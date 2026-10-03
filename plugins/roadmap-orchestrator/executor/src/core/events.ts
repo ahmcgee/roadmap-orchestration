@@ -228,7 +228,7 @@ export type BatchCandidate = Readonly<{
 /** What an `ff` publishes besides a unit (M3): a docs publication, or a repair batch (every member's fingerprint re-checked). */
 export type FfSubject = Readonly<{ type: 'docs'; pub: JobId }> | Readonly<{ type: 'batch'; job: JobId }>;
 /**
- * A unit's `ff` carries its approval fingerprint and no subject (the 1.0.0-dev.5 shape); a docs or batch `ff`
+ * A unit's `ff` carries its approval fingerprint and no subject (the M2 shape); a docs or batch `ff`
  * carries its subject and no fingerprint.
  */
 export type IntegrationFfExpect = Readonly<{ ref: RefName; old: Sha; new: Sha }> & (
@@ -421,7 +421,8 @@ export type OperatorParkKind = (typeof OPERATOR_PARK_KINDS)[number];
  * A park's class (A7), written inside the `stage-outcome` fact that parks (F9). `retryable`: the executor
  * probes `targets` and the park recovers once each has a covering passing probe. `operator`: `env` re-runs
  * the stage on `resume <unit>` (an `unparked` fact); `design` needs an applied spec revision (a reopen) or a
- * re-entry. Absent on a park 1.0.0-dev.4 wrote: read as operator, its kind by outcome (src/core/upgrade.ts).
+ * re-entry. Absent only where the interim M2 shim wrote none (src/pipeline/transitions.ts `outcomeFact`): read as operator, its kind
+ * by outcome (src/core/state.ts `unclassedParkRecord`).
  */
 export type ParkRecord =
   | Readonly<{ class: 'retryable'; targets: readonly ProbeTarget[] }>
@@ -468,8 +469,7 @@ export type JudgmentInputs = Readonly<{
   routingRev: RoutingRev;
   /**
    * M3 (Checkpoint A): the gate's complete approval fingerprint, captured with its other inputs under the revision
-   * fence; an approval records exactly it. Absent on a plan-check's, and on a gate's a 1.0.0-dev.5 executor wrote
-   * (read-time default: taken at the recorded tip when the call is read, `judgmentFingerprintDefault`).
+   * fence; an approval records exactly it. Present exactly on a gate's.
    */
   fingerprint?: ApprovalFingerprint;
 }>;
@@ -512,19 +512,8 @@ export type Fact =
    * `inputs/<sha256>.plan.json` and `.spec.json`), the command that applied it (null for a start) and what
    * changed against the previous revision. The postcondition of an `apply`: written once, last.
    */
-  /**
-   * `scheduling: 'dag'` (M2) only on rev 1, and only in a log with no `dispatch` fact: the arc runs DAG
-   * scheduling. Absent on rev 1, the arc is legacy (started on 1.0.0-dev.4 or earlier): it keeps that release's
-   * serial frontier (`legacyNext`, src/core/upgrade.ts).
-   */
+  /** `scheduling: 'dag'` (M2) on rev 1, and only there: the arc runs DAG scheduling. */
   | (Readonly<{ kind: 'plan-applied'; rev: PlanRev; command: CommandId | null; changes: readonly PlanChange[]; scheduling?: 'dag' }> & PlanManifest & PlanAppliedM3)
-  /**
-   * `resume <unit>` re-entered a unit parked `routing-changed` once the routing in force lets it keep its
-   * implementer seat (a `dispatch` fact re-pinned it first). The unit re-enters at the stage it parked at as
-   * a new, uncharged attempt: its decision and interruption return to what they were before the park. Written
-   * through 1.0.0-dev.4; since M2 read as `unparked` (src/core/upgrade.ts).
-   */
-  | Readonly<{ kind: 'rerouted'; unit: UnitId; command: CommandId }>
   /**
    * `resume <unit>` re-entered a unit parked operator-env (M2): the unit re-runs the stage it parked at as a new,
    * uncharged attempt; its decision and interruption return to what they were before the park.
@@ -565,20 +554,18 @@ export type Fact =
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
- * M3 fields of `plan-applied`, all absent on a 1.0.0-dev.5 fact and written on every M3 revision:
- * `source` (G1; absent: `start` for a null command, else `command`, `revisionSourceOf`); `payloadSha256` (the kept
- * `inputs/<sha>.revision.json` it was appended from); the ledger's, obligations' and vision's bytes in force
- * (`rulingsSha256` absent: the ledger is read live, `rulingsFromLiveFile`; `visionSha256` present exactly while the
- * arc is holistic); `publication` (the docs publication that carried it); `routingProvenance` (H7).
+ * M3 fields of `plan-applied`: `source` (G1); `payloadSha256` (the kept `inputs/<sha>.revision.json` it was appended
+ * from); the ledger's, obligations' and vision's bytes in force (`visionSha256` present exactly while the arc is
+ * holistic); `publication` (the docs publication that carried it, absent: none); `routingProvenance` (H7).
  */
 export type PlanAppliedM3 = Readonly<{
-  source?: RevisionSource;
-  payloadSha256?: Sha256Hex;
-  rulingsSha256?: Sha256Hex;
+  source: RevisionSource;
+  payloadSha256: Sha256Hex;
+  rulingsSha256: Sha256Hex;
   obligationsSha256?: Sha256Hex;
   visionSha256?: Sha256Hex;
   publication?: Readonly<{ pub: JobId; head: Sha }>;
-  routingProvenance?: RoutingProvenance;
+  routingProvenance: RoutingProvenance;
 }>;
 
 /** Whom a witness run certified or measured: a candidate, a job (audit, baseline, docs, batch), or a mutant (G13). */
@@ -1456,7 +1443,6 @@ export const fact: Read<Fact> = tagged('kind', {
     kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),
   })),
-  rerouted: object((f): Fact => ({ kind: f.get('kind', literal('rerouted')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
   unparked: object((f): Fact => ({ kind: f.get('kind', literal('unparked')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
   probe: object((f): Fact => {
     const out = {
@@ -1474,8 +1460,8 @@ export const fact: Read<Fact> = tagged('kind', {
     };
     if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);
     const fingerprint = f.optional('fingerprint', approvalFingerprint);
+    if ((fingerprint !== undefined) !== (out.stage === 'gate')) throw new SchemaError(`${f.path}.fingerprint`, out.stage === 'gate' ? 'the gate\'s approval fingerprint' : 'absent on a plan-check', fingerprint);
     if (fingerprint === undefined) return out;
-    if (out.stage !== 'gate') throw new SchemaError(`${f.path}.fingerprint`, 'absent on a plan-check', fingerprint);
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
     return { ...out, fingerprint };
   }),
@@ -1496,30 +1482,24 @@ export const fact: Read<Fact> = tagged('kind', {
   }),
   'plan-applied': object((f): Fact => {
     const scheduling = f.optional('scheduling', literal('dag'));
-    const m3: Record<string, unknown> = {};
-    const opt = <T>(key: keyof PlanAppliedM3, read: Read<T>): void => {
-      const v = f.optional(key, read);
-      if (v !== undefined) m3[key] = v;
-    };
-    opt('source', revisionSource);
-    opt('payloadSha256', sha256R);
-    opt('rulingsSha256', sha256R);
-    opt('obligationsSha256', sha256R);
-    opt('visionSha256', sha256R);
-    opt('publication', object((g) => ({ pub: g.get('pub', docsJobR), head: g.get('head', shaR) })));
-    opt('routingProvenance', routingProvenance);
+    const opt: Record<string, unknown> = {};
+    for (const [key, read] of [['obligationsSha256', sha256R], ['visionSha256', sha256R], ['publication', object((g) => ({ pub: g.get('pub', docsJobR), head: g.get('head', shaR) }))]] as const) {
+      const v = f.optional(key, read as Read<unknown>);
+      if (v !== undefined) opt[key] = v;
+    }
     const out = {
       kind: f.get('kind', literal('plan-applied')), rev: f.get('rev', (v, p) => planRev(v, p)), command: f.get('command', nullable(cmdR)),
       planSha256: f.get('planSha256', sha256R), specs: f.get('specs', manifestSpecs), changes: f.get('changes', arrayOf(planChange)),
-      ...(scheduling === undefined ? {} : { scheduling }), ...(m3 as PlanAppliedM3),
+      ...(scheduling === undefined ? {} : { scheduling }),
+      source: f.get('source', revisionSource), payloadSha256: f.get('payloadSha256', sha256R), rulingsSha256: f.get('rulingsSha256', sha256R),
+      routingProvenance: f.get('routingProvenance', routingProvenance), ...opt,
     };
-    if (scheduling !== undefined && out.rev !== 1) throw new SchemaError(`${f.path}.scheduling`, 'absent after rev 1 (the arc\'s scheduling is fixed at its first plan)', scheduling);
-    const source = m3['source'] as RevisionSource | undefined;
-    if (source !== undefined && (source.type === 'command' ? source.command !== out.command : out.command !== null)) {
-      throw new SchemaError(`${f.path}.source`, `the source naming command ${out.command}`, source);
+    if ((scheduling !== undefined) !== (out.rev === 1)) throw new SchemaError(`${f.path}.scheduling`, out.rev === 1 ? 'dag on rev 1' : 'absent after rev 1 (the arc\'s scheduling is fixed at its first plan)', scheduling);
+    if (out.source.type === 'command' ? out.source.command !== out.command : out.command !== null) {
+      throw new SchemaError(`${f.path}.source`, `the source naming command ${out.command}`, out.source);
     }
-    if (m3['obligationsSha256'] !== undefined && m3['visionSha256'] === undefined) throw new SchemaError(`${f.path}.obligationsSha256`, 'absent without a vision (obligations are a holistic input, A5)', m3['obligationsSha256']);
-    return out;
+    if (opt['obligationsSha256'] !== undefined && opt['visionSha256'] === undefined) throw new SchemaError(`${f.path}.obligationsSha256`, 'absent without a vision (obligations are a holistic input, A5)', opt['obligationsSha256']);
+    return out as Fact;
   }),
   'executor-started': object((f): Fact => ({ kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive) })),
   approval: object((f): Fact => ({

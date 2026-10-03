@@ -10,8 +10,7 @@
 //   `steer --class` layer on top, src/routing/layers.ts). Every record since 1.0.0-dev.6 pins the unit's bounds
 //   (`bounds`: `boundsOf` its plan `limits`, the transition table's counters and the backend windows) and the
 //   transient rules its candidate runs under (`transientRules: 'm3'`, H15). A `limits` or scope-growth revision
-//   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules` (a 1.0.0-dev.5
-//   lineage keeps its dev.5 rules).
+//   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules`.
 // - A routing change mid-unit (a new routingRev at a later dispatch; lead ruling, arc-1 feedback item 7):
 //   every judgment is a fresh session, so a judgment seat may change harmlessly; the implementer's session
 //   resumes, so its session key (`implementerSessionKey`: backend and model, R4) may not change. The unit is re-pinned
@@ -644,7 +643,7 @@ export type Cancelled = Readonly<{ kind: 'cancelled'; reason: 'pause' | 'stop' }
 
 export const isCancelled = <T extends object>(done: T | Cancelled): done is Cancelled => 'kind' in done && done.kind === 'cancelled';
 
-/** A request, or null when it asks for nothing (a legacy arc's judgment, a build of a unit with no resources there). */
+/** A request, or null when it asks for nothing (a build of a unit with no resources and no `@cpu`). */
 export const nonEmpty = (r: ResourceRequest): ResourceRequest | null =>
   r.named.length === 0 && r.pools.length === 0 && r.cpu === 0 && !r.publication ? null : r;
 

@@ -20,10 +20,8 @@ import {
   type ResourceName, type ResourceUnit, type UnitId, CPU_POOL, INTEGRATION_SLOT, type LaneId, compareResourceUnits, cpuToken,
   parseResourceUnit, poolInstance,
 } from '../core/ids.ts';
-import type { JournalView } from '../core/interfaces.ts';
 import type { LaneDef, SpecM1 } from '../core/records.ts';
 import { type ResourceEntry, FREE_RESOURCE } from '../core/state.ts';
-import { isLegacy } from '../core/upgrade.ts';
 import type { PlanM1, PlanUnit, ResourceDecl } from '../input/plan.ts';
 import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 
@@ -50,7 +48,7 @@ export function declOf(plan: PlanM1, name: ResourceName): ResourceDecl {
 
 /**
  * A request from declared names: pools (declared with `pool`) take one instance each, the rest are named, and
- * `integration-slot` makes it a publication. `cpu` tokens are the caller's (0 for a legacy arc).
+ * `integration-slot` makes it a publication. `cpu` tokens are the caller's.
  */
 export function requestOf(plan: PlanM1, names: readonly ResourceName[], cpu: number): ResourceRequest {
   if (new Set(names).size !== names.length) throw new Error(`duplicate resources in ${JSON.stringify(names)}`);
@@ -167,20 +165,16 @@ export type OverCapacity = Readonly<{
 /**
  * Every request of `plan` over total capacity, as `plan-invalid` rows (src/preflight/checks.ts wires it).
  * `capacity.cpu`: the `@cpu` pool's size (`cpuCapacity`). `specs`: the units' loaded specs (their lanes).
- * `view`: the arc's log once it has a plan revision, else null (a first start).
  *
  * Only `@cpu` can be exceeded: a request takes one instance per pool and a pool has at least one, and a
  * judgment takes a single token. So the rows are a build's `unit.cpu ?? 4` and each active lane's cost (suite
- * lanes with unit null) against `capacity.cpu`. A legacy arc (`isLegacy`) requests no `@cpu`, so none of its
- * requests, existing or gained through `apply` (new pools included), can be over capacity.
+ * lanes with unit null) against `capacity.cpu`.
  */
 export function overCapacity(
   plan: PlanM1,
   capacity: Readonly<{ cpu: number }>,
   specs: ReadonlyMap<UnitId, SpecM1>,
-  view: JournalView | null,
 ): readonly Readonly<{ kind: 'plan-invalid'; problem: OverCapacity }>[] {
-  if (view !== null && isLegacy(view)) return [];
   const rows: OverCapacity[] = [];
   const check = (unit: UnitId | null, lane: LaneId | null, requested: number): void => {
     if (requested > capacity.cpu) rows.push({ type: 'over-capacity', unit, lane, resource: CPU_POOL, requested, total: capacity.cpu });

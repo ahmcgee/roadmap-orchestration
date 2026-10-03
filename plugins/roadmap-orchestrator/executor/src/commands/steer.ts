@@ -99,7 +99,7 @@ async function routeClass(ctx: CommandContext, id: CommandId, unit: UnitId, cls:
   const tier = view.unit(unit).buildTier;
   if (tier === null) throw new Error(`steer of ${unit}: dispatched without a build tier`);
   const inForce = requirePlanInForce(ctx.runDir, view);
-  const current = inForceFiles(ctx.runDir, view, inForce, revisionInForce(ctx.runDir, inForce, ctx.planFile), ctx.planFile);
+  const current = inForceFiles(ctx.runDir, view, inForce, revisionInForce(ctx.runDir, inForce), ctx.planFile);
   const layer: RoutingLayer = inForce.plan.units.find((u) => u.id === unit)?.routing ?? {};
   if (layer.build?.[tier] === cls) return { kind: 'applied', verified: [`unit ${unit}'s routing layer seats ${cls} at build.${tier} already`] };
   // The plan's own JSON, with the unit's layer set, so every other byte of it stays as the architect wrote it.

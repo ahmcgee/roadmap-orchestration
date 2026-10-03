@@ -36,7 +36,7 @@ export const CPU_COST = { judgment: 1, build: 4, lane: { fast: 2, estate: 4 } } 
 
 /**
  * What one reservation asks for, all-or-none: named resources, one instance per pool request, `@cpu` tokens
- * (0 for a legacy arc), and `integration-slot` for a publication. Its units are taken in lock order.
+ * and `integration-slot` for a publication. Its units are taken in lock order.
  */
 export type ResourceRequest = Readonly<{
   named: readonly ResourceName[];
@@ -51,7 +51,7 @@ export type ResourceRequest = Readonly<{
  * `@cpu`×1; build the unit's resources and `@cpu`×(`unit.cpu ?? 4`); lanes the first lane's set; candidate the
  * publication (`integration-slot`); prepare none. A wait cancelled by pause or stop journals nothing.
  */
-export type EntryReservation = (plan: PlanM1, unit: PlanUnit, stage: AdmissionStage, legacy: boolean) => ResourceRequest | null;
+export type EntryReservation = (plan: PlanM1, unit: PlanUnit, stage: AdmissionStage) => ResourceRequest | null;
 
 /** The arbiter's answer to one waiter (src/schedule/arbiter.ts, step 1). */
 export type Grant =

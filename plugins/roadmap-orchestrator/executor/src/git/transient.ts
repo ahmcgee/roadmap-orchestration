@@ -3,10 +3,8 @@
 // - `diffBase(T, branch)` is the one diff base everyone uses: `merge-base(T, branch)`. It is recomputed on
 //   every call, so after a merge-in (whose commit has T as a parent) it is T itself.
 // - The transient check refuses a unit diff that touches run state or evidence, files only the executor
-//   writes, or in-tree `.roadmap/`: under `m3` rules (every dispatch since 1.0.0-dev.6, H15) any `.roadmap/`
-//   path and any path outside the unit's pinned scope; under `dev5` rules (a dispatch record without
-//   `transientRules`, for its whole lineage attempt) `.roadmap/` outside the published allowlist, and no
-//   scope check. Nothing transient may reach a candidate, so the tested head is the published head and the
+//   writes, or in-tree `.roadmap/` (H15): any `.roadmap/` path and any path outside the unit's pinned scope.
+//   Nothing transient may reach a candidate, so the tested head is the published head and the
 //   PR diff stays product-only. A violation is a scope-growth finding for a normal fix round, never a
 //   silent drop.
 // - The docs check (G17) confines a docs publication's diff to the `.roadmap/` files it renders and its
@@ -15,7 +13,6 @@
 //   filesystem. Collisions already present at T are grandfathered.
 import type { Sha } from '../core/ids.ts';
 import type { DispatchRecord } from '../core/records.ts';
-import { transientRulesOf } from '../core/upgrade.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern, repoPath } from '../core/values.ts';
 import { git, lsTree, mergeBase } from './git.ts';
 
@@ -43,13 +40,10 @@ export function unitDiffPaths(repo: AbsPath, tip: Sha, branch: Sha): readonly Re
 // ---------------------------------------------------------------------------------------------------
 // Transient check
 
-/** The in-tree `.roadmap/` entries publication owns (DESIGN §2.9), allowed in a unit diff under `dev5` rules only. */
-export const ROADMAP_ALLOWLIST = ['contracts/', 'constraints.md', 'invariants.md', 'debt.md', 'config.json'] as const;
-
 export type TransientRule =
-  /** Under `.roadmap/`: any such path under `m3` rules; one not in ROADMAP_ALLOWLIST under `dev5` rules. */
+  /** Under `.roadmap/`. */
   | 'roadmap-dir'
-  /** `m3` rules: a path no pattern of the unit's pinned scope matches. */
+  /** A path no pattern of the unit's pinned scope matches. */
   | 'out-of-scope'
   /** The docs check: a path that is neither a rendered `.roadmap/` file nor a contract op's path. */
   | 'not-docs'
@@ -62,21 +56,15 @@ export type TransientRule =
 
 export type TransientViolation = Readonly<{ path: RepoPath; rule: TransientRule }>;
 
-/** `evidenceGlobs`: the spec's declared lane `evidenceGlobs` (every lane's, active or not). */
-export type TransientRules =
-  /** A 1.0.0-dev.5 dispatch: ROADMAP_ALLOWLIST allowed, no scope check. */
-  | Readonly<{ kind: 'dev5'; evidenceGlobs: readonly RepoPattern[] }>
-  /** H15: no `.roadmap/` path, and every path inside `scope`, the dispatch record's pinned scope (re-pinned on a ruled growth). */
-  | Readonly<{ kind: 'm3'; evidenceGlobs: readonly RepoPattern[]; scope: readonly RepoPattern[] }>;
+/**
+ * H15: no `.roadmap/` path, and every path inside `scope`, the dispatch record's pinned scope (re-pinned on a ruled
+ * growth). `evidenceGlobs`: the spec's declared lane `evidenceGlobs` (every lane's, active or not).
+ */
+export type TransientRules = Readonly<{ evidenceGlobs: readonly RepoPattern[]; scope: readonly RepoPattern[] }>;
 
 /** The rules of a unit's candidate from its latest dispatch record. */
 export function unitTransientRules(dispatch: DispatchRecord, evidenceGlobs: readonly RepoPattern[]): TransientRules {
-  switch (transientRulesOf(dispatch)) {
-    case 'dev5':
-      return { kind: 'dev5', evidenceGlobs };
-    case 'm3':
-      return { kind: 'm3', evidenceGlobs, scope: dispatch.scope };
-  }
+  return { evidenceGlobs, scope: dispatch.scope };
 }
 
 const RUN_STATE_SEGMENTS: ReadonlySet<string> = new Set(['roadmap-runtime', '.roadmap-runtime', '__preview', '__codex']);
@@ -84,13 +72,9 @@ const RUNNER_FILES: ReadonlySet<string> = new Set(['launch.json', 'runner.json',
 /** `<seq>-<ordinal>`: the name of an invocation dir under the run dir's `inv/`. */
 const INVOCATION_DIR = /^[1-9][0-9]*-[1-9][0-9]*$/;
 
-function roadmapAllowed(rest: string): boolean {
-  return ROADMAP_ALLOWLIST.some((entry) => (entry.endsWith('/') ? rest.startsWith(entry) : rest === entry));
-}
-
 function transientRule(rules: TransientRules, path: RepoPath): TransientRule | null {
   const segments = path.split('/');
-  if (segments[0] === '.roadmap') return rules.kind === 'dev5' && roadmapAllowed(segments.slice(1).join('/')) ? null : 'roadmap-dir';
+  if (segments[0] === '.roadmap') return 'roadmap-dir';
   if (segments.some((s) => RUN_STATE_SEGMENTS.has(s))) return 'run-state';
   if (segments[0] === 'evidence') return 'evidence';
   if (rules.evidenceGlobs.some((g) => matchesPattern(path, g))) return 'evidence';
@@ -98,7 +82,7 @@ function transientRule(rules: TransientRules, path: RepoPath): TransientRule | n
   if (name === 'events.jsonl' || name.startsWith('events.torn.')) return 'executor-file';
   const parent = segments[segments.length - 2];
   if (parent !== undefined && INVOCATION_DIR.test(parent) && RUNNER_FILES.has(name)) return 'executor-file';
-  if (rules.kind === 'm3' && !rules.scope.some((p) => matchesPattern(path, p))) return 'out-of-scope';
+  if (!rules.scope.some((p) => matchesPattern(path, p))) return 'out-of-scope';
   return null;
 }
 

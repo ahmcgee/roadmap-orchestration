@@ -7,7 +7,7 @@
 // Every stage a unit is admitted into takes its entry reservation before its first journaled op (A1, F6):
 // plan-check and gate `@cpu`×1 (`judgmentEntry`, held until the call is read), build the unit's resources and
 // `@cpu`×`buildCpu` (`buildEntry`, held through the build chain to teardown), lanes its first lane's set
-// (lanes.ts `seriesEntry`); none for a legacy arc's judgments. The grant's `reserve` transition is the
+// (lanes.ts `seriesEntry`). The grant's `reserve` transition is the
 // attempt's first op, so a wait the task's signal cancels (pause, stop) starts nothing (`Cancelled`): no
 // attempt, no counter, no `interrupted`. A judgment journals facts before it (plan-check's pin, and its
 // `judgment-inputs` capture, below), which a cancelled wait leaves behind. The chain stages (quiesce → evidence → salvage → teardown) take none
@@ -65,7 +65,6 @@ import {
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { ApprovalFingerprint, SpecM1, SpecPatchOp, NeedsUserContent } from '../core/records.ts';
-import { isLegacy, rulingsFromLiveFile } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
@@ -161,13 +160,12 @@ export const failedFacts = (failed: readonly ResourceInstance[]): ParkFacts => (
 /** The holder a stage attempt reserves under. */
 export const stageHolder = (parent: StageParent): StageHolder => ({ type: 'stage', unit: parent.unit, stage: parent.stage, attempt: parent.attempt });
 
-/** A judgment's entry reservation: `@cpu`×1, none for a legacy arc. */
-export const judgmentEntry = (ctx: StageContext): ResourceRequest | null =>
-  nonEmpty({ named: [], pools: [], cpu: isLegacy(ctx.journal.view) ? 0 : CPU_COST.judgment, publication: false });
+/** A judgment's entry reservation: `@cpu`×1. */
+export const judgmentEntry = (): ResourceRequest => ({ named: [], pools: [], cpu: CPU_COST.judgment, publication: false });
 
-/** A build's entry reservation: the unit's declared resources and its `@cpu` (`buildCpu`; none for a legacy arc). */
+/** A build's entry reservation: the unit's declared resources and its `@cpu` (`buildCpu`). */
 export const buildEntry = (ctx: StageContext, unit: PlanUnit): ResourceRequest | null =>
-  nonEmpty(requestOf(ctx.plan(), unit.resources, isLegacy(ctx.journal.view) ? 0 : buildCpu(unit)));
+  nonEmpty(requestOf(ctx.plan(), unit.resources, buildCpu(unit)));
 
 /** What an attempt holds once its entry grant is probed and running, or why it may not run. */
 export type Held =
@@ -196,7 +194,7 @@ export async function holdEntry(ctx: StageContext, parent: StageParent): Promise
  * after the attempt's capture under the fence (never while waiting for it).
  */
 export async function enterJudgment(ctx: StageContext, parent: StageParent): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
-  const entered = await enter(ctx, stageHolder(parent), judgmentEntry(ctx));
+  const entered = await enter(ctx, stageHolder(parent), judgmentEntry());
   if (isCancelled(entered)) return entered;
   if ((await holdEntry(ctx, parent)).kind !== 'held') throw new Error(`${parent.unit} ${parent.stage}#${parent.attempt}: a judgment's @cpu has no probe, so it cannot be occupied`);
   return entered;
@@ -204,8 +202,8 @@ export async function enterJudgment(ctx: StageContext, parent: StageParent): Pro
 
 /**
  * Releases what a judgment attempt still holds (its `@cpu` token, which has no teardown, so its cleanup cannot
- * fail): once its call is read, or before it records an outcome without one. Nothing when it holds nothing (a
- * legacy arc's, or a call recovered after a crash, whose dead holder recovery released).
+ * fail): once its call is read, or before it records an outcome without one. Nothing when it holds nothing (a call
+ * recovered after a crash, whose dead holder recovery released).
  */
 export async function releaseJudgment(ctx: StageContext, parent: StageParent): Promise<void> {
   const holder = stageHolder(parent);
@@ -244,8 +242,8 @@ export const at = <S extends OutcomeStage>(p: StageParent, stage: S): StageParen
  */
 export function loadUnitSpec(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>, unit: PlanUnit): LoadedSpec {
   const path = absPath(join(ctx.planDir, unit.spec));
-  const { bytes, sha256 } = specBytesOf(ctx.runDir, specShaInForce(ctx.journal.view, unit.id), path);
-  return { path, spec: parseUnitSpec(bytes, path, unit.id), sha256 };
+  const sha256 = specShaInForce(ctx.journal.view, unit.id);
+  return { path, spec: parseUnitSpec(specBytesOf(ctx.runDir, sha256), path, unit.id), sha256 };
 }
 
 /** The kept file of the unit's spec in force: what a snapshot publishes and a park's evidence cites. */
@@ -267,28 +265,23 @@ export const ledgerPath = (ctx: StageContext): AbsPath => absPath(join(ctx.planD
 /** The directory a session is given to read the ledger from. */
 export const ledgerDir = (ctx: StageContext): AbsPath => absPath(dirname(ledgerPath(ctx)));
 
-/**
- * The rulings ledger in force (A3: executor-owned after start): the bytes the latest revision's payload kept; the
- * live file for a revision a 1.0.0-dev.5 executor wrote, which kept none (`rulingsFromLiveFile`, scaffolding).
- */
+/** The rulings ledger in force (A3: executor-owned after start): the bytes the latest revision's payload kept. */
 export function ledger(ctx: StageContext): readonly Ruling[] {
   const payload = payloadInForce(ctx);
-  if (payload === null) return parseRulings(rulingsFromLiveFile(ledgerPath(ctx)).toString('utf8'), ledgerPath(ctx));
   return parseRulings(kept(ctx, payload.manifest.rulings.ledgerSha256, RULINGS_INPUT).toString('utf8'), ledgerPath(ctx));
 }
 
-/** The ruling sidecars in force (M3); none for a revision a 1.0.0-dev.5 executor wrote. */
+/** The ruling sidecars in force (M3). */
 export function rulingSidecars(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): readonly RulingSidecar[] {
   const payload = payloadInForce(ctx);
-  if (payload === null) return [];
   return Object.values(payload.manifest.rulings.sidecars).map((sha) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
 }
 
-/** The latest revision's payload, or null for one a 1.0.0-dev.5 executor wrote (no payload). */
-function payloadInForce(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): ReturnType<typeof keptPayload> | null {
+/** The latest revision's payload. */
+function payloadInForce(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): ReturnType<typeof keptPayload> {
   const fact = ctx.journal.view.planApplied();
   if (fact === null) throw new Error('a stage before any plan revision');
-  return fact.payloadSha256 === undefined ? null : keptPayload(ctx.runDir, fact.payloadSha256);
+  return keptPayload(ctx.runDir, fact.payloadSha256);
 }
 
 function kept(ctx: Readonly<{ runDir: AbsPath }>, sha: Sha256Hex, ext: string): Buffer {
@@ -299,15 +292,15 @@ function kept(ctx: Readonly<{ runDir: AbsPath }>, sha: Sha256Hex, ext: string): 
 
 /**
  * The vision and obligations in force (M3): the latest revision's kept bytes; null where it names none (a
- * non-holistic arc, a holistic one without obligations, a revision a 1.0.0-dev.5 executor wrote).
+ * non-holistic arc, a holistic one without obligations).
  */
 export function holisticInForce(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): Readonly<{ vision: Vision | null; obligations: Obligations | null }> {
   const payload = payloadInForce(ctx);
   const read = <T>(sha: Sha256Hex | null, ext: string, parse: (v: unknown) => T): T | null =>
     (sha === null ? null : parse(JSON.parse(kept(ctx, sha, ext).toString('utf8'))));
   return {
-    vision: read(payload?.manifest.vision ?? null, VISION_INPUT, parseVision),
-    obligations: read(payload?.manifest.obligations ?? null, OBLIGATIONS_INPUT, parseObligations),
+    vision: read(payload.manifest.vision, VISION_INPUT, parseVision),
+    obligations: read(payload.manifest.obligations, OBLIGATIONS_INPUT, parseObligations),
   };
 }
 
@@ -700,7 +693,7 @@ export type BuildRun = Readonly<{
   branch: RefName;
   /** The implementer's evidence dir (decisions.json). */
   workDir: AbsPath;
-  /** The build's entry reservation, held from reserve to teardown; null when it reserved nothing (a legacy arc's unit without resources). */
+  /** The build's entry reservation, held from reserve to teardown; null when it reserved nothing. */
   reservation: Reservation<'running', StageHolder> | null;
 }>;
 

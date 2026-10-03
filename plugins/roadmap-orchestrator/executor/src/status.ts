@@ -4,9 +4,8 @@
 // lock (`readJournal`: no tail repair, no fact, no cache write), and the run dir's files are only read.
 // Nothing here names a model except `spend.byModel`, which looks each seat's model up in its revision's
 // routing table at render time: each plan revision's table is resolved from the routing provenance it recorded
-// (H7; a 1.0.0-dev.5 revision's from the record its adoption persisted, `routing-provenance/<rev>.json`), for the
-// arc and for each unit, never from the live repo config; a revision with no provenance (a dev.5 arc not yet
-// adopted by a start of this release, or one adopted as unreconstructable) is listed as unresolved.
+// (H7), for the arc and for each unit, never from the live repo config; a meter row whose `routingRev` no revision
+// resolves to is listed as unresolved.
 // `plan` is the plan in force (its revision and hash, src/input/inforce.ts), and `units` are its units, not
 // the live plan.json: an edit nobody applied does not show. `routing` is the arc's routing in force (the plan in
 // force under its revision's provenance), as classes per seat with the layer that named each and where each
@@ -25,8 +24,7 @@
 //   running | preparing         its task is in a stage or chain (`preparing`: a re-entry's `prepare`); with no
 //                               sched.json, an attempt is open while the executor lives
 //   waiting                     its task waits for its stage's entry reservation (`waitingFor.resources`), or it
-//                               waits on `after` dependencies or contingent edges (a legacy arc: on its serial
-//                               frontier)
+//                               waits on `after` dependencies or contingent edges
 //   awaiting-admission          its next stage is not admitted now (`waitingFor.admission`, `drainFor`)
 //   ready                       it may start now (the scheduler starts it on its next tick)
 //
@@ -45,7 +43,7 @@
 // supervisor's `sup-<gen>-<n>`, a refused claim's `host-<kind>-<n>`), read from `needs-user/`; an item is
 // acknowledged once the log holds its ack fact, as the executor reads it.
 //
-// M3 (§2.4 additions; the holistic keys are vacuous in an arc without the layer, a 1.0.0-dev.5 one included):
+// M3 (§2.4 additions; the holistic keys are vacuous in an arc without the layer):
 //   run.state     `draining` (a live executor that would run, with admissions closed); in a holistic arc `complete`
 //                 only while its `arc-completed` is active (A20), and `completion.unmet` names what the completion
 //                 predicate lacks now
@@ -72,7 +70,7 @@
 //   completion    the latest `arc-completed` (A20 `active`), whether it is sealed (A5b `sealingOf`), the unmet
 //                 clauses of the completion predicate now (the scheduler's `completionBlockers`: one rule)
 //   host.log      the event log's size and fold time: the deferred compaction's trigger (50 MB or 2 s)
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { COMMANDS_DIR, incomingPath, pendingCommandIds, readCommand, terminalReceipt } from './commands/queue.ts';
@@ -90,11 +88,8 @@ import {
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
 import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
-import { DEV6_CLASS_CATALOGUE, legacyNext, legacySettled, revisionSourceOf, routingProvenanceOf, warnPlanFromFile } from './core/upgrade.ts';
-import {
-  type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce,
-  routingProvenanceOf as rebuiltProvenance,
-} from './input/inforce.ts';
+import { DEV6_CLASS_CATALOGUE } from './core/upgrade.ts';
+import { type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
@@ -115,17 +110,17 @@ import { observations } from './pipeline/lanes.ts';
 import { type CompletionBlocker, type QueueEntry, SCHED_FILE, type SchedFile, arcSettled, completionBlockers, dischargingObservation, readOnlyContexts, recordedLaneEnv, schedFile, unitSettled } from './schedule/scheduler.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import {
-  type ResolvedRouting, type RoutingStack, type SeatSources, arcScopeOf, planStack, provenanceStack, resolveRouting, resolveRoutingUnder,
+  type ResolvedRouting, type RoutingStack, type SeatSources, arcScopeOf, provenanceStack, resolveRouting, resolveRoutingUnder,
 } from './routing/layers.ts';
 import {
-  type Backend, type ClassSource, type ClassTable, type ModelClass, type ProfileName, type RiskTier, type RoutingProvenance, type SeatRef,
+  type Backend, type ClassSource, type ClassTable, type ModelClass, type ProfileName, type RiskTier, type SeatRef,
   type RoutingTable,
 } from './routing/types.ts';
 import { readClaim } from './host/lock.ts';
 import { isAlive } from './host/liveness.ts';
 import { readOwner } from './host/owner.ts';
 import { revParse } from './git/git.ts';
-import { readLegacyProvenance, legacyProvenancePath, witnessDir } from './git/snapshot.ts';
+import { witnessDir } from './git/snapshot.ts';
 import { coverageBase, coverageOf } from './holistic/coverage.ts';
 import { type AppliedBundle, brakesOf } from './holistic/convergence.ts';
 import { uncoveredDivergences } from './holistic/divergence.ts';
@@ -172,7 +167,7 @@ export const SESSION_GUARANTEE = 'Every process that keeps ROADMAP_INV in its ex
 
 /**
  * What an unstarted or waiting unit waits on; null for a unit that waits on nothing. `deps`: its `after`
- * dependencies not merged yet (each followed to its lineage head, F15; a legacy arc's serial frontier);
+ * dependencies not merged yet (each followed to its lineage head, F15);
  * `edges`: its unresolved contingent edges; `resources`: the entry reservation its task waits for (from the
  * arbiter's queue), and `envBlocked` when a residue keeps it from healthy capacity (F8); `admission`: what
  * keeps its next stage from being admitted (A17), `drainFor` the pending mutations among them (A12).
@@ -189,7 +184,8 @@ export type WaitingFor = Readonly<{
 /**
  * A park-pending unit's park: `class` and, for an operator park, its `kind`; for a retryable park, its
  * `targets`, those still `outstanding`, the earliest `nextProbeAt` among them (null: due now, no failed probe
- * backs it off) and `escalateAt` (6 h after the park, D2). A 1.0.0-dev.4 park reads as operator.
+ * backs it off) and `escalateAt` (6 h after the park, D2). A park fact without its class (the interim M2 shim) reads
+ * as operator.
  */
 export type UnitPark = Readonly<{
   class: 'retryable' | 'operator';
@@ -388,8 +384,6 @@ export type Status = Readonly<{
   edges: readonly EdgeView[];
   /** The `run-only` allowlist in force, or null when admission is unlimited. */
   runOnly: readonly UnitId[] | null;
-  /** An arc started before M2: its serial frontier and its resources' dev.4 meaning (src/core/upgrade.ts). */
-  legacy: boolean;
   /** Raised and not acknowledged, ascending id: the log's items and the file-only `sup-*` / `host-*` ones. */
   needsUser: readonly Readonly<{ id: NeedsUserId; reason: NeedsUserReason; blocking: boolean }>[];
   commands: Readonly<{
@@ -464,17 +458,6 @@ function commandsOf(runDir: AbsPath, arc: ArcId): Status['commands'] {
   return { pending, receipts: receipts.slice(-RECEIPTS_SHOWN) };
 }
 
-/**
- * A plan revision's routing provenance as recorded: its own (M3), or a 1.0.0-dev.5 revision's as its adoption persisted
- * it (H7); null when none was persisted (no start of this release adopted the arc yet) or it is unreconstructable.
- */
-function recordedProvenance(runDir: AbsPath, f: PlanAppliedFact): RoutingProvenance | null {
-  if (f.routingProvenance !== undefined) return f.routingProvenance;
-  if (!existsSync(legacyProvenancePath(runDir, f.rev))) return null;
-  const adopted = readLegacyProvenance(runDir, f.rev);
-  return adopted.kind === 'reconstructed' ? adopted.provenance : null;
-}
-
 /** The kept plan of a revision. */
 function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
   const bytes = keptInput(runDir, f.planSha256, PLAN_INPUT);
@@ -492,8 +475,7 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
   const out = new Map<RoutingRev, RoutingTable>();
   for (const e of events) {
     if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') continue;
-    const provenance = recordedProvenance(runDir, e.fact);
-    if (provenance === null) continue;
+    const provenance = e.fact.routingProvenance;
     const scope = arcScopeOf(keptPlan(runDir, e.fact));
     for (const unit of [null, ...(Object.keys(provenance.unitLayers) as UnitId[])]) {
       const stack = provenanceStack(provenance, scope, unit);
@@ -515,23 +497,8 @@ function dev6RevAlias(stack: RoutingStack): RoutingRev | null {
   return stack.arcScope === 'corpus' ? null : resolveRoutingUnder(DEV6_CLASS_CATALOGUE, stack).rev;
 }
 
-/**
- * The routing provenance of the plan in force: as recorded, else (a 1.0.0-dev.5 revision no start of this release has
- * adopted) rebuilt from the plan, start.json's profile and the repo config, warned (src/core/upgrade.ts, scaffolding).
- */
-function provenanceInForce(runDir: AbsPath, inForce: InForce, record: RunStart): RoutingProvenance {
-  return recordedProvenance(runDir, inForce.fact)
-    ?? routingProvenanceOf(inForce.fact, () => rebuiltProvenance({ profile: record.profile, config: readRepoConfig(record.repo) }, inForce.plan));
-}
-
 function routingView(profile: ProfileName, r: ResolvedRouting): RoutingView {
   return { profile, rev: r.rev, seats: r.classes, sources: r.sources, bindings: r.bindings };
-}
-
-/** An arc with no plan in force (started before plan revisions): its plan file, as that release read it. */
-function planFile(arc: ArcId, path: AbsPath): PlanM1 {
-  warnPlanFromFile(arc, path);
-  return parsePlan(JSON.parse(readFileSync(path, 'utf8')));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -619,7 +586,6 @@ type Inputs = Readonly<{
   blocking: readonly BlockingItem[];
   /** Each unit's routing in force (its layer over the arc's), for admission's backend constraints; null before any start. */
   routing: ((unit: UnitId) => RoutingTable) | null;
-  legacy: boolean;
   /** What admission and the next stage read from each unit's spec in force (M3 B3). */
   spec: SpecFactsOf;
 }>;
@@ -635,18 +601,10 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   const { view, plan } = x;
   const item = x.blocking.find((b) => holdsUnit(b, unit.id));
   if (item !== undefined) return { state: 'blocked', waitingFor: waitFor({ admission: [{ type: 'blocking-item', id: item.id, reason: item.reason }] }) };
-  if (x.legacy) {
-    const f = legacyNext(view, plan.units);
-    if (f !== null && f.unit !== unit.id) return { state: 'waiting', waitingFor: waitFor({ deps: [f.unit] }) };
-    // The frontier blocked other than by a pause (which admission reports): its `after` units not settled by dev.4's rule.
-    const deps = unit.after.filter((d) => !legacySettled(view, d));
-    if (deps.length > 0) return { state: 'waiting', waitingFor: waitFor({ deps }) };
-  } else {
-    const deps = unit.after.map((d) => effectiveDependency(view, d)).filter((d) => view.unit(d).status !== 'retired');
-    const edges = unit.contingent.filter((e) => view.edgeResolved(e.id) === null).map((e) => e.id);
-    if (deps.some((d) => dead(view, d))) return { state: 'blocked', waitingFor: waitFor({ deps, edges }) };
-    if (deps.length > 0 || edges.length > 0) return { state: 'waiting', waitingFor: waitFor({ deps, edges }) };
-  }
+  const deps = unit.after.map((d) => effectiveDependency(view, d)).filter((d) => view.unit(d).status !== 'retired');
+  const edges = unit.contingent.filter((e) => view.edgeResolved(e.id) === null).map((e) => e.id);
+  if (deps.some((d) => dead(view, d))) return { state: 'blocked', waitingFor: waitFor({ deps, edges }) };
+  if (deps.length > 0 || edges.length > 0) return { state: 'waiting', waitingFor: waitFor({ deps, edges }) };
   const next = nextStage(u, x.spec(unit).reproduces);
   const routing = x.routing;
   if (next?.kind === 'admission' && routing !== null) {
@@ -787,16 +745,10 @@ type Derived = Readonly<{
 
 /**
  * Each unit's routing in force and the arc's: the plan in force under its revision's provenance (per unit, its layer on
- * top); an arc with no plan in force (started before plan revisions) resolves its plan file under the repo config.
+ * top).
  */
-function routingInForce(runDir: AbsPath, start: Readonly<{ record: RunStart; plan: PlanM1 }>, inForce: InForce | null): Readonly<{
-  profile: ProfileName; of: (unit: UnitId | null) => ResolvedRouting;
-}> {
-  if (inForce === null) {
-    const r = resolveRouting(planStack(start.record.profile, readRepoConfig(start.record.repo), start.plan));
-    return { profile: start.record.profile, of: () => r };
-  }
-  const provenance = provenanceInForce(runDir, inForce, start.record);
+function routingInForce(inForce: InForce): Readonly<{ profile: ProfileName; of: (unit: UnitId | null) => ResolvedRouting }> {
+  const provenance = inForce.fact.routingProvenance;
   const scope = arcScopeOf(inForce.plan);
   const cache = new Map<UnitId | null, ResolvedRouting>();
   return {
@@ -820,15 +772,14 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   const { view, events } = log;
   const record = readIf(join(runDir, START_FILE), runStart);
   const inForce = planInForce(runDir, view);
-  const plan = inForce?.plan ?? (record === null ? null : planFile(arc, record.planFile));
+  const plan = inForce?.plan ?? null;
   const start = record === null || plan === null ? null : { record, plan };
   const rejection = readIf(join(runDir, REJECTION_FILE), rejectionFile);
   const owner = ownerState(runDir, hostDir);
   const sched = liveSched(runDir, arc, owner);
   const blocking = blockingItems(runDir, view);
-  const routing = start === null ? null : routingInForce(runDir, start, inForce);
+  const routing = start === null || inForce === null ? null : routingInForce(inForce);
   const resolved = routing === null ? null : { profile: routing.profile, arc: routing.of(null) };
-  const scheduling = view.scheduling();
   // The specs in force are read only once a finding is active, which a started arc (start.json written first) alone has.
   const spec: SpecFactsOf = record === null
     ? (u) => {
@@ -836,8 +787,8 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
       return { reproduces: false, repairs: new Set() };
     }
     : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) });
-  const inputs: Inputs | null = plan === null || scheduling === null ? null : {
-    view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, legacy: scheduling === 'legacy', spec,
+  const inputs: Inputs | null = plan === null ? null : {
+    view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
   };
   const starts = attemptStarts(events);
   const now = Date.now();
@@ -1061,7 +1012,7 @@ function divergencesOf(view: JournalView): readonly DivergenceView[] {
 
 /** A revision's source as the one who ruled it. */
 function rulerOf(f: PlanAppliedFact): RuledBy {
-  const source = revisionSourceOf(f);
+  const source = f.source;
   switch (source.type) {
     case 'start':
       return { type: 'architect', command: null };
@@ -1253,11 +1204,11 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const commands = commandsOf(runDir, arc);
   const acks = ackSeqs(events);
 
-  // The holistic keys: only an arc whose plan in force names a vision (A5) has them; a dev.5 revision has no payload.
+  // The holistic keys: only an arc whose plan in force names a vision (A5) has them.
   const fold = view.holistic();
   const plan = inForce?.plan ?? null;
-  const on = fold.on && plan !== null && start !== null && inForce !== null && inForce.fact.payloadSha256 !== undefined
-    ? { plan, repo: start.record.repo, revision: revisionInForce(runDir, inForce, start.record.planFile) } : null;
+  const on = fold.on && plan !== null && start !== null && inForce !== null
+    ? { plan, repo: start.record.repo, revision: revisionInForce(runDir, inForce) } : null;
   const holistic = on !== null;
   const revision = on?.revision ?? null;
   const head = on === null ? null : revParse(on.repo, branchRef(on.plan.integrationBranch));
@@ -1271,9 +1222,8 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     arc,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
     units: d.units,
-    edges: d.plan === null || view.scheduling() === null ? [] : edgesOf(view, d.plan),
+    edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
-    legacy: view.scheduling() === 'legacy',
     needsUser,
     commands,
     spend: { byRole: meter.byRole, byModel: { models: byModel(resolvable, tables), unresolvedRevs }, byJob: meter.byJob, bySmoke: meter.bySmoke },

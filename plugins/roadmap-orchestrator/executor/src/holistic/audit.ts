@@ -298,10 +298,9 @@ function readLens(ctx: StageContext, job: JobId, called: BackendCallOutcome): Le
   }
 }
 
-/** Holds `@cpu`×1 under the job's holder around `body` (none on a legacy arc). */
+/** Holds `@cpu`×1 under the job's holder around `body`. */
 export async function withCpu<T>(ctx: AuditContext, job: JobId, body: () => Promise<T>): Promise<T> {
-  const request = judgmentEntry(ctx);
-  if (request === null) return body();
+  const request = judgmentEntry();
   const holder: JobHolder = { type: 'job', job };
   const parent = jobParent(job);
   const grant = await ctx.acquireFirst(request, holder, NEVER);

@@ -276,7 +276,7 @@ export function checkpointPending(ctx: CheckpointContext): boolean {
 function capture(ctx: CheckpointContext, due: Due): Captured {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
-  const revision = revisionInForce(ctx.runDir, inForce, ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, inForce);
   const files = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
   const head = integrationHeadNow(ctx);
   const vector = vectorAt(ctx, inForce, revision, files, head);
@@ -487,7 +487,7 @@ async function rewitnessCited(ctx: CheckpointContext, prev: CheckpointState): Pr
   if (prev.decided?.kind !== 'rejected' || prev.decided.reason !== 'evidence') return;
   const out = outputOf(ctx, prev.inputs.job);
   if (out === null) throw new Error(`${prev.inputs.job} was rejected on its evidence, but its output is not recorded`);
-  const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view), ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view));
   const wanted = new Set<LaneId>(out.output.cites.observations.map((k) => k.lane));
   const lanes = (revision.obligations?.value.lanes ?? []).filter((l) => wanted.has(l.id));
   if (lanes.length === 0) return;

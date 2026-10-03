@@ -27,7 +27,7 @@ import {
   type PackTarget, type WitnessRef, observationKey, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { checkpointOutputM4Default, planCheckVisionConflict, splitChildRuleDefault } from '../core/upgrade.ts';
+import { checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
 import {
   JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
 } from '../routing/types.ts';
@@ -154,7 +154,7 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     risk: f.get('risk', oneOf(RISK_TIERS)),
     notes: f.get('notes', text),
     premises: f.get('premises', arrayOf(premise)),
-    visionConflict: planCheckVisionConflict(f.optional('visionConflict', arrayOf(visionConflict)), f.path),
+    visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
   };
   if (decision === 'redirect') {
     return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };

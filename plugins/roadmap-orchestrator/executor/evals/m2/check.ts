@@ -47,6 +47,7 @@ import { candidateRef } from '../../src/git/candidate.ts';
 import { git, refTarget, revParse } from '../../src/git/git.ts';
 import { snapshotRef, verifySnapshot } from '../../src/git/snapshot.ts';
 import { transientViolations } from '../../src/git/transient.ts';
+import { ROADMAP_DIR_ALLOWED } from '../../src/preflight/checks.ts';
 import { outputSignatures } from '../../src/host/signatures.ts';
 import { readResidues, undispositioned } from '../../src/host/residues.ts';
 import { requirePlanInForce } from '../../src/input/inforce.ts';
@@ -456,9 +457,14 @@ function headIsCandidate(run: Run): Verdict {
 function diffProductOnly(run: Run): Verdict {
   const out = git(run.repo, ['diff', '--name-only', '-z', `${MAIN}...${run.plan.integrationBranch}`]);
   const paths = out.split('\0').filter((p) => p !== '').map((p) => repoPath(p));
-  const evidenceGlobs = run.plan.units.flatMap((u) => loadSpec(absPath(join(run.input, u.spec))).lanes.flatMap((l) => l.evidenceGlobs));
-  // The whole arc's diff: publication's .roadmap/ entries are allowed, and no unit's scope bounds it (dev.5's rules).
-  const violations = transientViolations({ kind: 'dev5', evidenceGlobs }, paths);
+  const specs = run.plan.units.map((u) => loadSpec(absPath(join(run.input, u.spec))));
+  // The whole arc's diff: the in-tree `.roadmap/` entries docs publications own (ROADMAP_DIR_ALLOWED) are allowed; every
+  // other path is under the transient rules, bounded by the union of the units' scopes.
+  const published = (p: string): boolean => p.startsWith('.roadmap/') && (ROADMAP_DIR_ALLOWED as readonly string[]).includes(p.split('/')[1]!);
+  const violations = transientViolations(
+    { evidenceGlobs: specs.flatMap((s) => s.lanes.flatMap((l) => l.evidenceGlobs)), scope: specs.flatMap((s) => s.scope) },
+    paths.filter((p) => !published(p)),
+  );
   return { pass: violations.length === 0, detail: violations.length > 0 ? violations.map((v) => `${v.path} (${v.rule})`).join(', ') : `${paths.length} product paths: ${paths.join(', ')}` };
 }
 

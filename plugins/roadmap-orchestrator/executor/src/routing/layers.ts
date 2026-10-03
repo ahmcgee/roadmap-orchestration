@@ -15,8 +15,7 @@
 // Seats: build has `low | med | high`; planCheck and gate also have `escalation`, where route-ups and risk
 // triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles `lens`, `checkpoint` (M3) and
 // `packReview` (M4a) have the one seat `arc`. An arc role is in force (checked, smoked and hashed) only where it can run,
-// the arc's `ArcScope`: none in a non-holistic arc (G20: it resolves exactly as in M2, so its `routingRev` is the one
-// 1.0.0-dev.5 recorded); `lens` and `checkpoint` in a holistic `architecture-doc` arc (so its seats in force are the
+// the arc's `ArcScope`: none in a non-holistic arc (G20: it resolves exactly as in M2); `lens` and `checkpoint` in a holistic `architecture-doc` arc (so its seats in force are the
 // ones 1.0.0-dev.6 hashed); all three in a corpus arc (lead ruling LR-0a-1: the pack review runs only there).
 //
 // `.roadmap/config.json` (committed, set once per repo):
@@ -177,7 +176,7 @@ export function resolveRoutingUnder(catalogue: ClassCatalogue, stack: RoutingSta
 
 /**
  * First 16 hex of sha256 over the canonical JSON of the resolved table's roles in force: the unit roles and the arc
- * roles of `arcScope`. A non-holistic arc hashes the M2 table (its 1.0.0-dev.5 revs); a holistic `architecture-doc`
+ * roles of `arcScope`. A non-holistic arc hashes the M2 table; a holistic `architecture-doc`
  * arc the 1.0.0-dev.6 role set (no `packReview`), so only the class catalogue (OR-L3) moved its revs.
  */
 export function routingRevOf(table: RoutingTable, arcScope: ArcScope): RoutingRev {

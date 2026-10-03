@@ -86,7 +86,7 @@ import { executorIdentity } from './stages.ts';
 export type DocsContext = ResourceContext & Readonly<{
   /** The executor's own environment: lanes take their declared `pass` names from it. */
   hostEnv: Readonly<Record<string, string | undefined>>;
-  /** The plan file: the inputs in force of a dev.5 revision resolve beside it. */
+  /** The plan file. */
   planFile: AbsPath;
   arbiter: Readonly<{ acquireFirst: AcquireFirst; wake: () => void }>;
 }>;
@@ -171,7 +171,7 @@ type Reader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPa
  */
 export function rulingContextAt(ctx: Reader, tip: Sha): RulingContext {
   const inForce = requirePlanInForce(ctx.runDir, ctx.journal.view);
-  const revision = revisionInForce(ctx.runDir, inForce, ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, inForce);
   return {
     ledger: parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force'),
     inForce: { head: tip, ledgerSha256: revision.ledger.sha256, obligationsSha256: revision.obligations?.sha256 ?? null, visionSha256: revision.vision?.sha256 ?? null },
@@ -192,7 +192,7 @@ const keptOr = (runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer => {
 
 /** The sidecars the payload lands: in its manifest and not in the revision in force (A2: the new ones), ascending by id. */
 function landedSidecars(ctx: Reader, payload: RevisionPayload): readonly RulingSidecar[] {
-  const inForce = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view), ctx.planFile).manifest.rulings.sidecars;
+  const inForce = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).manifest.rulings.sidecars;
   return Object.entries(payload.manifest.rulings.sidecars)
     .filter(([id]) => !Object.hasOwn(inForce, id))
     .sort(([a], [b]) => Number(a.slice(2)) - Number(b.slice(2)))
@@ -217,7 +217,7 @@ function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
   }
   const base = rulingContextAt(ctx, tip);
   const reasons: string[] = [];
-  let ledgerText = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view), ctx.planFile).ledger.bytes.toString('utf8');
+  let ledgerText = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).ledger.bytes.toString('utf8');
   const edited = new Map<RepoPath, string>();
   const docAt = (path: RepoPath): string | null => edited.get(path) ?? base.docAt(path);
   for (const s of landed) {
@@ -362,7 +362,7 @@ function verdictReason(
 /** The close-out renderings (A8) that differ from what `commit` holds: `constraints.md`, then `invariants.md`. */
 export function closeOutFiles(ctx: Reader, commit: Sha): readonly DocsFile[] {
   const view = ctx.journal.view;
-  const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, view), ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, view));
   const latched = view.holistic().latched.map((l) => l.obligation);
   const ledger = parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force');
   const renders: DocsFile[] = [{ path: CONSTRAINTS_DOC, bytes: Buffer.from(renderConstraints(ledger, [...revision.sidecars.values()].map((x) => x.sidecar), 'close-out'), 'utf8') }];
@@ -411,7 +411,7 @@ export async function publishCloseOut(ctx: DocsContext): Promise<CloseOutOutcome
     if (tip === null) throw new Error(`integration ${integration} does not exist`);
     return tip;
   };
-  const obligations = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, view), ctx.planFile).obligations?.value ?? null;
+  const obligations = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, view)).obligations?.value ?? null;
   const arcLanes = (obligations?.lanes ?? []).map(arcJourneyLane);
   const owner = { type: 'job', job: pub, acquireFirst: ctx.arbiter.acquireFirst } as const;
 

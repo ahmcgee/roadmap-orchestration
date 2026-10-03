@@ -150,8 +150,7 @@ export type JobQueueEntry = Readonly<{ holder: FirstHolder; request: ResourceReq
 /**
  * `sched.json`: written by the executor process `pid` (status trusts it only while that executor owns the
  * run). `tasks`: every unit with a task (a unit without one is idle). `queue`: the units' waiters, served
- * first to last. `jobQueue` (M3): the jobs' waiters, served before every unit's, in arrival order (a 1.0.0-dev.5
- * executor's file has none: read as empty). `drains`: the pending mutations, in submission order, with their
+ * first to last. `jobQueue` (M3): the jobs' waiters, served before every unit's, in arrival order. `drains`: the pending mutations, in submission order, with their
  * scopes (A12).
  */
 export type SchedFile = Readonly<{
@@ -189,10 +188,9 @@ export const schedFile: Read<SchedFile> = object((f) => ({
     unit: g.get('unit', (v, p) => unitId(v, p)), stage: g.get('stage', oneOf(STAGES)), attempt: g.get('attempt', positive),
     publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool),
   })))),
-  // A derived view a live 1.0.0-dev.5 executor may still be writing during an upgrade: absent reads as no job waits.
-  jobQueue: f.optional('jobQueue', arrayOf(object((g): JobQueueEntry => ({
+  jobQueue: f.get('jobQueue', arrayOf(object((g): JobQueueEntry => ({
     holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool),
-  })))) ?? [],
+  })))),
   drains: f.get('drains', arrayOf(object((g) => ({ command: g.get('command', (v, p) => commandId(v, p)), scope: g.get('scope', scope) })))),
 }));
 
@@ -535,18 +533,12 @@ export async function terminalSnapshot(ctx: StageContext): Promise<void> {
   }));
 }
 
-/**
- * Writes `arc-completed` for the plan in force and the integration head now, unless an active completion records them.
- * An arc started before plan revisions (1.0.0-dev.2, no `plan-applied`) completes without it (scaffolding).
- */
+/** Writes `arc-completed` for the plan in force and the integration head now, unless an active completion records them. */
 function completeArc(ctx: StageContext): void {
   const view = ctx.journal.view;
   if (view.holistic().completion?.active === true) return;
   const applied = view.planApplied();
-  if (applied === null) {
-    process.stderr.write('roadmap: upgrade (arc-completed): the arc has no plan revision (started before 1.0.0-dev.3); it completes without the fact\n');
-    return;
-  }
+  if (applied === null) throw new Error(`arc ${view.arc} completes with no plan in force; a start records it before anything runs`);
   const merged = ctx.plan().units.filter((u) => view.unit(u.id).status === 'retired').map((u) => u.id).sort();
   ctx.journal.fact({ kind: 'arc-completed', planRev: applied.rev, head: integrationHeadNow(ctx), highWater: view.highWater(), units: merged });
   crashPoint('complete.after-fact');

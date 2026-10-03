@@ -388,17 +388,18 @@ async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StagePare
 }
 
 /**
- * The deadline of the build call a crash left lost without tree effects: the unit's open build attempt (one
- * with no stage outcome, cut short by the crash) whose latest backend spawn recovery closed `lost` without
- * tree effects. The attempt that re-runs it inherits that deadline, as the live retry does; null otherwise.
- * Read before the new attempt begins any op, while the crashed attempt is still the open one.
+ * The deadline of the build call a crash left lost without tree effects: the unit's build attempt just before this one,
+ * cut short by the crash (no stage outcome records it), whose latest backend spawn recovery closed `lost` without tree
+ * effects. The attempt that re-runs it inherits that deadline, as the live retry does; null otherwise. The new attempt
+ * may already hold its entry reservation (`@cpu`), so the crashed attempt is found by number, not as the open one.
  */
 function crashLostDeadline(ctx: StageContext, parent: StageParent): IsoTime | null {
   const view = ctx.journal.view;
-  const open = view.unit(parent.unit).open;
-  if (open === null || open.stage !== 'build' || open.attempt === parent.attempt) return null;
+  const crashed = parent.attempt - 1;
+  const u = view.unit(parent.unit);
+  if (u.decided?.attempt === crashed || u.interrupted?.attempt === crashed) return null;
   const spawn = view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.parent.type === 'stage'
-    && i.parent.unit === parent.unit && i.parent.stage === 'build' && i.parent.attempt === open.attempt).at(-1);
+    && i.parent.unit === parent.unit && i.parent.stage === 'build' && i.parent.attempt === crashed).at(-1);
   if (spawn === undefined) return null;
   const done = view.doneOf(spawn.op);
   if (done === null || done.kind !== 'proc.spawn' || done.outcome.kind !== 'lost' || done.outcome.treeEffects) return null;

@@ -8,18 +8,13 @@
 // dispatch, the executor's own `spec.patch`es, a reopen, an evidence-only apply), and the manifest's before.
 // Stages load exactly those bytes, never the live file.
 //
-// An arc started before plan revisions existed has no `plan-applied` fact until its first start on this
-// release records the baseline; until then `status` reads the files, with the upgrade warning, and `apply`
-// (also a dry run) is rejected (src/core/upgrade.ts).
-//
 // M3 (G1, A2, A3, A14; step A2): the revisioned set is the plan, the specs, the rulings ledger with its sidecars
 // (`<ledger>.d/C-<n>.json` beside the ledger file), the obligations and the vision (`plan.holistic`). A revision's
 // manifest hashes them all (`RevisionManifest`) and keeps their bytes (`inputs/<sha>.rulings.md`, `.ruling.json`,
 // `.obligations.json`, `.vision.json`). Its evaluated payload is kept as `inputs/<sha>.revision.json` and named by a
 // `revision.commit` intent (`beginRevision`) before any docs `ff`; `plan-applied` is appended from it exactly, then
 // its divergences (`appendRevision`). The inputs in force beyond plan and specs are the latest `plan-applied`'s
-// payload manifest's (`revisionInForce`); a revision a dev.5 executor wrote has no payload: its ledger is the live
-// file (`rulingsFromLiveFile`, scaffolding), with no sidecars, obligations or vision.
+// payload manifest's (`revisionInForce`).
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
@@ -31,7 +26,6 @@ import { type OpId, type PlanRev, type RulingId, type Sha256Hex, type UnitId, op
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { PlanManifest, RevisionManifest, SpecM1 } from '../core/records.ts';
-import { rulingsFromLiveFile, specBytesFromLiveFile } from '../core/upgrade.ts';
 import { notYet } from '../core/notyet.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type PlanPath, absPath } from '../core/values.ts';
@@ -149,9 +143,6 @@ export function readInputFiles(planFile: AbsPath): InputFiles {
   };
 }
 
-/** The plan part of an apply's manifest (a dev.5 command's is all of it). */
-export const planManifestOf = (m: PlanManifest): PlanManifest => ({ planSha256: m.planSha256, specs: m.specs });
-
 /** The manifest of the files, or why it cannot be made: each missing file, one reason each. */
 export function revisionManifestOf(files: InputFiles): RevisionManifest | Readonly<{ missing: readonly string[] }> {
   const specs: Record<UnitId, Sha256Hex> = {};
@@ -266,14 +257,13 @@ export type Publication = NonNullable<PlanAppliedFact['publication']>;
 /**
  * The `plan-applied` fact of a payload: every M3 field from it (`obligationsSha256` and `visionSha256` exactly
  * when the manifest names them, A5), `publication` from the docs publication that carried it, and the DAG
- * scheduling of an arc's revision 1 in a log with no dispatch (M2).
+ * scheduling of an arc's revision 1 (M2).
  */
-export function planAppliedOf(view: JournalView, payload: RevisionPayload, payloadSha256: Sha256Hex, publication: Publication | null): PlanAppliedFact {
+export function planAppliedOf(payload: RevisionPayload, payloadSha256: Sha256Hex, publication: Publication | null): PlanAppliedFact {
   const m = payload.manifest;
-  const dag = payload.rev === 1 && !view.unitsWithState().some((u) => view.dispatchOf(u) !== null);
   return {
     kind: 'plan-applied', rev: payload.rev, command: payload.source.type === 'command' ? payload.source.command : null,
-    planSha256: m.planSha256, specs: m.specs, changes: payload.changes, ...(dag ? { scheduling: 'dag' as const } : {}),
+    planSha256: m.planSha256, specs: m.specs, changes: payload.changes, ...(payload.rev === 1 ? { scheduling: 'dag' as const } : {}),
     source: payload.source, payloadSha256, rulingsSha256: m.rulings.ledgerSha256,
     ...(m.obligations === null ? {} : { obligationsSha256: m.obligations }), ...(m.vision === null ? {} : { visionSha256: m.vision }),
     ...(publication === null ? {} : { publication }), routingProvenance: payload.routingProvenance,
@@ -292,7 +282,7 @@ export function appendRevision(journal: Journal, commit: IntentOf<'revision.comm
     fact = inForce;
   } else {
     if ((inForce?.rev ?? 0) !== commit.expect.base) throw new Error(`${commit.op} commits rev ${commit.expect.rev} on rev ${commit.expect.base}, but rev ${inForce?.rev ?? 0} is in force`);
-    fact = planAppliedOf(journal.view, payload, commit.expect.payloadSha256, publication);
+    fact = planAppliedOf(payload, commit.expect.payloadSha256, publication);
     journal.fact(fact);
     crashPoint('revision.commit.after-fact');
   }
@@ -341,10 +331,8 @@ export function commitRevisionNow(journal: Journal, runDir: AbsPath, payload: Re
 }
 
 /**
- * Puts `files` in force as the next plan revision of source `start` (an arc's first start, the baseline of an arc an
- * earlier release ran): their bytes kept, then the revision committed (`commitRevisionNow`). Revision 1 of a log with
- * no `dispatch` fact schedules a DAG (`scheduling: 'dag'`, M2); revision 1 of a log an earlier release dispatched in
- * (a 1.0.0-dev.3 arc's baseline) leaves it out, so that arc stays legacy (src/core/upgrade.ts). A start whose files
+ * Puts `files` in force as the next plan revision of source `start` (an arc's first start): their bytes kept, then the
+ * revision committed (`commitRevisionNow`). Revision 1 schedules a DAG (`scheduling: 'dag'`, M2). A start whose files
  * change a later revision commits the payload its evaluation built (src/preflight/checks.ts `settlePlan`).
  */
 export function recordPlan(journal: Journal, runDir: AbsPath, files: InputFiles, changes: readonly PlanChange[], routing: RoutingBase): PlanAppliedFact {
@@ -383,13 +371,13 @@ export function requirePlanInForce(runDir: AbsPath, view: JournalView): InForce 
 
 /** The ruling sidecars, obligations and vision in force besides plan and specs, parsed from their kept bytes. */
 export type RevisionInForce = Readonly<{
-  /** The ledger's bytes: kept, or (a dev.5 revision, no payload) the live file. */
+  /** The ledger's kept bytes. */
   ledger: Readonly<{ sha256: Sha256Hex; bytes: Buffer }>;
   /** Ascending by id. */
   sidecars: ReadonlyMap<RulingId, Readonly<{ sha256: Sha256Hex; bytes: Buffer; sidecar: RulingSidecar }>>;
   obligations: Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: Obligations }> | null;
   vision: Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: Vision }> | null;
-  /** The whole revision manifest in force (a dev.5 one: the live ledger's hash, no sidecars, no obligations or vision). */
+  /** The whole revision manifest in force. */
   manifest: RevisionManifest;
 }>;
 
@@ -400,21 +388,9 @@ function kept(runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer {
 }
 const json = (bytes: Buffer): unknown => JSON.parse(bytes.toString('utf8'));
 
-/**
- * The inputs in force beyond plan and specs: the latest `plan-applied`'s payload manifest's. A revision a dev.5
- * executor wrote has none: the ledger is read live beside `planFile` (the upgrade warning), nothing else is in force.
- */
-export function revisionInForce(runDir: AbsPath, inForce: InForce, planFile: AbsPath): RevisionInForce {
-  const { fact } = inForce;
-  if (fact.payloadSha256 === undefined) {
-    const bytes = rulingsFromLiveFile(ledgerPath(planFile, inForce.plan));
-    const ledgerSha256 = bytesSha256(bytes);
-    return {
-      ledger: { sha256: ledgerSha256, bytes }, sidecars: new Map(), obligations: null, vision: null,
-      manifest: { ...inForce.manifest, rulings: { ledgerSha256, sidecars: {} }, obligations: null, vision: null },
-    };
-  }
-  const { manifest } = keptPayload(runDir, fact.payloadSha256);
+/** The inputs in force beyond plan and specs: the latest `plan-applied`'s payload manifest's. */
+export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInForce {
+  const { manifest } = keptPayload(runDir, inForce.fact.payloadSha256);
   const sidecars = new Map(Object.entries(manifest.rulings.sidecars).map(([id, sha]) => {
     const bytes = kept(runDir, sha, RULING_INPUT);
     return [id as RulingId, { sha256: sha, bytes, sidecar: parseRulingSidecar(json(bytes)) }] as const;
@@ -445,7 +421,7 @@ export function inForceFiles(runDir: AbsPath, view: JournalView, inForce: InForc
     const s = view.unit(u.id);
     const sha = s.pendingRevision?.sha256 ?? s.spec?.sha256 ?? inForce.manifest.specs[u.id];
     if (sha === undefined) throw new Error(`unit ${u.id} is in the plan in force without a spec in its manifest`);
-    return [u.id, { path: specFilePath(planFile, u), bytes: specBytesOf(runDir, sha, specFilePath(planFile, u)).bytes }] as const;
+    return [u.id, { path: specFilePath(planFile, u), bytes: specBytesOf(runDir, sha) }] as const;
   }));
   const beside = (path: string, bytes: Buffer): InputFile => ({ path: absPath(join(dirname(planFile), path)), bytes });
   const planBytes = keptInput(runDir, inForce.manifest.planSha256, PLAN_INPUT);
@@ -470,16 +446,9 @@ export function specShaInForce(view: JournalView, unit: UnitId): Sha256Hex {
   return sha;
 }
 
-/**
- * The spec whose bytes hash to `sha`: kept in the run dir, or (an arc started before specs were kept) the
- * live file at `livePath`, with the upgrade warning.
- */
-export function specBytesOf(runDir: AbsPath, sha: Sha256Hex, livePath: AbsPath): Readonly<{ bytes: Buffer; sha256: Sha256Hex }> {
-  const kept = keptInput(runDir, sha, SPEC_INPUT);
-  if (kept !== null) return { bytes: kept, sha256: sha };
-  const bytes = specBytesFromLiveFile(livePath, sha);
-  const actual = keepInput(runDir, bytes, SPEC_INPUT);
-  return { bytes, sha256: actual };
+/** The kept spec whose bytes hash to `sha`. */
+export function specBytesOf(runDir: AbsPath, sha: Sha256Hex): Buffer {
+  return kept(runDir, sha, SPEC_INPUT);
 }
 
 export type LoadedSpec = Readonly<{ path: AbsPath; spec: SpecM1; sha256: Sha256Hex }>;

@@ -11,7 +11,7 @@ import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, Scheduling, UnitState } from './state.ts';
+import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, UnitState } from './state.ts';
 import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -54,8 +54,6 @@ export interface JournalView {
    * facts; a unit the log has not named yet is fresh at plan-check. The only source of a unit's counters.
    */
   unit(unit: UnitId): UnitState;
-  /** Every unit the log has state for (a stage start or outcome, a dispatch, a spec edit), ascending. */
-  unitsWithState(): readonly UnitId[];
   /** The unit's latest `dispatch` fact (its pinned scope envelope and risk floor), or null before one. */
   dispatchOf(unit: UnitId): DispatchRecord | null;
   /** Every `dispatch` fact of the unit, in log order (the first pin, then each re-pin); empty before one. */
@@ -82,8 +80,6 @@ export interface JournalView {
   edgeResolved(edge: EdgeId): EdgeResolvedState | null;
   /** M2: the `run-only` allowlist in force (sorted), or null when admission is unlimited. */
   runOnly(): readonly UnitId[] | null;
-  /** M2: `dag`, or `legacy` for an arc started before M2 (its rev-1 `plan-applied` has no `scheduling`); null before rev 1. */
-  scheduling(): Scheduling | null;
   /** Every needs-user item a done `needsuser.raise` recorded, ascending id, with its acknowledgement. */
   needsUser(): readonly NeedsUserState[];
   /** The `needs-user-acked` fact of any id (journal-raised or not), or null while unacknowledged. */

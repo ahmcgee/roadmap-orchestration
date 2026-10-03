@@ -15,8 +15,7 @@
 //                   refuses (plan-change-refused); a revision a crash left mid-commit is recovery's first, and so
 //                   is a committed command's write-back (its `command.apply` still open with its revision in force:
 //                   the files may not hold that revision yet, and recovery re-runs the command, which writes it
-//                   back), so the files wait for the next start. Then, on an arc a 1.0.0-dev.5 executor started,
-//                   the adoption of its revisions' routing provenance (src/git/snapshot.ts `adoptLegacyProvenance`)
+//                   back), so the files wait for the next start.
 //
 // M3: group 1 also loads the ruling sidecars, the obligations and the vision the files name (`revisionInputRows`).
 //
@@ -36,7 +35,6 @@ import { durableMkdir, readJson } from '../core/fsx.ts';
 import { type ArcId, INTEGRATION_SLOT, type ResourceName, type UnitId, sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { LogCorruptError, type OpenJournal, openJournal, readJournal } from '../core/log.ts';
-import { earlierReleaseBaseline } from '../core/upgrade.ts';
 import type { HostLockClaim, LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
@@ -50,10 +48,9 @@ import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
   type InputFiles, type RoutingBase, appendRevision, closeRevision, commitRevisionNow, keptPayload, openRevision, planInForce, readInputFiles, recordPlan,
-  specBytesOf, specFilePath, specShaInForce,
+  specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
 import { type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason } from '../input/plan.ts';
-import { adoptLegacyProvenance } from '../git/snapshot.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
@@ -235,8 +232,7 @@ export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
       unknown(unit.id, null, spec.resources);
       for (const lane of spec.lanes) unknown(unit.id, lane, lane.resources);
     }
-    const view = arcView(context);
-    if (view !== 'corrupt') out.push(...overCapacity(plan, { cpu: cpuCapacity(plan) }, specsLoaded, view));
+    out.push(...overCapacity(plan, { cpu: cpuCapacity(plan) }, specsLoaded));
     return out;
   },
 };
@@ -282,12 +278,6 @@ function arcLog(context: StartupContext): JournalView | 'corrupt' {
     if (error instanceof LogCorruptError) return 'corrupt';
     throw error;
   }
-}
-
-/** The arc's log once it records a plan revision; null before one (a first start). */
-function arcView(context: StartupContext): JournalView | null | 'corrupt' {
-  const view = arcLog(context);
-  return view === 'corrupt' || view.scheduling() !== null ? view : null;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -460,7 +450,7 @@ function fileSource(planFile: AbsPath): Source | Rejection<'plan-invalid'> {
 }
 
 /** On a respawn, the plan in force and its kept specs; null when the log records none (or does not read). */
-function inForceSource(runDir: AbsPath, arc: ArcId, planFile: AbsPath): Source | null {
+function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
   let view: JournalView;
   try {
     view = readJournal(runDir, arc).view;
@@ -470,7 +460,7 @@ function inForceSource(runDir: AbsPath, arc: ArcId, planFile: AbsPath): Source |
   }
   const inForce = planInForce(runDir, view);
   if (inForce === null) return null;
-  const specOf = (unit: PlanUnit): Buffer => specBytesOf(runDir, specShaInForce(view, unit.id), specFilePath(planFile, unit)).bytes;
+  const specOf = (unit: PlanUnit): Buffer => specBytesOf(runDir, specShaInForce(view, unit.id));
   return { plan: inForce.plan, specOf, files: null };
 }
 
@@ -480,8 +470,8 @@ export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): Re
 }
 
 /**
- * Group 4, last: the plan in force. With none recorded (a first start, or an arc started before plan
- * revisions: `earlierReleaseBaseline`, which warns and may refuse), the files' become revision 1. A start whose files differ from the plan in force
+ * Group 4, last: the plan in force. With none recorded (a first start), the files' become revision 1. A start whose
+ * files differ from the plan in force
  * classifies them like `roadmap apply` (no command) and refuses what the rules refuse. A respawn runs the plan
  * in force and asks nothing.
  */
@@ -500,16 +490,12 @@ export function settlePlan(journal: OpenJournal, context: StartupContext, files:
   }
   const routingBase: RoutingBase = { profile: context.profile, config: readRepoConfig(context.repo) };
   if (inForce === null) {
-    // A fresh arc records the files as they are; one a release without plan revisions ran, as that release ran them.
-    const baseline = earlierReleaseBaseline(journal.view, files, context.planFile);
-    if ('reasons' in baseline) return [{ kind: 'plan-change-refused', reasons: baseline.reasons }];
-    // Units entering now: every unit of a fresh arc; of an earlier release's, those it never ran.
-    const ran = new Set(journal.view.unitsWithState());
-    const reserved = files.plan.units.filter((u) => !ran.has(u.id)).map((u) => reservedUnitIdReason(u.id)).filter((r) => r !== null);
+    // A fresh arc records the files as they are; every unit enters now.
+    const reserved = files.plan.units.map((u) => reservedUnitIdReason(u.id)).filter((r) => r !== null);
     if (reserved.length > 0) return [{ kind: 'plan-change-refused', reasons: reserved }];
     const dropped = obligationDropped(context, files);
     if (dropped.length > 0) return [{ kind: 'plan-change-refused', reasons: dropped }];
-    recordPlan(journal, context.runDir, files, baseline.changes, routingBase);
+    recordPlan(journal, context.runDir, files, [], routingBase);
     return [];
   }
   // A command's or bundle's revision a crash left mid-commit: recovery settles it; the files are settled at the next start.
@@ -560,7 +546,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     ({ kind: 'refused', rejections, claim, journal });
 
   // 1. input
-  const inForce = input.respawn === null ? null : inForceSource(input.respawn.runDir, input.respawn.arc, input.planFile);
+  const inForce = input.respawn === null ? null : inForceSource(input.respawn.runDir, input.respawn.arc);
   const source = inForce ?? fileSource(input.planFile);
   if ('kind' in source) return refused([...legacyRoadmapDir(input.repo), source]);
   const { plan } = source;
@@ -605,9 +591,6 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if (mode.length > 0) return refused(mode, claim, journal);
   const planRows = settlePlan(journal, context, source.files);
   if (planRows.length > 0) return refused(planRows, claim, journal);
-  for (const reason of adoptLegacyProvenance(context.runDir, readJournal(context.runDir, plan.arc).events, readRepoConfig(input.repo))) {
-    process.stderr.write(`roadmap: upgrade (routing provenance, H7): ${reason}\n`);
-  }
 
   return { kind: 'passed', context, routing: { profile, resolved }, claim, journal, respawn: inForce !== null };
 }

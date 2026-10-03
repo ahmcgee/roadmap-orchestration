@@ -16,8 +16,8 @@
 //                        high-water mark is at or after the last integration.ff done
 //   judgment-fresh       no judgment invocation's launch argv resumes; every judgment session id is distinct
 //   meter-covers-calls   exactly one usage fact (meter or usage-unavailable) per backend invocation, none other
-//   no-model-ids         no model id in any run-dir file outside inv/*/launch.json, the routing-provenance records
-//                        (routing configuration) and captured backend output (stdout, stderr, the Codex -o file), nor
+//   no-model-ids         no model id in any run-dir file outside inv/*/launch.json and captured backend output
+//                        (stdout, stderr, the Codex -o file), nor
 //                        in the snapshot ref's files in that scope (the state.no-model-ids scope)
 //
 // The non-exercised list names the branches of the pipeline this run's journal shows no trace of; the
@@ -34,6 +34,7 @@ import { candidateRef } from '../../src/git/candidate.ts';
 import { git, refTarget, revParse } from '../../src/git/git.ts';
 import { snapshotRef, verifySnapshot } from '../../src/git/snapshot.ts';
 import { transientViolations } from '../../src/git/transient.ts';
+import { ROADMAP_DIR_ALLOWED } from '../../src/preflight/checks.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
@@ -149,9 +150,14 @@ function ffIntent(run: Run, op: OpId): IntentOf<'integration.ff'> {
 function diffProductOnly(run: Run): Verdict {
   const out = git(run.repo, ['diff', '--name-only', '-z', `${MAIN}...${run.plan.integrationBranch}`]);
   const paths = out.split('\0').filter((p) => p !== '').map((p) => repoPath(p));
-  const evidenceGlobs = run.plan.units.flatMap((u) => loadSpec(absPath(join(run.input, u.spec))).lanes.flatMap((l) => l.evidenceGlobs));
-  // The whole arc's diff: publication's .roadmap/ entries are allowed, and no unit's scope bounds it (dev.5's rules).
-  const violations = transientViolations({ kind: 'dev5', evidenceGlobs }, paths);
+  const specs = run.plan.units.map((u) => loadSpec(absPath(join(run.input, u.spec))));
+  // The whole arc's diff: the in-tree `.roadmap/` entries docs publications own (ROADMAP_DIR_ALLOWED) are allowed; every
+  // other path is under the transient rules, bounded by the union of the units' scopes.
+  const published = (p: string): boolean => p.startsWith('.roadmap/') && (ROADMAP_DIR_ALLOWED as readonly string[]).includes(p.split('/')[1]!);
+  const violations = transientViolations(
+    { evidenceGlobs: specs.flatMap((s) => s.lanes.flatMap((l) => l.evidenceGlobs)), scope: specs.flatMap((s) => s.scope) },
+    paths.filter((p) => !published(p)),
+  );
   return {
     pass: violations.length === 0,
     detail: violations.length > 0 ? violations.map((v) => `${v.path} (${v.rule})`).join(', ') : `${paths.length} product paths: ${paths.join(', ')}`,
@@ -228,14 +234,11 @@ function filesUnder(dir: string): readonly string[] {
 }
 
 /**
- * The state.no-model-ids scope (SCHEMAS.md, owner ruling 2): launch inputs, routing configuration (a 1.0.0-dev.5
- * revision's adopted `routing-provenance/<rev>.json`, which may name a repo class binding's model) and captured backend
- * output are out. The snapshot ref mirrors run-dir paths, so one scope serves both.
+ * The state.no-model-ids scope (SCHEMAS.md, owner ruling 2): launch inputs and captured backend output are out. The snapshot ref mirrors run-dir paths, so one scope serves both.
  */
 function inScope(path: string): boolean {
   const name = basename(path);
   if (name === 'stdout' || name === 'stderr' || name === 'last.json') return false;
-  if (path.startsWith('routing-provenance/')) return false;
   return !(path.startsWith('inv/') && name === 'launch.json');
 }
 

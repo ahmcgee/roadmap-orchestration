@@ -8,8 +8,7 @@
 //   add a unit                  now; its id was never planned before and is not reserved (`reservedUnitIdReason`);
 //                               never already cut
 //   remove a unit               only if it never started
-//   unit order                  the started units keep their relative order (G3); a legacy arc keeps dev.4's
-//                               rule, the started units first in their order (its frontier is plan order)
+//   unit order                  the started units keep their relative order (G3)
 //   an undispatched unit        any plan field and its spec, now
 //   a dispatched unit's plan    scope, a lower risk, resources, spec path and a new `after`: refused (dropping an
 //                               `after` is allowed; M3: a higher risk is re-pinned at dispatch, step A3)
@@ -75,10 +74,9 @@ import {
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type ApplyManifest, type Bounds, type ResidueKey, type RevisionManifest, type SpecM1, BOUND_FIELDS, isRevisionManifest, specObligations, specRepairs,
+  type Bounds, type ResidueKey, type RevisionManifest, type SpecM1, BOUND_FIELDS, specObligations, specRepairs,
 } from '../core/records.ts';
 import { type UnitState, maxTier } from '../core/state.ts';
-import { applyInputsOf, isLegacy, unkeptSpecReason } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import type { AbsPath, RepoPattern } from '../core/values.ts';
 import { undispositioned } from '../host/residues.ts';
@@ -97,7 +95,7 @@ import type { CommandScope, ScopeOf } from '../schedule/types.ts';
 import { type Ruling, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
 import {
-  type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, planInForce, planManifestOf, planRouting,
+  type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, planInForce, planRouting,
   readInputFiles, revisionInForce, revisionManifestOf, unitRouting,
 } from './inforce.ts';
 import { type PlanM1, type PlanUnit, boundsOf, parsePlan, planFieldValue, reservedUnitIdReason } from './plan.ts';
@@ -214,7 +212,7 @@ function dispatchedSpec(
     return `unit ${unit.id} has ${u.open.stage} attempt ${u.open.attempt} cut short by a crash; apply its spec edit once the executor has recorded that attempt`;
   }
   const kept = keptInput(input.runDir, recorded.sha256, SPEC_INPUT);
-  if (kept === null) return unkeptSpecReason(unit.id, path);
+  if (kept === null) throw new Error(`unit ${unit.id}: the spec it was dispatched at (${recorded.sha256}) is not kept in the run dir`);
   const was = parseSpec(kept, path);
   if (!same(was.resources, spec.resources)) return `unit ${unit.id} is dispatched: its spec's scope and resources may not change`;
   const growth = scopeGrowthReason(unit.id, 'spec\'s scope', 'its spec\'s scope and resources may not change', was.scope, spec.scope, spec, inputs);
@@ -456,7 +454,6 @@ export function classify(input: ClassifyInput): Classified {
   const { view, inForce, next, proposer } = input;
   const cur = inForce.plan;
   const plan = next.plan;
-  const legacy = isLegacy(view);
   const reasons: string[] = [];
   const changes: PlanChange[] = [];
   const scoped = new Set<UnitId>();
@@ -488,14 +485,11 @@ export function classify(input: ClassifyInput): Classified {
       if (u.reenters !== undefined) reentering.push(u);
     }
   }
-  // G3: a DAG arc starts units out of plan order, so the started ones keep only their relative order. A legacy
-  // arc's frontier is plan order itself (dev.4), so there they stay first. A re-entry that has not prepared
-  // yet has started nothing of its own: its attempts are its lineage's.
+  // G3: a DAG arc starts units out of plan order, so the started ones keep only their relative order. A re-entry
+  // that has not prepared yet has started nothing of its own: its attempts are its lineage's.
   const startedIds = curIds.filter((id) => view.dispatchOf(id) !== null || (view.unit(id).lineage === null && started(view, id)));
   const keptStarted = startedIds.filter((id) => nextIds.includes(id));
-  const orderReason = legacy
-    ? (same(nextIds.slice(0, startedIds.length), startedIds) ? null : `the units that have started (${startedIds.join(', ')}) must stay first in plan order, in their order`)
-    : (same(nextIds.filter((id) => keptStarted.includes(id)), keptStarted) ? null : `the units that have started must keep their relative order (${keptStarted.join(', ')})`);
+  const orderReason = same(nextIds.filter((id) => keptStarted.includes(id)), keptStarted) ? null : `the units that have started must keep their relative order (${keptStarted.join(', ')})`;
   if (orderReason !== null) reasons.push(orderReason);
   else {
     const common = (ids: readonly UnitId[]) => ids.filter((id) => curIds.includes(id) && nextIds.includes(id));
@@ -675,8 +669,8 @@ export function classify(input: ClassifyInput): Classified {
   }
   if (changes.some((c) => c.type === 'resource' && c.edit !== 'added')) for (const u of plan.units) scoped.add(u.id);
 
-  // Capacity: no request above its pool's size (a legacy arc requests no `@cpu`, so none of its can be).
-  for (const row of overCapacity(plan, { cpu: cpuCapacity(plan) }, specs, view)) reasons.push(canonicalJson(row));
+  // Capacity: no request above its pool's size.
+  for (const row of overCapacity(plan, { cpu: cpuCapacity(plan) }, specs)) reasons.push(canonicalJson(row));
 
   // Suite lanes.
   if (!same(cur.suite, plan.suite)) {
@@ -890,35 +884,26 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
 // An apply's proposal (G15)
 
 /**
- * The proposal an `apply` command makes: the files as they are, when they still hash to its manifest. A 1.0.0-dev.5
- * command's plan manifest (G15, `applyInputsOf`) is read as the ledger live (the files' own), no obligations and no
- * vision; its bytes are never rewritten. Otherwise why it no longer holds: files missing, or changed since hashed.
+ * The proposal an `apply` command makes: the files as they are, when they still hash to its manifest. Otherwise why
+ * it no longer holds: files missing, or changed since hashed.
  */
-export function applyProposal(files: InputFiles, manifest: ApplyManifest): Readonly<{ next: InputFiles }> | Readonly<{ reasons: readonly string[] }> {
+export function applyProposal(files: InputFiles, manifest: RevisionManifest): Readonly<{ next: InputFiles }> | Readonly<{ reasons: readonly string[] }> {
   const actual = revisionManifestOf(files);
   if ('missing' in actual) return { reasons: actual.missing };
-  if (isRevisionManifest(manifest)) {
-    return same(actual, manifest) ? { next: files } : { reasons: [manifestMismatch(files, manifest, actual)] };
-  }
-  const inputs = applyInputsOf(manifest);
-  if (inputs.rulings !== 'live') throw new Error('a plan manifest reads the ledger live');
-  const proposal: InputFiles = { ...files, obligations: inputs.obligations, vision: inputs.vision };
-  return same(planManifestOf(actual), planManifestOf(manifest)) ? { next: proposal } : { reasons: [manifestMismatch(files, manifest, actual)] };
+  return same(actual, manifest) ? { next: files } : { reasons: [manifestMismatch(files, manifest, actual)] };
 }
 
 /** Which files no longer hash to what the command's manifest recorded. */
-function manifestMismatch(files: InputFiles, expected: ApplyManifest, actual: RevisionManifest): string {
+function manifestMismatch(files: InputFiles, expected: RevisionManifest, actual: RevisionManifest): string {
   const differ: string[] = [];
   if (expected.planSha256 !== actual.planSha256) differ.push(files.planFile);
   const units = new Set([...Object.keys(expected.specs), ...Object.keys(actual.specs)] as UnitId[]);
   for (const u of [...units].sort()) {
     if (expected.specs[u] !== actual.specs[u]) differ.push(files.specs.get(u)?.path ?? `the spec of ${u} (no longer in the plan)`);
   }
-  if (isRevisionManifest(expected)) {
-    if (!same(expected.rulings, actual.rulings)) differ.push(files.ledger.path);
-    if (expected.obligations !== actual.obligations) differ.push(files.obligations?.path ?? 'the obligations file (no longer in the plan)');
-    if (expected.vision !== actual.vision) differ.push(files.vision?.path ?? 'the vision file (no longer in the plan)');
-  }
+  if (!same(expected.rulings, actual.rulings)) differ.push(files.ledger.path);
+  if (expected.obligations !== actual.obligations) differ.push(files.obligations?.path ?? 'the obligations file (no longer in the plan)');
+  if (expected.vision !== actual.vision) differ.push(files.vision?.path ?? 'the vision file (no longer in the plan)');
   return `the files changed since \`roadmap apply\` hashed them: ${differ.join(', ')}; run it again`;
 }
 
@@ -971,7 +956,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
         const proposal = applyProposal(files, body.manifest);
         if ('reasons' in proposal) return ARC;
         const verdict = classify({
-          runDir: sc.runDir, view, inForce, revision: revisionInForce(sc.runDir, inForce, sc.planFile), next: proposal.next,
+          runDir: sc.runDir, view, inForce, revision: revisionInForce(sc.runDir, inForce), next: proposal.next,
           residues: undispositioned(sc.hostDir), routing: sc.routingBase, proposer: { type: 'apply' },
         });
         return verdict.kind === 'accepted' ? changesScope(verdict.changes, inForce.plan, proposal.next.plan) : NONE;

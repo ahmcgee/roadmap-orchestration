@@ -392,8 +392,8 @@ export function parkClassOf(u: UnitState, outcome: StageOutcome): ParkClass | nu
 
 /**
  * What only the stage knows about its outcome. `targets`: a retryable park's probe targets (non-empty; a
- * stage that states none leaves the fact without `park`, read as the pre-M2 operator default until the
- * stages name their targets, M2 step 7a). `cause`: why a hold is not an operator pause or stop (G5).
+ * stage that states none leaves the fact without `park`, which the fold reads as an operator park until the
+ * stages name their targets: the interim M2 shim, step 7a, src/core/state.ts `unclassedParkRecord`). `cause`: why a hold is not an operator pause or stop (G5).
  */
 export type OutcomeContext = Readonly<{ targets?: readonly ProbeTarget[]; cause?: HoldCause }>;
 

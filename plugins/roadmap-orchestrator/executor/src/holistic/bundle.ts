@@ -671,7 +671,7 @@ function decided(ctx: CheckpointContext, job: JobId, decision: Exclude<BundleDec
 async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDecision> {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
-  const revision = revisionInForce(ctx.runDir, inForce, ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, inForce);
   const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
   const now = vectorAt(ctx, inForce, revision, current, integrationHead(ctx));
   const p = a.output.decision === 'no-op'

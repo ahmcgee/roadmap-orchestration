@@ -5,7 +5,7 @@
 // merge and on the integration tip alone (set `suite`, the candidate stage). Arc lanes (M3) run as a journey series
 // (`runJourneySeries`, at the end of this file) under the same rules.
 //
-// Per lane: acquire its reservation (its declared resources and, outside a legacy arc, its `@cpu` tokens,
+// Per lane: acquire its reservation (its declared resources and its `@cpu` tokens,
 // `laneCpu`) through the stage's `acquire` (`LaneRuntime`) → occupancy probe → run (step 10's cycle) → `invoke`
 // purpose `lane` with the exact argv, cwd and env (plus the unit's owner label and the holder's pool instance
 // binding, `instanceEnv`, F7) → evidence snapshots → cleanup. The host is sampled at the lane's start and end
@@ -55,7 +55,6 @@ import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/f
 import {
   type CommandVerdict, type IgnoredCensus, type LaneDef, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
 } from '../core/records.ts';
-import { DEV1_LANE_DEADLINE_MS, isLegacy } from '../core/upgrade.ts';
 import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPattern } from '../core/values.ts';
 import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, pathPattern, patternPath, readManifest } from '../git/evidence.ts';
 import { ignoredWrites, planIgnored } from '../git/ignored.ts';
@@ -187,9 +186,9 @@ export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: re
   return env;
 }
 
-/** What a lane reserves: its declared resources, and its `@cpu` tokens outside a legacy arc; null when nothing. */
+/** What a lane reserves: its declared resources and its `@cpu` tokens; null when nothing. */
 export function laneRequest(ctx: ResourceContext, lane: LaneDef): ResourceRequest | null {
-  const cpu = isLegacy(ctx.journal.view) ? 0 : laneCpu(lane);
+  const cpu = laneCpu(lane);
   return lane.resources.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), lane.resources, cpu);
 }
 
@@ -271,7 +270,7 @@ const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdic
 /**
  * A lane run's record, read from its spawn and invocation files: what ran (the definition), how it ended
  * (result.json, or none when lost with its runner), when (a lane's deadline is its start plus
- * LANE_DEADLINE_MS, or 1.0.0-dev.1's fixed deadline for a lane it launched, so launch.json carries the start;
+ * LANE_DEADLINE_MS, so launch.json carries the start;
  * exit.json the end), its evidence dir's census and host samples, and a red run's host signatures. The live
  * series and every later reader build records here, so they are the same record.
  */
@@ -284,7 +283,7 @@ function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDe
   if (launch === null) throw new Error(`lane ${lane.id} ${inv}: no launch.json`);
   const result = files.read('result.json');
   if (result !== null && result.type !== 'command') throw new Error(`${inv}: a lane produced a ${result.type} result`);
-  const at = isoTimeOf(new Date(new Date(launch.deadlineAt).getTime() - (launch.stallMs === null ? DEV1_LANE_DEADLINE_MS : LANE_DEADLINE_MS)));
+  const at = isoTimeOf(new Date(new Date(launch.deadlineAt).getTime() - LANE_DEADLINE_MS));
   const verdict: CommandVerdict = result?.verdict ?? 'process-fault';
   return {
     lane: lane.id, argv: lane.argv, expectedExit: lane.expectedExit, exitCode: result?.exitCode ?? null, verdict, evidenceDir: dir,

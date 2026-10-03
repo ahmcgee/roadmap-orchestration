@@ -20,19 +20,18 @@
 //   4. Write-back (A3): the live ledger, each sidecar file and the obligations file take the revision's bytes only
 //      while they still hold the previous revision's (a file the architect changed since is left alone, and the
 //      receipt says so), as `spec.patch` writes back a spec. A run again after a crash past the fact finishes it from
-//      the log: the previous revision's payload names what the files held; a previous 1.0.0-dev.5 revision has none,
-//      so the live ledger's hash is kept before the commit (`legacyPreimagePath`) for that compare.
+//      the log: the previous revision's payload names what the files held.
 //
 // Until the command's op is done, a manual start leaves the files for the next start (src/preflight/checks.ts
 // `settlePlan`): they may not hold the revision yet, and recovery re-runs this command, which writes it back.
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { atomicJson, durableMkdir, durableWrite } from '../core/fsx.ts';
-import { type CommandId, type ObligationId, type RulingId, type Sha256Hex, sha256 } from '../core/ids.ts';
+import { durableMkdir, durableWrite } from '../core/fsx.ts';
+import { type CommandId, type ObligationId, type RulingId, type Sha256Hex } from '../core/ids.ts';
 import type { CommandBody, RevisionManifest } from '../core/records.ts';
 import { readJournal } from '../core/log.ts';
 import { canonicalJson } from '../core/json.ts';
-import { SchemaError, object } from '../core/validate.ts';
+import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { refTarget } from '../git/git.ts';
 import { type RulingSidecar, parseRulingSidecar } from '../holistic/types.ts';
@@ -44,7 +43,6 @@ import { rulingContextAt } from '../pipeline/publish.ts';
 import { bytesSha256, fileSha256 } from '../spec/spec.ts';
 import { ledgerAfter, sidecarsAfter, validateRuling } from '../spec/rulings.ts';
 import { type CommandContext, type Effect, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
-import { COMMANDS_DIR } from './queue.ts';
 
 type RuleBody = Extract<CommandBody, { type: 'rule' }>;
 
@@ -83,7 +81,7 @@ export async function rule(ctx: CommandContext, id: CommandId, body: RuleBody): 
   const view = ctx.journal.view;
   // Run again after a crash past the fact: it is the postcondition; the write-back is finished from the log.
   const done = view.planAppliedBy(id);
-  if (done !== null) return { kind: 'applied', verified: [`plan rev ${done.rev} in force: the ruling of ${body.path} landed`, ...writeBackAfter(ctx, id, done.rev)] };
+  if (done !== null) return { kind: 'applied', verified: [`plan rev ${done.rev} in force: the ruling of ${body.path} landed`, ...writeBackAfter(ctx, done.rev)] };
 
   if (!existsSync(body.path)) return { kind: 'rejected', reason: `the ruling record ${body.path} does not exist` };
   const bytes = readFileSync(body.path);
@@ -102,7 +100,7 @@ export async function rule(ctx: CommandContext, id: CommandId, body: RuleBody): 
   if (reasons.length > 0) return { kind: 'rejected', reason: rejectedText(reasons, 'rule') };
 
   const inForce = requirePlanInForce(ctx.runDir, view);
-  const revision = revisionInForce(ctx.runDir, inForce, ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, inForce);
   const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
   const before = writtenBackOf(revision.manifest);
   const ledger = Buffer.from(ledgerAfter(revision.ledger.bytes.toString('utf8'), sidecar), 'utf8');
@@ -117,10 +115,9 @@ export async function rule(ctx: CommandContext, id: CommandId, body: RuleBody): 
   const evaluated = evaluateRevision(rctx, proposal, { type: 'rule' });
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons, 'rule') };
   if (evaluated.kind === 'unchanged') throw new Error(`rule ${sidecar.id}: a new ruling left the rulings in force unchanged`);
-  if (inForce.fact.payloadSha256 === undefined) keepLegacyPreimage(ctx.runDir, id, before);
   const committed = await commitUnderFence(ctx, evaluated, { type: 'rule' }, { type: 'command', command: id }, parentOf(id));
   if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons, 'rule') };
-  const after = writtenBackOf(keptPayload(ctx.runDir, committed.fact.payloadSha256!).manifest);
+  const after = writtenBackOf(keptPayload(ctx.runDir, committed.fact.payloadSha256).manifest);
   return {
     kind: 'applied',
     verified: [
@@ -131,36 +128,14 @@ export async function rule(ctx: CommandContext, id: CommandId, body: RuleBody): 
   };
 }
 
-// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"): a rule whose previous revision a 1.0.0-dev.5 executor
-// recorded (no payload) keeps the live ledger's hash it evaluated against before it commits, so a run again after a
-// crash past the fact compares the live files with it. That revision has no sidecars or obligations in force. Delete
-// once no arc started on 1.0.0-dev.5 is in flight.
-
-/** `<runDir>/commands/rule-preimages/<command>.json`: `{ledgerSha256}`. */
-const legacyPreimagePath = (runDir: AbsPath, id: CommandId): AbsPath => absPath(join(runDir, COMMANDS_DIR, 'rule-preimages', `${id}.json`));
-
-function keepLegacyPreimage(runDir: AbsPath, id: CommandId, before: WrittenBack): void {
-  if (Object.keys(before.sidecars).length > 0 || before.obligations !== null) throw new Error(`a 1.0.0-dev.5 revision in force has sidecars or obligations: ${canonicalJson(before)}`);
-  const path = legacyPreimagePath(runDir, id);
-  mkdirSync(dirname(path), { recursive: true });
-  atomicJson(path, { ledgerSha256: before.ledgerSha256 });
-}
-
-function legacyPreimage(runDir: AbsPath, id: CommandId): WrittenBack {
-  const path = legacyPreimagePath(runDir, id);
-  if (!existsSync(path)) throw new Error(`rule ${id} committed on a 1.0.0-dev.5 revision without keeping the ledger it replaced (${path})`);
-  const read = object((f) => ({ ledgerSha256: f.get('ledgerSha256', (v, p) => sha256(v, p)) }))(JSON.parse(readFileSync(path, 'utf8')), path);
-  return { ledgerSha256: read.ledgerSha256, sidecars: {}, obligations: null };
-}
-
 /** The write-back of the revision `rev` command `id` committed, found from the log (a run again after a crash). */
-function writeBackAfter(ctx: CommandContext, id: CommandId, rev: number): readonly string[] {
+function writeBackAfter(ctx: CommandContext, rev: number): readonly string[] {
   const facts = readJournal(ctx.runDir, ctx.journal.view.arc).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'plan-applied' ? [e.fact] : []));
   const mine = facts.find((f) => f.rev === rev);
   const prev = facts.find((f) => f.rev === rev - 1);
-  if (mine?.payloadSha256 === undefined) throw new Error(`plan rev ${rev} of a rule has no payload`);
+  if (mine === undefined) throw new Error(`plan rev ${rev} of a rule is not in the log`);
   if (prev === undefined) throw new Error(`plan rev ${rev} of a rule has no revision before it in the log`);
-  const before = prev.payloadSha256 === undefined ? legacyPreimage(ctx.runDir, id) : writtenBackOf(keptPayload(ctx.runDir, prev.payloadSha256).manifest);
+  const before = writtenBackOf(keptPayload(ctx.runDir, prev.payloadSha256).manifest);
   return writeBack(ctx, before, writtenBackOf(keptPayload(ctx.runDir, mine.payloadSha256).manifest));
 }
 

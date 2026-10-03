@@ -37,7 +37,6 @@ import { matchesGlob } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import type { IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { judgmentFingerprintDefault, judgmentInputsDefault } from '../core/upgrade.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type ApprovalFingerprint, type ObligationRev, specObligations, specRepairs } from '../core/records.ts';
@@ -81,7 +80,7 @@ export function unitTip(ctx: StageContext, unit: UnitId): Sha {
  * The fingerprint an approval of `unit` at integration tip `tip` binds to: the unit's commit now, its spec
  * revision now, the blob ids at `tip` of the contracts the spec cites and of the architecture doc (and its
  * digest), and the cited active rulings' effective revisions: 1, raised by each partial supersession of it
- * (`effectiveRulingRevs` over the sidecars in force; a dev.5 ledger has none, so every ruling is at 1). A cited
+ * (`effectiveRulingRevs` over the sidecars in force). A cited
  * ruling that is withdrawn (fully superseded) leaves the set; both change the fingerprint.
  */
 export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): ApprovalFingerprint {
@@ -90,7 +89,7 @@ export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): Appr
   const rulings = ledger(ctx).filter((r) => r.status === 'active' && spec.cites.rulings.includes(r.id)).map((r) => r.id);
   const revs = effectiveRulingRevs(rulingSidecars(ctx));
   const head = unitTip(ctx, unit.id);
-  // Choice 1 of M3 0a: absent exactly when no obligation is selected, so a dev.5 fingerprint reads unchanged.
+  // Choice 1 of M3 0a: absent exactly when no obligation is selected.
   const obligationRevs: readonly ObligationRev[] = selected(ctx, unit, tip, head).filter((o) => !isExempt(o)).map((o) => ({ id: o.id, rev: o.rev }));
   return {
     unitCommit: head,
@@ -316,9 +315,6 @@ export async function gateRead(
  * Records a plan-check or gate attempt from the call recovery closed after a crash, against the attempt's
  * durable `judgment-inputs`: a gate's approval records the fingerprint captured with them (`gateRead`), so it
  * binds what it reviewed, whatever moved since. The unit driver calls it in place of a read at the current tip.
- * Read-time defaults, each logged once: an attempt 1.0.0-dev.4 or earlier spawned has no inputs, and is
- * fingerprinted at the current tip, as that release did; one 1.0.0-dev.5 spawned has inputs without a
- * fingerprint, and is fingerprinted at its recorded tip, as that release did.
  */
 export async function consumeJudgment(
   ctx: StageContext, unit: PlanUnit, parent: StageParent, called: BackendCallOutcome,
@@ -331,11 +327,10 @@ export async function consumeJudgment(
       return planCheckRead(ctx, unit, at(parent, 'plan-check'), called, result.session);
     case 'gate': {
       const inputs = ctx.journal.view.judgmentInputs(unit.id, 'gate', parent.attempt);
-      if (inputs !== null && inputs.head === null) throw new Error(`gate ${unit.id}#${parent.attempt}: judgment-inputs without a head`);
-      if (inputs === null) judgmentInputsDefault(unit.id, 'gate', parent.attempt);
-      else if (inputs.fingerprint === undefined) judgmentFingerprintDefault(unit.id, parent.attempt);
-      const fingerprint = inputs?.fingerprint ?? fingerprintAt(ctx, unit, inputs?.tip ?? integrationTip(ctx));
-      if (inputs !== null && fingerprint.unitCommit !== inputs.head) throw new Error(`gate ${unit.id}#${parent.attempt}: the unit branch moved from ${inputs.head} since its judgment-inputs`);
+      if (inputs === null) throw new Error(`gate ${unit.id}#${parent.attempt}: a judgment call without judgment-inputs`);
+      const fingerprint = inputs.fingerprint;
+      if (fingerprint === undefined) throw new Error(`gate ${unit.id}#${parent.attempt}: judgment-inputs without a fingerprint`);
+      if (fingerprint.unitCommit !== inputs.head) throw new Error(`gate ${unit.id}#${parent.attempt}: the unit branch moved from ${inputs.head} since its judgment-inputs`);
       return gateRead(ctx, unit, at(parent, 'gate'), called, result.session, fingerprint);
     }
     default:

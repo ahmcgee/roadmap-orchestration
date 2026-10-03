@@ -43,7 +43,7 @@
 //            cleaning under the sweep and the residue undisposed (a sweep records no failure), and the
 //            receipt says so. A resource another holder has is left alone. Mutation.
 //   apply    the inputs the manifest hashes (plan, specs, and since M3 the ledger with its sidecars, the
-//            obligations and the vision; a dev.5 command's plan manifest by its legacy reading, G15) become the
+//            obligations and the vision, G15) become the
 //            revision in force (`applyPlan`): the files are re-read and must still hash to the manifest,
 //            `expectRev` must be the revision in force, and without it a revision in force from a bundle or the
 //            executor refuses it (stale base, A4); the apply core evaluates it (`evaluateRevision`: every change
@@ -86,9 +86,8 @@ import {
   planRev, resourceInstance,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { type ApplyManifest, type CommandBody, type CommandFile, type NeedsUserAck, type ResidueKey, type Stage, isRevisionManifest } from '../core/records.ts';
+import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey, RevisionManifest, Stage } from '../core/records.ts';
 import type { ParkState } from '../core/state.ts';
-import { revisionSourceOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
 import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
@@ -99,7 +98,7 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
 import { type NextInputs, type Proposer, applyProposal, classify } from '../input/classify.ts';
 import {
-  type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepInput, keepRevisionFiles, planInForce, planManifestOf, planRouting,
+  type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepInput, keepRevisionFiles, planInForce, planRouting,
   readInputFiles, requirePlanInForce, revisionInForce, revisionManifestOf, routingProvenanceOf,
 } from '../input/inforce.ts';
 import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
@@ -603,7 +602,7 @@ export function evaluateRevision(
   ctx: RevisionContext, proposal: InputFiles, proposer: Proposer,
 ): RevisionVerdict {
   const inForce = requirePlanInForce(ctx.runDir, ctx.view);
-  const revision = revisionInForce(ctx.runDir, inForce, ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, inForce);
   const verdict = classify({
     runDir: ctx.runDir, view: ctx.view, inForce, revision, next: proposal, residues: undispositioned(ctx.hostDir), routing: ctx.routingBase, proposer,
   });
@@ -645,7 +644,7 @@ export type ApplyInput = RevisionContext & Readonly<{
   repo: AbsPath;
   laneEnv: Readonly<Record<string, string | undefined>>;
   /** The manifest the command carries (null for a dry run, which hashes the files itself), and its expectRev. */
-  manifest: ApplyManifest | null;
+  manifest: RevisionManifest | null;
   expectRev: PlanRev | null;
 }>;
 
@@ -664,7 +663,7 @@ const rowText = (r: StartupRejection): string => canonicalJson(r);
  */
 function staleBase(inForce: InForce, expectRev: PlanRev | null): string | null {
   if (expectRev !== null) return null;
-  const source = revisionSourceOf(inForce.fact);
+  const source = inForce.fact.source;
   if (source.type !== 'bundle' && source.type !== 'executor') return null;
   const by = source.type === 'bundle' ? `checkpoint bundle ${source.job}` : `the executor (${source.inv})`;
   return `stale base: plan rev ${inForce.rev} in force came from ${by}, not an architect; re-read the plan, specs and inputs in force, `
@@ -673,13 +672,13 @@ function staleBase(inForce: InForce, expectRev: PlanRev | null): string | null {
 
 /**
  * Evaluates an apply without effect: the expected revision and the stale base (A4), the files against the manifest
- * (a dev.5 command's by its legacy reading, G15), the apply core, then the startup rows over the changed units. Every
+ * (G15), the apply core, then the startup rows over the changed units. Every
  * reason found at a step is reported together.
  */
 export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   const inForce = planInForce(input.runDir, input.view);
   if (inForce === null) {
-    return { kind: 'rejected', reasons: [`arc ${input.view.arc} records no plan in force yet (started before plan revisions); its next start records plan.json as revision 1`] };
+    return { kind: 'rejected', reasons: [`arc ${input.view.arc} records no plan in force yet (its first start records plan.json as revision 1`] };
   }
   if (input.expectRev !== null && input.expectRev !== inForce.rev) {
     return { kind: 'rejected', reasons: [`stale: --expect-rev ${input.expectRev}, but the plan in force is rev ${inForce.rev}`] };
@@ -716,13 +715,12 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   return { kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke };
 }
 
-/** The apply's manifest is the revision in force already (a dev.5 command's: its plan and specs). */
-function alreadyInForce(ctx: CommandContext, manifest: ApplyManifest): PlanRev | null {
+/** The apply's manifest is the revision in force already. */
+function alreadyInForce(ctx: CommandContext, manifest: RevisionManifest): PlanRev | null {
   const inForce = planInForce(ctx.runDir, ctx.journal.view);
   if (inForce === null) return null;
-  const m = revisionInForce(ctx.runDir, inForce, ctx.planFile).manifest;
-  const same = isRevisionManifest(manifest) ? canonicalJson(m) === canonicalJson(manifest) : canonicalJson(planManifestOf(m)) === canonicalJson(planManifestOf(manifest));
-  return same ? inForce.rev : null;
+  const m = revisionInForce(ctx.runDir, inForce).manifest;
+  return canonicalJson(m) === canonicalJson(manifest) ? inForce.rev : null;
 }
 
 /** The manifest's inputs, verified, evaluated and smoked, then committed through the fence: `plan-applied` is the postcondition. */

@@ -36,9 +36,8 @@ import { type CommandContext, type Effect, commitUnderFence, evaluateRevision, p
 
 type Manifest = PlanManifest & Readonly<{ obligations: Sha256Hex | null }>;
 
-/** The plan, specs and obligations a `plan-applied` put in force (a dev.5 revision names no obligations). */
+/** The plan, specs and obligations a `plan-applied` put in force. */
 function manifestOf(runDir: AbsPath, fact: PlanAppliedFact): Manifest {
-  if (fact.payloadSha256 === undefined) return { planSha256: fact.planSha256, specs: fact.specs, obligations: null };
   const m = keptPayload(runDir, fact.payloadSha256).manifest;
   return { planSha256: m.planSha256, specs: m.specs, obligations: m.obligations };
 }
@@ -146,7 +145,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
   const preM = manifestOf(ctx.runDir, pre);
   const postM = manifestOf(ctx.runDir, post);
   const inForce = requirePlanInForce(ctx.runDir, view);
-  const revision = revisionInForce(ctx.runDir, inForce, ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, inForce);
   const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
 
   // The touched artifacts as the preimage recorded them, and a later revision that changed any of them again.
@@ -176,7 +175,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
     if (!restore) return [u.id, now] as const;
     const sha = preSpecs.get(u.id) ?? preM.specs[u.id];
     if (sha === undefined) throw new Error(`${divergence}: the preimage plan lists ${u.id} without a spec`);
-    const bytes = specBytesOf(ctx.runDir, sha, path).bytes;
+    const bytes = specBytesOf(ctx.runDir, sha);
     const recorded = view.unit(u.id).spec;
     // A dispatched unit takes the preimage's content as the next rev of its recorded spec (its pending revision).
     return [u.id, { path, bytes: recorded === null ? bytes : specBytes({ ...parseSpec(bytes, path), rev: specRev(recorded.rev + 1) }) }] as const;

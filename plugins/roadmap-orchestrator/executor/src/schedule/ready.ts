@@ -3,10 +3,9 @@
 // (bound to the routing in force by `admitter`) at every admission boundary of every task, and `rankOf` for the
 // arbiter's waiter order.
 //
-// A DAG arc's unit is ready when it is active (not retired, cut, superseded, parked, held or stop-pending),
-// every `after` dependency is merged (D1; the edge follows the lineage once the successor prepared, F15),
-// every contingent edge is resolved, and its next stage is an admission stage that `admit` lets in. A legacy
-// arc's readiness is 1.0.0-dev.4's serial frontier (`legacyNext`, G4), still subject to admission.
+// A unit is ready when it is active (not retired, cut, superseded, parked, held or stop-pending), every `after`
+// dependency is merged (D1; the edge follows the lineage once the successor prepared, F15), every contingent edge
+// is resolved, and its next stage is an admission stage that `admit` lets in.
 //
 // M3 (B3): two facts about a unit come from its spec in force, which only the pipeline reads (`SpecFacts`,
 // src/pipeline/reproduce.ts `specFacts`): whether it is a vacuity repair that reproduces its mutant first (its first
@@ -17,7 +16,6 @@ import type { ObligationId, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
-import { isLegacy, legacyNext } from '../core/upgrade.ts';
 import { p1Blocking } from '../holistic/findings.ts';
 import type { PlanM1, PlanUnit } from '../input/plan.ts';
 import { judgmentSeat, decidedBy } from '../pipeline/transitions.ts';
@@ -185,22 +183,14 @@ function dependenciesMet(view: JournalView, unit: PlanUnit): boolean {
 }
 
 /**
- * The dispatchable units in rank order, each with the admission stage it runs next. A DAG arc offers every
- * active unit whose dependencies are met; a legacy arc its serial frontier when `legacyNext` does not block
- * it. Either way the unit's next stage must be an admission stage that `admit` lets in.
+ * The dispatchable units in rank order, each with the admission stage it runs next: every active unit whose
+ * dependencies are met and whose next stage is an admission stage that `admit` lets in.
  */
 export function ready(input: ReadyInput): readonly ReadyUnit[] {
   const { view, plan } = input;
   const admit = admitter(input.routing, input.spec);
-  let candidates: readonly PlanUnit[];
-  if (isLegacy(view)) {
-    const f = legacyNext(view, plan.units);
-    candidates = f === null || f.block !== null ? [] : plan.units.filter((u) => u.id === f.unit);
-  } else {
-    candidates = plan.units.filter((u) => dependenciesMet(view, u));
-  }
   const out: ReadyUnit[] = [];
-  for (const unit of candidates) {
+  for (const unit of plan.units.filter((u) => dependenciesMet(view, u))) {
     const u = view.unit(unit.id);
     if (u.status !== 'active') continue;
     const next = nextStage(u, input.spec(unit).reproduces);

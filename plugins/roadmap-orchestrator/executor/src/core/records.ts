@@ -17,7 +17,6 @@ import {
   type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
-import { launchStallMs } from './upgrade.ts';
 import type { SchemaVersion } from './version.ts';
 import {
   type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, modelClass,
@@ -209,7 +208,7 @@ export const launchFile: Read<LaunchFile> = object((f) => ({
   env: f.get('env', declaredEnv),
   stdinPath: f.get('stdinPath', nullable(abs)),
   deadlineAt: f.get('deadlineAt', time),
-  stallMs: launchStallMs(f.optional('stallMs', nullable(positive)), f.path),
+  stallMs: f.get('stallMs', nullable(positive)),
   graceMs: f.get('graceMs', graceMs),
   containment: f.get('containment', containmentMode),
   test: f.get('test', nullable(object((g) => ({ crash: g.get('crash', abs) })))),
@@ -540,8 +539,8 @@ export type ApprovalFingerprint = Readonly<{
   rulingRevs: readonly Readonly<{ id: RulingId; rev: number }>[];
   /**
    * M3: the normative revisions of the selected, non-exempt obligations at the gated tip, ascending by id.
-   * Absent exactly when there are none (non-empty when present), so a fingerprint with no obligations is
-   * byte-identical to a 1.0.0-dev.5 one and compares equal to it (`obligationRevsOf`).
+   * Absent exactly when there are none (non-empty when present), so a fingerprint with no obligations has the
+   * M2 shape (`obligationRevsOf`).
    */
   obligationRevs?: readonly ObligationRev[];
   /** M4a (R6): the corpus pin in force at the gated tip, in a corpus arc; absent: none (lasting, byte-identical to dev.6). */
@@ -593,7 +592,7 @@ export const DEFAULT_BOUNDS: Bounds = {
 };
 export const bounds: Read<Bounds> = object((f) => Object.fromEntries(BOUND_FIELDS.map((k) => [k, f.get(k, positive)])) as Bounds);
 
-/** H15: the transient-check rules a unit's lineage attempt runs under; absent on a 1.0.0-dev.5 dispatch (`transientRulesOf`). */
+/** H15: the transient-check rules a unit's lineage attempt runs under. */
 export const TRANSIENT_RULES = ['m3'] as const;
 export type TransientRules = (typeof TRANSIENT_RULES)[number];
 
@@ -613,17 +612,15 @@ export type DispatchRecord = Readonly<{
   implementerSeatRev: SeatRev;
   at: IsoTime;
   /**
-   * M3 (H15): `m3` on every dispatch since 1.0.0-dev.6: the unit's candidate may touch only its pinned scope and
-   * ruling-added paths, and no in-tree `.roadmap/` path. Absent (a 1.0.0-dev.5 dispatch): dev.5's rules for the
-   * lineage attempt (`transientRulesOf`, src/core/upgrade.ts). A re-pin copies it.
+   * M3 (H15): `m3` on every dispatch: the unit's candidate may touch only its pinned scope and ruling-added paths,
+   * and no in-tree `.roadmap/` path. A re-pin copies it.
    */
-  transientRules?: TransientRules;
+  transientRules: TransientRules;
   /** M3 (`limits`): the unit's bounds in force since this pin; absent: `DEFAULT_BOUNDS` (`boundsOfRecord`). */
   bounds?: Bounds;
 }>;
 
 export const dispatchRecord: Read<DispatchRecord> = object((f) => {
-  const transientRules = f.optional('transientRules', oneOf(TRANSIENT_RULES));
   const b = f.optional('bounds', bounds);
   return {
     unit: f.get('unit', unit),
@@ -634,7 +631,7 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
     routingRev: f.get('routingRev', rev),
     implementerSeatRev: f.get('implementerSeatRev', (v, p) => seatRev(v, p)),
     at: f.get('at', time),
-    ...(transientRules === undefined ? {} : { transientRules }),
+    transientRules: f.get('transientRules', oneOf(TRANSIENT_RULES)),
     ...(b === undefined ? {} : { bounds: b }),
   };
 });
@@ -1057,14 +1054,8 @@ export type RevisionInputs = Readonly<{
   phase0?: Sha256Hex;
   phase0Issues?: Sha256Hex;
 }>;
-/** What an M3 `apply` hashes (A2): the plan manifest and the revision inputs. */
+/** What an `apply` hashes (A2), its body's manifest: the plan manifest and the revision inputs. */
 export type RevisionManifest = PlanManifest & RevisionInputs;
-/**
- * An `apply` body's manifest: a `RevisionManifest` since 1.0.0-dev.6, or a 1.0.0-dev.5 command's `PlanManifest`
- * (G15), which is read as the ledger live and no obligations or vision (`applyInputsOf`, src/core/upgrade.ts). The
- * command's bytes and `commandSha256` are never rewritten.
- */
-export type ApplyManifest = PlanManifest | RevisionManifest;
 
 const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) => {
   const f = new Fields(value, path);
@@ -1089,15 +1080,11 @@ export const revisionInputs = (f: Fields): RevisionInputs => {
     ...corpus,
   };
 };
-export const applyManifest: Read<ApplyManifest> = (value, path) => {
-  const m3 = typeof value === 'object' && value !== null && Object.hasOwn(value, 'rulings');
-  return object((f): ApplyManifest => ({
-    planSha256: f.get('planSha256', (v, p) => sha256(v, p)),
-    specs: f.get('specs', manifestSpecs),
-    ...(m3 ? revisionInputs(f) : {}),
-  }))(value, path);
-};
-export const isRevisionManifest = (m: ApplyManifest): m is RevisionManifest => 'rulings' in m;
+export const applyManifest: Read<RevisionManifest> = object((f): RevisionManifest => ({
+  planSha256: f.get('planSha256', (v, p) => sha256(v, p)),
+  specs: f.get('specs', manifestSpecs),
+  ...revisionInputs(f),
+}));
 
 export type CommandBody =
   | Readonly<{ type: 'pause'; target: PauseTarget }>
@@ -1110,7 +1097,7 @@ export type CommandBody =
    * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
    * or null to apply over whatever is in force. A mutation.
    */
-  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: ApplyManifest }>
+  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: RevisionManifest }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
