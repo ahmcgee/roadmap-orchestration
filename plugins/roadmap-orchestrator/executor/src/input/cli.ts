@@ -2,8 +2,8 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-  type ArcId, type DivergenceId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, arcId, divergenceId, edgeId, needsUserId,
-  planRev, resourceName, unitId,
+  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceName, type UnitId, arcId, briefId, divergenceId,
+  edgeId, needsUserId, planRev, resourceName, unitId,
 } from '../core/ids.ts';
 import { LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
@@ -57,7 +57,23 @@ export type Command =
   | Readonly<{ command: 'audit'; lenses: readonly LensKindName[] | null; run: RunLocator }>
   | Readonly<{ command: 'close-admissions'; run: RunLocator }>
   /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
-  | Readonly<{ command: 'gc'; repo: string; keep: number | null; dryRun: boolean }>;
+  | Readonly<{ command: 'gc'; repo: string; keep: number | null; dryRun: boolean }>
+  // M4a host acts (not queued; no host lock): src/commands/{phase0,corpus,brief,pr,issues,chain}.ts.
+  /** `phase0 check`: the shared Phase-0 rows, read-only, over a plan file or (K20) the digests an arc's ref recorded. */
+  | Readonly<{ command: 'phase0-check'; repo: string; source: Phase0Source }>
+  /** `corpus pin`: derive the corpus pin from the guide's source at `commit` and write it to `out`. */
+  | Readonly<{ command: 'corpus-pin'; repo: string; commit: string; out: string }>
+  /** `brief`: everything since the last ack across the chain (`json`: the payload, else its Markdown); `ack` acknowledges one brief. */
+  | Readonly<{ command: 'brief'; repo: string; json: boolean; ack: BriefId | null }>
+  /** `pr`: open or update the arc's stacked pull request. */
+  | Readonly<{ command: 'pr'; repo: string; arc: ArcId }>
+  /** `issues`: the canonical issue capture, to stdout or (`out`) a file by atomic rename. */
+  | Readonly<{ command: 'issues'; repo: string; out: string | null }>
+  /** `chain status`: the chain derived from refs, the ack log and K. */
+  | Readonly<{ command: 'chain-status'; repo: string }>;
+
+/** What `phase0 check` reads: a plan file in the working tree, or every input by the digests `refs/roadmap/<arc>` recorded (K20). */
+export type Phase0Source = Readonly<{ type: 'plan'; plan: string }> | Readonly<{ type: 'ref'; arc: ArcId }>;
 
 type Parsed = Readonly<{ positionals: readonly string[]; flags: ReadonlyMap<string, string | true> }>;
 
@@ -264,11 +280,62 @@ export function parseCommand(argv: readonly string[]): Command {
       const keep = value(p, 'keep');
       return { command, repo, keep: keep === undefined ? null : positiveInt(command, '--keep', keep, 'arcs'), dryRun: p.flags.has('dry-run') };
     }
+    case 'phase0': {
+      const [sub, ...args] = rest;
+      if (sub !== 'check') throw new CliError(`phase0: expected the subcommand check, got ${JSON.stringify(sub ?? '')}`);
+      const p = parseRest(args, { repo: 'value', plan: 'value', 'from-ref': 'value' }, 'phase0 check');
+      positionals(p, 'phase0 check', 0);
+      const repo = required(p, 'phase0 check', 'repo', '<path>');
+      const plan = value(p, 'plan');
+      const ref = value(p, 'from-ref');
+      if ((plan === undefined) === (ref === undefined)) throw new CliError('phase0 check: give exactly one of --plan <plan.json> or --from-ref <arc>');
+      const source: Phase0Source = plan !== undefined ? { type: 'plan', plan } : { type: 'ref', arc: arg('phase0 check', '--from-ref', arcId, ref as string) };
+      return { command: 'phase0-check', repo, source };
+    }
+    case 'corpus': {
+      const [sub, ...args] = rest;
+      if (sub !== 'pin') throw new CliError(`corpus: expected the subcommand pin, got ${JSON.stringify(sub ?? '')}`);
+      const p = parseRest(args, { repo: 'value', commit: 'value', out: 'value' }, 'corpus pin');
+      positionals(p, 'corpus pin', 0);
+      return {
+        command: 'corpus-pin', repo: required(p, 'corpus pin', 'repo', '<path>'), commit: required(p, 'corpus pin', 'commit', '<ref>'), out: required(p, 'corpus pin', 'out', '<file>'),
+      };
+    }
+    case 'brief': {
+      const p = parseRest(rest, { repo: 'value', json: 'switch', ack: 'value' }, command);
+      positionals(p, command, 0);
+      const ack = value(p, 'ack');
+      return { command, repo: required(p, command, 'repo', '<path>'), json: p.flags.has('json'), ack: ack === undefined ? null : arg(command, '--ack', briefId, ack) };
+    }
+    case 'pr': {
+      const p = parseRest(rest, { repo: 'value', arc: 'value' }, command);
+      positionals(p, command, 0);
+      return { command, repo: required(p, command, 'repo', '<path>'), arc: arg(command, '--arc', arcId, required(p, command, 'arc', '<arc>')) };
+    }
+    case 'issues': {
+      const p = parseRest(rest, { repo: 'value', out: 'value' }, command);
+      positionals(p, command, 0);
+      return { command, repo: required(p, command, 'repo', '<path>'), out: value(p, 'out') ?? null };
+    }
+    case 'chain': {
+      const [sub, ...args] = rest;
+      if (sub !== 'status') throw new CliError(`chain: expected the subcommand status, got ${JSON.stringify(sub ?? '')}`);
+      const p = parseRest(args, { repo: 'value' }, 'chain status');
+      positionals(p, 'chain status', 0);
+      return { command: 'chain-status', repo: required(p, 'chain status', 'repo', '<path>') };
+    }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status`,
       );
   }
+}
+
+/** A required `--name <what>` option. */
+function required(p: Parsed, command: string, name: string, what: string): string {
+  const v = value(p, name);
+  if (v === undefined) throw new CliError(`${command}: --${name} ${what} is required`);
+  return v;
 }
 
 /** The run dir: `<git common dir>/roadmap-runtime/<arc>`. The caller passes the absolute common dir. */

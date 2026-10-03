@@ -20,7 +20,7 @@ at triage stay in git history.
 
 - `merge-in`, `route`, `limits`, and `steer` (with `--class <efficient|frontier|summit>` as a per-unit routing
   layer, A13) and the `repair` origin: taken into M3 (LR-a).
-- Preview's own estate slot: specified with preview in M4 (F23).
+- Preview's own estate slot: specified with preview, deferred to 1.1 (F23, OR-Q15).
 - A memory capacity class.
 - Handing adopted runners to unit tasks.
 - Async git (git runs through `spawnSync` and blocks the event loop).
@@ -31,7 +31,7 @@ at triage stay in git history.
 - Usage-limit hits under parallel burn: measured in arc 2 (owner ruling D4, 2026-09-30).
 - Persisted arbiter tickets, if exact post-recovery grant order is ever required (F20).
 
-### M3 (implemented, in PR: plan `/claude-state/plans/m3-holistic.md`, rev 2.1; 1.0.0-dev.6)
+### M3 (done: plan `/claude-state/plans/m3-holistic.md`, rev 2.1; 1.0.0-dev.6, merged at 0a58349)
 
 - Scope (LR-a): DESIGN-1.0.md §10 M3 and the holistic layer (the vision as the root record, OR-V; obligations,
   witness protocol, impact mapping, journey lanes, the held-claims brake, lenses, the checkpoint with bundles,
@@ -52,7 +52,7 @@ at triage stay in git history.
   judgment seat. Trigger: the weekly Claude limit binding on judgments, or a Codex model the owner wants judging.
 - `explore` (A11). Trigger: arc 2's finding metrics showing a defect class the four lenses miss.
   `--adversarial` is withdrawn (A12: a unit routing layer expresses it); `contractRequests` and `owedAfterMerge`
-  go to M4 (A13).
+  are withdrawn in M4a (OR-V+: corpus amendments, rulings or debt carry them).
 - More witness reporters, and a capture from a real `go test -json` (`go-test-json` is tested on hand-written
   streams only; no `go` on this host). Trigger: a target repo whose tests are neither `node --test` nor a jsonl
   wrapper, or a host with `go`.
@@ -60,18 +60,29 @@ at triage stay in git history.
   refused for an obligation whose pattern cannot in fact overlap the unit's scope.
 - Lens parallelism (lenses run serially, one `@cpu` each). Trigger: audit wall time delaying completion or
   raising `audit-owed`.
-- Vision playback verification and the vision's in-tree home for the next arc: M4. Part of it: `confirmation.ref`
-  (`vision.md#sha256:<hex>`, the skill's) is stored unverified; status could flag a vision.md whose hash no longer
-  matches `confirmation.ref` (the compiled record drifted from the text the owner confirmed).
 - Code-level enforcement of implementer boundaries beyond the unit policy and containment (H10's stated limit).
   Trigger: an implementer acting outside the sandbox.
 
-### M4
+### M4a (in progress: plan `/claude-state/plans/m4a-convergence.md`, rev 2.1; 1.0.0-dev.7, branch `feat/m4a-convergence`)
 
-- Debt lifecycle (stable ids, Phase-0 disposition or refuse, the two-arc question). Gate directive overflow
-  banking waits on it: today every directive goes to the fix round.
-- Issue mode inbound only; outbound projection in 1.1.
-- Phase 0 skill text; SKILL.md becomes the full skill.
+- Scope (LR-a): the pinned corpus as the target (guide, sources, `T-n` rules, pin, census), the vision's in-tree home
+  and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy, intake, push, stacked
+  PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus xhigh), the pack
+  review, prompt notes, the full skill, and the deletion of every pre-dev.6 scaffolding layer (OR-L4, step X0).
+- Records frozen in step 0a (SCHEMAS.md "M4a"); step 0a placed placeholder modules at every final command path.
+- Directive overflow is not banked (R7): every directive still goes to the fix round.
+
+### M4b (after M4a)
+
+- The flow loop, SPC, the flow role, givens, proposals and verdicts, the ruler fence (judgment-seat effort is part of
+  the ruler, OR-Q17), test-set-preserving lane edits, the two plants. Seeded from M4a arcs' refs (LR-c).
+
+### Deferred from M4a
+
+- Preview (the root agent starts the app from integration on request): 1.1 (OR-Q15).
+- Flow series: not recorded (LR-c); M4b derives any series from `events.jsonl` in M4a arcs' refs.
+- Issue mode outbound projection: 1.1.
+- The Codex judgment profile and cgroup containment stay out (LR-a).
 
 ## Convergence and integrity (unscheduled, wanted)
 
@@ -121,7 +132,7 @@ None.
   `low` is the cheaper step if verification holds. Sonnet has no judgment prompt; write one only if a route wants
   a cheap judge.
 - `apply`: `.roadmap/config.json` is read at `start` only, so a
-  class rebind needs a restart (and a dry run reads it fresh, so the two can disagree); a build's decisions are
+  class rebind or (M4a) a new chain K needs a restart, acceptable between arcs (and a dry run reads it fresh, so the two can disagree); a build's decisions are
   not appended while a revision of its spec is pending; a suite change is refused while any unit is active past a
   candidate attempt. Trigger: any of these blocking or misleading a real arc.
 - Upgrade test variants not yet covered: the previous release crashing mid-op, a backend parked on a usage
@@ -163,6 +174,23 @@ None.
   arc to take one; read its log against the fake test.
 
 ## Scaffolding to delete
+
+- M4a step 0a's construction placeholders, before the M4a PR: `src/core/notyet.ts` and every `notYet` call (the
+  command modules `src/commands/{corpus,issues,pr,phase0,brief,chain}.ts`, a corpus arc's judgment input in
+  src/pipeline/stages.ts and src/prompts/inputs.ts, its vision record in src/input/inforce.ts, a rule ref in
+  src/spec/rulings.ts, a rule-anchored split child in src/prompts/schemas.ts), each replaced by its landing step; and
+  the packReview placeholder module (`src/prompts/packReview/claude-opus-5-5.ts`, B1).
+- The 1.0.0-dev.6 → M4a defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.6 is in flight:
+  - `censusOf`: an obligations file without a census (docRef obligations; census checks vacuous).
+  - `visionVerifiable`: the M3 confirmation form `vision.md#sha256:<hex>`, never verified.
+  - `checkpointOutputM4Default`: a checkpoint answer without `corpusAmendments` or `issueIntake`.
+  - `splitChildRuleDefault`: a split child without `rule`.
+  - `dev6SeatTriple` (K2, step A2) and status's `dev6RevAlias` (K12, step A2).
+  - With them, the holistic `architecture-doc` variant and the `docRef` obligation arm in holistic arcs: anchor checks
+    at the tip, `contractRevs` carrying the architecture doc, an `apply` adding `holistic` to an `architecture-doc` arc.
+    Lasting, not scaffolding: the `architecture-doc` variant of a non-holistic arc, `target-kind-changed`, a fingerprint
+    without `corpus`, and a sidecar's doc-ref arm for contract docRefs.
+- Every layer below older than 1.0.0-dev.6 is deleted in M4a step X0 (OR-L4).
 
 - `completeArc`'s branch for an arc with no `plan-applied` (started before 1.0.0-dev.3: it completes without
   `arc-completed`, src/schedule/scheduler.ts), with the 1.0.0-dev.3 plan-revision scaffolding below.

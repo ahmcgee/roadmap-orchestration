@@ -29,7 +29,7 @@ import type { HolisticFold } from '../core/state.ts';
 import type { AbsPath, RepoPath } from '../core/values.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
-import type { DivergenceDraft, Preimage, RevisionVector, RulingSidecar } from './types.ts';
+import { type DivergenceDraft, type Preimage, type RevisionVector, type RulingSidecar, rulingRefSource } from './types.ts';
 
 /** What a bundle's ops are measured against: the captured vector and the revisions in force when it activates. */
 export type DivergenceBase = Readonly<{
@@ -104,7 +104,8 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
           return blob === null ? [] : [{ path, blob }];
         }),
       });
-      const deviations = s.docRefs.filter((d) => d.relation === 'deviates').map((d): DivergenceDraft => ({
+      // A rule ref is never `deviates` (K19), so only the doc arm departs here.
+      const deviations = s.docRefs.map(rulingRefSource).flatMap((d) => (d.kind === 'doc' && d.relation === 'deviates' ? [d] : [])).map((d): DivergenceDraft => ({
         ...common, type: 'target-departed', from: `${d.path}${d.anchor}`, what: `${s.id} deviates from ${JSON.stringify(d.quotedText)}: ${s.statement}`,
         preimage: pre([d.path]), compensation: supersede(s.id),
       }));

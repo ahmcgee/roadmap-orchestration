@@ -1,7 +1,8 @@
 // Impact selection (DESIGN-1.0.md §2.8 "Impact mapping"; the frozen `SelectObligations` of src/holistic/types.ts;
 // M3 step A1). Pure. A candidate selects:
 //   - its units' declared obligations and their repairs, and the declared obligations of their dependency closure;
-//   - every obligation a changed path touches: one of its contracts, its docRef's document, a file its witness lane
+//   - every obligation a changed path touches: one of its contracts, its docRef's document (a rule-anchored one, M4a,
+//     touches no document path), a file its witness lane
 //     runs (an argv entry resolved against the lane's cwd), or a mapping pattern naming it;
 //   - the future obligations its units deliver;
 //   - every must-hold obligation when a changed path matches no mapping pattern;
@@ -11,10 +12,16 @@
 import { posix } from 'node:path';
 import type { ObligationId } from '../core/ids.ts';
 import { type RepoPath, matchesPattern } from '../core/values.ts';
-import type { ArcLaneDef, ImpactInput, ObligationDef, SelectObligations } from './types.ts';
+import { type ArcLaneDef, type ImpactInput, type ObligationDef, type SelectObligations, obligationSource } from './types.ts';
 
 /** Whether `path` is a file `lane` runs: one of its argv entries, resolved against its cwd. */
 const runsFile = (lane: ArcLaneDef, path: RepoPath): boolean => lane.argv.some((a) => posix.normalize(posix.join(lane.cwd, a)) === path);
+
+/** Whether `o` is anchored at the document `path` (a docRef); a rule-anchored obligation is anchored at none. */
+const anchoredAt = (o: ObligationDef, path: RepoPath): boolean => {
+  const src = obligationSource(o);
+  return src.kind === 'doc' && src.path === path;
+};
 
 export const selectObligations: SelectObligations = (input: ImpactInput) => {
   const all = new Map<ObligationId, ObligationDef>(input.obligations.obligations.map((o) => [o.id, o]));
@@ -33,7 +40,7 @@ export const selectObligations: SelectObligations = (input: ImpactInput) => {
     mapped.forEach((e) => e.obligations.forEach((id) => picked.add(id)));
     for (const o of all.values()) {
       const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
-      if (o.contracts.includes(path) || o.docRef.path === path || (lane !== undefined && runsFile(lane, path))) picked.add(o.id);
+      if (o.contracts.includes(path) || anchoredAt(o, path) || (lane !== undefined && runsFile(lane, path))) picked.add(o.id);
       if (mapped.length === 0 && o.activation === 'must-hold') picked.add(o.id);
     }
   }

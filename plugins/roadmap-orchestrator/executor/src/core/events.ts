@@ -3,13 +3,16 @@
 // prose twin of this module.
 import type { Buffer } from 'node:buffer';
 import {
-  type ArcId, type CommandId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev,
-  type NeedsUserId, type ObligationId, type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceName, type ResourceUnit,
-  type RoutingRev, type RulingId, type Sha, type Sha256Hex, type SpecRev, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId,
-  commandId, compareResourceUnits, divergenceId, edgeId, envId, findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId,
-  obligationId, opIdOf, opKey, parseInvocationId, parseOpId, parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev,
-  rulingId, sha, sha256, specRev, unitId, visionClauseId,
+  type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
+  type IssueId, type JobId, type LaneId, type LaneRev, type NeedsUserId, type ObligationId, type OpId, type OpKey, type PlanRev,
+  type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type RulingId, type Sha, type Sha256Hex, type SpecRev,
+  type UnitId, type VisionClauseId, INTEGRATION_SLOT, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
+  findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseOpId,
+  parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, rulingId, sha, sha256, specRev, unitId,
+  visionClauseId,
 } from './ids.ts';
+import { type BankReason, type DebtSource, BANK_REASONS, debtSource } from '../debt/types.ts';
+import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIdentity } from '../forge/types.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
   COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
@@ -20,9 +23,10 @@ import {
 } from './records.ts';
 import {
   type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
-  type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type RevisionVector,
-  type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger, checkpointTrigger, contractOp,
-  divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, observationKey, revisionVector,
+  type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type PackFinding,
+  type RevisionVector, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger,
+  checkpointTrigger, contractOp, divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, observationKey,
+  packFinding, revisionVector,
 } from '../holistic/types.ts';
 import {
   type Read, Fields, SchemaError, arrayOf, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
@@ -556,7 +560,8 @@ export type Fact =
    */
   | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint }>
   | StageOutcomeFact
-  | HolisticFact;
+  | HolisticFact
+  | M4aFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
@@ -619,9 +624,10 @@ export type HolisticFact =
   | Readonly<{ kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned' }>
   /** A17, H8: a docs-only publication covers its own edge U→D by construction. */
   | Readonly<{ kind: 'docs-covered'; pub: JobId; from: Sha; to: Sha }>
+  /** M4a: `issues` (the checkpoint's issue capture; absent on a dev.6 fact: none) and `corpusSha256` (the pin in force; absent: none). */
   | Readonly<{
     kind: 'checkpoint-inputs'; job: JobId; trigger: CheckpointTrigger; generation: number; vector: RevisionVector; headSha: Sha; visionSha256: Sha256Hex;
-    findings: readonly FindingId[]; observations: readonly ObservationKey[];
+    findings: readonly FindingId[]; observations: readonly ObservationKey[]; issues?: CheckpointIssues; corpusSha256?: Sha256Hex;
   }>
   | Readonly<{ kind: 'bundle-decided'; job: JobId; outcome: BundleOutcome }>
   /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
@@ -635,6 +641,30 @@ export type HolisticFact =
   | Readonly<{ kind: 'docs-published'; pub: JobId; source: 'close-out'; commit: Sha }>
   /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
   | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>;
+
+/** Where a corpus amendment came from (M4a): a checkpoint's proposal, a divergence code derived it from, or an issue's intake. */
+export type AmendmentSource =
+  | Readonly<{ type: 'checkpoint'; job: JobId; index: number }>
+  | Readonly<{ type: 'divergence'; divergence: DivergenceId }>
+  | Readonly<{ type: 'issue'; job: JobId; issue: IssueId }>;
+
+/** A checkpoint's issues (M4a, R21): the kept capture, or why none was taken (non-fatal, never a park). */
+export type CheckpointIssues = Readonly<{ type: 'captured'; sha256: Sha256Hex }> | Readonly<{ type: 'unavailable'; reason: string }>;
+
+/** The M4a facts (SCHEMAS.md "M4a"); their behaviour is A4's (debt), C3's (amendments, intake, pack review, captures). */
+export type M4aFact =
+  /** A debt item banked (R7): after the approving gate's `approval`, or a checkpoint's deferral; idempotent per `source`. */
+  | Readonly<{ kind: 'debt-banked'; id: DebtId; bankReason: BankReason; what: string; key: Sha256Hex; source: DebtSource }>
+  /** A proposed change to the corpus, dispositioned at the next Phase 0. */
+  | Readonly<{ kind: 'corpus-amendment'; id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string; evidence: readonly string[] }>
+  /** A checkpoint's one outcome for one captured issue; once per `(job, issue)`. */
+  | Readonly<{ kind: 'issue-intake'; job: JobId; issue: IssueId; outcome: IssueIntakeOutcome }>
+  /** A pack review's kept inputs (K8): written after `inputs/<inputsSha256>.pack-review.json` and before the spawn; `key` its required-review key. */
+  | Readonly<{ kind: 'pack-review-started'; job: JobId; planRev: PlanRev; inputsSha256: Sha256Hex; key: Sha256Hex }>
+  /** A pack review's findings, each identified by `(job, index)` (K13). */
+  | Readonly<{ kind: 'pack-review-ended'; job: JobId; outcome: 'completed' | 'abandoned'; findings: readonly PackFinding[] }>
+  /** A checkpoint's issue capture kept as `inputs/<sha256>.issues.json`, before its `checkpoint-inputs` (H13: the repo it resolved once). */
+  | Readonly<{ kind: 'issues-captured'; job: JobId; sha256: Sha256Hex; repo: RepoIdentity; filtered: Readonly<{ comments: number; pullRequests: number }> }>;
 
 export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
@@ -680,7 +710,15 @@ export type PlanChange =
   /** M3 (A5): the plan gained `holistic`. */
   | Readonly<{ type: 'holistic' }>
   /** M3: `holistic.advances`, the arc's slice of the vision, changed (owner-only). */
-  | Readonly<{ type: 'advances' }>;
+  | Readonly<{ type: 'advances' }>
+  /**
+   * M4a (H7): a re-pin of the corpus (source `command` only): the new pin's and its guide's bytes. Triggers a drift audit
+   * (`L ∩ {drift, vision}`), re-gates every approval through the fingerprint's `corpus`, and before the first admission
+   * changes the required-review key.
+   */
+  | Readonly<{ type: 'corpus'; pinSha256: Sha256Hex; guideSha256: Sha256Hex }>
+  /** M4a (H7): a Phase-0 record edit (source `command` only), with its issue capture; changes only the required-review key. */
+  | Readonly<{ type: 'phase0'; sha256: Sha256Hex; issuesSha256: Sha256Hex }>;
 
 /**
  * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
@@ -1173,6 +1211,8 @@ const planChange: Read<PlanChange> = tagged('type', {
   limits: object((f): PlanChange => ({ type: f.get('type', literal('limits')), unit: f.get('unit', nullable(unitR)) })),
   holistic: object((f): PlanChange => ({ type: f.get('type', literal('holistic')) })),
   advances: object((f): PlanChange => ({ type: f.get('type', literal('advances')) })),
+  corpus: object((f): PlanChange => ({ type: f.get('type', literal('corpus')), pinSha256: f.get('pinSha256', sha256R), guideSha256: f.get('guideSha256', sha256R) })),
+  phase0: object((f): PlanChange => ({ type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R), issuesSha256: f.get('issuesSha256', sha256R) })),
 });
 
 export const revisionPayload: Read<RevisionPayload> = object((f) => {
@@ -1242,6 +1282,55 @@ const bundleOutcome: Read<BundleOutcome> = tagged('kind', {
   requested: object((f): BundleOutcome => ({ kind: f.get('kind', literal('requested')), needsUser: f.get('needsUser', (v, p) => needsUserId(v, p)) })),
 });
 
+const reviewJobR: Read<JobId> = (v, p) => jobIdOfKind('review')(v, p);
+const ruleList: Read<readonly RuleId[]> = sortedBy((v, p) => ruleId(v, p), (r) => r);
+
+const checkpointIssues: Read<CheckpointIssues> = tagged('type', {
+  captured: object((f): CheckpointIssues => ({ type: f.get('type', literal('captured')), sha256: f.get('sha256', sha256R) })),
+  unavailable: object((f): CheckpointIssues => ({ type: f.get('type', literal('unavailable')), reason: f.get('reason', str) })),
+});
+
+const amendmentSource: Read<AmendmentSource> = tagged('type', {
+  checkpoint: object((f): AmendmentSource => ({ type: f.get('type', literal('checkpoint')), job: f.get('job', ckptJobR), index: f.get('index', nat) })),
+  divergence: object((f): AmendmentSource => ({ type: f.get('type', literal('divergence')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
+  issue: object((f): AmendmentSource => ({ type: f.get('type', literal('issue')), job: f.get('job', ckptJobR), issue: f.get('issue', (v, p) => issueId(v, p)) })),
+});
+
+export type M4aFactKind = M4aFact['kind'];
+/** The readers of the M4a facts, spread into `fact`. */
+const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
+  'debt-banked': object((f): Fact => ({
+    kind: f.get('kind', literal('debt-banked')), id: f.get('id', (v, p) => debtId(v, p)), bankReason: f.get('bankReason', oneOf(BANK_REASONS)), what: f.get('what', str),
+    key: f.get('key', sha256R), source: f.get('source', debtSource),
+  })),
+  'corpus-amendment': object((f): Fact => ({
+    kind: f.get('kind', literal('corpus-amendment')), id: f.get('id', (v, p) => amendmentId(v, p)), source: f.get('source', amendmentSource),
+    rules: f.get('rules', ruleList), proposal: f.get('proposal', str), why: f.get('why', str), evidence: f.get('evidence', arrayOf(str)),
+  })),
+  'issue-intake': object((f): Fact => ({
+    kind: f.get('kind', literal('issue-intake')), job: f.get('job', ckptJobR), issue: f.get('issue', (v, p) => issueId(v, p)), outcome: f.get('outcome', issueIntakeOutcome),
+  })),
+  'pack-review-started': object((f): Fact => ({
+    kind: f.get('kind', literal('pack-review-started')), job: f.get('job', reviewJobR), planRev: f.get('planRev', planRevR), inputsSha256: f.get('inputsSha256', sha256R),
+    key: f.get('key', sha256R),
+  })),
+  'pack-review-ended': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('pack-review-ended')), job: f.get('job', reviewJobR), outcome: f.get('outcome', oneOf(['completed', 'abandoned'] as const)),
+      findings: f.get('findings', arrayOf(packFinding)),
+    };
+    out.findings.forEach((x, i) => {
+      if (x.index !== i) throw new SchemaError(`${f.path}.findings[${i}].index`, String(i), x.index);
+    });
+    if (out.outcome === 'abandoned' && out.findings.length > 0) throw new SchemaError(`${f.path}.findings`, 'none for an abandoned review', out.findings);
+    return out;
+  }),
+  'issues-captured': object((f): Fact => ({
+    kind: f.get('kind', literal('issues-captured')), job: f.get('job', ckptJobR), sha256: f.get('sha256', sha256R), repo: f.get('repo', repoIdentity),
+    filtered: f.get('filtered', object((g) => ({ comments: g.get('comments', nat), pullRequests: g.get('pullRequests', nat) }))),
+  })),
+};
+
 /** The readers of the M3 facts, spread into `fact`. */
 const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = {
   witnessed: object((f): Fact => {
@@ -1272,6 +1361,8 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     // A must-hold not held on an audit snapshot opens a P1 over its obligation.
     if (out.lens === 'witness' && (out.severity !== 'P1' || out.obligation === null)) throw new SchemaError(`${f.path}.severity`, 'P1 over its obligation for a witness finding', out.severity);
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
+    // M4a: a checkpoint's issue intake opens P2 or P3 only.
+    if (out.lens === 'issue' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for an issue finding', out.severity);
     return out;
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
@@ -1307,7 +1398,9 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       observations: f.get('observations', sortedBy(observationKey, (k: ObservationKey) => `${k.treeSha}/${k.lane}/${k.laneRev}/${k.envId}`)),
     };
     if (out.vector.visionSha256 !== out.visionSha256) throw new SchemaError(`${f.path}.vector.visionSha256`, out.visionSha256, out.vector.visionSha256);
-    return out;
+    const issues = f.optional('issues', checkpointIssues);
+    const corpusSha256 = f.optional('corpusSha256', sha256R);
+    return { ...out, ...(issues === undefined ? {} : { issues }), ...(corpusSha256 === undefined ? {} : { corpusSha256 }) };
   }),
   'bundle-decided': object((f): Fact => ({ kind: f.get('kind', literal('bundle-decided')), job: f.get('job', ckptJobR), outcome: f.get('outcome', bundleOutcome) })),
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
@@ -1433,6 +1526,7 @@ export const fact: Read<Fact> = tagged('kind', {
     kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),
   })),
   ...HOLISTIC_FACT_READERS,
+  ...M4A_FACT_READERS,
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {

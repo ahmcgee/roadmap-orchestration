@@ -11,6 +11,7 @@
 //                   status active, a one-line statement that is not a withdrawn fold
 //   supersession    every target an active ruling of the ledger, each once, never itself
 //   docRefs         each anchor names exactly one place of its document at the tip, and the quoted text is under it
+//                   (M4a: a rule ref resolves to `{T-n, textSha256}` in the corpus pin, which lands in step C1)
 //   contract ops    only on the plan's contracts and architecture docs, each listed in `contractRefs`; anchor-exact,
 //                   old text exactly once under the anchor, no two ops of one document with overlapping anchors
 //                   (`deviates` without ops is refused by the reader)
@@ -27,10 +28,11 @@
 import { readFileSync } from 'node:fs';
 import { type RulingId, type Sha, type Sha256Hex, type UnitId, rulingId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
+import { notYet } from '../core/notyet.ts';
 import { SchemaError } from '../core/validate.ts';
 import type { RepoPath } from '../core/values.ts';
 import { applyContractOps, quotedTextReason } from '../docs/contracts.ts';
-import type { Consistency, Obligations, RulingSidecar, Vision } from '../holistic/types.ts';
+import { type Consistency, type Obligations, type RulingSidecar, type Vision, rulingRefSource } from '../holistic/types.ts';
 import { citeReasons } from '../holistic/vision.ts';
 
 export type Ruling =
@@ -118,7 +120,8 @@ export function validateRuling(s: RulingSidecar, ctx: RulingContext): readonly s
     if (s.supersedes.findIndex((u) => u.id === t.id) !== i) out.push(`${at} supersedes ${t.id} twice`);
   });
   // Document references.
-  for (const d of s.docRefs) {
+  for (const d of s.docRefs.map(rulingRefSource)) {
+    if (d.kind === 'rule') notYet(`${at}'s rule ref ${d.rule} (resolved in the corpus pin)`, 'C1');
     const doc = ctx.docAt(d.path);
     const why = doc === null ? 'no such document at the head' : quotedTextReason(doc, d.anchor, d.quotedText);
     if (why !== null) out.push(`${at} docRef ${d.path}: ${why}`);

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { type ApplyManifest, type CancelFile, type DispatchRecord, type ExitFile, type ResultFile, type RevisionInputs, isRevisionManifest } from './records.ts';
 import type { RoutingProvenance } from '../routing/types.ts';
+import type { CensusEntry, ConfirmationRef, Obligations } from '../holistic/types.ts';
 import type { InputFiles } from '../input/inforce.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
@@ -289,4 +290,43 @@ export function planCheckVisionConflict<T>(read: readonly T[] | undefined, path:
   if (read !== undefined) return read;
   warnDefaulted('planCheck.visionConflict', `${path} has no visionConflict (a plan-check answer written by 1.0.0-dev.5 or earlier); read as none`);
   return [];
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.6 → M4a (1.0.0-dev.7). Byte-preserving as above: nothing is rewritten and no default enters a hash.
+// Delete with the holistic `architecture-doc` variant once no dev.6 arc is in flight (BACKLOG "Scaffolding to delete").
+
+/**
+ * An obligations file's census (M4a): a dev.6 file (docRef obligations) has none, which reads as M3 semantics: the
+ * census checks are vacuous for it. A corpus arc's file always carries one (the reader requires it beside rule anchors).
+ */
+export function censusOf(o: Obligations): readonly CensusEntry[] | null {
+  if (o.census !== undefined) return o.census;
+  warnDefaulted('obligations.census', 'an obligations file without a census (docRef obligations, a 1.0.0-dev.6 arc): census checks are vacuous');
+  return null;
+}
+
+/**
+ * Whether a vision's confirmation can be verified against the pinned corpus (OR-V+): the `corpus:` form can; the M3
+ * form `vision.md#sha256:<hex>` an adopted dev.6 arc carries is not verified (R18), warned once.
+ */
+export function visionVerifiable(ref: ConfirmationRef): ref is Extract<ConfirmationRef, { form: 'corpus' }> {
+  if (ref.form === 'corpus') return true;
+  warnDefaulted('vision.confirmation', `the vision's confirmation ${ref.path}#sha256:… is the M3 form (a 1.0.0-dev.6 arc); it is not verified`);
+  return false;
+}
+
+/**
+ * A checkpoint answer's `corpusAmendments` and `issueIntake` (M4a): a recorded dev.6 answer (`upgrade.dev6-checkpoint-open`)
+ * has neither, read as none. Step B1 makes both required of the model's schema.
+ */
+export function checkpointOutputM4Default(key: 'corpusAmendments' | 'issueIntake'): readonly never[] {
+  warnDefaulted(`checkpoint.${key}`, `a checkpoint answer without ${key} (written before 1.0.0-dev.7); read as none`);
+  return [];
+}
+
+/** A split child's `rule` (M4a): absent on a recorded dev.6 answer, whose children are docRef-anchored; read as null. */
+export function splitChildRuleDefault(): null {
+  warnDefaulted('checkpoint.splitChild.rule', 'a split child without rule (a checkpoint answer written before 1.0.0-dev.7); read as null');
+  return null;
 }

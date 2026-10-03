@@ -14,9 +14,13 @@ import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
 import type {
-  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, ObservationKey, ObservationVerdict,
+  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict,
   Vision, VisionClause, VisionCoverage, VisionQuestion,
 } from '../holistic/types.ts';
+import { obligationSource } from '../holistic/types.ts';
+import { notYet } from '../core/notyet.ts';
+import type { PinnedRule } from '../corpus/types.ts';
+import type { Phase0Record } from '../phase0/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
@@ -46,6 +50,16 @@ export type ReferenceIndex = Readonly<{
 export type ArchitectureInput =
   | Readonly<{ kind: 'full'; doc: DocText }>
   | Readonly<{ kind: 'digest'; digest: DocText; doc: RepoPath }>;
+
+/**
+ * M4a: a corpus arc's target as a judgment gets it, in place of the architecture doc: every active pinned rule (the
+ * rules index, by file and section; the vision doc carries none) embedded in full, and the pinned files materialised
+ * read-only under `dir` to read on demand. `visionDoc`: the vision document's path under `dir`, null for the gate and
+ * the build, whose view omits it (M3 R17).
+ */
+export type CorpusInput = Readonly<{ kind: 'corpus'; rulesIndex: readonly PinnedRule[]; dir: AbsPath; visionDoc: RepoPath | null }>;
+/** What a judgment's `architecture` input holds: an `architecture-doc` arc's doc or digest, or a corpus arc's corpus. */
+export type TargetInput = ArchitectureInput | CorpusInput;
 
 /** A fix round resumes the build session with what failed. `directives` are the gate's (or, for a
  * conflict or scope-growth round, the executor's) instructions; either list may be empty, not both. */
@@ -105,7 +119,7 @@ export type PlanCheckInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: ArchitectureInput;
+  architecture: TargetInput;
   direction: string;
   /** The scope envelope pinned for the unit. */
   scope: readonly RepoPattern[];
@@ -140,7 +154,7 @@ export type GateInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: ArchitectureInput;
+  architecture: TargetInput;
   direction: string;
   planCheckNotes: string;
   /** The obligations the candidate selects, with their observations (never their vision clauses: R17). */
@@ -200,7 +214,7 @@ export type LensInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: ArchitectureInput;
+  architecture: TargetInput;
   /** The audit's detached worktree at the audited SHA, the lens's cwd. */
   checkout: AbsPath;
 }>;
@@ -234,8 +248,22 @@ export type CheckpointInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: ArchitectureInput;
+  architecture: TargetInput;
   direction: string;
+}>;
+
+/**
+ * M4a (OR-Q16): what a pack review reads, all read-only, rendered from its kept `PackReviewInputs` (K8): the vision,
+ * the plan rendered, every unit's spec, the obligations file with its census, the pinned rules index and the Phase-0
+ * record.
+ */
+export type PackReviewPromptInputs = Readonly<{
+  vision: VisionInput;
+  plan: string;
+  specs: readonly RenderedSpec[];
+  obligations: Obligations;
+  rulesIndex: readonly PinnedRule[];
+  phase0: Phase0Record;
 }>;
 
 export type RoleInputs = {
@@ -244,6 +272,7 @@ export type RoleInputs = {
   readonly gate: GateInputs;
   readonly lens: LensInputs;
   readonly checkpoint: CheckpointInputs;
+  readonly packReview: PackReviewPromptInputs;
 };
 
 export const ROLE_INPUTS = {
@@ -258,6 +287,7 @@ export const ROLE_INPUTS = {
     'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'architecture', 'direction',
   ],
+  packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -268,6 +298,7 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   gate: true,
   lens: true,
   checkpoint: true,
+  packReview: true,
 };
 void ROLE_INPUTS_COMPLETE;
 
@@ -369,11 +400,19 @@ export function ignoredText(c: IgnoredCensus): string | null {
   return `ignored writes: ${files} (${sizeText(c.written.bytes)}), ${c.captured.files} captured${gaps.length === 0 ? '' : `; uncaptured: ${gaps.join(', ')}`}`;
 }
 
-/** The architecture doc's entry in a documents block: the whole doc, or the digest naming the doc's path. */
-export function architectureDocument(a: ArchitectureInput): Readonly<{ source: string; content: string }> {
-  return a.kind === 'full'
-    ? { source: `architecture doc ${a.doc.path}`, content: a.doc.text }
-    : { source: `architecture digest ${a.digest.path} (the full architecture doc is ${a.doc} in the repository)`, content: a.digest.text };
+/**
+ * The architecture doc's entry in a documents block: the whole doc, or the digest naming the doc's path. A corpus arc's
+ * rules index and corpus directory render in step B1.
+ */
+export function architectureDocument(a: TargetInput): Readonly<{ source: string; content: string }> {
+  switch (a.kind) {
+    case 'full':
+      return { source: `architecture doc ${a.doc.path}`, content: a.doc.text };
+    case 'digest':
+      return { source: `architecture digest ${a.digest.path} (the full architecture doc is ${a.doc} in the repository)`, content: a.digest.text };
+    case 'corpus':
+      return notYet('the corpus input\'s rendering (rules index and pinned corpus)', 'B1');
+  }
 }
 
 /** The reference index as data: one line per uncited contract and per ruling not embedded. */
@@ -466,7 +505,9 @@ export function obligationsText(views: readonly ObligationView[], opts: Readonly
     const witness = o.witness === null ? 'none' : `lane ${o.witness.lane}, tests ${o.witness.testIds.join(', ')}`;
     const delivered = o.deliveredBy.length === 0 ? '' : `\n  Delivered by: ${o.deliveredBy.join(', ')}`;
     const obs = v.observation === null ? 'none (not covered, which never counts as passed)' : `${v.observation.verdict} at ${JSON.stringify(v.observation.key)}`;
-    return `- ${o.id} (${head.join('; ')}): ${o.statement}\n  Anchored at ${o.docRef.path}${o.docRef.anchor}: "${o.docRef.quotedText}"\n  Witness: ${witness}${delivered}\n  Observation: ${obs}`;
+    const src = obligationSource(o);
+    const anchored = src.kind === 'doc' ? `${src.path}${src.anchor}: "${src.quotedText}"` : `corpus rule ${src.rule.id}`;
+    return `- ${o.id} (${head.join('; ')}): ${o.statement}\n  Anchored at ${anchored}\n  Witness: ${witness}${delivered}\n  Observation: ${obs}`;
   }).join('\n');
 }
 

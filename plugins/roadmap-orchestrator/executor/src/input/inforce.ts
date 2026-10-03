@@ -32,14 +32,15 @@ import type { Journal, JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { PlanManifest, RevisionManifest, SpecM1 } from '../core/records.ts';
 import { rulingsFromLiveFile, specBytesFromLiveFile } from '../core/upgrade.ts';
+import { notYet } from '../core/notyet.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath, type PlanPath, absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { type RepoConfig, type ResolvedRouting, planStack, resolveRouting } from '../routing/layers.ts';
 import type { ProfileName, RoutingLayer, RoutingProvenance } from '../routing/types.ts';
 import { bytesSha256, parseSpec } from '../spec/spec.ts';
-import { type PlanM1, type PlanUnit, parsePlan } from './plan.ts';
+import { type PlanM1, type PlanUnit, parsePlan, visionFile } from './plan.ts';
 
 export const PLAN_INPUT = 'plan.json';
 export const SPEC_INPUT = 'spec.json';
@@ -124,6 +125,16 @@ function readSidecars(ledger: AbsPath): ReadonlyMap<RulingId, Readonly<{ path: A
   return new Map(entries.sort(([a], [b]) => rulingNumber(a) - rulingNumber(b)));
 }
 
+/**
+ * The vision file beside the plan (`visionFile`), or null when the arc has none. A corpus arc's record lives in the
+ * product repo (`<repo>/.roadmap/vision.json`, R1), which lands in step C1.
+ */
+function besideVision(plan: PlanM1, beside: (path: PlanPath) => InputFile): InputFile | null {
+  const at = visionFile(plan);
+  if (at === null) return null;
+  return at.base === 'plan' ? beside(at.path) : notYet(`a corpus arc's vision record (${at.path} in the repo)`, 'C1');
+}
+
 /** Reads the plan (parsed: throws SchemaError or SyntaxError) and the bytes of every input it names. */
 export function readInputFiles(planFile: AbsPath): InputFiles {
   const planBytes = readFileSync(planFile);
@@ -134,7 +145,7 @@ export function readInputFiles(planFile: AbsPath): InputFiles {
   return {
     planFile, plan, planBytes, specs, ledger: inputFile(ledger), sidecars: readSidecars(ledger),
     obligations: plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations),
-    vision: plan.holistic === undefined ? null : beside(plan.holistic.vision),
+    vision: besideVision(plan, beside),
   };
 }
 
@@ -444,7 +455,7 @@ export function inForceFiles(runDir: AbsPath, view: JournalView, inForce: InForc
     ledger: { path: ledger, bytes: revision.ledger.bytes },
     sidecars: new Map([...revision.sidecars].map(([id, s]) => [id, { path: sidecarPath(ledger, id), bytes: s.bytes }] as const)),
     obligations: revision.obligations === null || plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations, revision.obligations.bytes),
-    vision: revision.vision === null || plan.holistic === undefined ? null : beside(plan.holistic.vision, revision.vision.bytes),
+    vision: revision.vision === null ? null : besideVision(plan, (path) => beside(path, revision.vision!.bytes)),
   };
 }
 

@@ -13,7 +13,7 @@
 // rev exactly as a seat edit does.
 //
 // Seats: build has `low | med | high`; planCheck and gate also have `escalation`, where route-ups and risk
-// triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles (M3) `lens` and `checkpoint`
+// triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles (M3) `lens` and `checkpoint` (and M4a `packReview`)
 // have the one seat `arc`; they are in force only in a holistic arc (its plan names a vision, A5), and only
 // then are they checked, smoked and hashed (G20: a non-holistic arc resolves exactly as in M2, so its
 // `routingRev` is the one 1.0.0-dev.5 recorded).
@@ -25,7 +25,11 @@
 //       "seats": { "<planCheck|gate>": { "<low|med|high|escalation>": "<class>" },
 //                  "build": { "<low|med|high>": "<class>" } },        optional; any subset of seats
 //       "classes": { "<efficient|frontier|summit>":                    optional; rebinds for this repo
-//                      { "backend", "model", "effort" } } } }
+//                      { "backend", "model", "effort" } } },
+//     "chain": { "k": <positive> } }                                  optional (M4a): unacked chained starts allowed
+//
+//   `chain.k` (M4a, OR-Q19, K10) is asked once at bootstrap and committed by the owner; the root agent never writes it.
+//   Absent: K unset (a chained start is refused `chain-invalid{k-unset}`). Nothing about issues lives here (OR-L6).
 //
 //   Classes: `efficient | frontier | summit`. A seat value that is a triple is refused: triples are bound
 //   only under `classes`, which is repo-level (a plan cannot rebind a class). A binding's effort is one its
@@ -36,7 +40,7 @@
 import type { UnitId } from '../core/ids.ts';
 import { type RoutingRev, routingRev } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { object } from '../core/validate.ts';
+import { object, positive } from '../core/validate.ts';
 import type { PlanM1 } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
@@ -48,9 +52,13 @@ import {
   classBindings, profileName, routingLayer, seatTable,
 } from './types.ts';
 
-export type RepoConfig = Readonly<{ routing?: Readonly<{ profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings }> }>;
+export type RepoConfig = Readonly<{
+  routing?: Readonly<{ profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings }>;
+  chain?: Readonly<{ k: number }>;
+}>;
 
 export const repoConfig = object((f): RepoConfig => {
+  const chain = f.optional('chain', object((g) => ({ k: g.get('k', positive) })));
   const routing = f.optional('routing', object((g) => {
     const out: { profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings } = {};
     const profile = g.optional('profile', profileName);
@@ -61,7 +69,7 @@ export const repoConfig = object((f): RepoConfig => {
     if (classes !== undefined) out.classes = classes;
     return out;
   }));
-  return routing === undefined ? {} : { routing };
+  return { ...(routing === undefined ? {} : { routing }), ...(chain === undefined ? {} : { chain }) };
 });
 
 /** Reads `.roadmap/config.json`'s parsed JSON. */

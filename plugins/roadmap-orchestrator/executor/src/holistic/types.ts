@@ -6,9 +6,9 @@
 // observations, the transition table in table.ts), B3 (findings), B5 (audits, coverage), B6 (checkpoint, bundles,
 // divergences).
 import {
-  type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev, type ObligationId, type QuestionId, type RulingId, type Sha,
-  type Sha256Hex, type UnitId, type VisionClauseId, envId, findingId, invocationIdOf, jobIdOf, laneId, laneRev, obligationId, questionId, rulingId,
-  sha, sha256, unitId, visionClauseId, type EnvId,
+  type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev, type ObligationId, type PlanRev, type QuestionId, type RoutingRev, type RuleId,
+  type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, envId, findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev,
+  obligationId, planRev, questionId, routingRev, ruleId, ruleSeq, rulingId, sha, sha256, unitId, visionClauseId, type EnvId,
 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { LENS_KIND_NAMES, type LaneDef, type LensKindName, laneDef } from '../core/records.ts';
@@ -33,6 +33,8 @@ const byId = <T extends Readonly<{ id: string }>>(t: T): string => t.id;
 function docRefFields(g: Fields): DocRef {
   return { path: g.get('path', pathR), anchor: g.get('anchor', str), quotedText: g.get('quotedText', str) };
 }
+const ruleR: Read<RuleId> = (v, p) => ruleId(v, p);
+const ruleRefR: Read<RuleRef> = object((g) => ({ id: g.get('id', ruleR), textSha256: g.get('textSha256', sha256R) }));
 
 // ---------------------------------------------------------------------------------------------------
 // Lenses (§2.5; A15 adds `vision`)
@@ -70,7 +72,9 @@ export type VisionQuestion = Readonly<{ id: QuestionId; text: string; bears: rea
 
 /**
  * The root record (OR-V). Owner-only: only an architect `apply` changes it. `confirmation` is the Phase-0
- * playback's confirmation reference, stored unverified (verification is M4). At least one active `world` clause.
+ * playback's confirmation reference (`parseConfirmationRef`): since M4a `corpus:<path under root>#sha256:<hex>`, verified
+ * at every start and apply against the pinned corpus file (C1); the M3 form `vision.md#sha256:<hex>` an adopted dev.6
+ * arc carries is not verified (`visionVerifiable`, scaffolding). At least one active `world` clause.
  */
 export type Vision = Readonly<{
   schema: typeof VISION_SCHEMA;
@@ -127,6 +131,21 @@ export function parseVision(value: unknown): Vision {
 
 export const activeClauses = (v: Vision): readonly VisionClauseId[] => v.clauses.filter((c) => c.state === 'active').map((c) => c.id);
 
+/**
+ * A vision confirmation reference (OR-V+, R18): `corpus` names a corpus file by its path under the corpus root and the
+ * sha256 of its confirmed bytes; `m3` is the dev.6 form `vision.md#sha256:<hex>` (path relative to the plan), which is
+ * never verified. Anything else is malformed.
+ */
+export type ConfirmationRef =
+  | Readonly<{ form: 'corpus'; path: RepoPath; sha256: Sha256Hex }>
+  | Readonly<{ form: 'm3'; path: string; sha256: Sha256Hex }>;
+export function parseConfirmationRef(ref: string, path = 'vision.confirmation.ref'): ConfirmationRef {
+  const m = /^(corpus:)?(.+)#sha256:([0-9a-f]{64})$/.exec(ref);
+  if (m === null) throw new SchemaError(path, 'corpus:<path>#sha256:<hex> (or the M3 form <file>#sha256:<hex>)', ref);
+  const hash = sha256(m[3], path);
+  return m[1] === undefined ? { form: 'm3', path: m[2] as string, sha256: hash } : { form: 'corpus', path: repoPath(m[2], path), sha256: hash };
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Obligations (§2.8; LR-b, H14): `holistic.obligations` in plan.json names this file.
 
@@ -142,6 +161,21 @@ export const ACTIVATIONS = ['future', 'must-hold'] as const;
 export type Activation = (typeof ACTIVATIONS)[number];
 
 export type DocRef = Readonly<{ path: RepoPath; anchor: string; quotedText: string }>;
+/** A corpus rule by identity (M4a): what a rule obligation, the census and a ruling's rule ref bind. */
+export type RuleRef = Readonly<{ id: RuleId; textSha256: Sha256Hex }>;
+/**
+ * What an obligation is anchored at (M4a, A-M4-3): exactly one of a document reference (`architecture-doc` arcs) or a
+ * pinned corpus rule (corpus arcs). Read only through `obligationSource`.
+ */
+export type ObligationAnchor = Readonly<{ docRef: DocRef; rule?: never }> | Readonly<{ rule: RuleRef; docRef?: never }>;
+/** An obligation's anchor as its readers see it: the doc ref's fields, or the rule (as `rulingRefSource` reads a sidecar ref). */
+export type ObligationSource = Readonly<{ kind: 'doc' } & DocRef> | Readonly<{ kind: 'rule'; rule: RuleRef }>;
+/** The only reader of an obligation's anchor (H10; test target.no-direct-access). */
+export function obligationSource(o: ObligationAnchor): ObligationSource {
+  if (o.rule !== undefined) return { kind: 'rule', rule: o.rule };
+  const d = o.docRef as DocRef;
+  return { kind: 'doc', path: d.path, anchor: d.anchor, quotedText: d.quotedText };
+}
 export type WitnessRef = Readonly<{ lane: LaneId; testIds: readonly string[] }>;
 /**
  * "This test proves this statement", judged at Phase 0 and bound to everything it judged: the obligation's `rev`,
@@ -161,7 +195,6 @@ export type ObligationDef = Readonly<{
   /** The normative revision (`obligationRevs`); evidence refreshes never bump it. */
   rev: number;
   statement: string;
-  docRef: DocRef;
   /** The vision clauses it serves; non-empty in an arc with a vision (checked by the classifier, A1). */
   serves: readonly VisionClauseId[];
   witness: WitnessRef | null;
@@ -173,7 +206,17 @@ export type ObligationDef = Readonly<{
   /** The contracts it binds: a candidate touching one selects it. */
   contracts: readonly RepoPath[];
   state: ObligationState;
-}>;
+}> & ObligationAnchor;
+
+/**
+ * A corpus arc's census (M4a, OR-Q13): one state per active pinned rule. `obligation` names the obligation whose
+ * `rule.id` is the rule; the others say why no obligation tests it.
+ */
+export type CensusState =
+  | Readonly<{ type: 'obligation'; id: ObligationId }>
+  | Readonly<{ type: 'out-of-slice' | 'untestable' | 'prod-only' }>;
+export const CENSUS_STATES = ['obligation', 'out-of-slice', 'untestable', 'prod-only'] as const;
+export type CensusEntry = Readonly<{ rule: RuleId; state: CensusState }>;
 
 export type MappingEntry = Readonly<{ pattern: RepoPattern; obligations: readonly ObligationId[] }>;
 
@@ -184,6 +227,11 @@ export type Obligations = Readonly<{
   obligations: readonly ObligationDef[];
   /** The one authoritative impact mapping (§2.8), revisioned with the obligations. */
   mapping: Readonly<{ paths: readonly MappingEntry[] }>;
+  /**
+   * M4a: present exactly when the obligations are rule-anchored (a corpus arc), ascending by rule number. Absent on a
+   * dev.6 file (`censusOf`: none, census checks vacuous).
+   */
+  census?: readonly CensusEntry[];
 }>;
 
 const arcLaneDef: Read<ArcLaneDef> = (value, path) => {
@@ -220,13 +268,34 @@ const proofJudgment: Read<ProofJudgment> = object((f) => ({
   witness: f.get('witness', witnessRef),
 }));
 
+const obligationAnchor = (f: Fields): ObligationAnchor => {
+  const doc = f.optional('docRef', docRef);
+  const rule = f.optional('rule', ruleRefR);
+  if ((doc === undefined) === (rule === undefined)) throw new SchemaError(`${f.path}.docRef`, 'exactly one of docRef and rule', { docRef: doc, rule });
+  return doc !== undefined ? { docRef: doc } : { rule: rule as RuleRef };
+};
+
+const censusState: Read<CensusState> = tagged('type', {
+  obligation: object((f): CensusState => ({ type: f.get('type', literal('obligation')), id: f.get('id', oid) })),
+  'out-of-slice': object((f): CensusState => ({ type: f.get('type', literal('out-of-slice')) })),
+  untestable: object((f): CensusState => ({ type: f.get('type', literal('untestable')) })),
+  'prod-only': object((f): CensusState => ({ type: f.get('type', literal('prod-only')) })),
+});
+const censusEntries: Read<readonly CensusEntry[]> = (value, path) => {
+  const out = arrayOf(object((f): CensusEntry => ({ rule: f.get('rule', ruleR), state: f.get('state', censusState) })))(value, path);
+  for (let i = 1; i < out.length; i++) {
+    if (!(ruleSeq(out[i - 1]!.rule) < ruleSeq(out[i]!.rule))) throw new SchemaError(`${path}[${i}]`, 'one entry per rule, ascending by number', value);
+  }
+  return out;
+};
+
 const obligationDef: Read<ObligationDef> = object((f) => {
   const parent = f.optional('parent', oid);
   const out: ObligationDef = {
     id: f.get('id', oid),
     rev: f.get('rev', positive),
     statement: f.get('statement', str),
-    docRef: f.get('docRef', docRef),
+    ...obligationAnchor(f),
     serves: f.get('serves', sortedBy(vid, (c) => c)),
     witness: f.get('witness', nullable(witnessRef)),
     proofJudgment: f.get('proofJudgment', nullable(proofJudgment)),
@@ -245,6 +314,7 @@ const obligationDef: Read<ObligationDef> = object((f) => {
 });
 
 export const obligations: Read<Obligations> = object((f) => {
+  const census = f.optional('census', censusEntries);
   const out: Obligations = {
     schema: f.get('schema', literal(OBLIGATIONS_SCHEMA)),
     cutLine: f.get('cutLine', str),
@@ -256,6 +326,7 @@ export const obligations: Read<Obligations> = object((f) => {
         obligations: h.get('obligations', sortedBy(oid, (o) => o, { nonEmpty: true })),
       })))),
     }))),
+    ...(census === undefined ? {} : { census }),
   };
   assertUnique(out.lanes, byId, `${f.path}.lanes`);
   assertUnique(out.obligations, byId, `${f.path}.obligations`);
@@ -276,6 +347,25 @@ export const obligations: Read<Obligations> = object((f) => {
   out.mapping.paths.forEach((e, i) => e.obligations.forEach((o) => {
     if (!ids.has(o)) throw new SchemaError(`${f.path}.mapping.paths[${i}].obligations`, 'obligations of this file', o);
   }));
+  // M4a: one anchor kind per file, and a census exactly with rule anchors (a corpus arc's file).
+  const ruled = out.obligations.filter((o) => obligationSource(o).kind === 'rule');
+  if (ruled.length > 0 && ruled.length < out.obligations.length) throw new SchemaError(`${f.path}.obligations`, 'one anchor kind for every obligation (all docRef or all rule)', ruled.map((o) => o.id));
+  if (out.census === undefined && ruled.length > 0) throw new SchemaError(`${f.path}.census`, 'a census beside rule-anchored obligations', undefined);
+  if (out.census !== undefined) {
+    if (ruled.length < out.obligations.length) throw new SchemaError(`${f.path}.census`, 'absent beside docRef-anchored obligations', out.census);
+    const inCensus = new Map<ObligationId, RuleId>();
+    out.census.forEach((e, i) => {
+      if (e.state.type !== 'obligation') return;
+      const o = ids.get(e.state.id);
+      const src = o === undefined ? null : obligationSource(o);
+      if (src?.kind !== 'rule' || src.rule.id !== e.rule) throw new SchemaError(`${f.path}.census[${i}].state.id`, `an obligation of this file anchored at ${e.rule}`, e.state.id);
+      if (inCensus.has(e.state.id)) throw new SchemaError(`${f.path}.census[${i}].state.id`, 'an obligation the census names once', e.state.id);
+      inCensus.set(e.state.id, e.rule);
+    });
+    ruled.forEach((o) => {
+      if (!inCensus.has(o.id)) throw new SchemaError(`${f.path}.census`, `an entry naming ${o.id} (every rule obligation is in the census)`, out.census);
+    });
+  }
   return out;
 });
 
@@ -384,7 +474,24 @@ export const RULING_SCHEMA = 'roadmap/ruling-m3';
 export const RULING_KINDS = ['constraint', 'decision', 'deviation', 'disposition'] as const;
 export type RulingKind = (typeof RULING_KINDS)[number];
 export const DOC_RELATIONS = ['consistent', 'refines', 'deviates'] as const;
-export type RulingDocRef = DocRef & Readonly<{ relation: (typeof DOC_RELATIONS)[number] }>;
+export type DocRelation = (typeof DOC_RELATIONS)[number];
+/** A rule ref's relations (K19): a ruling never deviates from the corpus; a departure is a divergence plus an amendment. */
+export const RULE_RELATIONS = ['consistent', 'refines'] as const;
+export type RuleRelation = (typeof RULE_RELATIONS)[number];
+export type RulingDocRef = DocRef & Readonly<{ relation: DocRelation }>;
+/** M4a: a ruling's reference to a pinned corpus rule, resolved in the pin (C1). */
+export type RulingRuleRef = Readonly<{ rule: RuleId; textSha256: Sha256Hex; relation: RuleRelation }>;
+/** One entry of a sidecar's `docRefs` (on disk told apart by `rule`); read only through `rulingRefSource`. */
+export type RulingRef = RulingDocRef | RulingRuleRef;
+export type RulingRefSource =
+  | Readonly<{ kind: 'doc'; path: RepoPath; anchor: string; quotedText: string; relation: DocRelation }>
+  | Readonly<{ kind: 'rule'; rule: RuleId; textSha256: Sha256Hex; relation: RuleRelation }>;
+/** The only reader of a sidecar ref's arm (H10). */
+export function rulingRefSource(d: RulingRef): RulingRefSource {
+  return 'rule' in d
+    ? { kind: 'rule', rule: d.rule, textSha256: d.textSha256, relation: d.relation }
+    : { kind: 'doc', path: d.path, anchor: d.anchor, quotedText: d.quotedText, relation: d.relation };
+}
 /** An anchor-exact contract edit: the one match of `oldText` under `anchor` in `path` becomes `newText`. */
 export type ContractOp = Readonly<{ path: RepoPath; anchor: string; oldText: string; newText: string }>;
 /** Weakening dispositions (LR-c; "Obligations as a revisioned input"): `amended` covers a statement, docRef or activation change. */
@@ -407,6 +514,8 @@ export type Consistency = Readonly<{
     obligationsSha256: Sha256Hex | null;
     visionSha256: Sha256Hex | null;
     contracts: readonly Readonly<{ path: RepoPath; blob: Sha }>[];
+    /** M4a: the corpus pin in force (a corpus arc); absent: none (lasting). */
+    corpusSha256?: Sha256Hex;
   }>;
   /** A judgment role and the routing revision it ran under (never a model), or the architect. */
   by: Readonly<{ type: 'judgment'; role: FreshRole; routingRev: string }> | Readonly<{ type: 'architect' }>;
@@ -421,7 +530,7 @@ export type RulingSidecar = Readonly<{
   trigger: string;
   supersedes: readonly Readonly<{ id: RulingId; part: string | null }>[];
   condition: string | null;
-  docRefs: readonly RulingDocRef[];
+  docRefs: readonly RulingRef[];
   contractRefs: readonly RepoPath[];
   contractOps: readonly ContractOp[];
   obligations: readonly ObligationId[];
@@ -439,13 +548,17 @@ const contractRevs = sortedBy(object((g) => ({ path: g.get('path', pathR), blob:
 
 export const consistency: Read<Consistency> = object((f) => ({
   verdict: f.get('verdict', oneOf(['consistent', 'inconsistent'] as const)),
-  judgedRevs: f.get('judgedRevs', object((g) => ({
-    head: g.get('head', shaR),
-    ledgerSha256: g.get('ledgerSha256', sha256R),
-    obligationsSha256: g.get('obligationsSha256', nullable(sha256R)),
-    visionSha256: g.get('visionSha256', nullable(sha256R)),
-    contracts: g.get('contracts', contractRevs),
-  }))),
+  judgedRevs: f.get('judgedRevs', object((g) => {
+    const corpusSha256 = g.optional('corpusSha256', sha256R);
+    return {
+      head: g.get('head', shaR),
+      ledgerSha256: g.get('ledgerSha256', sha256R),
+      obligationsSha256: g.get('obligationsSha256', nullable(sha256R)),
+      visionSha256: g.get('visionSha256', nullable(sha256R)),
+      contracts: g.get('contracts', contractRevs),
+      ...(corpusSha256 === undefined ? {} : { corpusSha256 }),
+    };
+  })),
   by: f.get('by', tagged<'judgment' | 'architect', Consistency['by']>('type', {
     judgment: object((g) => ({
       type: g.get('type', literal('judgment')),
@@ -460,6 +573,11 @@ export const contractOp: Read<ContractOp> = object((f) => ({
   path: f.get('path', pathR), anchor: f.get('anchor', str), oldText: f.get('oldText', str), newText: f.get('newText', text),
 }));
 
+/** A doc ref `{path, anchor, quotedText, relation}`, or (M4a) a rule ref `{rule, textSha256, relation: consistent | refines}` (K19). */
+const rulingRef: Read<RulingRef> = (value, path) => typeof value === 'object' && value !== null && Object.hasOwn(value, 'rule')
+  ? object((g): RulingRef => ({ rule: g.get('rule', ruleR), textSha256: g.get('textSha256', sha256R), relation: g.get('relation', oneOf(RULE_RELATIONS)) }))(value, path)
+  : object((g): RulingRef => ({ ...docRefFields(g), relation: g.get('relation', oneOf(DOC_RELATIONS)) }))(value, path);
+
 export const rulingSidecar: Read<RulingSidecar> = object((f) => {
   const out: RulingSidecar = {
     schema: f.get('schema', literal(RULING_SCHEMA)),
@@ -473,7 +591,7 @@ export const rulingSidecar: Read<RulingSidecar> = object((f) => {
     trigger: f.get('trigger', str),
     supersedes: f.get('supersedes', arrayOf(object((g) => ({ id: g.get('id', rid), part: g.get('part', nullable(str)) })))),
     condition: f.get('condition', nullable(str)),
-    docRefs: f.get('docRefs', arrayOf(object((g) => ({ ...docRefFields(g), relation: g.get('relation', oneOf(DOC_RELATIONS)) })), { nonEmpty: true })),
+    docRefs: f.get('docRefs', arrayOf(rulingRef, { nonEmpty: true })),
     contractRefs: f.get('contractRefs', sortedBy(pathR, (c) => c)),
     contractOps: f.get('contractOps', arrayOf(contractOp)),
     obligations: f.get('obligations', sortedBy(oid, (o) => o)),
@@ -488,7 +606,7 @@ export const rulingSidecar: Read<RulingSidecar> = object((f) => {
     status: f.get('status', oneOf(RULING_STATUSES)),
     consistency: f.get('consistency', consistency),
   };
-  if (out.docRefs.some((d) => d.relation === 'deviates') && out.contractOps.length === 0) throw new SchemaError(`${f.path}.contractOps`, 'the contract ops of a deviating ruling', out.contractOps);
+  if (out.docRefs.some((d) => rulingRefSource(d).relation === 'deviates') && out.contractOps.length === 0) throw new SchemaError(`${f.path}.contractOps`, 'the contract ops of a deviating ruling', out.contractOps);
   if (out.ruledBy.type === 'checkpoint' && (out.cites.length === 0 || out.evidence.length === 0)) {
     throw new SchemaError(`${f.path}.cites`, 'active vision clauses and evidence for a checkpoint ruling', { cites: out.cites, evidence: out.evidence });
   }
@@ -505,8 +623,9 @@ export function parseRulingSidecar(value: unknown): RulingSidecar {
 
 export const FINDING_SEVERITIES = ['P1', 'P2', 'P3'] as const;
 export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
-/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), or plan-check (R17). */
-export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'plan-check'] as const;
+/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), plan-check (R17), or issue intake (M4a). */
+/** M4a: `issue` (a checkpoint's issue intake opens a P2 or P3 finding, C3). */
+export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'plan-check', 'issue'] as const;
 export type FindingLens = (typeof FINDING_LENSES)[number];
 /** `fixed-on-branch` (R5): the owner's gate approved. `resolved` and `ruled` are terminal. */
 export const FINDING_STATES = ['open', 'owned', 'fixed-on-branch', 'resolved', 'ruled'] as const;
@@ -693,3 +812,76 @@ export const OWNER_ONLY_CLASSES = [
   'destructive', 'cost', 'legal', 'vision', 'resource', 'config', 'gc', 'ref-deletion', 'lane-program', 'env-prerequisite', 'contract-path',
 ] as const;
 export type OwnerOnlyClass = (typeof OWNER_ONLY_CLASSES)[number];
+
+// ---------------------------------------------------------------------------------------------------
+// Pack review (M4a, OR-Q16; C3 runs the job, `packReviewKey` is src/holistic/packreview.ts)
+
+export const PACK_REVIEW_INPUTS_SCHEMA = 'roadmap/pack-review-inputs-m4';
+
+/**
+ * What a pack review binds (K8), kept as `inputs/<sha>.pack-review.json` before its spawn; recovery consumes only these
+ * bytes. Without `job` (R28) its canonical hash is the required-review key.
+ */
+export type PackReviewInputs = Readonly<{
+  schema: typeof PACK_REVIEW_INPUTS_SCHEMA;
+  job: JobId;
+  planRev: PlanRev;
+  planSha256: Sha256Hex;
+  /** Every unit's spec in force, ascending by unit. */
+  specs: readonly Readonly<{ unit: UnitId; sha256: Sha256Hex }>[];
+  obligationsSha256: Sha256Hex;
+  corpusPinSha256: Sha256Hex;
+  phase0Sha256: Sha256Hex;
+  visionSha256: Sha256Hex;
+  head: Sha;
+  routingRev: RoutingRev;
+}>;
+
+const reviewJobR: Read<JobId> = (v, p) => jobIdOfKind('review')(v, p);
+export const packReviewInputs: Read<PackReviewInputs> = object((f) => ({
+  schema: f.get('schema', literal(PACK_REVIEW_INPUTS_SCHEMA)),
+  job: f.get('job', reviewJobR),
+  planRev: f.get('planRev', (v, p) => planRev(v, p)),
+  planSha256: f.get('planSha256', sha256R),
+  specs: f.get('specs', sortedBy(object((g) => ({ unit: g.get('unit', (v, p) => unitId(v, p)), sha256: g.get('sha256', sha256R) })), (s) => s.unit, { nonEmpty: true })),
+  obligationsSha256: f.get('obligationsSha256', sha256R),
+  corpusPinSha256: f.get('corpusPinSha256', sha256R),
+  phase0Sha256: f.get('phase0Sha256', sha256R),
+  visionSha256: f.get('visionSha256', sha256R),
+  head: f.get('head', shaR),
+  routingRev: f.get('routingRev', (v, p) => routingRev(v, p)),
+}));
+
+export function parsePackReviewInputs(value: unknown): PackReviewInputs {
+  return packReviewInputs(value, 'packReviewInputs');
+}
+
+export const PACK_SEVERITIES = ['blocking', 'note'] as const;
+export type PackSeverity = (typeof PACK_SEVERITIES)[number];
+/** What a pack finding is about. */
+export type PackTarget =
+  | Readonly<{ type: 'unit'; id: UnitId }>
+  | Readonly<{ type: 'obligation'; id: ObligationId }>
+  | Readonly<{ type: 'census'; rule: RuleId }>
+  | Readonly<{ type: 'rule'; id: RuleId }>
+  | Readonly<{ type: 'plan' }>;
+/** One pack finding as `pack-review-ended` records it; its identity is `(job, index)` everywhere (K13). */
+export type PackFinding = Readonly<{
+  index: number; severity: PackSeverity; target: PackTarget; claim: string; evidence: readonly Readonly<{ path: string; line: number }>[];
+}>;
+
+export const packTarget: Read<PackTarget> = tagged('type', {
+  unit: object((f): PackTarget => ({ type: f.get('type', literal('unit')), id: f.get('id', (v, p) => unitId(v, p)) })),
+  obligation: object((f): PackTarget => ({ type: f.get('type', literal('obligation')), id: f.get('id', oid) })),
+  census: object((f): PackTarget => ({ type: f.get('type', literal('census')), rule: f.get('rule', ruleR) })),
+  rule: object((f): PackTarget => ({ type: f.get('type', literal('rule')), id: f.get('id', ruleR) })),
+  plan: object((f): PackTarget => ({ type: f.get('type', literal('plan')) })),
+});
+export const packEvidence: Read<PackFinding['evidence'][number]> = object((f) => ({ path: f.get('path', str), line: f.get('line', positive) }));
+export const packFinding: Read<PackFinding> = object((f) => ({
+  index: f.get('index', nat),
+  severity: f.get('severity', oneOf(PACK_SEVERITIES)),
+  target: f.get('target', packTarget),
+  claim: f.get('claim', str),
+  evidence: f.get('evidence', arrayOf(packEvidence)),
+}));

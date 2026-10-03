@@ -15,6 +15,12 @@
 // run goes on), the refused exit line (exit 78/75), or `failed` / `timeout` (exit 70). The run's own end is
 // in exit.reason.json and `status`. `status` prints the status object.
 //
+// M4a host acts (no host lock, not queued; each module's own header has its contract): `phase0 check` prints its rows
+// and slice candidates (exit 0 when no row, else 78); `corpus pin` writes the pin and prints it with its sha256, or the
+// refused row (78); `brief` prints the payload (`--json`) or its Markdown, and `--ack` prints the commands it enqueued, or
+// the stale ids (78); `pr` prints the pull request; `issues` prints the capture (or writes `--out`), or the refused row
+// (78); `chain status` prints the chain. Step 0a placed every module at its final path; the landing steps replace them.
+//
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -22,6 +28,12 @@ import { createRequire } from 'node:module';
 import { submitCommand } from '../commands/queue.ts';
 import { evaluateApply } from '../commands/apply.ts';
 import { DEFAULT_KEEP, gc } from '../commands/gc.ts';
+import { brief } from '../commands/brief.ts';
+import { chainStatus } from '../commands/chain.ts';
+import { corpusPin } from '../commands/corpus.ts';
+import { captureIssues } from '../commands/issues.ts';
+import { phase0Check } from '../commands/phase0.ts';
+import { openPr } from '../commands/pr.ts';
 import { readJson } from '../core/fsx.ts';
 import type { ArcId, PlanRev } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
@@ -36,7 +48,7 @@ import { HOST_DIR } from '../host/hostdir.ts';
 import { readClaim } from '../host/lock.ts';
 import { CliError, type Command, type RunLocator, parseCommand, runDir } from '../input/cli.ts';
 import { gitCommonDir, readRepoConfig } from '../preflight/checks.ts';
-import { EXIT_HOST_BUSY, EXIT_REFUSED } from '../preflight/startup.ts';
+import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
 import { status } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
 import { watch } from '../watch.ts';
@@ -144,7 +156,55 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       process.exitCode = outcome.rejection.kind === 'host-busy' ? EXIT_HOST_BUSY : EXIT_REFUSED;
       return;
     }
+    case 'phase0-check': {
+      const report = await phase0Check({ repo: repoOf(command.repo), source: command.source.type === 'plan' ? { type: 'plan', plan: resolve(command.source.plan) } : command.source });
+      process.stdout.write(`${canonicalJson(report)}\n`);
+      if (report.rows.length > 0) process.exitCode = EXIT_REFUSED;
+      return;
+    }
+    case 'corpus-pin': {
+      const outcome = await corpusPin({ repo: repoOf(command.repo), commit: command.commit, out: absPath(resolve(command.out)) });
+      if (outcome.kind === 'refused') return refused(outcome.rejection);
+      process.stdout.write(`${canonicalJson({ pin: outcome.pin, sha256: outcome.sha256 })}\n`);
+      return;
+    }
+    case 'brief': {
+      const outcome = await brief({ repo: repoOf(command.repo), ack: command.ack });
+      switch (outcome.kind) {
+        case 'brief':
+          process.stdout.write(command.json ? `${canonicalJson({ briefId: outcome.briefId, payload: outcome.payload })}\n` : outcome.markdown);
+          return;
+        case 'acked':
+          process.stdout.write(`${canonicalJson({ acked: outcome.briefId, commands: outcome.commands })}\n`);
+          return;
+        case 'stale':
+          process.stdout.write(`${canonicalJson({ stale: { expected: outcome.expected, actual: outcome.actual } })}\n`);
+          process.exitCode = EXIT_REFUSED;
+          return;
+      }
+      return;
+    }
+    case 'pr':
+      process.stdout.write(`${canonicalJson(await openPr({ repo: repoOf(command.repo), arc: command.arc }))}\n`);
+      return;
+    case 'issues': {
+      const outcome = await captureIssues({ repo: repoOf(command.repo), out: command.out === null ? null : absPath(resolve(command.out)) });
+      if (outcome.kind === 'refused') return refused(outcome.rejection);
+      process.stdout.write(command.out === null ? `${canonicalJson(outcome.capture)}\n` : `${canonicalJson({ out: absPath(resolve(command.out)), sha256: outcome.sha256 })}\n`);
+      return;
+    }
+    case 'chain-status':
+      process.stdout.write(`${canonicalJson(await chainStatus({ repo: repoOf(command.repo) }))}\n`);
+      return;
   }
+}
+
+const repoOf = (repo: string): AbsPath => absPath(resolve(repo));
+
+/** A host act's refusal: the row as JSON, exit 78. */
+function refused(rejection: StartupRejection): void {
+  process.stdout.write(`${canonicalJson({ refused: rejection })}\n`);
+  process.exitCode = EXIT_REFUSED;
 }
 
 /** A file a command names, by its absolute path and the sha256 of its bytes as the CLI read them. */

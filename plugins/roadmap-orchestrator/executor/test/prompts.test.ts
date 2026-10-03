@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, questionId, rulingId, sha, specRev, unitId, visionClauseId } from '../src/core/ids.ts';
+import {
+  clauseId, divergenceId, envId, findingId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId, visionClauseId,
+} from '../src/core/ids.ts';
 import { DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../src/holistic/types.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, repoPath, repoPattern } from '../src/core/values.ts';
+import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
 import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted } from '../src/prompts/inputs.ts';
@@ -44,6 +46,15 @@ const obligation = (id: string, statement: string): ObligationDef => ({
 const observed = (id: string, statement: string, tree: typeof SHA_A) => ({
   obligation: obligation(id, statement), exempt: false, latched: false,
   observation: { key: { treeSha: tree, lane: laneId('journey'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210') }, verdict: 'held' as const },
+});
+const packObligations = (cutLine: string) => ({
+  schema: 'roadmap/obligations-m3' as const, cutLine, lanes: [], obligations: [], mapping: { paths: [] },
+  census: [{ rule: ruleId('T-1'), state: { type: 'untestable' as const } }],
+});
+const pinnedRule = (id: string, text: string) => ({ id: ruleId(id), textSha256: sha256('c'.repeat(64)), text, file: repoPath('docs/0010.md'), section: 'Overview' });
+const phase0Of = (why: string) => ({
+  schema: 'roadmap/phase0-m4' as const, curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+  issueCapture: { file: planPath('issues.json'), sha256: sha256('d'.repeat(64)) }, intake: [], slice: { advances: [visionClauseId('V-1')], why },
 });
 const findingView = (id: string, claim: string) => ({
   id: findingId(id), lens: 'invariants' as const, severity: 'P1' as const, state: 'open' as const, obligation: obligationId('I-1'), claim, owner: null,
@@ -134,9 +145,24 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       direction: 'DIR-B',
     },
   ],
+  // M4a: step 0a's placeholder module; B1 replaces it and these samples with the ported pack-review prompt's.
+  packReview: [
+    {
+      vision: vision(1, 'VISION-A'), plan: 'PLAN-A', specs: [spec(1, 'SPEC-A')], obligations: packObligations('OBLIGATION-A'),
+      rulesIndex: [pinnedRule('T-1', 'RULE-A')], phase0: phase0Of('WHY-A'),
+    },
+    {
+      vision: vision(2, 'VISION-B'), plan: 'PLAN-B', specs: [spec(2, 'SPEC-B')], obligations: packObligations('OBLIGATION-B'),
+      rulesIndex: [pinnedRule('T-2', 'RULE-B')], phase0: phase0Of('WHY-B'),
+    },
+  ],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
+  packReview: {
+    findings: [{ severity: 'blocking', target: { type: 'census', rule: 'T-1' }, claim: 'T-1 has no census entry', evidence: [{ path: 'obligations.json', line: 1 }] }],
+    reasons: ['the census misses T-1'], premises: [],
+  },
   planCheck: {
     decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],

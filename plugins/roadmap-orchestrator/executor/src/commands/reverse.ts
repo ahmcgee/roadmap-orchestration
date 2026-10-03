@@ -25,7 +25,7 @@ import type { Event, PlanAppliedFact } from '../core/events.ts';
 import { type CommandId, type DivergenceId, type Sha256Hex, type UnitId, specRev } from '../core/ids.ts';
 import type { PlanManifest } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
-import { type ObligationDef, parseObligations } from '../holistic/types.ts';
+import { type ObligationDef, obligationSource, parseObligations } from '../holistic/types.ts';
 import {
   type InputFile, type InputFiles, OBLIGATIONS_INPUT, PLAN_INPUT, SPEC_INPUT, inForceFiles, keptInput, keptPayload, requirePlanInForce, revisionInForce,
   specBytesOf, specFilePath,
@@ -97,7 +97,7 @@ function specAtRev(ctx: CommandContext, events: readonly Event[], unit: UnitId, 
 
 /** Whether two versions of an obligation differ in what its rev counts: statement, docRef or activation. */
 const normative = (a: ObligationDef, b: ObligationDef): boolean =>
-  a.statement !== b.statement || canonicalJson(a.docRef) !== canonicalJson(b.docRef) || a.activation !== b.activation;
+  a.statement !== b.statement || canonicalJson(obligationSource(a)) !== canonicalJson(obligationSource(b)) || a.activation !== b.activation;
 
 /**
  * The obligations file restoring `pre` (the preimage's bytes) as a fresh revision of `now` (the one in force): each

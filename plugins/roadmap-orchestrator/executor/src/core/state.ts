@@ -858,6 +858,17 @@ export class Fold implements JournalView {
         this.#planAppliedFact(f, at.seq, fail);
         for (const c of f.changes) if (c.type === 'unit-changed') this.#unitChangedSeq.set(c.unit, at.seq);
         return;
+      // M4a (frozen in step 0a): read and validated, and a job they name is seen (`nextJobId`); their folding (the pack-
+      // review hold, intake, amendments, debt) lands with the steps that write them (A4, C3).
+      case 'debt-banked':
+      case 'corpus-amendment':
+        return;
+      case 'issue-intake':
+      case 'pack-review-started':
+      case 'pack-review-ended':
+      case 'issues-captured':
+        this.#seeJob(f.job);
+        return;
       default:
         this.#holisticFact(f, fail, at);
     }

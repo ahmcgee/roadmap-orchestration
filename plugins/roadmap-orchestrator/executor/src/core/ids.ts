@@ -251,10 +251,10 @@ export const divergenceIdOf = D.of;
 export const divergenceSeq = D.n;
 
 /**
- * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch or the
- * baseline witness. `<kind>-<n>`, numbered per kind.
+ * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch, the
+ * baseline witness or (M4a) a pack review. `<kind>-<n>`, numbered per kind.
  */
-export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline'] as const;
+export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobId = Brand<string, 'JobId'>;
 const JOB = new RegExp(`^(${JOB_KINDS.join('|')})-(${POS})$`);
@@ -278,6 +278,71 @@ export function jobIdOfKind(kind: JobKind): IdReader<JobId> {
     return job;
   };
 }
+
+// ---------------------------------------------------------------------------------------------------
+// M4a ids (SCHEMAS.md "M4a"). Unlike the M3 ids these are global across the chain of arcs, except `M-<n>`.
+
+/** A corpus rule: `T-<n>`, global across arcs; a retired id is never reused (the pin and the registry hold it). */
+export type RuleId = Brand<string, 'RuleId'>;
+const T = numbered('RuleId', 'T');
+export const ruleId: IdReader<RuleId> = T.read;
+export const ruleIdOf = T.of;
+export const ruleSeq = T.n;
+
+/** A debt item: `B-<n>`, global and stable across arcs (`debt.md`'s block holds the high-water). */
+export type DebtId = Brand<string, 'DebtId'>;
+const B = numbered('DebtId', 'B');
+export const debtId: IdReader<DebtId> = B.read;
+export const debtIdOf = B.of;
+export const debtSeq = B.n;
+
+/** A corpus amendment: `M-<n>`, numbered within its arc; cited across arcs as `<arc>/M-<n>` (`AmendmentRef`). */
+export type AmendmentId = Brand<string, 'AmendmentId'>;
+const M = numbered('AmendmentId', 'M');
+export const amendmentId: IdReader<AmendmentId> = M.read;
+export const amendmentIdOf = M.of;
+export const amendmentSeq = M.n;
+
+/** An amendment cited outside its arc: `<arc>/M-<n>`. */
+export type AmendmentRef = Brand<string, 'AmendmentRef'>;
+const AMENDMENT_REF = new RegExp(`^(${SLUG})/(M-${POS})$`);
+export const amendmentRef: IdReader<AmendmentRef> = textual('AmendmentRef', AMENDMENT_REF, '<arc>/M-<n>');
+export function amendmentRefOf(arc: ArcId, id: AmendmentId): AmendmentRef {
+  return amendmentRef(`${arc}/${id}`);
+}
+export function parseAmendmentRef(ref: AmendmentRef): Readonly<{ arc: ArcId; id: AmendmentId }> {
+  const m = AMENDMENT_REF.exec(ref);
+  if (m === null) throw new InvalidIdError('AmendmentRef', 'AmendmentRef', '<arc>/M-<n>', ref);
+  return { arc: m[1] as ArcId, id: m[2] as AmendmentId };
+}
+
+/**
+ * A ranked Phase-0 question: `P-<n>`, global, never reused. No registry: the next id is 1 + the max across every
+ * Phase-0 record in the verified chain closure (H23); a carried-forward question keeps its id and text.
+ */
+export type PhaseQuestionId = Brand<string, 'PhaseQuestionId'>;
+const P = numbered('PhaseQuestionId', 'P');
+export const phaseQuestionId: IdReader<PhaseQuestionId> = P.read;
+export const phaseQuestionIdOf = P.of;
+export const phaseQuestionSeq = P.n;
+
+/** A forge issue: `issue-<number>`, the only issue identity in outcomes, amendments and coverage checks (H18). */
+export type IssueId = Brand<string, 'IssueId'>;
+const ISSUE = new RegExp(`^issue-(${POS})$`);
+export const issueId: IdReader<IssueId> = textual('IssueId', ISSUE, 'issue-<number>');
+export const issueIdOf = (n: number): IssueId => issueId(`issue-${n}`);
+export const issueNumber = (id: IssueId): number => Number(ISSUE.exec(id)?.[1]);
+
+/** Pasted issue content and evidence only (H18): an issue's body `issue-<n>`, or one of its comments `issue-<n>/c-<id>`. */
+export type IssueContentRef = Brand<string, 'IssueContentRef'>;
+const ISSUE_CONTENT = new RegExp(`^issue-(${POS})(?:/c-(${POS}))?$`);
+export const issueContentRef: IdReader<IssueContentRef> = textual('IssueContentRef', ISSUE_CONTENT, 'issue-<number> | issue-<number>/c-<id>');
+/** The issue a content ref belongs to. */
+export const issueOfContent = (ref: IssueContentRef): IssueId => issueIdOf(Number(ISSUE_CONTENT.exec(ref)?.[1]));
+
+/** A brief: the first 16 hex of sha256 over its canonical payload (H16). */
+export type BriefId = Brand<string, 'BriefId'>;
+export const briefId: IdReader<BriefId> = textual('BriefId', /^[0-9a-f]{16}$/, '16 lowercase hex');
 
 /** An arc lane's revision: first 16 hex of sha256 over its canonical definition (`laneRevOf`). */
 export type LaneRev = Brand<string, 'LaneRev'>;

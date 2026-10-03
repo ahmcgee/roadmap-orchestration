@@ -78,7 +78,8 @@ import { unitDiffPaths } from '../git/transient.ts';
 import {
   type LoadedSpec, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput, keptPayload, parseUnitSpec, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
-import { type PlanUnit, advancesOf, parsePlan } from '../input/plan.ts';
+import { type PlanUnit, advancesOf, parsePlan, targetDocumentPaths, targetDocuments } from '../input/plan.ts';
+import { notYet } from '../core/notyet.ts';
 import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
@@ -354,18 +355,21 @@ export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
   };
 }
 
-/** The architecture doc a judgment embeds at `tip`: the plan's digest when it names one, else the whole doc. */
+/**
+ * The target a judgment embeds at `tip`: the plan's architecture digest when it names one, else the whole doc. A corpus
+ * arc's (the rules index and the materialised pin) lands in step C2.
+ */
 export function architecture(ctx: StageContext, tip: Sha): ArchitectureInput {
-  const digest = ctx.plan().architectureDigest;
-  return digest === undefined
-    ? { kind: 'full', doc: docAt(ctx, tip, ctx.plan().architectureDoc) }
-    : { kind: 'digest', digest: docAt(ctx, tip, digest), doc: ctx.plan().architectureDoc };
+  const t = targetDocuments(ctx.plan());
+  if (t === null) return notYet('a corpus arc\'s judgment input (the rules index and the materialised pin)', 'C2');
+  return t.digest === null
+    ? { kind: 'full', doc: docAt(ctx, tip, t.doc) }
+    : { kind: 'digest', digest: docAt(ctx, tip, t.digest), doc: t.doc };
 }
 
 /** The product documents whose change touches the unit's authority: every plan contract, the architecture doc and its digest. */
 export function authorityPaths(ctx: StageContext): ReadonlySet<RepoPath> {
-  const digest = ctx.plan().architectureDigest;
-  return new Set<RepoPath>([...ctx.plan().contracts, ctx.plan().architectureDoc, ...(digest === undefined ? [] : [digest])]);
+  return new Set<RepoPath>([...ctx.plan().contracts, ...targetDocumentPaths(ctx.plan())]);
 }
 
 export const inMs = (ms: number) => isoTimeOf(new Date(Date.now() + ms));

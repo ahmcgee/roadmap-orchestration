@@ -26,7 +26,7 @@
 import type { LaneId, ObligationId, RulingId, UnitId, VisionClauseId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevOf,
+  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevOf, obligationSource,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
@@ -62,7 +62,7 @@ export function weakeningsOf(prev: ObligationDef, next: ObligationDef | undefine
     out.push({ disposition: s.type, what: `${s.type} by ${s.ruling}`, ruling: s.ruling });
   }
   if (next.statement !== prev.statement) out.push({ disposition: 'amended', what: 'statement changed', ruling: null });
-  if (canonicalJson(next.docRef) !== canonicalJson(prev.docRef)) out.push({ disposition: 'amended', what: 'docRef changed', ruling: null });
+  if (canonicalJson(obligationSource(next)) !== canonicalJson(obligationSource(prev))) out.push({ disposition: 'amended', what: 'docRef changed', ruling: null });
   if (prev.activation === 'must-hold' && next.activation === 'future') out.push({ disposition: 'amended', what: 'must-hold → future', ruling: null });
   if (prev.witness !== null && next.witness !== null) {
     const kept = new Set(next.witness.testIds.map((t) => `${next.witness!.lane}\u0000${t}`));
@@ -147,7 +147,7 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
     if (o.parent !== p.parent) reasons.push(`${o.id}'s parent changed (a split family is fixed)`);
     newCites(o, p);
 
-    const normative = o.statement !== p.statement || canonicalJson(o.docRef) !== canonicalJson(p.docRef) || o.activation !== p.activation;
+    const normative = o.statement !== p.statement || canonicalJson(obligationSource(o)) !== canonicalJson(obligationSource(p)) || o.activation !== p.activation;
     if (o.rev !== p.rev + (normative ? 1 : 0)) reasons.push(`${o.id} takes rev ${p.rev + (normative ? 1 : 0)}, not ${o.rev} (the rev rises exactly when its statement, docRef or activation changes)`);
 
     for (const w of weakeningsOf(p, o)) disposed(o.id, w);

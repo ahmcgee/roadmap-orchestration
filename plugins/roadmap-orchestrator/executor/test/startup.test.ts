@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { arcId, invocationIdOf, laneId, resourceName, sha, unitId } from '../src/core/ids.ts';
-import { absPath, planPath } from '../src/core/values.ts';
+import { arcId, invocationIdOf, issueId, laneId, resourceName, ruleId, sha, sha256, unitId } from '../src/core/ids.ts';
+import { absPath, planPath, repoPath } from '../src/core/values.ts';
 import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection, type StartupRejectionKind, exitCodeFor } from '../src/preflight/startup.ts';
 
 const arc = arcId('arc-1');
@@ -23,6 +23,13 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'log-corrupt': { kind: 'log-corrupt', file: absPath('/r/.git/roadmap-runtime/arc-1/events.jsonl'), offset: 4096, detail: 'bad line' },
   'containment-mode-changed': { kind: 'containment-mode-changed', recorded: 'session', detected: 'cgroup' },
   'plan-change-refused': { kind: 'plan-change-refused', reasons: ['unit u1 has started; it cannot be removed'] },
+  'vision-unconfirmed': { kind: 'vision-unconfirmed', ref: 'corpus:0005_Vision.md#sha256:' + 'a'.repeat(64), expected: sha256('a'.repeat(64)), actual: null },
+  'corpus-invalid': { kind: 'corpus-invalid', problems: [{ type: 'pin-drift' }, { type: 'rule-reused', id: ruleId('T-3') }] },
+  'phase0-invalid': { kind: 'phase0-invalid', problems: [{ type: 'intake-missing', issue: issueId('issue-4') }] },
+  'chain-invalid': { kind: 'chain-invalid', problem: { type: 'limit', k: 1, unacked: 1 } },
+  'issue-policy-untrusted': { kind: 'issue-policy-untrusted', visibility: 'PUBLIC', policy: 'ALL' },
+  'tree-uncommitted': { kind: 'tree-uncommitted', paths: [repoPath('.roadmap/vision.json')] },
+  'holistic-needs-corpus': { kind: 'holistic-needs-corpus' },
 };
 
 describe('startup rejection table', () => {

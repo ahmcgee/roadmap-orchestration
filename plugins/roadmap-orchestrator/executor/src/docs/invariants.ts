@@ -9,7 +9,7 @@
 import type { ObligationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { repoPath } from '../core/values.ts';
-import { type ObligationDef, type Obligations, parseObligations } from '../holistic/types.ts';
+import { type ObligationDef, type Obligations, obligationSource, parseObligations } from '../holistic/types.ts';
 
 export const OBLIGATIONS_BLOCK_INFO = 'json roadmap-obligations';
 
@@ -39,12 +39,20 @@ function stateText(o: ObligationDef): string {
   }
 }
 
+/** A doc-anchored obligation's doc ref; a rule-anchored one's rule (M4a). */
+function anchorLine(o: ObligationDef): string {
+  const src = obligationSource(o);
+  return src.kind === 'doc'
+    ? `doc ref: ${code(src.path)} ${code(src.anchor)}: ${JSON.stringify(src.quotedText)}`
+    : `rule: ${code(src.rule.id)}`;
+}
+
 function entry(o: ObligationDef): string {
   const lines = [
     `state: ${stateText(o)}`,
     `activation: ${o.activation}`,
     `rev: ${o.rev}`,
-    `doc ref: ${code(o.docRef.path)} ${code(o.docRef.anchor)}: ${JSON.stringify(o.docRef.quotedText)}`,
+    anchorLine(o),
     `serves: ${list(o.serves)}`,
     `witness: ${o.witness === null ? '(none: a split parent is witnessed through its children)' : `lane ${code(o.witness.lane)}, tests ${o.witness.testIds.map((t) => JSON.stringify(t)).join(', ')}`}`,
     ...(o.deliveredBy.length === 0 ? [] : [`delivered by: ${o.deliveredBy.join(', ')}`]),

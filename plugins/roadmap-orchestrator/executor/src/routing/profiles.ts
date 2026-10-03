@@ -13,7 +13,8 @@ const JUDGMENT: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'frontier'
 
 /**
  * The efficient class builds low/med, frontier builds high. The arc roles (M3): the lenses on frontier (Opus),
- * the checkpoint on summit (Fable); they are in force only while the arc is holistic (layers.ts).
+ * the checkpoint on summit (Fable); they are in force only while the arc is holistic (layers.ts). The pack review
+ * (M4a, OR-Q16) on frontier; its seat is placed here by step 0a and owned by A2 from then on.
  */
 export const BUILTIN_SEATS: ClassTable = {
   planCheck: JUDGMENT,
@@ -21,4 +22,5 @@ export const BUILTIN_SEATS: ClassTable = {
   gate: JUDGMENT,
   lens: { arc: 'frontier' },
   checkpoint: { arc: 'summit' },
+  packReview: { arc: 'frontier' },
 };

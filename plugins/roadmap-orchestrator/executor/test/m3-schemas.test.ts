@@ -122,7 +122,7 @@ describe('M3 ids', () => {
     for (const bad of ['V-0', 'V-01', 'I-', 'F-x', 'D-1a']) assert.throws(() => (bad[0] === 'V' ? visionClauseId(bad) : bad[0] === 'I' ? obligationId(bad) : bad[0] === 'F' ? findingId(bad) : divergenceId(bad)), InvalidIdError, bad);
     assert.deepEqual(parseJobId(jobIdOf('baseline-2')), { kind: 'baseline', n: 2 });
     for (const k of ['audit', 'ckpt', 'docs', 'batch', 'baseline'] as const) assert.equal(jobId(k, 3), `${k}-3`);
-    assert.throws(() => jobIdOf('review-1'), InvalidIdError);
+    assert.throws(() => jobIdOf('lens-1'), InvalidIdError); // M4a made `review-<n>` a job kind (m4a-schemas)
     assert.throws(() => jobIdOfKind('docs')('audit-1'), InvalidIdError);
     assert.throws(() => laneRev('0123'), InvalidIdError);
     assert.throws(() => envId('XYZ'), InvalidIdError);
@@ -408,11 +408,12 @@ describe('M3 file records', () => {
       units: [{ ...unit, origin: 'repair', routing: { gate: { med: 'summit' } }, limits: { redirects: 1 } }, { ...unit, id: 'u2', spec: 'specs/u2.json' }],
     };
     const plan = parsePlan(m3);
-    assert.deepEqual(plan, m3);
+    assert.deepEqual(plan, { ...m3, target: 'architecture-doc' });
+    assert.ok(plan.target === 'architecture-doc' && plan.holistic !== undefined);
     assert.deepEqual(boundsOf(plan, plan.units[0]!), { ...DEFAULT_BOUNDS, chargeable: 4, redirects: 1 });
     assert.deepEqual(boundsOf(plan, plan.units[1]!), { ...DEFAULT_BOUNDS, chargeable: 4 });
     assert.deepEqual(lensSetOf(plan.holistic!), ['invariants', 'vision']);
-    assert.deepEqual(lensSetOf({ vision: plan.holistic!.vision, advances: plan.holistic!.advances }), ['invariants', 'drift', 'vacuity', 'vision']);
+    assert.deepEqual(lensSetOf({ advances: plan.holistic.advances }), ['invariants', 'drift', 'vacuity', 'vision']);
     assert.equal(DEFAULT_CONVERGENCE_K, 3);
     const noM3 = parsePlan(base);
     assert.equal(noM3.holistic, undefined);

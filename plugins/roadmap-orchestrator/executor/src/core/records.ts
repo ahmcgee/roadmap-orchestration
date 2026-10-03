@@ -544,6 +544,8 @@ export type ApprovalFingerprint = Readonly<{
    * byte-identical to a 1.0.0-dev.5 one and compares equal to it (`obligationRevsOf`).
    */
   obligationRevs?: readonly ObligationRev[];
+  /** M4a (R6): the corpus pin in force at the gated tip, in a corpus arc; absent: none (lasting, byte-identical to dev.6). */
+  corpus?: Sha256Hex;
 }>;
 export type ObligationRev = Readonly<{ id: ObligationId; rev: number }>;
 
@@ -551,12 +553,14 @@ const obligationRev: Read<ObligationRev> = object((g) => ({ id: g.get('id', (v, 
 
 export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => {
   const obligationRevs = f.optional('obligationRevs', sortedBy(obligationRev, (e) => e.id, { nonEmpty: true }));
+  const corpus = f.optional('corpus', (v, p) => sha256(v, p));
   return {
     unitCommit: f.get('unitCommit', commitSha),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
     contractRevs: f.get('contractRevs', sortedBy(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), blob: g.get('blob', commitSha) })), (e) => e.path)),
     rulingRevs: f.get('rulingRevs', sortedBy(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
     ...(obligationRevs === undefined ? {} : { obligationRevs }),
+    ...(corpus === undefined ? {} : { corpus }),
   };
 });
 
@@ -1039,11 +1043,19 @@ export const planManifest: Read<PlanManifest> = object((f) => ({
  * sidecar's (kept as `inputs/<sha256>.rulings.md` and `inputs/<sha256>.ruling.json`); `obligations` and `vision`:
  * the obligations and vision files' (`inputs/<sha256>.obligations.json`, `.vision.json`), null when the plan
  * names none.
+ *
+ * M4a (a corpus arc's; absent: none, lasting): `corpus` the pin (`inputs/<sha>.corpus.json`), `corpusGuide` the guide's
+ * bytes (`inputs/<sha>.corpus-guide.md`, H5), `phase0` the Phase-0 record (`inputs/<sha>.phase0.json`) and `phase0Issues`
+ * its issue capture (`inputs/<sha>.issues.json`, H8). The four are present together or not at all.
  */
 export type RevisionInputs = Readonly<{
   rulings: Readonly<{ ledgerSha256: Sha256Hex; sidecars: Readonly<Record<RulingId, Sha256Hex>> }>;
   obligations: Sha256Hex | null;
   vision: Sha256Hex | null;
+  corpus?: Sha256Hex;
+  corpusGuide?: Sha256Hex;
+  phase0?: Sha256Hex;
+  phase0Issues?: Sha256Hex;
 }>;
 /** What an M3 `apply` hashes (A2): the plan manifest and the revision inputs. */
 export type RevisionManifest = PlanManifest & RevisionInputs;
@@ -1061,11 +1073,22 @@ const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) =
   f.end();
   return out;
 };
-export const revisionInputs = (f: Fields): RevisionInputs => ({
-  rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
-  obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
-  vision: f.get('vision', nullable((v, p) => sha256(v, p))),
-});
+const CORPUS_INPUTS = ['corpus', 'corpusGuide', 'phase0', 'phase0Issues'] as const;
+export const revisionInputs = (f: Fields): RevisionInputs => {
+  const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number], Sha256Hex>> = {};
+  for (const k of CORPUS_INPUTS) {
+    const v = f.optional(k, (x, p) => sha256(x, p));
+    if (v !== undefined) corpus[k] = v;
+  }
+  const n = Object.keys(corpus).length;
+  if (n !== 0 && n !== CORPUS_INPUTS.length) throw new SchemaError(`${f.path}.corpus`, `all of ${CORPUS_INPUTS.join(', ')} or none (a corpus arc's inputs)`, corpus);
+  return {
+    rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
+    obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
+    vision: f.get('vision', nullable((v, p) => sha256(v, p))),
+    ...corpus,
+  };
+};
 export const applyManifest: Read<ApplyManifest> = (value, path) => {
   const m3 = typeof value === 'object' && value !== null && Object.hasOwn(value, 'rulings');
   return object((f): ApplyManifest => ({
@@ -1215,6 +1238,10 @@ export const NEEDS_USER_REASONS = [
   // M3, non-blocking: a bundle held for the architect (A9: `apply | reject`); the convergence brakes; an owed audit;
   // the divergence digest (H11).
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest',
+  // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
+  // the first (K14, H9); a checkpoint capture that found the issue policy untrusted, holding admission arc-wide and the
+  // capture until acked (OR-L6).
+  'pack-review', 'issue-policy-untrusted',
 ] as const;
 /** The M3 reasons raised non-blocking; every other M3 reason is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = ['bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest'] as const satisfies readonly NeedsUserReason[];

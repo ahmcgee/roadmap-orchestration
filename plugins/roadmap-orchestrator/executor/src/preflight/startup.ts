@@ -4,11 +4,15 @@
 // kind; no fs or git here. A refused start persists its rejections as `status.rejection.json` in the run
 // dir (`RejectionFile`, step 13b), which `status` reads back through `rejectionFile`.
 import {
-  type ArcId, type InvocationId, type LaneId, type ResourceName, type Sha, type UnitId, CPU_POOL, arcId, invocationIdOf, laneId, resourceName, sha, unitId,
+  type ArcId, type InvocationId, type LaneId, type ResourceName, type Sha, type Sha256Hex, type UnitId, CPU_POOL, arcId, invocationIdOf, laneId,
+  resourceName, sha, sha256, unitId,
 } from '../core/ids.ts';
 import { type ResidueKey, residueKey } from '../core/records.ts';
-import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, str, tagged, version } from '../core/validate.ts';
-import { type AbsPath, type IsoTime, type PlanPath, type RefName, absPath, isoTime, planPath, refName } from '../core/values.ts';
+import {
+  type ChainProblem, type CorpusProblem, type Phase0Problem, type UntrustedPolicy, chainProblem, corpusProblem, phase0Problem, untrustedPolicyFields,
+} from '../phase0/types.ts';
+import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, version } from '../core/validate.ts';
+import { type AbsPath, type IsoTime, type PlanPath, type RefName, type RepoPath, absPath, isoTime, planPath, refName, repoPath } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
 import type { PlanM1, PlanUnit } from '../input/plan.ts';
 import type { OverCapacity } from '../resources/pool.ts';
@@ -72,7 +76,19 @@ export type StartupRejection =
   | Readonly<{ kind: 'containment-mode-changed'; recorded: 'session' | 'cgroup'; detected: 'session' | 'cgroup' }>
   // Row: a start whose plan.json or specs differ from the plan in force, with a change the apply rules refuse
   // (src/input/classify.ts); every reason is listed. A respawn runs the plan in force and never asks.
-  | Readonly<{ kind: 'plan-change-refused'; reasons: readonly string[] }>;
+  | Readonly<{ kind: 'plan-change-refused'; reasons: readonly string[] }>
+  // M4a rows, shared with `roadmap phase0 check` (`phase0Rows`, src/phase0/rows.ts, step C1).
+  // The vision's confirmation does not match the pinned corpus file (`ref` null: unconfirmed; `actual` null: no such file).
+  | Readonly<{ kind: 'vision-unconfirmed'; ref: string | null; expected: Sha256Hex | null; actual: Sha256Hex | null }>
+  | Readonly<{ kind: 'corpus-invalid'; problems: readonly CorpusProblem[] }>
+  | Readonly<{ kind: 'phase0-invalid'; problems: readonly Phase0Problem[] }>
+  | Readonly<{ kind: 'chain-invalid'; problem: ChainProblem }>
+  // The forge's issue policy lets anyone open issues (OR-L6): restrict issue creation or disable issues.
+  | (Readonly<{ kind: 'issue-policy-untrusted' }> & UntrustedPolicy)
+  // `.roadmap/{vision.json, corpus.md, config.json}` in the working tree differ from their blobs at HEAD (K18).
+  | Readonly<{ kind: 'tree-uncommitted'; paths: readonly RepoPath[] }>
+  // A fresh arc's holistic plan names an architecture doc (H4, R17): a new holistic arc targets a corpus.
+  | Readonly<{ kind: 'holistic-needs-corpus' }>;
 
 /** Why a declared command (a lane, a probe, a teardown) cannot run on this host. */
 export type CommandProblem = Readonly<{ type: 'argv0-unresolvable'; argv0: string }> | Readonly<{ type: 'env-missing'; name: string }>;
@@ -97,6 +113,13 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'log-corrupt':
     case 'containment-mode-changed':
     case 'plan-change-refused':
+    case 'vision-unconfirmed':
+    case 'corpus-invalid':
+    case 'phase0-invalid':
+    case 'chain-invalid':
+    case 'issue-policy-untrusted':
+    case 'tree-uncommitted':
+    case 'holistic-needs-corpus':
       return EXIT_REFUSED;
   }
 }
@@ -140,6 +163,7 @@ const laneProblem: Read<LaneProblem> = (value, path) => {
 type Row<K extends StartupRejectionKind> = Extract<StartupRejection, { kind: K }>;
 const abs: Read<AbsPath> = (v, p) => absPath(v, p);
 const containment = oneOf(['session', 'cgroup'] as const);
+const sha256R: Read<Sha256Hex> = (v, p) => sha256(v, p);
 
 const specLaneUnrunnable: Read<Row<'spec-lane-unrunnable'>> = (value, path) => {
   if (typeof value === 'object' && value !== null && Object.hasOwn(value, 'resource')) {
@@ -206,6 +230,19 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
   'plan-change-refused': object((f): StartupRejection => ({
     kind: f.get('kind', literal('plan-change-refused')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
   })),
+  'vision-unconfirmed': object((f): StartupRejection => ({
+    kind: f.get('kind', literal('vision-unconfirmed')), ref: f.get('ref', nullable(str)), expected: f.get('expected', nullable(sha256R)), actual: f.get('actual', nullable(sha256R)),
+  })),
+  'corpus-invalid': object((f): StartupRejection => ({ kind: f.get('kind', literal('corpus-invalid')), problems: f.get('problems', arrayOf(corpusProblem, { nonEmpty: true })) })),
+  'phase0-invalid': object((f): StartupRejection => ({ kind: f.get('kind', literal('phase0-invalid')), problems: f.get('problems', arrayOf(phase0Problem, { nonEmpty: true })) })),
+  'chain-invalid': object((f): StartupRejection => ({ kind: f.get('kind', literal('chain-invalid')), problem: f.get('problem', chainProblem) })),
+  'issue-policy-untrusted': object((f): StartupRejection => ({
+    kind: f.get('kind', literal('issue-policy-untrusted')), visibility: f.get('visibility', untrustedPolicyFields.visibility), policy: f.get('policy', untrustedPolicyFields.policy),
+  })),
+  'tree-uncommitted': object((f): StartupRejection => ({
+    kind: f.get('kind', literal('tree-uncommitted')), paths: f.get('paths', sortedBy((v, p): RepoPath => repoPath(v, p), (x) => x, { nonEmpty: true })),
+  })),
+  'holistic-needs-corpus': object((f): StartupRejection => ({ kind: f.get('kind', literal('holistic-needs-corpus')) })),
 });
 
 export const rejectionFile: Read<RejectionFile> = object((f) => {

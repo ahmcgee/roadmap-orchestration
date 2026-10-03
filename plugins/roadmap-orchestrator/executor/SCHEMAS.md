@@ -1,9 +1,10 @@
-# Executor schemas and contracts (frozen in M1 step 1a; M2 additions in M2 step 0a; M3 additions in M3 step 0a)
+# Executor schemas and contracts (frozen in M1 step 1a; M2 additions in M2 step 0a; M3 additions in M3 step 0a; M4a additions in M4a step 0a)
 
-The specification every later step compiles against, current as of 1.0.0-dev.6 (M3). M2's records and scheduling
+The specification every later step compiles against, current as of 1.0.0-dev.7 (M4a). M2's records and scheduling
 interfaces are in place below and summarised in "M2: scheduling, resources, parks"; M3's are in "M3: the holistic
-layer" at the end, whose later "Choices made in M3 …" sections state the rule where an earlier section is
-superseded. Each schema names the TypeScript type and the
+layer", whose later "Choices made in M3 …" sections state the rule where an earlier section is
+superseded; M4a's are in "M4a: corpus, debt, forge, brief, chaining" at the end, which supersedes the M3 text it names
+(the plan target, obligation anchors, sidecar refs, the vision's home and confirmation). Each schema names the TypeScript type and the
 validator that implement it; if you change one, change the other in the same commit. Owner: the lead.
 Other steps request changes rather than edit.
 
@@ -99,6 +100,30 @@ holistic layer, spends nothing new, and completes as in M2.
 | `UnitState` (fold) | `+ bounds` | derived from the latest dispatch record |
 | `DerivedState` (`state.json`) | `+ holistic` (`HolisticFold`) | derived |
 | `residues.jsonl` | `+ compacted` head, archives (A5a) | none: an uncompacted index has no head |
+
+**1.0.0-dev.6 → 1.0.0-dev.7 (M4a).** `SCHEMA_VERSION` stays 1; the plan and spec literals stay `roadmap/plan-m1` and
+`roadmap/spec-m1` (LR-b). Every change is additive and byte-preserving (G14); each scaffolding default below is a helper
+in `src/core/upgrade.ts` (warned once per process), the rest lasting absent-means-none. dev.6 is the only release
+adopted (OR-L4: step X0 deletes every older layer); `PREVIOUS_RELEASE` for this update is 0a58349 (1.0.0-dev.6). An
+adopted dev.6 arc runs on with docRef obligations, an unverified vision and no census, keeps its target variant, and
+completes as in M3.
+
+| Record | Change | Read-time default for dev.6 state |
+|---|---|---|
+| `plan.json` | parsed into the closed target union (`target: architecture-doc \| corpus`, K7); `+ corpus?`, `+ phase0?`, `+ chain?{previousArc, previousHead}` | `architectureDoc` present: the `architecture-doc` variant (lasting for non-holistic arcs; scaffolding for holistic ones) |
+| `PlanChange` | `+ corpus{pinSha256, guideSha256}`, `+ phase0{sha256, issuesSha256}` (H7) | none |
+| `obligations-m3` | obligation: exactly one of `docRef \| rule{id, textSha256}`; file `+ census?` | docRef obligations, no census: M3 semantics, census checks vacuous (`censusOf`) |
+| `vision-m3` | `confirmation.ref` gains `corpus:<path>#sha256:<hex>` | the `vision.md#…` form, never verified (`visionVerifiable`) |
+| `ruling-m3` sidecar | `docRefs[]` `+` the rule arm `{rule, textSha256, relation: consistent \| refines}` (K19); `consistency.judgedRevs + corpusSha256?` | none (lasting) |
+| `ApprovalFingerprint` | `+ corpus?` (the pin's sha256) | absent: none (lasting, byte-identical to dev.6) |
+| `RevisionManifest` (`RevisionInputs`) | `+ corpus?, corpusGuide?, phase0?, phase0Issues?` (all four or none) | absent: none |
+| `checkpoint-inputs` | `+ issues?: captured{sha256} \| unavailable{reason}`, `+ corpusSha256?` | absent: none |
+| Checkpoint answer | `+ corpusAmendments`, `+ issueIntake`; split child `docRef` nullable, `+ rule` | absent: none (`checkpointOutputM4Default`, `splitChildRuleDefault`) |
+| `.roadmap/config.json` | `+ chain?{k}` | absent: K unset (lasting) |
+| `Role` | `+ packReview` (seat `arc`, frontier) | in force for every holistic arc (its seat is hashed: revs change, nothing parks, OR-L3) |
+| `JobId` | `+ review-<n>` | none |
+| `DispatchRecord`, `status` routing tables | none persisted | `dev6SeatTriple`, `dev6RevAlias` (step A2) |
+| New facts, `NeedsUserReason`, startup rows, `FINDING_LENSES + issue` | "M4a" | none |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -2067,3 +2092,192 @@ ran the holistic layer before it: no defaulting and no `SCHEMA_VERSION` bump):
    provisional (act on it, prefer the reversible choice); for the checkpoint, an act costly to undo if it proves false
    is a `request` (class `vision`), not an op; never resolve an open question.
 5. **`status.vision`** gains `questions` (as the file holds them) and `advances` (the plan in force's).
+
+## M4a: corpus, debt, forge, brief, chaining (frozen in M4a step 0a)
+
+The records and signatures of M4a (plan `/claude-state/plans/m4a-convergence.md`, revision 2.1). The types and readers
+are in `src/core/{ids,records,events,state,upgrade,notyet}.ts`, `src/input/{plan,cli}.ts`, `src/holistic/{types,packreview}.ts`,
+`src/corpus/types.ts`, `src/forge/types.ts`, `src/debt/types.ts`, `src/phase0/types.ts`, `src/preflight/startup.ts`,
+`src/routing/{types,profiles,layers}.ts` and `src/prompts/{inputs,schemas,index}.ts`; the behaviour is the later steps'
+(A1–A4, B1, X0, C1–C4). DESIGN-1.0.md (draft 9) is the prose.
+
+**Ids** (`src/core/ids.ts`). `RuleId` `T-<n>` (global across arcs, never reused; `ruleSeq`), `DebtId` `B-<n>` (global,
+stable), `AmendmentId` `M-<n>` (numbered within its arc) and `AmendmentRef` `<arc>/M-<n>` (cited across arcs),
+`PhaseQuestionId` `P-<n>` (global, never reused: the next is 1 + the max across the Phase-0 records of the verified chain
+closure, H23), `IssueId` `issue-<number>` (the only issue identity in outcomes, amendments and coverage, H18),
+`IssueContentRef` `issue-<n> | issue-<n>/c-<id>` (pasted content and evidence only; `issueOfContent`), `BriefId` (16
+hex), `JobId += review-<n>`. A pack finding is identified by `(job, index)` only (K13).
+
+**Plan target** (`src/input/plan.ts`, K7). The parsed plan is `PlanBase & (ArchitectureDocTarget | CorpusTarget)`, the
+discriminant `target` flattened onto it; the file is told by the field present and never carries `target`:
+`{target: architecture-doc, architectureDoc, architectureDigest?, holistic?: HolisticDoc (with vision)}` or `{target:
+corpus, corpus: PlanPath (the pin), phase0: PlanPath (the Phase-0 record), holistic: Holistic (no vision)}`.
+`holistic.advances`, `obligations` and `audit` read the same in both arms. `chain?: {previousArc, previousHead}` (H12),
+fixed at revision 1 (`chain-immutable`, C1). Refused at parse (`plan-invalid{schema}`): both `architectureDoc` and
+`corpus`; neither; `corpus` without `phase0`; `phase0` without `corpus`; `architectureDigest` with `corpus`; `corpus`
+without `holistic`; `holistic.vision` with `corpus`; `holistic` without `vision` on an `architecture-doc` plan. A fresh
+arc's holistic `architecture-doc` start is `holistic-needs-corpus` (C1, H4).
+
+**Accessors (H10)**, the only readers of the variant fields: `targetDocuments(plan) → {doc, digest|null} | null` (null for
+a corpus arc) and `targetDocumentPaths`; `contractOpDocuments(plan)` (contracts and the architecture doc, never the
+digest or a corpus file); `planFieldValue` (the `plan-field` change comparison); `visionFile(plan) → {base: plan, path}
+| {base: repo, path: .roadmap/vision.json} | null`; `obligationSource(o) → {kind: doc, path, anchor, quotedText} |
+{kind: rule, rule: {id, textSha256}}`; `rulingRefSource(d) → {kind: doc, path, anchor, quotedText, relation} | {kind:
+rule, rule, textSha256, relation}`; `splitChildAnchor(c)`. Test `target.no-direct-access` scans `src/` (comments and
+plain string literals blanked) outside `src/input/plan.ts`, `src/holistic/types.ts` and `src/prompts/schemas.ts` for a
+property access of `.architectureDoc`, `.architectureDigest` or `.docRef`, `holistic.vision`/`holistic?.vision`, the
+type `RulingDocRef`, and an `in` test on an anchor key; the union types refuse every unnarrowed read.
+
+**Corpus guide** (`.roadmap/corpus.md`, R2; `src/corpus/types.ts`): prose plus exactly one fenced `json roadmap-corpus`
+block, `{schema: roadmap/corpus-guide-m4, source: same-repo{root} | other-repo{path: AbsPath, root} | checkout{remote,
+root}, include: RepoPattern[] (non-empty, unique, relative to root), vision: <path under root>}`. A checkout clone lives
+at `$(git-common-dir)/roadmap/corpus/<sha256 of the canonical remote>/` with a write-once `remote.json` (H22).
+
+**Corpus pin** (`roadmap/corpus-pin-m4`, `plan.corpus`; `parseCorpusPin`). `{schema, guideSha256, source: {kind,
+commit, root, path? (other-repo) | remote? (checkout)}, files: [{path, sha256}] (ascending, non-empty), rules: [{id,
+textSha256, text, file, section|null}] (ascending by number), retired: [{id, textSha256}] (ascending by number),
+highWater, vision: {path, sha256}}`. Paths are under the source root. The reader checks: the vision is a pinned file
+with its hash; every rule's file is pinned and is not the vision doc (`rules-in-vision`); no retired id is active;
+`highWater` ≥ every pinned number. `textSha256` = sha256 of the text trimmed with whitespace collapsed (`normalizeText`,
+A1, shared with `debtKey`). Re-derivation at start and apply (`pin-drift`) and the kept bytes are C1's.
+
+**Rules registry** (`json roadmap-rules` block in the published `invariants.md`, R3): `{highWater, active: [{id,
+textSha256}], retired: [{id, textSha256}]}` (each ascending by number, disjoint, `highWater` ≥ every number).
+
+**Obligations.** `ObligationDef = {…M3 fields} & ({docRef} | {rule: {id: T-n, textSha256}})`: exactly one anchor. File
+`+ census?: [{rule: T-n, state: obligation{id: I-n} | out-of-slice | untestable | prod-only}]` (ascending by rule
+number, one entry per rule). The reader checks: one anchor kind for every obligation of a file; a census exactly beside
+rule anchors (absent beside docRefs, required beside rules); an `obligation` state names an obligation of the file
+anchored at that rule, each once; every rule obligation appears in the census. One entry per active pinned rule and none
+for a retired or unknown one is checked against the pin (`census-incomplete`, `census-dangling`, C1).
+
+**Ruling sidecars.** `docRefs[]` is `RulingDocRef | RulingRuleRef`; on disk the rule arm is told by `rule`: `{rule: T-n,
+textSha256, relation: consistent | refines}`; `deviates` is refused on it (K19; test `sidecar.rule-arm-no-deviates`), so
+only a doc ref deviates and needs contract ops. `consistency.judgedRevs + corpusSha256?` (the pin in force).
+
+**Vision.** A corpus arc's record is `<repo>/.roadmap/vision.json` (R1), its vision document a corpus file with no rules
+block. `confirmation.ref` (`parseConfirmationRef`): `corpus:<path under root>#sha256:<hex>`, verified at every start and
+apply against the pinned file (`vision-unconfirmed`, C1); the M3 form `<file>#sha256:<hex>` of an adopted dev.6 arc is
+never verified (`visionVerifiable`, scaffolding).
+
+**Phase-0 record** (`roadmap/phase0-m4`, `plan.phase0`; `parsePhase0Record`; revisioned like the vision). `{schema,
+curation: [{tier: structural | fact-currency, what, files (non-empty), rules}], corpusDivergences: [{tier: semantic,
+what, preimage: {pinSha256, files: [{path, sha256}] (non-empty)}, cites: V-n[] (non-empty), rules}], questions: [{id:
+P-n, rank (unique), text, files (non-empty), bears: (T-n|V-n)[] (non-empty), assumption, state: open | answered{answer,
+at}}] (ascending by number), debt: [{id: B-n, disposition: promote{unit} | keep{reason} | resolve{ruling: C-n}}]
+(ascending by number), amendments: [{id: <arc>/M-n, disposition: applied{rules} | rejected{reason} | deferred{reason}}]
+(ascending), issueCapture: {file: PlanPath, sha256}, intake: [{issue: IssueId, outcome: finding{severity, claim} |
+amendment{rules, proposal} | acted{on: units{ids} | rules{ids}} | none{reason}}] (ascending by issue number, one per
+issue), slice: {advances: V-n[] (non-empty), why}}`.
+
+**Issue capture** (`roadmap/issues-capture-m4`, `src/forge/types.ts`; one schema for Phase 0 and checkpoints, kept as
+`inputs/<sha>.issues.json`). `{schema, repo: {host, owner, name}, policy: {visibility: PUBLIC | PRIVATE | INTERNAL,
+hasIssuesEnabled, issueCreationPolicy: ALL | COLLABORATORS_ONLY}, issues: [{id: IssueId, title, labels (ascending),
+body (pasted_content-wrapped), comments: [{id: issue-n/c-m of that issue, association: OWNER | MEMBER | COLLABORATOR |
+CONTRIBUTOR | FIRST_TIME_CONTRIBUTOR | FIRST_TIMER | MANNEQUIN | NONE, body}] (ascending by comment id)}] (ascending by
+number; empty while issues are disabled), filtered: {comments, pullRequests}}`, canonical JSON, no clock. `acted` is one
+closed shape (H17, R29): `acted{on: ops{indexes} | units{ids} | rules{ids}}`, each list non-empty and ascending
+(`actedOn(kinds)`); Phase 0 reads only `units | rules`.
+
+**Debt** (`roadmap/debt-m4`, the `json roadmap-debt` block of `debt.md`; `src/debt/types.ts`). `{schema, items: [{id: B-n,
+originArc, bankReason: gate-note | finding-deferred, what, unit|null, key, history: [{arc, disposition}], state: open |
+promoted | resolved}] (ascending by number)}`. `key` is computed only by `debtKey` (A4's src/debt/ledger.ts).
+
+**Pack review** (`src/holistic/types.ts`, `src/holistic/packreview.ts`). `PackReviewInputs` (`roadmap/pack-review-inputs-m4`,
+kept as `inputs/<sha>.pack-review.json` before the spawn, K8): `{schema, job: review-n, planRev, planSha256, specs:
+[{unit, sha256}] (ascending, non-empty), obligationsSha256, corpusPinSha256, phase0Sha256, visionSha256, head,
+routingRev}`. `packReviewKey(inputs)` = sha256 of the canonical inputs without `job` (R28), the only place the
+required-review key is computed. `PackFinding = {index, severity: blocking | note, target: unit{id} | obligation{id} |
+census{rule} | rule{id} | plan, claim, evidence: [{path, line}]}`.
+
+**`PlanChange`** (H7; source `command` only, as `vision`): `corpus{pinSha256, guideSha256}` (a re-pin: a drift trigger,
+every approval re-gates through the fingerprint's `corpus`, a new required-review key before the first admission);
+`phase0{sha256, issuesSha256}` (a Phase-0 record edit: only a new required-review key; `promote` while draining is
+refused, C1).
+
+**Facts** (`M4aFact`, `src/core/events.ts`; folded by the steps that write them: 0a's fold sees the job a fact names):
+
+| Fact `kind` | Fields |
+|---|---|
+| `debt-banked` | `id: B-n, bankReason, what, key, source: gate{unit, attempt, index} \| finding{finding}`; idempotent per source (A4) |
+| `corpus-amendment` | `id: M-n, source: checkpoint{job: ckpt-n, index} \| divergence{divergence: D-n} \| issue{job: ckpt-n, issue}, rules: T-n[] (ascending), proposal, why, evidence` |
+| `issue-intake` | `job: ckpt-n, issue, outcome: finding{finding: F-n} \| amendment{amendment: M-n} \| acted{on: ops{indexes}} \| none{reason}`; one per `(job, issue)` (C3) |
+| `pack-review-started` | `job: review-n, planRev, inputsSha256, key` |
+| `pack-review-ended` | `job: review-n, outcome: completed \| abandoned, findings: PackFinding[]` (each `index` its place; none when abandoned) |
+| `issues-captured` | `job: ckpt-n, sha256, repo: {host, owner, name}, filtered: {comments, pullRequests}` (before its `checkpoint-inputs`) |
+
+`checkpoint-inputs + issues?: captured{sha256} | unavailable{reason}` (R21) `+ corpusSha256?`. `finding-opened.lens +
+issue` (a checkpoint's intake; P2 or P3 only).
+
+**Manifests and fingerprints.** `RevisionInputs + corpus?, corpusGuide?, phase0?, phase0Issues?`: the pin, the guide's bytes
+(H5), the Phase-0 record and its issue capture (H8), all four or none (kept as `inputs/<sha>.corpus.json`,
+`.corpus-guide.md`, `.phase0.json`, `.issues.json`; the corpus files as `.corpus-file`, C1). `ApprovalFingerprint +
+corpus?` (the pin's sha256, R6).
+
+**Needs-user reasons** (`NEEDS_USER_REASONS`; blocking, fixed by `m3Blocking`): `pack-review` (holds admission before the
+first, K14, H9), `issue-policy-untrusted` (holds admission arc-wide and the checkpoint's capture until acked, OR-L6).
+
+**Startup rows** (`src/preflight/startup.ts`; problems in `src/phase0/types.ts`; all exit 78; shared with `phase0 check`):
+`vision-unconfirmed{ref|null, expected|null, actual|null}` (null `ref`: unconfirmed; null `actual`: no such pinned
+file); `corpus-invalid{problems: (pin-drift | rule-reused{id} | rule-retired-reappears{id} | rules-in-vision |
+guide-missing | source-unreadable{detail} | source-remote-mismatch | scope-overlaps-corpus{unit} |
+contract-overlaps-corpus{path})[]}`; `phase0-invalid{problems: (census-incomplete{rules} | census-dangling{rules} |
+obligation-rule-unresolved{obligation} | debt-undispositioned{id} | debt-kept-twice-unasked{id} |
+amendment-undispositioned{id} | intake-missing{issue} | intake-unknown{issue} | intake-duplicate{issue} |
+capture-missing | capture-foreign{expected, actual} | question-reused{id})[]}`; `chain-invalid{problem: limit{k,
+unacked} | baseline{baseline: previous-head-mismatch | merge-commit | parent-mismatch | paths{paths}} |
+previous-incomplete{arc} | k-unset}`; `issue-policy-untrusted{visibility, policy}`; `tree-uncommitted{paths}`;
+`holistic-needs-corpus`.
+
+**Config** (`.roadmap/config.json`, `src/routing/layers.ts`): `+ chain?: {k: positive}`; nothing about issues (OR-L6).
+
+**Routing.** `ROLES += packReview`, `ARC_ROLES += packReview` (last, so every earlier role keeps its seat order); seat
+`arc`, built-in class frontier (`src/routing/profiles.ts`, A2 owns it from here). In a holistic arc its seat is in force
+and hashed, so every holistic routing rev changes (OR-L3: nothing parks on it; A2's effort-only key does the rest).
+
+**Prompts** (`src/prompts/`). `TargetInput = ArchitectureInput | CorpusInput{kind: corpus, rulesIndex: PinnedRule[], dir,
+visionDoc|null}` is every judgment's `architecture` input (the corpus arm renders in B1). `RoleInputs.packReview =
+{vision, plan, specs, obligations (the file, census included), rulesIndex, phase0}`; `PackReviewOutput = {findings:
+[{severity, target, claim, evidence}], reasons, premises}` (strict schema `PACK_REVIEW_SCHEMA`). `CheckpointOutput +
+corpusAmendments[{rules, proposal, why}] + issueIntake[{issue, outcome: finding{severity: P2|P3, claim, cause} |
+amendment{rules, proposal} | acted{on} | none{reason}}]`, read now and required of the model's schema from B1; C3
+refuses an `acted` that is not `ops` of the same output and a second outcome for one issue. A split child `docRef:
+DocRef | null`, `+ rule: T-n | null`, exactly one non-null (its schema in `CHECKPOINT_SCHEMA` since 0a).
+
+**CLI** (`src/input/cli.ts`, host acts, not queued; dispatch final in `src/cli/main.ts`): `phase0 check --repo (--plan
+<file> | --from-ref <arc>)` → `phase0-check{repo, source: plan{plan} | ref{arc}}` (exit 0 or 78); `corpus pin --repo
+--commit <ref> --out <file>`; `brief --repo [--json] [--ack <briefId>]`; `pr --repo --arc`; `issues --repo [--out
+<file>]`; `chain status --repo`. Each module (`src/commands/{phase0,corpus,brief,pr,issues,chain}.ts`) exports its final
+signature and outcome type; step 0a's bodies throw `NotYetError` (`src/core/notyet.ts`) until the landing step replaces
+them (A1 corpus, A3 issues and pr, C1 phase0, C4 brief and chain).
+
+**Brief ack log** (K9, K10, H6; `src/phase0/types.ts`): `$(git-common-dir)/roadmap/acks/<briefId>.pending.json`, committed
+by rename to `<briefId>.json`: `{briefId, at, chainHead, coverage: [{arc, snapshotCommit, highWater}] (ascending by
+arc), items: [{arc, id: NeedsUserId}] (ascending, unique)}`. **Brief payload** (`roadmap/brief-m4`, H16): `{schema,
+coverage, items, chain: {position, k|null, unackedStarts}, arcs: [{arc, divergences [{id, type, what}], digests
+[{needsUser, ids}], decisions, curation, corpusDivergences, debt: {banked [{id, what}], dispositioned [{id,
+disposition}]}, intake [{issue, job: null (Phase 0) | ckpt-n, outcome}], questions [{id, rank, text, assumption,
+state}], amendments [{id: <arc>/M-n, rules, proposal}], census: {held, obligationRules, outOfSlice, untestable,
+prodOnly}|null, timings [{stage, count, p50Ms, maxMs}], pr: pr{number, url, state, base, needsRebase} | none |
+unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 hex of sha256 over its canonical bytes.
+
+**Choices made in M4a 0a** (where the plan left a shape open or could not be frozen as written):
+
+1. **The accessors' doc arms are flat** (`obligationSource` → `{kind: doc, path, anchor, quotedText}`, as `rulingRefSource`
+   reads a sidecar ref), not `{kind: doc, docRef}`: the guard forbids `.docRef` outside the parsers, and the result of the
+   accessor must not spell it.
+2. **`visionFile(plan)` returns a location** `{base: plan | repo, path}` instead of taking `(planFile, repo)`: no caller
+   of the inputs in force holds the repo (`readInputFiles`, `inForceFiles`); C1 threads it where a corpus arc's record is
+   read. `contractOpDocuments` and `planFieldValue` join `targetDocuments` in `src/input/plan.ts` so the contract-op set
+   keeps M3's exact members (contracts and the doc, not the digest).
+3. **The packReview prompt is a placeholder `prompt` module, not `unsupported`**: the routing row checks every seat in
+   force of a holistic arc (`seatsInForce`), so an unsupported packReview would refuse every holistic start. The
+   placeholder renders every input and carries the frozen schema; nothing spawns it before B1 replaces it (C3 lands the
+   job). Fable inherits it, Sonnet and Codex are unsupported, as for the lens.
+4. **Problem fields beyond the plan's list**: `rule-retired-reappears{id}`, `source-unreadable{detail}` and
+   `census-dangling{rules}` name what they refuse.
+5. **The checkpoint's new keys are read, not yet required of the model**: the strict schema gains `corpusAmendments` and
+   `issueIntake` with B1's prompt text and fakes (as M3's B4 keys landed with their modules); until then an answer
+   without them reads as none through `checkpointOutputM4Default`. The split child's `rule` is in the schema now.
+6. **The M4a facts are validated but not folded** in 0a: the fold sees the job they name (`nextJobId`), and the steps
+   that write them fold them (A4 debt, C3 amendments, intake, pack review, captures).

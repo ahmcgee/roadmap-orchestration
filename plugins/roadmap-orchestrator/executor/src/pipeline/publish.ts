@@ -67,7 +67,7 @@ import { type ArcLaneDef, type Obligations, type RulingSidecar, isExempt, parseO
 import {
   OBLIGATIONS_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
 } from '../input/inforce.ts';
-import type { PlanM1 } from '../input/plan.ts';
+import { type PlanM1, contractOpDocuments } from '../input/plan.ts';
 import {
   type DocsHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run,
 } from '../resources/reserve.ts';
@@ -177,7 +177,7 @@ export function rulingContextAt(ctx: Reader, tip: Sha): RulingContext {
     inForce: { head: tip, ledgerSha256: revision.ledger.sha256, obligationsSha256: revision.obligations?.sha256 ?? null, visionSha256: revision.vision?.sha256 ?? null },
     docAt: (path) => textAt(ctx.repo, tip, path),
     blobAt: (path) => blobAt(ctx.repo, tip, path),
-    documents: [...new Set([...inForce.plan.contracts, inForce.plan.architectureDoc])].sort(),
+    documents: contractOpDocuments(inForce.plan),
     obligations: revision.obligations?.value ?? null,
     vision: revision.vision?.value ?? null,
     units: inForce.plan.units.map((u) => u.id),

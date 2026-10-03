@@ -31,7 +31,7 @@ const unit = (id: UnitId, extra: Partial<PlanUnit> = {}): PlanUnit => ({
 });
 const planOf = (units: readonly PlanUnit[]): PlanM1 => ({
   schema: PLAN_SCHEMA, arc: ARC, integrationBranch: branchName('main'), baseline: sha('a'.repeat(40)), worktreeRoot: absPath('/wt'), contracts: [],
-  rulings: planPath('rulings.md'), architectureDoc: repoPath('ARCH.md'), direction: 'd', suite: { lanes: [] }, resources: [], units,
+  rulings: planPath('rulings.md'), target: 'architecture-doc', architectureDoc: repoPath('ARCH.md'), direction: 'd', suite: { lanes: [] }, resources: [], units,
 });
 
 const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });

@@ -48,7 +48,7 @@ import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, repoPath } from '../core/values.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
-import type { PlanUnit } from '../input/plan.ts';
+import { type PlanUnit, targetDocumentPaths } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
 import type { GatePriorRound } from '../prompts/inputs.ts';
 import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
@@ -86,8 +86,7 @@ export function unitTip(ctx: StageContext, unit: UnitId): Sha {
  */
 export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): ApprovalFingerprint {
   const { spec } = loadUnitSpec(ctx, unit);
-  const digest = ctx.plan().architectureDigest;
-  const paths = [...new Set<RepoPath>([...spec.cites.contracts, ctx.plan().architectureDoc, ...(digest === undefined ? [] : [digest])])].sort();
+  const paths = [...new Set<RepoPath>([...spec.cites.contracts, ...targetDocumentPaths(ctx.plan())])].sort();
   const rulings = ledger(ctx).filter((r) => r.status === 'active' && spec.cites.rulings.includes(r.id)).map((r) => r.id);
   const revs = effectiveRulingRevs(rulingSidecars(ctx));
   const head = unitTip(ctx, unit.id);

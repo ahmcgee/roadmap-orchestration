@@ -58,13 +58,13 @@ import {
   type InForce, type InputFile, type InputFiles, type RevisionInForce, type RoutingBase, inForceFiles, keptPayload, ledgerPath, requirePlanInForce, revisionInForce,
   sidecarPath,
 } from '../input/inforce.ts';
-import { type PlanM1, parsePlan } from '../input/plan.ts';
+import { type PlanM1, contractOpDocuments, parsePlan } from '../input/plan.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { mayOverlap } from '../input/classify.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { laneEnvId, observations } from '../pipeline/lanes.ts';
 import { rulingContextAt } from '../pipeline/publish.ts';
-import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
+import { type BundleOp, type CheckpointOutput, splitChildAnchor } from '../prompts/schemas.ts';
 import { type DocsPublisher, commitRevision } from '../recover/revision.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch } from '../spec/patch.ts';
 import { ledgerAfter, parseRulings, sidecarsAfter, validateRuling } from '../spec/rulings.ts';
@@ -164,7 +164,7 @@ export function vectorAt(ctx: CheckpointContext, inForce: InForce, revision: Rev
     obligationsSha256: revision.manifest.obligations,
     ledgerSha256: revision.ledger.sha256,
     visionSha256: revision.vision.sha256,
-    contracts: [...new Set([...inForce.plan.contracts, inForce.plan.architectureDoc])].sort().flatMap((path) => {
+    contracts: contractOpDocuments(inForce.plan).flatMap((path) => {
       const blob = blobs.blobAt(path);
       return blob === null ? [] : [{ path, blob }];
     }),
@@ -263,7 +263,7 @@ function stampedRulings(ctx: CheckpointContext, a: Activation, reasons: string[]
 function childOf(parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-split' }>, c: Extract<BundleOp, { op: 'obligation-split' }>['children'][number], laneRev: string): Record<string, unknown> {
   const serves = [...new Set([...parent.serves, ...op.cites])].sort();
   return {
-    id: c.id, rev: 1, statement: c.statement, docRef: c.docRef, serves, witness: c.witness,
+    id: c.id, rev: 1, statement: c.statement, ...splitChildAnchor(c), serves, witness: c.witness,
     proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness: c.witness },
     deliveredBy: c.deliveredBy, activation: c.activation, parent: parent.id, contracts: parent.contracts, state: { type: 'active' },
   };
@@ -298,7 +298,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
   const byId = new Map(landing.map((s) => [s.id as string, s]));
   const ruled = new Set(a.output.ops.flatMap((op) => (op.op === 'rule' ? [op.ruling as string] : [])));
   for (const s of landing) if (!ruled.has(s.id)) reasons.push(`ruling ${s.id} lands through no \`rule\` op`);
-  const documents = new Set<RepoPath>([...inForce.plan.contracts, inForce.plan.architectureDoc]);
+  const documents = new Set<RepoPath>(contractOpDocuments(inForce.plan));
   const outsidePaths = [...new Set(landing.flatMap((s) => s.contractOps.map((o) => o.path).filter((p) => !documents.has(p))))].sort();
 
   let ledgerText = revision.ledger.bytes.toString('utf8');

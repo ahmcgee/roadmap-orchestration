@@ -9,6 +9,7 @@ import { PROMPT as GATE_FABLE } from './gate/claude-fable-5-1.ts';
 import { PROMPT as GATE_OPUS } from './gate/claude-opus-5-5.ts';
 import type { PromptModule, PromptModules } from './inputs.ts';
 import { PROMPT as LENS_OPUS } from './lens/claude-opus-5-5.ts';
+import { PROMPT as PACK_REVIEW_OPUS } from './packReview/claude-opus-5-5.ts';
 import { PROMPT as PLAN_CHECK_FABLE } from './planCheck/claude-fable-5-1.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 
@@ -80,6 +81,19 @@ export const PROMPTS: PromptTable<PromptModules> = {
       reviewed: '2026-09-30: Prompting Claude Opus 5.5 (Anthropic) checked against the Fable 5.1 checkpoint prompt; no Opus-specific change needed',
     },
     'claude-fable-5-1': { type: 'prompt', prompt: CHECKPOINT_FABLE },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  // M4a (OR-Q16): the pack review on frontier (Opus). The module is step 0a's placeholder until B1 ports the review
+  // brief; Fable reads it unchanged, as it reads the Opus lens prompt.
+  packReview: {
+    'claude-opus-5-5': { type: 'prompt', prompt: PACK_REVIEW_OPUS },
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-10-03: placeholder (M4a step 0a); B1 reviews the ported pack-review prompt for Fable',
+    },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },

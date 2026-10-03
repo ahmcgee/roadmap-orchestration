@@ -11,7 +11,7 @@
 // ruling the ledger has withdrawn; the living rendering keeps them all. The ref keeps them either way.
 import type { RulingId } from '../core/ids.ts';
 import { repoPath } from '../core/values.ts';
-import type { RulingSidecar } from '../holistic/types.ts';
+import { type RulingRef, type RulingSidecar, rulingRefSource } from '../holistic/types.ts';
 import type { Ruling } from '../spec/rulings.ts';
 
 export type ConstraintsMode = 'living' | 'close-out';
@@ -32,6 +32,14 @@ function stateLine(r: Ruling, sidecars: readonly RulingSidecar[]): string {
   return parts.length === 0 ? 'active' : `active, partly superseded by ${parts.join(', ')}`;
 }
 
+/** A doc ref by path, anchor and quoted text; a rule ref (M4a) by its rule id and text hash. */
+function refText(d: RulingRef): string {
+  const r = rulingRefSource(d);
+  return r.kind === 'doc'
+    ? `${code(r.path)} ${code(r.anchor)} (${r.relation}): ${JSON.stringify(r.quotedText)}`
+    : `rule ${code(r.rule)} (${r.relation}), text sha256 ${code(r.textSha256)}`;
+}
+
 function provenance(s: RulingSidecar): readonly string[] {
   const list = (items: readonly string[]): string => (items.length === 0 ? '(none)' : items.join(', '));
   return [
@@ -42,7 +50,7 @@ function provenance(s: RulingSidecar): readonly string[] {
     `lifetime: ${s.lifetime}`,
     ...(s.condition === null ? [] : [`condition: ${s.condition}`]),
     ...(s.supersedes.length === 0 ? [] : [`supersedes: ${s.supersedes.map((t) => (t.part === null ? t.id : `${t.id} (part: ${t.part})`)).join(', ')}`]),
-    `doc refs:\n${s.docRefs.map((d) => bullet('', `${code(d.path)} ${code(d.anchor)} (${d.relation}): ${JSON.stringify(d.quotedText)}`)).join('\n')}`,
+    `doc refs:\n${s.docRefs.map((d) => bullet('', refText(d))).join('\n')}`,
     `contracts: ${list(s.contractRefs.map(code))}${s.contractOps.length === 0 ? '' : ` (edits ${[...new Set(s.contractOps.map((o) => o.path))].sort().map(code).join(', ')})`}`,
     `obligations: ${list(s.obligations.map((id) => {
       const d = s.obligationDispositions.find((x) => x.id === id);

@@ -66,7 +66,7 @@
 //
 // `commandScope` (A12) is the units a mutation must find idle or awaiting admission: an apply's follow from
 // its classification.
-import type { IntentOf, PlanChange, PlanField } from '../core/events.ts';
+import type { IntentOf, PlanChange } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import {
   type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type UnitId, type VisionClauseId,
@@ -100,7 +100,7 @@ import {
   type InForce, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, planInForce, planManifestOf, planRouting,
   readInputFiles, revisionInForce, revisionManifestOf, unitRouting,
 } from './inforce.ts';
-import { type PlanM1, type PlanUnit, boundsOf, parsePlan, reservedUnitIdReason } from './plan.ts';
+import { type PlanM1, type PlanUnit, boundsOf, parsePlan, planFieldValue, reservedUnitIdReason } from './plan.ts';
 
 /**
  * Who proposes a revision (G1), as far as its rules differ: an architect's `apply`, `rule` or `reverse` command, a
@@ -694,7 +694,7 @@ export function classify(input: ClassifyInput): Classified {
 
   // The other plan fields.
   for (const field of PLAN_FIELDS) {
-    if (!same(cur[field as PlanField], plan[field as PlanField])) changes.push({ type: 'plan-field', field });
+    if (!same(planFieldValue(cur, field), planFieldValue(plan, field))) changes.push({ type: 'plan-field', field });
   }
   if (changes.some((c) => c.type === 'plan-field' && (c.field === 'contracts' || c.field === 'rulings'))) for (const u of plan.units) scoped.add(u.id);
 
