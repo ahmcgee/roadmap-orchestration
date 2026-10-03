@@ -973,12 +973,13 @@ read-time `status.timings`).
    `claude-only`; the issue fixture (D6) is part of `evals/m4a`. A property a model's output cannot be forced to
    show is asserted at the unit tier instead: M3's literal partial-bundle rejection is asserted by the fake fixture
    `evals-m3.fake`, and the paid run asserts stale-whole rejection (A18, G19).
-5. **delegated adjudication** (M4a, once) — a headless summit-class session role-plays the synthetic owner and
-   grades the M4a fixture's output against a rubric (readability, rules, collapsed restatements, contradictions
-   resolved or asked, stale text pruned, slice fit, witnesses that prove their claims). It reads the vision, the
-   raw and pinned corpus, the extraction, the plan and slice, a product snapshot and the witness evidence, never
-   the answer key; a transcript scan over tool arguments and results voids the verdict on any key access. The lead
-   adjudicates each finding; the PR is gated on that adjudication, not the verdict.
+
+**Delegated adjudication** (M4a acceptance, once; not a ladder rung) — a headless summit-class session role-plays the
+synthetic owner and grades the M4a fixture's output against a rubric (readability, rules, collapsed restatements,
+contradictions resolved or asked, stale text pruned, slice fit, witnesses that prove their claims). It reads the
+vision, the raw and pinned corpus, the extraction, the plan and slice, a product snapshot and the witness evidence,
+never the answer key; a transcript scan over tool arguments and results voids the verdict on any key access. The
+lead adjudicates each finding; the PR is gated on that adjudication, not the verdict.
 
 **The M4a fixture** (`evals/m4a`) runs a headless root-agent session, launched from a staged plugin copy without
 `evals/` or `test/`, in a constrained environment (allowlisted env, empty forge and git config dirs, a fake `gh`
