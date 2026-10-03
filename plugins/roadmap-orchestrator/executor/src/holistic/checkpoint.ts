@@ -415,8 +415,10 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     contracts: r.plan.contracts.map((c) => docAt(ctx, s.headSha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
     index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
-    architecture: architecture(ctx, s.headSha),
+    target: architecture(ctx, s.headSha),
     direction: r.plan.direction,
+    // No capture before step C3 lands checkpoint intake (it renders the kept `inputs/<sha>.issues.json` here).
+    issues: { type: 'captured', issues: [] },
   };
 }
 

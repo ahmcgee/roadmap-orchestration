@@ -238,7 +238,7 @@ export type GateFinding = Readonly<{
   severity: (typeof FINDING_SEVERITIES)[number];
   path: string | null;
   text: string;
-  /** A C-nn id or a contract path (with an optional #anchor) the finding rests on. */
+  /** A C-nn id, a contract path (with an optional #anchor) or a corpus rule T-n the finding rests on. */
   contractRef: string | null;
 }>;
 type GateCommon = Readonly<{ findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
@@ -412,6 +412,8 @@ export type CheckpointIssueOutcome =
   | Readonly<{ type: 'none'; reason: string }>;
 
 const LIMIT_FIELDS = [...BOUND_FIELDS, 'convergenceK'] as const;
+/** An issue's finding opens at P2 or P3 only (a P1 comes from an audit). */
+const ISSUE_FINDING_SEVERITIES = ['P2', 'P3'] as const;
 const opSchema = (op: BundleOpKind, fields: { readonly [key: string]: Schema }): Schema =>
   sObj({ op: sEnum([op]), ...fields, cites: S_IDS, evidence: sArr(S_STR) });
 const S_DOC_REF = sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR });
@@ -444,6 +446,19 @@ export const CHECKPOINT_SCHEMA: Schema = sObj({
   interpretations: sArr(sObj({ clauses: S_IDS, situation: S_STR, reading: S_STR })),
   cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
   premises: S_PREMISES,
+  corpusAmendments: sArr(sObj({ rules: S_IDS, proposal: S_STR, why: S_STR })),
+  // A checkpoint acts on an issue only through its own ops (H17): the schema offers `acted{on: ops}` alone.
+  issueIntake: sArr(sObj({
+    issue: S_STR,
+    outcome: {
+      anyOf: [
+        sObj({ type: sEnum(['finding']), severity: sEnum(ISSUE_FINDING_SEVERITIES), claim: S_STR, cause: S_STR }),
+        sObj({ type: sEnum(['amendment']), rules: S_IDS, proposal: S_STR }),
+        sObj({ type: sEnum(['acted']), on: sObj({ type: sEnum(['ops']), indexes: sArr(S_INT) }) }),
+        sObj({ type: sEnum(['none']), reason: S_STR }),
+      ],
+    },
+  })),
 });
 
 const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
@@ -473,7 +488,6 @@ export function splitChildAnchor(c: SplitChild): ObligationAnchor {
   return { docRef: c.docRef as DocRef };
 }
 
-const ISSUE_FINDING_SEVERITIES = ['P2', 'P3'] as const;
 const ruleList: Read<readonly RuleId[]> = uniqueIds((v, p) => ruleId(v, p));
 const corpusAmendmentProposal: Read<CorpusAmendmentProposal> = object((g) => ({
   rules: g.get('rules', ruleList), proposal: g.get('proposal', str), why: g.get('why', str),
@@ -565,7 +579,7 @@ export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
       findings: g.get('findings', uniqueIds((v, p): FindingId => findingId(v, p))),
     }))),
     premises: f.get('premises', arrayOf(premise)),
-    // M4a: absent on a dev.6 checkpoint's recorded answer (read as none, scaffolding); B1 makes both required of the model.
+    // M4a: required of the model (CHECKPOINT_SCHEMA); absent only on a dev.6 checkpoint's recorded answer (read as none, scaffolding).
     corpusAmendments: f.optional('corpusAmendments', arrayOf(corpusAmendmentProposal)) ?? checkpointOutputM4Default('corpusAmendments'),
     issueIntake: f.optional('issueIntake', issueIntakeEntries) ?? checkpointOutputM4Default('issueIntake'),
   };

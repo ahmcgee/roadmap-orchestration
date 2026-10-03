@@ -231,7 +231,7 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
     contracts: ctx.plan().contracts.map((c) => docAt(ctx, sha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
     index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
-    architecture: architecture(ctx, sha),
+    target: architecture(ctx, sha),
     checkout,
   };
 }

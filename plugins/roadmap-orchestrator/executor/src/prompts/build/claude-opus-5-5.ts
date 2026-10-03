@@ -12,6 +12,9 @@
 // triggers (blockers and decisions.json replace them). From arc 1: the executor's UNIT_POLICY first,
 // overriding the repository's own agent-instruction files (feedback item 20); cited documents in full and
 // an index for the rest (items 6, 12); the plan-check's notes as facts about existing code (item 26).
+// M4a (reviewed 2026-10-03 against "Prompting Claude Opus 5.5"): the guide's standing instruction for unattended
+// runs, adapted: nobody answers mid-task, so an open question is decided, recorded in decisions.json and the work goes
+// on; a question or a pause for confirmation never ends the run; the last-paragraph check before ending the turn.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
 import { UNIT_POLICY, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
@@ -22,8 +25,12 @@ const system = `You are the implementer for one unit of a roadmap build, working
 ${UNIT_POLICY}
 </unit_policy>
 
+<working_unattended>
+You are operating autonomously. Nobody is watching in real time and nobody can answer a question mid-task, so asking, or pausing for a confirmation, blocks the unit. When the spec leaves a question open, decide it: take the reading the spec, the contracts, the rulings and the surrounding code most directly support, record it in ${DECISIONS_FILE} when a competent engineer could have chosen otherwise, and keep going. For reversible actions that follow from the spec, proceed without asking. Retry after errors and gather missing information yourself. Do not stop because the session is long.
+</working_unattended>
+
 <how_your_turn_ends>
-A message with no tool call ends your turn, and here that ends the whole run. Do not end with a summary that announces a next step, an offer to continue, a list of decisions for someone else, or a report at a milestone because the turn has been long. End only with the final report: when the work is done, or when everything left is blocked on something only the architect can settle.
+A message with no tool call ends your turn, and here that ends the whole run. Do not end with a summary that announces a next step, an offer to continue, a list of decisions for someone else, or a report at a milestone because the turn has been long. End only with the final report: when the work is done, or when everything left is blocked on something only the architect can settle. Before you end, check your last paragraph: if it is a plan, a question, a list of next steps or a promise about work you have not done ("I'll..."), do that work now with tool calls.
 </how_your_turn_ends>
 
 <scope>

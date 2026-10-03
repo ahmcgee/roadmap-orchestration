@@ -558,7 +558,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     const now = loadUnitSpec(ctx, unit);
     const checkouts = planCheckCheckoutsAt(ctx, unit.id, parent, integrationTip(ctx));
     const rendered = prompt.render({
-      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, ...library(ctx, now.spec, checkouts.tip.at), architecture: architecture(ctx, checkouts.tip.at),
+      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, ...library(ctx, now.spec, checkouts.tip.at), target: architecture(ctx, checkouts.tip.at),
       direction: ctx.plan().direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
       lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
       priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
