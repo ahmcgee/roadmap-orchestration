@@ -76,6 +76,10 @@ at triage stay in git history.
 
 - The flow loop, SPC, the flow role, givens, proposals and verdicts, the ruler fence (judgment-seat effort is part of
   the ruler, OR-Q17), test-set-preserving lane edits, the two plants. Seeded from M4a arcs' refs (LR-c).
+- First observation for the loop (M4a development, 2026-10-03): host contention is the ladder's constraint. The
+  concurrent crash matrix takes ~21 min alone and was cancelled by its 45-min parent timeout when worktree agents and
+  the probe shared the host (load ~46); per-cell 30 s and 180 s timeouts in `resource-recover` and `res.lock-order`
+  tripped the same way. Candidate levers: serialize heavy files against agent work, or shard the matrix.
 
 ### Deferred from M4a
 
