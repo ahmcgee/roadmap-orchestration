@@ -2,7 +2,7 @@
 // Opus 5.5" (platform.claude.com, reviewed 2026-10-03). Applied as in the Opus lens and gate: role in the system prompt;
 // XML sections; the inputs first and the ask last; read broadly before judging; no reasoning field (reasons is the
 // justification); plain one-sentence claims with file:line evidence. Ported from the former Phase-0 plan-pack review
-// brief (skills/orchestrate/templates/phase0-review-brief.md): a review of the pack before anything is admitted,
+// brief (the deleted Astra-era template skills/orchestrate/templates/phase0-review-brief.md, tag v0.20.0 and git history): a review of the pack before anything is admitted,
 // reporting what the units' builders would trip over; read-only; the hunt in order (contradictions, units that cannot be
 // built as specified, decomposition cuts with a concrete cost, lanes that cannot prove what they claim, questions the
 // code cannot answer); capped and worst first; an empty report is legitimate; judge the pack as drafted, never propose
