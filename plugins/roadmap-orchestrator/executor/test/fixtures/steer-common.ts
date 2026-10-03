@@ -6,7 +6,7 @@ import type { UnitId } from '../../src/core/ids.ts';
 import { requirePlanInForce, routingProvenanceOf } from '../../src/input/inforce.ts';
 import type { PlanUnit } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
-import { type ResolvedRouting, provenanceStack, resolveRouting } from '../../src/routing/layers.ts';
+import { type ResolvedRouting, arcScopeOf, provenanceStack, resolveRouting } from '../../src/routing/layers.ts';
 import type { ArcRun } from './unit-common.ts';
 
 /** `r`'s stage context with `plan()` and `routing(unit)` read from the log at each call (default profile, no repo config). */
@@ -16,7 +16,7 @@ export function followingContext(r: ArcRun): StageContext {
     const { plan, fact } = inForce();
     // A revision recorded without provenance (rev 1 of these arcs) is rebuilt from its plan, as the executor does.
     const provenance = fact.routingProvenance ?? routingProvenanceOf({ profile: 'default', config: null }, plan);
-    return resolveRouting(provenanceStack(provenance, plan.holistic !== undefined, unit));
+    return resolveRouting(provenanceStack(provenance, arcScopeOf(plan), unit));
   };
   return { ...r.ctx, plan: () => inForce().plan, routing };
 }

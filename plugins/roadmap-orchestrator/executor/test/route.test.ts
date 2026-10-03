@@ -24,8 +24,10 @@ import { type Json, apply, editPlan, editSpec, editUnit, followContext, modelOf,
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U2 = unitId('u2');
-const SUMMIT = 'claude-fable-5-1';
-const FRONTIER = 'claude-opus-5-5';
+/** A Claude call's seat binding, model and effort: frontier and summit are both Opus 5.5 (OR-Q17), told by effort. */
+const seatOf = (argv: readonly string[]): string => `${modelOf(argv)}/${argv[argv.indexOf('--effort') + 1]}`;
+const SUMMIT = 'claude-opus-5-5/xhigh';
+const FRONTIER = 'claude-opus-5-5/medium';
 
 /** A fresh Claude implementer session (the frontier build seat) that commits mul. */
 const claudeBuild = (): Step => ({
@@ -72,7 +74,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     assert.deepEqual(r.journal.view.dispatchesOf(U2).map((x) => x.routingRev), [arcRev], 'u2 keeps the arc\'s rev');
     const gates = readCalls(d.scenarioPath).filter(isGateCall);
     assert.equal(gates.length, 1);
-    assert.equal(modelOf(gates[0]!.argv), SUMMIT, 'u1\'s gate ran on its layer\'s summit class');
+    assert.equal(seatOf(gates[0]!.argv), SUMMIT, 'u1\'s gate ran on its layer\'s summit class');
 
     // A layer that moves u1's implementer seat after its build started, and u2's before its build.
     editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' }, build: { med: 'frontier' } }));
@@ -94,7 +96,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
     const calls = readCalls(d.scenarioPath);
     assert.equal(calls.length, 5);
     assert.ok(calls.every((c) => c.step !== null), 'every call matched its step');
-    assert.deepEqual([calls[4]!.as, modelOf(calls[4]!.argv)], ['claude', FRONTIER], 'u2 built on its layer\'s frontier seat');
+    assert.deepEqual([calls[4]!.as, seatOf(calls[4]!.argv)], ['claude', FRONTIER], 'u2 built on its layer\'s frontier seat');
   } finally {
     r.journal.close();
   }
@@ -123,7 +125,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
     });
     await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
     const record = r.journal.view.dispatchOf(U1)!;
-    const reproduced = resolveRouting(provenanceStack(provenance!, false, U1));
+    const reproduced = resolveRouting(provenanceStack(provenance!, 'none', U1));
     assert.equal(record.routingRev, reproduced.rev, 'the provenance reproduces the unit\'s dispatch rev');
     const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
     assert.equal(reproduced.rev, unitRouting(base, plan, unitOf(ctx, 'u1')).rev, 'the same routing the start resolved');
@@ -132,7 +134,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
       ['repo-config', 'unit', 'repo-config', 'plan'],
     );
     assert.equal(reproduced.table.build.med.model, 'claude-sonnet-5-5', 'the repo config rebinds the efficient class');
-    assert.notEqual(resolveRouting(provenanceStack(provenance!, false, U2)).rev, record.routingRev, 'u2 has no unit layer');
+    assert.notEqual(resolveRouting(provenanceStack(provenance!, 'none', U2)).rev, record.routingRev, 'u2 has no unit layer');
 
     // The architect edits the live config: a revision's routing never re-reads it (H7).
     writeFileSync(configPath, JSON.stringify({ routing: { classes: { efficient: sonnet('high') } } }));
@@ -222,7 +224,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     about(windowOf(gates.at(-1)!), 4 * MIN, 'the gate after the re-pin');
     const calls = readCalls(d.scenarioPath);
     assert.ok(calls.every((c) => c.step !== null));
-    assert.equal(modelOf(calls.filter(isGateCall).at(-1)!.argv), SUMMIT, 'the routed-up gate sits on the escalation seat');
+    assert.equal(seatOf(calls.filter(isGateCall).at(-1)!.argv), SUMMIT, 'the routed-up gate sits on the escalation seat');
   } finally {
     r.journal.close();
   }
@@ -292,7 +294,7 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
     const calls = readCalls(d.scenarioPath);
     assert.equal(calls.length, 4);
     assert.ok(calls.every((c) => c.step !== null));
-    assert.deepEqual([calls[3]!.as, modelOf(calls[3]!.argv)], ['claude', FRONTIER], 'u2 built on build.high');
+    assert.deepEqual([calls[3]!.as, seatOf(calls[3]!.argv)], ['claude', FRONTIER], 'u2 built on build.high');
   } finally {
     r.journal.close();
   }

@@ -74,7 +74,7 @@ describe('meter', () => {
 
   it('meter.job-usage: a job\'s lens and checkpoint calls count at their arc seat, by role and per job, never per unit; byModel renders them', () => {
     const job = (j: string, role: 'lens' | 'checkpoint', attempt: number) => ({ type: 'job', job: jobIdOf(j), attempt, role, tier: 'arc' }) as const;
-    const holistic = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, holistic: true });
+    const holistic = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'architecture-doc' });
     const rev = holistic.rev;
     const log = [
       factEvent({ kind: 'meter', inv: inv(1), routingRev: rev, subject: job('audit-1', 'lens', 1), usage: tokens(100, 10) }),
@@ -109,8 +109,8 @@ describe('meter', () => {
       ({ ...unitSeatRef(role, tier), routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 });
     const seats = [t('build', 'med', claudeOnly.rev, 10), t('build', 'med', def.rev, 5), t('build', 'high', def.rev, 7), t('gate', 'high', def.rev, 2), t('gate', 'escalation', def.rev, 3)];
     assert.deepEqual(byModel(seats, tables), [
-      { model: 'claude-fable-5-1', calls: 1, input: 3, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
-      { model: 'claude-opus-5-5', calls: 2, input: 9, output: 2, cacheRead: 0, cacheWrite: 0, turns: 2, costUsd: 1, unavailable: 0 },
+      // build.high (frontier), gate.high (frontier) and gate.escalation (summit): Opus 5.5 at medium and xhigh (OR-Q17).
+      { model: 'claude-opus-5-5', calls: 3, input: 12, output: 3, cacheRead: 0, cacheWrite: 0, turns: 3, costUsd: 1.5, unavailable: 0 },
       { model: 'claude-sonnet-5-5', calls: 1, input: 10, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
       { model: 'gpt-5.6-luna', calls: 1, input: 5, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
     ]);

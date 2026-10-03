@@ -34,7 +34,8 @@
 // inputs, then NO_SESSION_NOTE and CONTINUE_DIRECTIVE; a reopen's fresh round: RESPEC_DIRECTIVE, then
 // NO_SESSION_NOTE); the round keeps its kind, and its launch.json records the session as fresh. A session's
 // seat is the `implementerSeatRev` of the dispatch fact its spawn ran under (`spawnSeatRev`); a routing
-// change never moves the seat of a unit whose build started (implementerDispatch parks it instead).
+// change never moves the session key (backend, model) of a unit whose build started (implementerDispatch parks it
+// instead), and an effort-only change re-pins it and resumes the session with the new effort (R4, OR-L3).
 //
 // A resolve round after a re-entry's conflicted `prepare` (A6) is fresh: the re-entering unit is a new unit
 // id with no build of its own, and no session inherits across units, so it starts a fresh session on the
@@ -83,7 +84,8 @@ import { type FixRound, ignoredText } from '../prompts/inputs.ts';
 import { DECISIONS_FILE } from '../prompts/schemas.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
-  type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, implementerSeatRev, minutesMs, runOp, sessionNeverPersisted, unitBranch, unitWorktree,
+  type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, implementerSeatRev, minutesMs, runOp, sameSession, seatTripleOf, sessionNeverPersisted, unitBranch,
+  unitWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
@@ -276,13 +278,13 @@ export function lastImplementerSession(ctx: StageContext, unit: UnitId): SeatedS
 }
 
 /**
- * The session a round on `dispatch` may resume: `earlier` when it ran on the same implementer seat, else null.
- * A session cannot move across models or backends, so a build whose seat moved (a plan-check risk raise
- * after a build) starts a fresh session on the kept branch and worktree, its round's inputs given with
- * NO_SESSION_NOTE.
+ * The session a round on `dispatch` may resume: `earlier` when its seat has the same session key (R4: backend and
+ * model; an effort-only change resumes it with the new `--effort`, OR-L3), else null. A session cannot move across
+ * models or backends, so a build whose seat moved to another model (a plan-check risk raise after a build) starts a
+ * fresh session on the kept branch and worktree, its round's inputs given with NO_SESSION_NOTE.
  */
 function onSeat(dispatch: ImplementerDispatch, earlier: SeatedSession | null): ImplementerSessionId | null {
-  return earlier !== null && earlier.seatRev === dispatch.seatRev ? earlier.id : null;
+  return earlier !== null && sameSession(seatTripleOf(earlier.seatRev), dispatch.triple) ? earlier.id : null;
 }
 
 function freshSession(dispatch: ImplementerDispatch): ImplementerSession {

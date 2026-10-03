@@ -79,7 +79,7 @@ import {
   EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
-import { type ResolvedRouting, provenanceStack, resolveRouting } from './routing/layers.ts';
+import { type ResolvedRouting, arcScopeOf, provenanceStack, resolveRouting } from './routing/layers.ts';
 import { type ProfileName, type RoutingProvenance, profileName } from './routing/types.ts';
 import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
@@ -304,7 +304,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     const routingOf = (unit: UnitId | null): ResolvedRouting => {
       const hit = resolved.get(unit);
       if (hit !== undefined) return hit;
-      const r = resolveRouting(provenanceStack(provenance, plan.holistic !== undefined, unit));
+      const r = resolveRouting(provenanceStack(provenance, arcScopeOf(plan), unit));
       resolved.set(unit, r);
       return r;
     };
