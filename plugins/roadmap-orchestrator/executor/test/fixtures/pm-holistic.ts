@@ -53,6 +53,9 @@ function holistic(r: ExecRun): void {
 
 const keyed = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
 
+/** The approving gate's note: a corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
+const GATE_NOTE = { severity: 'note', path: null, text: 'The mul helper has no overflow test.', contractRef: null } as const;
+
 export const HOLISTIC: Scenario = {
   arc: () => ({}),
   prepare: holistic,
@@ -61,7 +64,7 @@ export const HOLISTIC: Scenario = {
     ...keyed('u1', [
       planCheckStep({ decision: 'approve' }),
       codexStep([{ type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'] }),
-      gateStep({ decision: 'approve' }),
+      gateStep({ decision: 'approve', findings: [GATE_NOTE] }),
     ]),
     lensStep('audit-1', 'vision'),
     checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
@@ -132,11 +135,11 @@ export function contextOf(view: JournalView, e: Event): string {
 /** The M3 facts whose append the holistic row crashes (each kind's first, at every log.append label). */
 export const M3_FACTS: readonly string[] = [
   'witnessed', 'obligation-latched', 'audit-started', 'audit-ended', 'checkpoint-inputs', 'plan-applied', 'divergence', 'divergence-digest',
-  'bundle-decided', 'docs-covered', 'docs-published', 'arc-completed',
+  'bundle-decided', 'docs-covered', 'docs-published', 'arc-completed', 'debt-banked',
 ];
 
 /** Labels only the holistic layer reaches (the row crashes each at occurrence 1, and 2 where it repeats). */
-export const M3_ONLY = /^(audit|checkpoint|bundle|closeout|docs|latch|complete)\./;
+export const M3_ONLY = /^(audit|checkpoint|bundle|closeout|docs|latch|complete|debt)\./;
 /** A log append's record is in flight at these labels (the crash leaves it out of the log). */
 export const IN_FLIGHT: readonly string[] = ['log.append.before-write', 'log.append.after-partial-write'];
 

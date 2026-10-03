@@ -1,3 +1,4 @@
+// adopted-arc coverage (LR-D0b): migrate to corpus arcs when holistic architecture-doc scaffolding is deleted (BACKLOG)
 // Shared by the checkpoint tests (test/checkpoint.test.ts) and their crash child (checkpoint-child.ts): an audit-common
 // arc whose required lens set is the vision lens alone (one lens call per audit), the checkpoint context over the run's
 // one arbiter (the command context's docs publisher and routing base), and the readers the tests assert with.

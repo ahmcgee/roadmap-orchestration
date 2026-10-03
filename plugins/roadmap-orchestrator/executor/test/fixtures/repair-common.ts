@@ -1,3 +1,4 @@
+// adopted-arc coverage (LR-D0b): migrate to corpus arcs when holistic architecture-doc scaffolding is deleted (BACKLOG)
 // Shared by the repair and vacuity tests (test/repair.test.ts) and their crash child (repair-child.ts): holistic arcs
 // whose findings open, through the findings store, before revision 1 (a repair unit's spec must name a finding the arc
 // holds), and the tree ids a mutant's lane will run on (a patch applied to a commit plus files, through a private index),

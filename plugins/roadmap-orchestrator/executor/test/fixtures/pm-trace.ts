@@ -84,6 +84,7 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'packreview.after-ended': NONE,
   'issues.after-keep': NONE,
   'amendment.after-decided': NONE,
+  'debt.after-approval': NONE,
   // The close-out's docs.commit: open (redone, then the unpublished holder abandoned) or done.
   'docs.act-start': R('redone'),
   'docs.after-commit-tree': R('redone'),

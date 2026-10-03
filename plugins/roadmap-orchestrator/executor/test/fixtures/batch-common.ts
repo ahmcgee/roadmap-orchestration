@@ -1,3 +1,4 @@
+// adopted-arc coverage (LR-D0b): migrate to corpus arcs when holistic architecture-doc scaffolding is deleted (BACKLOG)
 // Shared by the repair-batch tests (test/batch.test.ts) and their crash child (batch-child.ts): a holistic arc with two
 // units that both repair I-2 (a P1 finding F-1 is open over it), each adding its own module, approved one after the
 // other; then `publishBatch` publishes them as one candidate. `estate`: the journey lane reserves an estate pool
