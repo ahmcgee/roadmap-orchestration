@@ -8,7 +8,8 @@
 //                     GIT_CONFIG_GLOBAL the fixture's gitconfig; `command -v gh` was the staged fake; the real forge's
 //                     canary is unchanged (real runs; a fake run reads no real forge); the transcript's tool inputs and
 //                     results name neither the answer key nor `evals/m4a` nor this repository (re-scanned)
-//   defects           every postcondition of every answer-key entry holds on the arcs' kept bytes (key.ts)
+//   defects           every postcondition of every answer-key entry holds on the arcs' kept bytes (key.ts), each arc's
+//                     as in force at its completion (its latest revision: `arcView`)
 //   phase0-green      `phase0 check --from-ref` finds no row for either arc, after the driver scrambled the live corpus
 //                     and `.roadmap/` files (K20)
 //   census-complete   each arc's census names every active pinned rule once, none dangling (`censusProblems`)
@@ -35,7 +36,8 @@
 //
 // NOT EXERCISED (the paid run cannot force them; each has a fake integrated test): other-repo and checkout corpus
 // sources, `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n,
-// the vision-silent stop.
+// the vision-silent stop. A mid-arc re-pin stays listed: the owner's P-1 answer is released at arc 1's completion and
+// lands mid-arc only when the root agent started arc 2 before the answer came (paid run 5), else in arc 2's Phase 0.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { computeBrief } from '../../src/brief.ts';
@@ -85,7 +87,12 @@ const need = (r: ArcRef | null, which: string): ArcRef => {
   return r;
 };
 
-/** The arc's view for the defects: kept pin, pinned files, obligations with census, Phase-0 record. */
+/**
+ * The arc's view for the defects: kept pin, pinned files, obligations with census, Phase-0 record, all of the revision
+ * in force at the ref's high-water. For a completed arc that is the revision in force at its completion (`arc-completed`
+ * names the plan rev in force, and `completedHeadOf` takes no completion older than the last `plan-applied`), so an
+ * owner's answer applied mid-arc (a re-pin and a record edit) is what the postconditions read, never the first revision.
+ */
 export function arcView(ref: ArcRef): ArcView {
   const m = ref.manifest;
   if (m.corpus === undefined || m.phase0 === undefined || m.obligations === null) throw new Error(`${ref.arc} is no corpus arc (its manifest names no pin, record or obligations)`);

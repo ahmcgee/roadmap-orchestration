@@ -177,6 +177,62 @@ describe('re-pin (the corpus edit class)', () => {
     }
   });
 
+  /**
+   * The skill's immediate-apply path for an owner's answer (paid M4a run 5): P-1 bears in-slice T-1 (anchoring must-hold
+   * I-1) and is answered mid-arc with a change of meaning. One apply carries the corpus commit's re-pin (T-1 retired for
+   * T-4), the record (P-1 answered), the census and I-1 re-anchored; `ruled` lands C-2 naming I-1 amended first (as
+   * `roadmap rule` does, in force before the apply).
+   */
+  async function ownerAnswer(ruled: boolean): Promise<ApplyVerdict> {
+    const a = await corpusArc();
+    editPhase0(a, (r) => ({
+      ...r, questions: [{ id: 'P-1', rank: 1, text: 'Is a double booking ever allowed?', files: ['docs/corpus/0010_Overview.md'], bears: ['T-1'], assumption: 'never', state: { type: 'open' } }],
+    }));
+    if (ruled) {
+      const ledger = join(a.planDir, 'rulings.md');
+      writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}C-2 — The owner answered P-1: I-1 follows T-4.\n`);
+      mkdirSync(`${ledger}.d`, { recursive: true });
+      writeFileSync(join(`${ledger}.d`, 'C-2.json'), JSON.stringify({
+        schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'The owner answered P-1: I-1 follows T-4.', kind: 'disposition', ruledBy: { type: 'architect' }, trigger: 'owner answer',
+        supersedes: [], condition: null, docRefs: [{ path: 'docs/corpus/0010_Overview.md', anchor: 'Scope', quotedText: 'berth', relation: 'consistent' }], contractRefs: [], contractOps: [], obligations: ['I-1'], obligationDispositions: [{ id: 'I-1', disposition: 'amended' }],
+        cites: [], evidence: [], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
+        consistency: { verdict: 'consistent', judgedRevs: { head: 'b'.repeat(40), ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
+      }));
+    }
+    const j = inForce(a);
+    try {
+      const commit = commitCorpus(a, '0010_Overview.md', (t) => t.replace('T-1: A berth is never double-booked.', 'T-4: A berth is never booked twice for one tide window.'));
+      await repin(a, commit);
+      assert.deepEqual(parseCorpusPin(readJsonFile(join(a.planDir, PIN_FILE))).rules.map((r) => r.id), ['T-2', 'T-3', 'T-4']);
+      editPhase0(a, (r) => ({
+        ...r, questions: (r['questions'] as Json[]).map((q) => ({ ...q, state: { type: 'answered', answer: 'Never, per tide window.', at: '2026-10-04T05:00:00.000Z' } })),
+      }));
+      editJsonFile(join(a.planDir, 'obligations.json'), (o) => ({
+        ...o,
+        obligations: (o['obligations'] as Json[]).map((ob) => ({
+          ...ob, rev: 2, statement: 'A berth is never booked twice for one tide window.', rule: { id: 'T-4', textSha256: pinnedHash(a, 'T-4') },
+          proofJudgment: { ...(ob['proofJudgment'] as Json), obligationRev: 2 },
+        })),
+        census: (o['census'] as Json[]).map((e) => (e['rule'] === 'T-1' ? { ...e, rule: 'T-4' } : e)).sort((x, y) => Number(String(x['rule']).slice(2)) - Number(String(y['rule']).slice(2))),
+      }));
+      return await apply(a, j);
+    } finally {
+      j.close();
+    }
+  }
+
+  it('apply.owner-answer-unruled: an answer re-anchoring in-slice I-1 without a ruling naming it amended is refused', T, async () => {
+    const reasons = rejected(await ownerAnswer(false));
+    assert.ok(reasons.some((r) => r.includes('I-1 is weakened') && r.includes('amended')), JSON.stringify(reasons));
+  });
+
+  it('apply.owner-answer-mid-arc: with C-2 in force, one apply re-pins, answers P-1 and amends I-1 (corpus + phase0 + obligation)', T, async () => {
+    const v = accepted(await ownerAnswer(true));
+    const types = v.evaluated.draft.changes.map((c) => c.type).sort();
+    assert.ok(['corpus', 'phase0', 'obligation'].every((t) => types.includes(t as never)), JSON.stringify(v.evaluated.draft.changes));
+    assert.deepEqual([...new Set(v.evaluated.draft.dispositions.map((d) => `${d.obligation} ${d.disposition} ${d.ruling}`))], ['I-1 amended C-2']);
+  });
+
   it('classify.corpus-repin-not-by-start: a start may not re-pin (architect apply only)', T, async () => {
     const { a, j } = await arcInForce();
     try {

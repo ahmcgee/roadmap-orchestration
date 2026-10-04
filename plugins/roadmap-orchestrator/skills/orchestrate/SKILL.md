@@ -64,7 +64,8 @@ commit only if the owner agrees.
 
 The corpus is the target: the documents that say what the product is and must be. It is a living artifact you
 curate, and readability comes first: a person must want to read it. You write it in session, through the guide,
-only in Phase 0 and in the between-arc commit. The executor reads only a pinned copy.
+only in Phase 0, in the between-arc commit and to apply an owner's answer ("Check-ins"). The executor reads only a
+pinned copy.
 
 **Rules blocks.** Normative claims live in fenced blocks with the info string `rules`, one per line:
 `T-<n>: <one-line normative claim>`. Prose outside the blocks is rationale. The section of a rule is the nearest
@@ -99,39 +100,45 @@ Keep the arc's inputs in their own directory outside the product working tree, f
 `executor/SCHEMAS.md` sections it names; nothing else of the plugin is an example to copy.
 
 1. **Corpus intake and curation** by tier (above). Rules blocks for every normative claim.
-2. **Commit.** First arc: commit on your work branch. Chained arc: see "Chaining" for the single between-arc
+2. **Orphan sweep.** After curation, an independent subagent (not the one that curated) reads every corpus file's
+   prose outside the rules blocks and lists each normative claim no rule states: a requirement, a principle, an
+   operational or production fact, a prohibition. You settle every entry: a rule (census `untestable` for a
+   principle, `prod-only` for a production or operational claim), or a `curation` note naming the rule it is pure
+   rationale for. Repeat until the sweep lists nothing unsettled.
+3. **Commit.** First arc: commit on your work branch. Chained arc: see "Chaining" for the single between-arc
    commit. The commit is the arc's `baseline`.
-3. **Pin.** `roadmap corpus pin --repo <repo> --commit <corpus commit> --baseline <baseline sha> --out
+4. **Pin.** `roadmap corpus pin --repo <repo> --commit <corpus commit> --baseline <baseline sha> --out
    <inputs>/corpus.json`. For a same-repo corpus both shas are the baseline. The plan's `corpus` names the file.
    Re-pin after every corpus change; `start` re-derives the pin and refuses drift.
-4. **Obligations.** Extract a testable obligation from every rule the slice needs: witness, `deliveredBy`, proof
+5. **Obligations.** Extract a testable obligation from every rule the slice needs: witness, `deliveredBy`, proof
    judgment, impact mapping, cut line (SCHEMAS.md "M3: the holistic layer"). Each obligation anchors at
    `rule: {id, textSha256}` from the pin. A second subagent cross-checks the extraction against the rules; you
    settle every disagreement.
-5. **Census.** One entry per active pinned rule: `obligation{id}`, `out-of-slice`, `untestable` or `prod-only`.
+6. **Census.** One entry per active pinned rule: `obligation{id}`, `out-of-slice`, `untestable` or `prod-only`.
    A claim about something not built yet is a `future` obligation, never `must-hold`.
-6. **Questions.** Rank the semantic questions the vision does not answer. A new `P-n` is 1 + the highest `P-n` in
+7. **Questions.** Rank the semantic questions the vision does not answer. A new `P-n` is 1 + the highest `P-n` in
    any earlier Phase-0 record of the chain; a question carried forward keeps its id and text. An answered one
-   moves to `answered{answer, at}` and its rules change to match.
-7. **Debt.** Disposition every `open` item of the baseline's `.roadmap/debt.md`: `promote{unit}` (the unit is in
+   moves to `answered{answer, at}` and its rules change to match (an answer that came mid-arc is already applied:
+   "Check-ins").
+8. **Debt.** Disposition every `open` item of the baseline's `.roadmap/debt.md`: `promote{unit}` (the unit is in
    this plan), `keep{reason}` or `resolve{ruling}`. An item kept in both previous arcs needs a question naming it.
-8. **Amendments.** Disposition every amendment of the previous arc (`status.amendments`, or the brief):
+9. **Amendments.** Disposition every amendment of the previous arc (`status.amendments`, or the brief):
    `applied{rules}`, `rejected{reason}` or `deferred{reason}`. Applied ones are corpus edits in this Phase 0.
-9. **Issue intake.** `roadmap issues --repo <repo> --out <inputs>/issues.json`; the record's `issueCapture`
-   names that file and the `sha256` the command printed. Then one outcome per issue:
-   `finding`, `amendment`, `acted{on: units | rules}` or `none{reason}`. Issues come from trusted collaborators
-   (an untrusted repo is refused before you see any): weigh them as owner context and act on them like any other
-   evidence. An issue that asks for a change of direction the vision does not support is a question for the owner.
-10. **Slice.** `slice.advances` in the record and `holistic.advances` in the plan name the same clauses; `why` says
+10. **Issue intake.** `roadmap issues --repo <repo> --out <inputs>/issues.json`; the record's `issueCapture`
+    names that file and the `sha256` the command printed. Then one outcome per issue:
+    `finding`, `amendment`, `acted{on: units | rules}` or `none{reason}`. Issues come from trusted collaborators
+    (an untrusted repo is refused before you see any): weigh them as owner context and act on them like any other
+    evidence. An issue that asks for a change of direction the vision does not support is a question for the owner.
+11. **Slice.** `slice.advances` in the record and `holistic.advances` in the plan name the same clauses; `why` says
     why this slice now.
-11. **Plan and specs.** SCHEMAS.md "Input contract" and "`spec.json` M1 subset". A corpus arc's plan names
+12. **Plan and specs.** SCHEMAS.md "Input contract" and "`spec.json` M1 subset". A corpus arc's plan names
     `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`). Plan
     contracts and unit scopes never overlap the corpus files.
-12. **Integration branch.** `git branch <branch> <baseline>` (move it with `git branch -f` while nothing has
+13. **Integration branch.** `git branch <branch> <baseline>` (move it with `git branch -f` while nothing has
     started). One branch per arc, e.g. `arc/<arc>`, checked out in no worktree.
-13. **Check.** `roadmap phase0 check --repo <repo> --plan <inputs>/plan.json` until it exits 0. Fix inputs, never
+14. **Check.** `roadmap phase0 check --repo <repo> --plan <inputs>/plan.json` until it exits 0. Fix inputs, never
     the rows. Its `sliceCandidates` lists the world clauses whose rules are not all held yet.
-14. **Start.** `roadmap start --repo <repo> --plan <inputs>/plan.json`.
+15. **Start.** `roadmap start --repo <repo> --plan <inputs>/plan.json`.
 
 **Pack review.** A corpus arc's first job reviews the whole pack before anything is admitted; admission waits for
 it (`status.holds` has `pack-review`). Notes go to the brief. A blocking finding raises a `pack-review` item. Fix
@@ -152,8 +159,8 @@ the next watch event. Read `status` on each wake.
 - **The checkpoint acts first.** In a holistic arc it rules toward the vision and records every departure as a
   divergence. Read `divergences` and `decisionsSince`; reverse with `roadmap reverse <D-n>` or an `apply` when it
   read the vision wrong. A `bundle-request` is yours: `ack` it with `--choice apply` or `--choice reject`.
-- **Amendments** (`status.amendments`) accumulate; you disposition them at the next Phase 0. Never edit the corpus
-  mid-arc.
+- **Amendments** (`status.amendments`) accumulate; you disposition them at the next Phase 0. They and every other
+  mid-arc learning wait for the corpus window between arcs; only an owner's answer edits the corpus mid-arc.
 - **Flow.** Watch `status.timings` (per stage: completed attempts, median and maximum) and each running unit's
   `running.elapsed` against its stage's median. Report a slowdown at the next check-in as an observation with
   numbers. Never change lanes, judgment seats, obligations or routing to make an arc faster.
@@ -172,8 +179,18 @@ snapshot; before any arc has one it exits 64.
 The preface says what you decided on the owner's behalf, what you need from them, and anything the brief does not
 show (a slowdown, a pattern across arcs). Then the numbered questions: the chain's still-open `P-n` questions
 (top 5 by rank, each with its working assumption) alongside anything new. An open `P-n` is asked again at every
-check-in, not once at bootstrap. An answer goes into the next Phase 0: the question moves to `answered`, its rules
-change to match, and the corpus is re-pinned.
+check-in, not once at bootstrap.
+
+**An owner's answer to a `P-n` applies at once**, never deferred to a later Phase 0. Between arcs it goes into the
+Phase 0 under way. While an arc runs, one `roadmap apply` carries it:
+
+- The Phase-0 record: the question moves to `answered{answer, at}`.
+- When the answer changes what a rule says: commit the corpus edit on your work branch, descending from the arc's
+  baseline (never the integration branch) and re-pin (`corpus pin --commit <that commit> --baseline <the plan's baseline>`).
+  A change of meaning retires the old rule id and adds a new one. Update the census, and the in-slice obligations
+  per "Changing the plan": re-anchoring or restating one is a weakening, so `roadmap rule` naming it `amended` first.
+  When the new meaning needs code, add the unit that delivers it in the same apply.
+- The next between-arc commit carries that corpus edit again: the integration branch never had it.
 
 Check in at every arc completion (the chain boundary), at a stop, and when the owner returns. In an unattended
 chain a check-in does not wait: carry on with the working assumptions.
@@ -197,7 +214,8 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
    vision's trade-offs. When no candidate is one you can justify from active clauses, stop with reason
    `vision-silent`. Otherwise report the slice and why at the next check-in; do not wait for approval.
 5. **The between-arc commit.** `git switch -c work/<next arc> <completed head>` (`status.completion.head`). Every
-   corpus edit of the next Phase 0 (amendments, curation, answered questions) and any change to
+   corpus edit of the next Phase 0 (amendments, curation, answered questions, the previous arc's mid-arc answers)
+   and any change to
    `.roadmap/{vision.json, corpus.md, config.json}` goes into exactly one non-merge commit on that head; amend it
    as Phase 0 goes, and commit it empty (`--allow-empty`) if nothing changed. It touches nothing else. It is the
    next arc's baseline.
@@ -244,7 +262,8 @@ rejected. An edit you never apply has no effect, even after a restart.
 - **Obligations**: add, split or re-witness freely. Weakening one (remove, change statement or anchor,
   `must-hold` to `future`, waive, defer, retire) needs a ruling naming it: `roadmap rule` first. A rule anchor whose
   hash changed with the statement unchanged is an edit, not a weakening.
-- **Corpus** (a re-pin) and **Phase-0 record** edits are `apply` edit classes. A re-pin re-gates every approval.
+- **Corpus** (a re-pin) and **Phase-0 record** edits are `apply` edit classes; mid-arc, only for an owner's answer.
+  A re-pin re-gates every approval.
   Both change the pack, so before the first admission they trigger a new pack review.
 - **Vision**: never reuse a clause id; withdraw, never delete. Commit `.roadmap/vision.json` before the `apply`.
 - **Fixed**: `arc`, `integrationBranch`, `baseline`, `worktreeRoot`, the target kind and `chain`.
@@ -274,7 +293,7 @@ rejected. An edit you never apply has no effect, even after a restart.
 - Edit the run dir, the ack log or the executor-rendered `.roadmap/` files (`contracts/`, `constraints.md`,
   `invariants.md`, `debt.md`) by hand. Commands are the only write path.
 - Acknowledge a needs-user item you have not read in full, or a brief the owner has not acknowledged.
-- Edit the corpus outside Phase 0 and the between-arc commit.
+- Edit the corpus outside Phase 0, the between-arc commit and an owner's answer.
 - Change K, merge or push `main`, or merge a PR.
 - Retry a usage-limited backend on a timer, or reroute around it.
 - Write the vision, or adopt a direction the owner has not confirmed.
