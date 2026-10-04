@@ -104,7 +104,7 @@ export const ARC1_EDITS: readonly Edit[] = [
     file: '0030_Bookings.md',
     find: 'A cancelled booking frees its berth at once: the next skipper to ask for that berth and window gets it.\n',
     replace: `A cancelled booking frees its berth at once: the next skipper to ask for that berth and window gets it.\n\n${rules(
-      'T-9: A skipper may cancel a booking until 24 hours before its tide window opens.',
+      'T-9: A skipper may cancel a booking until 24 hours before its tide window opens. (working assumption, P-1)',
       'T-10: A cancelled booking frees its berth at once.',
     )}\n`,
   },
@@ -139,7 +139,7 @@ export const ARC2_EDITS: readonly Edit[] = [
   },
   {
     file: '0030_Bookings.md',
-    find: 'T-9: A skipper may cancel a booking until 24 hours before its tide window opens.',
+    find: 'T-9: A skipper may cancel a booking until 24 hours before its tide window opens. (working assumption, P-1)',
     replace: 'T-15: A skipper may cancel a booking until 48 hours before its tide window opens.',
   },
   {
