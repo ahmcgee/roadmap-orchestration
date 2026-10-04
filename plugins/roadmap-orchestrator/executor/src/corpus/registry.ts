@@ -6,7 +6,7 @@
 //   - a known active id whose text hash changed is a rewording (R5), allowed;
 //   - `highWater` is the larger of the registry's and the highest pinned number.
 // No registry (a first corpus arc) is the empty one.
-import { type RuleId, ruleSeq } from '../core/ids.ts';
+import { type RuleId, ruleSeq, compareIds } from '../core/ids.ts';
 import type { AbsPath } from '../core/values.ts';
 import { gitRun } from '../git/git.ts';
 import { INVARIANTS_DOC, parseRulesRegistryBlock } from '../docs/invariants.ts';
@@ -41,7 +41,7 @@ export function diffRegistry(rules: readonly PinnedRule[], registry: RulesRegist
   for (const r of registry.active) if (!pinned.has(r.id)) retired.set(r.id, r);
   return {
     problems,
-    retired: [...retired.values()].sort((a, b) => ruleSeq(a.id) - ruleSeq(b.id)),
+    retired: [...retired.values()].sort((a, b) => compareIds(a.id, b.id)),
     highWater: Math.max(registry.highWater, ...rules.map((r) => ruleSeq(r.id))),
   };
 }

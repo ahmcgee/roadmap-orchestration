@@ -192,6 +192,10 @@ None.
   - `censusOf`: an obligations file without a census (docRef obligations; census checks vacuous).
   - `checkpointOutputM4Default`: a checkpoint answer without `corpusAmendments` or `issueIntake`.
   - `splitChildRuleDefault`: a split child without `rule`.
+  - `legacyIdOrder` and `idsAscending`'s `legacyStringOrder` option (with `sortedBy`'s `legacyKey`): a numbered-id list in
+    pre-dev.7 string order. Also needs every arc started on feat/m4a-convergence before the fix finished, and the
+    repo-authored vision, obligations, ruling and Phase-0 files re-sorted (a string-ordered one is refused once it goes).
+    With it goes the dev.7 sentence in `canonicalFingerprint`'s comment (src/pipeline/gate.ts); the set comparison stays.
   - `DEV6_CLASS_CATALOGUE` (K2, step A2) and status's `dev6RevAlias` (K12, step A2), which joins a dev.6 meter row's
     recorded `routingRev` through it.
   - With them, the holistic `architecture-doc` variant and the `docRef` obligation arm in holistic arcs: anchor checks

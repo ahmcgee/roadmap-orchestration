@@ -53,7 +53,7 @@ import { holdFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
   type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha256Hex, type UnitId,
-  parseInvocationId, specRev,
+  parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
 } from '../core/ids.ts';
 import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
 import type { CheckpointState } from '../core/state.ts';
@@ -237,6 +237,24 @@ function callRoutingRev(ctx: CheckpointContext, inv: InvocationId): RoutingRev {
 }
 
 /**
+ * A model-written ruling's id lists (`obligations`, `cites`, `obligationDispositions` by id) put in canonical order before
+ * the sidecar reader, which requires it: the model's order never invalidates a ruling. Anything else is the reader's to
+ * refuse (a malformed id throws InvalidIdError, a SchemaError: the ruling's reason).
+ */
+function answerIdOrder(raw: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...raw };
+  for (const key of ['obligations', 'cites'] as const) {
+    const v = out[key];
+    if (Array.isArray(v) && v.every((x) => typeof x === 'string')) out[key] = [...(v as NumberedId[])].sort(compareIds);
+  }
+  const d = out['obligationDispositions'];
+  if (Array.isArray(d) && d.every((x) => typeof x === 'object' && x !== null && typeof (x as { id?: unknown }).id === 'string')) {
+    out['obligationDispositions'] = [...(d as { id: NumberedId }[])].sort((x, y) => compareIds(x.id, y.id));
+  }
+  return out;
+}
+
+/**
  * The rulings of the output, each parsed with what the executor stamps (lead ruling): `ruledBy: checkpoint{job}` and a
  * `consistency` judged by the checkpoint at the captured head and revisions (the model echoes none).
  */
@@ -247,7 +265,7 @@ function stampedRulings(ctx: CheckpointContext, a: Activation, reasons: string[]
   if (ledgerSha256 === null) throw new Error(`${a.job}: a holistic revision keeps its ledger, but the capture names none`);
   return a.output.rulings.flatMap((text, i) => {
     try {
-      const raw = JSON.parse(text) as Record<string, unknown>;
+      const raw = answerIdOrder(JSON.parse(text) as Record<string, unknown>);
       const draft = parseRulingSidecar({
         ...raw, ruledBy: { type: 'checkpoint', job: a.job },
         consistency: {
@@ -274,7 +292,7 @@ function stampedRulings(ctx: CheckpointContext, a: Activation, reasons: string[]
  * in the pin in force; its proof is the checkpoint's own judgment of the witness it names.
  */
 function childOf(parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-split' }>, c: Extract<BundleOp, { op: 'obligation-split' }>['children'][number], laneRev: string, anchor: ObligationAnchor): Record<string, unknown> {
-  const serves = [...new Set([...parent.serves, ...op.cites])].sort();
+  const serves = canonicalIds([...parent.serves, ...op.cites]);
   return {
     id: c.id, rev: 1, statement: c.statement, ...anchor, serves, witness: c.witness,
     proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness: c.witness },
@@ -286,7 +304,7 @@ function childOf(parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-
 function mappedObligations(obligations: Obligations, scope: readonly string[], declared: readonly ObligationId[]): readonly ObligationId[] {
   const live = new Set(obligations.obligations.filter((o) => !isExempt(o)).map((o) => o.id));
   const mapped = obligations.mapping.paths.filter((m) => scope.some((p) => mayOverlap(p, m.pattern))).flatMap((m) => m.obligations).filter((id) => live.has(id));
-  return [...new Set([...declared, ...mapped])].sort();
+  return canonicalIds([...declared, ...mapped]);
 }
 
 /** The revision in force with every op applied, or the reasons it cannot be built; nothing is written. */
@@ -452,7 +470,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
           }
           return [childOf(parent, op, c, laneRevOf(lane), anchor)];
         });
-        raw.state = { type: 'split', children: op.children.map((c) => c.id) };
+        raw.state = { type: 'split', children: canonicalIds(op.children.map((c) => c.id)) };
         raw.witness = null;
         raw.proofJudgment = null;
         obligationsRaw.obligations.push(...(children as RawObligation[]));
@@ -665,7 +683,7 @@ function proposerOf(a: Activation) {
   const splits = a.output.ops.filter((op) => op.op === 'obligation-split');
   const from = splits.length > 0 ? splits : a.output.ops;
   return {
-    type: 'bundle' as const, job: a.job, cites: [...new Set(from.flatMap((op) => op.cites))].sort(),
+    type: 'bundle' as const, job: a.job, cites: canonicalIds(from.flatMap((op) => op.cites)),
     evidence: [...new Set(from.flatMap((op) => op.evidence))],
   };
 }

@@ -27,7 +27,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
-import { type CommandId, type ObligationId, type RulingId, type Sha256Hex } from '../core/ids.ts';
+import { type CommandId, type ObligationId, type RulingId, type Sha256Hex, compareIds } from '../core/ids.ts';
 import type { CommandBody, RevisionManifest } from '../core/records.ts';
 import { readJournal } from '../core/log.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -162,7 +162,7 @@ function writeBack(ctx: CommandContext, before: WrittenBack, after: WrittenBack)
     out.push(`${path} written back`);
   };
   one(ledger, before.ledgerSha256, after.ledgerSha256, RULINGS_INPUT);
-  for (const id of Object.keys(after.sidecars).sort() as RulingId[]) {
+  for (const id of (Object.keys(after.sidecars) as RulingId[]).sort(compareIds)) {
     const now = after.sidecars[id]!;
     if (before.sidecars[id] === now) continue;
     one(sidecarPath(ledger, id), before.sidecars[id], now, RULING_INPUT);

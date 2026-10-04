@@ -16,7 +16,7 @@
 //                    open, every bundle becomes a `bundle-request` (A9)
 //   quiescence       a generation whose checkpoint decided `no-op` under the vision in force, or whose request the
 //                    owner answered without `apply` (`quiescentGenerations`; a vision revision reopens it, H3)
-import type { FindingId, JobId, NeedsUserId, ObligationId, Sha256Hex, UnitId } from '../core/ids.ts';
+import { type FindingId, type JobId, type NeedsUserId, type ObligationId, type Sha256Hex, type UnitId, canonicalIds } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserReason } from '../core/records.ts';
 import type { HolisticFold } from '../core/state.ts';
@@ -63,7 +63,7 @@ export function identitiesOf(op: BundleOp, known: ReadonlySet<string>, rootOf: (
   const named = op.evidence.flatMap((e) => e.match(SUBJECTS) ?? []).filter((s) => known.has(s));
   const unit = unitOf(op);
   const root = unit === null ? null : rootOf(unit);
-  return [...new Set([...own, ...named])].sort().map((subject) => ({ subject: subject as FindingId | ObligationId, root }));
+  return canonicalIds([...own, ...named] as (FindingId | ObligationId)[]).map((subject) => ({ subject, root }));
 }
 
 /** An applied bundle: its job, the seq of its `plan-applied`, and its ops. */

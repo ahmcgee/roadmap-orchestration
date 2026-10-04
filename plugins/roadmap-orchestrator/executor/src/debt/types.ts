@@ -2,7 +2,7 @@
 // item, the Phase-0 disposition and the `debt-banked` fact's source. Types and readers only; A4 owns the behaviour
 // (src/debt/{ledger,mint,render}.ts): `debtKey`, minting, dedupe, rendering.
 import {
-  type ArcId, type DebtId, type FindingId, type RulingId, type Sha256Hex, type UnitId, arcId, debtId, debtSeq, findingId, rulingId, sha256, unitId,
+  type ArcId, type DebtId, type FindingId, type RulingId, type Sha256Hex, type UnitId, arcId, debtId, debtSeq, findingId, rulingId, sha256, unitId, compareIds,
 } from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, str, tagged } from '../core/validate.ts';
 
@@ -60,7 +60,7 @@ const debtItem: Read<DebtItem> = object((f) => ({
 export const debtLedger: Read<DebtLedger> = object((f) => {
   const out: DebtLedger = { schema: f.get('schema', literal(DEBT_SCHEMA)), items: f.get('items', arrayOf(debtItem)) };
   out.items.forEach((item, i) => {
-    if (i > 0 && !(debtSeq(out.items[i - 1]!.id) < debtSeq(item.id))) throw new SchemaError(`${f.path}.items[${i}]`, 'items strictly ascending by number', item.id);
+    if (i > 0 && !(compareIds(out.items[i - 1]!.id, item.id) < 0)) throw new SchemaError(`${f.path}.items[${i}]`, 'items strictly ascending by number', item.id);
   });
   return out;
 });

@@ -13,7 +13,7 @@
 // `chain` (H7) names the previous arc of a chained start, fixed at revision 1.
 import {
   type ArcId, type EdgeId, type ResourceName, type RulingId, type Sha, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, resourceName,
-  rulingId, sha, unitId, visionClauseId,
+  rulingId, sha, unitId, visionClauseId, idList,
 } from '../core/ids.ts';
 import { BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type LaneDef, type LaneEnv, laneDef, laneEnv } from '../core/records.ts';
 import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str } from '../core/validate.ts';
@@ -244,7 +244,7 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
   }));
   return {
     ...(vision === undefined ? {} : { vision }),
-    advances: f.get('advances', sortedBy((v, p) => visionClauseId(v, p), (c) => c, { nonEmpty: true })),
+    advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true, legacyStringOrder: true })),
     ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }) };
 });
 

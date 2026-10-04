@@ -28,7 +28,7 @@ import {
   type IntentOf, type Parent, type PlanAppliedFact, type PlanChange, REVISION_FENCE_KEY, type RevisionPayload, parseRevisionPayload,
 } from '../core/events.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
-import { type OpId, type PlanRev, type RulingId, type Sha256Hex, type UnitId, opKey, planRev, rulingId } from '../core/ids.ts';
+import { type OpId, type PlanRev, type RulingId, type Sha256Hex, type UnitId, opKey, planRev, rulingId, compareIds } from '../core/ids.ts';
 import { CORPUS_GUIDE_PATH } from '../corpus/guide.ts';
 import type { SourceFile } from '../corpus/source.ts';
 import { type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
@@ -134,7 +134,6 @@ export const sidecarPath = (ledger: AbsPath, id: RulingId): AbsPath => absPath(j
 const SIDECAR_NAME = /^(C-[0-9]+)\.json$/;
 
 const inputFile = (path: AbsPath): InputFile => ({ path, bytes: existsSync(path) ? readFileSync(path) : null });
-const rulingNumber = (id: RulingId): number => Number(id.slice(2));
 
 /** The sidecar files of `ledger` by id, ascending; a file there not named `C-<n>.json` is refused (SchemaError). */
 function readSidecars(ledger: AbsPath): ReadonlyMap<RulingId, Readonly<{ path: AbsPath; bytes: Buffer }>> {
@@ -146,7 +145,7 @@ function readSidecars(ledger: AbsPath): ReadonlyMap<RulingId, Readonly<{ path: A
     const path = sidecarPath(ledger, rulingId(m[1], join(dir, name)));
     return [rulingId(m[1]), { path, bytes: readFileSync(path) }] as const;
   });
-  return new Map(entries.sort(([a], [b]) => rulingNumber(a) - rulingNumber(b)));
+  return new Map(entries.sort(([a], [b]) => compareIds(a, b)));
 }
 
 /**
@@ -492,7 +491,7 @@ export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInFo
   const sidecars = new Map(Object.entries(manifest.rulings.sidecars).map(([id, sha]) => {
     const bytes = kept(runDir, sha, RULING_INPUT);
     return [id as RulingId, { sha256: sha, bytes, sidecar: parseRulingSidecar(json(bytes)) }] as const;
-  }).sort(([a], [b]) => rulingNumber(a) - rulingNumber(b)));
+  }).sort(([a], [b]) => compareIds(a, b)));
   const parsed = <T>(sha: Sha256Hex | null, ext: string, parse: (v: unknown) => T): Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: T }> | null => {
     if (sha === null) return null;
     const bytes = kept(runDir, sha, ext);

@@ -54,7 +54,7 @@
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, Parent, PlanChange, RevisionPayload } from '../core/events.ts';
-import { type JobId, type ObligationId, type OpId, type Sha, type Sha256Hex, INTEGRATION_SLOT } from '../core/ids.ts';
+import { type JobId, type ObligationId, type OpId, type Sha, type Sha256Hex, INTEGRATION_SLOT, compareIds, type RulingId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
@@ -211,7 +211,7 @@ function landedSidecars(ctx: Reader, payload: RevisionPayload): readonly RulingS
   const inForce = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).manifest.rulings.sidecars;
   return Object.entries(payload.manifest.rulings.sidecars)
     .filter(([id]) => !Object.hasOwn(inForce, id))
-    .sort(([a], [b]) => Number(a.slice(2)) - Number(b.slice(2)))
+    .sort(([a], [b]) => compareIds(a as RulingId, b as RulingId))
     .map(([, sha]) => parseRulingSidecar(JSON.parse(keptOr(ctx.runDir, sha, RULING_INPUT).toString('utf8'))));
 }
 
@@ -410,7 +410,7 @@ function verdictReason(
     },
   });
   if (!brakesOn(effects, selected)) return null;
-  const reds = [...selected].filter((id) => effects.get(id) === 'red').sort();
+  const reds = [...selected].filter((id) => effects.get(id) === 'red').sort(compareIds);
   return `obligations ${reds.join(', ')} do not hold on the docs candidate`;
 }
 

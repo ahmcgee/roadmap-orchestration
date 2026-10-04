@@ -3,9 +3,9 @@
 // (src/forge/{gh,policy,issues,trust,push,pr}.ts), C3 the checkpoint intake, C1 the Phase-0 coverage rows.
 import {
   type AmendmentId, type FindingId, type IssueContentRef, type IssueId, type RuleId, type UnitId, amendmentId, findingId, issueContentRef, issueId,
-  issueNumber, issueOfContent, ruleId, unitId,
+  answerIds, idList, issueNumber, issueOfContent, ruleId, unitId,
 } from '../core/ids.ts';
-import { type Read, SchemaError, arrayOf, bool, literal, nat, object, oneOf, sortedBy, str, tagged, text } from '../core/validate.ts';
+import { type Read, SchemaError, answerSet, arrayOf, bool, literal, nat, object, oneOf, sortedBy, str, tagged, text } from '../core/validate.ts';
 import { FINDING_SEVERITIES, type FindingSeverity } from '../holistic/types.ts';
 
 /** Who the forge says a repo is: resolved once per capture (`gh repo view`, H13) and passed to every later call. */
@@ -102,13 +102,32 @@ export type ActedOn =
 export type ActedOnKind = ActedOn['type'];
 
 const indexes = sortedBy(nat, (n) => String(n).padStart(16, '0'), { nonEmpty: true });
+const unitR: Read<UnitId> = (v, p) => unitId(v, p);
+const ruleR: Read<RuleId> = (v, p) => ruleId(v, p);
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+/** A judgment answer's lists: unique in any order, returned ascending (`answerSet`), so the model's order never invalidates it. */
+const ANSWER_LISTS = {
+  indexes: answerSet(nat, String, (a, b) => a - b, { nonEmpty: true }),
+  units: answerSet(unitR, (u) => u, byCodeUnit, { nonEmpty: true }),
+  rules: answerIds(ruleR, { nonEmpty: true }),
+};
+/** A record's lists: strictly ascending as written (rule ids in canonical order). */
+const RECORD_LISTS = {
+  indexes,
+  units: sortedBy(unitR, (u) => u, { nonEmpty: true }),
+  rules: idList(ruleR, { nonEmpty: true, legacyStringOrder: true }),
+};
 
-/** An `acted{on}` limited to `kinds` (Phase 0: units or rules; a checkpoint: ops); each list non-empty and ascending. */
-export function actedOn(kinds: readonly ActedOnKind[]): Read<ActedOn> {
+/**
+ * An `acted{on}` limited to `kinds` (Phase 0: units or rules; a checkpoint: ops); each list non-empty. A record's lists
+ * are ascending as written; a judgment answer's (`from: 'answer'`) may come in any order and are returned ascending.
+ */
+export function actedOn(kinds: readonly ActedOnKind[], from: 'record' | 'answer' = 'record'): Read<ActedOn> {
+  const lists = from === 'answer' ? ANSWER_LISTS : RECORD_LISTS;
   const all: { readonly [K in ActedOnKind]: Read<ActedOn> } = {
-    ops: object((f): ActedOn => ({ type: f.get('type', literal('ops')), indexes: f.get('indexes', indexes) })),
-    units: object((f): ActedOn => ({ type: f.get('type', literal('units')), ids: f.get('ids', sortedBy((v, p) => unitId(v, p), (u) => u, { nonEmpty: true })) })),
-    rules: object((f): ActedOn => ({ type: f.get('type', literal('rules')), ids: f.get('ids', sortedBy((v, p) => ruleId(v, p), (r) => r, { nonEmpty: true })) })),
+    ops: object((f): ActedOn => ({ type: f.get('type', literal('ops')), indexes: f.get('indexes', lists.indexes) })),
+    units: object((f): ActedOn => ({ type: f.get('type', literal('units')), ids: f.get('ids', lists.units) })),
+    rules: object((f): ActedOn => ({ type: f.get('type', literal('rules')), ids: f.get('ids', lists.rules) })),
   };
   return tagged('type', Object.fromEntries(kinds.map((k) => [k, all[k]])) as { readonly [K in ActedOnKind]: Read<ActedOn> });
 }
@@ -137,7 +156,7 @@ export type Phase0IntakeOutcome =
   | Readonly<{ type: 'acted'; on: Exclude<ActedOn, { type: 'ops' }> }>
   | Readonly<{ type: 'none'; reason: string }>;
 
-const rulesList = sortedBy((v, p) => ruleId(v, p), (r) => r);
+const rulesList = idList((v, p) => ruleId(v, p), { legacyStringOrder: true });
 export const phase0IntakeOutcome: Read<Phase0IntakeOutcome> = tagged('type', {
   finding: object((f): Phase0IntakeOutcome => ({ type: f.get('type', literal('finding')), severity: f.get('severity', oneOf(FINDING_SEVERITIES)), claim: f.get('claim', str) })),
   amendment: object((f): Phase0IntakeOutcome => ({ type: f.get('type', literal('amendment')), rules: f.get('rules', rulesList), proposal: f.get('proposal', str) })),

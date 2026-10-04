@@ -9,7 +9,7 @@ import {
   type UnitId, type VisionClauseId, INTEGRATION_SLOT, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
   findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseOpId,
   parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId,
+  visionClauseId, idList,
 } from './ids.ts';
 import { type BankReason, type DebtSource, BANK_REASONS, debtSource } from '../debt/types.ts';
 import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIdentity } from '../forge/types.ts';
@@ -1259,7 +1259,7 @@ const witnessFor: Read<WitnessFor> = tagged('type', {
 });
 const lensR = oneOf(LENS_KIND_NAMES);
 const lensSet: Read<readonly LensKindName[]> = sortedBy(lensR, (l) => l, { nonEmpty: true });
-const findingSet: Read<readonly FindingId[]> = sortedBy(findingR, (id) => id);
+const findingSet: Read<readonly FindingId[]> = idList(findingR, { legacyStringOrder: true });
 const auditJobR: Read<JobId> = (v, p) => jobIdOfKind('audit')(v, p);
 const ckptJobR: Read<JobId> = (v, p) => jobIdOfKind('ckpt')(v, p);
 
@@ -1270,7 +1270,7 @@ const bundleOutcome: Read<BundleOutcome> = tagged('kind', {
 });
 
 const reviewJobR: Read<JobId> = (v, p) => jobIdOfKind('review')(v, p);
-const ruleList: Read<readonly RuleId[]> = sortedBy((v, p) => ruleId(v, p), (r) => r);
+const ruleList: Read<readonly RuleId[]> = idList((v, p) => ruleId(v, p), { legacyStringOrder: true });
 
 const checkpointIssues: Read<CheckpointIssues> = tagged('type', {
   captured: object((f): CheckpointIssues => ({ type: f.get('type', literal('captured')), sha256: f.get('sha256', sha256R) })),
@@ -1337,7 +1337,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     const out = {
       kind: f.get('kind', literal('finding-opened')), id: f.get('id', findingR), key: f.get('key', sha256R), lens: f.get('lens', oneOf(FINDING_LENSES)),
       severity: f.get('severity', oneOf(FINDING_SEVERITIES)), obligation: f.get('obligation', nullable(obligationR)),
-      visionClauses: f.get('visionClauses', sortedBy((v, p): VisionClauseId => visionClauseId(v, p), (c) => c)), claim: f.get('claim', str),
+      visionClauses: f.get('visionClauses', idList((v, p): VisionClauseId => visionClauseId(v, p), { legacyStringOrder: true })), claim: f.get('claim', str),
       evidence: f.get('evidence', arrayOf(findingEvidence)), mutant: f.get('mutant', nullable(mutantRef)), source: f.get('source', findingSource),
       gateHadPassed: f.get('gateHadPassed', bool),
     };
@@ -1393,7 +1393,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
   'divergence-digest': object((f): Fact => ({
     kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
-    ids: f.get('ids', sortedBy((v, p): DivergenceId => divergenceId(v, p), (d) => d, { nonEmpty: true })),
+    ids: f.get('ids', idList((v, p): DivergenceId => divergenceId(v, p), { nonEmpty: true, legacyStringOrder: true })),
   })),
   steered: object((f): Fact => ({
     kind: f.get('kind', literal('steered')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R),

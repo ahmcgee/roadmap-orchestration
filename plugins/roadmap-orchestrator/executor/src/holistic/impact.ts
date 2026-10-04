@@ -10,7 +10,7 @@
 // then the split closure (H14), to a fixed point: a selected child selects its parent, a selected parent its
 // children. An id the obligations file does not hold is a caller bug and throws.
 import { posix } from 'node:path';
-import type { ObligationId } from '../core/ids.ts';
+import { type ObligationId, canonicalIds } from '../core/ids.ts';
 import { type RepoPath, matchesPattern } from '../core/values.ts';
 import { type ArcLaneDef, type ImpactInput, type ObligationDef, type SelectObligations, obligationSource } from './types.ts';
 
@@ -55,5 +55,5 @@ export const selectObligations: SelectObligations = (input: ImpactInput) => {
       for (const k of kin) if (!picked.has(k)) { picked.add(k); grew = true; }
     }
   }
-  return [...picked].sort();
+  return canonicalIds(picked);
 };

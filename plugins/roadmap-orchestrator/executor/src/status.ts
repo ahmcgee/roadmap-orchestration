@@ -95,7 +95,7 @@ import { readJson } from './core/fsx.ts';
 import {
   type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev,
   type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId,
-  commandId, compareResourceUnits, cpuToken, parseJobId, parseOpId,
+  commandId, compareResourceUnits, cpuToken, parseJobId, parseOpId, compareIds,
 } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
@@ -867,7 +867,6 @@ export function compactState(l: UnitStatusLine): string {
 // M3: the holistic view (§2.4; see the header)
 
 /** The numeric part of an `X-<n>` id: ids of one kind order by it. */
-const idNumber = (id: string): number => Number(id.slice(id.lastIndexOf('-') + 1));
 const TERMINAL_UNIT: readonly string[] = ['retired', 'cut', 'superseded'];
 
 /** What an open needs-user item is about: status lists them, and the M3 keys pick theirs by reason. */
@@ -969,7 +968,7 @@ function truths(
 
   const nowTrue: ObligationTruth[] = [];
   const notYetTrue: ObligationPending[] = [];
-  for (const o of [...obligations.obligations].sort((a, b) => idNumber(a.id) - idNumber(b.id))) {
+  for (const o of [...obligations.obligations].sort((a, b) => compareIds(a.id, b.id))) {
     if (isExempt(o)) continue;
     const l = leaf(o);
     const truth: ObligationTruth = {
@@ -1024,7 +1023,7 @@ function targetOf(view: JournalView, plan: PlanM1, obligations: Obligations, t: 
     .filter((o) => !isExempt(o) && o.state.type !== 'split' && o.activation === 'future' && !latched.has(o.id))
     .map((o) => ({ obligation: o.id, statement: o.statement, unmerged: unmergedOf(view, o.deliveredBy) }))
     .filter((m) => m.unmerged.length > 0)
-    .sort((a, b) => a.unmerged.length - b.unmerged.length || idNumber(a.obligation) - idNumber(b.obligation));
+    .sort((a, b) => a.unmerged.length - b.unmerged.length || compareIds(a.obligation, b.obligation));
   return {
     cutLine: obligations.cutLine,
     nextMilestone: pending[0] ?? null,
@@ -1038,15 +1037,15 @@ function targetOf(view: JournalView, plan: PlanM1, obligations: Obligations, t: 
 
 function exemptBy(obligations: Obligations | null, type: 'waived' | 'deferred'): readonly Readonly<{ obligation: ObligationId; ruling: RulingId }>[] {
   return (obligations?.obligations ?? []).flatMap((o) => (o.state.type === type ? [{ obligation: o.id, ruling: o.state.ruling }] : []))
-    .sort((a, b) => idNumber(a.obligation) - idNumber(b.obligation));
+    .sort((a, b) => compareIds(a.obligation, b.obligation));
 }
 
 function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[], fold: HolisticFold): VisionView | null {
   if (revision.vision === null) return null;
   const v = revision.vision.value;
   const citers = [
-    ...[...revision.sidecars].map(([id, s]) => ({ id: id as string, cites: s.sidecar.cites })),
-    ...fold.divergences.map((d) => ({ id: d.id as string, cites: d.cites })),
+    ...[...revision.sidecars].map(([id, s]) => ({ id, cites: s.sidecar.cites })),
+    ...fold.divergences.map((d) => ({ id: d.id, cites: d.cites })),
   ];
   return {
     rev: v.rev, confirmation: v.confirmation,
@@ -1144,7 +1143,7 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
         // The arc's first revision states its starting rulings: nothing was decided in the arc yet.
         if (payload.base !== 0) for (const id of ids) if (!sidecars.has(id)) added.add(id);
         if (e.seq > since) {
-          for (const id of [...added].sort((a, b) => idNumber(a) - idNumber(b))) {
+          for (const id of [...added].sort((a, b) => compareIds(a as RulingId, b as RulingId))) {
             const r = parseRulingSidecar(JSON.parse(read.ruling(rulings[id as RulingId]!).toString('utf8')));
             const ruledBy: RuledBy = r.ruledBy.type === 'checkpoint' ? { type: 'checkpoint', job: r.ruledBy.job } : { type: 'architect', command: f.command };
             out.push({ seq: e.seq, kind: 'ruling', id, oneLine: r.statement, ruledBy });

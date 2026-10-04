@@ -1,7 +1,7 @@
 // Branded identifiers. Each id has one constructor that checks its textual form and throws
 // InvalidIdError otherwise, so an unchecked string can never reach a place that wants an id. The forms
 // are recorded in SCHEMAS.md ("Ids").
-import { type Brand, SchemaError } from './validate.ts';
+import { type Brand, type Read, SchemaError, answerSet, sortedBy } from './validate.ts';
 
 export class InvalidIdError extends SchemaError {
   readonly idKind: string;
@@ -315,6 +315,11 @@ export function parseAmendmentRef(ref: AmendmentRef): Readonly<{ arc: ArcId; id:
   if (m === null) throw new InvalidIdError('AmendmentRef', 'AmendmentRef', '<arc>/M-<n>', ref);
   return { arc: m[1] as ArcId, id: m[2] as AmendmentId };
 }
+/** An amendment ref's sort key: by arc, then canonically by id (`a/M-9` before `a/M-10`). */
+export function amendmentRefKey(ref: AmendmentRef): string {
+  const { arc, id } = parseAmendmentRef(ref);
+  return `${arc}\u0000${idKey(id)}`;
+}
 
 /**
  * A ranked Phase-0 question: `P-<n>`, global, never reused. No registry: the next id is 1 + the max across every
@@ -325,6 +330,57 @@ const P = numbered('PhaseQuestionId', 'P');
 export const phaseQuestionId: IdReader<PhaseQuestionId> = P.read;
 export const phaseQuestionIdOf = P.of;
 export const phaseQuestionSeq = P.n;
+
+// ---------------------------------------------------------------------------------------------------
+// The canonical order of numbered ids (`<letter>-<n>`: V, Q, I, F, D, T, B, M, P and the ruling ids C). Every list of
+// them, in a record or in code, is in this one order: by letter, then by `<n>` as a number (T-9 < T-10 < T-100).
+// Validators read such lists with `idsAscending`; code writes them with `canonicalIds` (or sorts with `compareIds`).
+// Plain string order stays for keys that are not numbered ids (paths, slugs, job and needs-user ids).
+
+export type NumberedId = VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | AmendmentId | PhaseQuestionId | RulingId;
+
+const NUMBERED_ID = /^([A-Z])-([0-9]+)$/;
+
+/** A numbered id's sort key: string order of keys is the canonical order, and equal keys mean equal ids. */
+export function idKey(id: NumberedId): string {
+  const m = NUMBERED_ID.exec(id);
+  if (m === null) throw new InvalidIdError('NumberedId', 'NumberedId', '<letter>-<n>', id);
+  const digits = m[2] as string;
+  return `${m[1]}-${String(digits.length).padStart(3, '0')}-${digits}`;
+}
+
+/** The canonical order of numbered ids, for `Array.prototype.sort`. */
+export function compareIds(a: NumberedId, b: NumberedId): number {
+  const x = idKey(a);
+  const y = idKey(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/** `ids` once each, in canonical order: how code writes an id list, and how a judgment's id lists are normalised. */
+export function canonicalIds<T extends NumberedId>(ids: Iterable<T>): T[] {
+  return [...new Set(ids)].sort(compareIds);
+}
+
+/** A judgment answer's numbered ids: unique, any order, returned in canonical order (`answerSet`). */
+export function answerIds<T extends NumberedId>(item: Read<T>, opts: { readonly nonEmpty?: boolean } = {}): Read<readonly T[]> {
+  return answerSet(item, (t) => t, compareIds, opts);
+}
+
+const ID_ORDER = 'in id order (T-9 before T-10)';
+
+/**
+ * A list strictly ascending in canonical id order by `id` (sorted, unique). `legacyStringOrder` (TEMPORARY SCAFFOLDING,
+ * SCHEMAS.md "Record evolution"): the list was read in plain string order before 1.0.0-dev.7, so a list strictly
+ * ascending in that order (`["T-10","T-9"]`) still reads, as written, with a warning (`legacyIdOrder`).
+ */
+export function idsAscending<T>(item: Read<T>, id: (t: T) => NumberedId, opts: Readonly<{ nonEmpty?: boolean; legacyStringOrder?: true }> = {}): Read<readonly T[]> {
+  return sortedBy(item, (t) => idKey(id(t)), { nonEmpty: opts.nonEmpty === true, order: ID_ORDER, ...(opts.legacyStringOrder === true ? { legacyKey: id } : {}) });
+}
+
+/** A list of numbered ids strictly ascending in canonical order (see `idsAscending`). */
+export function idList<T extends NumberedId>(item: Read<T>, opts: Readonly<{ nonEmpty?: boolean; legacyStringOrder?: true }> = {}): Read<readonly T[]> {
+  return idsAscending(item, (t) => t, opts);
+}
 
 /** A forge issue: `issue-<number>`, the only issue identity in outcomes, amendments and coverage checks (H18). */
 export type IssueId = Brand<string, 'IssueId'>;

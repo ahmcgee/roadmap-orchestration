@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
-import { type ClauseId, type LaneId, type Sha256Hex, specRev } from '../core/ids.ts';
+import { type ClauseId, type LaneId, type Sha256Hex, specRev, canonicalIds } from '../core/ids.ts';
 import type { IntentBody, Reconciler } from '../core/interfaces.ts';
 import type { SpecM1, SpecPatch, SpecPatchOp, SpecSection } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
@@ -88,7 +88,7 @@ function applyOp(sections: Sections, op: ItemOp, index: number): void {
   }
 }
 
-/** The union of two id lists, sorted: cites only grow, and a repeated cite is already there. */
+/** The union of two path lists, sorted: cites only grow, and a repeated cite is already there (rulings: `canonicalIds`). */
 const union = <T extends string>(a: readonly T[], b: readonly T[]): readonly T[] => [...new Set([...a, ...b])].sort();
 
 /**
@@ -108,7 +108,7 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
   };
   let cites = spec.cites;
   patch.ops.forEach((op, i) => {
-    if (op.op === 'cite') cites = { contracts: union(cites.contracts, op.contracts), rulings: union(cites.rulings, op.rulings) };
+    if (op.op === 'cite') cites = { contracts: union(cites.contracts, op.contracts), rulings: canonicalIds([...cites.rulings, ...op.rulings]) };
     else applyOp(sections, op, i);
   });
   // Each add and replace put an item of its own section's type into that section.

@@ -50,7 +50,7 @@ import { mintDebt } from '../debt/mint.ts';
 import { baselineDebtAt } from '../phase0/rows.ts';
 import type { IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId } from '../core/ids.ts';
+import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type ApprovalFingerprint, type ObligationRev, specObligations, specRepairs } from '../core/records.ts';
 import { selectObligations } from '../holistic/impact.ts';
@@ -110,7 +110,7 @@ export function fingerprintAt(ctx: StageContext, unit: PlanUnit, tip: Sha): Appr
     unitCommit: head,
     specRev: spec.rev,
     contractRevs: paths.map((path) => ({ path, blob: revParse(ctx.repo, `${tip}:${path}`) })),
-    rulingRevs: [...rulings].sort().map((id) => ({ id, rev: revs.get(id) ?? 1 })),
+    rulingRevs: canonicalIds(rulings).map((id) => ({ id, rev: revs.get(id) ?? 1 })),
     ...(obligationRevs.length === 0 ? {} : { obligationRevs }),
     ...(ctx.plan().target === 'corpus' ? { corpus: corpusInForce(ctx).pin.sha256 } : {}),
   };
@@ -159,7 +159,16 @@ export function selected(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha)
   return ids.map((id) => obligations.obligations.find((o) => o.id === id)!);
 }
 
-const sameFingerprint = (a: ApprovalFingerprint, b: ApprovalFingerprint): boolean => canonicalJson(a) === canonicalJson(b);
+/**
+ * A fingerprint with its revision lists in canonical id order. They are sets: a fingerprint recorded before 1.0.0-dev.7
+ * lists them in string order (`C-10` before `C-9`, SCHEMAS.md "Record evolution"), and still holds against the same set.
+ */
+const canonicalFingerprint = (fp: ApprovalFingerprint): ApprovalFingerprint => ({
+  ...fp,
+  rulingRevs: [...fp.rulingRevs].sort((x, y) => compareIds(x.id, y.id)),
+  ...(fp.obligationRevs === undefined ? {} : { obligationRevs: [...fp.obligationRevs].sort((x, y) => compareIds(x.id, y.id)) }),
+});
+const sameFingerprint = (a: ApprovalFingerprint, b: ApprovalFingerprint): boolean => canonicalJson(canonicalFingerprint(a)) === canonicalJson(canonicalFingerprint(b));
 
 /** Whether an approval still holds when publishing onto `tip`. */
 export function fingerprintHolds(ctx: StageContext, unit: PlanUnit, fingerprint: ApprovalFingerprint, tip: Sha): boolean {

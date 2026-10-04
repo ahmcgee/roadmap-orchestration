@@ -4,25 +4,13 @@
 //
 // Paths in a guide and a pin are relative to the source's `root` (a path "under root"), never to the product repo,
 // so one shape serves every source kind. For a same-repo source the product path of a corpus file is `root/path`.
-import { type RuleId, type Sha, type Sha256Hex, ruleId, ruleSeq, sha, sha256 } from '../core/ids.ts';
+import { type RuleId, type Sha, type Sha256Hex, idsAscending, ruleId, ruleSeq, sha, sha256 } from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, assertUnique, literal, nat, nullable, object, sortedBy, str, tagged } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, absPath, repoPath, repoPattern } from '../core/values.ts';
 
 const pathR: Read<RepoPath> = (v, p) => repoPath(v, p);
 const sha256R: Read<Sha256Hex> = (v, p) => sha256(v, p);
 const ruleR: Read<RuleId> = (v, p) => ruleId(v, p);
-
-/** Rule ids strictly ascending by number (`T-2` before `T-10`), so equal sets serialise equally. */
-export function rulesAscending<T>(item: Read<T>, id: (t: T) => RuleId): Read<readonly T[]> {
-  const read = arrayOf(item);
-  return (value, path) => {
-    const out = read(value, path);
-    for (let i = 1; i < out.length; i++) {
-      if (!(ruleSeq(id(out[i - 1] as T)) < ruleSeq(id(out[i] as T)))) throw new SchemaError(`${path}[${i}]`, 'rule ids strictly ascending by number', value);
-    }
-    return out;
-  };
-}
 
 // ---------------------------------------------------------------------------------------------------
 // The corpus guide (`.roadmap/corpus.md`, R2): agent-facing prose plus exactly one fenced `json roadmap-corpus` block.
@@ -138,8 +126,8 @@ export const corpusPin: Read<CorpusPin> = object((f) => {
     guideSha256: f.get('guideSha256', sha256R),
     source: f.get('source', pinSource),
     files: f.get('files', sortedBy(corpusFile, (c) => c.path, { nonEmpty: true })),
-    rules: f.get('rules', rulesAscending(pinnedRule, (r) => r.id)),
-    retired: f.get('retired', rulesAscending(ruleRef, (r) => r.id)),
+    rules: f.get('rules', idsAscending(pinnedRule, (r) => r.id)),
+    retired: f.get('retired', idsAscending(ruleRef, (r) => r.id)),
     highWater: f.get('highWater', nat),
     vision: f.get('vision', corpusFile),
   };
@@ -176,8 +164,8 @@ export type RulesRegistry = Readonly<{ highWater: number; active: readonly RuleR
 export const rulesRegistry: Read<RulesRegistry> = object((f) => {
   const out: RulesRegistry = {
     highWater: f.get('highWater', nat),
-    active: f.get('active', rulesAscending(ruleRef, (r) => r.id)),
-    retired: f.get('retired', rulesAscending(ruleRef, (r) => r.id)),
+    active: f.get('active', idsAscending(ruleRef, (r) => r.id)),
+    retired: f.get('retired', idsAscending(ruleRef, (r) => r.id)),
   };
   const active = new Set(out.active.map((r) => r.id));
   out.retired.forEach((r, i) => {

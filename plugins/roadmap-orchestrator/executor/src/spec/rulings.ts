@@ -29,7 +29,7 @@
 // `ledgerAfter` and `sidecarsAfter` put a validated ruling in force: its line appended, every fully superseded
 // ruling folded to `withdrawn by` (and its sidecar marked `superseded`), the ledger's other bytes kept.
 import { readFileSync } from 'node:fs';
-import { type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, rulingId } from '../core/ids.ts';
+import { type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, rulingId, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { SchemaError } from '../core/validate.ts';
 import type { RepoPath } from '../core/values.ts';
@@ -193,7 +193,7 @@ export function effectiveRulingRevs(sidecars: readonly RulingSidecar[]): Readonl
   const revs = new Map<RulingId, number>();
   const rev = (id: RulingId): number => revs.get(id) ?? 1;
   // A superseding ruling is always a later id (the ledger's next C-n): descending, its own revision is final first.
-  for (const s of [...sidecars].sort((a, b) => rulingNumber(b.id) - rulingNumber(a.id))) {
+  for (const s of [...sidecars].sort((a, b) => compareIds(b.id, a.id))) {
     for (const t of s.supersedes) if (t.part !== null) revs.set(t.id, rev(t.id) + rev(s.id) + (s.status === 'active' ? 0 : 1));
   }
   return revs;
@@ -202,5 +202,5 @@ export function effectiveRulingRevs(sidecars: readonly RulingSidecar[]): Readonl
 /** The sidecars in force with `s` landed: each one it fully supersedes marked `superseded`, `s` added; ascending by id. */
 export function sidecarsAfter(sidecars: readonly RulingSidecar[], s: RulingSidecar): readonly RulingSidecar[] {
   const folded = new Set<string>(s.supersedes.filter((t) => t.part === null).map((t) => t.id));
-  return [...sidecars.map((x) => (folded.has(x.id) ? { ...x, status: 'superseded' as const } : x)), s].sort((a, b) => rulingNumber(a.id) - rulingNumber(b.id));
+  return [...sidecars.map((x) => (folded.has(x.id) ? { ...x, status: 'superseded' as const } : x)), s].sort((a, b) => compareIds(a.id, b.id));
 }

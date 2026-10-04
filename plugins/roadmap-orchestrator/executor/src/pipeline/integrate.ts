@@ -59,7 +59,7 @@ import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, OpOutcome, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
-import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
+import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type Sha, type UnitId, invocationId, canonicalIds } from '../core/ids.ts';
 import { type ApprovalFingerprint, type NeedsUserContent, obligationRevsOf, specRepairs } from '../core/records.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planBatchCandidate, planCandidate } from '../git/candidate.ts';
@@ -976,7 +976,7 @@ export async function publishBatch(ctx: BatchContext, finding: FindingId, member
 
   // The claims: the union of every member's selection (each over its own diff and closure), completions over all members.
   const { obligations } = holisticInForce(ctx);
-  const ids = [...new Set(sorted.flatMap((u) => selected(ctx, u, tip, approvals.get(u.id)!.unitCommit).map((o) => o.id)))].sort();
+  const ids = canonicalIds(sorted.flatMap((u) => selected(ctx, u, tip, approvals.get(u.id)!.unitCommit).map((o) => o.id)));
   const repairs = new Set(sorted.flatMap((u) => [...repairedObligations(ctx, u)]));
   const claims = claimsOf(ctx, obligations, sorted.map((u) => u.id), ids, repairs);
   const owner = { type: 'job', job, acquireFirst: ctx.acquireFirst } as const;

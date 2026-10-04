@@ -78,7 +78,7 @@ import type { IntentOf, PlanChange } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import {
   type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId,
-  parseResourceUnit,
+  parseResourceUnit, compareIds,
 } from '../core/ids.ts';
 import { type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
@@ -836,7 +836,7 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
     if (obligations !== null) {
       const scope = [...new Set([...unit.scope, ...spec.scope])];
       const owed = [...new Set(obligations.mapping.paths.filter((m) => scope.some((p) => mayOverlap(p, m.pattern))).flatMap((m) => m.obligations))]
-        .filter((id) => !isExempt(byId.get(id)!) && !declared.includes(id)).sort();
+        .filter((id) => !isExempt(byId.get(id)!) && !declared.includes(id)).sort(compareIds);
       if (owed.length > 0) reasons.push(`unit ${unit.id}'s scope may touch paths mapped to ${owed.join(', ')}; its spec declares them in \`obligations\``);
     }
     const repairs = specRepairs(spec);

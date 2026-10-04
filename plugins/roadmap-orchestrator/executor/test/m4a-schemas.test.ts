@@ -507,6 +507,65 @@ describe('upgrade.defaults-dev6', () => {
   });
 });
 
+// Before 1.0.0-dev.7 every numbered-id list was validated and written in string order (`T-10` before `T-9`): a dev.6
+// record, or an arc started on this branch before the fix, may hold one. Each reads as written (byte-identical, so a hash
+// or chain over it holds); what is written now is canonical (T-9 before T-10), and a list in neither order is refused.
+describe('upgrade.legacy-id-order', () => {
+  it('facts: corpus-amendment rules, finding-opened clauses, audit findings and digest ids', () => {
+    const amendment = { kind: 'corpus-amendment', id: 'M-1', source: { type: 'divergence', divergence: 'D-3' }, proposal: 'p', why: 'w', evidence: [] };
+    roundTrip(fact({ ...amendment, rules: ['T-10', 'T-9'] }));
+    roundTrip(fact({ ...amendment, rules: ['T-9', 'T-10'] }));
+    roundTrip(fact({ ...amendment, rules: ['T-42', 'T-120'] }));
+    refusesFact({ ...amendment, rules: ['T-9', 'T-10', 'T-2'] }, /^event\.fact\.rules\[2\]$/);
+    const opened = {
+      kind: 'finding-opened', id: 'F-1', key: H, lens: 'issue', severity: 'P2', obligation: null, claim: 'c', evidence: [], mutant: null,
+      source: { type: 'job', job: 'ckpt-1' }, gateHadPassed: false,
+    };
+    roundTrip(fact({ ...opened, visionClauses: ['V-10', 'V-9'] }));
+    roundTrip(fact({ ...opened, visionClauses: ['V-9', 'V-10'] }));
+    roundTrip(fact({ kind: 'audit-ended', job: 'audit-2', covered: [], findings: ['F-10', 'F-11', 'F-9'], suppressed: 0, outcome: 'completed' }));
+    roundTrip(fact({ kind: 'divergence-digest', needsUser: 'nu-4', ids: ['D-10', 'D-2'] }));
+  });
+
+  it('records and inputs: an approval fingerprint, an obligations file, a ruling sidecar, a plan\'s advances, a Phase-0 record', () => {
+    const fp = { unitCommit: A, specRev: 2, contractRevs: [], rulingRevs: [{ id: 'C-10', rev: 1 }, { id: 'C-9', rev: 2 }], obligationRevs: [{ id: 'I-10', rev: 1 }, { id: 'I-2', rev: 1 }] };
+    same((v) => approvalFingerprint(v, 'fp'), fp);
+    same((v) => approvalFingerprint(v, 'fp'), { ...fp, rulingRevs: [...fp.rulingRevs].reverse(), obligationRevs: [...fp.obligationRevs].reverse() });
+    assert.throws(() => approvalFingerprint({ ...fp, rulingRevs: [{ id: 'C-9', rev: 1 }, { id: 'C-10', rev: 1 }, { id: 'C-2', rev: 1 }] }, 'fp'), /fp\.rulingRevs\[2\]/);
+    same(parseObligations, obligationsFile([{ ...ruleObligation('I-1', 'T-2'), serves: ['V-10', 'V-9'] }], [{ rule: 'T-2', state: { type: 'obligation', id: 'I-1' } }]));
+    same(parseRulingSidecar, { ...sidecar([{ rule: 'T-2', textSha256: H, relation: 'refines' }]), obligations: ['I-10', 'I-9'], cites: ['V-11', 'V-2'] });
+    same(parsePhase0Record, { ...phase0, amendments: [{ id: 'arc-1/M-10', disposition: { type: 'deferred', reason: 'r' } }, { id: 'arc-1/M-9', disposition: { type: 'deferred', reason: 'r' } }] });
+    same(parsePhase0Record, { ...phase0, amendments: [{ id: 'arc-1/M-9', disposition: { type: 'deferred', reason: 'r' } }, { id: 'arc-1/M-10', disposition: { type: 'deferred', reason: 'r' } }] });
+    const plan = parsePlan({ ...corpusPlan, holistic: { ...corpusPlan.holistic, advances: ['V-10', 'V-9'] } });
+    assert.deepEqual(plan.holistic?.advances, ['V-10', 'V-9']);
+  });
+
+  it('a checkpoint answer\'s lists come in any order and read canonical, so no fact built from them is refused for order', () => {
+    const child = { id: 'I-12', statement: 's', docRef: null, rule: 'T-2', witness, activation: 'must-hold', deliveredBy: ['u2', 'u1'] };
+    const out = validateCheckpointOutput({
+      decision: 'bundle', reasons: ['r'], rulings: [], findingDispositions: [], premises: [],
+      ops: [{ op: 'obligation-split', obligation: 'I-1', children: [child], cites: ['V-10', 'V-2'], evidence: ['F-1'] }],
+      interpretations: [{ clauses: ['V-11', 'V-3'], situation: 's', reading: 'r' }],
+      cites: { vision: ['V-10', 'V-9'], observations: [], findings: ['F-12', 'F-3'] },
+      corpusAmendments: [{ rules: ['T-120', 'T-42'], proposal: 'p', why: 'w' }],
+      issueIntake: [
+        { issue: 'issue-3', outcome: { type: 'acted', on: { type: 'ops', indexes: [2, 0] } } },
+        { issue: 'issue-4', outcome: { type: 'amendment', rules: ['T-42', 'T-120'], proposal: 'p' } },
+      ],
+    });
+    const op = out.ops[0]!;
+    assert.ok(op.op === 'obligation-split');
+    assert.deepEqual([op.cites, op.children[0]!.deliveredBy], [['V-2', 'V-10'], ['u1', 'u2']]);
+    assert.deepEqual([out.interpretations[0]!.clauses, out.cites.vision, out.cites.findings], [['V-3', 'V-11'], ['V-9', 'V-10'], ['F-3', 'F-12']]);
+    assert.deepEqual(out.corpusAmendments[0]!.rules, ['T-42', 'T-120']);
+    assert.deepEqual(out.issueIntake.map((e) => e.outcome), [{ type: 'acted', on: { type: 'ops', indexes: [0, 2] } }, { type: 'amendment', rules: ['T-42', 'T-120'], proposal: 'p' }]);
+  });
+
+  it('the census and the pin were always numeric: string order is refused there', () => {
+    assert.throws(() => parseObligations(obligationsFile([ruleObligation('I-1', 'T-2')], [{ rule: 'T-10', state: { type: 'out-of-slice' } }, { rule: 'T-2', state: { type: 'obligation', id: 'I-1' } }])), /census\[1\]/);
+  });
+});
+
 describe('cli.m4a', () => {
   it('parses every M4a host act', () => {
     assert.deepEqual(parseCommand(['phase0', 'check', '--repo', '.', '--plan', 'plan.json']), { command: 'phase0-check', repo: '.', source: { type: 'plan', plan: 'plan.json' } });

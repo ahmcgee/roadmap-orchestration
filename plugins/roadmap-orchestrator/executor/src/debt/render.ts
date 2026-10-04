@@ -1,7 +1,7 @@
 // The ledger as `debt.md` shows it (M4a, DESIGN §2.9, A4): the baseline ledger, this arc's Phase-0 dispositions recorded
 // in each item's history, and the items banked this arc. Pure; docs/debt.ts prints the result.
 import type { ArcId, DebtId, UnitId } from '../core/ids.ts';
-import { debtSeq } from '../core/ids.ts';
+import { compareIds } from '../core/ids.ts';
 import type { DebtBanked } from './mint.ts';
 import type { DebtDisposition, DebtItem, DebtLedger, DebtSource, DebtState } from './types.ts';
 
@@ -32,6 +32,6 @@ export function ledgerAfterArc(
   const minted: DebtItem[] = banked.map((b) => ({
     id: b.id, originArc: arc, bankReason: b.bankReason, what: b.what, unit: unitOf(b.source), key: b.key, history: [], state: 'open',
   }));
-  const items = [...carried, ...minted].sort((a, b) => debtSeq(a.id) - debtSeq(b.id));
+  const items = [...carried, ...minted].sort((a, b) => compareIds(a.id, b.id));
   return { schema: baseline.schema, items };
 }

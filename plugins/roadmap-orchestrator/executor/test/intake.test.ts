@@ -27,6 +27,7 @@ import { withForge } from './helpers/corpusarc.ts';
 import { VALID_OP, checkpointAnswer, checkpointStep, intakeOutcome, lensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
+import { type CorpusSpec, SAMPLE_DOCS } from './helpers/corpus.ts';
 import { type CallRecord, readCalls } from './helpers/scenario.ts';
 import { CORPUS_AMENDMENT, ISSUE_CAPTURE, crashCells } from './matrix.ts';
 import { checkpointContext, completedAudit, factsOfKind } from './fixtures/checkpoint-common.ts';
@@ -59,8 +60,8 @@ const itemsOf = (r: ArcRun, reason: string): readonly NeedsUserId[] =>
   r.journal.view.needsUser().filter((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === reason).map((n) => n.id);
 
 /** The scripted arc with `steps` after audit-1's vision lens (`findings` its findings), audit-1 completed, issues seeded. */
-async function arcWith(steps: readonly ReturnType<typeof checkpointStep>[], opts: Readonly<{ seed?: boolean; findings?: Parameters<typeof lensStep>[2] }> = {}) {
-  const a = await corpusHolisticArc([lensStep('audit-1', 'vision', opts.findings ?? []), ...steps]);
+async function arcWith(steps: readonly ReturnType<typeof checkpointStep>[], opts: Readonly<{ seed?: boolean; findings?: Parameters<typeof lensStep>[2]; corpus?: Partial<CorpusSpec> }> = {}) {
+  const a = await corpusHolisticArc([lensStep('audit-1', 'vision', opts.findings ?? []), ...steps], opts.corpus === undefined ? {} : { corpus: opts.corpus });
   if (opts.seed !== false) seedIssues(a);
   const r = contextFor(a.d);
   const { ctx, w } = checkpointContext(r);
@@ -212,6 +213,34 @@ function brokenGh(): string {
   chmodSync(join(dir, 'gh'), 0o755);
   return dir;
 }
+
+// Paid M4a run 7: the checkpoint proposed an amendment of ["T-42","T-120"] (numeric order); the fact's reader compared
+// rule ids as strings, so writing it threw and the executor crash-looped. Rule ids order numerically, and the model's
+// order never reaches a fact: both proposals are recorded in canonical order.
+test('amendment.canonical-rule-order: amendments citing T-42 and T-120, in either order, are recorded ascending by number', T, async () => {
+  const corpus = { docs: [...SAMPLE_DOCS, { path: '0030_Tides.md', title: 'Tides', sections: [{ heading: 'Windows', rules: [{ n: 42, text: 'A tide window is two hours.' }, { n: 120, text: 'A late vessel waits for the next window.' }] }] }] };
+  const x = await arcWith([checkpointStep('ckpt-1', checkpointAnswer({
+    decision: 'no-op',
+    corpusAmendments: [
+      { rules: ['T-42', 'T-120'], proposal: 'Say how a late vessel is windowed.', why: 'run 7 shape' },
+      { rules: ['T-120', 'T-42', 'T-3'], proposal: 'Tie cancellation to tide windows.', why: 'model order' },
+    ],
+  }))], { seed: false, corpus });
+  try {
+    assert.deepEqual(x.a.pin.rules.map((r) => r.id), ['T-1', 'T-2', 'T-3', 'T-42', 'T-120'], 'the pin lists rules by number');
+    const out = await withForge(x.a.forge, () => runCheckpoint(x.ctx));
+    assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
+    assert.deepEqual(factsOfKind(x.r, 'corpus-amendment').map((m) => [m.id, m.rules]), [['M-1', ['T-42', 'T-120']], ['M-2', ['T-3', 'T-42', 'T-120']]]);
+  } finally {
+    x.r.journal.close();
+  }
+  const reopened = contextFor(x.a.d);
+  try {
+    assert.deepEqual(reopened.journal.view.holistic().amendments.map((m) => m.rules), [['T-42', 'T-120'], ['T-3', 'T-42', 'T-120']], 'the log reopens');
+  } finally {
+    reopened.journal.close();
+  }
+});
 
 test('checkpoint.issues-unavailable: a forge failure is non-fatal: the inputs record unavailable{reason}, the prompt says so, the checkpoint decides', T, async () => {
   const x = await arcWith([checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))], { seed: false });

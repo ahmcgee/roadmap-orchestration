@@ -1,6 +1,7 @@
 // Hand-written validation primitives. Every boundary reader takes `unknown` and either returns the typed
 // value or throws a SchemaError naming the field path and the offending value. A reader is a plain
 // function `(value, path) => T`, so readers compose without a library.
+import { legacyIdOrder } from './upgrade.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
 
 declare const brand: unique symbol;
@@ -115,17 +116,43 @@ export function arrayOf<T>(item: Read<T>, opts: { readonly nonEmpty?: boolean } 
   };
 }
 
-/** An array whose elements are strictly ascending by `key` (sorted and unique), so equal sets serialise equally. */
-export function sortedBy<T>(item: Read<T>, key: (t: T) => string, opts: { readonly nonEmpty?: boolean } = {}): Read<readonly T[]> {
+/**
+ * An array whose elements are strictly ascending by `key` (sorted and unique), so equal sets serialise equally; `order`
+ * says what the order is in the error. `legacyKey` (scaffolding, numbered-id lists only: `idsAscending` in ids.ts): a
+ * list strictly ascending by it instead reads as written, with a warning (`legacyIdOrder`).
+ */
+export function sortedBy<T>(
+  item: Read<T>, key: (t: T) => string, opts: Readonly<{ nonEmpty?: boolean; order?: string; legacyKey?: (t: T) => string }> = {},
+): Read<readonly T[]> {
+  const read = arrayOf(item, opts.nonEmpty === true ? { nonEmpty: true } : {});
+  return (value, path) => {
+    const out = read(value, path);
+    const bad = firstUnordered(out, key);
+    if (bad === null) return out;
+    if (opts.legacyKey !== undefined && firstUnordered(out, opts.legacyKey) === null) {
+      legacyIdOrder(path);
+      return out;
+    }
+    throw new SchemaError(`${path}[${bad}]`, `entries strictly ascending${opts.order === undefined ? '' : ` ${opts.order}`} (sorted, no duplicates)`, value);
+  };
+}
+
+/** The index of the first element not strictly above its predecessor by `key`, or null. */
+function firstUnordered<T>(items: readonly T[], key: (t: T) => string): number | null {
+  for (let i = 1; i < items.length; i++) if (!(key(items[i - 1] as T) < key(items[i] as T))) return i;
+  return null;
+}
+
+/**
+ * A judgment answer's set: an array without duplicates (`key`), in any order, returned sorted by `compare`. The model's
+ * order never decides validity; the records built from the answer get the canonical order their readers require.
+ */
+export function answerSet<T>(item: Read<T>, key: (t: T) => string, compare: (a: T, b: T) => number, opts: { readonly nonEmpty?: boolean } = {}): Read<readonly T[]> {
   const read = arrayOf(item, opts);
   return (value, path) => {
     const out = read(value, path);
-    for (let i = 1; i < out.length; i++) {
-      if (!(key(out[i - 1] as T) < key(out[i] as T))) {
-        throw new SchemaError(`${path}[${i}]`, 'entries strictly ascending (sorted, no duplicates)', value);
-      }
-    }
-    return out;
+    assertUnique(out, key, path);
+    return [...out].sort(compare);
   };
 }
 

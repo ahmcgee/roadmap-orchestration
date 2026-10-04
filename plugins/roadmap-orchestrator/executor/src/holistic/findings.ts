@@ -25,7 +25,7 @@
 //   timeToResolveMs}`, over the log's events (their times).
 import { canonicalJson } from '../core/json.ts';
 import type { Event, HolisticFact, Parent } from '../core/events.ts';
-import type { FindingId, IssueId, JobId, NeedsUserId, ObligationId, Sha256Hex, UnitId, VisionClauseId } from '../core/ids.ts';
+import { type FindingId, type IssueId, type JobId, type NeedsUserId, type ObligationId, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
@@ -91,7 +91,7 @@ export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen 
   if (admission.kind !== 'open') return admission;
   const id = journal.view.nextFindingId();
   const { cause: _cause, ...fields } = draft;
-  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: [...new Set(draft.visionClauses)].sort() });
+  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: canonicalIds(draft.visionClauses) });
   return { kind: 'opened', id };
 }
 
@@ -103,7 +103,7 @@ export function witnessFindingDraft(input: Readonly<{
   obligation: ObligationId; serves: readonly VisionClauseId[]; job: JobId; claim: string; evidence: readonly FindingEvidence[]; gateHadPassed: boolean;
 }>): FindingDraft {
   return {
-    lens: 'witness', severity: 'P1', obligation: input.obligation, visionClauses: [...input.serves].sort(), claim: input.claim,
+    lens: 'witness', severity: 'P1', obligation: input.obligation, visionClauses: canonicalIds(input.serves), claim: input.claim,
     cause: 'witness not held', evidence: input.evidence, mutant: null, source: { type: 'job', job: input.job }, gateHadPassed: input.gateHadPassed,
   };
 }

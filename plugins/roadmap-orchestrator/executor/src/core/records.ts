@@ -6,7 +6,7 @@ import {
   type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ResourceInstance,
   type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId,
   commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
-  obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId,
+  obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -551,13 +551,13 @@ export type ObligationRev = Readonly<{ id: ObligationId; rev: number }>;
 const obligationRev: Read<ObligationRev> = object((g) => ({ id: g.get('id', (v, p) => obligationId(v, p)), rev: g.get('rev', positive) }));
 
 export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => {
-  const obligationRevs = f.optional('obligationRevs', sortedBy(obligationRev, (e) => e.id, { nonEmpty: true }));
+  const obligationRevs = f.optional('obligationRevs', idsAscending(obligationRev, (e) => e.id, { nonEmpty: true, legacyStringOrder: true }));
   const corpus = f.optional('corpus', (v, p) => sha256(v, p));
   return {
     unitCommit: f.get('unitCommit', commitSha),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
     contractRevs: f.get('contractRevs', sortedBy(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), blob: g.get('blob', commitSha) })), (e) => e.path)),
-    rulingRevs: f.get('rulingRevs', sortedBy(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
+    rulingRevs: f.get('rulingRevs', idsAscending(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id, { legacyStringOrder: true })),
     ...(obligationRevs === undefined ? {} : { obligationRevs }),
     ...(corpus === undefined ? {} : { corpus }),
   };

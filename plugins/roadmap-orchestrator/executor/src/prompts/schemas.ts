@@ -11,13 +11,13 @@
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
   type ClauseId, type FindingId, type IssueId, type LaneId, type ObligationId, type RuleId, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  findingId, issueId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
+  answerIds, findingId, issueId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import type { JsonValue } from '../core/json.ts';
 import { BOUND_FIELDS, type Bounds, type NoteDef, type SpecPatchOp, specPatchOp } from '../core/records.ts';
 import {
-  Fields, type Read, SchemaError, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
+  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
 import { type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
@@ -144,7 +144,7 @@ const wireOp: Read<SpecPatchOp> = (value, path) => {
 };
 
 // Reads at validation time, after the M3 helpers below are initialised.
-const visionConflict: Read<VisionConflict> = object((g) => ({ clauses: g.get('clauses', uniqueIds(vid, { nonEmpty: true })), note: g.get('note', str) }));
+const visionConflict: Read<VisionConflict> = object((g) => ({ clauses: g.get('clauses', answerIds(vid, { nonEmpty: true })), note: g.get('note', str) }));
 
 export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutput => {
   const decision = f.get('decision', oneOf(PLAN_CHECK_DECISIONS));
@@ -331,7 +331,7 @@ export const lensOutput: Read<LensOutput> = object((f) => ({
   findings: f.get('findings', arrayOf(object((g) => ({
     severity: g.get('severity', oneOf(LENS_SEVERITIES)),
     obligation: g.get('obligation', nullable(oid)),
-    visionClauses: g.get('visionClauses', uniqueIds(vid)),
+    visionClauses: g.get('visionClauses', answerIds(vid)),
     claim: g.get('claim', str),
     cause: g.get('cause', str),
     evidence: g.get('evidence', lineEvidence),
@@ -472,7 +472,7 @@ const splitChild: Read<SplitChild> = object((g) => {
     rule: rule === undefined ? splitChildRuleDefault() : rule,
     witness: g.get('witness', object((h) => ({ lane: h.get('lane', (v, p): LaneId => laneId(v, p)), testIds: h.get('testIds', uniqueIds(str, { nonEmpty: true })) }))),
     activation: g.get('activation', oneOf(ACTIVATIONS)),
-    deliveredBy: g.get('deliveredBy', uniqueIds(unitR)),
+    deliveredBy: g.get('deliveredBy', answerSet(unitR, (u) => u, (a, b) => (a < b ? -1 : a > b ? 1 : 0))),
   };
   if ((out.docRef === null) === (out.rule === null)) throw new SchemaError(`${g.path}.docRef`, 'exactly one of docRef and rule', { docRef: out.docRef, rule: out.rule });
   return out;
@@ -488,7 +488,7 @@ export function splitChildAnchor(c: SplitChild, pinned: (id: RuleId) => Sha256He
   return textSha256 === null ? null : { rule: { id: c.rule, textSha256 } };
 }
 
-const ruleList: Read<readonly RuleId[]> = uniqueIds((v, p) => ruleId(v, p));
+const ruleList: Read<readonly RuleId[]> = answerIds((v, p) => ruleId(v, p));
 const corpusAmendmentProposal: Read<CorpusAmendmentProposal> = object((g) => ({
   rules: g.get('rules', ruleList), proposal: g.get('proposal', str), why: g.get('why', str),
 }));
@@ -497,7 +497,7 @@ const checkpointIssueOutcome: Read<CheckpointIssueOutcome> = tagged('type', {
     type: g.get('type', literal('finding')), severity: g.get('severity', oneOf(ISSUE_FINDING_SEVERITIES)), claim: g.get('claim', str), cause: g.get('cause', str),
   })),
   amendment: object((g): CheckpointIssueOutcome => ({ type: g.get('type', literal('amendment')), rules: g.get('rules', ruleList), proposal: g.get('proposal', str) })),
-  acted: object((g): CheckpointIssueOutcome => ({ type: g.get('type', literal('acted')), on: g.get('on', actedOn(['ops', 'units', 'rules'])) })),
+  acted: object((g): CheckpointIssueOutcome => ({ type: g.get('type', literal('acted')), on: g.get('on', actedOn(['ops', 'units', 'rules'], 'answer')) })),
   none: object((g): CheckpointIssueOutcome => ({ type: g.get('type', literal('none')), reason: g.get('reason', str) })),
 });
 const issueIntakeEntries: Read<CheckpointOutput['issueIntake']> = arrayOf(object((g) => ({
@@ -556,7 +556,7 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
 export const bundleOp: Read<BundleOp> = (value, path) => {
   const f = new Fields(value, path);
   const op = f.get('op', oneOf(BUNDLE_OP_KINDS));
-  const out = { ...opBody(f, op), cites: f.get('cites', uniqueIds(vid, { nonEmpty: true })), evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })) };
+  const out = { ...opBody(f, op), cites: f.get('cites', answerIds(vid, { nonEmpty: true })), evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })) };
   f.end();
   return out;
 };
@@ -571,12 +571,12 @@ export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
       finding: g.get('finding', (v, p): FindingId => findingId(v, p)), disposition: g.get('disposition', oneOf(FINDING_DISPOSITIONS)), reason: g.get('reason', str),
     })))),
     interpretations: f.get('interpretations', arrayOf(object((g) => ({
-      clauses: g.get('clauses', uniqueIds(vid, { nonEmpty: true })), situation: g.get('situation', str), reading: g.get('reading', str),
+      clauses: g.get('clauses', answerIds(vid, { nonEmpty: true })), situation: g.get('situation', str), reading: g.get('reading', str),
     })))),
     cites: f.get('cites', object((g) => ({
-      vision: g.get('vision', uniqueIds(vid)),
+      vision: g.get('vision', answerIds(vid)),
       observations: g.get('observations', arrayOf(observationKey)),
-      findings: g.get('findings', uniqueIds((v, p): FindingId => findingId(v, p))),
+      findings: g.get('findings', answerIds((v, p): FindingId => findingId(v, p))),
     }))),
     premises: f.get('premises', arrayOf(premise)),
     // M4a: required of the model (CHECKPOINT_SCHEMA); absent only on a dev.6 checkpoint's recorded answer (read as none, scaffolding).

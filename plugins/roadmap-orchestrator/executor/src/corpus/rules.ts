@@ -7,7 +7,7 @@
 //
 // `normalizeText` (trim, collapse whitespace) is the one text normalisation: a rule's `textSha256` hashes it, and
 // `debtKey` (src/debt/ledger.ts) normalises a debt item's `what` with it.
-import { type RuleId, type Sha256Hex, ruleId, ruleSeq, sha256 } from '../core/ids.ts';
+import { type RuleId, type Sha256Hex, compareIds, ruleId, sha256 } from '../core/ids.ts';
 import { sha256Hex } from '../core/json.ts';
 import type { RepoPath } from '../core/values.ts';
 import { type PinnedRule, RULES_FENCE } from './types.ts';
@@ -102,5 +102,5 @@ export function collectRules(perFile: readonly (readonly PinnedRule[])[]): reado
       byId.set(r.id, r);
     }
   }
-  return [...byId.values()].sort((a, b) => ruleSeq(a.id) - ruleSeq(b.id));
+  return [...byId.values()].sort((a, b) => compareIds(a.id, b.id));
 }

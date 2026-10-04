@@ -121,6 +121,7 @@ completes as in M3.
 | `JobId` | `+ review-<n>` | none |
 | `DispatchRecord`, `status` routing tables | none persisted | a dev.6 record's `implementerSeatRev` reads back through `seatTripleOf` (lasting); status joins a dev.6 meter row's `routingRev` through `dev6RevAlias` over `DEV6_CLASS_CATALOGUE` (step A2) |
 | New facts, `NeedsUserReason`, startup rows, `FINDING_LENSES + issue` | "M4a" | none |
+| Every numbered-id list (facts `finding-opened.visionClauses`, `audit-started.priorFindings`, `audit-ended.findings`, `checkpoint-inputs.findings`, `divergence-digest.ids`, `corpus-amendment.rules`; `ApprovalFingerprint.rulingRevs`/`obligationRevs`; vision `bears`; obligations `serves`, split `children`, mapping `obligations`; ruling sidecar `obligations`, `obligationDispositions`, `cites`; divergence `cites`; plan `holistic.advances`; Phase-0 record and brief payload `rules`, `cites`, `bears`, `amendments`, `slice.advances`; `acted{rules}`) | canonical numbered-id order ("Numbered-id order"), was string order | a list strictly ascending in string order (`["T-10","T-9"]`) reads as written, byte-preserving, with one warning per process (`legacyIdOrder`, `idsAscending(…, {legacyStringOrder})`); `fingerprintHolds` compares rev lists as sets, so a dev.6 approval holds against the canonical fingerprint. Lists that were always numeric (the pin, the registry, the census, the debt ledger, Phase-0 `questions`/`debt`) take no legacy order. Also covers arcs started on this branch before the fix and input files (vision, obligations, rulings, Phase-0) written for the old order |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -257,6 +258,17 @@ classified, not dropped.
 | `ResourceInstance` (M2) | `ResourceName \| PoolInstance` | what a probe, teardown or residue names |
 | `ResourceUnit` (M2) | `ResourceInstance \| CpuToken` | what a `resource.transition` moves; `parseResourceUnit` → `named{name} \| instance{pool, n} \| cpu{n}`; `compareResourceUnits` is lock order |
 | `EdgeId` (M2) | slug | a contingent edge's id, unique across the plan |
+
+**Numbered-id order** (1.0.0-dev.7, paid M4a run 7). A numbered id is `<letter>-<n>`: `V`, `Q`, `I`, `F`, `D` (M3), `T`,
+`B`, `M`, `P` (M4a) and the ruling ids `C` (`NumberedId`). Every list of them, in a record, a fact or code, is in one
+canonical order: by letter, then by `n` as a number (`T-9` < `T-10` < `T-100`; `compareIds`, `idKey`). Readers take such a
+list with `idsAscending`/`idList` (strictly ascending in that order, unique), writers build it with `canonicalIds` (sorted,
+deduplicated); an `AmendmentRef` list orders by arc, then id (`amendmentRefKey`). A judgment answer's id lists are sets in
+any order (`answerIds`, `answerSet`; a duplicate is still an invalid answer) and are returned canonical, so the model's
+order never reaches a record and never invalidates an answer; a checkpoint's model-written ruling has its `obligations`,
+`cites` and `obligationDispositions` put in canonical order before the sidecar reader. Plain string order stays for keys
+that are not numbered ids (paths, slugs, `JobId`, `NeedsUserId`, `IssueId` by its number). Before dev.7 these lists were
+validated and written in string order (`T-10` before `T-9`); "1.0.0-dev.6 → 1.0.0-dev.7" says how those still read.
 
 Values (`src/core/values.ts`): `AbsPath` (absolute, normalised), `RepoPath` (repo-relative, `.` = root, no
 `.`/`..` segments), `PlanPath` (relative to the plan file's directory), `RepoPattern` (relative glob, no `..`),
@@ -2155,7 +2167,8 @@ body (pasted_content-wrapped), comments: [{id: issue-n/c-m of that issue, associ
 CONTRIBUTOR | FIRST_TIME_CONTRIBUTOR | FIRST_TIMER | MANNEQUIN | NONE, body}] (ascending by comment id)}] (ascending by
 number; empty while issues are disabled), filtered: {comments, pullRequests}}`, canonical JSON, no clock. `acted` is one
 closed shape (H17, R29): `acted{on: ops{indexes} | units{ids} | rules{ids}}`, each list non-empty and ascending
-(`actedOn(kinds)`); Phase 0 reads only `units | rules`.
+(`actedOn(kinds)`; rule ids in numbered-id order); Phase 0 reads only `units | rules`. A checkpoint answer's `acted`
+(`actedOn(kinds, 'answer')`) takes each list in any order and returns it ascending.
 
 **Debt** (`roadmap/debt-m4`, the `json roadmap-debt` block of `debt.md`; `src/debt/types.ts`). `{schema, items: [{id: B-n,
 originArc, bankReason: gate-note | finding-deferred, what, unit|null, key, history: [{arc, disposition}], state: open |

@@ -47,6 +47,15 @@ export function splitChildRuleDefault(): null {
 }
 
 /**
+ * A numbered-id list in plain string order (`["T-10","T-9"]`): how every release before 1.0.0-dev.7 validated and wrote
+ * them, so a dev.6 record, an arc started before the fix, or a vision, obligations, ruling or Phase-0 file written for
+ * them may hold one. It reads as written (byte-preserving); everything written now is in canonical order (`idsAscending`).
+ */
+export function legacyIdOrder(path: string): void {
+  warnDefaulted('ids.string-order', `${path}: a numbered-id list in string order (written before 1.0.0-dev.7); read as written`);
+}
+
+/**
  * The class catalogue 1.0.0-dev.6 bound (frontier Opus 5.5 `high`, summit Fable 5.1 `high`), kept only so `status`
  * can join a dev.6 meter row's recorded `routingRev` (K12, src/status.ts `dev6RevAlias`). OR-L3: nothing routes under
  * it; HEAD binds every revision through `CLASS_CATALOGUE` (src/routing/classes.ts). A dev.6 dispatch record needs no

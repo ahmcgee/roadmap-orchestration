@@ -23,7 +23,7 @@
 // those ids; later divergences raise the next digest (`raiseDigest`). The item is raised first and its fact second: a
 // crash between them leaves a raised digest item no fact names, whose ids its summary lists; the next call writes its fact.
 import type { DivergenceId, JobId, NeedsUserId, Sha, Sha256Hex, UnitId } from '../core/ids.ts';
-import { divergenceId } from '../core/ids.ts';
+import { canonicalIds, divergenceId } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { HolisticFold } from '../core/state.ts';
 import type { AbsPath, RepoPath } from '../core/values.ts';
@@ -60,7 +60,7 @@ const supersede = (id: string): DivergenceDraft['compensation'] => ({
 
 /** The divergence of one op, or none (a request applies nothing; a ruling that departs from nothing records nothing here). */
 function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, RulingSidecar>): readonly DivergenceDraft[] {
-  const common = { job: b.job, cites: [...op.cites].sort(), evidence: op.evidence };
+  const common = { job: b.job, cites: canonicalIds(op.cites), evidence: op.evidence };
   const plan = (what: string): DivergenceDraft => ({
     ...common, type: 'plan-departed', from: `plan rev ${b.planRev}`, what, preimage: planPreimage(b), compensation: restore(`plan rev ${b.planRev}`),
   });
@@ -136,8 +136,8 @@ export function interpretationDivergences(job: JobId, vector: RevisionVector, ou
   const cited = [...output.cites.findings, ...output.cites.observations.map((k) => `observation ${k.treeSha}/${k.lane}/${k.laneRev}/${k.envId}`)];
   const evidence = cited.length > 0 ? cited : output.reasons;
   return output.interpretations.map((i): DivergenceDraft => ({
-    job, type: 'interpretation', from: `the vision (${[...i.clauses].sort().join(', ')})`, what: `${i.situation} Read as: ${i.reading}`,
-    cites: [...i.clauses].sort(), evidence,
+    job, type: 'interpretation', from: `the vision (${canonicalIds(i.clauses).join(', ')})`, what: `${i.situation} Read as: ${i.reading}`,
+    cites: canonicalIds(i.clauses), evidence,
     preimage: { planRev: vector.plan, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] },
     compensation: { hint: 'a reading where the vision is silent; an architect vision edit (`roadmap apply`) settles it otherwise', kind: 'none' },
   }));
@@ -186,7 +186,7 @@ export function raiseDigest(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>
   const pending = unrecordedDigest(view, ctx.runDir);
   if (pending !== null) {
     const summary = readNeedsUser(ctx.runDir, pending)!.summary.split('\n')[0]!;
-    const ids = [...new Set(summary.match(DIGEST_IDS) ?? [])].map((d) => divergenceId(d, 'digest summary')).sort();
+    const ids = canonicalIds((summary.match(DIGEST_IDS) ?? []).map((d) => divergenceId(d, 'digest summary')));
     ctx.journal.fact({ kind: 'divergence-digest', needsUser: pending, ids });
     return pending;
   }
@@ -195,7 +195,7 @@ export function raiseDigest(ctx: Readonly<{ journal: Journal; runDir: AbsPath }>
   const bound = new Set(fold.digests.flatMap((d) => d.ids));
   const unbound = fold.divergences.filter((d) => !bound.has(d.id));
   if (unbound.length === 0) return null;
-  const ids = unbound.map((d) => d.id).sort();
+  const ids = canonicalIds(unbound.map((d) => d.id));
   const needsUser = raiseNeedsUser(ctx.journal, ctx.runDir, {
     blocking: false,
     subject: { type: 'arc' },

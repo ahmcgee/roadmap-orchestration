@@ -83,20 +83,23 @@ export function buildCorpus(spec: CorpusSpec): BuiltCorpus {
   return { files, corpusFiles, guidePath, guide, expected };
 }
 
-/** A small two-doc corpus with a vision doc: rules T-1..T-3 in `0010_Overview.md` and `0020_Berths.md`. */
+/** The sample corpus's two docs: rules T-1..T-3 in `0010_Overview.md` and `0020_Berths.md`. */
+export const SAMPLE_DOCS: readonly CorpusDoc[] = [
+  { path: '0010_Overview.md', title: 'Overview', sections: [{ heading: 'Scope', prose: 'What the harbour system does.', rules: [{ n: 1, text: 'A berth is never double-booked.' }] }] },
+  {
+    path: '0020_Berths.md',
+    title: 'Berths',
+    sections: [
+      { heading: 'Booking', rules: [{ n: 2, text: 'A booking names one berth and one tide window.' }, { n: 3, text: 'A cancelled booking frees its berth at once.' }] },
+      { heading: 'Rationale', prose: 'Why bookings are strict.' },
+    ],
+  },
+];
+
+/** A small two-doc corpus with a vision doc: `SAMPLE_DOCS` (rules T-1..T-3) and `0005_Vision.md`. */
 export function sampleCorpus(overrides: Partial<CorpusSpec> = {}): BuiltCorpus {
   return buildCorpus({
-    docs: [
-      { path: '0010_Overview.md', title: 'Overview', sections: [{ heading: 'Scope', prose: 'What the harbour system does.', rules: [{ n: 1, text: 'A berth is never double-booked.' }] }] },
-      {
-        path: '0020_Berths.md',
-        title: 'Berths',
-        sections: [
-          { heading: 'Booking', rules: [{ n: 2, text: 'A booking names one berth and one tide window.' }, { n: 3, text: 'A cancelled booking frees its berth at once.' }] },
-          { heading: 'Rationale', prose: 'Why bookings are strict.' },
-        ],
-      },
-    ],
+    docs: SAMPLE_DOCS,
     vision: { path: '0005_Vision.md', text: '# Vision\n\nA calm harbour where every vessel has a berth.\n' },
     ...overrides,
   });

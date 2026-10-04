@@ -5,7 +5,7 @@ import { OUTCOME_STAGES, type OutcomeStage } from '../core/events.ts';
 import {
   type AmendmentRef, type ArcId, type DebtId, type DivergenceId, type IssueId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
   type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, debtId, divergenceId, issueId, issueNumber,
-  debtSeq, jobIdOf, needsUserId, obligationId, phaseQuestionId, phaseQuestionSeq, ruleId, sha, sha256, unitId, visionClauseId, type BriefId,
+  amendmentRefKey, compareIds, idList, jobIdOf, needsUserId, obligationId, phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, type BriefId,
 } from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type IsoTime, type PlanPath, type RepoPath, isoTime, planPath, repoPath } from '../core/values.ts';
@@ -15,13 +15,12 @@ import {
   type RepoVisibility, issueIntakeOutcome, phase0IntakeOutcome, repoIdentity,
 } from '../forge/types.ts';
 import { DIVERGENCE_KINDS, type DivergenceKind } from '../holistic/types.ts';
-import { rulesAscending } from '../corpus/types.ts';
 
 const pathR: Read<RepoPath> = (v, p) => repoPath(v, p);
 const sha256R: Read<Sha256Hex> = (v, p) => sha256(v, p);
 const ruleR: Read<RuleId> = (v, p) => ruleId(v, p);
 const vidR: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
-const rules: Read<readonly RuleId[]> = sortedBy(ruleR, (r) => r);
+const rules: Read<readonly RuleId[]> = idList(ruleR, { legacyStringOrder: true });
 const files: Read<readonly RepoPath[]> = sortedBy(pathR, (p) => p, { nonEmpty: true });
 
 // ---------------------------------------------------------------------------------------------------
@@ -76,7 +75,7 @@ const corpusDivergence: Read<CorpusDivergence> = object((f) => ({
     pinSha256: g.get('pinSha256', sha256R),
     files: g.get('files', sortedBy(object((h) => ({ path: h.get('path', pathR), sha256: h.get('sha256', sha256R) })), (x) => x.path, { nonEmpty: true })),
   }))),
-  cites: f.get('cites', sortedBy(vidR, (c) => c, { nonEmpty: true })),
+  cites: f.get('cites', idList(vidR, { nonEmpty: true, legacyStringOrder: true })),
   rules: f.get('rules', rules),
 }));
 const questionState: Read<QuestionState> = tagged('type', {
@@ -91,7 +90,7 @@ const phaseQuestion: Read<PhaseQuestion> = object((f) => ({
   rank: f.get('rank', positive),
   text: f.get('text', str),
   files: f.get('files', files),
-  bears: f.get('bears', sortedBy(bearsOn, (b) => b, { nonEmpty: true })),
+  bears: f.get('bears', idList(bearsOn, { nonEmpty: true, legacyStringOrder: true })),
   assumption: f.get('assumption', str),
   state: f.get('state', questionState),
 }));
@@ -108,17 +107,17 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
     corpusDivergences: f.get('corpusDivergences', arrayOf(corpusDivergence)),
     questions: f.get('questions', arrayOf(phaseQuestion)),
     debt: f.get('debt', arrayOf(object((g) => ({ id: g.get('id', (v, p) => debtId(v, p)), disposition: g.get('disposition', debtDisposition) })))),
-    amendments: f.get('amendments', sortedBy(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), disposition: g.get('disposition', amendmentDisposition) })), (a) => a.id)),
+    amendments: f.get('amendments', sortedBy(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), disposition: g.get('disposition', amendmentDisposition) })), (a) => amendmentRefKey(a.id), { order: 'by arc, then id', legacyKey: (a) => a.id })),
     issueCapture: f.get('issueCapture', object((g) => ({ file: g.get('file', (v, p) => planPath(v, p)), sha256: g.get('sha256', sha256R) }))),
     intake: f.get('intake', arrayOf(object((g) => ({ issue: g.get('issue', (v, p) => issueId(v, p)), outcome: g.get('outcome', phase0IntakeOutcome) })))),
-    slice: f.get('slice', object((g) => ({ advances: g.get('advances', sortedBy(vidR, (c) => c, { nonEmpty: true })), why: g.get('why', str) }))),
+    slice: f.get('slice', object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true, legacyStringOrder: true })), why: g.get('why', str) }))),
   };
   out.questions.forEach((q, i) => {
-    if (i > 0 && !(phaseQuestionSeq(out.questions[i - 1]!.id) < phaseQuestionSeq(q.id))) throw new SchemaError(`${f.path}.questions[${i}]`, 'questions strictly ascending by number', q.id);
+    if (i > 0 && !(compareIds(out.questions[i - 1]!.id, q.id) < 0)) throw new SchemaError(`${f.path}.questions[${i}]`, 'questions strictly ascending by number', q.id);
   });
   assertUnique(out.questions, (q) => String(q.rank), `${f.path}.questions[].rank`);
   out.debt.forEach((d, i) => {
-    if (i > 0 && !(debtSeq(out.debt[i - 1]!.id) < debtSeq(d.id))) throw new SchemaError(`${f.path}.debt[${i}]`, 'one disposition per item, ascending by number', d.id);
+    if (i > 0 && !(compareIds(out.debt[i - 1]!.id, d.id) < 0)) throw new SchemaError(`${f.path}.debt[${i}]`, 'one disposition per item, ascending by number', d.id);
   });
   out.intake.forEach((x, i) => {
     if (i > 0 && !(issueNumber(out.intake[i - 1]!.issue) < issueNumber(x.issue))) throw new SchemaError(`${f.path}.intake[${i}]`, 'one outcome per issue, ascending by number', x.issue);
@@ -168,7 +167,7 @@ export type Phase0Problem =
   | Readonly<{ type: 'capture-foreign'; expected: RepoIdentity; actual: RepoIdentity }>
   | Readonly<{ type: 'question-reused'; id: PhaseQuestionId }>;
 
-const ruleSet: Read<readonly RuleId[]> = rulesAscending(ruleR, (r) => r);
+const ruleSet: Read<readonly RuleId[]> = idList(ruleR);
 const issueProblem = (type: 'intake-missing' | 'intake-unknown' | 'intake-duplicate'): Read<Phase0Problem> =>
   object((f): Phase0Problem => ({ type: f.get('type', literal(type)), issue: f.get('issue', (v, p) => issueId(v, p)) }));
 const debtProblem = (type: 'debt-undispositioned' | 'debt-kept-twice-unasked'): Read<Phase0Problem> =>
@@ -321,7 +320,7 @@ const briefIntake: Read<BriefArc['intake'][number]> = object((f) => {
 });
 const briefArc: Read<BriefArc> = object((f) => ({
   arc: f.get('arc', (v, p) => arcId(v, p)),
-  slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', sortedBy(vidR, (c) => c, { nonEmpty: true })), why: g.get('why', str) })))),
+  slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true, legacyStringOrder: true })), why: g.get('why', str) })))),
   divergences: f.get('divergences', arrayOf(object((g) => ({ id: g.get('id', divR), type: g.get('type', oneOf(DIVERGENCE_KINDS)), what: g.get('what', str) })))),
   digests: f.get('digests', arrayOf(object((g) => ({ needsUser: g.get('needsUser', (v, p) => needsUserId(v, p)), ids: g.get('ids', arrayOf(divR, { nonEmpty: true })) })))),
   decisions: f.get('decisions', arrayOf(str)),

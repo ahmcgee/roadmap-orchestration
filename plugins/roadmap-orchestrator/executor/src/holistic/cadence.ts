@@ -35,7 +35,7 @@
 import type { AuditTrigger } from './types.ts';
 import { type LensKind, isExempt, LENS_KINDS } from './types.ts';
 import type { Parent } from '../core/events.ts';
-import type { ObligationId, Sha } from '../core/ids.ts';
+import { type ObligationId, type Sha, compareIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { AuditState } from '../core/state.ts';
 import { branchRef } from '../core/values.ts';
@@ -143,7 +143,7 @@ function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly Obligation
       }
     }
     out = observedViews(ctx, obligations, [...picked.values()], h.head)
-      .filter((v) => v.observation === null || v.observation.verdict === 'unwitnessed').map((v) => v.obligation.id).sort();
+      .filter((v) => v.observation === null || v.observation.verdict === 'unwitnessed').map((v) => v.obligation.id).sort(compareIds);
   }
   unwitnessedMemo.set(key, out);
   return out;

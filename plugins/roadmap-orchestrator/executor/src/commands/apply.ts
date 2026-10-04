@@ -87,7 +87,7 @@ import { exclusivePublish } from '../core/fsx.ts';
 import { JUDGMENT_STAGES, probeTargetKey } from '../core/events.ts';
 import {
   type CommandId, type NeedsUserId, type PlanRev, type ResourceInstance, type ResourceName, type UnitId, invocationId, opKey, parseResourceUnit,
-  planRev, resourceInstance,
+  planRev, resourceInstance, canonicalIds,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey, RevisionManifest, Stage } from '../core/records.ts';
@@ -631,7 +631,7 @@ export function evaluateRevision(
     if (proposer.type !== 'bundle') throw new Error(`a split dropping text proposed by ${proposer.type}: the classifier refuses it`);
     return {
       job: proposer.job, type: 'split-dropped', from: `${d.obligation} (plan rev ${inForce.rev})`, what: `the split of ${d.obligation} drops ${d.sentences.map((t) => JSON.stringify(t)).join(', ')}`,
-      cites: [...proposer.cites].sort(), evidence: proposer.evidence, preimage: obligationsPreimage(inForce, revision),
+      cites: canonicalIds(proposer.cites), evidence: proposer.evidence, preimage: obligationsPreimage(inForce, revision),
       compensation: { hint: `\`roadmap reverse\` restores the obligations before the split of ${d.obligation}`, kind: 'restore-revision' },
     };
   });

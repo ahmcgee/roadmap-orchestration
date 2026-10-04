@@ -16,7 +16,7 @@ import { absPath } from '../../src/core/values.ts';
 import type { CorpusPin } from '../../src/corpus/types.ts';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
 import { CAPTURE_FILE, PHASE0_FILE, PIN_FILE, VISION_DOC, visionRecord, withForge, writePhase0 } from '../helpers/corpusarc.ts';
-import { DEFAULT_CORPUS_ROOT, sampleCorpus } from '../helpers/corpus.ts';
+import { type CorpusSpec, DEFAULT_CORPUS_ROOT, sampleCorpus } from '../helpers/corpus.ts';
 import { makeForge } from '../helpers/forge.ts';
 import { type FileSet, commitAll, writeFiles } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
@@ -33,13 +33,15 @@ export type CorpusUnitOptions = Readonly<{
   baseline?: FileSet;
   /** Fields over the minimal Phase-0 record (its debt dispositions). */
   phase0?: Readonly<Record<string, unknown>>;
+  /** Overrides of the sample corpus (more docs and rules). */
+  corpus?: Partial<CorpusSpec>;
 }>;
 
 /** The corpus arc over u1 with `steps` scripted; nothing recorded yet (`contextFor` records revision 1). */
 export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOptions = {}): Promise<CorpusUnitArc> {
   const d = setupArc({ steps });
   const planDir = planDirOf(d);
-  const corpus = sampleCorpus();
+  const corpus = sampleCorpus(opts.corpus);
   writeFiles(d.repo, { ...corpus.files, '.roadmap/vision.json': `${JSON.stringify(visionRecord(corpus.files[VISION_PATH]!), null, 2)}\n`, ...opts.baseline });
   const baseline = commitAll(d.repo, 'the corpus');
 

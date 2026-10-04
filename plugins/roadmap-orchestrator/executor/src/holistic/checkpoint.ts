@@ -43,7 +43,7 @@ import { crashPoint } from '../core/crash.ts';
 import type { CheckpointIssues, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type InvocationId, type JobId, type LaneId, type Sha, type UnitId, parseInvocationId } from '../core/ids.ts';
+import { type InvocationId, type JobId, type LaneId, type Sha, type UnitId, parseInvocationId, canonicalIds } from '../core/ids.ts';
 import { BACKEND_PARK_CLASSES } from '../core/events.ts';
 import { DEFAULT_BOUNDS } from '../core/records.ts';
 import type { CheckpointState } from '../core/state.ts';
@@ -299,7 +299,7 @@ function capture(ctx: CheckpointContext, due: Due, issues: CheckpointIssues | nu
   const job = view.nextJobId('ckpt');
   const fact = {
     kind: 'checkpoint-inputs' as const, job, trigger: due.trigger, generation: due.generation, vector, headSha: head, visionSha256: vector.visionSha256,
-    findings: view.holistic().findings.filter(isActive).map((f) => f.id).sort(),
+    findings: canonicalIds(view.holistic().findings.filter(isActive).map((f) => f.id)),
     observations: shown,
     ...(issues === null ? {} : { issues }),
     ...(revision.corpus === null ? {} : { corpusSha256: revision.corpus.pin.sha256 }),

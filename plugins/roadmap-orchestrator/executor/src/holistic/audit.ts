@@ -40,7 +40,7 @@ import type { AuditInputs, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { crashPoint } from '../core/crash.ts';
-import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, parseJobId } from '../core/ids.ts';
+import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, parseJobId, canonicalIds } from '../core/ids.ts';
 import type { AuditState, FindingState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
@@ -166,7 +166,7 @@ function capture(ctx: AuditContext): Started | null {
     obligationsSha256: applied.obligationsSha256 ?? null,
     visionSha256: applied.visionSha256,
     owners: ownersOf(ctx),
-    priorFindings: view.holistic().findings.map((f) => f.id).sort(),
+    priorFindings: canonicalIds(view.holistic().findings.map((f) => f.id)),
     highWater: view.highWater(),
   };
   const seq = ctx.journal.fact({ kind: 'audit-started', ...inputs });
@@ -260,7 +260,7 @@ function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f
     lens,
     severity: lens === 'vision' && f.severity === 'P1' ? 'P2' : f.severity,
     obligation: f.obligation !== null && obligationIds.has(f.obligation) ? f.obligation : null,
-    visionClauses: [...new Set(f.visionClauses.filter((c): c is VisionClauseId => clauseIds.has(c)))].sort(),
+    visionClauses: canonicalIds(f.visionClauses.filter((c): c is VisionClauseId => clauseIds.has(c))),
     claim: f.claim,
     cause: f.cause,
     evidence,
@@ -428,7 +428,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     const from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
     return from === s.integrationSha ? [] : [{ lens, from, to: s.integrationSha }];
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
-  const findings = [...t.ids].sort();
+  const findings = canonicalIds(t.ids);
   ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome });
   crashPoint('audit.after-ended');
   if (outcome === 'abandoned') {

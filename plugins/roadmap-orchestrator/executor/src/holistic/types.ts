@@ -8,7 +8,7 @@
 import {
   type FindingId, type InvocationId, type JobId, type LaneId, type LaneRev, type ObligationId, type PlanRev, type QuestionId, type RoutingRev, type RuleId,
   type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, envId, findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev,
-  obligationId, planRev, questionId, routingRev, ruleId, ruleSeq, rulingId, sha, sha256, unitId, visionClauseId, type EnvId,
+  obligationId, planRev, questionId, routingRev, ruleId, ruleSeq, rulingId, sha, sha256, unitId, visionClauseId, type EnvId, idList, idsAscending,
 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { LENS_KIND_NAMES, type LaneDef, type LensKindName, laneDef } from '../core/records.ts';
@@ -99,7 +99,7 @@ const visionClause: Read<VisionClause> = object((f) => {
 const visionQuestion: Read<VisionQuestion> = object((f) => ({
   id: f.get('id', (v, p) => questionId(v, p)),
   text: f.get('text', str),
-  bears: f.get('bears', sortedBy(vid, (c) => c, { nonEmpty: true })),
+  bears: f.get('bears', idList(vid, { nonEmpty: true, legacyStringOrder: true })),
   assumption: f.get('assumption', str),
   state: f.get('state', oneOf(QUESTION_STATES)),
 }));
@@ -247,7 +247,7 @@ const arcLaneDef: Read<ArcLaneDef> = (value, path) => {
 
 const obligationState: Read<ObligationState> = tagged('type', {
   active: object((f): ObligationState => ({ type: f.get('type', literal('active')) })),
-  split: object((f): ObligationState => ({ type: f.get('type', literal('split')), children: f.get('children', sortedBy(oid, (c) => c, { nonEmpty: true })) })),
+  split: object((f): ObligationState => ({ type: f.get('type', literal('split')), children: f.get('children', idList(oid, { nonEmpty: true, legacyStringOrder: true })) })),
   waived: object((f): ObligationState => ({ type: f.get('type', literal('waived')), ruling: f.get('ruling', rid) })),
   deferred: object((f): ObligationState => ({ type: f.get('type', literal('deferred')), ruling: f.get('ruling', rid) })),
   retired: object((f): ObligationState => ({ type: f.get('type', literal('retired')), ruling: f.get('ruling', rid) })),
@@ -281,13 +281,8 @@ const censusState: Read<CensusState> = tagged('type', {
   untestable: object((f): CensusState => ({ type: f.get('type', literal('untestable')) })),
   'prod-only': object((f): CensusState => ({ type: f.get('type', literal('prod-only')) })),
 });
-const censusEntries: Read<readonly CensusEntry[]> = (value, path) => {
-  const out = arrayOf(object((f): CensusEntry => ({ rule: f.get('rule', ruleR), state: f.get('state', censusState) })))(value, path);
-  for (let i = 1; i < out.length; i++) {
-    if (!(ruleSeq(out[i - 1]!.rule) < ruleSeq(out[i]!.rule))) throw new SchemaError(`${path}[${i}]`, 'one entry per rule, ascending by number', value);
-  }
-  return out;
-};
+/** One entry per rule, ascending by rule number. */
+const censusEntries: Read<readonly CensusEntry[]> = idsAscending(object((f): CensusEntry => ({ rule: f.get('rule', ruleR), state: f.get('state', censusState) })), (e) => e.rule);
 
 const obligationDef: Read<ObligationDef> = object((f) => {
   const parent = f.optional('parent', oid);
@@ -296,7 +291,7 @@ const obligationDef: Read<ObligationDef> = object((f) => {
     rev: f.get('rev', positive),
     statement: f.get('statement', str),
     ...obligationAnchor(f),
-    serves: f.get('serves', sortedBy(vid, (c) => c)),
+    serves: f.get('serves', idList(vid, { legacyStringOrder: true })),
     witness: f.get('witness', nullable(witnessRef)),
     proofJudgment: f.get('proofJudgment', nullable(proofJudgment)),
     deliveredBy: f.get('deliveredBy', sortedBy((v, p) => unitId(v, p), (u) => u)),
@@ -323,7 +318,7 @@ export const obligations: Read<Obligations> = object((f) => {
     mapping: f.get('mapping', object((g) => ({
       paths: g.get('paths', arrayOf(object((h) => ({
         pattern: h.get('pattern', (v, p) => repoPattern(v, p)),
-        obligations: h.get('obligations', sortedBy(oid, (o) => o, { nonEmpty: true })),
+        obligations: h.get('obligations', idList(oid, { nonEmpty: true, legacyStringOrder: true })),
       })))),
     }))),
     ...(census === undefined ? {} : { census }),
@@ -604,9 +599,9 @@ export const rulingSidecar: Read<RulingSidecar> = object((f) => {
     docRefs: f.get('docRefs', arrayOf(rulingRef, { nonEmpty: true })),
     contractRefs: f.get('contractRefs', sortedBy(pathR, (c) => c)),
     contractOps: f.get('contractOps', arrayOf(contractOp)),
-    obligations: f.get('obligations', sortedBy(oid, (o) => o)),
-    obligationDispositions: f.get('obligationDispositions', sortedBy(object((g) => ({ id: g.get('id', oid), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)) })), byId)),
-    cites: f.get('cites', sortedBy(vid, (c) => c)),
+    obligations: f.get('obligations', idList(oid, { legacyStringOrder: true })),
+    obligationDispositions: f.get('obligationDispositions', idsAscending(object((g) => ({ id: g.get('id', oid), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)) })), (d) => d.id, { legacyStringOrder: true })),
+    cites: f.get('cites', idList(vid, { legacyStringOrder: true })),
     evidence: f.get('evidence', arrayOf(str)),
     appliesTo: f.get('appliesTo', tagged<'arc' | 'units', RulingSidecar['appliesTo']>('type', {
       arc: object((g) => ({ type: g.get('type', literal('arc')) })),
@@ -807,7 +802,7 @@ export const divergenceDraftFields = (f: Fields): DivergenceDraft => ({
   type: f.get('type', oneOf(DIVERGENCE_KINDS)),
   from: f.get('from', str),
   what: f.get('what', str),
-  cites: f.get('cites', sortedBy(vid, (c) => c, { nonEmpty: true })),
+  cites: f.get('cites', idList(vid, { nonEmpty: true, legacyStringOrder: true })),
   evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })),
   preimage: f.get('preimage', preimage),
   compensation: f.get('compensation', compensation),
