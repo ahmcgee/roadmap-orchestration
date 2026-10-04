@@ -26,7 +26,7 @@ import { type CheckResult, CRITERIA, arcView, chainOf } from '../evals/m4a/check
 import { type OwnerCtx, type Report, codeAnswer, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin, wakeKey } from '../evals/m4a/driver.ts';
 import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
 import { FILES, LANES, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
-import { type ArcView, defectVerdicts, readKey, spanPresent } from '../evals/m4a/key.ts';
+import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../evals/m4a/key.ts';
 import { INJECTION_MARKER, layout } from '../evals/m4a/layout.ts';
 import { ANSWER_KEY, needles, toolTraffic } from '../evals/m4a/transcript.ts';
 import { type Exit, runUntilExit } from './helpers/proc.ts';
@@ -328,6 +328,23 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const rule = (id: string, text: string) => ({ ...a1.pin.rules[0]!, id: id as never, text });
     const siblings = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, rule('T-97', 'A booking confirmation text reads as the Booking confirmed template, filled in.'), rule('T-96', 'Every cancellation that goes through is confirmed by a text to the vessel\'s phone.')] } }, 2: a2 };
     assert.deepEqual(defectVerdicts(key, siblings).filter((v) => !v.pass).map((v) => v.id), []);
+    // D2 and D7 do not own deduplication (D1 does): a claim split into two rules passes when each holds; D2 fails if any split half is must-hold.
+    const split = (v: ArcView, id: string, copy: string, text: string): ArcView => ({
+      ...v, pin: { ...v.pin, rules: [...v.pin.rules, { ...v.pin.rules[0]!, id: copy as never, text }] },
+      obligations: { ...v.obligations, census: [...v.obligations.census!, { ...v.obligations.census!.find((e) => e.rule === id)!, rule: copy as never }] },
+    });
+    const d2 = a1.pin.rules.find((r) => matches([['booking'], ['confirm'], ['text', 'sms']], r.text) && !/cancel|template/i.test(r.text))!;
+    const d7 = a1.pin.rules.find((r) => matches([['backed up', 'backup', 'back up', 'backs up'], ['night']], r.text))!;
+    const twoText = split(a1, d2.id, 'T-95', 'A booking\'s confirmation text goes out within a minute.');
+    const twoBackup = split(a1, d7.id, 'T-94', 'The ledger can be restored from last night\'s backup.');
+    assert.deepEqual(defectVerdicts(key, { 1: twoBackup, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), []);
+    assert.deepEqual(defectVerdicts(key, { 1: twoText, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), []);
+    const halfMustHold = { ...twoText, obligations: { ...twoText.obligations, obligations: twoText.obligations.obligations.map((o) => ({ ...o, activation: 'must-hold' as const, deliveredBy: [] })) } };
+    assert.ok(defectVerdicts(key, { 1: halfMustHold, 2: a2 }).some((v) => v.id === 'D2' && !v.pass), 'D2 still fails when the split claim is must-hold');
+    // D5's curation matches the file in either form: repo-relative (under the pin's source root) or corpus-root-relative.
+    const root = a1.pin.source.root as string;
+    const repoRel = { ...a1, phase0: { ...a1.phase0, curation: a1.phase0.curation.map((c) => ({ ...c, files: c.files.map((f) => (f.startsWith(root) ? f : `${root}/${f}`)) as never })) } };
+    assert.deepEqual(defectVerdicts(key, { 1: repoRel, 2: a2 }).filter((v) => !v.pass), []);
     // D4's arc-1 half too: P-1 answered already in arc 1.
     const early = { 1: { ...a1, phase0: { ...a1.phase0, questions: a1.phase0.questions.map((q) => ({ ...q, state: { type: 'answered' as const, answer: '48', at: q.id as never } })) } }, 2: a2 };
     assert.deepEqual(defectVerdicts(key, early).filter((v) => !v.pass).map((v) => v.id), ['D4']);

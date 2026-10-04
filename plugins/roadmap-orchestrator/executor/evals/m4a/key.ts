@@ -1,7 +1,9 @@
 // The answer key (answer-key.json) and its postconditions (plan "Planted defects", H19, K21), checked directly against
 // the arcs' kept pins, censuses and Phase-0 records, never by file name. Vocabulary:
 //   rule               exactly one active pin rule matches `match` and contains none of `exclude` (`census`: its census
-//                      state, and for `obligation` the named obligation's activation)
+//                      state, and for `obligation` the named obligation's activation). With `any: true` at least one
+//                      rule matches instead (for a defect that does not own deduplication; D1 does): at least one
+//                      matching rule has the census state, and every matching rule with that state has the activation
 //   no-rule            no active pin rule matches `match`
 //   absent             no pinned file's normalised text contains the planted span (sha256 and length of its
 //                      normalised text: every window of that length is hashed)
@@ -9,7 +11,8 @@
 //   divergence         a `corpusDivergences` entry cites the clause and its rules include the rule matching `rule`
 //   question           a Phase-0 question bears the rule matching `bears` (in that arc's pin) in state `state`
 //   question-answered  the question of arc `askedIn` bearing `bears` is answered, by the same id, in this arc's record
-//   curation           a `curation` entry of one of `tiers` names `file`
+//   curation           a `curation` entry of one of `tiers` names `file` (curation paths are repo-relative, the key's are
+//                      corpus-root-relative: both are resolved against the pin's source root before comparing)
 // A match is a list of fragment groups over the rule's normalised, lower-cased text: each group matches when the text
 // contains any of its alternatives; the rule matches when every group does. A rule may satisfy the positive matchers
 // (`rule`) of at most one defect per arc: a rule matching two defects' fails both.
@@ -26,7 +29,7 @@ export type Span = Readonly<{ file: string; sha256: string; length: number }>;
 export type ArcNo = 1 | 2;
 
 export type Postcondition =
-  | Readonly<{ type: 'rule'; arc: ArcNo; match: Match; exclude?: readonly string[]; census?: Readonly<{ state: 'obligation' | 'out-of-slice' | 'untestable' | 'prod-only'; activation?: 'future' | 'must-hold' }> }>
+  | Readonly<{ type: 'rule'; arc: ArcNo; match: Match; exclude?: readonly string[]; any?: true; census?: Readonly<{ state: 'obligation' | 'out-of-slice' | 'untestable' | 'prod-only'; activation?: 'future' | 'must-hold' }> }>
   | Readonly<{ type: 'no-rule'; arc: ArcNo; match: Match }>
   | Readonly<{ type: 'absent'; arc: ArcNo; span: Span }>
   | Readonly<{ type: 'spans-at-most'; arc: ArcNo; max: number; spans: readonly Span[] }>
@@ -72,17 +75,30 @@ function evaluate(p: Postcondition, arcs: Readonly<Record<ArcNo, ArcView>>): Ver
   const view = arcs[p.arc];
   switch (p.type) {
     case 'rule': {
+      const censusOf = (id: string): Verdict => {
+        const c = p.census!;
+        const entry = view.obligations.census?.find((e) => e.rule === id);
+        if (entry === undefined) return { pass: false, detail: `${id} has no census entry` };
+        if (entry.state.type !== c.state) return { pass: false, detail: `${id}'s census state is ${entry.state.type}, not ${c.state}` };
+        if (c.activation === undefined) return { pass: true, detail: `${id} ${entry.state.type}` };
+        const named = entry.state.type === 'obligation' ? entry.state.id : null;
+        const o = view.obligations.obligations.find((x) => x.id === named);
+        if (o === undefined) return { pass: false, detail: `${id}'s census names ${named}, which the obligations lack` };
+        return { pass: o.activation === c.activation, detail: `${id} → ${o.id} ${o.activation}` };
+      };
+      if (p.any === true) {
+        const hits = rulesMatching(view, p.match, p.exclude);
+        if (hits.length === 0) return { pass: false, detail: `no rule matches ${JSON.stringify(p.match)}` };
+        if (p.census === undefined) return { pass: true, detail: hits.map((r) => r.id).join(', ') };
+        const verdicts = hits.map((r) => ({ id: r.id as string, v: censusOf(r.id), has: view.obligations.census?.find((e) => e.rule === r.id)?.state.type === p.census!.state }));
+        const holders = verdicts.filter((x) => x.has);
+        if (holders.length === 0) return { pass: false, detail: `none of ${hits.map((r) => r.id).join(', ')} has census state ${p.census.state}` };
+        const bad = holders.filter((x) => !x.v.pass);
+        return { pass: bad.length === 0, detail: holders.map((x) => x.v.detail).join('; ') };
+      }
       const r = one(view, p.match, p.exclude);
       if ('problem' in r) return { pass: false, detail: r.problem };
-      if (p.census === undefined) return { pass: true, detail: `${r.id}` };
-      const entry = view.obligations.census?.find((e) => e.rule === r.id);
-      if (entry === undefined) return { pass: false, detail: `${r.id} has no census entry` };
-      if (entry.state.type !== p.census.state) return { pass: false, detail: `${r.id}'s census state is ${entry.state.type}, not ${p.census.state}` };
-      if (p.census.activation === undefined) return { pass: true, detail: `${r.id} ${entry.state.type}` };
-      const named = entry.state.type === 'obligation' ? entry.state.id : null;
-      const o = view.obligations.obligations.find((x) => x.id === named);
-      if (o === undefined) return { pass: false, detail: `${r.id}'s census names ${named}, which the obligations lack` };
-      return { pass: o.activation === p.census.activation, detail: `${r.id} → ${o.id} ${o.activation}` };
+      return p.census === undefined ? { pass: true, detail: `${r.id}` } : censusOf(r.id);
     }
     case 'no-rule': {
       const hits = rulesMatching(view, p.match);
@@ -118,7 +134,9 @@ function evaluate(p: Postcondition, arcs: Readonly<Record<ArcNo, ArcView>>): Ver
       return { pass: now.state.type === 'answered', detail: `${q.id} ${now.state.type}` };
     }
     case 'curation': {
-      const hit = view.phase0.curation.find((c) => p.tiers.includes(c.tier) && c.files.includes(p.file as never));
+      const root = view.pin.source.root as string;
+      const rel = (f: string): string => (f.startsWith(`${root}/`) ? f.slice(root.length + 1) : f);
+      const hit = view.phase0.curation.find((c) => p.tiers.includes(c.tier) && c.files.some((f) => rel(f) === rel(p.file)));
       return { pass: hit !== undefined, detail: hit === undefined ? `no ${p.tiers.join('/')} curation names ${p.file}` : hit.what };
     }
   }
