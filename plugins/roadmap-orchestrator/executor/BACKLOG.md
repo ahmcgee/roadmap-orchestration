@@ -144,6 +144,12 @@ None.
   profile, a lane launched by the previous release, a unit parked by the previous release with a `resume <unit>`
   queued after a rev + 1 edit (the M1 driver stops the arc on the park before the queued resume applies). Trigger: a
   record change that touches one of them, or a driver mode that waits on parks.
+- Rule ids can run out of order inside a rules block (ids are global; topical order is allowed), M4a paid run 6.
+  Cosmetic. Trigger: a real corpus session shows it hurting readability.
+- Code shipped by checkpoint-admitted repair units sits outside `deliveredBy` accounting (M4a paid run 6). Trigger:
+  a real corpus session shows a repair unit delivering a rule no obligation credits.
+- A witness can pass whichever side of the distinction its obligation draws (M4a paid run 6: one obligation's
+  witness could not fail on it); proof judgment did not catch it. Trigger: a real corpus session shows it.
 - A `sweep` whose teardown fails leaves the instance cleaning under the sweep with its residue undisposed. That
   residue is not a probe target (only cleanup-failed or retry-held ones are), so the arc stays `blocked` short of
   `complete` until another sweep cleans it, with no escalation item. Trigger: a sweep failing on a real arc; the

@@ -76,7 +76,12 @@ heading above its block. A principle no test can check ("it should feel calm to 
   reports it; the baseline's `.roadmap/invariants.md` registry holds the previous arc's).
 - A rewording that keeps the meaning keeps its id. A change of meaning removes the old rule (the pin retires it)
   and adds a new id.
-- One claim per rule. A claim restated in several places becomes one rule; the restatements go.
+- One claim per rule. A claim restated in several places becomes one rule; the restatements go. The prose
+  sentence a rule came from is rewritten as its rationale (why it holds), never left stating the claim again.
+- No invented claims. Every rule traces to source text, or to a record entry (`curation`, `corpusDivergences`, an
+  answered question) that says why it exists; a rule you add without source text needs that entry.
+- A rule that encodes a question's working assumption ends with `(working assumption, P-<n>)`; the answer removes
+  the marker.
 - The vision document carries no rules block (`rules-in-vision`).
 
 **Curation tiers.** Every curation names the corpus files it touched and goes in the Phase-0 record.
@@ -87,6 +92,9 @@ heading above its block. A principle no test can check ("it should feel calm to 
 | fact-currency | stale text the code or an ADR has overtaken | act; list it in `curation` |
 | semantic, the vision decides | a contradiction a vision clause resolves | act; record a `corpusDivergences` entry with the preimage (pin sha and file hashes) and the `V-n` it cites |
 | semantic, the vision silent | a contradiction nothing decides | do not resolve it; a ranked `P-n` question with the working assumption the rules encode meanwhile |
+
+A contradiction is resolved (a divergence) or asked (a `P-n`), never parked as debt. A claim the arcs' own code
+made false is a fact-currency fix in the next corpus window, never debt.
 
 ## Phase 0 (each arc)
 
@@ -104,7 +112,8 @@ Keep the arc's inputs in their own directory outside the product working tree, f
    prose outside the rules blocks and lists each normative claim no rule states: a requirement, a principle, an
    operational or production fact, a prohibition. You settle every entry: a rule (census `untestable` for a
    principle, `prod-only` for a production or operational claim), or a `curation` note naming the rule it is pure
-   rationale for. Repeat until the sweep lists nothing unsettled.
+   rationale for. It also lists every rule that states more than one claim; split each. Repeat until the sweep
+   lists nothing unsettled.
 3. **Commit.** First arc: commit on your work branch. Chained arc: see "Chaining" for the single between-arc
    commit. The commit is the arc's `baseline`.
 4. **Pin.** `roadmap corpus pin --repo <repo> --commit <corpus commit> --baseline <baseline sha> --out
@@ -129,8 +138,9 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     `finding`, `amendment`, `acted{on: units | rules}` or `none{reason}`. Issues come from trusted collaborators
     (an untrusted repo is refused before you see any): weigh them as owner context and act on them like any other
     evidence. An issue that asks for a change of direction the vision does not support is a question for the owner.
-11. **Slice.** `slice.advances` in the record and `holistic.advances` in the plan name the same clauses; `why` says
-    why this slice now.
+11. **Slice.** `slice.advances` in the record and `holistic.advances` in the plan name the same clauses: every
+    `V-n` any unit delivers, including one it delivers without being the reason for the slice. `why` says why
+    this slice now.
 12. **Plan and specs.** SCHEMAS.md "Input contract" and "`spec.json` M1 subset". A corpus arc's plan names
     `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`). Plan
     contracts and unit scopes never overlap the corpus files.
@@ -160,7 +170,8 @@ the next watch event. Read `status` on each wake.
   divergence. Read `divergences` and `decisionsSince`; reverse with `roadmap reverse <D-n>` or an `apply` when it
   read the vision wrong. A `bundle-request` is yours: `ack` it with `--choice apply` or `--choice reject`.
 - **Amendments** (`status.amendments`) accumulate; you disposition them at the next Phase 0. They and every other
-  mid-arc learning wait for the corpus window between arcs; only an owner's answer edits the corpus mid-arc.
+  mid-arc learning wait for the corpus window between arcs; only an owner's answer edits the corpus mid-arc. Note
+  each corpus claim a unit's code makes false; the next window fixes it.
 - **Flow.** Watch `status.timings` (per stage: completed attempts, median and maximum) and each running unit's
   `running.elapsed` against its stage's median. Report a slowdown at the next check-in as an observation with
   numbers. Never change lanes, judgment seats, obligations or routing to make an arc faster.
