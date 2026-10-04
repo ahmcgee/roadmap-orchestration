@@ -68,7 +68,8 @@ only in Phase 0 and in the between-arc commit. The executor reads only a pinned 
 
 **Rules blocks.** Normative claims live in fenced blocks with the info string `rules`, one per line:
 `T-<n>: <one-line normative claim>`. Prose outside the blocks is rationale. The section of a rule is the nearest
-heading above its block.
+heading above its block. A principle no test can check ("it should feel calm to use") is a rule too, with census
+`untestable`, so the lenses and the census track it; prose may explain a rule but never carries a claim alone.
 
 - Ids are global across arcs and never reused. A new rule takes the next number above the high-water (the pin
   reports it; the baseline's `.roadmap/invariants.md` registry holds the previous arc's).
@@ -169,10 +170,13 @@ intake, amendments, pack-review notes, census `% held`, timings and PRs. It sees
 snapshot; before any arc has one it exits 64.
 
 The preface says what you decided on the owner's behalf, what you need from them, and anything the brief does not
-show (a slowdown, a pattern across arcs). Then the numbered questions, if any.
+show (a slowdown, a pattern across arcs). Then the numbered questions: the chain's still-open `P-n` questions
+(top 5 by rank, each with its working assumption) alongside anything new. An open `P-n` is asked again at every
+check-in, not once at bootstrap. An answer goes into the next Phase 0: the question moves to `answered`, its rules
+change to match, and the corpus is re-pinned.
 
-Check in at every arc completion, at a stop, and when the owner returns. In an unattended chain a check-in does
-not wait: carry on with the working assumptions.
+Check in at every arc completion (the chain boundary), at a stop, and when the owner returns. In an unattended
+chain a check-in does not wait: carry on with the working assumptions.
 
 **The ack** is the owner's. Run `roadmap brief --repo <repo> --ack <briefId>` only when the owner acknowledged that
 brief. It acknowledges the brief's non-blocking digest and convergence items and moves "since"; acknowledged starts

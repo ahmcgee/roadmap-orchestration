@@ -1,6 +1,6 @@
 {
   "schema": "roadmap/m4a-answer-key",
-  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text.",
+  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group, and a rule containing any of `exclude` does not match. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text.",
   "defects": [
     {
       "id": "D1",
@@ -51,12 +51,19 @@
           "arc": 1,
           "match": [
             [
+              "booking"
+            ],
+            [
               "confirm"
             ],
             [
               "text",
               "sms"
             ]
+          ],
+          "exclude": [
+            "cancel",
+            "template"
           ],
           "census": {
             "state": "obligation",

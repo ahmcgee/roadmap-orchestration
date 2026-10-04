@@ -1,7 +1,7 @@
 // The answer key (answer-key.json) and its postconditions (plan "Planted defects", H19, K21), checked directly against
 // the arcs' kept pins, censuses and Phase-0 records, never by file name. Vocabulary:
-//   rule               exactly one active pin rule matches `match` (`census`: its census state, and for `obligation`
-//                      the named obligation's activation)
+//   rule               exactly one active pin rule matches `match` and contains none of `exclude` (`census`: its census
+//                      state, and for `obligation` the named obligation's activation)
 //   no-rule            no active pin rule matches `match`
 //   absent             no pinned file's normalised text contains the planted span (sha256 and length of its
 //                      normalised text: every window of that length is hashed)
@@ -26,7 +26,7 @@ export type Span = Readonly<{ file: string; sha256: string; length: number }>;
 export type ArcNo = 1 | 2;
 
 export type Postcondition =
-  | Readonly<{ type: 'rule'; arc: ArcNo; match: Match; census?: Readonly<{ state: 'obligation' | 'out-of-slice' | 'untestable' | 'prod-only'; activation?: 'future' | 'must-hold' }> }>
+  | Readonly<{ type: 'rule'; arc: ArcNo; match: Match; exclude?: readonly string[]; census?: Readonly<{ state: 'obligation' | 'out-of-slice' | 'untestable' | 'prod-only'; activation?: 'future' | 'must-hold' }> }>
   | Readonly<{ type: 'no-rule'; arc: ArcNo; match: Match }>
   | Readonly<{ type: 'absent'; arc: ArcNo; span: Span }>
   | Readonly<{ type: 'spans-at-most'; arc: ArcNo; max: number; spans: readonly Span[] }>
@@ -57,13 +57,14 @@ export function spanPresent(view: ArcView, span: Span): boolean {
   return false;
 }
 
-/** The active rules matching `m`. */
-const rulesMatching = (view: ArcView, m: Match) => view.pin.rules.filter((r) => matches(m, r.text));
+/** The active rules matching `m` and containing none of `exclude`. */
+const rulesMatching = (view: ArcView, m: Match, exclude: readonly string[] = []) =>
+  view.pin.rules.filter((r) => matches(m, r.text) && !exclude.some((x) => lower(r.text).includes(x.toLowerCase())));
 
 type Verdict = Readonly<{ pass: boolean; detail: string }>;
 
-function one(view: ArcView, m: Match): Readonly<{ id: string } | { problem: string }> {
-  const hits = rulesMatching(view, m);
+function one(view: ArcView, m: Match, exclude: readonly string[] = []): Readonly<{ id: string } | { problem: string }> {
+  const hits = rulesMatching(view, m, exclude);
   return hits.length === 1 ? { id: hits[0]!.id } : { problem: `${hits.length} rules match ${JSON.stringify(m)}${hits.length === 0 ? '' : ` (${hits.map((r) => r.id).join(', ')})`}` };
 }
 
@@ -71,7 +72,7 @@ function evaluate(p: Postcondition, arcs: Readonly<Record<ArcNo, ArcView>>): Ver
   const view = arcs[p.arc];
   switch (p.type) {
     case 'rule': {
-      const r = one(view, p.match);
+      const r = one(view, p.match, p.exclude);
       if ('problem' in r) return { pass: false, detail: r.problem };
       if (p.census === undefined) return { pass: true, detail: `${r.id}` };
       const entry = view.obligations.census?.find((e) => e.rule === r.id);
@@ -132,7 +133,7 @@ export function defectVerdicts(key: AnswerKey, arcs: Readonly<Record<ArcNo, ArcV
   for (const d of key.defects) {
     for (const p of d.postconditions) {
       if (p.type !== 'rule') continue;
-      for (const r of rulesMatching(arcs[p.arc], p.match)) {
+      for (const r of rulesMatching(arcs[p.arc], p.match, p.exclude)) {
         const k = `${p.arc}:${r.id}`;
         claims.set(k, (claims.get(k) ?? new Set()).add(d.id));
       }

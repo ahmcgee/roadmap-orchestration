@@ -324,6 +324,10 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       assert.ok(mutate !== undefined, `a mutation for ${d.id}`);
       assert.deepEqual(defectVerdicts(key, mutate()).filter((v) => !v.pass).map((v) => v.id), [d.id], `the ${d.id} mutation fails ${d.id} alone`);
     }
+    // D2 names the booking-by-text claim only: a template rule and a cancellation-by-text rule beside it (paid run 4) match nothing.
+    const rule = (id: string, text: string) => ({ ...a1.pin.rules[0]!, id: id as never, text });
+    const siblings = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, rule('T-97', 'A booking confirmation text reads as the Booking confirmed template, filled in.'), rule('T-96', 'Every cancellation that goes through is confirmed by a text to the vessel\'s phone.')] } }, 2: a2 };
+    assert.deepEqual(defectVerdicts(key, siblings).filter((v) => !v.pass).map((v) => v.id), []);
     // D4's arc-1 half too: P-1 answered already in arc 1.
     const early = { 1: { ...a1, phase0: { ...a1.phase0, questions: a1.phase0.questions.map((q) => ({ ...q, state: { type: 'answered' as const, answer: '48', at: q.id as never } })) } }, 2: a2 };
     assert.deepEqual(defectVerdicts(key, early).filter((v) => !v.pass).map((v) => v.id), ['D4']);

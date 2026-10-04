@@ -225,7 +225,7 @@ function arc2Chained(run: Run): Verdict {
   if (two.plan.chain?.previousArc !== one.arc || two.plan.chain.previousHead !== head) problems.push(`arc 2's chain is ${JSON.stringify(two.plan.chain)}, arc 1 completed at ${head}`);
   const parents = git(run.product, ['rev-list', '--parents', '-n', '1', two.plan.baseline]).trim().split(' ').slice(1);
   if (parents.length !== 1 || parents[0] !== head) problems.push(`arc 2's baseline ${two.plan.baseline} has parents ${parents.join(', ')}`);
-  const unacked = unackedStarts(run.arcs.filter((a) => a === one || a === two).map((a) => a.arc), committedAcks(run.product));
+  const unacked = unackedStarts([one.arc, two.arc], committedAcks(run.product));
   if (!unacked.includes(two.arc)) problems.push(`arc 2's start is acked (unacked: ${unacked.join(', ') || 'none'})`);
   const p0 = two.manifest.phase0 === undefined ? null : parsePhase0Record(JSON.parse(two.input(two.manifest.phase0, PHASE0_INPUT).toString('utf8')));
   const slice = briefSlice(run, two.arc);
