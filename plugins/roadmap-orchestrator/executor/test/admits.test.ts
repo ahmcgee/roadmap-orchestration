@@ -1,22 +1,23 @@
-// M4a rev 3 step N2 (B "Checkpoint admits", OR-A1, LR-k, R44–R48): the admit classifier (src/holistic/admits.ts) over
-// hand-built worlds, pure. Named tests: admits.table-row-1..9, admits.table-total, admits.ref-holds-invalid,
+// M4a rev 3 step N2 (B "Checkpoint admits", OR-A1, LR-k, LR-m, R44–R46, R48): the admit classifier
+// (src/holistic/admits.ts) over hand-built worlds, pure. Census: T-1 obligation (in slice), T-2 out-of-slice, T-3 untestable. Named tests: admits.table-row-1..9, admits.table-total, admits.ref-holds-invalid,
 // admits.ref-exempt-invalid, admits.ref-resolved-invalid, admits.impact-mapped-not-touched,
-// admits.exempt-delivered-not-touched, admits.mixed-finding-keeps-out-of-slice, admits.attr-audit-lens-range,
+// admits.exempt-delivered-not-touched, admits.finding-clauses-are-context, admits.declared-target-out-of-slice,
+// admits.target-unknown-invalid, admits.split-child-out-of-slice-targets, admits.attr-audit-lens-range,
 // admits.attr-witness-union-range, admits.attr-plan-check-ambiguous, admits.attr-issue-ambiguous,
 // admits.attr-absolute-paths-ignored, admits.attr-obligation-held-window, admits.attr-shared-file-ambiguous,
 // admits.opportunity-clause-without-lineage-spends, admits.follow-up-overrun-converts-with-debt,
 // admits.conversion-referenced-is-invalid, admits.dishonest-citation-invalid. The run-9 replay is test/admits-run9.test.ts.
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import type { FindingId, JobId, ObligationId, UnitId, VisionClauseId } from '../src/core/ids.ts';
-import type { RepairRef } from '../src/core/records.ts';
+import type { FindingId, JobId, ObligationId, RuleId, UnitId, VisionClauseId } from '../src/core/ids.ts';
+import type { RepairRef, SpecM1 } from '../src/core/records.ts';
 import { mintDebt } from '../src/debt/mint.ts';
 import { DEBT_SCHEMA } from '../src/debt/types.ts';
 import {
-  type AdmitFinding, type AdmitObligation, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, type UnitMerge, classifyAdmits, conversionReasons,
+  type AdmitFinding, type AdmitObligation, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, type UnitMerge, admitOpOf, classifyAdmits, conversionReasons,
   findingAttribution, obligationAttribution, opportunityClauses,
 } from '../src/holistic/admits.ts';
-import type { AdmitClass, ObligationDef } from '../src/holistic/types.ts';
+import type { AdmitClass, ObligationDef, Obligations } from '../src/holistic/types.ts';
 import { validateCheckpointOutput } from '../src/prompts/schemas.ts';
 import { checkpointAnswer, intakeOutcome } from './helpers/holistic.ts';
 
@@ -24,11 +25,13 @@ const v = (...n: number[]) => n.map((x) => `V-${x}` as VisionClauseId);
 const u = (s: string) => s as UnitId;
 const job = (s: string) => s as JobId;
 
-function obligation(id: string, serves: readonly VisionClauseId[], over: Partial<{ deliveredBy: readonly string[]; activation: 'must-hold' | 'future'; state: ObligationDef['state'] }> = {}): ObligationDef {
+function obligation(
+  id: string, serves: readonly VisionClauseId[], over: Partial<{ deliveredBy: readonly string[]; activation: 'must-hold' | 'future'; state: ObligationDef['state']; rule: string }> = {},
+): ObligationDef {
   return {
     id: id as ObligationId, rev: 1, statement: id, serves, witness: { lane: 'journey', testIds: [`t-${id}`] } as unknown as ObligationDef['witness'], proofJudgment: null,
     deliveredBy: (over.deliveredBy ?? []) as UnitId[], activation: over.activation ?? 'must-hold', contracts: [], state: over.state ?? { type: 'active' },
-    rule: { id: 'T-1', textSha256: '0'.repeat(64) },
+    rule: { id: over.rule ?? 'T-1', textSha256: '0'.repeat(64) },
   } as unknown as ObligationDef;
 }
 const ob = (def: ObligationDef, holding = false, history: AdmitObligation['history'] = []): AdmitObligation => ({ def, holding, history });
@@ -44,12 +47,14 @@ function world(over: Partial<AdmitWorld> & { obligationList?: readonly AdmitObli
   const { obligationList = [], findingList = [], ...rest } = over;
   return {
     world: v(1, 3, 4), advances: v(1, 2), recorded: [], rootOf: (x) => x,
+    census: new Map([['T-1', 'obligation'], ['T-2', 'out-of-slice'], ['T-3', 'untestable']] as [RuleId, 'obligation' | 'out-of-slice' | 'untestable'][]),
     obligations: new Map(obligationList.map((o) => [o.def.id, o])), findings: new Map(findingList.map((f) => [f.id, f])),
     audits: new Map([[job('audit-1'), [{ lens: 'vision', from: 0, to: 2 }, { lens: 'drift', from: 1, to: 2 }] as AuditRange[]]]),
     merges: [], ...rest,
   };
 }
-const admit = (unit: string, cites: readonly VisionClauseId[], repairs: readonly string[] = [], index = 0): AdmitOp => ({ index, unit: u(unit), cites, repairs: repairs as RepairRef[] });
+const admit = (unit: string, cites: readonly VisionClauseId[], repairs: readonly string[] = [], index = 0, targets: readonly string[] = [], declared: readonly string[] = []): AdmitOp =>
+  ({ index, unit: u(unit), cites, repairs: repairs as RepairRef[], targets: targets as RuleId[], declared: declared as ObligationId[] });
 const opp = (unit: string, clauses: readonly VisionClauseId[], id = 'O-1'): RecordedAdmit => ({ job: job('ckpt-1'), index: 0, unit: u(unit), class: { type: 'opportunity', id, clauses } as AdmitClass });
 const followUp = (unit: string, refs: readonly string[], o = 'O-1'): RecordedAdmit => ({ job: job('ckpt-2'), index: 0, unit: u(unit), class: { type: 'repair', refs, followUp: o } as AdmitClass });
 const merge = (unit: string, position: number, paths: readonly string[] = ['src/a.js']): UnitMerge => ({ unit: u(unit), position, paths });
@@ -86,13 +91,14 @@ describe('admit classes: the decision table (R45)', () => {
     assert.deepEqual(one(w, admit('fix', v(1), ['F-1'])).classes[0]!.class, { type: 'repair', refs: ['F-1'], followUp: null });
   });
 
-  test('admits.table-row-5 / admits.dishonest-citation-invalid: a repair touching V-3 outside the slice without citing it is invalid', () => {
-    const out = one(world({ findingList: [finding('F-1', v(1, 3))] }), admit('fix', v(1), ['F-1']));
+  test('admits.table-row-5 / admits.dishonest-citation-invalid: targeting out-of-slice T-2 without citing a clause outside the slice is invalid', () => {
+    const out = one(world({ findingList: [finding('F-1', v(1))] }), admit('fix', v(1), ['F-1'], 0, ['T-2']));
     assert.equal(out.reasons.length, 1);
-    assert.match(out.reasons[0]!, /dishonest-citation: V-3/);
+    assert.match(out.reasons[0]!, /dishonest-citation: it targets out-of-slice rules T-2 and cites no clause outside the owner-selected slice/);
   });
 
-  test('admits.table-row-6: honest work outside the slice with the budget left → opportunity O-1, its clauses joining advances', () => {
+  test('admits.table-row-6: honest work outside the slice with the budget left → opportunity O-1, its cited clauses joining advances', () => {
+    assert.deepEqual(one(world(), admit('more', v(1, 3), [], 0, ['T-1', 'T-2'])).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-3'] });
     const out = one(world(), admit('more', v(1, 3)));
     assert.deepEqual(out.classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-3'] });
     assert.deepEqual(opportunityClauses(out.classes), ['V-3']);
@@ -112,15 +118,15 @@ describe('admit classes: the decision table (R45)', () => {
 
   test('admits.table-total: every generated combination of refs, attribution, out-of-slice touch, follow-ups and budget lands on exactly one row', () => {
     let n = 0;
-    for (const ref of ['none', 'valid-in', 'valid-out', 'invalid'] as const) {
-      for (const cites of [v(1), v(3), v(1, 3), v(2), []] as const) {
+    for (const ref of ['none', 'valid', 'valid-oos-obligation', 'invalid'] as const) {
+      for (const [cites, targets] of [[v(1), []], [v(3), []], [v(1, 3), ['T-2']], [v(2), ['T-1']], [v(1), ['T-2']]] as const) {
         for (const lineage of [false, true]) {
           for (const followed of [false, true]) {
             for (const spent of [false, true]) {
               const recorded = [...(spent || lineage ? [opp('opp', v(3))] : []), ...(followed ? [followUp('fix1', ['F-8'])] : [])];
-              const f = ref === 'valid-in' ? finding('F-1', v(1)) : ref === 'valid-out' ? finding('F-1', v(3)) : finding('F-1', v(1), { active: ref !== 'invalid' });
-              const w = world({ recorded, findingList: [f], merges: lineage ? [merge('opp', 1)] : [merge('other', 1)] });
-              one(w, admit('x', cites, ref === 'none' ? [] : ['F-1']));
+              const f = finding('F-1', v(3), { active: ref !== 'invalid', obligation: ref === 'valid-oos-obligation' ? 'I-2' as ObligationId : null });
+              const w = world({ recorded, findingList: [f], obligationList: [ob(obligation('I-2', v(3), { rule: 'T-2' }))], merges: lineage ? [merge('opp', 1)] : [merge('other', 1)] });
+              one(w, admit('x', cites, ref === 'none' ? [] : ['F-1'], 0, targets));
               n += 1;
             }
           }
@@ -157,29 +163,45 @@ describe('admit classes: repair refs and touched clauses (R45, R47)', () => {
     assert.deepEqual(one(world({ obligationList: [ob(obligation('I-1', v(1)))] }), admit('fix', v(1), ['I-1'])).classes[0]!.class, { type: 'repair', refs: ['I-1'], followUp: null });
   });
 
-  test('admits.impact-mapped-not-touched: an obligation the admit only may affect (not delivered by it) adds no clause', () => {
-    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['other'], activation: 'future' }), true)] });
+  test('admits.impact-mapped-not-touched: an obligation the impact mapping selects for the scope is no declared target (admitOpOf)', () => {
+    const obligations = { mapping: { paths: [{ pattern: 'src/**', obligations: ['I-2', 'I-1'] }] } } as unknown as Obligations;
+    const spec = { scope: ['src/**'], obligations: ['I-1', 'I-2', 'I-3'], repairs: [] } as unknown as SpecM1;
+    const op = { op: 'admit', unit: { id: 'gap', risk: 'low', scope: ['src/**'], after: [], origin: 'checkpoint' }, spec: '{}', targets: ['T-1'], cites: ['V-1'], evidence: ['e'] } as never;
+    assert.deepEqual(admitOpOf(3, op, spec, obligations), { index: 3, unit: 'gap', cites: ['V-1'], repairs: [], targets: ['T-1'], declared: ['I-3'] });
+    // Mapped I-2 (at out-of-slice T-2) is no target: an oversight; declared beyond the mapping, it is opportunity work.
+    const w = world({ obligationList: [ob(obligation('I-2', v(3), { rule: 'T-2' }), true)] });
+    assert.deepEqual(one(w, admit('gap', v(1))).classes[0]!.class, { type: 'oversight', clauses: ['V-1'] });
+    assert.match(one(w, admit('gap', v(1), [], 0, [], ['I-2'])).reasons[0]!, /dishonest-citation: it targets out-of-slice rules T-2/);
+  });
+
+  test('admits.split-child-out-of-slice-targets: an obligation the admit delivers (a split child at T-2) targets T-2', () => {
+    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['gap'], activation: 'future', rule: 'T-2' }), true)] });
+    assert.match(one(w, admit('gap', v(1))).reasons[0]!, /dishonest-citation: it targets out-of-slice rules T-2/);
+    assert.deepEqual(one(w, admit('gap', v(1, 3))).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-3'] });
+  });
+
+  test('admits.exempt-delivered-not-touched: a waived obligation the admit delivers is no target', () => {
+    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['gap'], activation: 'future', state: { type: 'waived', ruling: 'C-1' } as ObligationDef['state'], rule: 'T-2' }), true)] });
     assert.deepEqual(one(w, admit('gap', v(1))).classes[0]!.class, { type: 'oversight', clauses: ['V-1'] });
   });
 
-  test('a delivered obligation counts: delivering I-2 (serving V-3) touches V-3', () => {
-    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['gap'], activation: 'future' }), true)] });
-    assert.match(one(w, admit('gap', v(1))).reasons[0]!, /dishonest-citation: V-3/);
-  });
-
-  test('admits.exempt-delivered-not-touched: a waived obligation the admit delivers adds no clause', () => {
-    const w = world({ obligationList: [ob(obligation('I-2', v(3), { deliveredBy: ['gap'], activation: 'future', state: { type: 'waived', ruling: 'C-1' } as ObligationDef['state'] }), true)] });
-    assert.deepEqual(one(w, admit('gap', v(1))).classes[0]!.class, { type: 'oversight', clauses: ['V-1'] });
-  });
-
-  test('admits.mixed-finding-keeps-out-of-slice: a finding over [V-1, V-3] keeps V-3 (Q1): cited, it is an opportunity', () => {
+  test('admits.finding-clauses-are-context (LR-m): a finding over [V-1, V-3] repaired citing V-1 is a repair; its V-3 is no scope', () => {
     const w = world({ findingList: [finding('F-1', v(1, 3))] });
-    assert.deepEqual(one(w, admit('fix', v(1, 3), ['F-1'])).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-3'] });
+    assert.deepEqual(one(w, admit('fix', v(1), ['F-1'])).classes[0]!.class, { type: 'repair', refs: ['F-1'], followUp: null });
   });
 
-  test('a repaired finding\'s obligation serves count: F-1 over V-1 on I-3 (serving V-4) touches V-4', () => {
-    const w = world({ findingList: [finding('F-1', v(1), { obligation: 'I-3' as ObligationId })], obligationList: [ob(obligation('I-3', v(4)), true)] });
-    assert.match(one(w, admit('fix', v(1), ['F-1'])).reasons[0]!, /dishonest-citation: V-4/);
+  test('a repaired finding\'s obligation is a target: F-1 on I-3 at out-of-slice T-2', () => {
+    const w = world({ findingList: [finding('F-1', v(1), { obligation: 'I-3' as ObligationId })], obligationList: [ob(obligation('I-3', v(3), { rule: 'T-2' }), true)] });
+    assert.match(one(w, admit('fix', v(1), ['F-1'])).reasons[0]!, /dishonest-citation: it targets out-of-slice rules T-2/);
+  });
+
+  test('admits.declared-target-out-of-slice (LR-m): declaring T-2 is opportunity work; declaring T-1 or T-3 is not', () => {
+    assert.deepEqual(one(world(), admit('more', v(1, 4), [], 0, ['T-2'])).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-4'] });
+    assert.deepEqual(one(world(), admit('gap', v(1), [], 0, ['T-1', 'T-3'])).classes[0]!.class, { type: 'oversight', clauses: ['V-1'] });
+  });
+
+  test('admits.target-unknown-invalid: a target no active rule of the pin is a reason', () => {
+    assert.match(one(world(), admit('gap', v(1), [], 0, ['T-9'])).reasons[0]!, /target-unknown: T-9 is no active rule of the pin in force/);
   });
 });
 

@@ -70,7 +70,7 @@ import {
   type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha,
   type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
 } from '../core/ids.ts';
-import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations, specRepairs } from '../core/records.ts';
+import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
 import { type CheckpointState, openAttempt } from '../core/state.ts';
 import { bundleClassesOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -94,7 +94,7 @@ import { SpecFileError, parseSpec, specBytes } from '../spec/spec.ts';
 import { mintDebt } from '../debt/mint.ts';
 import { baselineDebtAt } from '../phase0/rows.ts';
 import {
-  type AdmitClassification, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, classifyAdmits, conversionReasons, namedUnits, opportunityClauses,
+  type AdmitClassification, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, admitOpOf, classifyAdmits, conversionReasons, namedUnits, opportunityClauses,
 } from './admits.ts';
 import { admitSummary, amendmentReasons, appendAmendment, checkpointAmendments, conversionAmendment, divergenceAmendments } from './amendments.ts';
 import type { AuditContext } from './audit.ts';
@@ -895,19 +895,19 @@ export function admitWorldOf(
     recorded,
     rootOf: (u) => view.unit(u).lineage?.root ?? u,
     obligations: world,
+    // The census in force (before this bundle's ops): a split child at an out-of-slice rule targets that rule.
+    census: new Map((revision.obligations?.value.census ?? []).map((e) => [e.rule, e.state.type])),
     findings,
     audits,
     merges,
   };
 }
 
-/** The admit ops of `ops` for classification: each spec's repairs (the specs parsed when the proposal was built). */
-function admitOps(ctx: CheckpointContext, ops: readonly IndexedOp[]): readonly AdmitOp[] {
-  return ops.flatMap(({ op, index }) => {
-    if (op.op !== 'admit') return [];
-    const spec = parseSpec(Buffer.from(op.spec, 'utf8'), absPath(join(ctx.planFile, '..', `${op.unit.id}.json`)));
-    return [{ index, unit: op.unit.id, cites: op.cites, repairs: specRepairs(spec) }];
-  });
+/** The admit ops of `ops` for classification (the specs parsed when the proposal was built; `obligations` in force). */
+function admitOps(ctx: CheckpointContext, ops: readonly IndexedOp[], obligations: Obligations | null): readonly AdmitOp[] {
+  return ops.flatMap(({ op, index }) => (op.op === 'admit'
+    ? [admitOpOf(index, op, parseSpec(Buffer.from(op.spec, 'utf8'), absPath(join(ctx.planFile, '..', `${op.unit.id}.json`))), obligations)]
+    : []));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -990,7 +990,7 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   let classes: AdmitClassification | null = null;
   let ops = all;
   if (corpus) {
-    const admits = admitOps(ctx, all);
+    const admits = admitOps(ctx, all, revision.obligations?.value ?? null);
     classes = admits.length === 0 ? { classes: [], conversions: [], reasons: [] } : classifyAdmits(admitWorldOf(ctx, a, revision, inForce, p.obligations, recorded), admits);
     const why = [...classes.reasons, ...conversionReasons(a.output, classes.conversions)];
     if (why.length > 0) return invalid(why);

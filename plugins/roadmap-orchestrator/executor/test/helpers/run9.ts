@@ -2,14 +2,18 @@
 // (test/fixtures/run9-admits.json, copied by the N2 extractor; the synthetic Tidewater domain) replayed checkpoint by
 // checkpoint through `classifyAdmits`. Each checkpoint's world is the log as it stood at that checkpoint's capture: the
 // findings it was given (active at capture), the audits ended and the units published before it, the classes this replay
-// gave the earlier admits. A `dishonest-citation` reason is answered as the retry the prompt asks for (N4: "cite every
-// clause it advances"): the same output with the named clauses added to the op's cites, classified again.
+// gave the earlier admits. The recorded answers predate `targets` (LR-m) and classify on the structural floor; a
+// synthetic variant (`declare`) gives an admit its targets and cites. A `dishonest-citation` reason (an out-of-slice rule
+// targeted, no clause outside the slice cited) is answered as the retry the prompt asks for (N4: "cite every clause
+// it advances"): the same output with the clauses the targeted out-of-slice rules advance added to the op's cites,
+// classified again. Code holds no rule→clause map, so the replay takes the honest clauses from the records that name
+// them: the out-of-slice world clauses the Phase-0 record's questions bear beside those rules, and those its repaired
+// findings carry (lens context). None found: no retry (the admit stays invalid).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { FindingId, JobId, ObligationId, Sha, UnitId, VisionClauseId } from '../../src/core/ids.ts';
-import { specRepairs } from '../../src/core/records.ts';
+import type { FindingId, JobId, ObligationId, RuleId, Sha, UnitId, VisionClauseId } from '../../src/core/ids.ts';
 import {
-  type AdmitClassification, type AdmitFinding, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, classifyAdmits,
+  type AdmitClassification, type AdmitFinding, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, admitOpOf, classifyAdmits,
 } from '../../src/holistic/admits.ts';
 import { type FindingSource, type FindingLens, parseObligations, parseVision } from '../../src/holistic/types.ts';
 import { validateCheckpointOutput } from '../../src/prompts/schemas.ts';
@@ -21,6 +25,7 @@ type Json = Record<string, unknown>;
 type Pub = Readonly<{ op: string; seq: number; subject: 'unit' | 'docs'; unit: string | null; old: string; new: string; paths: readonly string[] }>;
 type Ckpt = Readonly<{ job: string; seq: number; headSha: string; findings: readonly string[]; planRev: number; output: Json }>;
 type Fixture = Readonly<{
+  phase0Questions: readonly Readonly<{ bears: readonly string[] }>[];
   vision: Json; advances: readonly string[]; obligations: Json; findings: readonly (Json & { seq: number })[];
   audits: readonly Readonly<{ job: string; covered: readonly Readonly<{ lens: string; from: string; to: string }>[]; seq: number }>[];
   publications: readonly Pub[]; checkpoints: readonly Ckpt[];
@@ -55,6 +60,7 @@ function worldAt(f: Fixture, c: Ckpt, recorded: readonly RecordedAdmit[]): Admit
     rootOf: (u) => u,
     // Run 9's admits repair findings only: no obligation ref needs a verdict, and no admitted unit delivers one.
     obligations: new Map(obligations.obligations.map((o) => [o.id, { def: o, holding: true, history: [] }])),
+    census: new Map((obligations.census ?? []).map((e) => [e.rule, e.state.type])),
     findings: new Map(f.findings.filter((x) => x.seq < c.seq).map((x): [FindingId, AdmitFinding] => [x['id'] as FindingId, {
       id: x['id'] as FindingId, active: captured.has(x['id'] as string), captured: captured.has(x['id'] as string), visionClauses: x['visionClauses'] as VisionClauseId[],
       obligation: x['obligation'] as ObligationId | null, lens: x['lens'] as FindingLens, source: x['source'] as FindingSource,
@@ -65,19 +71,40 @@ function worldAt(f: Fixture, c: Ckpt, recorded: readonly RecordedAdmit[]): Admit
   };
 }
 
-/** Every admit of the run-9 bundles, replayed in log order (see the header). */
-export function replayRun9(f: Fixture = loadRun9()): readonly Replayed[] {
+/**
+ * What a synthetic variant declares for an admit the records hold (LR-m): its `targets` and the cites it would then
+ * give; the recorded answers predate `targets` and read as none.
+ */
+export type Declared = Readonly<Record<string, Readonly<{ targets: readonly string[]; cites: readonly string[] }>>>;
+
+/** Every admit of the run-9 bundles, replayed in log order (see the header), with `declare` overriding admits by unit. */
+export function replayRun9(f: Fixture = loadRun9(), declare: Declared = {}): readonly Replayed[] {
   const recorded: RecordedAdmit[] = [];
   const out: Replayed[] = [];
   for (const c of f.checkpoints) {
     const output = validateCheckpointOutput(c.output);
+    const obligations = parseObligations(f.obligations);
     const ops: AdmitOp[] = output.ops.flatMap((op, index) => (op.op === 'admit'
-      ? [{ index, unit: op.unit.id, cites: op.cites, repairs: specRepairs(parseSpec(Buffer.from(op.spec, 'utf8'), absPath(`/run9/${op.unit.id}.json`))) }]
-      : []));
+      ? [admitOpOf(index, op, parseSpec(Buffer.from(op.spec, 'utf8'), absPath(`/run9/${op.unit.id}.json`)), obligations)]
+      : [])).map((o) => {
+      const d = declare[o.unit];
+      return d === undefined ? o : { ...o, targets: d.targets as RuleId[], cites: d.cites as VisionClauseId[] };
+    });
     const w = worldAt(f, c, recorded);
     const first = classifyAdmits(w, ops);
-    const dishonest = first.reasons.flatMap((r) => /dishonest-citation: (V-\d+)/.exec(r)?.[1] ?? []) as VisionClauseId[];
-    const retry = dishonest.length === 0 ? null : classifyAdmits(w, ops.map((o) => ({ ...o, cites: [...new Set([...o.cites, ...dishonest])].sort() as VisionClauseId[] })));
+    const slice = new Set(f.advances);
+    const world = new Set(w.world);
+    const honest = (op: AdmitOp): readonly VisionClauseId[] => {
+      const reason = first.reasons.find((r) => r.startsWith(`op ${op.index + 1} (admit ${op.unit})`) && r.includes('dishonest-citation'));
+      if (reason === undefined) return [];
+      const rules = new Set((/out-of-slice rules ([T0-9, -]+) and/.exec(reason)?.[1] ?? '').split(', ') as RuleId[]);
+      const fromQuestions = f.phase0Questions.filter((q) => q.bears.some((b) => rules.has(b as RuleId))).flatMap((q) => q.bears.filter((b) => b.startsWith('V-')));
+      const fromFindings = op.repairs.flatMap((r) => (r.startsWith('F-') ? w.findings.get(r as FindingId)?.visionClauses ?? [] : []));
+      return [...new Set([...fromQuestions, ...fromFindings])].filter((v) => world.has(v as VisionClauseId) && !slice.has(v)).sort() as VisionClauseId[];
+    };
+    const added = new Map(ops.map((o) => [o.index, honest(o)]));
+    const retry = [...added.values()].every((x) => x.length === 0) ? null
+      : classifyAdmits(w, ops.map((o) => ({ ...o, cites: [...new Set([...o.cites, ...added.get(o.index)!])].sort() as VisionClauseId[] })));
     const final = retry ?? first;
     for (const x of final.classes) recorded.push({ job: c.job as JobId, ...x });
     for (const o of ops) out.push({ job: c.job, unit: o.unit, first, retry, final });

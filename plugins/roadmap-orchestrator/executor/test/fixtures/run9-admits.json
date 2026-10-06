@@ -5847,6 +5847,151 @@
   ],
   "schema": "roadmap/obligations-m3"
  },
+ "phase0Questions": [
+  {
+   "assumption": "24 hours, as the booking rules say; the notifications page defers to them.",
+   "bears": [
+    "T-35",
+    "V-5"
+   ],
+   "files": [
+    "0030_Bookings.md",
+    "0040_Notifications.md"
+   ],
+   "id": "P-1",
+   "rank": 1,
+   "state": {
+    "type": "open"
+   },
+   "text": "Until when may a skipper cancel? 0030_Bookings.md says up to 24 hours before the tide window opens; 0040_Notifications.md says 48 hours."
+  },
+  {
+   "assumption": "Every text carries its id; the cancellation template keeps its wording, with the id inside.",
+   "bears": [
+    "T-56",
+    "T-57",
+    "V-5"
+   ],
+   "files": [
+    "0040_Notifications/message-templates.md"
+   ],
+   "id": "P-2",
+   "rank": 5,
+   "state": {
+    "type": "open"
+   },
+   "text": "Must every text end with the booking id? The wording notes said \"always end with the booking id\", but the \"Booking cancelled\" template ends with \"The berth is free again.\""
+  },
+  {
+   "assumption": "Window times stay the same for every boat; when V-7's slice comes, Tidewater marks which whole windows a draught can use from the high-water heights (T-24) and the sill depth, which the harbour master will supply.",
+   "bears": [
+    "T-19",
+    "T-24",
+    "V-7"
+   ],
+   "files": [
+    "0020_Berths/tide-windows.md"
+   ],
+   "id": "P-3",
+   "rank": 6,
+   "state": {
+    "type": "open"
+   },
+   "text": "V-7 has a visiting yacht find \"the windows its draught allows\"; the tide-windows page says Tidewater does not adjust windows for draught. How should a draught limit a window, and what is the sill depth to work it out from?"
+  },
+  {
+   "assumption": "The office keeps turning them away by hand; Tidewater does not know about the winter berth yet.",
+   "bears": [
+    "T-15",
+    "V-3"
+   ],
+   "files": [
+    "0020_Berths/berth-register.md"
+   ],
+   "id": "P-4",
+   "rank": 7,
+   "state": {
+    "type": "open"
+   },
+   "text": "Should Tidewater itself refuse bookings for B2 from November to February (the launch's winter berth), rather than the office turning them away by hand?"
+  },
+  {
+   "assumption": "One file per text in the folder TIDEWATER_OUTBOX names (default ./outbox): the phone number on the first line, the message on the second.",
+   "bears": [
+    "T-50",
+    "T-119",
+    "T-120",
+    "V-4"
+   ],
+   "files": [
+    "0040_Notifications.md"
+   ],
+   "id": "P-5",
+   "rank": 3,
+   "state": {
+    "type": "open"
+   },
+   "text": "What does the gateway's agent expect in the outbox: where is the folder, and what does one message file look like?"
+  },
+  {
+   "assumption": "Yes: off in winter except the weekly check, and nothing of Tidewater runs while it is off.",
+   "bears": [
+    "T-52",
+    "T-66",
+    "T-79",
+    "T-137",
+    "V-1"
+   ],
+   "files": [
+    "0060_Operations.md"
+   ],
+   "id": "P-6",
+   "rank": 4,
+   "state": {
+    "type": "open"
+   },
+   "text": "Is the office machine really switched off in the winter months except for the weekly check? Nightly backups, the nightly authority export, texts at any hour and the kiosk all need it on, and bookings still come in over the winter."
+  },
+  {
+   "assumption": "As written: a booking holds the arrival window only, and the harbour master sorts out departures on the day.",
+   "bears": [
+    "T-30",
+    "T-148",
+    "T-150",
+    "V-2",
+    "V-4"
+   ],
+   "files": [
+    "0020_Berths.md"
+   ],
+   "id": "P-7",
+   "rank": 8,
+   "state": {
+    "answer": "Yes, as far as the recorded answers go: a berth is never promised twice. If a boat could still be in the berth when an evening booking arrives, that berth has been promised twice, and the office should find the later boat another berth or window rather than leaving it to the harbour master.",
+    "at": "2026-10-05T23:52:51.000Z",
+    "type": "answered"
+   },
+   "text": "Should a booking hold its berth for the whole stay? Today a booking holds a berth only for the window the boat arrives on, and the harbour master sorts out departures. A boat that comes in on the morning tide and stays past the evening one would still be in the berth when an evening booking arrives, and V-4 has that skipper find the berth empty."
+  },
+  {
+   "assumption": "The table stands as typed until the office checks it against the printed sheet; Tidewater treats the two high waters as two windows.",
+   "bears": [
+    "T-18",
+    "T-30",
+    "T-102",
+    "V-2"
+   ],
+   "files": [
+    "0020_Berths/tide-windows.md"
+   ],
+   "id": "P-8",
+   "rank": 2,
+   "state": {
+    "type": "open"
+   },
+   "text": "data/tides.json has a high water at 23:47 on 2026-10-07 and another at 00:21 on 2026-10-08, 34 minutes apart. High waters come about twelve and a half hours apart, so one of them is probably a typing error, and their windows overlap: a berth could be booked to two boats for windows that are on the water at the same time. Which is right on the printed sheet?"
+  }
+ ],
  "publications": [
   {
    "new": "e7998c65dbe024a600f0313430e5f69e40efcf1c",
@@ -6025,7 +6170,7 @@
    "unit": "cancel-text-first"
   }
  ],
- "source": "Paid M4a run 9 (/var/tmp/m4a-9, arc evening-tide; the synthetic Tidewater harbour domain), copied by the N2 extractor: the vision, the plan's holistic.advances, the obligations in force, every finding-opened and audit-ended fact, every published integration.ff with its first-parent paths, and every checkpoint whose bundle applied with its captured findings and its output.",
+ "source": "Paid M4a run 9 (/var/tmp/m4a-9, arc evening-tide; the synthetic Tidewater harbour domain), copied by the N2 extractor: the vision, the plan's holistic.advances, the Phase-0 record's questions, the obligations in force, every finding-opened and audit-ended fact, every published integration.ff with its first-parent paths, and every checkpoint whose bundle applied with its captured findings and its output.",
  "vision": {
   "clauses": [
    {

@@ -2,7 +2,7 @@
 // stamps and ids, split census moves, input manifest, embedded specs, closeout and issue reuse, over real corpus arcs (real
 // git, real processes, the fake claude answering lens and checkpoint calls by job, the fake gh as the forge). Named tests:
 // bundle.decision-persists-conversions, bundle.opportunity-joins-advances, bundle.all-converted-no-op,
-// bundle.follow-up-overrun-converts-with-debt,
+// bundle.follow-up-overrun-converts-with-debt, bundle.admit-targets-checked,
 // bundle.recovery-no-reclassify, admits.architecture-doc-arc-unclassified, bundle.evidence-head-superset-accepted,
 // bundle.evidence-equal-results-new-inv, bundle.evidence-outcome-changed-rejected, bundle.evidence-test-removed-rejected,
 // bundle.evidence-malformed-or-empty-rejected, bundle.evidence-selection-loss-rejected,
@@ -114,6 +114,26 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
       assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
       assert.deepEqual(bundleSources(x.r), [{ type: 'bundle', job: 'ckpt-1', admits: [{ index: 0, unit: 'more', class: { type: 'opportunity', id: 'O-1', clauses: ['V-3'] } }], conversions: [] }]);
       assert.deepEqual(planInForce(x.r).holistic?.advances, ['V-1', 'V-3']);
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('bundle.admit-targets-checked (LR-m): a declared out-of-slice target without an out-of-slice cite is invalid; the honest retry is O-1', T, async () => {
+    const x = await arc([]);
+    try {
+      const withTargets = (cites: readonly string[]): JsonValue => ({ ...(admitCiting(x, 'more', cites) as Json), targets: ['T-2'] } as JsonValue);
+      appendSteps(x.a.d, [
+        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1'])] })),
+        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1', 'V-3'])] })),
+      ]);
+      const first = await run(x);
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'invalid', JSON.stringify(first));
+      assert.match(first.decision.detail, /dishonest-citation: it targets out-of-slice rules T-2 and cites no clause outside the owner-selected slice/);
+      const second = await run(x);
+      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
+      assert.match(callOf(x, 'ckpt-2').stdin, /<prior_attempt>[\s\S]*dishonest-citation/);
+      assert.deepEqual(bundleSources(x.r).map((b) => b.admits), [[{ index: 0, unit: 'more', class: { type: 'opportunity', id: 'O-1', clauses: ['V-3'] } }]]);
     } finally {
       x.r.journal.close();
     }

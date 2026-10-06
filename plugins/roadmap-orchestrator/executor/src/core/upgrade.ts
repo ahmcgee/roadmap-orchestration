@@ -42,6 +42,15 @@ export function checkpointOutputM4Default(key: 'corpusAmendments' | 'issueIntake
   return [];
 }
 
+/**
+ * A checkpoint `admit` op's `targets` (M4a rev 3, LR-m): absent on an answer recorded before it; read as none, so the
+ * admit classifies on its structural targets alone (the rules of the obligations it declares, delivers or repairs).
+ */
+export function admitTargetsDefault(): readonly never[] {
+  warnDefaulted('checkpoint.admit.targets', 'an admit op without targets (a checkpoint answer written before LR-m); read as none');
+  return [];
+}
+
 /** A split child's `rule` (M4a): absent on a recorded dev.6 answer, whose children are docRef-anchored; read as null. */
 export function splitChildRuleDefault(): null {
   warnDefaulted('checkpoint.splitChild.rule', 'a split child without rule (a checkpoint answer written before 1.0.0-dev.7); read as null');

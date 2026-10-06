@@ -69,7 +69,7 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
 
 /** The checkpoint's repair admit: origin repair, citing V-2, evidence naming the witness P1 (F-1, the first finding). */
 const ADMIT_REPAIR: JsonValue = {
-  op: 'admit', unit: { ...REPAIR_UNIT, scope: [...REPAIR_UNIT.scope], after: [...REPAIR_UNIT.after] }, spec: repairSpecText(),
+  op: 'admit', unit: { ...REPAIR_UNIT, scope: [...REPAIR_UNIT.scope], after: [...REPAIR_UNIT.after] }, spec: repairSpecText(), targets: [],
   cites: ['V-2'], evidence: ['F-1: I-2 not held on the integration head since tidy routed `format` through formatDisplay, whose toFixed prints 0.125 as 0.13'],
 };
 const REPAIR_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR] });

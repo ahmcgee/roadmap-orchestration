@@ -1,9 +1,9 @@
-// Checkpoint admit classes (M4a rev 3, OR-A1, LR-k; B "Checkpoint admits"): `classifyAdmits` gives each `admit` op of a
-// bundle its class (repair, oversight, opportunity) by R45's nine-row table, or converts it (unrelated, over-budget,
-// follow-up-overrun), and lists the invalid repair refs and dishonest citations as reasons. Pure: it reads an
-// `AdmitWorld` the caller built from the log, the revision in force and git (src/holistic/bundle.ts `admitWorldOf`), and
-// writes nothing. It runs once inside `decide`, under the fence, and its result is persisted in the decision record (Q4):
-// recovery never classifies again. Corpus arcs only (LR-h).
+// Checkpoint admit classes (M4a rev 3, OR-A1, LR-k, LR-m; B "Checkpoint admits"): `classifyAdmits` gives each `admit`
+// op of a bundle its class (repair, oversight, opportunity) or converts it (unrelated, over-budget, follow-up-overrun),
+// and lists invalid repair refs, unknown targets and dishonest citations as reasons. Pure: it reads an `AdmitWorld` the
+// caller built from the log, the revision in force and git (src/holistic/bundle.ts `admitWorldOf`), and writes nothing.
+// It runs once inside `decide`, under the fence, and its result is persisted in the decision record (Q4): recovery never
+// classifies again. Corpus arcs only (LR-h).
 //
 // Sets, per bundle:
 //   - W: the active world clauses of the vision in force; A: `holistic.advances` in force.
@@ -11,11 +11,17 @@
 //     OC = ∪ OC(O). S, the owner-selected slice = A \ OC (R44): an opportunity's clauses stay its own for the arc.
 //   - units(O): O's admitted unit, every unit admitted `repair{followUp: O}`, transitively, and the re-entries of each
 //     (same lineage root). followUps(O): the recorded `repair{followUp: O}` admits.
-// Touched clauses (R47) of admit i (unit u): T = W ∩ (cites ∪ serves(D) ∪ serves(Rₒ) ∪ clauses(R_f) ∪ serves(obl(R_f))),
-// D = the non-exempt obligations delivered by u (after this bundle's ops), Rₒ the repaired obligations, R_f the repaired
-// findings with every vision clause they carry (a mixed finding keeps its out-of-slice clauses, Q1), obl(R_f) their
-// non-exempt obligations. The obligations a spec declares by impact mapping ("may affect") never count. Out = T \ S,
-// In = T ∩ S.
+//
+// Scope (LR-m, replacing R47's touched clauses): the rules the admit targets, read through the census, and its cites. A
+// finding's `visionClauses` are lens context and free-text `T-n` mentions in a spec are context: neither is scope.
+//   - targets R(i) = the op's declared `targets` (the rules the unit adds or changes behaviour for; each must be an
+//     active rule of the pin, i.e. named by the census) ∪ the structural floor: the rules of the non-exempt obligations
+//     its spec declares (impact-mapped ones excluded by the caller, `admitOpOf`), delivers (after this bundle's ops, a
+//     split child at an out-of-slice rule included), repairs, or whose repaired findings name;
+//   - Out = (cites ∩ W) \ S, the world clauses it cites outside the slice; In = (cites ∩ W) ∩ S (a purpose,
+//     tradeoff or non-negotiable clause scopes nothing: an admit citing only those is unrelated);
+//   - opportunity work: a target whose census state is `out-of-slice`, or Out ≠ ∅.
+// Under-declared targets are not code-detectable; the brief's drift indicator is the backstop.
 //
 // Attribution (R46) L(i) = ∪ attr(ref) over the valid refs; an empty attr makes L(i) ambiguous:
 //   - a finding from an audit lens: the units whose ff merge lies in that lens's covered range of the audit and whose
@@ -27,22 +33,25 @@
 // Lineage O: L(i) non-empty, unambiguous and inside units(O) for exactly one O. Ambiguity never grants a follow-up.
 //
 // The table (first matching row, total):
-//   1 a ref invalid → reason; 2 lineage O, Out ⊆ OC(O), followUps(O) = 0 → repair{followUp: O};
-//   3 lineage O, Out ⊆ OC(O), followUps(O) ≥ 1 → convert follow-up-overrun (LR-k); 4 refs, Out = ∅ → repair{null};
-//   5 Out ≠ ∅ with a clause not cited → dishonest-citation reason; 6 Out ≠ ∅, budget left → opportunity{next O-n, Out};
-//   7 Out ≠ ∅ → convert over-budget; 8 no refs, In ≠ ∅ → oversight{In}; 9 no refs, T = ∅ → convert unrelated.
+//   1 a ref invalid or a target unknown → reason; 2 lineage O, Out ⊆ OC(O), followUps(O) = 0 → repair{followUp: O};
+//   3 lineage O, Out ⊆ OC(O), followUps(O) ≥ 1 → convert follow-up-overrun (LR-k);
+//   4 refs, no opportunity work → repair{null};
+//   5 opportunity work with Out = ∅ (an out-of-slice rule targeted, no clause outside the slice cited) → dishonest-citation;
+//   6 opportunity work, budget left → opportunity{next O-n, Out}; 7 opportunity work → convert over-budget;
+//   8 no refs, In ≠ ∅ → oversight{In}; 9 otherwise → convert unrelated.
 // Budgets count the arc's recorded admits plus the earlier ones of this bundle; ops classify in index order.
 import {
-  type FindingId, type JobId, type ObligationId, type OpportunityId, type UnitId, type VisionClauseId, canonicalIds, opportunityId,
+  type FindingId, type JobId, type ObligationId, type OpportunityId, type RuleId, type UnitId, type VisionClauseId, canonicalIds, opportunityId,
 } from '../core/ids.ts';
-import type { LensKindName, RepairRef } from '../core/records.ts';
+import { type LensKindName, type RepairRef, type SpecM1, specObligations, specRepairs } from '../core/records.ts';
+import { mayOverlap } from '../input/classify.ts';
 import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
 import {
-  type AdmitClass, type ClassifiedAdmit, type Conversion, type FindingLens, type FindingSource, type ObligationDef, LENS_KINDS, OPPORTUNITY_BUDGET,
-  OPPORTUNITY_FOLLOW_UPS, isExempt,
+  type AdmitClass, type CensusState, type ClassifiedAdmit, type Conversion, type FindingLens, type FindingSource, type ObligationDef, type Obligations, LENS_KINDS,
+  OPPORTUNITY_BUDGET, OPPORTUNITY_FOLLOW_UPS, isExempt,
 } from './types.ts';
 
-/** A finding as classification reads it. `paths`: its evidence paths as recorded. */
+/** A finding as classification reads it. `paths`: its evidence paths as recorded; `visionClauses` are context, never scope (LR-m). */
 export type AdmitFinding = Readonly<{
   id: FindingId;
   active: boolean;
@@ -83,13 +92,30 @@ export type AdmitWorld = Readonly<{
   /** A unit's lineage root (itself when it re-enters none). */
   rootOf: (unit: UnitId) => UnitId;
   obligations: ReadonlyMap<ObligationId, AdmitObligation>;
+  /** The census in force: each active pinned rule's state. */
+  census: ReadonlyMap<RuleId, CensusState['type']>;
   findings: ReadonlyMap<FindingId, AdmitFinding>;
   audits: ReadonlyMap<JobId, readonly AuditRange[]>;
   merges: readonly UnitMerge[];
 }>;
 
-/** An admit op of the bundle: its index in the answer, its unit, its cites and its spec's repairs. */
-export type AdmitOp = Readonly<{ index: number; unit: UnitId; cites: readonly VisionClauseId[]; repairs: readonly RepairRef[] }>;
+/**
+ * An admit op of the bundle: its index in the answer, its unit, its cites, its spec's repairs, its declared `targets`
+ * (LR-m) and the obligations its spec declares beyond those the impact mapping selects for its scope.
+ */
+export type AdmitOp = Readonly<{
+  index: number; unit: UnitId; cites: readonly VisionClauseId[]; repairs: readonly RepairRef[]; targets: readonly RuleId[]; declared: readonly ObligationId[];
+}>;
+
+/**
+ * An admit op as classification reads it: `spec` its parsed spec; its declared obligations minus those the impact
+ * mapping of `obligations` selects for the unit's and spec's scope ("may affect" is no target).
+ */
+export function admitOpOf(index: number, op: Extract<BundleOp, { op: 'admit' }>, spec: SpecM1, obligations: Obligations | null): AdmitOp {
+  const scope = [...op.unit.scope, ...spec.scope];
+  const mapped = new Set((obligations?.mapping.paths ?? []).filter((m) => scope.some((p) => mayOverlap(p, m.pattern))).flatMap((m) => m.obligations));
+  return { index, unit: op.unit.id, cites: op.cites, repairs: specRepairs(spec), targets: op.targets, declared: specObligations(spec).filter((o) => !mapped.has(o)) };
+}
 
 export type AdmitClassification = Readonly<{ classes: readonly ClassifiedAdmit[]; conversions: readonly Conversion[]; reasons: readonly string[] }>;
 
@@ -150,10 +176,13 @@ export function classifyAdmits(w: AdmitWorld, admits: readonly AdmitOp[]): Admit
 
   for (const op of admits) {
     const at = `op ${op.index + 1} (admit ${op.unit})`;
-    const invalid = op.repairs.flatMap((r) => {
-      const why = refReason(w, r);
-      return why === null ? [] : [why];
-    });
+    const invalid = [
+      ...op.repairs.flatMap((r) => {
+        const why = refReason(w, r);
+        return why === null ? [] : [why];
+      }),
+      ...op.targets.filter((t) => !w.census.has(t)).map((t) => `target-unknown: ${t} is no active rule of the pin in force`),
+    ];
     if (invalid.length > 0) {
       reasons.push(...invalid.map((x) => `${at}: ${x}`));
       continue;
@@ -162,20 +191,20 @@ export function classifyAdmits(w: AdmitWorld, admits: readonly AdmitOp[]): Admit
     const oc = new Set(opps.flatMap((o) => o.clauses));
     const slice = new Set(minus(w.advances, oc));
 
-    // Touched clauses (R47).
-    const findings = op.repairs.flatMap((r) => (r.startsWith('F-') ? [w.findings.get(r as FindingId)!] : []));
-    const repairedObligations = op.repairs.flatMap((r) => (r.startsWith('F-') ? [] : [w.obligations.get(r as ObligationId)!.def]));
-    const delivered = [...w.obligations.values()].filter((o) => !isExempt(o.def) && o.def.deliveredBy.includes(op.unit)).map((o) => o.def);
-    const findingObligations = findings.flatMap((f) => {
-      const o = f.obligation === null ? undefined : w.obligations.get(f.obligation);
+    // Scope (LR-m): declared and structural targets through the census; the clauses it cites.
+    const live = (id: ObligationId | null): ObligationDef[] => {
+      const o = id === null ? undefined : w.obligations.get(id);
       return o === undefined || isExempt(o.def) ? [] : [o.def];
-    });
-    const touched = canonicalIds([
-      ...op.cites, ...delivered.flatMap((o) => o.serves), ...repairedObligations.flatMap((o) => o.serves),
-      ...findings.flatMap((f) => f.visionClauses), ...findingObligations.flatMap((o) => o.serves),
-    ].filter((c) => world.has(c)));
-    const out = touched.filter((c) => !slice.has(c));
-    const inSlice = touched.filter((c) => slice.has(c));
+    };
+    const delivered = [...w.obligations.values()].filter((o) => !isExempt(o.def) && o.def.deliveredBy.includes(op.unit)).map((o) => o.def);
+    const structural = [
+      ...op.declared.flatMap(live), ...delivered,
+      ...op.repairs.flatMap((r) => (r.startsWith('F-') ? live(w.findings.get(r as FindingId)!.obligation) : live(r as ObligationId))),
+    ].flatMap((o) => (o.rule === undefined ? [] : [o.rule.id]));
+    const outOfSlice = canonicalIds([...op.targets, ...structural]).filter((r) => w.census.get(r) === 'out-of-slice');
+    const out = canonicalIds(op.cites.filter((c) => world.has(c) && !slice.has(c)));
+    const inSlice = canonicalIds(op.cites.filter((c) => world.has(c) && slice.has(c)));
+    const opportunityWork = outOfSlice.length > 0 || out.length > 0;
 
     // Attribution and lineage (R46).
     const attrs = op.repairs.map((r) => (r.startsWith('F-')
@@ -203,14 +232,13 @@ export function classifyAdmits(w: AdmitWorld, admits: readonly AdmitOp[]): Admit
       else convert('follow-up-overrun', owner.id); // row 3 (LR-k)
       continue;
     }
-    if (op.repairs.length > 0 && out.length === 0) { // row 4
+    if (op.repairs.length > 0 && !opportunityWork) { // row 4
       classify({ type: 'repair', refs: op.repairs, followUp: null });
       continue;
     }
-    if (out.length > 0) {
-      const uncited = out.filter((c) => !op.cites.includes(c));
-      if (uncited.length > 0) { // row 5
-        reasons.push(...uncited.map((c) => `${at}: dishonest-citation: ${c} — the admit touches ${c}, outside the owner-selected slice, without citing it; cite every clause it advances`));
+    if (opportunityWork) {
+      if (out.length === 0) { // row 5
+        reasons.push(`${at}: dishonest-citation: it targets out-of-slice rules ${outOfSlice.join(', ')} and cites no clause outside the owner-selected slice; cite every clause it advances`);
         continue;
       }
       if (opps.length < OPPORTUNITY_BUDGET) classify({ type: 'opportunity', id: opportunityId(`O-${opps.length + 1}`), clauses: out }); // row 6
