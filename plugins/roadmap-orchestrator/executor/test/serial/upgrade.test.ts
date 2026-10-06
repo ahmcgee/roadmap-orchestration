@@ -74,32 +74,72 @@
 //   upgrade.dev6-target-kind-fixed
 //                              an apply cannot switch the adopted arc to a corpus target (`target-kind-changed`).
 //
+// M4a rev 3 (N8): each story below runs the previous release once and is shared by the tests named under it.
+//   lanes story                `slug`'s lane fails once printing `etcdserver: request timed out` (a host signature only
+//                              HEAD's table has), passes its diagnostic rerun (flaky), and `slug` merges after a fix round;
+//                              `page-id`'s first lane passes, and the previous release is stopped in its second.
+//     upgrade.dev6-lanes-readback-stable
+//                              HEAD's `status` reads the unstamped run on the frozen dev.6 table: flaky, not host-suspected,
+//                              no red.json.
+//     upgrade.dev6-arc-new-lanes-stamped
+//                              HEAD's lane runs stamp `redRev` (spec lanes: and `identity`); its red one writes red.json.
+//     upgrade.dev6-paused-lanes-rerun
+//                              HEAD runs page-id's passed lane again at the same commit: no lane-reused (OI-15).
+//   answer stories             the previous release crashes after a call's result, before its stage outcome:
+//                              `page-id`'s build (no `experiments`); in a holistic arc with `page-id` at risk high,
+//                              `slug`'s plan-check.
+//     upgrade.dev6-completed-unrecorded-answers
+//                              HEAD consumes both answers with no new call; the build reads `experiments: []`.
+//     upgrade.dev6-plan-without-rev3-fields
+//                              (the plan-check story, LR-h) plan-check `uniform`, so `page-id`'s frontier builder gets a
+//                              plan-check call and one build call (no assess); no witness check, no smoke; priority normal.
+//   observation story          a holistic arc; the previous release witnessed `page-id`'s candidate and crashed at its ff.
+//     upgrade.dev6-uncertified-observation-reruns
+//                              HEAD's final audit needs that observation key and runs the lane again (no certificate).
+//   repair stories             a holistic arc with the vacuity lens: the final audit opens F-1 with a mutant, its
+//                              checkpoint bundles an admit of a repair unit, applied (revision 2); the repair's reproduce is
+//                              cut short in its `mutant.apply`, or in its mutant spawn. HEAD's start needs the architect's
+//                              files synced to the plan in force first (`roadmap inputs export`); the repair then merges.
+//     upgrade.dev6-open-mutant-spawn
+//                              the open dev.6 apply and the open dev.6 spawn (each naming `finding`) close on HEAD.
+//     upgrade.dev6-bundle-unclassified
+//                              the dev.6 bundle reads `unclassified`: no conversion, amendment or debt; status admits,
+//                              opportunities and drift empty.
+//
 // Not covered: a backend parked on a usage limit, the Claude-only profile.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { after, before, test } from 'node:test';
 import { isAlive, statOf } from '../../src/contain/proc.ts';
-import type { Event, Fact } from '../../src/core/events.ts';
+import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
 import { arcId, commandId, invocationId, opId, resourceName, unitId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
-import { canonicalJson } from '../../src/core/json.ts';
-import type { ProcIdentity } from '../../src/core/records.ts';
+import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
+import { type ProcIdentity, RED_FILE, STDERR_FILE } from '../../src/core/records.ts';
+import { HOST_SIGNATURES_DEV6, bundleClassesOf, mutantSubjectDefault } from '../../src/core/upgrade.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
+import { EXPORT_FILE } from '../../src/commands/inputs.ts';
 import { incomingPath, terminalReceipt } from '../../src/commands/queue.ts';
 import type { ExitReason } from '../../src/executor.ts';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
 import { readOwner } from '../../src/host/owner.ts';
+import { HOST_SIGNATURES_REV, matchSignatures } from '../../src/host/signatures.ts';
 import { RESIDUE_ARCHIVE, bodyOf, readResidues, recordDisposition, recordResidue } from '../../src/host/residues.ts';
 import { requirePlanInForce } from '../../src/input/inforce.ts';
+import { planCheckShapeOf, priorityOf } from '../../src/input/plan.ts';
+import { buildOutput } from '../../src/prompts/schemas.ts';
+import { runnerFiles } from '../../src/runner/files.ts';
 import { overCapacity } from '../../src/resources/pool.ts';
 import { bytesSha256, loadSpec } from '../../src/spec/spec.ts';
 import { CONTINUE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { seatTripleOf } from '../../src/pipeline/dispatch.ts';
+import type { LaneFailure } from '../../src/pipeline/failures.ts';
+import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { meterOf } from '../../src/meter.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import { corpusTarget } from '../fixtures/corpus-target.ts';
@@ -849,8 +889,9 @@ const SLUG_LANE = {
 } as const;
 const SLUG_WITNESS = { lane: SLUG_LANE.id, testIds: ['slugify never starts or ends with a hyphen (A2)'] };
 
-function obligations(): unknown {
-  const empty = { schema: 'roadmap/obligations-m3', cutLine: 'the arc ends when page-id ships', lanes: [SLUG_LANE], obligations: [], mapping: { paths: [] } };
+/** The obligations file: I-1 witnessed through `lane` (slug's journey lane: its id is SLUG_LANE's). */
+function obligations(lane: object = SLUG_LANE): unknown {
+  const empty = { schema: 'roadmap/obligations-m3', cutLine: 'the arc ends when page-id ships', lanes: [lane], obligations: [], mapping: { paths: [] } };
   const laneRev = laneRevOf(parseObligations(empty).lanes[0]!);
   return {
     ...empty,
@@ -910,10 +951,10 @@ test('upgrade.opt-in-holistic: an architect apply adds `holistic` to the previou
 // M4a: the previous release's holistic arcs (architecture-doc target) on HEAD
 
 /** The architect's holistic plan from the first revision: written before the previous release starts. */
-function holisticFromStart(l: Layout): void {
+function holisticFromStart(l: Layout, lane: object = SLUG_LANE): void {
   writeFileSync(join(l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
   // slug is not merged yet: the obligation is future, delivered by slug, its witness failing until then (the baseline).
-  const base = obligations() as { obligations: object[] };
+  const base = obligations(lane) as { obligations: object[] };
   const future = { ...base, obligations: base.obligations.map((o) => ({ ...o, activation: 'future', deliveredBy: ['slug'] })) };
   writeFileSync(join(l.input, 'obligations.json'), `${JSON.stringify(future, null, 2)}\n`);
   editJson<object>(l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
@@ -1152,4 +1193,456 @@ test('upgrade.dev6-target-kind-fixed: an apply cannot switch an adopted architec
   const out = JSON.parse(dry.stdout) as { kind: string; reasons?: string[] };
   assert.equal(out.kind, 'rejected', dry.stdout);
   assert.ok(out.reasons?.some((reason) => reason.startsWith('target-kind-changed')), dry.stdout);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// M4a rev 3: what the previous release ran and recorded, read and finished by HEAD (LR-g, LR-h, Q20, Q21, OI-15).
+// Each story runs the previous release once; the tests that share it each assert their own claim.
+
+/** Memoises a story: the first test that needs it runs it, the others read its result. */
+function once<T>(story: () => Promise<T>): () => Promise<T> {
+  let running: Promise<T> | null = null;
+  return () => (running ??= story());
+}
+
+const spawnsOf = (events: readonly Event[]): readonly IntentOf<'proc.spawn'>[] =>
+  events.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' ? [e] : []));
+/** The spec lane spawns among `events`, in log order. */
+const specLaneSpawns = (events: readonly Event[]): readonly IntentOf<'proc.spawn'>[] =>
+  spawnsOf(events).filter((i) => i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'spec');
+/** A lane spawn as `unit/lane`, a journey spawn as its lane. */
+const laneOf = (i: IntentOf<'proc.spawn'>): string => {
+  const s = i.expect.subject;
+  assert.ok(s.purpose === 'lane' || s.purpose === 'journey', `${i.op} spawned a ${s.purpose}`);
+  return s.purpose === 'lane' ? `${s.unit}/${s.lane}` : s.lane;
+};
+const invOf = (i: IntentOf<'proc.spawn'>) => invocationId(i.op, i.ordinal);
+
+/** Every `red.json` under the run dir, relative to it. */
+const redFiles = (p: Phase1): readonly string[] =>
+  readdirSync(p.l.runDir, { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith(`/${RED_FILE}`)).sort();
+
+type StatusOut = Readonly<{ units: readonly Readonly<{ unit: string; failures: readonly LaneFailure[] }>[] }>;
+async function statusOn(p: Phase1): Promise<StatusOut> {
+  const out = await headCli(p, ['status', ...p.run]);
+  assert.equal(out.code, 0, out.stderr);
+  return JSON.parse(out.stdout) as StatusOut;
+}
+/** A unit's `status` lane failures as `[lane, class, hostSuspected]`. */
+const failuresIn = (s: StatusOut, unit: string): readonly (readonly [string, string, unknown])[] =>
+  (s.units.find((u) => u.unit === unit)?.failures ?? []).map((f) => [f.lane, f.class, f.hostSuspected] as const);
+
+/** The files a scenario build step commits. */
+function committed(step: M1Step | undefined): Readonly<Record<string, string>> {
+  assert.ok(step !== undefined && step.role === 'build');
+  const files = step.acts.flatMap((a) => (a.type === 'commit' ? [a.files] : []))[0];
+  assert.ok(files !== undefined);
+  return files as Readonly<Record<string, string>>;
+}
+
+/** A fix round (Codex resumes the unit's thread) committing `path` of `files` with one more line. */
+const fixRound = (files: Readonly<Record<string, string>>, path: string): M1Step => ({
+  role: 'build', round: 'resume', acts: [{ type: 'commit', message: `fix round: ${path}`, files: { [path]: `${files[path]!}// fix round\n` } }],
+});
+
+const ETCD = 'etcdserver: request timed out';
+
+type LanesStory = Readonly<{ p: Phase1; f: Finished; before: readonly Event[]; status: StatusOut }>;
+
+/**
+ * The lanes story (no holistic layer). On the previous release: `slug`'s lane fails once printing a host signature only
+ * HEAD's table has (etcd); its diagnostic rerun passes, so it is flaky, charged a fix round, and `slug` merges. `page-id`'s
+ * first lane passes and its second (`page-id-tail`) waits at a marker, where the previous release is stopped. On HEAD:
+ * `page-id`'s series runs again; `page-id-tail` fails once without a signature (a diagnostic rerun, which passes), a fix
+ * round, then green, and the arc merges.
+ */
+const lanesStory = once(async (): Promise<LanesStory> => {
+  const c = clean();
+  let tail = '';
+  const p = await preparePrevious([c.slug[0]!, c.slug[1]!, fixRound(committed(c.slug[1]), 'src/slug.js'), c.slug[2]!, c.pageId.planCheck, c.pageId.build], [], (l) => {
+    const marker = join(l.dir, 'slug-red-once');
+    editJson<{ lanes: { argv: readonly string[] }[] }>(join(l.input, 'slug.json'), (spec) => ({
+      ...spec,
+      lanes: spec.lanes.map((lane) => ({ ...lane, argv: ['/bin/sh', '-c', `[ -e "$1" ] && exec node --test test/slug.test.js; : > "$1"; echo "Error: ${ETCD}" >&2; exit 1`, 'lane', marker] })),
+    }));
+    tail = join(l.dir, 'page-id-tail');
+    editJson<{ lanes: { id: string; argv: readonly string[] }[] }>(join(l.input, 'page-id.json'), (spec) => ({
+      ...spec,
+      lanes: [...spec.lanes, {
+        ...spec.lanes[0]!, id: 'page-id-tail',
+        argv: ['/bin/sh', '-c', [
+          // Waits until released (the previous release is stopped meanwhile), then fails once without a host signature.
+          '[ -e "$1.release" ] || { : > "$1.reached"; while [ ! -e "$1.release" ]; do sleep 0.2; done; }',
+          '[ -e "$1.failed" ] || { : > "$1.failed"; echo "page-id-tail: the empty slug is not page" >&2; exit 1; }',
+          'exec node --test test/page-id.test.js',
+        ].join('\n'), 'lane', tail],
+      }],
+    }));
+  });
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await until('page-id-tail runs on the previous release', PHASE_MS, () => (existsSync(`${tail}.reached`) ? true : null));
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  const held = mid.unit(unitId('page-id'));
+  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['lanes', 'held', 'interrupted']);
+  const before = journalOf(p).events;
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+  writeFileSync(`${tail}.release`, '');
+
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, [fixRound(pageIdFiles(c), 'src/page-id.js'), c.pageId.gate]);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  return { p, f, before, status: await statusOn(p) };
+});
+
+test('upgrade.dev6-lanes-readback-stable: a dev.6 diagnostic rerun whose output matches a host signature added since reads back on HEAD as dev.6 recorded it (frozen table, no red.json)', T, async () => {
+  const { p, before, status } = await lanesStory();
+  const [red, rerun, ...more] = specLaneSpawns(before).filter((i) => laneOf(i) === 'slug/slug');
+  assert.ok(red !== undefined && rerun !== undefined && more.length === 1, 'slug\'s lane: the red run, its diagnostic rerun, then the fix round\'s run');
+  assert.equal('redRev' in red.expect.subject, false, 'the previous release stamps no redRev');
+  const stderr = readFileSync(join(invocationDir(absPath(p.l.runDir), invOf(red)), STDERR_FILE), 'utf8');
+  assert.deepEqual(matchSignatures(stderr), ['etcd-request-timeout'], 'HEAD\'s table reads the red run as host-caused');
+  assert.deepEqual(matchSignatures(stderr, HOST_SIGNATURES_DEV6), [], 'the frozen dev.6 table does not');
+  assert.deepEqual(redFiles(p).filter((f) => f.includes('slug')), [], 'no red.json for the unstamped run');
+  assert.deepEqual(failuresIn(status, 'slug'), [['slug', 'flaky', null]], 'flaky, not host-suspected: as the previous release classified it');
+});
+
+test('upgrade.dev6-arc-new-lanes-stamped: an adopted dev.6 arc\'s new lane runs stamp redRev (spec lanes: and identity), and a red one writes red.json; its dev.6 runs stay on the frozen table', T, async () => {
+  const { p, f, before, status } = await lanesStory();
+  assert.ok(specLaneSpawns(before).every((i) => !('redRev' in i.expect.subject) && !('identity' in i.expect.subject)), 'the previous release\'s lane runs are unstamped');
+  const head = spawnsOf(f.after).filter((i) => i.expect.subject.purpose === 'lane' || i.expect.subject.purpose === 'journey');
+  assert.ok(head.length > 0);
+  for (const i of head) {
+    const s = i.expect.subject;
+    assert.ok((s.purpose === 'lane' || s.purpose === 'journey') && s.redRev === HOST_SIGNATURES_REV, `${laneOf(i)} is stamped with redRev ${HOST_SIGNATURES_REV}`);
+    if (s.purpose === 'lane' && s.set === 'spec') assert.ok(s.identity !== undefined, `${laneOf(i)} carries its reuse identity`);
+  }
+  const [file, ...others] = redFiles(p);
+  assert.ok(file !== undefined && others.length === 0, `one red.json, HEAD's red run's: ${JSON.stringify(redFiles(p))}`);
+  assert.match(file, /page-id-tail/);
+  const red = JSON.parse(readFileSync(join(p.l.runDir, file), 'utf8')) as { class: unknown; redRev: number };
+  assert.deepEqual([red.class, red.redRev], [{ kind: 'diagnostic' }, HOST_SIGNATURES_REV]);
+  assert.deepEqual(failuresIn(status, 'page-id'), [['page-id-tail', 'flaky', null]]);
+  assert.deepEqual(failuresIn(status, 'slug'), [['slug', 'flaky', null]], 'the dev.6 run still reads on the frozen table');
+});
+
+test('upgrade.dev6-paused-lanes-rerun: a dev.6 series stopped after a passing lane runs that lane again on HEAD (no identity, no certificate: never reused; no lane-reused)', T, async () => {
+  const { f, before } = await lanesStory();
+  const pageIdOn = (events: readonly Event[]) => specLaneSpawns(events).filter((i) => i.expect.subject.purpose === 'lane' && i.expect.subject.unit === 'page-id');
+  const [passed, ...stopped] = pageIdOn(before);
+  assert.deepEqual([passed, ...stopped].map((i) => i && laneOf(i)), ['page-id/page-id', 'page-id/page-id-tail'], 'the previous release ran page-id\'s first lane through (the series went on), then was stopped in the second');
+  assert.ok(passed !== undefined && passed.expect.subject.purpose === 'lane');
+  assert.equal('identity' in passed.expect.subject, false);
+  assert.deepEqual(factsOf(before, 'series-certified'), [], 'the previous release certified no series');
+  const [first] = pageIdOn(f.after);
+  assert.ok(first !== undefined && first.expect.subject.purpose === 'lane');
+  assert.deepEqual([laneOf(first), first.expect.subject.at], ['page-id/page-id', passed.expect.subject.at], 'HEAD ran the passed lane again, at the same commit');
+  assert.deepEqual(factsOf(f.after, 'lane-reused'), [], 'nothing reused');
+});
+
+/**
+ * The spawn of `unit`'s `stage` the previous release's crash left open (its intent, no done) and its completed result:
+ * the answer was written, the stage outcome was not.
+ */
+function completedUnrecorded(p: Phase1, unit: string, stage: string): Readonly<{ spawn: IntentOf<'proc.spawn'>; value: unknown }> {
+  const { view, events } = journalOf(p);
+  const open = spawnsOf(events).filter((i) => view.doneOf(i.op) === null);
+  const [spawn, ...more] = open;
+  assert.ok(spawn !== undefined && more.length === 0 && spawn.parent.type === 'stage', `one spawn open: ${JSON.stringify(open.map((i) => i.parent))}`);
+  assert.deepEqual([spawn.parent.unit, spawn.parent.stage], [unit, stage], `the crash left ${unit}'s ${stage} call open`);
+  assert.equal(outcomesOf(events, unit).some((o) => o.startsWith(`${stage}:`)), false, `no ${stage} outcome recorded`);
+  const result = runnerFiles(invocationDir(absPath(p.l.runDir), invOf(spawn)), invOf(spawn)).read('result.json');
+  assert.ok(result !== null && result.type === 'backend' && result.outcome.kind === 'success', `the call completed: ${JSON.stringify(result)}`);
+  return { spawn, value: result.outcome.value };
+}
+
+/** HEAD's calls after its smoke as `unit:role`, a judgment (read-only tools) `judge`, an implementer call `build`. */
+const callsOf = (calls: readonly CallRecord[]): readonly string[] =>
+  calls.slice(SMOKE_CALLS).map((call) => `${call.unit}:${call.as === 'codex' || call.argv.includes('--permission-mode') ? 'build' : call.lens ?? 'judge'}`);
+
+/** The build story: the previous release crashed after `page-id`'s build answer was written, before its outcome. */
+const buildAnswerStory = once(async (): Promise<Readonly<{ p: Phase1; f: Finished; value: unknown }>> => {
+  const c = clean();
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build], []);
+  // page-id's spawns: its plan-check, its resource probe, then its build.
+  await crashPrevious(p, { label: 'spawn.after-result', occurrence: 3, unit: 'page-id' });
+  const { value } = completedUnrecorded(p, 'page-id', 'build');
+  const scope = scopeOf(p);
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, [c.pageId.gate]);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  return { p, f, value };
+});
+
+function highPlanCheck(c: Clean): M1Step {
+  const step = c.pageId.planCheck;
+  assert.ok(step.role === 'planCheck');
+  return { ...step, answer: { ...(step.answer as object), risk: 'high' } };
+}
+
+/** `page-id` at risk high: its build resolves to a frontier (Claude) builder. */
+function pageIdHigh(l: Layout): void {
+  editJson<{ units: { id: string; risk: string }[] }>(l.plan, (plan) => ({ ...plan, units: plan.units.map((u) => (u.id === 'page-id' ? { ...u, risk: 'high' } : u)) }));
+}
+
+type HolisticRun = Readonly<{ p: Phase1; r: HeadRun; before: readonly Event[] }>;
+
+/**
+ * The plan-check story: a holistic architecture-doc arc (`holisticFromStart`) whose `page-id` is high risk; the previous
+ * release crashed after `slug`'s plan-check answer was written, before its outcome. HEAD consumes it, then runs the arc
+ * to completion, `page-id`'s build on a frontier (Claude) seat, then the final audit and a no-op checkpoint.
+ */
+const planCheckAnswerStory = once(async (): Promise<HolisticRun & Readonly<{ value: unknown }>> => {
+  const c = clean();
+  const p = await preparePrevious([c.slug[0]!], [], (l) => {
+    holisticFromStart(l);
+    pageIdHigh(l);
+  });
+  await crashPrevious(p, { label: 'spawn.after-result', occurrence: 1, unit: 'slug' });
+  const { value } = completedUnrecorded(p, 'slug', 'plan-check');
+  const before = journalOf(p).events;
+  const [smokeClaude, smokeCodex, ...m1] = headFakeSteps({ steps: [c.slug[1]!, c.slug[2]!, highPlanCheck(c)] }, 'default');
+  const [, , gate] = headFakeSteps({ steps: [c.pageId.gate] }, 'default');
+  const build: Step = {
+    as: 'claude', expect: { argv: ['-p', '--permission-mode', '--session-id'], argvLacks: ['--tools', '--resume'] },
+    acts: [...c.pageId.build.acts, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [] } }],
+  };
+  const scope = scopeOf(p);
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, [smokeClaude!, smokeCodex!, ...m1, build, gate!, lensStep('audit-1', 'invariants'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))], async () => {});
+  } finally {
+    await teardown(scope);
+  }
+  assert.deepEqual(r.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
+  return { p, r, before, value };
+});
+
+test('upgrade.dev6-completed-unrecorded-answers: a dev.6 build answer and a dev.6 plan-check answer, each completed but unrecorded at a crash, are consumed by HEAD\'s recovery with no new call; the build reads experiments: []', T, async () => {
+  const b = await buildAnswerStory();
+  assert.equal('experiments' in (b.value as object), false, 'the dev.6 build answer has no experiments');
+  assert.deepEqual(buildOutput(b.value as JsonValue, 'build').experiments, [], 'HEAD\'s reader defaults them to none');
+  assert.deepEqual(callsOf(b.f.calls), ['page-id:judge'], 'HEAD made no build call: the gate only');
+  assert.equal(outcomesOf(b.f.after, 'page-id')[0], 'build:success', 'HEAD recorded the dev.6 answer\'s outcome');
+
+  const pc = await planCheckAnswerStory();
+  assert.deepEqual((pc.value as { decision: string }).decision, 'approve');
+  const calls = callsOf(pc.r.calls);
+  assert.equal(calls[0], 'slug:build', `HEAD made no plan-check call for slug: ${JSON.stringify(calls)}`);
+  assert.deepEqual(calls.filter((call) => call.startsWith('slug:')), ['slug:build', 'slug:judge'], 'slug\'s one judgment on HEAD is its gate');
+  assert.equal(outcomesOf(pc.r.after, 'slug')[0], 'plan-check:approve', 'HEAD recorded the dev.6 answer\'s outcome');
+});
+
+test('upgrade.dev6-plan-without-rev3-fields: an adopted architecture-doc arc runs no witness-check, smoke or assess stage; plan-check uniform (a call for a frontier builder); priority normal', T, async () => {
+  const { p, r } = await planCheckAnswerStory();
+  const plan = requirePlanInForce(absPath(p.l.runDir), r.view).plan;
+  assert.deepEqual([planCheckShapeOf(plan), plan.units.map(priorityOf)], ['uniform', ['normal', 'normal']]);
+  assert.equal('knownDefects' in plan, false);
+  // page-id (risk high) builds on the frontier seat (Claude): a plan-check call, then one build call, no assess.
+  assert.deepEqual(callsOf(r.calls).filter((call) => call.startsWith('page-id:')), ['page-id:judge', 'page-id:build', 'page-id:judge']);
+  const pageId = outcomesOf(r.after, 'page-id');
+  assert.equal(pageId[0], 'plan-check:approve');
+  const rev3 = ['plan-check:in-session', 'build:infeasible', 'build:risk-raised', 'lanes:witnesses-missing', 'lanes:smoke-survived', 'lanes:known-defect'];
+  assert.deepEqual(outcomesOf(r.after, 'slug').concat(pageId).filter((o) => rev3.includes(o)), []);
+  assert.deepEqual(factsOf(r.after, 'smoke-ran'), [], 'no mutation smoke');
+  assert.deepEqual(spawnsOf(r.after).filter((i) => i.expect.subject.purpose === 'mutant'), []);
+  const witnessCheck = spawnsOf(r.after).filter((i) => i.expect.subject.purpose === 'journey' && i.parent.type === 'stage' && i.parent.stage === 'lanes');
+  assert.deepEqual(witnessCheck, [], 'no witness presence check (a journey series in the lanes stage)');
+  assert.deepEqual(factsOf(r.after, 'witnessed').filter((w) => w.for.type === 'smoke'), []);
+});
+
+/**
+ * The observation story: a holistic architecture-doc arc whose obligation I-1 is mapped from `src/**`, so `page-id`'s
+ * candidate selects it; the previous release witnessed that candidate (slug's journey lane on the candidate tree) and
+ * crashed at the start of its ff. HEAD's recovery publishes it; the final audit then needs that lane on that same tree.
+ * The lane passes no variable (`node` by its path): its environment identity is the same under both releases' fakes,
+ * whose PATHs differ, so the observation key HEAD needs is the dev.6 one.
+ */
+const observationStory = once(async (): Promise<HolisticRun> => {
+  const c = clean();
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, c.pageId.gate], previousJudgments(), (l) => {
+    holisticFromStart(l, { ...SLUG_LANE, argv: [process.execPath, '--test', 'test/slug.test.js'], env: { set: {}, pass: [] } });
+    editJson<object>(join(l.input, 'obligations.json'), (o) => ({ ...o, mapping: { paths: [{ pattern: 'src/**', obligations: ['I-1'] }] } }));
+  });
+  await crashPrevious(p, { label: 'ff.act-start', occurrence: 1, unit: 'page-id' });
+  const before = journalOf(p).events;
+  const scope = scopeOf(p);
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, [...headSmoke(), lensStep('audit-1', 'invariants'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))], async () => {});
+  } finally {
+    await teardown(scope);
+  }
+  assert.deepEqual(r.exit, { kind: 'complete', units: UNITS.map((unit) => ({ unit, result: 'merged' })) });
+  return { p, r, before };
+});
+
+test('upgrade.dev6-uncertified-observation-reruns: a dev.6 candidate\'s witnessed observation has no series-certified fact; HEAD\'s audit on the same tree runs the lane again', T, async () => {
+  const { r, before } = await observationStory();
+  const keyText = (w: Extract<Fact, { kind: 'witnessed' }>): string => canonicalJson({ treeSha: w.treeSha, lane: w.lane, laneRev: w.laneRev, envId: w.envId });
+  const dev6 = factsOf(before, 'witnessed').filter((w) => w.purpose === 'witness' && w.for.type === 'candidate' && w.for.unit === 'page-id');
+  assert.equal(dev6.length, 1, 'the previous release witnessed page-id\'s candidate');
+  assert.deepEqual(factsOf(before, 'series-certified'), [], 'and certified no series');
+  const audit = factsOf(r.after, 'witnessed').filter((w) => w.purpose === 'witness' && w.for.type === 'job' && w.for.job.startsWith('audit-'));
+  assert.deepEqual(audit.map(keyText), dev6.map(keyText), 'the audit observed the same key (tree, lane, lane rev, environment)');
+  const spawned = new Set(spawnsOf(r.after).map((i) => invOf(i)));
+  assert.ok(audit.every((w) => spawned.has(w.inv) && w.inv !== dev6[0]!.inv), 'from a run HEAD spawned, not the dev.6 observation');
+});
+
+/** The vacuity lens's mutant: slugify keeps a trailing hyphen its input ends with, which slug's A2 test never feeds it. */
+const SLUG_MUTANT = [
+  'diff --git a/src/slug.js b/src/slug.js',
+  '--- a/src/slug.js',
+  '+++ b/src/slug.js',
+  '@@ -1,4 +1,5 @@',
+  ' /** The URL slug of `text` (.roadmap/contracts/one.md, slugify). */',
+  ' export function slugify(text) {',
+  "-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');",
+  "+  const slug = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');",
+  "+  return text.endsWith('-') ? `${slug}-` : slug;",
+  ' }',
+  '',
+].join('\n');
+const REPAIR = 'repair-1';
+
+/** The repair unit's spec (a vacuity repair of F-1 over I-1): its lane runs slug's tests. */
+const REPAIR_SPEC = {
+  schema: 'roadmap/spec-m1', unit: REPAIR, rev: 1,
+  lanes: [{ id: REPAIR, argv: ['node', '--test', 'test/slug.test.js'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' }],
+  acceptance: [{ id: 'R1', clause: 'The A2 test also checks that an input ending with a hyphen yields no trailing hyphen.', failLoudIfUndelivered: true, state: 'active' }],
+  scope: ['test/**'], resources: [], decisions: [], facts: [], cites: { contracts: ['.roadmap/contracts/one.md'], rulings: [] },
+  obligations: ['I-1'], repairs: ['F-1'],
+};
+
+/** slug's test file with the A2 test strengthened: it kills SLUG_MUTANT. */
+function strictSlugTest(c: Clean): string {
+  const test = committed(c.slug[1])['test/slug.test.js']!;
+  const strict = test.replace("'SLUG-TRIM: no leading or trailing hyphen');", "'SLUG-TRIM: no leading or trailing hyphen');\n  assert.equal(slugify('trailing-'), 'trailing');");
+  assert.notEqual(strict, test);
+  return strict;
+}
+
+type MutantRun = HolisticRun & Readonly<{ status: Readonly<{ admits: readonly unknown[]; opportunities: readonly unknown[]; drift: readonly unknown[] }> }>;
+
+/**
+ * The repair story: a holistic architecture-doc arc auditing with the vacuity lens. On the previous release both units
+ * merge; the final audit's vacuity lens opens F-1 over I-1 with SLUG_MUTANT; its checkpoint bundles one op, admitting a
+ * repair unit (`repair-1`, repairs F-1), which the previous release applies (plan revision 2). The repair starts with
+ * `reproduce`, whose mutant the crash `spec` cuts short. On HEAD: the reproduce finishes (reproduced), the repair
+ * strengthens the A2 test, its candidate kills the mutant, it merges; then the final audit and a no-op checkpoint.
+ */
+function mutantStory(spec: TriggerSpec): () => Promise<MutantRun> {
+  return once(async () => {
+    const c = clean();
+    const { lensStep: lens, checkpointStep: checkpoint, checkpointAnswer: answer } = previous.modules.holistic;
+    const admit = {
+      op: 'admit', unit: { id: REPAIR, risk: 'med', scope: ['test/**'], after: [], origin: 'repair' }, spec: JSON.stringify(REPAIR_SPEC),
+      cites: ['V-1'], evidence: ['F-1: I-1\'s witness passes on the mutant'],
+    };
+    const judgments = [
+      lens('audit-1', 'vacuity', [{
+        severity: 'P2', obligation: 'I-1', claim: 'I-1\'s witness passes when slugify keeps a trailing hyphen', cause: 'the A2 test never ends its input with a hyphen',
+        evidence: [{ path: 'src/slug.js', line: 3 }], mutant: { patch: SLUG_MUTANT, lane: SLUG_LANE.id },
+      }]),
+      checkpoint('ckpt-1', answer({ decision: 'bundle', ops: [admit] })),
+      // The drift audit the bundle's revision triggers runs beside the repair: the crash may come before, during or after
+      // its judgments, so the previous release has them too (unused ones are never called).
+      lens('audit-2', 'vacuity'), checkpoint('ckpt-2', answer({ decision: 'no-op' })),
+    ];
+    const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, c.pageId.gate], judgments, (l) => {
+      holisticFromStart(l);
+      editJson<{ holistic: object }>(l.plan, (plan) => ({ ...plan, holistic: { ...plan.holistic, audit: { lenses: ['vacuity'] } } }));
+    });
+    await crashPrevious(p, spec);
+    const before = journalOf(p).events;
+    // The bundle's revision (repair-1 added) is in force but not in the architect's files, which `start` classifies: they
+    // are synced from the plan in force first, through the sanctioned recovery (`roadmap inputs export`, I1).
+    const exported = join(p.dir, 'inputs-export');
+    const exportCli = await headCli(p, ['inputs', 'export', ...p.run, '--out', exported]);
+    assert.equal(exportCli.code, 0, `inputs export: ${exportCli.stdout} ${exportCli.stderr}`);
+    cpSync(exported, p.l.input, { recursive: true, filter: (src) => basename(src) !== EXPORT_FILE });
+    const [, , ...repair] = headFakeSteps({
+      steps: [c.pageId.planCheck, { role: 'build', round: 'fresh', acts: [{ type: 'commit', message: 'strengthen the A2 witness', files: { 'test/slug.test.js': strictSlugTest(c) } }] }, c.pageId.gate],
+    }, 'default');
+    const scope = scopeOf(p);
+    let r: HeadRun;
+    track(scope);
+    try {
+      // The drift audit's judgments HEAD makes: those the previous release did not spawn before its crash (one it spawned
+      // ran to its end under its own runner, and recovery reads it). Then the final audit, once the repair merged.
+      const spawned = (job: string): boolean => spawnsOf(before).some((i) => i.parent.type === 'job' && i.parent.job === job && i.expect.subject.purpose === 'arc-backend');
+      const drift = [...(spawned('audit-2') ? [] : [lensStep('audit-2', 'vacuity')]), ...(spawned('ckpt-2') ? [] : [checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' }))])];
+      const final = [lensStep('audit-3', 'vacuity'), checkpointStep('ckpt-3', checkpointAnswer({ decision: 'no-op' }))];
+      r = await runOnHead(p, [...headSmoke(), ...repair, ...drift, ...final], async () => {});
+    } finally {
+      await teardown(scope);
+    }
+    assert.deepEqual(r.exit, { kind: 'complete', units: [...UNITS, REPAIR].map((unit) => ({ unit, result: 'merged' })) });
+    const out = await headCli(p, ['status', ...p.run]);
+    assert.equal(out.code, 0, out.stderr);
+    return { p, r, before, status: JSON.parse(out.stdout) as MutantRun['status'] };
+  });
+}
+
+/** Cut short in its `mutant.apply` (the worktree made, the patch not applied). */
+const applyOpenStory = mutantStory({ label: 'mutant.after-worktree', occurrence: 1 });
+/** Cut short in its mutant spawn (the lane ran, its result unwritten). */
+const spawnOpenStory = mutantStory({ label: 'spawn.after-runner-exit', occurrence: 1, unit: REPAIR });
+
+const AS_FINDING = { type: 'finding', finding: 'F-1' } as const;
+
+/** The repair merged on HEAD after its reproduce decided `reproduced`, and F-1 resolved. */
+function assertRepaired(m: MutantRun): void {
+  assert.equal(outcomesOf(m.r.after, REPAIR)[0], 'reproduce:reproduced', JSON.stringify(outcomesOf(m.r.after, REPAIR)));
+  assert.equal(m.r.view.holistic().findings.find((f) => f.id === 'F-1')?.state, 'resolved');
+}
+
+test('upgrade.dev6-open-mutant-spawn: an open dev.6 mutant.apply and an open dev.6 mutant proc.spawn (each naming `finding`) reconcile on HEAD through the `of: finding` default', T, async () => {
+  const a = await applyOpenStory();
+  const [apply, ...moreApplies] = a.before.flatMap((e) => (e.type === 'intent' && e.kind === 'mutant.apply' ? [e] : []));
+  assert.ok(apply !== undefined && moreApplies.length === 0);
+  assert.deepEqual(['finding' in apply.expect, 'of' in apply.expect, mutantSubjectDefault(apply.expect)], [true, false, AS_FINDING], 'the dev.6 intent names its finding');
+  assert.equal(journalOf(a.p).view.doneOf(apply.op)?.kind, 'mutant.apply', 'HEAD\'s recovery closed it');
+  assert.equal(a.before.some((e) => e.type === 'done' && e.op === apply.op), false, 'the previous release left it open');
+  assertRepaired(a);
+
+  const s = await spawnOpenStory();
+  const open = spawnsOf(s.before).filter((i) => i.expect.subject.purpose === 'mutant' && !s.before.some((e) => e.type === 'done' && e.op === i.op));
+  const [spawn, ...moreSpawns] = open;
+  assert.ok(spawn !== undefined && moreSpawns.length === 0 && spawn.expect.subject.purpose === 'mutant', 'the previous release left its mutant spawn open');
+  assert.deepEqual(['finding' in spawn.expect.subject, mutantSubjectDefault(spawn.expect.subject)], [true, AS_FINDING], 'the dev.6 subject names its finding');
+  assert.equal(journalOf(s.p).view.doneOf(spawn.op)?.kind, 'proc.spawn', 'HEAD\'s recovery closed it');
+  assertRepaired(s);
+});
+
+test('upgrade.dev6-bundle-unclassified: a dev.6 applied bundle (no admits, no conversions) reads back on HEAD as unclassified: nothing converted or counted; status admits and opportunities empty', T, async () => {
+  const { r, before, status } = await applyOpenStory();
+  const [bundle, ...more] = before.flatMap((e) => (e.type === 'intent' && e.kind === 'revision.commit' && e.expect.source.type === 'bundle' ? [e.expect.source] : []));
+  assert.ok(bundle !== undefined && more.length === 0, 'the previous release applied one bundle');
+  assert.deepEqual(['admits' in bundle, 'conversions' in bundle], [false, false]);
+  assert.equal(bundleClassesOf(bundle), 'unclassified');
+  assert.ok(factsOf(before, 'plan-applied').some((a) => a.rev === 2 && a.changes.some((ch) => ch.type === 'unit-added' && ch.unit === REPAIR)), 'its admit added the repair unit');
+  assert.deepEqual(factsOf(r.after, 'corpus-amendment'), [], 'no admit converted to an amendment');
+  assert.deepEqual(factsOf(r.after, 'debt-banked'), [], 'no overrun debt');
+  assert.deepEqual([status.admits, status.opportunities, status.drift], [[], [], []]);
 });
