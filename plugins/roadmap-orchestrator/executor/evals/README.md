@@ -355,3 +355,20 @@ refused `issue-policy-untrusted` under PUBLIC + ALL.
 `NOT EXERCISED` by the paid run (each has a fake integrated test): other-repo and checkout corpus sources,
 `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n, the
 vision-silent stop.
+
+## The run observer
+
+```sh
+node evals/observer.ts /var/tmp/m4a [--interval-min 10] [--model gpt-6-astra] [--max-hours 7] [--host-dir /var/tmp/roadmap] [--once]
+```
+
+A background watcher for a paid fixture run (start it beside the driver, e.g. under a Monitor). Each tick it gathers
+the delta since `<dir>/observer/cursor.json` (new events by seq for every arc under
+`stage/product/.git/roadmap-runtime/`, new needs-user files, new root-session `transcript.jsonl` lines summarised
+to tool calls and results, new bytes of the newest host `executor.*.err` / `supervisor.*.err`, and a `status`
+snapshot), capped at 200 KB with the newest kept, and asks a read-only `codex exec` (20 minute timeout) for NEW
+issues only. Replies are JSON lines `{severity: abort|high|note, kind, summary, evidence, suggestion}`; valid ones
+are appended to `<dir>/observer/observations.jsonl` with `{tick, at}`, invalid lines are recorded as `{invalid}`.
+stdout carries `OBSERVER abort: ...` / `OBSERVER high: ...` lines and one `OBSERVER tick <n> ok <count>` per tick
+(`OBSERVER tick <n> error codex-failed` retries the same delta next tick). It stops when `<dir>/report.json` exists
+or after `--max-hours`. It never touches the run. Free test: `test/observer.test.ts` (fake `codex` on PATH).
