@@ -184,7 +184,7 @@ export function tick(opts: Options): string[] {
   const at = new Date().toISOString();
   const out: string[] = [];
   const r = spawnSync('codex', ['exec', '-s', 'read-only', '--skip-git-repo-check', '-m', opts.model, '-C', opts.fixtureDir, '-o', outPath, '-'], {
-    input: prompt, encoding: 'utf8', timeout: CODEX_TIMEOUT_MS,
+    input: prompt, encoding: 'utf8', timeout: CODEX_TIMEOUT_MS, maxBuffer: 256 * 1024 * 1024,
   });
   if (r.status !== 0 || !existsSync(outPath)) {
     // Do not advance the cursor: the next tick retries the same delta.
@@ -221,7 +221,7 @@ export function retro(opts: Options): string {
   mkdirSync(dir, { recursive: true });
   const outPath = join(dir, 'retro.md');
   const r = spawnSync('codex', ['exec', '-s', 'read-only', '--skip-git-repo-check', '-m', opts.model, '-C', opts.fixtureDir, '-o', outPath, '-'], {
-    input: RETRO, encoding: 'utf8', timeout: 90 * 60_000,
+    input: RETRO, encoding: 'utf8', timeout: 90 * 60_000, maxBuffer: 256 * 1024 * 1024,
   });
   return r.status === 0 && existsSync(outPath) ? `OBSERVER retro ${outPath}` : `OBSERVER retro error status=${String(r.status)} ${clip(r.stderr ?? '', 300)}`;
 }
