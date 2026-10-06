@@ -314,7 +314,10 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
 
 ## Changing the plan
 
-Edit the files in place, then `roadmap apply` (`--dry-run` first; `--expect-rev <n>` to refuse if the plan moved).
+The executor revises the plan itself (checkpoint admits and cuts, plan-check patches, spec patches), so your input
+files fall behind the plan in force. Before any edit, `apply` or `start` after the arc has run, `roadmap inputs export`
+the arc and edit the export, never the files you wrote at Phase 0. Then `roadmap apply` (`--dry-run` first;
+`--expect-rev <n>` to refuse if the plan moved).
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.
 
