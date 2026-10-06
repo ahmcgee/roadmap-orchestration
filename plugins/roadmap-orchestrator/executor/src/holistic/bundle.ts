@@ -14,7 +14,7 @@
 //      running or crash-abandoned) → `rejected{busy, units}`; the trigger is due again once each attempt has closed
 //      (src/holistic/checkpoint.ts), and it never counts toward `secondInvalid`.
 //   1. Staleness (H3). The artifacts the ops touch, compared with the vector the checkpoint captured: the plan's bytes,
-//      each patched or re-entered unit's spec rev, the obligations, the ledger, the contracts a landing ruling names;
+//      each patched or re-entered unit's spec rev (and whether it merged since the capture: its spec is fixed now, so stale, not invalid), the obligations, the ledger, the contracts a landing ruling names;
 //      and the vision, always. A finding a disposition names that is no longer active is stale too. Any → `rejected
 //      {stale}`, and the trigger is due again (the whole bundle re-evaluated by a fresh checkpoint).
 //   2. Validation. Cites: every op's and interpretation's clauses active in the vision in force (H16: a withdrawn clause
@@ -708,6 +708,13 @@ function staleness(ctx: CheckpointContext, a: Activation, p: Proposal, now: Revi
   if (p.touched.plan && planShaAt(ctx, was.plan) !== inForce.manifest.planSha256) out.push(`the plan changed since plan rev ${was.plan}`);
   for (const u of [...p.touched.specs].sort()) {
     if (was.specs[u] !== now.specs[u]) out.push(`the spec of ${u} moved from rev ${was.specs[u] ?? 'none'} to ${now.specs[u] ?? 'none'}`);
+  }
+  // A unit the ops patch or re-enter that merged after the capture: its spec is fixed now, but the checkpoint saw it open.
+  // Staleness, not a model error: an op naming a unit already merged at capture stays for the classifier (`invalid`).
+  const view = ctx.journal.view;
+  const mergedSince = new Set(view.publications().filter((x) => x.seq > a.captured.seq).map((x) => x.unit));
+  for (const u of [...p.touched.specs].sort()) {
+    if (mergedSince.has(u) && view.unit(u).status === 'retired') out.push(`unit ${u} merged since the checkpoint read it; its spec is now fixed`);
   }
   if (p.touched.obligations && was.obligationsSha256 !== now.obligationsSha256) out.push('the obligations changed since the checkpoint read them');
   if (p.touched.ledger && was.ledgerSha256 !== now.ledgerSha256) out.push('the rulings ledger changed since the checkpoint read it');

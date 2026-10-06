@@ -11,7 +11,7 @@
 // checkpoint.busy-waits-for-boundary, classify.open-attempt-running-vs-abandoned, checkpoint.capture-waits-for-publication and
 // checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
 // checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
-// checkpoint.final-always-full, intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists.
+// bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.final-always-full, intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -616,6 +616,39 @@ describe('issue reuse (H5, F27)', () => {
       const stdin = callOf(x, 'ckpt-2').stdin;
       assert.match(stdin, /Every booking should say its tide window/);
       assert.doesNotMatch(stdin, /unchanged since checkpoint/);
+    } finally {
+      x.r.journal.close();
+    }
+  });
+});
+
+describe('a unit merged around the capture (paid M4a run 10)', () => {
+  const patchU1: JsonValue = { op: 'patch-spec', unit: 'u1', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: [] }], cites: ['V-1'], evidence: ['audit-1'] };
+  const toMerge = (): readonly Step[] => [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
+  const ckptBarrier = { type: 'barrier', name: 'ckpt', timeoutMs: 120_000 } as const;
+
+  test('bundle.merged-since-capture-stale: a spec op on a unit that merged after the checkpoint captured is stale (naming the unit), not invalid', T, async () => {
+    const x = await arc([...toMerge(), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [patchU1] }), [ckptBarrier])]);
+    try {
+      const running = run(x);
+      await reached(x.a.d.scenarioDir, 'ckpt', 120_000);
+      assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
+      release(x.a.d.scenarioDir, 'ckpt');
+      const out = await running;
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'stale', JSON.stringify(out));
+      assert.match(out.decision.detail, /unit u1 merged since the checkpoint read it/);
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('bundle.merged-at-capture-invalid: a spec op on a unit already merged at capture stays invalid (the model was shown it merged)', T, async () => {
+    const x = await arc([...toMerge(), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [patchU1] }))]);
+    try {
+      assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
+      const out = await run(x);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
+      assert.match(out.decision.detail, /unit u1 is merged; its spec is fixed/);
     } finally {
       x.r.journal.close();
     }
