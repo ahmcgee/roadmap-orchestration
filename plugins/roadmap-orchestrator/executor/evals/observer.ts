@@ -1,5 +1,5 @@
 // Background run observer for paid fixture runs. Agent-facing: output is `OBSERVER ...` lines for a Monitor.
-//   node evals/observer.ts <fixtureDir> [--interval-min 10] [--model gpt-6-astra] [--max-hours 7] [--host-dir D] [--once]
+//   node evals/observer.ts <fixtureDir> [--interval-min 10] [--model gpt-5.6-luna] [--max-hours 7] [--host-dir D] [--once]
 // Every tick it collects what is new since its cursor (<fixtureDir>/observer/cursor.json), asks a read-only
 // Codex session what looks wrong, appends the parsed observations to <fixtureDir>/observer/observations.jsonl and
 // prints abort/high ones (defects and efficiency opportunities: the constraint, redundant calls, avoidable waits). It never
@@ -188,8 +188,14 @@ export function tick(opts: Options): string[] {
   });
   if (r.status !== 0 || !existsSync(outPath)) {
     // Do not advance the cursor: the next tick retries the same delta.
-    appendFileSync(obsPath, `${JSON.stringify({ tick: n, at, error: `codex exec failed: status=${String(r.status)} signal=${String(r.signal)} ${clip(r.stderr ?? '', 500)}` })}\n`);
-    return [`OBSERVER tick ${n} error codex-failed`];
+    // The cause is at the END of codex's stderr (the banner and prompt echo come first).
+    const cause = tail(r.stderr ?? '', 600);
+    appendFileSync(obsPath, `${JSON.stringify({ tick: n, at, error: `codex exec failed: status=${String(r.status)} signal=${String(r.signal)} ${cause}` })}\n`);
+    // An observer that cannot observe must not look like a quiet run: two failed ticks in a row are an abort-level
+    // harness finding, so the lead's Monitor wakes (2026-10-06: a model became unavailable and every tick failed silently).
+    const recent = readFileSync(obsPath, 'utf8').trim().split('\n').slice(-2);
+    const failing = recent.length === 2 && recent.every((l) => (JSON.parse(l) as { error?: unknown }).error !== undefined);
+    return [`OBSERVER tick ${n} error codex-failed`, ...(failing ? [`OBSERVER abort: [harness] the observer's codex calls keep failing (model ${opts.model}): ${cause.replace(/\s+/g, ' ').slice(-300)}`] : [])];
   }
   const { ok, invalid } = parseObservations(readFileSync(outPath, 'utf8'));
   for (const o of ok) appendFileSync(obsPath, `${JSON.stringify({ tick: n, at, ...o })}\n`);
@@ -227,8 +233,8 @@ function main(argv: readonly string[]): void {
     return i >= 0 && args[i + 1] !== undefined ? (args[i + 1] as string) : dflt;
   };
   const fixtureDir = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1]?.startsWith('--') && args[i - 1] !== '--once'));
-  if (fixtureDir === undefined) throw new Error('usage: node evals/observer.ts <fixtureDir> [--interval-min 10] [--model gpt-6-astra] [--max-hours 7] [--host-dir D] [--once]');
-  const opts: Options = { fixtureDir, model: flag('--model', 'gpt-6-astra'), hostDir: flag('--host-dir', '/var/tmp/roadmap') };
+  if (fixtureDir === undefined) throw new Error('usage: node evals/observer.ts <fixtureDir> [--interval-min 10] [--model gpt-5.6-luna] [--max-hours 7] [--host-dir D] [--once]');
+  const opts: Options = { fixtureDir, model: flag('--model', 'gpt-5.6-luna'), hostDir: flag('--host-dir', '/var/tmp/roadmap') };
   const intervalMs = Number(flag('--interval-min', '10')) * 60_000;
   const deadline = Date.now() + Number(flag('--max-hours', '7')) * 3_600_000;
   const once = args.includes('--once');

@@ -373,7 +373,7 @@ vision-silent stop.
 ## The run observer
 
 ```sh
-node evals/observer.ts /var/tmp/m4a [--interval-min 10] [--model gpt-6-astra] [--max-hours 7] [--host-dir /var/tmp/roadmap] [--once]
+node evals/observer.ts /var/tmp/m4a [--interval-min 10] [--model gpt-5.6-luna] [--max-hours 7] [--host-dir /var/tmp/roadmap] [--once]
 ```
 
 A background watcher for a paid fixture run (start it beside the driver, e.g. under a Monitor). Each tick it gathers
