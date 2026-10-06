@@ -408,7 +408,8 @@ export const STAGE_OUTCOME_KINDS = {
   // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known
   // defect, uncharged, back to prepare).
   lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect'],
-  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed'],
+  // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
+  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified'],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
   candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked'],

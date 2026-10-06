@@ -16,9 +16,10 @@
 //      draining skipped, staleness and the rest checked as ever); a request answered otherwise ends the trigger's decision
 //      (its generation quiescent, `quiescentGenerations`). A due job is skipped, writing nothing, while the
 //      checkpoint seat's backend is parked or the arc is paused or stopped.
-//   1b. Paid M4a run 10 (R-15): a due job that would make a call does not capture while a publication would move the head
-//      under it (`publishing`: a unit at gate, approved and not yet at its candidate, at candidate or ff, or the
-//      integration slot held by any publication, a docs or batch one included); it is skipped, writing nothing, and asked
+//   1b. Paid M4a runs 10 and 11 (R-15, R-20): a due job that would make a call does not capture while a plan-check may
+//      patch a spec or a publication would move the head under it (`publishing`: a unit at plan-check or gate, approved
+//      and not yet at its candidate, at candidate or ff, or the integration slot held by any publication, a docs or batch
+//      one included); it is skipped, writing nothing, and asked
 //      again at the boundary, so its capture is not stale on arrival. The wait is bounded: once the trigger has waited
 //      CAPTURE_WAIT_MAX_MIN (by the scheduler's clock, from its audit's end, its park, or its previous job's capture),
 //      it captures whatever is in flight, so a steady stream of publications cannot starve it.
@@ -318,14 +319,17 @@ export function checkpointSkip(ctx: CheckpointContext): 'backend-parked' | 'paus
 /** R-15: how long a due checkpoint waits for the publications in flight before it captures anyway (see the header). */
 export const CAPTURE_WAIT_MAX_MIN = 15;
 
-/** The judgment stages and publication steps after which a unit's publication moves the integration head. */
-const PUBLISHING_STAGES: readonly string[] = ['gate', 'candidate', 'ff'];
+/**
+ * The stages whose open attempt moves what a capture reads: plan-check (its redirect patches the unit's spec, R-20), and
+ * the judgment stage and publication steps after which a unit's publication moves the integration head (R-15).
+ */
+const PUBLISHING_STAGES: readonly string[] = ['plan-check', 'gate', 'candidate', 'ff'];
 
 /**
- * R-15 (paid M4a run 10: ckpt-3 captured while refusal-next-steps was at gate, which published 4 s later): what would move
- * the integration head under a capture now: each unit at gate, candidate or ff, or approved and not yet at its candidate,
- * and the integration slot when any publication holds it (a unit's, a docs or a batch one). Empty: a capture now is not
- * stale on arrival.
+ * R-15 (paid M4a run 10: ckpt-3 captured while refusal-next-steps was at gate, which published 4 s later) and R-20 (paid
+ * M4a run 11: ckpt-2 was stale after a plan-check patched a spec it read): what would move a capture's inputs under it now:
+ * each unit at plan-check, gate, candidate or ff, or approved and not yet at its candidate, and the integration slot when
+ * any publication holds it (a unit's, a docs or a batch one). Empty: a capture now is not stale on arrival.
  */
 export function publishing(view: JournalView): readonly string[] {
   const out = view.plannedUnits().flatMap((unit) => {

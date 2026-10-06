@@ -233,6 +233,8 @@ export const TABLE: Table = {
     'process-fault': park('process-fault', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
+    // M4a rev 3 (paid run 11): the latest spec series' checkout is gone or of another commit; the lanes run again, uncharged.
+    unverified: go(at('lanes')),
   },
   candidate: {
     green: go(at('ff')),

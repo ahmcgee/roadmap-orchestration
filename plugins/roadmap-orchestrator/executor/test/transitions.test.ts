@@ -175,6 +175,8 @@ const ROWS: readonly Row[] = [
   ['gate', 'process-fault', {}, 'park:process-fault', 'park', {}],
   ['gate', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
   ['gate', 'interrupted', {}, 'hold', 'hold', {}],
+  // Run 11 round 3: no green verification checkout of the head: the lanes run again, uncharged.
+  ['gate', 'unverified', {}, 'lanes', 'advance', {}],
   // candidate (integration slot)
   ['candidate', 'green', {}, 'ff', 'advance', {}],
   ['candidate', 'transient-violation', {}, 'build/fix@med', 'trigger', { chargeableFailures: 1 }],

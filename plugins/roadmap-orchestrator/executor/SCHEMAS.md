@@ -147,7 +147,7 @@ warning per process each, BACKLOG "Scaffolding to delete", dev.6 layer), the res
 | `proc.spawn` subject `journey` | `+ redRev?` | as above |
 | `proc.spawn` subject `mutant`, `mutant.apply` expect | `of: MutantOf` (`finding{finding} \| smoke{unit, attempt}`) in place of `finding`; exactly one of the two | a `finding` field reads as written and as `of: finding` (`mutantSubjectDefault`) |
 | `witnessed.for` | `+ smoke{unit, attempt, of}` (purpose `mutant`: never certifies) | none |
-| `stage-outcome` | outcomes lanes `+ witnesses-missing, smoke-survived, known-defect`, plan-check `+ in-session`, build `+ infeasible, risk-raised`; class `+ smoke`; `+ detail?` exactly on `DETAILED_OUTCOMES` (`known-defect{id, match}`: the entry's match as hit, step N6) | none |
+| `stage-outcome` | outcomes lanes `+ witnesses-missing, smoke-survived, known-defect`, gate `+ unverified` (Run 11 round 3), plan-check `+ in-session`, build `+ infeasible, risk-raised`; class `+ smoke`; `+ detail?` exactly on `DETAILED_OUTCOMES` (`known-defect{id, match}`: the entry's match as hit, step N6) | none |
 | Checkpoint answer (`CheckpointOutput`, the recorded call's `result.json`) | admit op `+ targets: T-n[]` (LR-m, step N2; required by `CHECKPOINT_SCHEMA`) | `[]` (`admitTargetsDefault`, scaffolding: an answer recorded before LR-m classifies on its structural targets) |
 | `pack-review-ended` | `+ dispositions?: [{job, index, disposition: resolved \| still-open \| withdrawn}]` (a delta re-review's, step N5; refused on an abandoned review) | absent: a full review (lasting) |
 | `status`, brief payload (`roadmap/brief-m4`) | additive keys ("M4a rev 3", status and brief, step N6) | none: never persisted (an ack keeps only its coverage vector and items) |
@@ -2689,8 +2689,9 @@ sections and marks converted amendments.
    passed (not flaky, not a repeat), its identity is equal, `certifiedRun` holds, and it ran at this SHA, or the lane is
    fast, declares `inputs`, argv[0] is a resolved program and the diff between the SHAs touches none of them. The series
    writes `lane-reused` before the lane would have run and skips it; `seriesLedger` reads the execution's record back
-   (`reusedRecord`) with `LaneLedgerEntry.reused` set, which the gate's ledger shows. A series whose every lane is reused
-   still makes its verification checkout and certifies it (crash label `lanes.after-reused`).
+   (`reusedRecord`) with `LaneLedgerEntry.reused` set, which the gate's ledger shows. A green spec series that ran no lane
+   (every lane reused, or a spec declaring none, Run 11 round 3) still makes its verification checkout and certifies it
+   (crash label `lanes.after-reused`).
 2. **Series certificates (N1, Q12, R51).** `series-certified` is written after the census found the checkout clean
    (crash label `lanes.after-census-before-certified`). `certifiedRun(inv)`: a certificate under the run's parent, at its
    SHA, after its spawn, whose checkout holds the run's launch cwd. Lane reuse and a journey series' reuse
@@ -2903,3 +2904,31 @@ No record changes and no new writes (so no crash rows): each is a read-side rule
   `status.packReview.reviews[].superseded` still shows it.
 - **R-19. The observer's status snapshot** (evals/observer.ts) runs `roadmap status --repo <fixture>/stage/product --arc
   <arc>` for each arc under its roadmap-runtime, never the host-global default (exit 64 once no arc holds the host).
+
+## Run 11, round 3 (paid M4a run 11; still 1.0.0-dev.7)
+
+- **The gate never crashes on a missing verification checkout.** Run 11: the checkpoint-admitted repair unit
+  `witness-hardening` (plan-applied seq 1481) had a spec declaring no lanes (its checks are its witnesses, D1). Its lanes
+  attempt 8 ran no spec lane, so `runLaneSeries` made no verification checkout and wrote no `lane-reused` (the old
+  "every lane reused" materialisation required a non-empty ledger); the only checkout of attempt 8 was D1's witness
+  journey's (`witness-8`, created 1589, removed 1600, its journey certificate `series-certified` 1602). Smoke (1603–1621)
+  survived; one fix round (build 9, no new commit); lanes 14 reused the witness observation and the smoke verdict by key
+  (1640–1641, past the bound → gate). The gate's `latestSeries(spec)` found no series (no spec lane spawn, no reuse) and
+  threw `no green verification checkout at ce32909…` on every restart (executor generations 26–28).
+  Fixes: a green spec series that ran no lane, for any reason, makes and certifies its verification checkout
+  (`runLaneSeries`, the `_reused` snapshot); `latestSpecSeries(ctx, unit)` (replacing `latestSeries(view, unit, set)`,
+  whose `suite` set had no reader) names the latest lanes attempt that ran a lane, reused one, or created its own
+  `verificationWorktree` checkout (never the witness or smoke checkout of the same attempt). The gate's capture records
+  outcome `unverified` (record change: an additive closed-enum member) when the latest spec series' checkout is absent,
+  removed, or of another commit; transition `go(lanes)`, uncharged. An arc an older executor left in run 11's state is
+  adopted: its gate records `unverified`, the lanes run again and make the checkout. No new write order (the zero-lane
+  checkout is the full-reuse path's create → snapshot → certificate, crash rows LANE_REUSE and SERIES_CERTIFIED).
+- **Bundle staleness across a plan-check spec patch (observer, ckpt-5): not a hole.** ckpt-5 captured specs
+  `confirmation-in-outbox: 1` (seq 958); that unit's plan-check redirect patched it to rev 2 (1202–1204); ckpt-5 decided
+  `no-op` (1241) with one interpretation divergence (preimage `specs: {}`), corpus amendments (checked against the pin in
+  force) and issue outcomes (judged on the integration head). Staleness compares what the ops touch (H3: each patched or
+  re-entered unit's spec rev, plus the vision always); a no-op touches no spec, and nothing it recorded reads that spec.
+  A bundle op that patches or re-enters a unit whose spec moved is rejected `stale` (unchanged).
+- **R-20. The capture also waits while a unit is in plan-check** (src/holistic/checkpoint.ts `publishing`): an open
+  `plan-check` attempt may patch a spec the checkpoint reads (run 11 ckpt-2: stale after a $1.72 call, seq 635–796).
+  Same `skipped{publishing}`, same `CAPTURE_WAIT_MAX_MIN` bound. Read-side only: no record change.

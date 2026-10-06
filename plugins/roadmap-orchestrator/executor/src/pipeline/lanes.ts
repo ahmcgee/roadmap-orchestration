@@ -48,8 +48,9 @@
 // lane's now, its series is certified, and it ran at this SHA, or the lane is fast, declares `inputs`, and the diff
 // between the two SHAs touches none of them. An estate lane, and a lane whose argv[0] is a repository file, reuse only
 // at the same SHA; an argv[0] that resolves nowhere never reuses. A reused lane records `lane-reused` and is skipped;
-// its ledger entry is the earlier execution's record with `reused` set. A series whose every lane is reused still
-// creates its verification checkout (the gate's cwd) and certifies it.
+// its ledger entry is the earlier execution's record with `reused` set. A green spec series that ran no lane (every lane
+// reused, or a spec declaring none: a repair unit whose checks are its witnesses, paid M4a run 11) still creates its
+// verification checkout (the gate's cwd) and certifies it.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join, matchesGlob } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
@@ -88,7 +89,7 @@ import {
 import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
-import { type StageContext, type StageParent, evidenceRoot, runOp } from './dispatch.ts';
+import { type StageContext, type StageParent, evidenceRoot, runOp, verificationWorktree } from './dispatch.ts';
 import { invocationDir, invoke } from './invoke.ts';
 import {
   type FailureSignature, type LaneCancel, type LaneHost, type RedClass, type RedEvidence, type RepeatOf, classifyRed, failureSignature, hostWasBusy,
@@ -789,9 +790,10 @@ export async function runLaneSeries(
     break;
   }
   if (last.evidence === null) {
-    if (end.kind !== 'green' || ledger.length === 0) return { end, ledger, tree: null, dirty: [] };
-    // Every lane reused (F1a, Q3): the gate still reads a checkout of the commit, made and certified as any series'.
-    // `_reused` cannot collide with a lane id, which starts with a letter.
+    if (end.kind !== 'green' || set !== 'spec') return { end, ledger, tree: null, dirty: [] };
+    // No lane ran: every lane reused (F1a, Q3), or the spec declares none (a repair unit's, paid M4a run 11). The gate
+    // still reads a checkout of the commit, made and certified as any series'. `_reused` cannot collide with a lane id,
+    // which starts with a letter.
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, checkout);
     last.evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
       source: path, globs: [], dest: absPath(join(root, '_reused')),
@@ -864,20 +866,26 @@ export async function removeVerificationTree(ctx: StageContext, tree: Verificati
 const sameParent = (a: IntentOf<'proc.spawn'>['parent'], b: StageParent): boolean => canonicalJson(a) === canonicalJson(b);
 
 /**
- * The stage attempt of the unit's latest series of `set` that ran a lane, or (a spec series, F1a) reused one; null when
- * none did.
+ * The stage attempt of the unit's latest spec series: the latest lanes attempt that ran a lane, reused one (F1a), or
+ * created its own verification checkout (`verificationWorktree`; a series that ran no lane, Q3); null when none did. The
+ * lanes attempt's other checkouts (D1's witness journey, D2's smoke) never name it.
  */
-export function latestSeries(view: JournalView, unit: UnitId, set: LaneSet): StageParent | null {
-  let latest: Readonly<{ seq: number; parent: StageParent }> | null = null;
-  for (const { op, expect: { subject: s }, parent } of view.opsOf('proc.spawn')) {
-    if (s.purpose === 'lane' && s.unit === unit && s.set === set && parent.type === 'stage') latest = { seq: parseOpId(op).seq, parent };
+export function latestSpecSeries(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; plan: StageContext['plan'] }>, unit: UnitId): StageParent | null {
+  const view = ctx.journal.view;
+  const { worktreeRoot, arc } = ctx.plan();
+  const latest: { seq: number; parent: StageParent | null } = { seq: -1, parent: null };
+  const see = (seq: number, parent: Parent): void => {
+    if (parent.type !== 'stage' || parent.unit !== unit || seq <= latest.seq) return;
+    latest.seq = seq;
+    latest.parent = parent;
+  };
+  for (const { op, expect: { subject: s }, parent } of view.opsOf('proc.spawn')) if (s.purpose === 'lane' && s.set === 'spec') see(parseOpId(op).seq, parent);
+  for (const r of view.holistic().laneReuses) see(r.seq, r.parent);
+  for (const i of view.opsOf('worktree.create')) {
+    const p = i.parent;
+    if (p.type === 'stage' && p.stage === 'lanes' && i.expect.path === verificationWorktree(worktreeRoot, arc, p.unit, p.attempt)) see(parseOpId(i.op).seq, p);
   }
-  if (set === 'spec') {
-    for (const r of view.holistic().laneReuses) {
-      if (r.parent.type === 'stage' && r.parent.unit === unit && (latest === null || r.seq > latest.seq)) latest = { seq: r.seq, parent: r.parent };
-    }
-  }
-  return latest?.parent ?? null;
+  return latest.parent;
 }
 
 /**

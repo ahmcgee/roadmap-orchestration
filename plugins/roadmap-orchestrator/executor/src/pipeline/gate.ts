@@ -73,7 +73,7 @@ import {
   judgmentDispatch, unitBranch, verdictOf, verificationWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
-import { latestSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { latestSpecSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { gateSmokeChecks } from './smoke.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 import {
@@ -244,6 +244,7 @@ function buildEvidence(ctx: StageContext, unit: UnitId): readonly AbsPath[] {
 /** What a gate attempt's capture found: nothing to judge, a routing change, or its inputs (their fact written). */
 type GateCapture =
   | Readonly<{ kind: 'empty-diff' }>
+  | Readonly<{ kind: 'unverified' }>
   | Readonly<{ kind: 'routing-changed'; needsUser: NeedsUserContent }>
   | Readonly<{
     kind: 'captured'; fingerprint: ApprovalFingerprint; seat: JudgmentDispatch; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[]; cwd: AbsPath;
@@ -276,9 +277,11 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const paths = unitDiffPaths(ctx.repo, tip, head);
     // An approved empty diff is refused at the gate (DESIGN §3 "Merge"); with nothing to judge, no call is made.
     if (paths.length === 0) return { kind: 'empty-diff' };
-    const series = latestSeries(ctx.journal.view, unit.id, 'spec');
+    // The latest spec series' own checkout (Q3). Gone, or of another commit: nothing to judge in, so the lanes run again,
+    // uncharged (paid M4a run 11: an older executor made none for a spec declaring no lanes).
+    const series = latestSpecSeries(ctx, unit.id);
     const tree = series === null ? null : seriesTree(ctx.journal.view, series, verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, series.attempt));
-    if (series === null || tree === null || tree.at !== head) throw new Error(`gate of ${unit.id}: no green verification checkout at ${head}`);
+    if (series === null || tree === null || tree.at !== head) return { kind: 'unverified' };
     const seated = judgmentDispatch(ctx, unit.id, 'gate');
     if (seated.kind !== 'pinned') return { kind: 'routing-changed', needsUser: seated.needsUser };
     const pinned = dispatchOf(ctx.journal.view, unit.id);
@@ -303,7 +306,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     return { kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, cwd: tree.path, dirs: targetDirs(target) };
   });
   if (captured.kind !== 'captured') {
-    const done = captured.kind === 'empty-diff' ? record(ctx, parent, 'empty-diff') : record(ctx, parent, 'routing-changed', captured.needsUser);
+    const done = captured.kind === 'routing-changed' ? record(ctx, parent, 'routing-changed', captured.needsUser) : record(ctx, parent, captured.kind);
     return { ...done, session: null, fingerprint: null };
   }
   const entered = await enterJudgment(ctx, parent);

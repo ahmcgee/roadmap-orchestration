@@ -76,7 +76,7 @@ import {
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
 import { batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
-import { type LaneRecord, latestSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { type LaneRecord, latestSpecSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { prepare } from './prepare.ts';
 import { mutantFix, reproduce, specFacts, syncRepairs } from './reproduce.ts';
@@ -332,7 +332,7 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
   const tip = unitTip(ctx, unit.id);
   // The unit's latest spec series: the green one the gate judged and the candidate merged.
   const specSeries = (): StageParent => {
-    const parent = latestSeries(view, unit.id, 'spec');
+    const parent = latestSpecSeries(ctx, unit.id);
     if (parent === null) throw new Error(`unit ${unit.id}: a fix round after ${f.stage} ${f.outcome}, but no spec lanes ran`);
     return parent;
   };

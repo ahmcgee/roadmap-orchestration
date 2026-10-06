@@ -1,6 +1,7 @@
 // M4a rev 3 step N3: the executable checks before the gate (D1 witness presence, D2 mutation smoke) through the unit
 // driver in a corpus arc (real processes, real git, fake backends; test/fixtures/checks-common.ts). Named tests:
-// witnesscheck.*, e2e.gate-after-d1, smoke.*, mutant.corrupt-distinct, and the crash rows WITNESS_FILES, WITNESS_CHECK
+// witnesscheck.*, e2e.gate-after-d1, smoke.*, mutant.corrupt-distinct, gate.no-spec-lanes-after-smoke and
+// gate.unverified-reruns-lanes (paid M4a run 11), and the crash rows WITNESS_FILES, WITNESS_CHECK
 // and MUTATION_SMOKE (labels witnesscheck.after-lane-files, witnesscheck.after-witnessed, smoke.after-patch-kept,
 // smoke.after-apply, smoke.after-witnessed, smoke.after-ran-before-outcome).
 import assert from 'node:assert/strict';
@@ -13,6 +14,8 @@ import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import { step } from '../src/pipeline/unit.ts';
+import { verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { removeVerificationTree, seriesTree } from '../src/pipeline/lanes.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { fixture, runFixture } from './helpers/proc.ts';
 import { barrierDir, reached, release } from './helpers/barrier.ts';
@@ -240,6 +243,46 @@ describe('D2 mutation smoke', () => {
       const [first, second] = smokeRan(a.d);
       assert.equal(first!.key, second!.key);
       assert.match(gateCalls(a.d)[0]!.stdin, /- survived: journey t1/);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('gate.no-spec-lanes-after-smoke (paid M4a run 11): a unit whose spec declares no lanes, its D1 witness journey and a surviving smoke, one fix round, then the gate finds the last lanes attempt\'s own checkout and the unit merges', T, async () => {
+    // Run 11 (witness-hardening, seq 1585-1641): no spec lane ran, so no verification checkout existed; the only checkout of
+    // the attempt was D1's witness journey's, removed before its certificate; the gate threw on every restart.
+    const NOOP_FIX = codexStep([], { argv: ['exec', 'resume'] });
+    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null, { noSpecLanes: true });
+    try {
+      assert.deepEqual(spawns(a.d).filter((i) => i.expect.subject.purpose === 'lane'), [], 'no spec lane exists');
+      assert.equal(lanesFacts(a.d).at(-1)!.outcome, 'smoke-survived');
+      await stepUntil(r, 'u1', (x) => x.stage === 'snapshot');
+      assert.deepEqual(lanesFacts(a.d).map((x) => [x.outcome, x.class]), [['smoke-survived', 'smoke'], ['smoke-survived', 'advance']]);
+      assert.deepEqual(outcomes(a.d).filter((o) => o.startsWith('gate:')), ['gate:approve'], 'the gate judged once, never unverified');
+      const last = lanesFacts(a.d).at(-1)!.attempt;
+      assert.ok(gateCalls(a.d)[0]!.cwd.endsWith(`/u1.verify-${last}`), `the gate reads lanes attempt ${last}'s own checkout: ${gateCalls(a.d)[0]!.cwd}`);
+      const certified = facts(a.d).filter((f) => f.kind === 'series-certified' && f.parent.type === 'stage' && f.parent.attempt === last).map((f) => f.kind === 'series-certified' && f.checkout);
+      assert.ok(certified.some((c) => typeof c === 'string' && c.endsWith(`/u1.verify-${last}`)), 'the empty spec series certified its checkout');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('gate.unverified-reruns-lanes: a gate whose spec series\' checkout is gone records unverified, uncharged; the lanes run again and the gate then judges', T, async () => {
+    const { a, r } = await lanesOf({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+    try {
+      const green = lanesFacts(a.d).at(-1)!;
+      assert.equal(green.outcome, 'green');
+      const parent = { type: 'stage', unit: green.unit, stage: 'lanes', attempt: green.attempt } as const;
+      const tree = seriesTree(r.journal.view, parent, verificationWorktree(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, green.unit, green.attempt))!;
+      await removeVerificationTree(r.ctx, tree, parent);
+      await step(r.ctx, r.unit('u1'));
+      const gate = outcomeFacts(a.d).at(-1)!;
+      assert.deepEqual([gate.stage, gate.outcome, gate.class, gate.chargeable], ['gate', 'unverified', 'advance', false]);
+      assert.equal(gateCalls(a.d).length, 0, 'nothing judged without a checkout');
+      await stepUntil(r, 'u1', (x) => x.stage === 'snapshot');
+      assert.deepEqual(outcomes(a.d), [...PRE_LANES, 'lanes:green', 'gate:unverified', 'lanes:green', ...MERGED]);
+      assert.equal(gateCalls(a.d).length, 1);
     } finally {
       r.journal.close();
     }

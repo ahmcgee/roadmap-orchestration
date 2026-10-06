@@ -20,7 +20,7 @@ import { holisticInForce, lanes, loadUnitSpec } from '../src/pipeline/stages.ts'
 import { type StageContext, type StageParent, pinDispatch, verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
 import {
-  LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, type LaneRuntime, type Series, arcJourneyLane, latestSeries, laneOrder, reserveNow, runJourneySeries, runLaneSeries,
+  LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, type LaneRuntime, type Series, arcJourneyLane, latestSpecSeries, laneOrder, reserveNow, runJourneySeries, runLaneSeries,
   seriesLedger, seriesOrder, seriesTree, specSeriesRoot,
 } from '../src/pipeline/lanes.ts';
 import { unitTip } from '../src/pipeline/gate.ts';
@@ -125,7 +125,7 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.deepEqual(reuses(run).map((f) => f.kind === 'lane-reused' && [f.parent, f.lane, f.from]), [[parentOf(2), 'first', { parent: parentOf(1), inv, at: run.base }]]);
     // lanes.ledger-readback-with-reuse: the journal reads the same ledger back, reused entry included, in series order.
     assert.deepEqual(readBack(run, 2, run.base), resumed.ledger);
-    assert.deepEqual(latestSeries(run.journal.view, U1, 'spec'), parentOf(2));
+    assert.deepEqual(latestSpecSeries(run.ctx, U1), parentOf(2));
     // The spawn carries its reuse identity and the red protocol revision.
     const s = first.expect.subject;
     assert.ok(s.purpose === 'lane' && s.identity !== undefined && s.redRev === 2);
@@ -229,7 +229,7 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.equal(second.outcome.kind, 'green');
     assert.deepEqual(second.ledger.map((l) => l.reused !== null), [true, true]);
     assert.equal(spawnIntents(run).filter((i) => i.expect.subject.purpose === 'lane').length, 2, 'nothing ran in attempt 2');
-    const parent = latestSeries(run.journal.view, U1, 'spec')!;
+    const parent = latestSpecSeries(run.ctx, U1)!;
     assert.equal(parent.attempt, 2);
     const path = verificationWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1, parent.attempt);
     assert.equal(second.verification?.path, path);

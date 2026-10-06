@@ -407,7 +407,9 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
     try {
       const unit = stepTo(x.ctx, 'u1', (f) => f.stage === 'plan-check');
       await reached(x.a.d.scenarioDir, 'pc', 120_000);
-      const first = await run(x);
+      // R-20 holds the capture while u1 is in plan-check; past the bounded wait it captures, and the bundle is busy.
+      assert.deepEqual(await run(x), { kind: 'skipped', reason: 'publishing' });
+      const first = await withForge(x.a.forge, () => runCheckpoint({ ...x.ctx, clock: () => CAPTURE_WAIT_MAX_MIN }));
       assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'busy', JSON.stringify(first));
       assert.deepEqual(first.decision.units, [{ unit: 'u1', stage: 'plan-check', attempt: 1 }]);
       assert.match(first.decision.detail, /u1, which is in plan-check attempt 1/);
@@ -480,6 +482,27 @@ describe('the capture waits for a publication in flight (R-15)', () => {
       const out = await run(x);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
       assert.equal(factsOfKind(x.r, 'checkpoint-inputs')[0]!.headSha, git(x.a.d.repo, 'rev-parse', 'main'), 'the capture is the published head');
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('checkpoint.capture-waits-for-plan-check (R-20): a due checkpoint captures nothing while a unit is in plan-check, which may patch a spec it reads; it captures once the plan-check decides', T, async () => {
+    const pc = planCheckStep({ decision: 'approve' });
+    const x = await arc([{ ...pc, acts: [pcBarrier, ...pc.acts] } as Step, checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
+    try {
+      const checked = stepTo(x.ctx, 'u1', (f) => f.stage === 'plan-check');
+      await reached(x.a.d.scenarioDir, 'pc', 120_000);
+      assert.deepEqual(publishing(x.r.journal.view), ['u1 at plan-check attempt 1']);
+      assert.deepEqual(await run(x), { kind: 'skipped', reason: 'publishing' });
+      assert.deepEqual(factsOfKind(x.r, 'checkpoint-inputs'), [], 'nothing captured, nothing asked');
+      assert.deepEqual(ckptCalls(x), []);
+      release(x.a.d.scenarioDir, 'pc');
+      await checked;
+      assert.deepEqual(publishing(x.r.journal.view), []);
+      const out = await run(x);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
+      assert.deepEqual(ckptCalls(x), ['ckpt-1']);
     } finally {
       x.r.journal.close();
     }

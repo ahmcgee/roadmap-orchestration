@@ -17,7 +17,7 @@ import type { LaneDef } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { git, gitRun, lsTree } from '../src/git/git.ts';
 import { snapshotRef, snapshotRequestOf, verifySnapshot } from '../src/git/snapshot.ts';
-import { runCheckpoint } from '../src/holistic/checkpoint.ts';
+import { CAPTURE_WAIT_MAX_MIN, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import type { HostSample } from '../src/host/sample.ts';
 import { reentryRecommendation } from '../src/needsuser.ts';
 import { type StageContext, type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
@@ -232,7 +232,8 @@ test('status.checkpoint-busy-wait: a checkpoint rejected busy shows "waiting for
     await completedAudit(r, ctx);
     const unit = stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
     await reached(a.d.scenarioDir, 'pc', 120_000);
-    const first = await withForge(a.forge, () => runCheckpoint(ctx));
+    // Past R-20's bounded wait for the plan-check (a capture waits while a unit is in plan-check).
+    const first = await withForge(a.forge, () => runCheckpoint({ ...ctx, clock: () => CAPTURE_WAIT_MAX_MIN }));
     assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'busy', JSON.stringify(first));
     const waiting = await withForge(a.forge, () => statusOfRun(r));
     assert.deepEqual(waiting.checkpointWaits, [{ job: 'ckpt-1', waitingFor: [{ unit: 'u1', stage: 'plan-check', attempt: 1 }], line: 'checkpoint ckpt-1 waiting for u1 plan-check boundary' }]);

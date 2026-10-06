@@ -39,6 +39,8 @@ export type ChecksOptions = Readonly<{
   argv?: (wrapper: string) => readonly string[];
   /** u1's spec lane `mul` runs this argv instead (a colocated test file). */
   specLane?: readonly string[];
+  /** u1's spec declares no lanes (a repair unit whose checks are its witnesses, paid M4a run 11). */
+  noSpecLanes?: boolean;
   /** Files committed on the integration tip before anything runs (what the unit then leaves alone). */
   tipFiles?: Readonly<Record<string, string>>;
   /** The control file's scripts (default `*`: every test id passes). */
@@ -75,6 +77,7 @@ export async function checksArc(opts: ChecksOptions): Promise<ChecksArc> {
   editJson(specPathOf(d, 'u1'), (s) => {
     if (opts.declares ?? true) s['obligations'] = ['I-1'];
     if (opts.specLane !== undefined) s['lanes'] = (s['lanes'] as Json[]).map((l) => (l['id'] === 'mul' ? { ...l, argv: opts.specLane } : l));
+    if (opts.noSpecLanes === true) s['lanes'] = [];
     if (opts.witnesses !== undefined) {
       s['witnesses'] = opts.witnesses.map((w) => ({ id: w.id, lane: 'journey', testId: w.testId, clause: w.clause ?? 'A1', skeleton: `test('${w.testId}')`, state: w.state ?? 'active' }));
     }
