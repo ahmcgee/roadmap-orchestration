@@ -14,8 +14,17 @@
 //   arc 3  (story only, refused at K) the harbour master's day view, T-17.
 //
 // Units: arc 1 `guard` (I-1, T-7) and `confirm` (I-2, T-11); arc 2 `cutoff` (I-4, T-15) and `notice` (I-5, T-16);
-// arc 3 `dayview` (T-17, out of slice in the story: no obligation). I-3 (T-5, the tide table) is must-hold from the start. Their fake builds are
-// files/units/<unit>/; the journeys every witness lane runs are files/golden/journeys/, committed with the bootstrap.
+// arc 3 `dayview` (T-17, out of slice in the story: no obligation). I-3 (T-5, the tide table) is must-hold from the
+// start. Their fake builds are files/units/<unit>/ (guard's first, witness-missing attempt files/units/guard-first/);
+// the journeys every witness lane runs are files/golden/journeys/, committed with the bootstrap. Arc 2's checkpoint
+// admits `fits` (files/units/fits/, the opportunity, V-7) and a day view the budget converts (`OPPORTUNITY`).
+//
+// The M4a rev 3 checks the fake exercises through these inputs: every plan writes `planCheck.shape: by-builder`, so the
+// low-risk units take the efficient acceptance-shape plan-check and `confirm` (high risk, the frontier builder)
+// assesses in session; every arc lane declares `testPaths`, so mutation smoke runs for `confirm`, whose spec names the
+// tide-table journey as witness item W-1, a test the change never needed (a smoke survivor); `notice` declares a
+// second spec lane, `slow` (`SLOW_LANE`), that hangs on its first run so the scripted root agent can pause notice there
+// and see the resumed attempt reuse the first lane's pass.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -172,6 +181,8 @@ export function corpusFor(n: ArcNo): Readonly<Record<string, string>> {
 // Obligations, census, units
 
 export type LaneSeed = Readonly<{ id: string; journey: string; test: string }>;
+/** Every arc lane's `testPaths`: the journeys and the unit tests, so mutation smoke reverts production code only. */
+export const TEST_PATHS: readonly string[] = ['journeys/**', 'test/**'];
 export const LANES: readonly LaneSeed[] = [
   { id: 'tides', journey: 'journeys/tides.journey.js', test: 'tide windows come from the harbour tide table' },
   { id: 'berths', journey: 'journeys/berths.journey.js', test: 'a berth is never booked twice for one tide window' },
@@ -200,14 +211,34 @@ export const CENSUS_OTHERS: Readonly<Record<string, 'out-of-slice' | 'untestable
   'T-9': 'out-of-slice', 'T-10': 'out-of-slice', 'T-12': 'out-of-slice', 'T-13': 'out-of-slice', 'T-14': 'prod-only', 'T-17': 'out-of-slice',
 };
 
+/** A spec witness item (M4a rev 3): test `testId` of arc lane `lane` witnesses the spec's acceptance clause `clause`. */
+export type WitnessSeed = Readonly<{ id: string; lane: string; testId: string; clause: string }>;
+
 export type UnitSeed = Readonly<{
-  id: string; arc: ArcNo; scope: readonly string[]; after: readonly string[]; obligations: readonly string[];
-  unitLane: Readonly<{ id: string; file: string }>; acceptance: readonly string[];
+  id: string; arc: ArcNo; risk: 'low' | 'high'; scope: readonly string[]; after: readonly string[]; obligations: readonly string[];
+  unitLane: Readonly<{ id: string; file: string }>; acceptance: readonly string[]; witnesses?: readonly WitnessSeed[];
 }>;
+
+/**
+ * notice's second spec lane: it hangs on its first run (printing progress, so no stall watchdog kills it) and passes
+ * on any later one, the marker file outside the checkout telling the two apart. The scripted root agent pauses notice
+ * while it hangs; the resumed attempt reuses the first lane's pass at the same commit and runs this one again.
+ */
+export const SLOW_LANE = {
+  unit: 'notice', id: 'slow', markerEnv: 'TIDEWATER_SLOW_MARKER',
+  script: [
+    "const fs = require('node:fs');",
+    'const marker = process.env.TIDEWATER_SLOW_MARKER;',
+    "if (fs.existsSync(marker)) { console.log('slow: the second run passes'); process.exit(0); }",
+    "fs.writeFileSync(marker, '');",
+    "setInterval(() => console.log('slow: still working'), 2000);",
+    "setTimeout(() => { console.error('slow: never paused within 10 minutes'); process.exit(1); }, 600000);",
+  ].join(' '),
+} as const;
 
 export const UNITS: readonly UnitSeed[] = [
   {
-    id: 'guard', arc: 1, scope: ['src/ledger.js', 'test/unit/ledger.test.js'], after: [], obligations: ['I-1'],
+    id: 'guard', arc: 1, risk: 'low', scope: ['src/ledger.js', 'test/unit/ledger.test.js'], after: [], obligations: ['I-1'],
     unitLane: { id: 'ledger', file: 'test/unit/ledger.test.js' },
     acceptance: [
       '`book` in src/ledger.js refuses a berth already booked for the same date and high water with a TidewaterError naming the vessel that holds it (T-7); nothing is written for a refused booking.',
@@ -215,16 +246,18 @@ export const UNITS: readonly UnitSeed[] = [
     ],
   },
   {
-    id: 'confirm', arc: 1, scope: ['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js'], after: ['guard'], obligations: ['I-2'],
+    id: 'confirm', arc: 1, risk: 'high', scope: ['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js'], after: ['guard'], obligations: ['I-2'],
     unitLane: { id: 'confirm-unit', file: 'test/unit/confirm.test.js' },
     acceptance: [
       'src/confirm.js `sendConfirmation(booking)` appends one line `<phone>\\t<text>` to the outbox (TIDEWATER_OUTBOX, default tidewater-outbox.txt), the text being the "Booking confirmed" template of 0040_Notifications/message-templates.md (T-11).',
       '`book` in src/cli.js sends the confirmation after the booking is written.',
       'test/unit/confirm.test.js covers the message and passes under the confirm-unit lane.',
     ],
+    // A witness the change never needed: the tide table's journey passes with confirm reverted (mutation smoke's survivor).
+    witnesses: [{ id: 'W-1', lane: 'tides', testId: 'tide windows come from the harbour tide table', clause: 'A2' }],
   },
   {
-    id: 'cutoff', arc: 2, scope: ['src/cli.js', 'src/ledger.js', 'test/unit/ledger.test.js'], after: [], obligations: ['I-4'],
+    id: 'cutoff', arc: 2, risk: 'low', scope: ['src/cli.js', 'src/ledger.js', 'test/unit/ledger.test.js'], after: [], obligations: ['I-4'],
     unitLane: { id: 'ledger', file: 'test/unit/ledger.test.js' },
     acceptance: [
       '`cancel(id, now)` in src/ledger.js refuses a cancellation later than 48 hours before the booking\'s window opens, saying so (T-15).',
@@ -233,7 +266,7 @@ export const UNITS: readonly UnitSeed[] = [
     ],
   },
   {
-    id: 'notice', arc: 2, scope: ['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js'], after: ['cutoff'], obligations: ['I-5'],
+    id: 'notice', arc: 2, risk: 'low', scope: ['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js'], after: ['cutoff'], obligations: ['I-5'],
     unitLane: { id: 'confirm-unit', file: 'test/unit/confirm.test.js' },
     acceptance: [
       'src/confirm.js `sendCancellation(booking)` appends the "Booking cancelled" template to the outbox (T-16).',
@@ -242,13 +275,32 @@ export const UNITS: readonly UnitSeed[] = [
     ],
   },
   {
-    id: 'dayview', arc: 3, scope: ['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js'], after: [], obligations: [],
+    id: 'dayview', arc: 3, risk: 'low', scope: ['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js'], after: [], obligations: [],
     unitLane: { id: 'dayview-unit', file: 'test/unit/dayview.test.js' },
     // No rule id in the clause: the story's arc-3 census leaves T-17 out of slice (no obligation is drafted for it), and an
     // acceptance clause naming an out-of-slice rule is a `spec-census-mismatch` row (M4a rev 3, H3) that arc 3 must not hit.
     acceptance: ['`tidewater day <date>` prints the day\'s windows with each berth\'s booking.'],
   },
 ];
+
+/** A unit's spec as the golden Phase 0 (or arc 2's checkpoint) writes it; `extraLanes` follow the unit lane. */
+export type SpecSeed = Pick<UnitSeed, 'scope' | 'unitLane' | 'acceptance' | 'witnesses'> & Readonly<{ id: string; obligations?: readonly string[] }>;
+export const PASS_PATH = { set: {}, pass: ['PATH'] } as const;
+
+export function specLane(id: string, argv: readonly string[], env: Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }> = PASS_PATH) {
+  return { id, argv: [...argv], cwd: '.', env: { set: { ...env.set }, pass: [...env.pass] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' };
+}
+
+export function specOf(u: SpecSeed, extraLanes: readonly ReturnType<typeof specLane>[] = []) {
+  const obligations = u.obligations ?? [];
+  return {
+    schema: 'roadmap/spec-m1', unit: u.id, rev: 1, scope: [...u.scope], resources: [], decisions: [],
+    lanes: [specLane(u.unitLane.id, ['node', '--test', u.unitLane.file]), ...extraLanes],
+    acceptance: u.acceptance.map((clause, i) => ({ id: `A${i + 1}`, clause, failLoudIfUndelivered: true, state: 'active' })),
+    facts: [], cites: { contracts: [], rulings: ['C-1'] }, ...(obligations.length === 0 ? {} : { obligations: [...obligations] }),
+    ...(u.witnesses === undefined ? {} : { witnesses: u.witnesses.map((w) => ({ ...w, skeleton: `test('${w.testId}', ...) in the ${w.lane} lane's journey`, state: 'active' })) }),
+  };
+}
 
 /** The path → obligations mapping: every scoped path and journey. */
 export const MAPPING: readonly Readonly<{ pattern: string; obligations: readonly string[] }>[] = [
@@ -275,6 +327,28 @@ export const SLICES: Readonly<Record<ArcNo, Readonly<{ advances: readonly string
 };
 
 export const DIRECTION = 'Grow tidewater toward the harbour the vision describes, one scene at a time.';
+
+/**
+ * Arc 2's first checkpoint (scenario.ts) admits two units outside the owner's slice (V-5), each citing the one clause it
+ * advances (honest citation): `fits` (V-7) is the arc's opportunity O-1, and V-7 joins `advances`; `dayview` (V-6) is
+ * over the budget of one, so code converts it into a corpus amendment, which arc 3's Phase 0 applies as T-17.
+ */
+export const OPPORTUNITY = {
+  fits: {
+    unit: { id: 'fits', risk: 'low', scope: ['src/registers.js', 'test/unit/registers.test.js'], after: ['notice'], origin: 'checkpoint' },
+    unitLane: { id: 'registers-unit', file: 'test/unit/registers.test.js' },
+    acceptance: ['src/registers.js `berthsFor(draught)` lists the berths whose maximum draught takes a vessel of that draught, shallowest first; a draught that is not a positive number is refused.'],
+    cites: ['V-7'],
+    why: 'A visiting yacht finds the berths its draught allows (V-7): one function over the berth register, in reach while cancellations are built.',
+  },
+  dayview: {
+    unit: { id: 'dayview', risk: 'low', scope: ['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js'], after: [], origin: 'checkpoint' },
+    unitLane: { id: 'dayview-unit', file: 'test/unit/dayview.test.js' },
+    acceptance: ['`tidewater day <date>` prints the day\'s windows with each berth\'s booking.'],
+    cites: ['V-6'],
+    why: 'The harbour master\'s morning (V-6) needs one view of the day; nothing shows it yet.',
+  },
+} as const;
 
 /** The curation digest and the semantic records of arc 1 (paths under the corpus root). */
 export const ARC1_CURATION = [

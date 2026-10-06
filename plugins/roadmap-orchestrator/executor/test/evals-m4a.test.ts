@@ -2,11 +2,15 @@
 // scripted root agent (evals/m4a/fake-root.ts) replaying the golden Phase-0 outputs through the staged plugin's real
 // CLI, against the fake backends (evals/m4a/scenario.ts) and the fake gh over a local bare origin; real processes,
 // real git, the real supervisor, real node-test witness lanes over the product's journeys. Two scripts run side by
-// side: `story` (bootstrap, arc 1 with the pack-review hold, the cutoff question, arc 2 with the mid-arc policy flip,
-// arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice candidate, stop vision-silent).
+// side: `story` (bootstrap, arc 1 with the pack-review hold, a witness fix round, an in-session assessment and a smoke
+// survivor, the cutoff question, arc 2 with the mid-arc policy flip, an opportunity admit and a converted one, a pause in
+// a hung lane and the lane reuse after it, arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice
+// candidate, stop vision-silent). The story synchronises on events, never on time, so its turns are the same every run.
 // Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.intake-filtering, evals-m4a.pack-review-hold,
 // evals-m4a.amendments-debt, evals-m4a.policy-flip, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
-// evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.untrusted-start, evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.wake-key.
+// evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.witness-missing,
+// evals-m4a.in-session-smoke, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause, evals-m4a.untrusted-start,
+// evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.wake-key, skill.operator-log-format.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -15,17 +19,18 @@ import { fileURLToPath } from 'node:url';
 import { after, before, describe, test } from 'node:test';
 import { type ArcRef, amendmentsOf } from '../src/chain.ts';
 import { captureIssues } from '../src/commands/issues.ts';
-import type { Event, Fact } from '../src/core/events.ts';
+import type { Event, Fact, Parent } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { parseDebtBlock } from '../src/docs/debt.ts';
 import { readStore, writeStore } from './fakes/gh-store.ts';
 import { verdictProblems, stageTree } from '../evals/m4a/adjudicate.ts';
-import { type CheckResult, CRITERIA, arcView, chainOf } from '../evals/m4a/check.ts';
+import { type CheckResult, CRITERIA, LEVERS, arcView, chainOf, parseOperatorLog } from '../evals/m4a/check.ts';
 import { type OwnerCtx, type Report, codeAnswer, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin, wakeKey } from '../evals/m4a/driver.ts';
 import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
-import { FILES, LANES, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
+import { FILES, LANES, SLOW_LANE, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
+import { DRIFT_CHECKPOINT } from '../evals/m4a/scenario.ts';
 import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../evals/m4a/key.ts';
 import { INJECTION_MARKER, layout } from '../evals/m4a/layout.ts';
 import { ANSWER_KEY, needles, toolTraffic } from '../evals/m4a/transcript.ts';
@@ -93,6 +98,22 @@ const raisedOf = (events: readonly Event[], reason: string, dir: string, n: numb
     return file.reason === reason ? [{ id: e.expect.id as string, seq: e.seq }] : [];
   });
 
+/** A unit's stage outcomes, `<stage>:<outcome>` in log order, and the facts themselves. */
+const outcomesOf = (events: readonly Event[], unit: string): readonly Seq<Extract<Fact, { kind: 'stage-outcome' }>>[] => factsOf(events, 'stage-outcome').filter((f) => f.unit === unit);
+const named = (o: readonly Readonly<{ stage: string; outcome: string }>[]): readonly string[] => o.map((f) => `${f.stage}:${f.outcome}`);
+/** The `lane` spawns of `unit`'s lane `lane` (spec, suite or journey runs alike). */
+const laneSpawns = (events: readonly Event[], unit: string, lane: string): readonly Event[] =>
+  events.filter((e) => e.type === 'intent' && e.kind === 'proc.spawn' && JSON.stringify(e.expect).includes(`"unit":"${unit}"`) && (e.expect as { subject?: { purpose?: string; lane?: string } }).subject?.purpose === 'lane' && (e.expect as { subject: { lane?: string } }).subject.lane === lane);
+/** One arc's fake backend calls, as calls.jsonl records them. */
+const callsOf = (dir: string, n: number): readonly Readonly<{ step: number | null; unit: string | null; argv: readonly string[]; stdin: string }>[] =>
+  readFileSync(join(layout(dir).fake, `arc-${n}`, 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { step: number | null; unit: string | null; argv: string[]; stdin: string });
+/** A stage parent's fields; any other parent is a bug in the story. */
+const stageOf = (p: Parent): Extract<Parent, { type: 'stage' }> => {
+  if (p.type !== 'stage') throw new Error(`not a stage parent: ${JSON.stringify(p)}`);
+  return p;
+};
+const argAfter = (argv: readonly string[], flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
+
 /** Every step of each arc's fake scenario was played once, by a call that matched it. */
 function assertEveryStepPlayed(dir: string, arcs: readonly number[]): void {
   for (const n of arcs) {
@@ -148,12 +169,15 @@ test('evals-m4a.setup-valid: the messy corpus hides its defects, the key\'s span
   const suite = () => spawnSync('npm', ['test'], { cwd: tree, env: ENV, encoding: 'utf8', timeout: 120_000 });
   assert.equal(suite().status, 0, 'the seed suite is green');
   assert.deepEqual(journeys(tree), { tides: 0, berths: 1, confirm: 1, cutoff: 1, notice: 1 }, 'at the seed only the tide table holds');
+  cpSync(join(FILES, 'units', 'guard-first'), tree, { recursive: true });
+  assert.equal(suite().status, 0, 'guard\'s first attempt passes its unit tests');
+  assert.equal(journeys(tree)['berths'], 1, 'but not the berths journey: its refusal does not name the vessel (the witness fix round)');
   for (const u of ['guard', 'confirm']) cpSync(join(FILES, 'units', u), tree, { recursive: true });
   assert.equal(suite().status, 0);
   assert.deepEqual(journeys(tree), { tides: 0, berths: 0, confirm: 0, cutoff: 1, notice: 1 }, 'arc 1 delivers I-1 and I-2');
-  for (const u of ['cutoff', 'notice']) cpSync(join(FILES, 'units', u), tree, { recursive: true });
+  for (const u of ['cutoff', 'notice', 'fits']) cpSync(join(FILES, 'units', u), tree, { recursive: true });
   assert.equal(suite().status, 0);
-  assert.deepEqual(journeys(tree), { tides: 0, berths: 0, confirm: 0, cutoff: 0, notice: 0 }, 'arc 2 delivers I-4 and I-5');
+  assert.deepEqual(journeys(tree), { tides: 0, berths: 0, confirm: 0, cutoff: 0, notice: 0 }, 'arc 2 delivers I-4 and I-5, and the opportunity breaks none');
 
   // The forge: trusted; the capture keeps issues #1 and #2 and the author's comment, drops the stranger's and the PR entry.
   const before = process.env['PATH'];
@@ -202,7 +226,18 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const { driver, report, checked } = story;
     assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
     assert.deepEqual([report.endedBy, report.stopReason, report.failure], ['stopped', 'k-limit', null]);
-    assert.deepEqual(report.turns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'owner', 'wake', 'owner', 'wake']);
+    assert.deepEqual(report.turns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake']);
+    // Each wake carries exactly the events the story synchronises on (paid run 10 batch: two events 3.7 s apart against
+    // the 3 s debounce once made an extra wake); the same lines every run, whatever the timing.
+    const wakes = report.turns.filter((t) => t.kind === 'wake').map((t) => t.prompt.split('\n').slice(1).map((x) => {
+      const e = JSON.parse(x) as { event: string; reason?: string; run?: string };
+      return e.event === 'needs-user' ? `needs-user:${e.reason}` : `${e.event}:${e.run}`;
+    }).sort());
+    assert.deepEqual(wakes, [
+      ['needs-user:pack-review'], ['units:complete'],
+      ['units:blocked'], ['needs-user:issue-policy-untrusted'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],
+    ]);
+    assert.deepEqual(checked.result.interventions, { n: 1, byLever: { pause: 1 }, malformed: [] }, 'the one intervention, logged once');
     assert.deepEqual(report.owner.map((o) => [o.by, o.answer]), [
       ['code', 'K = 1.'], ['code', 'Yes, I accept that slice.'],
       ['simulator', (JSON.parse(readFileSync(ANSWER_KEY, 'utf8')) as { ownerAnswers: { answer: string }[] }).ownerAnswers[0]!.answer],
@@ -264,14 +299,19 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const between = (seq: number) => seq > item.seq && seq < ack.seq;
     assert.deepEqual(factsOf(arc2, 'checkpoint-inputs').filter((f) => between(f.seq)), [], 'no checkpoint captured while it was open');
     assert.deepEqual(factsOf(arc2, 'issues-captured').filter((f) => between(f.seq)), []);
-    // While it was open, status showed the arc-wide hold (the root agent read it before clearing notice's run-only).
+    // While it was open, status showed the arc-wide hold: the root agent's last status read before its ack.
     const traffic = toolTraffic(layout(story.dir).transcript);
-    const status = traffic.findIndex((t) => t.kind === 'tool_use' && t.text.includes('roadmap status') && t.text.includes(fakeArc(story.dir, 2)));
+    const acked = traffic.findIndex((t) => t.kind === 'tool_use' && t.text.includes(`roadmap ack ${item.id}`));
+    assert.ok(acked >= 0, 'the root agent acked the item');
+    const status = traffic.findLastIndex((t, i) => i < acked && t.kind === 'tool_use' && t.text.includes('roadmap status') && t.text.includes(fakeArc(story.dir, 2)));
     assert.ok(status >= 0, 'the root agent read status on the item');
     assert.match(traffic[status + 1]!.text, /\\"holds\\":\[\\"issue-policy-untrusted\\"\]/, 'admission was held arc-wide');
     const notice = factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice');
     assert.ok(notice.length > 0 && notice.every((d) => d.seq > ack.seq), 'notice was admitted only after the ack');
     assert.ok(factsOf(arc2, 'checkpoint-inputs').some((f) => f.seq > ack.seq), 'the checkpoint captured after the ack');
+    // The audit of cutoff waited for the root agent's blocked wake, so the item came after that wake's turn.
+    const blockedTurn = story.report.turns.find((t) => t.kind === 'wake' && t.prompt.includes('"run":"blocked"'));
+    assert.ok(blockedTurn !== undefined && traffic.some((t) => t.turn === blockedTurn.n && t.kind === 'tool_use' && t.text.includes('roadmap status')), 'the blocked wake read status');
   });
 
   test('evals-m4a.k-limit: with K = 1 and arc 2 unacked, arc 3 is refused chain-invalid{limit} at phase0 check and at start', () => {
@@ -389,6 +429,87 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(pass, ['isolation', 'intake-filtered', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile'], 'the paid run\'s criteria that need a second arc or the k-limit stop fail here');
     assert.match(checked.result.criteria.find((c) => c.name === 'stopped-at-k')!.detail, /vision-silent/);
   });
+
+  test('evals-m4a.witness-missing: guard\'s first build passes its unit lane but fails the berths witness, so a fix round naming the test comes before any gate', () => {
+    const guard = outcomesOf(arc1, 'guard');
+    assert.deepEqual(named(guard).filter((o) => /^(lanes|gate|build|plan-check):/.test(o)), ['plan-check:approve', 'build:success', 'lanes:witnesses-missing', 'build:success', 'lanes:green', 'gate:approve']);
+    const missing = guard.find((o) => o.outcome === 'witnesses-missing')!;
+    assert.deepEqual(missing.detail, { kind: 'witnesses-missing', missing: [], failed: [{ lane: 'berths', testId: LANES.find((x) => x.id === 'berths')!.test }] });
+    // The fix round's call is the scenario's resume step that expects the failing id in its prompt (every step played once).
+    const calls = callsOf(story.dir, 1).filter((c) => c.unit === 'guard');
+    assert.equal(calls.length, 4, 'plan-check, build, the witness fix round, gate');
+    assert.match(calls[2]!.stdin, /Failing: test "a berth is never booked twice for one tide window" on lane berths/);
+    assert.match(calls[2]!.stdin, /witness-check --lane-file/, 'the fix round names the witness check command');
+  });
+
+  test('evals-m4a.in-session-smoke: confirm (frontier) makes no plan-check call, assesses and implements in one session; smoke finds W-1 surviving, one fix round, then the gate', () => {
+    const confirm = outcomesOf(arc1, 'confirm');
+    assert.deepEqual(named(confirm).filter((o) => /^(lanes|gate|build|plan-check):/.test(o)), [
+      'plan-check:in-session', 'build:success', 'lanes:smoke-survived', 'build:success', 'lanes:smoke-survived', 'gate:approve',
+    ]);
+    const calls = callsOf(story.dir, 1).filter((c) => c.unit === 'confirm');
+    assert.equal(calls.length, 4, 'assess, implement, the smoke fix round, gate: no plan-check call');
+    const session = argAfter(calls[0]!.argv, '--session-id');
+    assert.ok(session !== undefined && !calls[0]!.argv.includes('--tools'));
+    assert.deepEqual([argAfter(calls[1]!.argv, '--resume'), argAfter(calls[2]!.argv, '--resume')], [session, session], 'one session: implement and the fix round resume the assessment');
+    assert.ok(calls[3]!.argv.includes('--tools'), 'the gate still runs');
+    const tides = { lane: 'tides', testId: LANES.find((x) => x.id === 'tides')!.test };
+    const ran = factsOf(arc1, 'smoke-ran').filter((f) => f.unit === 'confirm');
+    assert.equal(ran.length, 2);
+    for (const r of ran) assert.deepEqual(r.verdict, { killed: [{ lane: 'confirm', testId: LANES.find((x) => x.id === 'confirm')!.test }], survived: [tides], inconclusive: [] });
+    assert.equal(ran[0]!.key, ran[1]!.key, 'the fix round left the production change as it was: the allowance reused the first run');
+    const mutants = arc1.filter((e) => e.type === 'intent' && e.kind === 'mutant.apply');
+    assert.equal(mutants.length, 1, 'one smoke execution');
+    // The fix round changed nothing, so the second lanes attempt reused the unit lane's pass at the same commit.
+    assert.equal(factsOf(arc1, 'lane-reused').filter((f) => stageOf(f.parent).unit === 'confirm').length, 1);
+    assert.deepEqual(confirm.find((o) => o.outcome === 'smoke-survived')!.detail, { kind: 'smoke-survived', obligations: [], testIds: [tides] });
+  });
+
+  test('evals-m4a.opportunity: arc 2\'s checkpoint admits fits as the opportunity O-1 (V-7 joins advances) and converts the over-budget day view into an amendment, which arc 3 applies as T-17', () => {
+    const bundle = factsOf(arc2, 'plan-applied').find((p) => p.source?.type === 'bundle');
+    assert.ok(bundle !== undefined && bundle.source?.type === 'bundle');
+    assert.deepEqual(bundle.source.admits, [{ index: 0, unit: 'fits', class: { type: 'opportunity', id: 'O-1', clauses: ['V-7'] } }]);
+    assert.deepEqual(bundle.source.conversions, [{ index: 1, unit: 'dayview', reason: 'over-budget', opportunity: null }]);
+    const [amendment] = factsOf(arc2, 'corpus-amendment');
+    assert.deepEqual(amendment?.source, { type: 'admit', job: 'ckpt-1', index: 1, reason: 'over-budget' });
+    assert.deepEqual(named(outcomesOf(arc2, 'fits')).filter((o) => o.startsWith('ff:')), ['ff:published'], 'fits merged');
+    assert.deepEqual(named(outcomesOf(arc2, 'dayview')), [], 'the converted unit never ran');
+    const two = chainOf(absPath(layout(story.dir).product)).two!;
+    assert.deepEqual(two.plan.holistic?.advances, ['V-5', 'V-7'], 'the opportunity\'s clause joined the slice in force');
+    // The bundle's drift audit and its checkpoint ran before notice was admitted (the root agent waited on them).
+    const drift = factsOf(arc2, 'checkpoint-inputs').find((f) => f.job === DRIFT_CHECKPOINT)!;
+    assert.ok(factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice').every((d) => d.seq > drift.seq));
+    const arc3 = JSON.parse(readFileSync(join(layout(story.dir).inputs, fakeArc(story.dir, 3), 'phase0.json'), 'utf8')) as { amendments: { id: string; disposition: unknown }[] };
+    assert.equal(amendmentsOf(two).length, 1);
+    assert.deepEqual(arc3.amendments, amendmentsOf(two).map((a) => ({ id: a.id, disposition: { type: 'applied', rules: ['T-17'] } })), 'arc 2\'s one amendment, the converted admit');
+  });
+
+  test('evals-m4a.lane-reuse-after-pause: the root agent pauses notice in its hung slow lane and resumes it; the resumed attempt reuses the unit lane\'s pass and logs one intervention', () => {
+    const notice = outcomesOf(arc2, 'notice');
+    assert.deepEqual(named(notice).filter((o) => o.startsWith('lanes:')), ['lanes:interrupted', 'lanes:green']);
+    const [first, second] = notice.filter((o) => o.stage === 'lanes');
+    const reused = factsOf(arc2, 'lane-reused').filter((f) => stageOf(f.parent).unit === 'notice');
+    assert.deepEqual(reused.map((f) => [f.lane, stageOf(f.parent).attempt, stageOf(f.from.parent).attempt]), [['confirm-unit', second!.attempt, first!.attempt]]);
+    assert.equal(laneSpawns(arc2, 'notice', 'confirm-unit').length, 1, 'the unit lane ran once');
+    assert.equal(laneSpawns(arc2, 'notice', SLOW_LANE.id).length, 2, 'the slow lane ran twice: killed by the pause, then passed');
+    const traffic = toolTraffic(layout(story.dir).transcript).filter((t) => t.kind === 'tool_use');
+    const pause = traffic.find((t) => t.text.includes('roadmap pause notice'));
+    const resume = traffic.find((t) => /roadmap resume --repo/.test(t.text));
+    assert.ok(pause !== undefined && resume !== undefined && resume.turn === pause.turn + 1, 'paused in one turn, resumed on the next wake');
+    const log = parseOperatorLog(readFileSync(join(layout(story.dir).inputs, 'skill-feedback.md'), 'utf8'));
+    assert.deepEqual(log, { n: 1, byLever: { pause: 1 }, malformed: [] });
+  });
+});
+
+test('skill.operator-log-format: reference.md\'s operator-log example parses with check.ts\'s parser, every lever in the closed list', () => {
+  const ref = readFileSync(fileURLToPath(new URL('../../skills/orchestrate/reference.md', import.meta.url)), 'utf8');
+  const section = ref.slice(ref.indexOf('\n## The operator log\n'));
+  const block = /```operator-log\n([\s\S]*?)\n```/.exec(section);
+  assert.ok(block !== null, 'an operator-log fenced block under "The operator log"');
+  const parsed = parseOperatorLog(block[1]!);
+  assert.equal(parsed.n, 1);
+  assert.deepEqual(parsed.malformed, []);
+  for (const lever of Object.keys(parsed.byLever)) assert.ok((LEVERS as readonly string[]).includes(lever));
 });
 
 test('evals-m4a.untrusted-start: under PUBLIC + ALL, phase0 check and start refuse issue-policy-untrusted before anything runs', T, async () => {

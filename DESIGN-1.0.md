@@ -245,7 +245,9 @@ that fails partway leaves one residue per failed resource. `start` for any arc r
 - **Known defects and priority (A-M4-24; opt-in).** `plan.knownDefects [{id: K-n, match: lane | output{contains},
   fixUnit}]`: a unit matching an active defect records `known-defect` uncharged and waits at `prepare` until the fixer's
   lineage merges (one predicate, `knownDefectActive`; the fixer is never held by its own defect; the combined dependency
-  and hold graph is cycle-checked; once the fixer merges a later match charges normally). A unit's `priority: high`
+  and hold graph is cycle-checked; once the fixer merges a later match charges normally; removing an entry or editing
+  its match releases the units it held at once, whose lanes then decide again; a changed fixer alone keeps the hold
+  under the new fixer). A unit's `priority: high`
   ranks it before every `normal` waiter, ahead of promotion.
 
 ### 2.3 Architect commands
