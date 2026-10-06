@@ -313,3 +313,36 @@ unattended week is only safe if the owner can see, in one place, everything deci
 - **Efficiency waits for M4b.** M4a only measures stage timings; the root agent reports slowdowns as
   observations and changes nothing that grades the work.
 
+## 18. Checks that run, admits that are classed, supervision that is logged [M4]
+
+**Evidence.** Paid runs 4 to 9 of the M4a fixture. Witness defects dominated the gate's work: 5 spec witnesses never
+written, 15 weak witnesses at the gate, 38 post-merge vacuity findings, 4 tests that read the real clock. The build
+prompt carried no witness ids, so a builder saw the tests it had to pass only as prose. Plan-check caught nothing
+material for frontier builders (one citation redirect in 11) and five real redirects for efficient ones. Run 9's
+checkpoints admitted a chain of three units that drifted into a vision clause outside the slice, each citing in-slice
+clauses only. In run 1 the root agent, unsure what it was allowed to touch, searched the filesystem for the fixture's
+own scripts.
+
+**Decision.**
+
+- **Executable before judged** (lead ruling LR-j). In a corpus arc every witness a unit must pass runs by exact test
+  id before the gate, and the builder can run the same check (`witness-check`); a missing id is a fix round, not a
+  gate finding. For a med or high-risk unit, mutation smoke reverts its production change and runs its witnesses
+  again: a witness that still passes did not need the change. One fix round, then the gate decides with the
+  survivors in view, because some behaviour truly predates the unit.
+- **Plan-check by builder class** (E). A frontier builder assesses the spec in its own session, as the build's first
+  structured output, before any edit, so an infeasible or riskier spec is routed before code exists. An efficient
+  builder keeps a plan-check, narrowed to adding witness items through the one spec patch channel. Run 10 measures
+  it against the runs 4 to 9 baseline; the template reverts on a safety regression.
+- **Admit classes** (owner ruling OR-A1, lead ruling LR-k). Code, not the checkpoint, classes each admit from what it
+  touches: repair and oversight always pass; an opportunity outside the slice must cite its clauses, shows in the
+  brief, and is capped at one per arc with one follow-up repair; anything else becomes a corpus amendment for the
+  next Phase 0. A checkpoint can still widen an arc, but never silently.
+- **Clocks are spec guidance, not code** (R39). No product-agnostic clock seam exists, and faking time from outside
+  changes what a declared lane runs. The spec pins the product's own seam and adds a shifted-clock lane; the gate and
+  the reviews treat a real-clock test as a defect class.
+- **Supervision through levers, with a log** (owner ruling OR-A3). The root agent observes cheaply and acts through
+  the CLI's levers, never by patching the executor or its run dir. Each intervention is logged with the executor
+  change that would have made it unnecessary; the fixture counts them, so an executor that needs less supervision
+  scores better.
+

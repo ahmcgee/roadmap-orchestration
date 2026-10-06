@@ -21,7 +21,7 @@ the corpus, Phase 0, the plan, adjudicating what the executor hands you, and the
 1. **Bootstrap**, once per product repo (below).
 2. **Phase 0** for the next arc, in session (below).
 3. **Start** the arc, then adjudicate its pack review.
-4. **Run**: watch, adjudicate needs-user items, check in with the owner.
+4. **Run**: watch, adjudicate needs-user items, supervise through the levers, check in with the owner.
 5. **Complete**: `roadmap pr`, check in, then chain: decide whether to stop, else back to 2.
 6. **Stop**: a final check-in, then the session-end line.
 
@@ -55,6 +55,8 @@ Work on a branch you own (`git switch -c roadmap-work main`), never the integrat
 5. **First slice.** Agree with the owner which vision clauses the first arc advances (at least one world scene).
 6. **Commit** `.roadmap/{corpus.md, vision.json, config.json}` and the corpus. `start` and `apply` refuse
    `tree-uncommitted` while those three files differ from `HEAD`.
+7. **Boot hook.** When the product runs in a devcontainer, offer the owner the `resume-arc` boot hook
+   (`reference.md`, "Recovery") so a host restart brings a dead arc's supervisor back.
 
 The issue templates in `templates/` (`roadmap-bug.yml`, `roadmap-feedback.yml`) label issues for intake. Offer them;
 they work only once committed under `.github/ISSUE_TEMPLATE/` on the default branch, so they go in the bootstrap
@@ -142,8 +144,10 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     `V-n` any unit delivers, including one it delivers without being the reason for the slice. `why` says why
     this slice now.
 12. **Plan and specs.** SCHEMAS.md "Input contract" and "`spec.json` M1 subset". A corpus arc's plan names
-    `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`). Plan
-    contracts and unit scopes never overlap the corpus files.
+    `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`), and writes
+    `"planCheck": {"shape": "by-builder"}`: a frontier builder assesses the spec in its own session instead of a
+    plan-check call, and an efficient builder gets a plan-check that may add witness items. Plan contracts and unit
+    scopes never overlap the corpus files. Write lanes and witnesses per "Lanes, witnesses and clocks".
 13. **Integration branch.** `git branch <branch> <baseline>` (move it with `git branch -f` while nothing has
     started). One branch per arc, e.g. `arc/<arc>`, checked out in no worktree.
 14. **Check.** `roadmap phase0 check --repo <repo> --plan <inputs>/plan.json` until it exits 0. Fix inputs, never
@@ -160,15 +164,23 @@ corpus arc (`holistic-needs-corpus`). An arc started on an older release keeps i
 
 ## Running an arc
 
-Wait on `roadmap watch` under Monitor, with a timeout. It wakes you on every needs-user item, every unit state
-change and on `run: complete`. Without a Monitor tool, end your turn while the arc runs; the harness resumes you on
-the next watch event. Read `status` on each wake.
+Wait on `roadmap watch` under Monitor, with a timeout, and wake only on what is actionable ("Supervising the
+executor"). Without a Monitor tool, end your turn while the arc runs; the harness resumes you on the next actionable
+watch event. Read `status` on each wake.
 
 - **Needs-user items** are yours to adjudicate, except owner-only acts. Read the item file and its evidence in
   full before you act or ack. The recommendation says which procedure applies; "Handling parks" below has them.
 - **The checkpoint acts first.** In a holistic arc it rules toward the vision and records every departure as a
   divergence. Read `divergences` and `decisionsSince`; reverse with `roadmap reverse <D-n>` or an `apply` when it
   read the vision wrong. A `bundle-request` is yours: `ack` it with `--choice apply` or `--choice reject`.
+- **Checkpoint admits** (corpus arcs). Code classes every unit a checkpoint admits (`status.admits`): `repair`
+  (something broken, or a delivered obligation not holding), `oversight` (a gap within the slice's clauses) or
+  `opportunity` (it advances a clause outside the slice; its clauses join `advances`). An admit must cite every
+  out-of-slice clause it touches; one that does not is refused as dishonest. An arc gets one opportunity, and an
+  opportunity one follow-up repair of its own code. An admit serving no touched clause (`unrelated`), a second
+  opportunity (`over-budget`) or a second follow-up (`follow-up-overrun`, which also banks a debt item naming the
+  opportunity) is dropped from the bundle and becomes a corpus amendment for the next Phase 0. A checkpoint whose
+  bundle touches a unit mid-attempt waits for that stage boundary (`status.checkpointWaits`).
 - **Amendments** (`status.amendments`) accumulate; you disposition them at the next Phase 0. They and every other
   mid-arc learning wait for the corpus window between arcs; only an owner's answer edits the corpus mid-arc. Note
   each corpus claim a unit's code makes false; the next window fixes it.
@@ -179,6 +191,38 @@ the next watch event. Read `status` on each wake.
   `git worktree add --detach <dir> <integration branch>`, outside the plan's `worktreeRoot`. A checkout that is not
   detached would put the integration branch in a worktree, which the executor forbids.
 
+## Supervising the executor
+
+**Observe**, cheaply. Read `status` on every wake; between wakes, at most one `status` read per 15 quiet minutes.
+Read only `status`, `brief --json`, needs-user item files and the evidence an item names; never poll in a tight
+loop, never read lane output an item does not point at.
+
+**Wake rule.** Wake on a needs-user item, the run reaching a terminal state (`complete`, `refused`, `no-owner`), a
+changed constraint (the run newly `held`, `blocked` or `draining`) or a measured stall (no state change for 30
+minutes). Unit moves between stages, gates, lanes and publications are routine: say nothing about them.
+
+**Operate** only through the sanctioned levers: `pause`, `resume`, `resume --backend`, `ack`, `apply` (re-entry,
+priority, known defects and `--ruling` included), `rule`, `steer`, `reverse`, `merge-in`, `audit`,
+`close-admissions`, `stop`, `start`, `resume-arc`, `gc`, `inputs export`. Use them when observation says to; that is
+the job. Never patch the plugin or the run dir. To recover inputs, `roadmap inputs export` the arc, edit the export,
+then `apply --expect-rev <planRev>` (`reference.md`, "Recovery"); never copy a historical manifest back.
+
+Two levers carry their own judgment:
+
+- **Priority.** `"priority": "high"` on a unit ranks it before every `normal` waiter; an `apply` changes it.
+- **Known defects.** A lane failing for a cause another unit fixes holds every unit that runs it:
+  `"knownDefects": [{"id": "K-<n>", "match": {"type": "lane", "lane": <id>} | {"type": "output", "lane": <id>,
+  "contains": <text>}, "fixUnit": <unit>}]`. A matching unit records `known-defect` uncharged and waits at prepare
+  until the fixer merges; the fixer itself is never held. Removing the entry or editing its match releases the units
+  at once. `apply` refuses a fixer that is merged, cut or absent, a lane no spec declares, and a hold cycle.
+
+**An intervention** is a lever you use on your own initiative from what you observed. Adjudicating a needs-user item
+as its recommendation says, Phase 0, `start`, `pr` and check-ins are not interventions. Log every intervention,
+once, in the operator log `<repo>/../roadmap-inputs/skill-feedback.md` (outside the product repo, append-only;
+format in `reference.md`, "The operator log"): what you saw, the evidence (status fields, item ids, event seqs), the
+outcome, and what executor change would have made it unnecessary. A check-in preface may cite the log; the brief
+never reads it.
+
 ## Check-ins
 
 A check-in is `roadmap brief --repo <repo>` (Markdown; `--json` for the payload) plus your preface of at most 10
@@ -188,7 +232,10 @@ intake, amendments, pack-review notes, census `% held`, timings and PRs. It sees
 snapshot; before any arc has one it exits 64.
 
 The preface says what you decided on the owner's behalf, what you need from them, and anything the brief does not
-show (a slowdown, a pattern across arcs). Then the numbered questions: the chain's still-open `P-n` questions
+show (a slowdown, a pattern across arcs, your interventions). Report as observations with numbers each opportunity
+(the clauses it joined to the slice, its units, follow-ups and spend) and any non-zero drift line: findings outside
+the slice and the opportunities' clauses on the merge of a unit admitted as repair or oversight, the one sign of an
+admit that touched more than it cited. Then the numbered questions: the chain's still-open `P-n` questions
 (top 5 by rank, each with its working assumption) alongside anything new. An open `P-n` is asked again at every
 check-in, not once at bootstrap.
 
@@ -199,8 +246,9 @@ Phase 0 under way. While an arc runs, one `roadmap apply` carries it:
 - When the answer changes what a rule says: commit the corpus edit on your work branch, descending from the arc's
   baseline (never the integration branch) and re-pin (`corpus pin --commit <that commit> --baseline <the plan's baseline>`).
   A change of meaning retires the old rule id and adds a new one. Update the census, and the in-slice obligations
-  per "Changing the plan": re-anchoring or restating one is a weakening, so `roadmap rule` naming it `amended` first.
-  When the new meaning needs code, add the unit that delivers it in the same apply.
+  per "Changing the plan": re-anchoring or restating one is a weakening, so the apply carries a ruling naming it
+  `amended` (`apply --ruling <sidecar>`). When the new meaning needs code, add the unit that delivers it in the
+  same apply.
 - The next between-arc commit carries that corpus edit again: the integration branch never had it.
 
 Check in at every arc completion (the chain boundary), at a stop, and when the owner returns. In an unattended
@@ -250,8 +298,13 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,
   `roadmap resume <unit>` re-pins it and re-enters it where it parked.
 - **Parked anywhere else** (a lost build, a residue, a red candidate, a red base, a failed salvage): re-enter.
-  Add a unit with a new id (its fixed spec, the same scope), `git branch roadmap/<arc>/<new> roadmap/<arc>/<old>`,
-  ack the old item, `roadmap apply`.
+  Add a unit with a new id and `"reenters": {"unit": <old>}` (its fixed spec, the same scope), ack the old item,
+  `roadmap apply`. The new unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand.
+  Its scope may grow beyond the lineage's only on a ruling its spec cites that names exactly the added patterns.
+- **Parked `escalation` after an assessment found the spec infeasible** (the build's `infeasible` notes are in the
+  evidence): a design park, so the checkpoint sees it first; otherwise apply a feasible spec revision (it reopens
+  the unit) or re-enter.
+- **A lane red for a cause another unit fixes**: a known defect (above), not a re-entry.
 - **Usage limit**: the backend is parked arc-wide and nothing retries. Once the limit resets,
   `roadmap resume --backend <name>`. Never switch profiles to route around it.
 - **Supervisor crash limit** (`sup-*`): the executor crashed on a defect of its own. Never patch the plugin or
@@ -271,21 +324,42 @@ rejected. An edit you never apply has no effect, even after a restart.
   takes `rev` + 1. A merged, approved or publishing unit's spec is fixed.
 - **Lanes**: a lane's `evidenceGlobs` and `evidenceExcludes` may change at the current rev.
 - **Obligations**: add, split or re-witness freely. Weakening one (remove, change statement or anchor,
-  `must-hold` to `future`, waive, defer, retire) needs a ruling naming it: `roadmap rule` first. A rule anchor whose
-  hash changed with the statement unchanged is an edit, not a weakening.
+  `must-hold` to `future`, waive, defer, retire) needs a ruling naming it, landed with the edit:
+  `roadmap apply --ruling <sidecar>`. A rule anchor whose hash changed with the statement unchanged is an edit, not
+  a weakening.
+- **Priority, known defects, plan-check shape**: apply at once, draining nothing ("Supervising the executor").
 - **Corpus** (a re-pin) and **Phase-0 record** edits are `apply` edit classes; mid-arc, only for an owner's answer.
   A re-pin re-gates every approval.
   Both change the pack, so before the first admission they trigger a new pack review.
 - **Vision**: never reuse a clause id; withdraw, never delete. Commit `.roadmap/vision.json` before the `apply`.
 - **Fixed**: `arc`, `integrationBranch`, `baseline`, `worktreeRoot`, the target kind and `chain`.
-- **Rulings ledger**: only through `roadmap rule`.
+- **Rulings ledger**: only through commands. A ruling and the edits that depend on it go in one
+  `apply --ruling <sidecar>`, so no review sees half of it; `roadmap rule` is for a ruling with no dependent edit.
 
-## Lanes and shared resources
+## Lanes, witnesses and clocks
 
 - Declare `evidenceGlobs` for everything a lane script writes as evidence. Undeclared ignored output is captured
   only when the lane fails, capped. Add `evidenceExcludes` for anything that must never leave the checkout.
 - A lane asserts its required failure inside the script (or by `expectedExit`) and prints the failing step and
   reason on stderr before a non-zero exit: the fix round starts from stderr.
+- A spec lane may declare `inputs`, the repo patterns it reads: a fast lane's pass is then reused on a later commit
+  that touched none of them. Suite and arc lanes never declare it.
+- Every arc lane in the obligations file declares `testPaths`, every test path it runs. Mutation smoke reverts a
+  unit's production change (everything outside `testPaths`) and runs its witnesses again; without `testPaths` it
+  does not run.
+- Before the gate, a corpus arc runs every witness the unit must pass (its delivered and repaired obligations', its
+  spec's `witnesses`, its must-hold obligations') by exact test id; a missing or failing one is a fix round. Acceptance
+  a witness lane must prove goes in the spec's `witnesses` section: `{id: W-<n>, lane: <arc lane>, testId: <exact
+  id>, clause: <the spec's acceptance clause id, e.g. A2>, skeleton: <what the test does>}`. Name only a test the
+  change makes pass: mutation smoke reports a witness that passes with the change reverted.
+- **Clocks.** A unit whose behaviour depends on the date or time zone pins the product's own clock seam in every test
+  it touches, existing ones included, and declares a second fast lane that runs its witnesses with the seam shifted
+  far ahead (+400 days) under a non-UTC `TZ`. No real wait in a fast lane: inject the timeout, and check the production
+  default separately. Every negative witness drives the real entry point (the CLI command) with an injected fixture,
+  never a helper.
+
+## Shared resources
+
 - A shared resource needs an owner marker its probe honours: anyone using it outside the executor writes
   `/var/tmp/roadmap-resources/<name>.lease`; the probe exits 11 while the lease exists, so the executor parks
   `occupancy-unlabelled` instead of tearing down someone else's work.
@@ -294,12 +368,14 @@ rejected. An edit you never apply has no effect, even after a restart.
 
 - You create the integration branch (short local name, cut at the baseline, checked out in no worktree, never
   `roadmap` or under `roadmap/<arc>`) and your work branches. The executor creates every other ref:
-  `roadmap/<arc>/<unit>`, `refs/roadmap-run/<arc>/*`, `refs/roadmap/<arc>`. The only exception is a re-entry branch.
+  `roadmap/<arc>/<unit>` (a re-entering unit's included: its prepare cuts it at the parked tip),
+  `refs/roadmap-run/<arc>/*`, `refs/roadmap/<arc>`.
 - `baseline` is a full 40-hex sha. `arc` and unit ids are lowercase slugs, at most 64 characters, no `/`.
 
 ## What you never do
 
 - Run a backend, a lane or a teardown yourself.
+- Patch the plugin or the run dir, or restore inputs by copying a historical manifest.
 - Run `git` inside the executor's worktrees, commit to its branches, or move or delete a ref it owns.
 - Edit the run dir, the ack log or the executor-rendered `.roadmap/` files (`contracts/`, `constraints.md`,
   `invariants.md`, `debt.md`) by hand. Commands are the only write path.
