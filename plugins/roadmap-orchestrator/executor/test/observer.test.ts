@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,11 @@ describe('observer', () => {
     writeFileSync(join(rt, 'events.jsonl'), ev(1) + ev(2));
     writeFileSync(join(rt, 'needs-user/nu-1.json'), '{"reason":"NUMARK"}');
     writeFileSync(join(fx, 'transcript.jsonl'), `${JSON.stringify({ turn: 1, event: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'TRMARK' } }] } } })}\n`);
+    // An earlier run's log on the shared host dir, older than this fixture's seed: never read.
+    writeFileSync(join(host, 'executor.0.err'), 'OLDRUNERR\n');
+    utimesSync(join(host, 'executor.0.err'), new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+    writeFileSync(join(fx, 'seed.json'), '{}');
+    utimesSync(join(fx, 'seed.json'), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
     writeFileSync(join(host, 'executor.1.err'), 'HOSTERR1\n');
     fakeCodex(bin, `${A}\n${H}\n${N}\ngarbage`);
     // R-19: the staged CLI is asked per arc, by the fixture's identity.
@@ -60,6 +65,7 @@ describe('observer', () => {
     assert.match(first.stdout, /^OBSERVER tick 1 ok 3 invalid 1$/m);
     const prompt1 = readFileSync(join(bin, 'stdin.0'), 'utf8');
     for (const m of ['EV1', 'EV2', 'NUMARK', 'TRMARK', 'HOSTERR1']) assert.ok(prompt1.includes(m), m);
+    assert.ok(!prompt1.includes('OLDRUNERR'), 'an earlier run\'s host log is never read');
     assert.ok(prompt1.includes(`## status arc=arc-a\nSTATUSARGS status --repo ${join(fx, 'stage/product')} --arc arc-a`), prompt1.slice(0, 3000));
     assert.match(readFileSync(join(bin, 'argv'), 'utf8'), /read-only[\s\S]*m-x/);
     const obs = readFileSync(join(fx, 'observer/observations.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));

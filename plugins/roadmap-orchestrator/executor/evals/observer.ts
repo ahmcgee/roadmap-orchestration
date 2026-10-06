@@ -55,11 +55,13 @@ function summariseTranscriptLine(line: string): string[] {
   return out;
 }
 
-function newestTail(dir: string, prefix: string, suffix: string): string[] {
+/** The newest host log files written since `sinceMs` (the host dir is shared across runs: an earlier run's logs never count). */
+function newestTail(dir: string, prefix: string, suffix: string, sinceMs: number): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((f) => f.startsWith(prefix) && f.endsWith(suffix))
     .map((f) => ({ f, m: statSync(join(dir, f)).mtimeMs }))
+    .filter((x) => x.m >= sinceMs)
     .sort((a, b) => b.m - a.m)
     .slice(0, 3)
     .map((x) => x.f);
@@ -108,7 +110,9 @@ export function collectDelta(fixtureDir: string, cursor: Cursor, hostDir: string
   sections.push(`## root session transcript (new lines ${cursor.transcriptLines + 1}..${tl.length}, summarised)\n${tail(summary.join('\n'), SECTION_CAP) || '(none)'}`);
 
   const hostBytes = { ...cursor.hostBytes };
-  const files = [...newestTail(hostDir, 'executor.', '.err'), ...newestTail(hostDir, 'supervisor.', '.err')];
+  // The run's own start: the fixture's seed (setup writes it before the driver starts).
+  const since = statSync(join(fixtureDir, 'seed.json')).mtimeMs;
+  const files = [...newestTail(hostDir, 'executor.', '.err', since), ...newestTail(hostDir, 'supervisor.', '.err', since)];
   for (const f of files) {
     const buf = readFileSync(join(hostDir, f));
     const from = hostBytes[f] ?? 0;
