@@ -74,7 +74,8 @@ describe('the checkpoint and its bundle', () => {
       const call = readCalls(d.scenarioPath).find((c) => c.unit === 'ckpt-1')!;
       assert.ok(call.stdin.startsWith('<vision>'), 'the vision first');
       assert.match(call.stdin, /Arithmetic helpers anyone can trust/, 'in full');
-      assert.match(call.stdin, /The spec in force of u1, the shape an admit's spec text takes/, 'the admit template');
+      assert.match(call.stdin, /<unit_specs>[\s\S]*spec of unit u1, revision 1; item ids it holds: [^\n]*/, 'every spec embedded with its item ids (H4)');
+      assert.match(call.stdin, /<input_manifest>\n- plan plan: /, 'the input manifest (H4)');
       assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' }, 'the trigger is settled');
       assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {

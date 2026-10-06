@@ -26,7 +26,7 @@ import {
   type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { buildExperimentsDefault, checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
+import { admitTargetsDefault, buildExperimentsDefault, checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
 import {
   JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
 } from '../routing/types.ts';
@@ -446,7 +446,14 @@ export type SplitChild = Readonly<{
  * spec.json as text (validated by the spec reader at activation); `rule.ruling` names one of the output's `rulings`.
  */
 export type BundleOpBody =
-  | Readonly<{ op: 'admit'; unit: Readonly<{ id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; origin: 'checkpoint' | 'repair' }>; spec: string }>
+  /**
+   * `targets` (M4a rev 3, LR-m): the corpus rules the unit adds or changes behaviour for (empty only for pure test,
+   * witness or doc work); an answer recorded before it reads as none (`admitTargetsDefault`).
+   */
+  | Readonly<{
+    op: 'admit'; unit: Readonly<{ id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; origin: 'checkpoint' | 'repair' }>; spec: string;
+    targets: readonly RuleId[];
+  }>
   | Readonly<{ op: 'patch-spec'; unit: UnitId; patch: readonly SpecPatchOp[] }>
   | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: RulingId | null }>
   | Readonly<{ op: 'cut'; unit: UnitId; reason: string }>
@@ -504,7 +511,7 @@ export const CHECKPOINT_SCHEMA: Schema = sObj({
   reasons: sArr(S_STR),
   ops: sArr({
     anyOf: [
-      opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_STR }),
+      opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_STR, targets: S_IDS }),
       opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
       opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR) }),
       opSchema('cut', { unit: S_STR, reason: S_STR }),
@@ -591,6 +598,7 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
           after: g.get('after', uniqueIds(unitR)), origin: g.get('origin', oneOf(['checkpoint', 'repair'] as const)),
         }))),
         spec: f.get('spec', str),
+        targets: f.optional('targets', ruleList) ?? admitTargetsDefault(),
       };
     case 'patch-spec':
       return { op, unit: f.get('unit', unitR), patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };

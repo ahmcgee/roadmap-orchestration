@@ -80,7 +80,7 @@ export function admitOp(d: ArcDescriptor, id: string, lanes?: readonly Json[]): 
   const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
   const text = JSON.stringify({ ...spec, unit: id, rev: 1, ...(lanes === undefined ? {} : { lanes }) });
   return {
-    op: 'admit', unit: { id, risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' }, spec: text,
+    op: 'admit', unit: { id, risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' }, spec: text, targets: [],
     cites: ['V-1'], evidence: ['scripted evidence'],
   };
 }

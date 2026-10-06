@@ -10,6 +10,9 @@
 // The whole activation holds the revision fence, from the staleness check through the commit (A19): no revision lands
 // between the check and the commit, and the proposal is built from the revision in force at that moment. In order:
 //
+//   0. Busy (M4a rev 3, C5, R50): an op that touches a unit with an open stage attempt (`openAttempt`, src/core/state.ts:
+//      running or crash-abandoned) → `rejected{busy, units}`; the trigger is due again once each attempt has closed
+//      (src/holistic/checkpoint.ts), and it never counts toward `secondInvalid`.
 //   1. Staleness (H3). The artifacts the ops touch, compared with the vector the checkpoint captured: the plan's bytes,
 //      each patched or re-entered unit's spec rev, the obligations, the ledger, the contracts a landing ruling names;
 //      and the vision, always. A finding a disposition names that is no longer active is stale too. Any → `rejected
@@ -22,54 +25,67 @@
 //      output reaches the ledger reader as a repeated id); each lands through exactly one `rule` op. M4a: the corpus
 //      amendments and the issue outcomes (src/holistic/{amendments,intake}.ts: active pinned rules only; every captured
 //      issue exactly once; an `acted` outcome through ops of this output only). A split child anchored at a rule takes
-//      its hash from the pin in force. The proposal: the revision in force plus the ops (`proposalOf`, built before
-//      step 1, which reads what it touches; it never throws on model output). Any reason → `rejected{invalid}`; a
+//      its hash from the pin in force; one anchored at another rule than its parent's whose census state is `out-of-slice`
+//      moves that state to `obligation{child}` when the child serves only the owner-selected slice and this bundle's
+//      opportunities (C4), else the reason names the rule, its state and the fix. The model's numbered ids are read in
+//      numeric form (`C-01` is `C-1`, C3). The proposal: the revision in force plus the ops (`proposalOf`, built before
+//      step 1, which reads what it touches; it never throws on model output). M4a rev 3, a corpus arc (OR-A1, LR-h): each
+//      `admit` is classified (src/holistic/admits.ts, over `admitWorldOf`); a converted admit is dropped from the
+//      proposal (unless another op or an `acted` intake names it: then a reason), an opportunity's clauses join
+//      `holistic.advances`, and the proposal is rebuilt from the effective ops. Any reason → `rejected{invalid}`; a
 //      trigger's second invalid bundle → `bundle-request`.
 //   3. Owner-only (A16, H10). A `request` op, or an op with a nested owner-only effect (a lane whose argv[0] no lane of
 //      the plan in force runs, a lane env prerequisite no lane in force passes, a contract op outside the plan's
 //      contracts and architecture doc) → one blocking `owner-request`; nothing is applied.
 //   4. Draining: an `admit` → `bundle-request` (non-blocking).
-//   5. Evidence base. Each cited observation on another tree than the head: the head's observation of that lane must
-//      exist with the same records. Else `rejected{evidence}`; its lanes are re-witnessed on the head before the
-//      trigger's next capture (src/holistic/checkpoint.ts), so the re-evaluation reads them.
+//   5. Evidence base (M4a rev 3, C1, R58). Each cited observation on another tree than the head: the head's observation
+//      of that lane must exist under the same lane rev and environment, neither record malformed, the cited one non-empty,
+//      and every cited test the same outcome on the head with no fewer selected (`evidenceDiffers`); tests the head adds
+//      never matter. Else `rejected{evidence}`; its lanes are re-witnessed on the head before the trigger's next capture
+//      (src/holistic/checkpoint.ts), so the re-evaluation reads them.
 //   6. Convergence (src/holistic/convergence.ts): an open brake, or a second material change of one causal identity
 //      (a `convergence-identity` item raised with it) → `bundle-request`. An owner-approved bundle request (`enact`)
 //      skips 4 and 6.
 //   7. All-or-none `evaluateRevision`. A refusal → `rejected{invalid}` as in 2. Nothing changes → `no-op` (step 8).
-//   8. No-op: `bundle-decided{no-op}`, then the divergences of its interpretations (H12), keyed `(job, index)`.
+//   8. No-op: `bundle-decided{no-op}` (with its conversions when every admit converted and nothing else changes), then
+//      the divergences of its interpretations (H12), keyed `(job, index)`.
 //   9. Divergences, computed by code from the ops against the revisions in force, plus one per interpretation (H13:
 //      each with its preimage and compensation hint).
-//  10. The commit: `plan-applied{source: bundle{job}}` first, then the divergences from the payload. Its docs
+//  10. The commit: `plan-applied{source: bundle{job, admits, conversions}}` first (a corpus arc's classification persisted
+//      atomically with the revision, Q4), then the divergences from the payload. Its docs
 //      publication (a ruling's `constraints.md`, contract ops; `invariants.md`) runs inside it; a publication refused at
 //      the tip → `rejected{stale}`.
 //
 // After an applied or no-op decision: its finding dispositions (`ruleFinding`, by `checkpoint{job}`); in a corpus arc the
-// debt its deferrals bank, its amendments and issue outcomes; the convergence bound when due, the divergence digest when
-// due. Each is idempotent, and `settleDecided` rewrites what a crash lost.
+// debt its deferrals bank, its amendments and issue outcomes, and its conversions (each an amendment `source: admit`, a
+// follow-up overrun also a debt item naming its opportunity), read from the decision record, never classified again;
+// the convergence bound when due (over the effective ops), the divergence digest when due. Each is idempotent, and
+// `settleDecided` rewrites what a crash lost.
 import { join } from 'node:path';
 import type { Parent } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { holdFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha256Hex, type UnitId,
-  parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
+  type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha,
+  type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
 } from '../core/ids.ts';
 import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
-import type { CheckpointState } from '../core/state.ts';
+import { type CheckpointState, openAttempt } from '../core/state.ts';
+import { bundleClassesOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
-import { revParse } from '../git/git.ts';
+import { git, revParse } from '../git/git.ts';
 import {
   type InForce, type InputFile, type InputFiles, type RevisionInForce, type RoutingBase, inForceFiles, keptPayload, ledgerPath, requirePlanInForce, revisionInForce,
   sidecarPath,
 } from '../input/inforce.ts';
-import { type PlanM1, contractOpDocuments, parsePlan } from '../input/plan.ts';
+import { type PlanM1, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { mayOverlap } from '../input/classify.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
-import { laneEnvId, observations } from '../pipeline/lanes.ts';
-import { rulingContextAt } from '../pipeline/publish.ts';
+import { laneEnvId, observations, observedViews } from '../pipeline/lanes.ts';
+import { conversionsOf, rulingContextAt } from '../pipeline/publish.ts';
 import { type BundleOp, type CheckpointOutput, splitChildAnchor } from '../prompts/schemas.ts';
 import { type DocsPublisher, commitRevision } from '../recover/revision.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch } from '../spec/patch.ts';
@@ -77,16 +93,20 @@ import { ledgerAfter, parseRulings, sidecarsAfter, validateRuling } from '../spe
 import { SpecFileError, parseSpec, specBytes } from '../spec/spec.ts';
 import { mintDebt } from '../debt/mint.ts';
 import { baselineDebtAt } from '../phase0/rows.ts';
-import { amendmentReasons, appendAmendment, checkpointAmendments, divergenceAmendments } from './amendments.ts';
+import {
+  type AdmitClassification, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, admitOpOf, classifyAdmits, conversionReasons, namedUnits, opportunityClauses,
+} from './admits.ts';
+import { admitSummary, amendmentReasons, appendAmendment, checkpointAmendments, conversionAmendment, divergenceAmendments } from './amendments.ts';
 import type { AuditContext } from './audit.ts';
 import { type AppliedBundle, brakesOf, raiseBound, secondChanges } from './convergence.ts';
+import { publishedHeads } from './coverage.ts';
 import { type DivergenceBase, appendDivergences, interpretationDivergences, opDivergences, raiseDigest } from './divergence.ts';
 import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
-import { intakeReasons, settleIntake } from './intake.ts';
-import { keyOf, reuse } from './observe.ts';
+import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
+import { type Observation, keyOf, observedVerdict, reuse } from './observe.ts';
 import {
-  type BundleRejection, type ObligationAnchor, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector, type RulingSidecar, isExempt, laneRevOf, observationKeyText, parseObligations,
-  parseRulingSidecar,
+  type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
+  type RulingSidecar, isExempt, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
@@ -98,8 +118,10 @@ export type Captured = CheckpointState['inputs'];
 
 export type BundleDecision =
   | Readonly<{ kind: 'applied'; planRev: PlanRev }>
-  | Readonly<{ kind: 'no-op' }>
-  | Readonly<{ kind: 'rejected'; reason: BundleRejection; detail: string }>
+  /** `conversions` (M4a rev 3): the admits code converted, when nothing else of the bundle changes the arc; absent: none. */
+  | Readonly<{ kind: 'no-op'; conversions?: readonly Conversion[] }>
+  /** `units` exactly on a `busy` rejection: the open attempts the bundle touched. */
+  | Readonly<{ kind: 'rejected'; reason: BundleRejection; detail: string; units?: readonly BusyAttempt[] }>
   | Readonly<{ kind: 'requested'; needsUser: NeedsUserId; reason: Extract<NeedsUserReason, 'bundle-request' | 'owner-request'> }>;
 
 /** One activation: the deciding job, the inputs the output was decided on, the output, and the call that produced it. */
@@ -208,8 +230,20 @@ function appliedByRev(ctx: CheckpointContext, rev: number) {
 /** What the ops touch: for staleness and the preimages. */
 type Touched = { plan: boolean; specs: Set<UnitId>; obligations: boolean; ledger: boolean; contracts: Set<RepoPath> };
 
+/** An op of the output with its index there (a converted admit drops out; the rest keep their index). */
+type IndexedOp = Readonly<{ index: number; op: BundleOp }>;
+const indexed = (ops: readonly BundleOp[]): readonly IndexedOp[] => ops.map((op, index) => ({ index, op }));
+
+/**
+ * What a proposal is built from: the effective ops; the clauses this bundle's opportunities add to `holistic.advances`;
+ * and (a corpus arc) the clauses a split child moving a census state may serve (C4), null outside a corpus arc.
+ */
+type ProposalOpts = Readonly<{ ops: readonly IndexedOp[]; addAdvances: readonly VisionClauseId[]; slice: ReadonlySet<VisionClauseId> | null }>;
+
 type Proposal = Readonly<{
   files: InputFiles;
+  /** The obligations with the ops applied (the obligations in force when they do not parse or nothing touched them). */
+  obligations: Obligations | null;
   landing: readonly RulingSidecar[];
   touched: Touched;
   /** The lanes the ops bring in (an admitted spec's, a patch's added or replaced lanes). */
@@ -237,12 +271,41 @@ function callRoutingRev(ctx: CheckpointContext, inv: InvocationId): RoutingRev {
 }
 
 /**
- * A model-written ruling's id lists (`obligations`, `cites`, `obligationDispositions` by id) put in canonical order before
- * the sidecar reader, which requires it: the model's order never invalidates a ruling. Anything else is the reader's to
- * refuse (a malformed id throws InvalidIdError, a SchemaError: the ruling's reason).
+ * A model-written numbered id in numeric form (M4a rev 3, C3): `C-01` is `C-1`, as the ids' comparator (9c35bfe) orders
+ * them, so a padded id never makes a second ruling of one. Only what the executor reads from the answer is canonicalised;
+ * stored records are never rewritten.
+ */
+export const numericId = <T extends string>(id: T): T => id.replace(/^([A-Z])-0+(?=[0-9])/, '$1-') as T;
+
+/** The output with every model-written ruling id of its ops in numeric form (`rule`, `obligation-dispose`, `reenter.reset`, a patch's `cite.rulings`). */
+export function numericRulingIds(output: CheckpointOutput): CheckpointOutput {
+  const ops = output.ops.map((op): BundleOp => {
+    switch (op.op) {
+      case 'rule':
+      case 'obligation-dispose':
+        return { ...op, ruling: numericId(op.ruling) };
+      case 'reenter':
+        return op.reset === null ? op : { ...op, reset: numericId(op.reset) };
+      case 'patch-spec':
+        return { ...op, patch: op.patch.map((x) => (x.op === 'cite' ? { ...x, rulings: x.rulings.map(numericId) } : x)) };
+      default:
+        return op;
+    }
+  });
+  return { ...output, ops };
+}
+
+/**
+ * A model-written ruling's ids in numeric form (`id`, `supersedes[].id`, C3) and its id lists (`obligations`, `cites`,
+ * `obligationDispositions` by id) put in canonical order before the sidecar reader, which requires it: the model's order
+ * never invalidates a ruling. Anything else is the reader's to refuse (a malformed id throws InvalidIdError, a
+ * SchemaError: the ruling's reason).
  */
 function answerIdOrder(raw: Record<string, unknown>): Record<string, unknown> {
   const out = { ...raw };
+  if (typeof out['id'] === 'string') out['id'] = numericId(out['id']);
+  const sup = out['supersedes'];
+  if (Array.isArray(sup)) out['supersedes'] = sup.map((x) => (typeof x === 'object' && x !== null && typeof (x as { id?: unknown }).id === 'string' ? { ...x, id: numericId((x as { id: string }).id) } : x));
   for (const key of ['obligations', 'cites'] as const) {
     const v = out[key];
     if (Array.isArray(v) && v.every((x) => typeof x === 'string')) out[key] = [...(v as NumberedId[])].sort(compareIds);
@@ -270,7 +333,11 @@ function stampedRulings(ctx: CheckpointContext, a: Activation, reasons: string[]
         ...raw, ruledBy: { type: 'checkpoint', job: a.job },
         consistency: {
           verdict: 'consistent',
-          judgedRevs: { head: a.captured.headSha, ledgerSha256, obligationsSha256: a.captured.vector.obligationsSha256, visionSha256: a.captured.visionSha256, contracts: [] },
+          // M4a rev 3 (C2): the pin the checkpoint read, so a corpus arc's ruling is consistent with the corpus in force.
+          judgedRevs: {
+            head: a.captured.headSha, ledgerSha256, obligationsSha256: a.captured.vector.obligationsSha256, visionSha256: a.captured.visionSha256, contracts: [],
+            ...(a.captured.corpusSha256 === undefined ? {} : { corpusSha256: a.captured.corpusSha256 }),
+          },
           by: { type: 'judgment', role: 'checkpoint', routingRev },
         },
       });
@@ -307,8 +374,8 @@ function mappedObligations(obligations: Obligations, scope: readonly string[], d
   return canonicalIds([...declared, ...mapped]);
 }
 
-/** The revision in force with every op applied, or the reasons it cannot be built; nothing is written. */
-function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, revision: RevisionInForce, current: InputFiles): Proposal {
+/** The revision in force with every op of `opts` applied, or the reasons it cannot be built; nothing is written. */
+function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, revision: RevisionInForce, current: InputFiles, opts: ProposalOpts): Proposal {
   const reasons: string[] = [];
   const touched: Touched = { plan: false, specs: new Set(), obligations: false, ledger: false, contracts: new Set() };
   const lanes: LaneDef[] = [];
@@ -329,7 +396,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
 
   const landing = stampedRulings(ctx, a, reasons);
   const byId = new Map(landing.map((s) => [s.id as string, s]));
-  const ruled = new Set(a.output.ops.flatMap((op) => (op.op === 'rule' ? [op.ruling as string] : [])));
+  const ruled = new Set(opts.ops.flatMap(({ op }) => (op.op === 'rule' ? [op.ruling as string] : [])));
   for (const s of landing) if (!ruled.has(s.id)) reasons.push(`ruling ${s.id} lands through no \`rule\` op`);
   const documents = new Set<RepoPath>(contractOpDocuments(inForce.plan));
   const outsidePaths = [...new Set(landing.flatMap((s) => s.contractOps.map((o) => o.path).filter((p) => !documents.has(p))))].sort();
@@ -347,7 +414,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     touched.obligations = true;
   };
 
-  a.output.ops.forEach((op, i) => {
+  opts.ops.forEach(({ op, index: i }) => {
     const at = `op ${i + 1} (${op.op})`;
     switch (op.op) {
       case 'admit': {
@@ -468,6 +535,11 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
             reasons.push(`${at}: child ${c.id} is anchored at ${c.rule}, which is no active rule of the pin in force`);
             return [];
           }
+          const census = censusMove(obligationsRaw, parent, op, c, opts.slice);
+          if (census !== null) {
+            reasons.push(`${at}: ${census}`);
+            return [];
+          }
           return [childOf(parent, op, c, laneRevOf(lane), anchor)];
         });
         raw.state = { type: 'split', children: canonicalIds(op.children.map((c) => c.id)) };
@@ -510,6 +582,12 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
         return;
     }
   });
+  if (opts.addAdvances.length > 0) {
+    const holistic = plan['holistic'] as { advances: VisionClauseId[] } | undefined;
+    if (holistic === undefined) throw new Error(`${a.job}: an opportunity in an arc whose plan is not holistic`);
+    holistic.advances = canonicalIds([...holistic.advances, ...opts.addAdvances]);
+    touched.plan = true;
+  }
 
   // The rulings, each at the tip with the earlier valid ones landed (their contract ops outside the documents are H10's).
   // An invalid ruling is never folded in: its reasons reject the bundle, and the ledger the next one is checked against
@@ -544,7 +622,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
       reasons.push(`the obligations with the ops applied do not parse: ${error.message}`);
     }
   }
-  if (parsed === null || reasons.length > 0) return { files: current, landing, touched, lanes, outsidePaths, reasons };
+  if (parsed === null || reasons.length > 0) return { files: current, obligations: obligationsNow, landing, touched, lanes, outsidePaths, reasons };
 
   // Lead ruling (paid M3 run 5): a spec the bundle authors declares every obligation the impact mapping selects for its
   // scope, filled in by code (declared ∪ mapping-selected, non-exempt); the model never reproduces the mapping. The
@@ -575,7 +653,34 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     sidecars: touched.ledger ? sidecarFiles : current.sidecars,
     obligations,
   };
-  return { files, landing, touched, lanes, outsidePaths, reasons };
+  return { files, obligations: obligationsAfter, landing, touched, lanes, outsidePaths, reasons };
+}
+
+/**
+ * A split child anchored at another rule than its parent's (M4a rev 3, C4), in a corpus arc: when that rule's census
+ * state is `out-of-slice` and the child serves only `slice` (the owner-selected slice and this bundle's opportunity
+ * clauses), the census entry moves to `obligation{child}` in `raw` and this returns null; any other state, or a child
+ * serving more, is the returned reason. Null too outside a corpus arc (`slice` null) and for a child on its parent's rule.
+ */
+function censusMove(
+  raw: RawObligations | null, parent: ObligationDef, op: Extract<BundleOp, { op: 'obligation-split' }>, c: Extract<BundleOp, { op: 'obligation-split' }>['children'][number],
+  slice: ReadonlySet<VisionClauseId> | null,
+): string | null {
+  if (slice === null || c.rule === null || raw === null) return null;
+  const parentRule = parent.rule?.id ?? null;
+  if (c.rule === parentRule) return null;
+  const census = raw['census'] as { rule: string; state: { type: string; id?: string } }[] | undefined;
+  if (census === undefined) throw new Error(`a corpus arc's obligations hold no census (split of ${parent.id})`);
+  const entry = census.find((e) => e.rule === c.rule);
+  const fix = `anchor the child at its parent's rule ${parentRule ?? '(none)'}, or admit it as an opportunity`;
+  if (entry === undefined) return `child ${c.id} is anchored at ${c.rule}, which the census does not name: ${fix}`;
+  const state = entry.state.type === 'obligation' ? `obligation{${entry.state.id}}` : entry.state.type;
+  if (entry.state.type !== 'out-of-slice') return `child ${c.id} is anchored at ${c.rule}, whose census state is ${state}: ${fix}`;
+  const serves = canonicalIds([...parent.serves, ...op.cites]);
+  const outside = serves.filter((v) => !slice.has(v));
+  if (outside.length > 0) return `child ${c.id} is anchored at ${c.rule}, whose census state is out-of-slice, and it serves ${outside.join(', ')}, outside the slice: ${fix}`;
+  entry.state = { type: 'obligation', id: c.id };
+  return null;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -651,7 +756,30 @@ function ownerOnly(ctx: CheckpointContext, a: Activation, p: Proposal, inForce: 
   return out;
 }
 
-/** Step 5: the cited observations that differ on the head, or are missing there, and their lanes. */
+/**
+ * Why a cited observation does not hold as evidence on the head (M4a rev 3, C1, R58), or null when it does: the head's
+ * observation of the lane ran under the same lane rev and environment, neither record is malformed, the cited one records
+ * a test, and every cited test has the same outcome on the head with at least as many selected. Tests the head adds, and
+ * another tree or invocation with equal results, never matter.
+ */
+export function evidenceDiffers(cited: Observation, head: Observation): string | null {
+  if (cited.key.laneRev !== head.key.laneRev || cited.key.envId !== head.key.envId) {
+    return `ran under lane rev ${cited.key.laneRev} in env ${cited.key.envId}, the head's under ${head.key.laneRev} in ${head.key.envId}`;
+  }
+  if (cited.record.malformed) return 'is malformed';
+  if (head.record.malformed) return 'is malformed on the head';
+  if (cited.record.records.length === 0) return 'records no test';
+  const onHead = new Map(head.record.records.map((r) => [r.testId, r]));
+  for (const r of cited.record.records) {
+    const h = onHead.get(r.testId);
+    if (h === undefined) return `test ${JSON.stringify(r.testId)} is not in the head's record`;
+    if (h.outcome !== r.outcome) return `test ${JSON.stringify(r.testId)} was ${r.outcome}, is ${h.outcome} on the head`;
+    if (h.selected < r.selected) return `test ${JSON.stringify(r.testId)} selected ${r.selected}, ${h.selected} on the head`;
+  }
+  return null;
+}
+
+/** Step 5: the cited observations that do not hold on the head (`evidenceDiffers`), or are missing there, and their lanes. */
 function evidenceBase(ctx: CheckpointContext, a: Activation, revision: RevisionInForce): Readonly<{ reasons: readonly string[]; lanes: readonly LaneId[] }> {
   const head = integrationHead(ctx);
   const tree = revParse(ctx.repo, `${head}^{tree}`);
@@ -667,26 +795,132 @@ function evidenceBase(ctx: CheckpointContext, a: Activation, revision: RevisionI
     }
     const cited = reuse(store, k);
     const now = reuse(store, keyOf(tree, lane, laneEnvId(ctx, lane)));
-    if (now === null) reasons.push(`the cited observation of lane ${k.lane} has none on the head ${head}`);
-    else if (cited === null || now.recordsSha256 !== cited.recordsSha256) reasons.push(`the cited observation of lane ${k.lane} differs on the head ${head}`);
-    else continue;
+    const why = now === null ? `has none on the head ${head}` : cited === null ? 'is not in the observation store' : evidenceDiffers(cited, now);
+    if (why === null) continue;
+    reasons.push(`the cited observation of lane ${k.lane} ${now === null ? why : `differs on the head ${head}: ${why}`}`);
     lanes.add(k.lane);
   }
   return { reasons, lanes: [...lanes].sort() };
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Busy (C5) and admit classes (B)
+
+/** Step 0 (C5, R50): the open stage attempts of the planned units the ops change, ascending by unit. */
+function busyAttempts(ctx: CheckpointContext, ops: readonly IndexedOp[]): readonly BusyAttempt[] {
+  const view = ctx.journal.view;
+  const planned = new Set(view.plannedUnits());
+  const touched = new Set(ops.flatMap(({ op }) => (op.op === 'admit' || op.op === 'obligation-split' ? [] : namedUnits(op))));
+  return [...touched].filter((u) => planned.has(u)).sort().flatMap((unit) => {
+    const open = openAttempt(view, unit);
+    return open === null ? [] : [{ unit, stage: open.stage, attempt: open.attempt }];
+  });
+}
+
+/** The arc's classified admits so far (the done bundle revisions' sources), in log order; unclassified bundles count none. */
+function recordedAdmits(ctx: CheckpointContext): readonly RecordedAdmit[] {
+  const view = ctx.journal.view;
+  return view.opsOf('revision.commit').flatMap((commit) => {
+    const source = commit.expect.source;
+    if (source.type !== 'bundle' || view.doneOf(commit.op) === null) return [];
+    const classes = bundleClassesOf(source);
+    return classes === 'unclassified' ? [] : classes.admits.map((x) => ({ job: source.job, ...x }));
+  });
+}
+
+/** S = `holistic.advances` minus every recorded opportunity's clauses (R44). */
+function ownerSlice(plan: PlanM1, recorded: readonly RecordedAdmit[]): ReadonlySet<VisionClauseId> {
+  const opportunity = new Set(recorded.flatMap((x) => (x.class.type === 'opportunity' ? x.class.clauses : [])));
+  return new Set(advancesOf(plan).filter((c) => !opportunity.has(c)));
+}
+
+/**
+ * What classification reads (src/holistic/admits.ts), from the log, the revision in force, the obligations after the ops
+ * and git: the integration history's positions (the base 0, each published head the next), each unit ff's first-parent
+ * paths, each completed audit's covered ranges, the obligations' verdicts on the head and at every published head.
+ */
+export function admitWorldOf(
+  ctx: CheckpointContext, a: Activation, revision: RevisionInForce, inForce: InForce, obligations: Obligations | null, recorded: readonly RecordedAdmit[],
+): AdmitWorld {
+  const view = ctx.journal.view;
+  if (revision.vision === null) throw new Error(`${a.job}: admit classes outside a holistic revision`);
+  const heads = publishedHeads(view);
+  const positions = new Map<Sha, number>();
+  // Nothing published yet: the head is the base.
+  positions.set(heads.length > 0 ? heads[0]!.old : integrationHead(ctx), 0);
+  heads.forEach((h, i) => {
+    if (!positions.has(h.head)) positions.set(h.head, i + 1);
+  });
+  const positionOf = (sha: Sha, what: string): number => {
+    const p = positions.get(sha);
+    if (p === undefined) throw new Error(`${a.job}: ${what} names ${sha}, no head of the integration history`);
+    return p;
+  };
+  const ffs = new Map(view.opsOf('integration.ff').map((i) => [i.op, i]));
+  const merges = heads.flatMap((h, i) => {
+    const parent = ffs.get(h.op)?.parent;
+    if (h.subject !== 'unit' || parent?.type !== 'stage') return [];
+    const paths = git(ctx.repo, ['diff', '--name-only', '--no-renames', h.old, h.head]).split('\n').filter((x) => x !== '');
+    return [{ unit: parent.unit, position: i + 1, paths }];
+  });
+  const fold = view.holistic();
+  const audits = new Map(fold.audits.flatMap((x) => (x.ended === null ? [] : [[x.started.job, x.ended.covered.map((r): AuditRange => ({
+    lens: r.lens, from: positionOf(r.from, `${x.started.job}'s ${r.lens} range`), to: positionOf(r.to, `${x.started.job}'s ${r.lens} range`),
+  }))] as const])));
+  const captured = new Set<FindingId>(a.captured.findings);
+  const findings = new Map(fold.findings.map((f) => [f.id, {
+    id: f.id, active: isActive(f), captured: captured.has(f.id), visionClauses: f.visionClauses, obligation: f.obligation, lens: f.lens, source: f.source,
+    paths: f.evidence.map((e) => e.path),
+  }] as const));
+  const defs = obligations?.obligations ?? [];
+  const head = integrationHead(ctx);
+  const views = new Map(observedViews(ctx, obligations, defs, head).map((v) => [v.obligation.id, v]));
+  const store = observations(ctx);
+  const lanes = new Map((obligations?.lanes ?? []).map((l) => [l.id, l]));
+  const trees = [...positions].map(([sha, position]) => ({ position, tree: revParse(ctx.repo, `${sha}^{tree}`) }));
+  const world = new Map(defs.map((o) => {
+    const v = views.get(o.id)!;
+    const held = v.observation?.verdict === 'held';
+    const holding = o.activation === 'must-hold' ? held : !(v.latched && !held);
+    const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
+    const history = lane === undefined || o.witness === null ? [] : trees.flatMap(({ position, tree }) => {
+      const verdict = observedVerdict(store, keyOf(tree, lane, laneEnvId(ctx, lane)), o.witness!);
+      return verdict === 'held' || verdict === 'not-held' ? [{ position, held: verdict === 'held' }] : [];
+    });
+    return [o.id, { def: o, holding, history }] as const;
+  }));
+  return {
+    world: revision.vision.value.clauses.filter((c) => c.kind === 'world' && c.state === 'active').map((c) => c.id),
+    advances: advancesOf(inForce.plan),
+    recorded,
+    rootOf: (u) => view.unit(u).lineage?.root ?? u,
+    obligations: world,
+    // The census in force (before this bundle's ops): a split child at an out-of-slice rule targets that rule.
+    census: new Map((revision.obligations?.value.census ?? []).map((e) => [e.rule, e.state.type])),
+    findings,
+    audits,
+    merges,
+  };
+}
+
+/** The admit ops of `ops` for classification (the specs parsed when the proposal was built; `obligations` in force). */
+function admitOps(ctx: CheckpointContext, ops: readonly IndexedOp[], obligations: Obligations | null): readonly AdmitOp[] {
+  return ops.flatMap(({ op, index }) => (op.op === 'admit'
+    ? [admitOpOf(index, op, parseSpec(Buffer.from(op.spec, 'utf8'), absPath(join(ctx.planFile, '..', `${op.unit.id}.json`))), obligations)]
+    : []));
+}
+
+// ---------------------------------------------------------------------------------------------------
 // The activation
 
-/** The proposer of a bundle's revision: its split ops' cites and evidence back a split that drops text (H14). */
-function proposerOf(a: Activation) {
-  const splits = a.output.ops.filter((op) => op.op === 'obligation-split');
-  const from = splits.length > 0 ? splits : a.output.ops;
+/** The proposer of a bundle's revision: its split ops' cites and evidence back a split that drops text (H14); its admits' classes (OR-A1). */
+function proposerOf(a: Activation, ops: readonly IndexedOp[], admits: readonly ClassifiedAdmit[]) {
+  const splits = ops.map((x) => x.op).filter((op) => op.op === 'obligation-split');
+  const from = splits.length > 0 ? splits : ops.map((x) => x.op);
   return {
     type: 'bundle' as const, job: a.job, cites: canonicalIds(from.flatMap((op) => op.cites)),
     evidence: [...new Set(from.flatMap((op) => op.evidence))],
-    // M4a rev 3 (OR-A1): the admit classes land with `classifyAdmits` (N2); until then a bundle admits no opportunity.
-    admits: [],
+    admits,
   };
 }
 
@@ -698,7 +932,7 @@ export async function activate(ctx: CheckpointContext, a: Activation): Promise<B
   const hold = await holdFence(ctx.journal);
   let decision: BundleDecision;
   try {
-    decision = await decide(ctx, a);
+    decision = await decide(ctx, { ...a, output: numericRulingIds(a.output) });
   } finally {
     hold.release();
   }
@@ -712,29 +946,68 @@ function decided(ctx: CheckpointContext, job: JobId, decision: Exclude<BundleDec
   return decision;
 }
 
+const NO_PROPOSAL = (current: InputFiles, obligations: Obligations | null): Proposal => ({
+  files: current, obligations, landing: [], touched: { plan: false, specs: new Set<UnitId>(), obligations: false, ledger: false, contracts: new Set<RepoPath>() },
+  lanes: [], outsidePaths: [], reasons: [],
+});
+
 async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDecision> {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
   const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile, ctx.repo);
   const now = vectorAt(ctx, inForce, revision, current, integrationHead(ctx));
-  const p = a.output.decision === 'no-op'
-    ? { files: current, landing: [], touched: { plan: false, specs: new Set<UnitId>(), obligations: false, ledger: false, contracts: new Set<RepoPath>() }, lanes: [], outsidePaths: [], reasons: [] }
-    : proposalOf(ctx, a, inForce, revision, current);
+  const all = indexed(a.output.ops);
+  // M4a rev 3 (LR-h): admit classes, census moves and opportunities exist in a corpus arc only.
+  const corpus = revision.corpus !== null && a.output.decision === 'bundle';
+  const recorded = corpus ? recordedAdmits(ctx) : [];
+  const slice = corpus ? ownerSlice(inForce.plan, recorded) : null;
+  // Before classification a split child may serve any clause an admit of this bundle cites (a would-be opportunity); the
+  // rebuild below checks it against the bundle's actual opportunities.
+  const firstSlice = slice === null ? null : new Set([...slice, ...all.flatMap(({ op }) => (op.op === 'admit' ? op.cites : []))]);
+  let p = a.output.decision === 'no-op' ? NO_PROPOSAL(current, revision.obligations?.value ?? null) : proposalOf(ctx, a, inForce, revision, current, { ops: all, addAdvances: [], slice: firstSlice });
+
+  // 0. Busy (C5): an op touching a unit with an open stage attempt waits for its boundary.
+  const busy = busyAttempts(ctx, all);
+  if (busy.length > 0) {
+    const detail = `the bundle changes ${busy.map((b) => `${b.unit}, which is in ${b.stage} attempt ${b.attempt}`).join('; ')}; it is decided again at the stage boundary`;
+    return decided(ctx, a.job, { kind: 'rejected', reason: 'busy', detail, units: busy });
+  }
 
   // 1. Staleness (H3: the vision always).
   const stale = staleness(ctx, a, p, now, inForce);
   if (stale.length > 0) return decided(ctx, a.job, { kind: 'rejected', reason: 'stale', detail: stale.join('; ') });
 
-  // 2. Validation (H16), and the proposal's own reasons.
+  // 2. Validation (H16), and the proposal's own reasons; then (a corpus arc) the admit classes (OR-A1).
   const invalid = (reasons: readonly string[]): BundleDecision => (a.secondInvalid
     ? decided(ctx, a.job, { kind: 'requested', needsUser: bundleRequest(ctx, a, `it is invalid a second time (${reasons.join('; ')})`, false), reason: 'bundle-request' })
     : decided(ctx, a.job, { kind: 'rejected', reason: 'invalid', detail: reasons.join('; ') }));
   const pin = revision.corpus?.pin.value ?? null;
   const reasons = [
-    ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output), ...intakeReasons(ctx.runDir, a.captured, pin, a.output), ...p.reasons,
+    ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output), ...intakeReasons(ctx.runDir, a.captured, pin, a.output, issueReuse(view, ctx.runDir, a.captured)), ...p.reasons,
   ];
   if (reasons.length > 0) return invalid(reasons);
+  let classes: AdmitClassification | null = null;
+  let ops = all;
+  if (corpus) {
+    const admits = admitOps(ctx, all, revision.obligations?.value ?? null);
+    classes = admits.length === 0 ? { classes: [], conversions: [], reasons: [] } : classifyAdmits(admitWorldOf(ctx, a, revision, inForce, p.obligations, recorded), admits);
+    const why = [...classes.reasons, ...conversionReasons(a.output, classes.conversions)];
+    if (why.length > 0) return invalid(why);
+    const dropped = new Set(classes.conversions.map((c) => c.index));
+    ops = all.filter((x) => !dropped.has(x.index));
+    const added = opportunityClauses(classes.classes);
+    if (dropped.size > 0 || added.length > 0 || ops.some(({ op }) => op.op === 'obligation-split')) {
+      p = proposalOf(ctx, a, inForce, revision, current, { ops, addAdvances: added, slice: new Set([...slice!, ...added]) });
+      if (p.reasons.length > 0) return invalid(p.reasons);
+    }
+  }
+  const conversions = classes?.conversions ?? [];
+  const noOp = (): BundleDecision => {
+    const d = decided(ctx, a.job, conversions.length === 0 ? { kind: 'no-op' } : { kind: 'no-op', conversions });
+    crashPoint('bundle.after-decided');
+    return d;
+  };
 
   // 3. Owner-only (A16, H10): nothing applied.
   const requests = ownerOnly(ctx, a, p, inForce, current, revision);
@@ -752,7 +1025,7 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   }
 
   // 4. Draining: an admit goes to the owner.
-  if (!a.enact && view.holistic().draining !== null && a.output.ops.some((op) => op.op === 'admit')) {
+  if (!a.enact && view.holistic().draining !== null && ops.some(({ op }) => op.op === 'admit')) {
     return decided(ctx, a.job, { kind: 'requested', needsUser: bundleRequest(ctx, a, 'the arc is draining (admissions closed) and the bundle admits a unit', true), reason: 'bundle-request' });
   }
 
@@ -760,7 +1033,7 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   const evidence = evidenceBase(ctx, a, revision);
   if (evidence.reasons.length > 0) return decided(ctx, a.job, { kind: 'rejected', reason: 'evidence', detail: evidence.reasons.join('; ') });
 
-  // 6. Convergence (A9, OR-Q2/3).
+  // 6. Convergence (A9, OR-Q2/3), over the effective ops.
   if (!a.enact && a.output.decision === 'bundle') {
     const rootOf = (u: UnitId): UnitId => view.unit(u).lineage?.root ?? u;
     const known = new Set<string>([...view.holistic().findings.map((f) => f.id as string), ...(revision.obligations?.value.obligations.map((o) => o.id as string) ?? [])]);
@@ -768,7 +1041,7 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
     if (brakes.open.length > 0) {
       return decided(ctx, a.job, { kind: 'requested', needsUser: bundleRequest(ctx, a, `a convergence brake is open (${brakes.open.join(', ')})`, true), reason: 'bundle-request' });
     }
-    const second = secondChanges(brakes, a.output.ops, known, rootOf);
+    const second = secondChanges(brakes, ops.map((x) => x.op), known, rootOf);
     if (second.length > 0) {
       raiseOnce(ctx, a.job, {
         blocking: false,
@@ -784,13 +1057,9 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   }
 
   // 7–8. All or none; no effective change is a no-op.
-  const evaluated = a.output.decision === 'no-op' ? null : evaluateRevision(revisionContext(ctx), p.files, proposerOf(a));
+  const evaluated = a.output.decision === 'no-op' ? null : evaluateRevision(revisionContext(ctx), p.files, proposerOf(a, ops, classes?.classes ?? []));
   if (evaluated?.kind === 'rejected') return invalid(evaluated.reasons);
-  if (evaluated === null || evaluated.kind === 'unchanged') {
-    decided(ctx, a.job, { kind: 'no-op' });
-    crashPoint('bundle.after-decided');
-    return { kind: 'no-op' };
-  }
+  if (evaluated === null || evaluated.kind === 'unchanged') return noOp();
 
   // 9. Divergences (H13), computed by code.
   const base: DivergenceBase = {
@@ -800,23 +1069,32 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   };
   const draft = {
     ...evaluated.draft,
-    divergences: [...evaluated.draft.divergences, ...opDivergences(base, a.output.ops, p.landing), ...interpretationDivergences(a.job, a.captured.vector, a.output)],
+    divergences: [...evaluated.draft.divergences, ...opDivergences(base, ops.map((x) => x.op), p.landing), ...interpretationDivergences(a.job, a.captured.vector, a.output)],
   };
 
-  // 10. The commit: plan-applied, then the divergences from the payload.
+  // 10. The commit: plan-applied (a corpus arc's classes and conversions in its source, Q4), then the divergences from the payload.
   keepRevision(ctx.runDir, { ...evaluated, draft });
-  const committed = await commitRevision({ journal: ctx.journal, runDir: ctx.runDir, docs: ctx.docs }, payloadOf(draft, { type: 'bundle', job: a.job }), jobParent(a.job));
+  const source = classes === null ? { type: 'bundle' as const, job: a.job } : { type: 'bundle' as const, job: a.job, admits: classes.classes, conversions };
+  const committed = await commitRevision({ journal: ctx.journal, runDir: ctx.runDir, docs: ctx.docs }, payloadOf(draft, source), jobParent(a.job));
   if (committed.kind === 'refused') return decided(ctx, a.job, { kind: 'rejected', reason: 'stale', detail: `its docs publication was refused at the tip: ${committed.reason}` });
   crashPoint('bundle.after-applied');
   return { kind: 'applied', planRev: committed.fact.rev };
+}
+
+/** The output's ops minus the admits `job`'s decision record converts (Q4): what was applied, as the brakes count it. */
+export function effectiveOps(view: Parameters<typeof conversionsOf>[0], job: JobId, output: CheckpointOutput): readonly BundleOp[] {
+  const dropped = new Set(conversionsOf(view, job).map((c) => c.index));
+  return output.ops.filter((_, i) => !dropped.has(i));
 }
 
 /**
  * What follows an applied or no-op decision, each only where missing (a crash may cut it short): a no-op's
  * interpretation divergences (H12), the finding dispositions still applicable, then (M4a, a corpus arc) the debt the
  * deferrals bank, the amendments (the output's own, keyed by `captured.job`, the checkpoint whose output it is), the
- * issue outcomes (src/holistic/intake.ts), and one amendment per `target-departed` or `interpretation` divergence of
- * `job` (src/holistic/amendments.ts); the convergence bound when due, the digest when due.
+ * issue outcomes (src/holistic/intake.ts), one amendment per `target-departed` or `interpretation` divergence of
+ * `job` (src/holistic/amendments.ts), and (M4a rev 3, R35) each conversion its decision record holds: an amendment
+ * `source: admit{job, index, reason}`, and for a follow-up overrun a debt item naming the opportunity (never classified
+ * again: the record is read); the convergence bound when due, the digest when due.
  */
 export function settleDecided(ctx: CheckpointContext, job: JobId, output: CheckpointOutput, captured: Captured, applied: readonly AppliedBundle[]): void {
   const view = ctx.journal.view;
@@ -831,14 +1109,37 @@ export function settleDecided(ctx: CheckpointContext, job: JobId, output: Checkp
   if (ctx.plan().target === 'corpus') {
     bankDeferred(ctx, job, output);
     for (const draft of checkpointAmendments(captured.job, output)) appendAmendment(ctx.journal, draft);
-    settleIntake(ctx.journal, captured.job, output);
+    settleIntake(ctx.journal, captured.job, output, issueReuse(ctx.journal.view, ctx.runDir, captured));
     for (const draft of divergenceAmendments(ctx.journal.view, job)) appendAmendment(ctx.journal, draft);
+    settleConversions(ctx, job, output);
   }
   const plan = requirePlanInForce(ctx.runDir, ctx.journal.view).plan;
   const rootOf = (u: UnitId): UnitId => ctx.journal.view.unit(u).lineage?.root ?? u;
   const all = c.decided.kind === 'applied' && !applied.some((x) => x.job === job) ? [...applied, ...appliedNow(ctx, job, output)] : applied;
   raiseBound(ctx, brakesOf(ctx.journal.view, ctx.runDir, plan, all, new Set(), rootOf), all);
   raiseDigest(ctx);
+}
+
+/** Each conversion of `job`'s decision record (Q4): its amendment, then (a follow-up overrun) its debt item; idempotent by source. */
+function settleConversions(ctx: CheckpointContext, job: JobId, output: CheckpointOutput): void {
+  const conversions = conversionsOf(ctx.journal.view, job);
+  if (conversions.length === 0) return;
+  const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);
+  for (const c of conversions) {
+    const op = output.ops[c.index];
+    if (op === undefined) throw new Error(`${job}'s decision record converts op ${c.index + 1}, which its output does not have`);
+    appendAmendment(ctx.journal, conversionAmendment(job, c, op));
+    crashPoint('bundle.after-conversion-amendment');
+    if (c.reason !== 'follow-up-overrun' || op.op !== 'admit') continue;
+    const fact = mintDebt(baseline, ctx.journal.view.holistic().debt, {
+      type: 'opportunity-overrun', opportunity: c.opportunity!, job, index: c.index, unit: c.unit,
+      what: `Opportunity ${c.opportunity} needed a second follow-up repair, which code converted: ${admitSummary(op)}`,
+    });
+    if (fact !== null) {
+      ctx.journal.fact(fact);
+      crashPoint('bundle.after-overrun-debt');
+    }
+  }
 }
 
 /**
@@ -865,9 +1166,9 @@ function bankDeferred(ctx: CheckpointContext, job: JobId, output: CheckpointOutp
   }
 }
 
-/** The bundle `job` just applied, as an applied bundle (its revision.commit's seq). */
+/** The bundle `job` just applied, as an applied bundle (its revision.commit's seq, its effective ops). */
 function appliedNow(ctx: CheckpointContext, job: JobId, output: CheckpointOutput): readonly AppliedBundle[] {
   const commit = [...ctx.journal.view.opsOf('revision.commit')].reverse().find((i) => i.expect.source.type === 'bundle' && i.expect.source.job === job);
   if (commit === undefined) throw new Error(`${job} applied with no revision.commit`);
-  return [{ job, seq: Number(commit.op.slice(commit.op.lastIndexOf('/') + 1)), ops: output.ops }];
+  return [{ job, seq: Number(commit.op.slice(commit.op.lastIndexOf('/') + 1)), ops: effectiveOps(ctx.journal.view, job, output) }];
 }

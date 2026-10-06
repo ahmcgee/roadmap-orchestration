@@ -24,8 +24,16 @@
 // checkpoint whose capture it covers: a finding opened (lens `issue`, P2 or P3, merged into an active one of its key), an
 // amendment (`source: issue{job, issue}`), or the outcome itself, then one `issue-intake` fact. Idempotent: a crash after
 // the decision is finished from the consumed output (ISSUE_INTAKE, crash label `amendment.after-decided`).
+//
+// Issue reuse (M4a rev 3, H5, F27, R65; `issueReuse`): when the latest checkpoint decided before this one's capture
+// (applied or no-op) captured issues and recorded their outcomes, and the grounds those outcomes rest on are unchanged
+// (the obligations, the ledger and the pin), each issue whose captured content is byte-equal to that checkpoint's keeps
+// its outcome there: the prompt lists only the changed and new issues (`issuesUnchangedSince` names that checkpoint), the
+// output may omit the unchanged ones, and `settleIntake` carries their outcomes forward (an `acted` one as `none`: the ops
+// it names were that output's).
 import { crashPoint } from '../core/crash.ts';
 import type { CheckpointIssues } from '../core/events.ts';
+import { canonicalJson } from '../core/json.ts';
 import { type IssueId, type JobId, type NeedsUserId, type Sha256Hex } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';
@@ -100,15 +108,41 @@ function capturedIds(runDir: AbsPath, s: Captured): readonly IssueId[] {
   return s.issues?.type === 'captured' ? keptCapture(runDir, s.issues.sha256).issues.map((i) => i.id) : [];
 }
 
-/** The prompt's issues: the kept capture's, the reason it is unavailable, or none (an arc or job without a capture). */
-export function issuesInputOf(runDir: AbsPath, s: Captured): CheckpointIssuesInput {
-  if (s.issues === undefined) return { type: 'captured', issues: [] };
-  if (s.issues.type === 'unavailable') return { type: 'unavailable', reason: s.issues.reason };
-  return { type: 'captured', issues: keptCapture(runDir, s.issues.sha256).issues };
+/** H5: the checkpoint whose outcomes the unchanged issues keep, and each such issue with its outcome there. */
+export type IssueReuse = Readonly<{ since: JobId; unchanged: ReadonlyMap<IssueId, IssueIntakeOutcome> }>;
+
+/** The issue reuse of the checkpoint that captured `s` (see the header), or null when none of its issues is reused. */
+export function issueReuse(view: JournalView, runDir: AbsPath, s: Captured): IssueReuse | null {
+  if (s.issues?.type !== 'captured') return null;
+  const fold = view.holistic();
+  const prev = fold.checkpoints.filter((c) => c.inputs.seq < s.seq && c.decided !== null).at(-1);
+  if (prev === undefined || (prev.decided!.kind !== 'applied' && prev.decided!.kind !== 'no-op') || prev.inputs.issues?.type !== 'captured') return null;
+  const was = prev.inputs;
+  if (was.vector.obligationsSha256 !== s.vector.obligationsSha256 || was.vector.ledgerSha256 !== s.vector.ledgerSha256 || was.corpusSha256 !== s.corpusSha256) return null;
+  const before = new Map(keptCapture(runDir, prev.inputs.issues.sha256).issues.map((i) => [i.id, canonicalJson(i)]));
+  const outcomes = new Map(fold.intake.filter((x) => x.job === was.job).map((x) => [x.issue, x.outcome]));
+  const unchanged = new Map(keptCapture(runDir, s.issues.sha256).issues.flatMap((i) => {
+    const outcome = outcomes.get(i.id);
+    return before.get(i.id) === canonicalJson(i) && outcome !== undefined ? [[i.id, outcome] as const] : [];
+  }));
+  return unchanged.size === 0 ? null : { since: was.job, unchanged };
 }
 
-/** Why the output's `issueIntake` is invalid against the capture `s` it was decided on (see the header), or empty. */
-export function intakeReasons(runDir: AbsPath, s: Captured, pin: CorpusPin | null, output: CheckpointOutput): readonly string[] {
+/**
+ * The prompt's issues: the kept capture's (without the reused ones, H5), the reason it is unavailable, or none (an arc or
+ * job without a capture).
+ */
+export function issuesInputOf(runDir: AbsPath, s: Captured, reuse: IssueReuse | null): CheckpointIssuesInput {
+  if (s.issues === undefined) return { type: 'captured', issues: [] };
+  if (s.issues.type === 'unavailable') return { type: 'unavailable', reason: s.issues.reason };
+  return { type: 'captured', issues: keptCapture(runDir, s.issues.sha256).issues.filter((i) => reuse?.unchanged.has(i.id) !== true) };
+}
+
+/**
+ * Why the output's `issueIntake` is invalid against the capture `s` it was decided on (see the header), or empty. A
+ * reused issue (`reuse`) may go without an outcome.
+ */
+export function intakeReasons(runDir: AbsPath, s: Captured, pin: CorpusPin | null, output: CheckpointOutput, reuse: IssueReuse | null): readonly string[] {
   const captured = capturedIds(runDir, s);
   const known = new Set<string>(captured);
   const seen = new Set<string>();
@@ -123,15 +157,23 @@ export function intakeReasons(runDir: AbsPath, s: Captured, pin: CorpusPin | nul
     }
     if (outcome.type === 'amendment') out.push(...ruleReasons(pin, outcome.rules, `issueIntake of ${issue}`));
   }
-  for (const id of captured) if (!seen.has(id)) out.push(`issueIntake gives ${id} no outcome`);
+  for (const id of captured) if (!seen.has(id) && reuse?.unchanged.has(id) !== true) out.push(`issueIntake gives ${id} no outcome`);
   return out;
 }
 
 /**
- * Records each outcome of `output.issueIntake` not yet recorded for `(job, issue)` (see the header); `job` is the
- * checkpoint whose capture the output covers. The output was validated (`intakeReasons`) when it was decided.
+ * Records each outcome of `output.issueIntake` not yet recorded for `(job, issue)` (see the header), then each reused
+ * issue the output gave none, carried from `reuse.since`; `job` is the checkpoint whose capture the output covers. The
+ * output was validated (`intakeReasons`) when it was decided.
  */
-export function settleIntake(journal: Journal, job: JobId, output: CheckpointOutput): void {
+export function settleIntake(journal: Journal, job: JobId, output: CheckpointOutput, reuse: IssueReuse | null): void {
+  const given = new Set<string>(output.issueIntake.map((x) => x.issue));
+  for (const [issue, was] of reuse?.unchanged ?? []) {
+    if (given.has(issue) || journal.view.holistic().intake.some((x) => x.job === job && x.issue === issue)) continue;
+    const outcome: IssueIntakeOutcome = was.type === 'acted' ? { type: 'none', reason: `unchanged since ${reuse!.since}, which acted on it through its ops` } : was;
+    journal.fact({ kind: 'issue-intake', job, issue, outcome });
+    crashPoint('amendment.after-decided');
+  }
   for (const { issue, outcome } of output.issueIntake) {
     if (journal.view.holistic().intake.some((x) => x.job === job && x.issue === issue)) continue;
     let recorded: IssueIntakeOutcome;

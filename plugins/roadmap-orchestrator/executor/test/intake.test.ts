@@ -171,9 +171,9 @@ test('intake.acted-ops-validated: an acted outcome names ops of the same output 
     const pin = revisionInForce(x.r.ctx.runDir, requirePlanInForce(x.r.ctx.runDir, x.r.journal.view)).corpus!.pin.value;
     for (const on of [{ type: 'units', ids: ['u1'] }, { type: 'rules', ids: ['T-1'] }] as const) {
       const output = validateCheckpointOutput(intake({ type: 'acted', on }));
-      assert.deepEqual(intakeReasons(x.r.ctx.runDir, captured, pin, output), [`issueIntake acts on issue-1 through ${on.type}: a checkpoint acts only through its own ops`]);
+      assert.deepEqual(intakeReasons(x.r.ctx.runDir, captured, pin, output, null), [`issueIntake acts on issue-1 through ${on.type}: a checkpoint acts only through its own ops`]);
     }
-    assert.deepEqual(intakeReasons(x.r.ctx.runDir, captured, pin, validateCheckpointOutput(intake(intakeOutcome.actedOps([0])))), [], 'its own op is fine');
+    assert.deepEqual(intakeReasons(x.r.ctx.runDir, captured, pin, validateCheckpointOutput(intake(intakeOutcome.actedOps([0]))), null), [], 'its own op is fine');
     assert.deepEqual(factsOfKind(x.r, 'issue-intake'), [], 'no outcome is recorded for an invalid decision');
     assert.deepEqual(factsOfKind(x.r, 'corpus-amendment'), []);
     assert.equal(x.r.journal.view.planApplied()!.rev, 1, 'the valid op did not apply either');
