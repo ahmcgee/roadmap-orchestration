@@ -14,9 +14,11 @@
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): the spec to rule to census cross-check (retro F07, H3);
 // deterministic time fixtures, existing tests included, and negative witnesses through the real entry point (F12, F19,
 // F20, D3).
+// M4a rev 3 (H3, F07): a re-review is a delta (the changed specs, what changed, the unresolved earlier findings) and
+// dispositions each earlier finding exactly once (resolved, still-open, withdrawn); a still-open one is not reported again.
 import { canonicalJson } from '../../core/json.ts';
 import type { PackReviewPromptInputs, PromptModule } from '../inputs.ts';
-import { documentsXml, rulesIndexText, visionText } from '../inputs.ts';
+import { documentsXml, packReviewDeltaText, rulesIndexText, visionText } from '../inputs.ts';
 import { MAX_PREMISES, PACK_REVIEW_SCHEMA } from '../schemas.ts';
 
 /** The finding cap the prompt states (it bounds reporting, never reading). Not enforced. */
@@ -34,6 +36,7 @@ The message holds the whole pack, read-only:
 - <obligations>: the obligations file: each obligation anchored at a corpus rule (T-n), its witness lane and tests, its activation and the units that deliver it; the cut line; and the census, one state per active rule (obligation, out-of-slice, untestable, prod-only).
 - <rules_index>: every active corpus rule, by file and section. The corpus is the arc's target.
 - <phase0>: the Phase-0 record: curation, corpus divergences, ranked questions with working assumptions, debt and amendment dispositions, issue intake and the slice.
+- <delta>, on a re-review only: the review this one follows (since), what changed in the pack since it (<changed>: the plan, a spec by unit, the obligations, the corpus pin, the Phase-0 record, the vision, the head or the routing), and every earlier finding still unresolved (<previous_findings>, each named job#index). On a re-review <specs> holds only the changed specs; the rest of the pack is given whole as the frame.
 Your working directory is the repository at the head the pack was drafted on. Explore as much of the code as you need: read the code the specs and rules describe before judging whether a unit can be built. Batch your reads: one Grep over many paths rather than many single Reads.
 
 # Constraints
@@ -50,13 +53,16 @@ Read the whole pack first, then the code the specs describe. Hunt, in this order
 
 A finding is blocking when the pack cannot run as written: a contradiction, a unit that cannot be built, an obligation or census state that is wrong. Everything else is a note. Each finding names its target: a unit by id, an obligation (I-n), a census entry or a rule by T-n, or the plan as a whole; one plain sentence in claim saying what is wrong and where; and the files and lines you read in evidence. At most ${MAX_PACK_FINDINGS} findings, worst first; never one defect twice under two targets. An empty report is legitimate and better than a manufactured finding: report what is there, not what would make the report look thorough.
 
+# A re-review
+When the message holds <delta>, review what changed against the frame, and give every earlier finding listed in <previous_findings> exactly one disposition, naming it by its job and index: resolved when the pack as it stands now no longer has the problem, still-open when it still does, withdrawn when on reading it again it was never a problem. A still-open blocking finding keeps holding the first admission, so do not report it again as a new finding; report as findings only problems that are new. Judge a resolution by the changed files, not by the change's intent.
+
 # Output
-findings as above. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, at most ${MAX_PREMISES}, each with the file and line you read it at. Write every claim and reason as plain, literal sentences.`;
+findings as above. dispositions: on a re-review one entry per earlier finding in <previous_findings>, none missing and none twice; on a first review it is empty. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, at most ${MAX_PREMISES}, each with the file and line you read it at. Write every claim and reason as plain, literal sentences.`;
 
 export const PROMPT: PromptModule<'packReview'> = {
   system,
   schema: PACK_REVIEW_SCHEMA,
-  fields: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0'],
+  fields: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   render: (i: PackReviewPromptInputs) => `<vision>
 ${visionText(i.vision)}
 </vision>
@@ -79,7 +85,7 @@ ${rulesIndexText(i.rulesIndex)}
 
 <phase0>
 ${canonicalJson(i.phase0)}
-</phase0>
+</phase0>${packReviewDeltaText(i.delta)}
 
 Review the pack against the vision and the code, worst problem first, then return your report.`,
 };

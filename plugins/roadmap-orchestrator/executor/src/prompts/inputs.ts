@@ -15,7 +15,7 @@ import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
 import type {
-  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict,
+  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding,
   Vision, VisionClause, VisionCoverage, VisionQuestion,
 } from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
@@ -266,8 +266,11 @@ export type LensInputs = Readonly<{
   target: TargetInput;
   /** The audit's detached worktree at the audited SHA, the lens's cwd. */
   checkout: AbsPath;
-  /** M4a rev 3 (H2, R61): a specs-only drift's changed units (the vision lens reads their spec deltas only); null: a full audit. */
-  specsOnly: readonly UnitId[] | null;
+  /**
+   * M4a rev 3 (H2, R61): a specs-only drift's changed specs, each rendered in full at the audited plan rev (the lens
+   * judges these against the vision; the code range is not its subject); null: a full audit.
+   */
+  specsOnly: readonly RenderedSpec[] | null;
 }>;
 
 /**
@@ -339,11 +342,23 @@ export type CheckpointIssuesInput =
 export type PackReviewPromptInputs = Readonly<{
   vision: VisionInput;
   plan: string;
+  /** Every unit's spec; on a delta re-review only the specs changed since the review it follows. */
   specs: readonly RenderedSpec[];
   obligations: Obligations;
   rulesIndex: readonly PinnedRule[];
   phase0: Phase0Record;
+  /** M4a rev 3 (H3, F07): null on a full review (the first, or after an abandoned one). */
+  delta: PackReviewDelta | null;
 }>;
+
+/** M4a rev 3 (H3): an unresolved finding of an earlier pack review, named by its origin `(job, index)`. */
+export type PreviousPackFinding = Readonly<{ job: JobId; finding: PackFinding }>;
+/**
+ * A delta re-review: the completed review it follows (`since`), what changed in the pack since (`plan`, `spec <unit>`,
+ * `spec <unit> removed`, `obligations`, `corpus pin`, `phase0`, `vision`, `head`, `routing`), and every earlier finding
+ * still unresolved, each of which its answer must disposition.
+ */
+export type PackReviewDelta = Readonly<{ since: JobId; changed: readonly string[]; previous: readonly PreviousPackFinding[] }>;
 
 export type RoleInputs = {
   readonly planCheck: PlanCheckInputs;
@@ -366,7 +381,7 @@ export const ROLE_INPUTS = {
     'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
-  packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0'],
+  packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -562,10 +577,18 @@ Approve when every acceptance clause that admits a test already has an active wi
 </acceptance_shape>`;
 }
 
-/** A specs-only drift (H2, R61): the units whose specs alone changed, or nothing for a full audit. */
-export function specsOnlyText(specsOnly: readonly UnitId[] | null): string {
+/** A pack review's delta (the review it follows, what changed, the unresolved earlier findings), or nothing for a full review. */
+export function packReviewDeltaText(delta: PackReviewDelta | null): string {
+  if (delta === null) return '';
+  const target = (t: PackFinding['target']): string => (t.type === 'plan' ? 'plan' : t.type === 'census' ? `census ${t.rule}` : `${t.type} ${t.id}`);
+  const previous = delta.previous.map((p) => `- ${p.job}#${p.finding.index} [${p.finding.severity}] ${target(p.finding.target)}: ${p.finding.claim}`);
+  return `\n\n<delta since="${delta.since}">\n<changed>\n${delta.changed.join('\n')}\n</changed>\n<previous_findings>\n${previous.join('\n')}\n</previous_findings>\n</delta>`;
+}
+
+/** A specs-only drift (H2, R61): the changed specs, embedded, with what to judge; nothing for a full audit. */
+export function specsOnlyText(specsOnly: readonly RenderedSpec[] | null): string {
   if (specsOnly === null) return '';
-  return `\n\n<specs_only>\nThis audit runs because a plan revision changed only these units' specs; the product code is unchanged since the code lenses last read it, and only the vision lens runs:\n${specsOnly.map((u) => `- ${u}`).join('\n')}\nJudge what those specs now ask for against the vision. Do not audit the code again.\n</specs_only>`;
+  return `\n\n<specs_only>\nThis audit runs because a plan revision changed only these units' specs; the product code is unchanged since the code lenses last read it, and only the vision lens runs. Judge what these specs now ask for against the vision. Do not audit the code again.\n${documentsXml(specsOnly.map((s) => ({ source: `spec of unit ${s.unit}, revision ${s.rev} (changed by the revision this audit follows)`, content: s.markdown })))}\n</specs_only>`;
 }
 
 /** The checkpoint's input manifest (H4): every captured input by kind, id, kept path and hash. */

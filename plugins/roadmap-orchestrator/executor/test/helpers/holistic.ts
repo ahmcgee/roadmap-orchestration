@@ -122,8 +122,11 @@ export const packTargetOf = {
   plan: (): JsonValue => ({ type: 'plan' }),
 } as const;
 
-/** A pack review's answer (OR-Q16), validated by the frozen reader: defaults a note on the plan. */
-export function packReviewAnswer(findings: readonly PackFindingSpec[] = []): JsonValue {
+/** A delta re-review's disposition of an earlier finding `job#index` (M4a rev 3, H3). */
+export type PackDispositionSpec = Readonly<{ job: string; index: number; disposition: 'resolved' | 'still-open' | 'withdrawn' }>;
+
+/** A pack review's answer (OR-Q16), validated by the frozen reader: defaults a note on the plan; `dispositions` a delta re-review's. */
+export function packReviewAnswer(findings: readonly PackFindingSpec[] = [], dispositions: readonly PackDispositionSpec[] = []): JsonValue {
   const value: Obj = {
     findings: findings.map((f, i) => ({
       severity: f.severity ?? 'note',
@@ -131,6 +134,7 @@ export function packReviewAnswer(findings: readonly PackFindingSpec[] = []): Jso
       claim: f.claim ?? `pack claim ${i + 1}`,
       evidence: (f.evidence ?? [{ path: 'docs/corpus/0010_Overview.md', line: 1 }]).map((e) => ({ ...e })),
     })),
+    dispositions: dispositions.map((d) => ({ ...d })),
     reasons: ['scripted pack review'],
     premises: [],
   };
@@ -138,7 +142,12 @@ export function packReviewAnswer(findings: readonly PackFindingSpec[] = []): Jso
   return value;
 }
 
-/** A pack-review call of job `review-<n>` answers `findings`; `extra` acts (commit, hang, barrier...) run first. */
-export function packReviewStep(job: string | undefined, findings: readonly PackFindingSpec[] = [], extra: readonly ClaudeAct[] = []): Step {
-  return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: packReviewAnswer(findings) }]);
+/**
+ * A pack-review call of job `review-<n>` answers `findings` (and, a delta re-review, `dispositions` of the earlier
+ * unresolved findings); `extra` acts (commit, hang, barrier...) run first.
+ */
+export function packReviewStep(
+  job: string | undefined, findings: readonly PackFindingSpec[] = [], extra: readonly ClaudeAct[] = [], dispositions: readonly PackDispositionSpec[] = [],
+): Step {
+  return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: packReviewAnswer(findings, dispositions) }]);
 }

@@ -470,6 +470,7 @@ async function main(): Promise<void> {
       specs: [{ unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n- unit' }],
       obligations: parseObligations(obligationsJson),
       rulesIndex: rules.map((r) => ({ id: ruleId(r.id), textSha256: sha256(r.textSha256), text: r.text, file: repoPath(r.file), section: r.section })),
+      delta: null,
       phase0: parsePhase0Record(phase0Json),
     };
     const pack = seatCall(corpusArc, 'packReview', 'arc', { role: 'planCheck', tier: 'high' }, 'm4a-pack-review', m4Dir, packInputs);

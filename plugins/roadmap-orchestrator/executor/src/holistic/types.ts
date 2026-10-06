@@ -1010,6 +1010,20 @@ export type PackFinding = Readonly<{
   index: number; severity: PackSeverity; target: PackTarget; claim: string; evidence: readonly Readonly<{ path: string; line: number }>[];
 }>;
 
+/**
+ * M4a rev 3 (H3, F07): a delta re-review's disposition of one unresolved finding of an earlier review, named by its
+ * origin `(job, index)`: `resolved` (the pack now handles it), `still-open` (it carries to the next review and, blocking,
+ * still holds admission), `withdrawn` (the reviewer takes it back).
+ */
+export const PACK_DISPOSITIONS = ['resolved', 'still-open', 'withdrawn'] as const;
+export type PackDispositionName = (typeof PACK_DISPOSITIONS)[number];
+export type PackDisposition = Readonly<{ job: JobId; index: number; disposition: PackDispositionName }>;
+
+/** A disposition's reader (a review job's origin finding); the list's coverage is the pack review's to check. */
+export const packDisposition: Read<PackDisposition> = object((f) => ({
+  job: f.get('job', (v, p) => jobIdOfKind('review')(v, p)), index: f.get('index', nat), disposition: f.get('disposition', oneOf(PACK_DISPOSITIONS)),
+}));
+
 export const packTarget: Read<PackTarget> = tagged('type', {
   unit: object((f): PackTarget => ({ type: f.get('type', literal('unit')), id: f.get('id', (v, p) => unitId(v, p)) })),
   obligation: object((f): PackTarget => ({ type: f.get('type', literal('obligation')), id: f.get('id', oid) })),

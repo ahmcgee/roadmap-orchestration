@@ -22,8 +22,8 @@ import {
 import { type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
   ACTIVATIONS, type Activation, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
-  OWNER_ONLY_CLASSES, PACK_SEVERITIES, type DocRef, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
-  type PackTarget, type WitnessRef, observationKey, packTarget,
+  OWNER_ONLY_CLASSES, PACK_DISPOSITIONS, PACK_SEVERITIES, type DocRef, type PackDisposition, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
+  type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import { buildExperimentsDefault, checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
@@ -680,7 +680,11 @@ export function validateCheckpointOutput(value: unknown): CheckpointOutput {
 
 /** One pack finding; its identity is its index in `findings` (K13: `(job, index)` everywhere). */
 export type PackReviewFinding = Readonly<{ severity: PackSeverity; target: PackTarget; claim: string; evidence: readonly Readonly<{ path: string; line: number }>[] }>;
-export type PackReviewOutput = Readonly<{ findings: readonly PackReviewFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
+/**
+ * `dispositions` (M4a rev 3, H3): a delta re-review's disposition of each unresolved earlier finding its inputs list, by
+ * origin `(job, index)`; empty on a full review. Which ones it must name is the pack review's check (src/holistic/packreview.ts).
+ */
+export type PackReviewOutput = Readonly<{ findings: readonly PackReviewFinding[]; dispositions: readonly PackDisposition[]; reasons: readonly string[]; premises: readonly Premise[] }>;
 
 export const PACK_REVIEW_SCHEMA: Schema = sObj({
   findings: sArr(sObj({
@@ -697,6 +701,7 @@ export const PACK_REVIEW_SCHEMA: Schema = sObj({
     claim: S_STR,
     evidence: S_EVIDENCE_LINES,
   })),
+  dispositions: sArr(sObj({ job: S_STR, index: S_INT, disposition: sEnum(PACK_DISPOSITIONS) })),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
 });
@@ -705,6 +710,7 @@ export const packReviewOutput: Read<PackReviewOutput> = object((f) => ({
   findings: f.get('findings', arrayOf(object((g) => ({
     severity: g.get('severity', oneOf(PACK_SEVERITIES)), target: g.get('target', packTarget), claim: g.get('claim', str), evidence: g.get('evidence', lineEvidence),
   })))),
+  dispositions: f.get('dispositions', arrayOf(packDisposition)),
   reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
   premises: f.get('premises', arrayOf(premise)),
 }));

@@ -14,7 +14,7 @@
 //   arc 3  (story only, refused at K) the harbour master's day view, T-17.
 //
 // Units: arc 1 `guard` (I-1, T-7) and `confirm` (I-2, T-11); arc 2 `cutoff` (I-4, T-15) and `notice` (I-5, T-16);
-// arc 3 `dayview` (I-6, T-17). I-3 (T-5, the tide table) is must-hold from the start. Their fake builds are
+// arc 3 `dayview` (T-17, out of slice in the story: no obligation). I-3 (T-5, the tide table) is must-hold from the start. Their fake builds are
 // files/units/<unit>/; the journeys every witness lane runs are files/golden/journeys/, committed with the bootstrap.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -244,7 +244,9 @@ export const UNITS: readonly UnitSeed[] = [
   {
     id: 'dayview', arc: 3, scope: ['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js'], after: [], obligations: [],
     unitLane: { id: 'dayview-unit', file: 'test/unit/dayview.test.js' },
-    acceptance: ['`tidewater day <date>` prints the day\'s windows with each berth\'s booking (T-17).'],
+    // No rule id in the clause: the story's arc-3 census leaves T-17 out of slice (no obligation is drafted for it), and an
+    // acceptance clause naming an out-of-slice rule is a `spec-census-mismatch` row (M4a rev 3, H3) that arc 3 must not hit.
+    acceptance: ['`tidewater day <date>` prints the day\'s windows with each berth\'s booking.'],
   },
 ];
 

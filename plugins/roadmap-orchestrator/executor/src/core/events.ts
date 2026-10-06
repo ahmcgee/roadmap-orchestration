@@ -25,13 +25,13 @@ import {
 import {
   type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
   type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
-  type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type PackFinding,
+  type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type PackDisposition, type PackFinding,
   type RevisionVector, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger,
   checkpointTrigger, contractOp, divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, observationKey,
-  packFinding, revisionVector,
+  packDisposition, packFinding, revisionVector,
 } from '../holistic/types.ts';
 import {
-  type Read, Fields, SchemaError, arrayOf, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
+  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
   version,
 } from './validate.ts';
 import {
@@ -742,8 +742,12 @@ export type M4aFact =
   | Readonly<{ kind: 'issue-intake'; job: JobId; issue: IssueId; outcome: IssueIntakeOutcome }>
   /** A pack review's kept inputs (K8): written after `inputs/<inputsSha256>.pack-review.json` and before the spawn; `key` its required-review key. */
   | Readonly<{ kind: 'pack-review-started'; job: JobId; planRev: PlanRev; inputsSha256: Sha256Hex; key: Sha256Hex }>
-  /** A pack review's findings, each identified by `(job, index)` (K13). */
-  | Readonly<{ kind: 'pack-review-ended'; job: JobId; outcome: 'completed' | 'abandoned'; findings: readonly PackFinding[] }>
+  /**
+   * A pack review's findings, each identified by `(job, index)` (K13). `dispositions` (M4a rev 3, H3): a completed delta
+   * re-review's disposition of each unresolved finding of the reviews before it, by origin `(job, index)`; absent on a
+   * full review (the first, or after an abandoned one) and on an abandoned one.
+   */
+  | Readonly<{ kind: 'pack-review-ended'; job: JobId; outcome: 'completed' | 'abandoned'; findings: readonly PackFinding[]; dispositions?: readonly PackDisposition[] }>
   /** A checkpoint's issue capture kept as `inputs/<sha256>.issues.json`, before its `checkpoint-inputs` (H13: the repo it resolved once). */
   | Readonly<{ kind: 'issues-captured'; job: JobId; sha256: Sha256Hex; repo: RepoIdentity; filtered: Readonly<{ comments: number; pullRequests: number }> }>;
 
@@ -1514,7 +1518,11 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
       if (x.index !== i) throw new SchemaError(`${f.path}.findings[${i}].index`, String(i), x.index);
     });
     if (out.outcome === 'abandoned' && out.findings.length > 0) throw new SchemaError(`${f.path}.findings`, 'none for an abandoned review', out.findings);
-    return out;
+    const dispositions = f.optional('dispositions', arrayOf(packDisposition));
+    if (dispositions === undefined) return out;
+    if (out.outcome === 'abandoned') throw new SchemaError(`${f.path}.dispositions`, 'none for an abandoned review', dispositions);
+    assertUnique(dispositions, (d) => `${d.job}#${d.index}`, `${f.path}.dispositions`);
+    return { ...out, dispositions };
   }),
   'issues-captured': object((f): Fact => ({
     kind: f.get('kind', literal('issues-captured')), job: f.get('job', ckptJobR), sha256: f.get('sha256', sha256R), repo: f.get('repo', repoIdentity),
