@@ -28,7 +28,7 @@ const unitSteps = (unit: string, files: Readonly<Record<string, string>>): reado
 ];
 
 /** The arc: u1 (mul) and u2 (div), each declaring I-1 and repairing I-2; `state`: the estate fake's state dir. */
-export function batchArc(opts: Readonly<{ estate?: true; t2?: 'pass' | 'fail' }> = {}): Readonly<{ d: ArcDescriptor; state: string }> {
+export function batchArc(opts: Readonly<{ estate?: true; t2?: 'pass' | 'fail'; beforeStart?: (d: ArcDescriptor) => void }> = {}): Readonly<{ d: ArcDescriptor; state: string }> {
   const state = tmpDir('batch-estate');
   const estate = (cmd: 'probe' | 'teardown') => ({ argv: [process.execPath, estateFake, cmd, state, 'estate'], cwd: '.', env: { set: {}, pass: ['PATH'] } });
   const { d } = holisticArc({
@@ -41,6 +41,7 @@ export function batchArc(opts: Readonly<{ estate?: true; t2?: 'pass' | 'fail' }>
       laneExtra: { journey: { resources: ['estate'] } },
       planExtra: { resources: [{ name: 'estate', pool: { size: 1 }, probe: estate('probe'), teardown: estate('teardown') }] },
     }),
+    ...(opts.beforeStart === undefined ? {} : { beforeStart: opts.beforeStart }),
   });
   return { d, state };
 }
