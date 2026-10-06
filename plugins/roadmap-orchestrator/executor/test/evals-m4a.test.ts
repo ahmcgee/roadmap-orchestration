@@ -386,7 +386,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const chain = chainOf(absPath(layout(silent.dir).product));
     assert.equal(chain.arcs.length, 1);
     const pass = checked.result.criteria.filter((c) => c.pass).map((c) => c.name);
-    assert.deepEqual(pass, ['isolation', 'intake-filtered', 'arc1-complete', 'brief-acked-once', 'no-model-ids'], 'the paid run\'s criteria that need a second arc or the k-limit stop fail here');
+    assert.deepEqual(pass, ['isolation', 'intake-filtered', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile'], 'the paid run\'s criteria that need a second arc or the k-limit stop fail here');
     assert.match(checked.result.criteria.find((c) => c.name === 'stopped-at-k')!.detail, /vision-silent/);
   });
 });
