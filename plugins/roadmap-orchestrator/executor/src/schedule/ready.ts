@@ -17,7 +17,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
 import { p1Blocking } from '../holistic/findings.ts';
-import type { PlanM1, PlanUnit } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, priorityOf } from '../input/plan.ts';
 import { judgmentSeat, decidedBy } from '../pipeline/transitions.ts';
 import type { Backend, JudgmentRole, RoutingTable } from '../routing/types.ts';
 import { effectiveDependency } from './graph.ts';
@@ -165,7 +165,7 @@ export function rankOf(view: JournalView, plan: PlanM1, id: UnitId): Rank {
   const unit = plan.units[planIndex] as PlanUnit;
   const start = waitStartSeq(view, unit);
   const bypassMerges = view.publications().filter((p) => p.unit !== id && p.seq > start).length;
-  return { unit: id, origin: unit.origin ?? 'planned', waitStartSeq: start, bypassMerges, promoted: bypassMerges >= PROMOTION_BYPASS, planIndex };
+  return { unit: id, priority: priorityOf(unit), origin: unit.origin ?? 'planned', waitStartSeq: start, bypassMerges, promoted: bypassMerges >= PROMOTION_BYPASS, planIndex };
 }
 
 // ---------------------------------------------------------------------------------------------------

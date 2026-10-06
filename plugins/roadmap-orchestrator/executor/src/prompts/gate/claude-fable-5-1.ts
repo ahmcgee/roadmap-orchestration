@@ -15,8 +15,7 @@
 // the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument,
-} from '../inputs.ts';
+  bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
 import { GATE_SCHEMA, MAX_DIRECTIVES, MAX_PREMISES } from '../schemas.ts';
 
 const system = `You are operating autonomously as the gate for one unit of a roadmap build, usually one a first gate escalated or a risk trigger promoted. Nothing merges without your approval. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision.
@@ -84,6 +83,7 @@ export const PROMPT: PromptModule<'gate'> = {
   schema: GATE_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'checks',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -126,7 +126,7 @@ ${bullets(i.scope.patterns, '(empty)')}
 
 <scope_growth>
 ${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
-</scope_growth>${priorRound(i)}
+</scope_growth>${gateChecksText(i.checks)}${priorRound(i)}
 
 Gate unit ${i.spec.unit} at head ${i.diff.head}, spec revision ${i.spec.rev}. Grade every acceptance clause, then return your decision.`,
 };

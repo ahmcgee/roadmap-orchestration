@@ -234,6 +234,8 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
     index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
     target: architecture(ctx, sha),
     checkout,
+    // M4a rev 3 (H2): every audit is full until N5 lands specs-only drift.
+    specsOnly: null,
   };
 }
 

@@ -54,7 +54,7 @@ function show(n: Next): string {
 
 function flat(c: UnitCounters): Record<Counter, number> {
   const out: Record<string, number> = {
-    chargeableFailures: c.chargeableFailures, redirects: c.redirects, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds,
+    chargeableFailures: c.chargeableFailures, redirects: c.redirects, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
   };
   for (const s of RETRY_STAGES) out[`retries.${s}`] = c.retries[s];
   return out as Record<Counter, number>;
@@ -107,6 +107,8 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'process-fault', {}, 'park:process-fault', 'park', {}],
   // A routing change that moved a started implementer's seat (dispatch.ts): park, uncharged, at any dispatching stage.
   ['plan-check', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
+  // M4a rev 3 (E): a frontier builder under by-builder makes no plan-check call; its fresh build assesses in session.
+  ['plan-check', 'in-session', {}, 'build/fresh@med', 'advance', {}],
   // build (implementer)
   ['build', 'success', {}, 'quiesce', 'advance', {}],
   ['build', 'refusal', {}, 'park:refusal', 'park', {}],
@@ -124,6 +126,10 @@ const ROWS: readonly Row[] = [
   ['build', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['build', 'interrupted', {}, 'hold', 'hold', {}],
   ['build', 'interrupted', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'hold', 'hold', {}],
+  // M4a rev 3 (E, R55): the in-session assessment's outcomes. Infeasible parks design with the escalation's reason (a
+  // build has no escalation seat to route up to); a raised floor on another seat builds fresh there, uncharged.
+  ['build', 'infeasible', {}, 'park:escalation', 'park', {}],
+  ['build', 'risk-raised', {}, 'build/fresh@med', 'advance', {}],
   // quiesce → evidence → salvage → teardown
   ['quiesce', 'empty', {}, 'evidence', 'advance', {}],
   ['evidence', 'captured', {}, 'salvage', 'advance', {}],
@@ -144,6 +150,15 @@ const ROWS: readonly Row[] = [
   ['lanes', 'interrupted', {}, 'hold', 'hold', {}],
   ['lanes', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['lanes', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
+  // M4a rev 3 (D1): a missing or failing required witness is a C fix round, bounded by the chargeable bound.
+  ['lanes', 'witnesses-missing', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
+  ['lanes', 'witnesses-missing', { counters: { chargeableFailures: 2 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1 }],
+  // M4a rev 3 (D2, R38): a smoke survivor gets `smokeRounds` (1) C fix rounds, then the gate decides with it.
+  ['lanes', 'smoke-survived', {}, 'build/fix@med', 'smoke', { smokeRounds: 1, chargeableFailures: 1 }],
+  ['lanes', 'smoke-survived', { counters: { smokeRounds: 1 } }, 'gate@med', 'advance', {}],
+  ['lanes', 'smoke-survived', { counters: { smokeRounds: 1 }, promotion: true }, 'gate@escalation', 'advance', {}],
+  // M4a rev 3 (F4): a known defect sends the unit back to prepare, uncharged.
+  ['lanes', 'known-defect', {}, 'prepare', 'advance', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
@@ -210,7 +225,7 @@ describe('transitions', () => {
       'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
       'build occupied': 'env', 'build cleanup-failed': 'retryable',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
-      'lanes red': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
+      'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
       'gate process-fault': 'retryable', 'gate routing-changed': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',

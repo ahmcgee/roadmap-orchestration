@@ -25,8 +25,7 @@
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   coverageText, divergencesText, documentsXml, findingViewsText, issuesText, obligationsText, priorInvalidText, referenceIndexText, rulingsText, targetDocument,
-  triggerText, visionText,
-} from '../inputs.ts';
+  triggerText, visionText, checkpointRev3Text} from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
 import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
 
@@ -107,7 +106,7 @@ export const PROMPT: PromptModule<'checkpoint'> = {
   schema: CHECKPOINT_SCHEMA,
   fields: [
     'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'issues',
+    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   render: (i) => `<vision>
 ${visionText(i.vision)}
@@ -157,7 +156,7 @@ ${referenceIndexText(i.index)}
 
 <direction>
 ${i.direction}
-</direction>
+</direction>${checkpointRev3Text(i)}
 
 Steer the arc at head ${i.head} toward the vision. Weigh every open finding, obligation, divergence and issue above, then return your decision.`,
 };

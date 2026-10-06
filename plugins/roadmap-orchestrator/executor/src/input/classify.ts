@@ -78,7 +78,7 @@ import type { IntentOf, PlanChange } from '../core/events.ts';
 import { PLAN_FIELDS } from '../core/events.ts';
 import {
   type JobId, type ObligationId, type ResourceName, type ResourceUnit, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId,
-  parseResourceUnit, compareIds,
+  parseResourceUnit, compareIds, canonicalIds,
 } from '../core/ids.ts';
 import { type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
@@ -87,12 +87,12 @@ import { canonicalJson } from '../core/json.ts';
 import {
   type Bounds, type ResidueKey, type RevisionManifest, type SpecM1, BOUND_FIELDS, specObligations, specRepairs,
 } from '../core/records.ts';
-import { type UnitState, maxTier } from '../core/state.ts';
+import { type UnitState, maxTier, openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import type { AbsPath, RepoPattern } from '../core/values.ts';
 import { undispositioned } from '../host/residues.ts';
 import { classifyObligations } from '../holistic/obligations.ts';
-import { type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
+import { type ClassifiedAdmit, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { advancesReasons, visionEditReasons } from '../holistic/vision.ts';
 import { withinEnvelope } from '../pipeline/prepare.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
@@ -116,9 +116,13 @@ import { type PlanM1, type PlanUnit, boundsOf, parsePlan, planFieldValue, reserv
  * start whose files differ, a checkpoint bundle (its cites back a split that drops text), or the executor's own
  * machine revision. Its source (`RevisionSource`) is the payload's.
  */
+/**
+ * Who proposes a revision. A bundle's `admits` (M4a rev 3, OR-A1): the classes code gave its admit ops (empty in an
+ * `architecture-doc` arc, LR-h); an `opportunity` class's clauses are the only `holistic.advances` it may add.
+ */
 export type Proposer =
   | Readonly<{ type: 'apply' | 'rule' | 'reverse' | 'start' | 'executor' }>
-  | Readonly<{ type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[] }>;
+  | Readonly<{ type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[] }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -204,6 +208,20 @@ function staleAfterMachineRevision(runDir: AbsPath, unit: UnitId, path: AbsPath,
     + `re-apply your edit on top of rev ${newRev} (kept at ${inputPath(runDir, newSha256, SPEC_INPUT)}) and set rev ${newRev + 1}`;
 }
 
+/**
+ * M4a rev 3 (OR-A1, B "advances carve-out"): a bundle may change `holistic.advances` only by adding exactly the clauses of
+ * the `opportunity` classes its own admits record, removing none. Null when it does; else why not (appended to the
+ * owner-only reason).
+ */
+function opportunityAdvancesReason(proposer: Extract<Proposer, { type: 'bundle' }>, was: readonly VisionClauseId[], next: readonly VisionClauseId[]): string | null {
+  const opportunity = canonicalIds(proposer.admits.flatMap((a) => (a.class.type === 'opportunity' ? a.class.clauses : [])));
+  const expected = canonicalIds([...was, ...opportunity]);
+  if (opportunity.length > 0 && same(canonicalIds(next), expected)) return null;
+  return opportunity.length === 0
+    ? ' (a bundle adds only the clauses of an opportunity it admits, and this one admits none)'
+    : ` (a bundle adds exactly its opportunities' clauses ${opportunity.join(', ')}, and removes none: expected ${expected.join(', ')})`;
+}
+
 /** The spec change of a dispatched unit, or why it is refused; null when the file is the unit's spec. */
 function dispatchedSpec(
   input: ClassifyInput, unit: PlanUnit, u: UnitState, path: AbsPath, bytes: Buffer, spec: SpecM1, inputs: NextInputs,
@@ -221,8 +239,11 @@ function dispatchedSpec(
   if (status === 'park-pending' && (u.decided === null || !['plan-check', 'gate'].includes(u.decided.stage))) {
     return `unit ${unit.id} is parked at ${u.decided?.stage}, which is final in M1; re-enter the work under a new unit id`;
   }
-  if (u.open !== null) {
-    return `unit ${unit.id} has ${u.open.stage} attempt ${u.open.attempt} cut short by a crash; apply its spec edit once the executor has recorded that attempt`;
+  const open = openAttempt(input.view, unit.id);
+  if (open !== null) {
+    return open.live
+      ? `unit ${unit.id} is running ${open.stage} attempt ${open.attempt}; apply the edit at its stage boundary`
+      : `unit ${unit.id} has ${open.stage} attempt ${open.attempt} cut short by a crash; apply its spec edit once the executor has recorded that attempt`;
   }
   const kept = keptInput(input.runDir, recorded.sha256, SPEC_INPUT);
   if (kept === null) throw new Error(`unit ${unit.id}: the spec it was dispatched at (${recorded.sha256}) is not kept in the run dir`);
@@ -745,8 +766,9 @@ export function classify(input: ClassifyInput): Classified {
   // The arc's slice of the vision (owner-only, like the vision): it fits the revision's vision whatever changed.
   if (plan.holistic !== undefined && inputs.vision !== null) reasons.push(...advancesReasons(inputs.vision, plan.holistic.advances));
   if (cur.holistic !== undefined && plan.holistic !== undefined && !same(cur.holistic.advances, plan.holistic.advances)) {
-    if (proposer.type !== 'apply') reasons.push(`holistic.advances is owner-only: only an architect \`apply\` changes it, not a ${proposer.type}`);
-    else changes.push({ type: 'advances' });
+    const why = proposer.type === 'apply' ? null : proposer.type === 'bundle' ? opportunityAdvancesReason(proposer, cur.holistic.advances, plan.holistic.advances) : '';
+    if (why === null) changes.push({ type: 'advances' });
+    else reasons.push(`holistic.advances is owner-only: only an architect \`apply\` changes it, not a ${proposer.type}${why}`);
   }
   const obligations = obligationRows(input, inputs, reasons);
   changes.push(...obligations.changes);

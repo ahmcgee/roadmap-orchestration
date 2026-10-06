@@ -40,8 +40,8 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
 - `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item; `--choice` names one of its `options`.
 - `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
-- `roadmap apply [--expect-rev <n>] [--dry-run]`: put the edited plan, specs and other revisioned inputs in force at
-  the next stage boundary. `--dry-run` always exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or
+- `roadmap apply [--expect-rev <n>] [--dry-run] [--ruling <file>]`: put the edited plan, specs and other revisioned inputs in force at
+  the next stage boundary; each `--ruling` (repeatable) lands a ruling sidecar with the edits as one revision. `--dry-run` always exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or
   `accepted{rev, nextRev, changes, smoke}`; it queues nothing.
 - `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
 - `roadmap run-only (<unit>... | --clear)`: limit admission to these units, or lift the limit.
@@ -87,6 +87,13 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   whose ref holds no completion, or whose PR was closed unmerged.
 - `roadmap chain status --repo <path>`: `{arcs: [{arc, previousArc, acked, pr}], k, unackedStarts}`, oldest first.
   Exits 64 before any snapshot.
+- `roadmap witness-check --lane-file <file>`: runs one required witness lane in the current worktree and compares its
+  required test ids: exit 0, or 78 with `{missing, failed, malformed}`. A build prompt names the exact command.
+- `roadmap resume-arc --repo <path>`: restarts the supervisor of this repo's arc when its owner died; otherwise
+  `{resumed: false, reason}` (exit 0).
+- `roadmap inputs export --repo <path> --arc <arc> --out <dir>`: writes the arc's current inputs (every spec at its
+  current rev) and `export.json {planRev, specRevs}` into a new `--out`; read-only. Edit them, then
+  `apply --expect-rev <planRev>`.
 
 ## Files
 

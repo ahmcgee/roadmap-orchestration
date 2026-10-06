@@ -15,7 +15,7 @@
 // AGENTS.md, which in arc 1 granted cloud use and sudo installs); cited documents in full and an index for
 // the rest (items 6, 12); the plan-check's notes as facts about existing code (item 26).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, bullets, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, bullets, fastLanesText, referenceIndexText, rulingsText, buildChecksText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
@@ -71,7 +71,7 @@ Fix exactly what failed and what the directives name. Carry out each directive, 
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
 ${i.spec.markdown}
 
@@ -99,5 +99,5 @@ ${fastLanesText(i.worktree, i.fastLanes)}${fixRound(i)}
 # Task
 ${i.fixRound === null
     ? `Implement unit ${i.spec.unit} in ${i.worktree} until every acceptance clause holds and every fast lane passes.`
-    : `Complete the fix round for unit ${i.spec.unit} in ${i.worktree}.`}`,
+    : `Complete the fix round for unit ${i.spec.unit} in ${i.worktree}.`}${buildChecksText(i.witnessChecks, i.assess)}`,
 };

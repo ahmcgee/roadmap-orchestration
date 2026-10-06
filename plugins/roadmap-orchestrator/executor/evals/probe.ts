@@ -54,7 +54,7 @@ import { queryPolicy } from '../src/forge/policy.ts';
 import { trusted } from '../src/forge/trust.ts';
 import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
 import {
-  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, ruleId, sha, sha256, specRev, unitId, visionClauseId,
+  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId, visionClauseId,
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
@@ -377,7 +377,7 @@ async function main(): Promise<void> {
 
   const lensInputs: LensInputs = {
     vision: MINI_VISION, lens: 'vision', obligations: MINI_OBLIGATIONS, range: { from: TREE, to: HEAD, diff: MINI_DIFF }, owners: [], priorFindings: [],
-    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir,
+    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir, specsOnly: null,
   };
   await backend(ctx, 'm3.lens', seatCall(holistic, 'lens', 'arc', { role: 'planCheck', tier: 'high' }, 'm3-lens', m3Dir, lensInputs),
     validates("m3.lens", "lens", () => true));
@@ -387,6 +387,7 @@ async function main(): Promise<void> {
     plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
     coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.', issues: { type: 'captured', issues: [] },
+    manifest: [], specs: [], nextRulingId: rulingId('C-1'), closeout: null, issuesUnchangedSince: null,
   };
   await backend(ctx, 'm4a.checkpoint-summit', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
     validates('m4a.checkpoint-summit', 'checkpoint', () => true));

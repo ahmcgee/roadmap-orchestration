@@ -4,7 +4,8 @@
 import type { Buffer } from 'node:buffer';
 import {
   type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
-  type IssueId, type JobId, type LaneId, type LaneRev, type NeedsUserId, type ObligationId, type OpId, type OpKey, type PlanRev,
+  type IssueId, type JobId, type KnownDefectId, type LaneId, type LaneRev, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev,
+  knownDefectId, opportunityId,
   type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type RulingId, type Sha, type Sha256Hex, type SpecRev,
   type UnitId, type VisionClauseId, INTEGRATION_SLOT, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
   findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseOpId,
@@ -16,12 +17,13 @@ import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIde
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
   COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
-  type DispatchRecord, type KillReason, type LensKindName, type PauseTarget, type PlanManifest, type ResidueRecord, type ResumeTarget,
+  type DispatchRecord, type KillReason, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
   type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
   usageUnavailableReason,
 } from './records.ts';
 import {
+  type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
   type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
   type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type PackFinding,
   type RevisionVector, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger,
@@ -133,15 +135,37 @@ export type ResourceEdge =
 export type LaneOwner = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'job'; job: JobId }>;
 
 /**
+ * What a mutant was made for (M4a rev 3, D2): a vacuity finding's patch (B3), or a unit attempt's mutation smoke (the
+ * attempt's production diff reverted). A 1.0.0-dev.6 record names `finding` instead, read as `of: finding`
+ * (`mutantSubjectDefault`, src/core/upgrade.ts).
+ */
+export type MutantOf = Readonly<{ type: 'finding'; finding: FindingId }> | Readonly<{ type: 'smoke'; unit: UnitId; attempt: number }>;
+
+/**
+ * A lane execution's reuse identity (M4a rev 3, F1a, R52), stamped on a spec lane's spawn: the lane's normalised rev
+ * (`laneRevOf`), its environment's id (`envIdOf`), and argv[0] resolved to a path with its content's sha256 (null when it
+ * does not resolve: never reused). Absent: a 1.0.0-dev.6 execution, never reused.
+ */
+export type LaneIdentity = Readonly<{ laneRev: LaneRev; envId: EnvId; argv0: Readonly<{ path: AbsPath; sha256: Sha256Hex }> | null }>;
+
+/** A mutant run's spawn subject as written since M4a rev 3. */
+export type MutantSubject = Readonly<{ purpose: 'mutant'; of: MutantOf; lane: LaneId; laneRev: LaneRev; tree: Sha }>;
+/** A mutant run's spawn subject as 1.0.0-dev.6 wrote it: read byte-preserving, normalised by `mutantSubjectDefault`. */
+export type Dev6MutantSubject = Readonly<{ purpose: 'mutant'; finding: FindingId; lane: LaneId; laneRev: LaneRev; tree: Sha }>;
+
+/**
  * What a spawn runs. Model ids never appear: a backend is named by role and routingRev. M3: `arc-backend` (a lens
  * or checkpoint call of a job, on an arc seat), `journey` (an arc lane), `mutant` (a finding's lane on its patched tree).
+ * M4a rev 3: `redRev` on a lane or journey spawn (the red protocol it runs under, written before the run, Q20; absent: the
+ * frozen 1.0.0-dev.6 table), `identity` on a spec lane's (`LaneIdentity`), and a mutant's `of` (`MutantOf`).
  */
 export type SpawnSubject =
   | (Readonly<{ purpose: 'backend'; routingRev: RoutingRev; unit: UnitId; attempt: number }> & UnitSeatRef)
   | (Readonly<{ purpose: 'arc-backend'; routingRev: RoutingRev; job: JobId; attempt: number }> & ArcSeatRef)
-  | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner }>
-  | Readonly<{ purpose: 'mutant'; finding: FindingId; lane: LaneId; laneRev: LaneRev; tree: Sha }>
-  | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha }>
+  | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner; redRev?: RedRev }>
+  | MutantSubject
+  | Dev6MutantSubject
+  | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   | Readonly<{
     purpose: 'smoke';
@@ -209,14 +233,21 @@ export type OpExpect = {
   'command.apply': Readonly<{ command: CommandId; commandSha256: Sha256Hex }>;
   /** M3 (A4): the docs publication's commit of the rendered `.roadmap/` files and its contract ops on the tip, on `refs/roadmap-run/<arc>/docs/<pub>`. */
   'docs.commit': Readonly<{ ref: RefName; old: Sha | null; pub: JobId; integrationTip: Sha; worktree: AbsPath; commit: CommitInputs<readonly [Sha]> }>;
-  /** M3 (B3): a finding's mutant (`inputs/<patchSha256>.patch`) applied in a detached worktree at `at`. */
-  'mutant.apply': Readonly<{ worktree: AbsPath; at: Sha; finding: FindingId; patchSha256: Sha256Hex }>;
+  /**
+   * M3 (B3): a mutant (`inputs/<patchSha256>.patch`) applied in a detached worktree at `at`: a finding's, or (M4a rev 3) a
+   * unit attempt's smoke (`MutantOf`). A 1.0.0-dev.6 intent names `finding` (`MutantApplyExpect`, `mutantSubjectDefault`).
+   */
+  'mutant.apply': MutantApplyExpect;
   /**
    * M3 (G1, A19): a revision's kept payload (`inputs/<payloadSha256>.revision.json`), its base and the rev it writes;
    * `base` 0 for an arc's first revision (its first start records rev 1, M3 step A2).
    */
   'revision.commit': Readonly<{ source: RevisionSource; base: RevisionBase; rev: PlanRev; payloadSha256: Sha256Hex; docs: boolean }>;
 };
+
+export type MutantApplyExpect =
+  | Readonly<{ worktree: AbsPath; at: Sha; of: MutantOf; patchSha256: Sha256Hex }>
+  | Readonly<{ worktree: AbsPath; at: Sha; finding: FindingId; patchSha256: Sha256Hex }>;
 
 /** The members of a repair batch candidate and the merges chaining them. */
 export type BatchCandidate = Readonly<{
@@ -239,11 +270,16 @@ export type IntegrationFfExpect = Readonly<{ ref: RefName; old: Sha; new: Sha }>
 /** The revision a revision is evaluated against: the plan rev in force, or 0 before the arc's first (M3 step A2). */
 export type RevisionBase = PlanRev | 0;
 
-/** Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, or the executor's own patch. */
+/**
+ * Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, or the executor's own patch.
+ * A bundle's `admits` and `conversions` (M4a rev 3, OR-A1, Q4): code's classification of its `admit` ops, persisted in
+ * the decision record before any settlement and never recomputed; both present (in a corpus arc) or both absent (an
+ * `architecture-doc` arc, or 1.0.0-dev.6: unclassified, never counted against a budget or a follow-up; `bundleClassesOf`).
+ */
 export type RevisionSource =
   | Readonly<{ type: 'start' }>
   | Readonly<{ type: 'command'; command: CommandId }>
-  | Readonly<{ type: 'bundle'; job: JobId }>
+  | Readonly<{ type: 'bundle'; job: JobId; admits?: readonly ClassifiedAdmit[]; conversions?: readonly Conversion[] }>
   | Readonly<{ type: 'executor'; inv: InvocationId }>;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
@@ -358,13 +394,20 @@ export const STAGE_OUTCOME_KINDS = {
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
   // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed'],
-  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed'],
-  build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed'],
+  // M4a rev 3 (E): `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check call, the
+  // build assesses in session).
+  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'in-session'],
+  // M4a rev 3 (E, R55): the in-session assessment found the spec `infeasible`, or raised the risk floor onto another
+  // implementer seat (`risk-raised`).
+  build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible', 'risk-raised'],
   quiesce: ['empty'],
   evidence: ['captured'],
   salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
   teardown: ['released', 'cleanup-failed'],
-  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed'],
+  // M4a rev 3 (corpus arcs, LR-h): `witnesses-missing` (D1: a required witness id absent or failing after a green certified
+  // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known
+  // defect, uncharged, back to prepare).
+  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect'],
   gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed'],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
@@ -386,14 +429,14 @@ export type RetryStage = (typeof RETRY_STAGES)[number];
 /**
  * What a recorded outcome did to the unit, as the transition table decided it; the fold derives the
  * unit's counters and status from it. `advance`: on to another stage, no counter. `redirect`, `revise`,
- * `candidate-red`: a bounded round within its bound. `retry`: the stage's one uncharged retry.
+ * `candidate-red`, `smoke` (M4a rev 3: a mutation-smoke fix round): a bounded round within its bound. `retry`: the stage's one uncharged retry.
  * `route-up`: re-dispatched at the role's escalation seat. `trigger`: a risk trigger (contract path touched,
  * scope growth) that puts the next judgment dispatch on the escalation seat. `hold`: the stage was interrupted
  * (a pause or stop cancel, or its backend parked arc-wide on a usage limit); the unit stays at the stage,
  * no counter moves, and a resume re-runs the stage as a new attempt. `park`, `stop`, `retire`: the unit
  * parks (needs-user), the arc stops (needs-user), the unit is done.
  */
-export const OUTCOME_CLASSES = ['advance', 'redirect', 'revise', 'candidate-red', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire'] as const;
+export const OUTCOME_CLASSES = ['advance', 'redirect', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire'] as const;
 export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 
 /**
@@ -434,10 +477,29 @@ export type ParkRecord =
  */
 export type HoldCause = Readonly<{ type: 'backend'; backend: Backend; parkSeq: number }>;
 
+/** A witness test of an arc lane, as a required-witness or smoke detail names it. */
+export type TestRef = Readonly<{ lane: LaneId; testId: string }>;
+/** Test refs' order (by lane, then test id) and identity. */
+export const testRefKey = (t: TestRef): string => `${t.lane}\u0000${t.testId}`;
+/**
+ * What an outcome carries beyond its name (M4a rev 3), present exactly on these outcomes: `witnesses-missing` (the
+ * required ids absent, zero-selected, skipped or malformed: `missing`; failing: `failed`), `smoke-survived` (the
+ * surviving targets and their obligations), `known-defect` (the plan entry hit), build `infeasible` (the assessment's notes).
+ */
+export type StageOutcomeDetail =
+  | Readonly<{ kind: 'witnesses-missing'; missing: readonly TestRef[]; failed: readonly TestRef[] }>
+  | Readonly<{ kind: 'smoke-survived'; obligations: readonly ObligationId[]; testIds: readonly TestRef[] }>
+  | Readonly<{ kind: 'known-defect'; id: KnownDefectId }>
+  | Readonly<{ kind: 'infeasible'; notes: string }>;
+/** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
+export const DETAILED_OUTCOMES = {
+  'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
+} as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
+
 /**
  * One per (unit, stage, attempt). `chargeable` marks a design-class failure (the table's C rows); the
  * third one bounds the unit, so its class must be `park`. `park` (M2) only with class `park`; `cause` (M2)
- * only with class `hold`, absent for a pause or stop.
+ * only with class `hold`, absent for a pause or stop. `detail` (M4a rev 3) exactly on `DETAILED_OUTCOMES`.
  */
 export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   kind: 'stage-outcome';
@@ -449,6 +511,7 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   chargeable: boolean;
   park?: ParkRecord;
   cause?: HoldCause;
+  detail?: StageOutcomeDetail;
 }> }[OutcomeStage];
 
 /**
@@ -568,11 +631,15 @@ export type PlanAppliedM3 = Readonly<{
   routingProvenance: RoutingProvenance;
 }>;
 
-/** Whom a witness run certified or measured: a candidate, a job (audit, baseline, docs, batch), or a mutant (G13). */
+/**
+ * Whom a witness run certified or measured: a candidate, a job (audit, baseline, docs, batch), or a mutant (G13): a
+ * finding's, or (M4a rev 3, D2) a unit attempt's mutation smoke of the salvaged tree `of`. A mutant never certifies.
+ */
 export type WitnessFor =
   | Readonly<{ type: 'candidate'; unit: UnitId; attempt: number }>
   | Readonly<{ type: 'job'; job: JobId }>
-  | Readonly<{ type: 'mutant'; finding: FindingId; of: Sha }>;
+  | Readonly<{ type: 'mutant'; finding: FindingId; of: Sha }>
+  | Readonly<{ type: 'smoke'; unit: UnitId; attempt: number; of: Sha }>;
 
 /** An audit's immutable inputs (§2.5), captured under the revision fence (A19, H2). */
 export type AuditInputs = Readonly<{
@@ -629,19 +696,46 @@ export type HolisticFact =
   /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
   | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>;
 
-/** Where a corpus amendment came from (M4a): a checkpoint's proposal, a divergence code derived it from, or an issue's intake. */
+/**
+ * Where a corpus amendment came from (M4a): a checkpoint's proposal, a divergence code derived it from, or an issue's
+ * intake; since M4a rev 3 (R35) a checkpoint `admit` op code converted (`index` the op's, `reason` the conversion's).
+ */
 export type AmendmentSource =
   | Readonly<{ type: 'checkpoint'; job: JobId; index: number }>
   | Readonly<{ type: 'divergence'; divergence: DivergenceId }>
-  | Readonly<{ type: 'issue'; job: JobId; issue: IssueId }>;
+  | Readonly<{ type: 'issue'; job: JobId; issue: IssueId }>
+  | Readonly<{ type: 'admit'; job: JobId; index: number; reason: ConversionReason }>;
 
 /** A checkpoint's issues (M4a, R21): the kept capture, or why none was taken (non-fatal, never a park). */
 export type CheckpointIssues = Readonly<{ type: 'captured'; sha256: Sha256Hex }> | Readonly<{ type: 'unavailable'; reason: string }>;
 
-/** The M4a facts (SCHEMAS.md "M4a"); their behaviour is A4's (debt), C3's (amendments, intake, pack review, captures). */
+/** A mutation smoke's per-target verdicts (D2, Q15), each list ascending by lane then test id. */
+export type SmokeVerdict = Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[] }>;
+
+/**
+ * The M4a facts (SCHEMAS.md "M4a"); their behaviour is A4's (debt), C3's (amendments, intake, pack review, captures).
+ * M4a rev 3: `lane-reused`, `series-certified` (N1), `smoke-ran` (N3), `finding-corroborated` (N5).
+ */
 export type M4aFact =
-  /** A debt item banked (R7): after the approving gate's `approval`, or a checkpoint's deferral; idempotent per `source`. */
-  | Readonly<{ kind: 'debt-banked'; id: DebtId; bankReason: BankReason; what: string; key: Sha256Hex; source: DebtSource }>
+  /**
+   * A debt item banked (R7): after the approving gate's `approval`, or a checkpoint's deferral; idempotent per `source`.
+   * `opportunity` (M4a rev 3, LR-k) exactly on an `opportunity-overrun` item: the opportunity it names.
+   */
+  | Readonly<{ kind: 'debt-banked'; id: DebtId; bankReason: BankReason; what: string; key: Sha256Hex; source: DebtSource; opportunity?: OpportunityId }>
+  /**
+   * A series reused a lane's earlier pass instead of running it (F1a, R52), written before the lane would have run;
+   * keyed `(parent, lane)`. `from`: the reused execution's series parent, invocation and SHA.
+   */
+  | Readonly<{ kind: 'lane-reused'; parent: Parent; lane: LaneId; from: Readonly<{ parent: Parent; inv: InvocationId; at: Sha }> }>
+  /**
+   * A series' completed clean certificate (Q12, R51): its lanes ran, its checkout's census was clean and its checkout was
+   * removed. Absence is unknown, never clean: an uncertified series is never reused. One per `(parent, checkout)`.
+   */
+  | Readonly<{ kind: 'series-certified'; parent: Parent; checkout: AbsPath; at: Sha }>
+  /** A unit attempt's mutation smoke ran (D2, Q17): `key` its allowance key; a later attempt with the same key reuses `verdict`. */
+  | Readonly<{ kind: 'smoke-ran'; unit: UnitId; attempt: number; key: Sha256Hex; verdict: SmokeVerdict }>
+  /** A second lens's draft merged into finding `id` within one audit (H7, R62): its lens and claim, kept as its rationale. */
+  | Readonly<{ kind: 'finding-corroborated'; id: FindingId; lens: LensKindName; claim: string }>
   /** A proposed change to the corpus, dispositioned at the next Phase 0. */
   | Readonly<{ kind: 'corpus-amendment'; id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string; evidence: readonly string[] }>
   /** A checkpoint's one outcome for one captured issue; once per `(job, issue)`. */
@@ -686,7 +780,7 @@ export type PlanChange =
    * M2: `unit` (added in the same change set) re-enters `reenters`, which is superseded: the new unit inherits its
    * counters (`chargeableFailures` reset only with a ruling: `reset`), risk floor and lineage.
    */
-  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean }>
+  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean; widened?: ReentryWidening }>
   /** M3: an obligation added, split (H14), re-witnessed, or disposed by a ruling in force (weakening). */
   | Readonly<{ type: 'obligation'; id: ObligationId; edit: ObligationEdit }>
   | Readonly<{ type: 'mapping' }>
@@ -705,7 +799,19 @@ export type PlanChange =
    */
   | Readonly<{ type: 'corpus'; pinSha256: Sha256Hex; guideSha256: Sha256Hex }>
   /** M4a (H7): a Phase-0 record edit (source `command` only), with its issue capture; changes only the required-review key. */
-  | Readonly<{ type: 'phase0'; sha256: Sha256Hex; issuesSha256: Sha256Hex }>;
+  | Readonly<{ type: 'phase0'; sha256: Sha256Hex; issuesSha256: Sha256Hex }>
+  /** M4a rev 3 (F1b): a unit's `priority` changed (no drain; any status but merged). */
+  | Readonly<{ type: 'unit-priority'; unit: UnitId }>
+  /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
+  | Readonly<{ type: 'known-defects' }>
+  /** M4a rev 3 (E): the plan's `planCheck.shape` changed (no drain; units whose plan-check has not decided). */
+  | Readonly<{ type: 'plan-check-shape' }>;
+
+/**
+ * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
+ * whose statement names exactly the added patterns (ascending, non-empty).
+ */
+export type ReentryWidening = Readonly<{ patterns: readonly RepoPattern[]; ruling: RulingId }>;
 
 /**
  * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
@@ -858,7 +964,16 @@ const laneOwner: Read<LaneOwner> = tagged('type', {
 const revisionSource: Read<RevisionSource> = tagged('type', {
   start: object((f): RevisionSource => ({ type: f.get('type', literal('start')) })),
   command: object((f): RevisionSource => ({ type: f.get('type', literal('command')), command: f.get('command', cmdR) })),
-  bundle: object((f): RevisionSource => ({ type: f.get('type', literal('bundle')), job: f.get('job', (v, p) => jobIdOfKind('ckpt')(v, p)) })),
+  bundle: object((f): RevisionSource => {
+    const admits = f.optional('admits', sortedBy(classifiedAdmit, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
+    const conversions = f.optional('conversions', sortedBy(conversion, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
+    if ((admits === undefined) !== (conversions === undefined)) throw new SchemaError(`${f.path}.admits`, 'admits and conversions together (a classified bundle) or neither', { admits, conversions });
+    const out = { type: f.get('type', literal('bundle')), job: f.get('job', (v, p) => jobIdOfKind('ckpt')(v, p)) };
+    if (admits === undefined || conversions === undefined) return out;
+    const both = [...admits.map((a) => a.index), ...conversions.map((c) => c.index)];
+    if (new Set(both).size !== both.length) throw new SchemaError(`${f.path}.conversions`, 'op indices an admit class does not also name', both);
+    return { ...out, admits, conversions };
+  }),
   executor: object((f): RevisionSource => ({ type: f.get('type', literal('executor')), inv: f.get('inv', invR) })),
 });
 
@@ -883,18 +998,29 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
     purpose: f.get('purpose', literal('arc-backend')), ...arcSeatFields(f), routingRev: f.get('routingRev', revR),
     job: f.get('job', jobR), attempt: f.get('attempt', positive),
   })),
-  journey: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('journey')), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR), at: f.get('at', shaR),
-    owner: f.get('owner', laneOwner),
-  })),
-  mutant: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('mutant')), finding: f.get('finding', findingR), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR),
-    tree: f.get('tree', shaR),
-  })),
-  lane: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('lane')), unit: f.get('unit', unitR), lane: f.get('lane', (v, p): LaneId => laneId(v, p)),
-    set: f.get('set', oneOf(['spec', 'suite'] as const)), at: f.get('at', shaR),
-  })),
+  journey: object((f): SpawnSubject => {
+    const redRev = f.optional('redRev', positive);
+    return {
+      purpose: f.get('purpose', literal('journey')), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR), at: f.get('at', shaR),
+      owner: f.get('owner', laneOwner), ...(redRev === undefined ? {} : { redRev }),
+    };
+  }),
+  // M4a rev 3: `of`; a 1.0.0-dev.6 subject's `finding` reads as written (`mutantSubjectDefault`).
+  mutant: object((f): SpawnSubject => {
+    const base = { purpose: f.get('purpose', literal('mutant')), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR), tree: f.get('tree', shaR) };
+    return withMutantOf(f, base);
+  }),
+  lane: object((f): SpawnSubject => {
+    const redRev = f.optional('redRev', positive);
+    const identity = f.optional('identity', laneIdentity);
+    const out = {
+      purpose: f.get('purpose', literal('lane')), unit: f.get('unit', unitR), lane: f.get('lane', (v, p): LaneId => laneId(v, p)),
+      set: f.get('set', oneOf(['spec', 'suite'] as const)), at: f.get('at', shaR),
+      ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }),
+    };
+    if (identity !== undefined && out.set !== 'spec') throw new SchemaError(`${f.path}.identity`, 'absent on a suite lane (only a spec lane is reused)', identity);
+    return out;
+  }),
   teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
   probe: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('probe')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
   smoke: object((f): SpawnSubject => ({
@@ -909,6 +1035,23 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
     })),
   })),
 });
+
+const mutantOf: Read<MutantOf> = tagged('type', {
+  finding: object((f): MutantOf => ({ type: f.get('type', literal('finding')), finding: f.get('finding', findingR) })),
+  smoke: object((f): MutantOf => ({ type: f.get('type', literal('smoke')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive) })),
+});
+/** A mutant record's subject: `of` since M4a rev 3, or a 1.0.0-dev.6 record's `finding` (exactly one of the two). */
+function withMutantOf<T extends object>(f: Fields, base: T): T & (Readonly<{ of: MutantOf }> | Readonly<{ finding: FindingId }>) {
+  const of = f.optional('of', mutantOf);
+  const finding = f.optional('finding', findingR);
+  if ((of === undefined) === (finding === undefined)) throw new SchemaError(`${f.path}.of`, 'exactly one of of and finding (finding: a 1.0.0-dev.6 record)', { of, finding });
+  return of !== undefined ? { ...base, of } : { ...base, finding: finding as FindingId };
+}
+
+const laneIdentity: Read<LaneIdentity> = object((f) => ({
+  laneRev: f.get('laneRev', laneRevR), envId: f.get('envId', (v, p): EnvId => envId(v, p)),
+  argv0: f.get('argv0', nullable(object((g) => ({ path: g.get('path', absR), sha256: g.get('sha256', sha256R) })))),
+}));
 
 const worktreeCheckout: Read<WorktreeCheckout> = tagged('type', {
   branch: object((f): WorktreeCheckout => ({ type: f.get('type', literal('branch')), branch: f.get('branch', refR), at: f.get('at', shaR), createBranch: f.get('createBranch', bool) })),
@@ -1108,7 +1251,7 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     },
   },
   'mutant.apply': {
-    expect: object((f) => ({ worktree: f.get('worktree', absR), at: f.get('at', shaR), finding: f.get('finding', findingR), patchSha256: f.get('patchSha256', sha256R) })),
+    expect: object((f): MutantApplyExpect => withMutantOf(f, { worktree: f.get('worktree', absR), at: f.get('at', shaR), patchSha256: f.get('patchSha256', sha256R) })),
     post: nothing,
     outcome: tagged('kind', {
       applied: object((f): OpOutcome['mutant.apply'] => ({ kind: f.get('kind', literal('applied')), tree: f.get('tree', shaR) })),
@@ -1190,7 +1333,10 @@ const planChange: Read<PlanChange> = tagged('type', {
   'unit-reentered': object((f): PlanChange => {
     const out = { type: f.get('type', literal('unit-reentered')), unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), reset: f.get('reset', bool) };
     if (out.reenters === out.unit) throw new SchemaError(`${f.path}.reenters`, 'a unit other than the re-entering one', out.reenters);
-    return out;
+    const widened = f.optional('widened', object((g): ReentryWidening => ({
+      patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), ruling: g.get('ruling', (v, p): RulingId => rulingId(v, p)),
+    })));
+    return widened === undefined ? out : { ...out, widened };
   }),
   obligation: object((f): PlanChange => ({ type: f.get('type', literal('obligation')), id: f.get('id', obligationR), edit: f.get('edit', oneOf(OBLIGATION_EDITS)) })),
   mapping: object((f): PlanChange => ({ type: f.get('type', literal('mapping')) })),
@@ -1200,6 +1346,9 @@ const planChange: Read<PlanChange> = tagged('type', {
   advances: object((f): PlanChange => ({ type: f.get('type', literal('advances')) })),
   corpus: object((f): PlanChange => ({ type: f.get('type', literal('corpus')), pinSha256: f.get('pinSha256', sha256R), guideSha256: f.get('guideSha256', sha256R) })),
   phase0: object((f): PlanChange => ({ type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R), issuesSha256: f.get('issuesSha256', sha256R) })),
+  'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
+  'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
+  'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
 });
 
 export const revisionPayload: Read<RevisionPayload> = object((f) => {
@@ -1241,6 +1390,19 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
   operator: object((f): ParkRecord => ({ class: f.get('class', literal('operator')), kind: f.get('kind', oneOf(OPERATOR_PARK_KINDS)) })),
 });
 
+const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
+  'witnesses-missing': object((f): StageOutcomeDetail => {
+    const out = { kind: f.get('kind', literal('witnesses-missing')), missing: f.get('missing', testRefs()), failed: f.get('failed', testRefs()) };
+    if (out.missing.length + out.failed.length === 0) throw new SchemaError(f.path, 'a missing or failed witness', out);
+    return out;
+  }),
+  'smoke-survived': object((f): StageOutcomeDetail => ({
+    kind: f.get('kind', literal('smoke-survived')), obligations: f.get('obligations', idList(obligationR)), testIds: f.get('testIds', testRefs({ nonEmpty: true })),
+  })),
+  'known-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('known-defect')), id: f.get('id', (v, p) => knownDefectId(v, p)) })),
+  infeasible: object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('infeasible')), notes: f.get('notes', str) })),
+});
+
 const holdCause: Read<HoldCause> = object((f) => ({
   type: f.get('type', literal('backend')), backend: f.get('backend', backend), parkSeq: f.get('parkSeq', positive),
 }));
@@ -1256,6 +1418,7 @@ const witnessFor: Read<WitnessFor> = tagged('type', {
   candidate: object((f): WitnessFor => ({ type: f.get('type', literal('candidate')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive) })),
   job: object((f): WitnessFor => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
   mutant: object((f): WitnessFor => ({ type: f.get('type', literal('mutant')), finding: f.get('finding', findingR), of: f.get('of', shaR) })),
+  smoke: object((f): WitnessFor => ({ type: f.get('type', literal('smoke')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), of: f.get('of', shaR) })),
 });
 const lensR = oneOf(LENS_KIND_NAMES);
 const lensSet: Read<readonly LensKindName[]> = sortedBy(lensR, (l) => l, { nonEmpty: true });
@@ -1264,8 +1427,18 @@ const auditJobR: Read<JobId> = (v, p) => jobIdOfKind('audit')(v, p);
 const ckptJobR: Read<JobId> = (v, p) => jobIdOfKind('ckpt')(v, p);
 
 const bundleOutcome: Read<BundleOutcome> = tagged('kind', {
-  'no-op': object((f): BundleOutcome => ({ kind: f.get('kind', literal('no-op')) })),
-  rejected: object((f): BundleOutcome => ({ kind: f.get('kind', literal('rejected')), reason: f.get('reason', oneOf(['stale', 'evidence', 'invalid'] as const)), detail: f.get('detail', str) })),
+  'no-op': object((f): BundleOutcome => {
+    const conversions = f.optional('conversions', sortedBy(conversion, (x) => String(x.index).padStart(6, '0'), { nonEmpty: true, order: 'by op index' }));
+    return { kind: f.get('kind', literal('no-op')), ...(conversions === undefined ? {} : { conversions }) };
+  }),
+  rejected: object((f): BundleOutcome => {
+    const out = { kind: f.get('kind', literal('rejected')), reason: f.get('reason', oneOf(BUNDLE_REJECTIONS)), detail: f.get('detail', str) };
+    const units = f.optional('units', sortedBy(
+      object((g): BusyAttempt => ({ unit: g.get('unit', unitR), stage: g.get('stage', stage), attempt: g.get('attempt', positive) })), (x) => x.unit, { nonEmpty: true },
+    ));
+    if ((out.reason === 'busy') !== (units !== undefined)) throw new SchemaError(`${f.path}.units`, out.reason === 'busy' ? 'the open attempts a busy bundle touched' : 'absent unless busy', units);
+    return units === undefined ? out : { ...out, units };
+  }),
   requested: object((f): BundleOutcome => ({ kind: f.get('kind', literal('requested')), needsUser: f.get('needsUser', (v, p) => needsUserId(v, p)) })),
 });
 
@@ -1281,15 +1454,46 @@ const amendmentSource: Read<AmendmentSource> = tagged('type', {
   checkpoint: object((f): AmendmentSource => ({ type: f.get('type', literal('checkpoint')), job: f.get('job', ckptJobR), index: f.get('index', nat) })),
   divergence: object((f): AmendmentSource => ({ type: f.get('type', literal('divergence')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
   issue: object((f): AmendmentSource => ({ type: f.get('type', literal('issue')), job: f.get('job', ckptJobR), issue: f.get('issue', (v, p) => issueId(v, p)) })),
+  admit: object((f): AmendmentSource => ({
+    type: f.get('type', literal('admit')), job: f.get('job', ckptJobR), index: f.get('index', nat), reason: f.get('reason', oneOf(CONVERSION_REASONS)),
+  })),
+});
+
+const testRef: Read<TestRef> = object((f) => ({ lane: f.get('lane', laneR), testId: f.get('testId', str) }));
+/** Test refs ascending by lane, then test id, each once. */
+const testRefs = (opts: Readonly<{ nonEmpty?: boolean }> = {}): Read<readonly TestRef[]> => sortedBy(testRef, testRefKey, { ...opts, order: 'by lane, then test id' });
+const smokeVerdict: Read<SmokeVerdict> = object((f) => {
+  const out = { killed: f.get('killed', testRefs()), survived: f.get('survived', testRefs()), inconclusive: f.get('inconclusive', testRefs()) };
+  const all = [...out.killed, ...out.survived, ...out.inconclusive].map(testRefKey);
+  if (all.length === 0) throw new SchemaError(f.path, 'at least one target', out);
+  if (new Set(all).size !== all.length) throw new SchemaError(f.path, 'each target in one verdict', out);
+  return out;
 });
 
 export type M4aFactKind = M4aFact['kind'];
 /** The readers of the M4a facts, spread into `fact`. */
 const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
-  'debt-banked': object((f): Fact => ({
-    kind: f.get('kind', literal('debt-banked')), id: f.get('id', (v, p) => debtId(v, p)), bankReason: f.get('bankReason', oneOf(BANK_REASONS)), what: f.get('what', str),
-    key: f.get('key', sha256R), source: f.get('source', debtSource),
+  'debt-banked': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('debt-banked')), id: f.get('id', (v, p) => debtId(v, p)), bankReason: f.get('bankReason', oneOf(BANK_REASONS)), what: f.get('what', str),
+      key: f.get('key', sha256R), source: f.get('source', debtSource),
+    };
+    const opportunity = f.optional('opportunity', (v, p) => opportunityId(v, p));
+    if ((out.bankReason === 'opportunity-overrun') !== (opportunity !== undefined)) {
+      throw new SchemaError(`${f.path}.opportunity`, out.bankReason === 'opportunity-overrun' ? 'the opportunity an overrun names' : 'absent (only an opportunity overrun names one)', opportunity);
+    }
+    if ((out.bankReason === 'opportunity-overrun') !== (out.source.type === 'admit')) throw new SchemaError(`${f.path}.source`, out.bankReason === 'opportunity-overrun' ? 'the admit that overran' : 'a gate or finding source', out.source);
+    return opportunity === undefined ? out : { ...out, opportunity };
+  }),
+  'lane-reused': object((f): Fact => ({
+    kind: f.get('kind', literal('lane-reused')), parent: f.get('parent', parent), lane: f.get('lane', laneR),
+    from: f.get('from', object((g) => ({ parent: g.get('parent', parent), inv: g.get('inv', invR), at: g.get('at', shaR) }))),
   })),
+  'series-certified': object((f): Fact => ({ kind: f.get('kind', literal('series-certified')), parent: f.get('parent', parent), checkout: f.get('checkout', absR), at: f.get('at', shaR) })),
+  'smoke-ran': object((f): Fact => ({
+    kind: f.get('kind', literal('smoke-ran')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), key: f.get('key', sha256R), verdict: f.get('verdict', smokeVerdict),
+  })),
+  'finding-corroborated': object((f): Fact => ({ kind: f.get('kind', literal('finding-corroborated')), id: f.get('id', findingR), lens: f.get('lens', lensR), claim: f.get('claim', str) })),
   'corpus-amendment': object((f): Fact => ({
     kind: f.get('kind', literal('corpus-amendment')), id: f.get('id', (v, p) => amendmentId(v, p)), source: f.get('source', amendmentSource),
     rules: f.get('rules', ruleList), proposal: f.get('proposal', str), why: f.get('why', str), evidence: f.get('evidence', arrayOf(str)),
@@ -1326,8 +1530,9 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       treeSha: f.get('treeSha', shaR), inv: f.get('inv', invR), recordsSha256: f.get('recordsSha256', sha256R), purpose: f.get('purpose', oneOf(WITNESS_PURPOSES)),
       for: f.get('for', witnessFor),
     };
-    // G13: a mutant run is recorded as such and never certifies.
-    if ((out.purpose === 'mutant') !== (out.for.type === 'mutant')) throw new SchemaError(`${f.path}.for`, out.purpose === 'mutant' ? 'mutant{finding, of}' : 'a candidate or a job', out.for);
+    // G13: a mutant run (a finding's, or M4a rev 3's mutation smoke) is recorded as such and never certifies.
+    const mutant = out.for.type === 'mutant' || out.for.type === 'smoke';
+    if ((out.purpose === 'mutant') !== mutant) throw new SchemaError(`${f.path}.for`, out.purpose === 'mutant' ? 'mutant{finding, of} or smoke{unit, attempt, of}' : 'a candidate or a job', out.for);
     return out;
   }),
   'obligation-latched': object((f): Fact => ({
@@ -1520,6 +1725,9 @@ export const fact: Read<Fact> = tagged('kind', {
     } as StageOutcomeFact;
     const park = f.optional('park', parkRecord);
     const cause = f.optional('cause', holdCause);
+    const detail = f.optional('detail', stageOutcomeDetail);
+    const wants = (DETAILED_OUTCOMES as Readonly<Record<string, StageOutcomeDetail['kind']>>)[`${s}/${out.outcome}`];
+    if (detail?.kind !== wants) throw new SchemaError(`${f.path}.detail`, wants === undefined ? 'absent (this outcome carries no detail)' : `a ${wants} detail`, detail);
     if (park !== undefined && out.class !== 'park') throw new SchemaError(`${f.path}.park`, 'absent unless the class is park', park);
     if (cause !== undefined && out.class !== 'hold') throw new SchemaError(`${f.path}.cause`, 'absent unless the class is hold', cause);
     // The chargeable bound is a design park: the unit needs a spec revision or a re-entry.
@@ -1530,7 +1738,7 @@ export const fact: Read<Fact> = tagged('kind', {
     // An interruption holds the unit, and nothing else does; a hold never charges.
     if ((out.outcome === 'interrupted') !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
-    return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }) } as StageOutcomeFact;
+    return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),
 });
 

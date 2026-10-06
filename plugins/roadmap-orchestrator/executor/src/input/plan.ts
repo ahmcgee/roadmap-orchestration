@@ -12,11 +12,11 @@
 // both arms; the variant fields are read only through `targetDocuments` and `visionFile` (test target.no-direct-access).
 // `chain` (H7) names the previous arc of a chained start, fixed at revision 1.
 import {
-  type ArcId, type EdgeId, type ResourceName, type RulingId, type Sha, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, resourceName,
-  rulingId, sha, unitId, visionClauseId, idList,
+  type ArcId, type EdgeId, type KnownDefectId, type LaneId, type ResourceName, type RulingId, type Sha, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId,
+  edgeId, knownDefectId, laneId, resourceName, rulingId, sha, unitId, visionClauseId, idList,
 } from '../core/ids.ts';
-import { BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type LaneDef, type LaneEnv, laneDef, laneEnv } from '../core/records.ts';
-import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str } from '../core/validate.ts';
+import { BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type LaneDef, type LaneEnv, laneDef, laneEnv, refuseLaneInputs } from '../core/records.ts';
+import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
 import {
   type AbsPath, type BranchName, type PlanPath, type RepoPath, type RepoPattern, absPath, branchName, planPath, repoPath,
@@ -116,7 +116,31 @@ export type PlanUnit = Readonly<{
   routing?: RoutingLayer;
   /** M3 (`limits`): this unit's bound overrides. */
   limits?: UnitLimits;
+  /** M4a rev 3 (F1b, R42): `high` ranks before every `normal` waiter, ahead of promotion; absent: `normal` (`priorityOf`). */
+  priority?: UnitPriority;
 }>;
+
+export const UNIT_PRIORITIES = ['normal', 'high'] as const;
+export type UnitPriority = (typeof UNIT_PRIORITIES)[number];
+/** A unit's priority: its own, or `normal` (absent, lasting). */
+export const priorityOf = (unit: PlanUnit): UnitPriority => unit.priority ?? 'normal';
+
+/**
+ * M4a rev 3 (F4, R49): a defect the plan knows of. A unit that declares lane `lane` (`match: lane`), or whose red lane's
+ * output tail contains `contains` (`match: output`, a substring, never a regex), waits uncharged at `prepare` while
+ * `knownDefectActive` (src/schedule/ready.ts) holds: until `fixUnit`'s lineage merges. Ids are plan-scoped and never reused.
+ */
+export type KnownDefectMatch = Readonly<{ type: 'lane'; lane: LaneId }> | Readonly<{ type: 'output'; lane: LaneId; contains: string }>;
+export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId }>;
+
+/** M4a rev 3 (E, R40): how plan-check runs, per builder class (`by-builder`) or for every unit alike (`uniform`, the default). */
+export const PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
+export type PlanCheckShape = (typeof PLAN_CHECK_SHAPES)[number];
+
+/** The plan's known defects; none when absent. */
+export const knownDefectsOf = (plan: PlanM1): readonly KnownDefect[] => plan.knownDefects ?? [];
+/** The plan's plan-check shape (R40: a non-holistic arc always runs `uniform`, the caller's rule); `uniform` when absent. */
+export const planCheckShapeOf = (plan: PlanM1): PlanCheckShape => plan.planCheck?.shape ?? 'uniform';
 
 /** A chained start's previous arc and its completed head (H12), fixed at revision 1 (`chain-immutable`). */
 export type PlanChain = Readonly<{ previousArc: ArcId; previousHead: Sha }>;
@@ -162,6 +186,10 @@ type PlanBase = Readonly<{
   limits?: ArcLimits;
   /** M4a: a chained start's previous arc (absent: not chained). */
   chain?: PlanChain;
+  /** M4a rev 3 (F4): known defects, ids unique (absent: none, lasting; `knownDefectsOf`). */
+  knownDefects?: readonly KnownDefect[];
+  /** M4a rev 3 (E): the plan-check shape (absent: `uniform`, lasting; `planCheckShapeOf`). */
+  planCheck?: Readonly<{ shape: PlanCheckShape }>;
 }>;
 export type PlanM1 = PlanBase & PlanTarget;
 
@@ -305,6 +333,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
   const cutField = f.optional('cut', cut);
   const routing = f.optional('routing', routingLayer);
   const limits = f.optional('limits', unitLimits);
+  const priority = f.optional('priority', oneOf(UNIT_PRIORITIES));
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
@@ -312,8 +341,18 @@ const planUnit: Read<PlanUnit> = object((f) => {
   return {
     ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
+    ...(priority === undefined ? {} : { priority }),
   };
 });
+
+const knownDefect: Read<KnownDefect> = object((f) => ({
+  id: f.get('id', (v, p) => knownDefectId(v, p)),
+  match: f.get('match', tagged<'lane' | 'output', KnownDefectMatch>('type', {
+    lane: object((g) => ({ type: g.get('type', literal('lane')), lane: g.get('lane', (v, p) => laneId(v, p)) })),
+    output: object((g) => ({ type: g.get('type', literal('output')), lane: g.get('lane', (v, p) => laneId(v, p)), contains: g.get('contains', str) })),
+  })),
+  fixUnit: f.get('fixUnit', (v, p) => unitId(v, p)),
+}));
 
 /**
  * Why a unit entering the plan (a fresh arc's rev 1, or a unit a revision adds) may not take `id`, or null. A repair
@@ -365,6 +404,8 @@ export function parsePlan(value: unknown): PlanM1 {
     const target = planTarget(f);
     const limits = f.optional('limits', arcLimits);
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
+    const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
+    const planCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(PLAN_CHECK_SHAPES)) })));
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', (v, p) => arcId(v, p)),
@@ -381,8 +422,12 @@ export function parsePlan(value: unknown): PlanM1 {
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),
       ...(limits === undefined ? {} : { limits }),
       ...(chain === undefined ? {} : { chain }),
+      ...(knownDefects === undefined ? {} : { knownDefects }),
+      ...(planCheck === undefined ? {} : { planCheck }),
       ...target,
     };
+    out.suite.lanes.forEach((l, i) => refuseLaneInputs(l, `plan.suite.lanes[${i}]`, 'suite'));
+    assertUnique(knownDefectsOf(out), (k) => k.id, 'plan.knownDefects');
     assertUnique(out.contracts, (c) => c, 'plan.contracts');
     assertUnique(out.suite.lanes, (l) => l.id, 'plan.suite.lanes');
     assertUnique(out.resources, (r) => r.name, 'plan.resources');

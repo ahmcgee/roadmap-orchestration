@@ -29,7 +29,7 @@ import type { LaneId, ObligationId, RulingId, UnitId, VisionClauseId } from '../
 import { canonicalJson } from '../core/json.ts';
 import { type CorpusPin, activeRules } from '../corpus/types.ts';
 import {
-  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevOf, obligationSource,
+  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevMatches, laneRevOf, obligationSource,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
@@ -138,9 +138,11 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
 
   const stale = (o: ObligationDef): void => {
     if (o.witness === null || o.proofJudgment === null) return;
-    const rev = laneRevOf(lanes.get(o.witness.lane)!);
+    const lane = lanes.get(o.witness.lane)!;
+    const rev = laneRevOf(lane);
     const p = o.proofJudgment;
-    if (p.obligationRev !== o.rev || p.laneRev !== rev) {
+    // F7 (R64): a judgment bound to the lane's minimal form (a generator hashing raw input) still names this lane.
+    if (p.obligationRev !== o.rev || !laneRevMatches(p.laneRev, lane)) {
       reasons.push(`${o.id}'s proof judgment is stale (judged obligation rev ${p.obligationRev}, lane ${p.laneRev}; now rev ${o.rev}, lane ${rev})`);
     }
     if (canonicalJson(p.witness) !== canonicalJson(o.witness)) {

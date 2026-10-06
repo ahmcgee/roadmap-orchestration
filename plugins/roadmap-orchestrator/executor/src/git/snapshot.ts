@@ -362,6 +362,13 @@ export const candidateLaneDir = (runDir: AbsPath, unit: UnitId, attempt: number,
 export const mutantLaneDir = (runDir: AbsPath, finding: FindingId, lane: LaneId, invDir: string): AbsPath =>
   absPath(join(runDir, 'evidence', 'mutants', finding, `${lane}-${invDir}`));
 
+/**
+ * A unit lanes attempt's mutation-smoke lane execution's evidence dir (M4a rev 3, D2), under that attempt's evidence root
+ * (`evidence/<unit>/<attempt>-lanes`, src/pipeline/dispatch.ts `evidenceRoot`): `smoke/<lane>-<seq>-<ordinal>`.
+ */
+export const smokeLaneDir = (runDir: AbsPath, unit: UnitId, attempt: number, lane: LaneId, invDir: string): AbsPath =>
+  absPath(join(runDir, 'evidence', unit, `${attempt}-lanes`, 'smoke', `${lane}-${invDir}`));
+
 type WitnessedFact = Readonly<{ lane: LaneId; inv: InvocationId; for: WitnessFor }>;
 
 /** Where a `witnessed` fact's run keeps its `witness.json`: its execution's dir. */
@@ -374,6 +381,8 @@ export function witnessDir(runDir: AbsPath, f: WitnessedFact): AbsPath {
       return candidateLaneDir(runDir, f.for.unit, f.for.attempt, 'arc', f.lane, inv);
     case 'mutant':
       return mutantLaneDir(runDir, f.for.finding, f.lane, inv);
+    case 'smoke':
+      return smokeLaneDir(runDir, f.for.unit, f.for.attempt, f.lane, inv);
   }
 }
 

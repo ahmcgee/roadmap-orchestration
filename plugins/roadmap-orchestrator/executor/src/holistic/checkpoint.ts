@@ -64,7 +64,7 @@ import { promptFor } from '../prompts/index.ts';
 import { type CheckpointInputs, type FindingView, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
 import { type CheckpointOutput, validateCheckpointOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
-import { parseRulings } from '../spec/rulings.ts';
+import { nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, rewitnessP1s, withCpu } from './audit.ts';
 import { type Activation, type BundleDecision, type Captured, type CheckpointContext, activate, raiseOnce, settleDecided, vectorAt } from './bundle.ts';
@@ -429,6 +429,12 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     target: architecture(ctx, s.headSha),
     direction: r.plan.direction,
     issues: issuesInputOf(ctx.runDir, s),
+    // M4a rev 3 (H4, H5): the manifest, embedded specs, closeout and issue reuse land in N2; the next ruling id is the ledger's.
+    manifest: [],
+    specs: [],
+    nextRulingId: nextRulingId(rulings),
+    closeout: null,
+    issuesUnchangedSince: null,
   };
 }
 

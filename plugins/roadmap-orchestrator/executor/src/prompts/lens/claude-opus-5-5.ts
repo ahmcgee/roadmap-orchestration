@@ -16,8 +16,7 @@
 // the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
 import type { LensInputs, PromptModule } from '../inputs.ts';
 import {
-  documentsXml, findingViewsText, obligationsText, pasted, referenceIndexText, rulingsText, targetDocument, visionText,
-} from '../inputs.ts';
+  documentsXml, findingViewsText, obligationsText, pasted, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
 import type { LensKind } from '../../holistic/types.ts';
 import { LENS_SCHEMA, MAX_LENS_FINDINGS, MAX_PREMISES } from '../schemas.ts';
 
@@ -77,7 +76,7 @@ function owners(i: LensInputs): string {
 export const PROMPT: PromptModule<'lens'> = {
   system,
   schema: LENS_SCHEMA,
-  fields: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout'],
+  fields: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   render: (i) => `<vision>
 ${visionText(i.vision)}
 </vision>
@@ -116,7 +115,7 @@ ${owners(i)}
 ${findingViewsText(i.priorFindings)}
 </prior_findings>
 
-<checkout>${i.checkout} (your working directory, at ${i.range.to})</checkout>
+<checkout>${i.checkout} (your working directory, at ${i.range.to})</checkout>${specsOnlyText(i.specsOnly)}
 
 Audit the tree at ${i.range.to} through the ${i.lens} lens, against the vision first, then return your report.`,
 };

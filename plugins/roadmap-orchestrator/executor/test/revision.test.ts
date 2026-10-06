@@ -21,7 +21,7 @@ import { newCommandId, readReceipt, submitCommand, terminalReceipt } from '../sr
 import { captureUnderFence, holdFence } from '../src/core/fence.ts';
 import type { Fact, IntentOf, PlanAppliedFact } from '../src/core/events.ts';
 import {
-  type DivergenceId, clauseId, invocationId, invocationIdOf, jobId, planRev, sha, sha256, unitId,
+  type DivergenceId, clauseId, invocationId, invocationIdOf, jobId, opportunityId, planRev, sha, sha256, unitId,
 } from '../src/core/ids.ts';
 import { commitRevision } from '../src/recover/revision.ts';
 import { runOp } from '../src/pipeline/dispatch.ts';
@@ -507,6 +507,39 @@ test('apply.advances: the plan\'s slice names active clauses of the revision\'s 
   }
 });
 
+test('classify.advances-bundle-opportunity-only: a bundle adds exactly the clauses of the opportunities it admits, and removes none', T, async () => {
+  const h = holisticArc();
+  try {
+    // The architect narrows the slice (V-2 leaves it), as revision 2.
+    editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = ['V-1', 'V-3']));
+    const narrowed = evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath), absPath(h.d.repo)), { type: 'apply' });
+    assert.ok(narrowed.kind === 'accepted', JSON.stringify(narrowed));
+    keepRevision(h.ctx.runDir, narrowed);
+    commitRevisionNow(h.journal, h.ctx.runDir, payloadOf(narrowed.draft, { type: 'start' }), { type: 'arc' });
+    const opportunity = (clauses: readonly string[]) => [{ index: 0, unit: U1, class: { type: 'opportunity', id: opportunityId('O-1'), clauses: clauses as never } } as const];
+    const bundle = (admits: Extract<Parameters<typeof evaluateRevision>[2], { type: 'bundle' }>['admits']) =>
+      ({ type: 'bundle', job: CKPT, cites: ['V-2' as never], evidence: ['an opportunity'], admits }) as const;
+    const evaluate = (advances: readonly string[], admits: Parameters<typeof bundle>[0]) => {
+      editPlan(h.d, (p) => void ((p['holistic'] as Record<string, unknown>)['advances'] = advances));
+      return evaluateRevision(rctxOf(h), readInputFiles(absPath(h.d.planPath), absPath(h.d.repo)), bundle(admits));
+    };
+    // Its opportunity's clause joins the slice: the one bundle change of `advances`.
+    const added = evaluate(['V-1', 'V-2', 'V-3'], opportunity(['V-2']));
+    assert.ok(added.kind === 'accepted', JSON.stringify(added));
+    assert.deepEqual(added.draft.changes, [{ type: 'advances' }]);
+    const refused = (advances: readonly string[], admits: Parameters<typeof bundle>[0], why: RegExp): void => {
+      const v = evaluate(advances, admits);
+      assert.ok(v.kind === 'rejected' && v.reasons.some((r) => /holistic\.advances is owner-only/.test(r) && why.test(r)), JSON.stringify(v));
+    };
+    refused(['V-1', 'V-2', 'V-3'], [], /admits none/);
+    refused(['V-1', 'V-2', 'V-3'], [{ index: 0, unit: U1, class: { type: 'oversight', clauses: ['V-1' as never] } }], /admits none/);
+    refused(['V-1', 'V-2', 'V-3'], opportunity(['V-1']), /expected V-1, V-3/);
+    refused(['V-1', 'V-2'], opportunity(['V-2']), /removes none: expected V-1, V-2, V-3/);
+  } finally {
+    h.journal.close();
+  }
+});
+
 // ---------------------------------------------------------------------------------------------------
 // The apply core, the fence
 
@@ -620,7 +653,7 @@ const divergence = (kind: 'restore-revision' | 'repair-unit'): DivergenceDraft =
 function bundleAdmitsU2(r: ArcRun, kind: 'restore-revision' | 'repair-unit'): void {
   checkpointInputs(r);
   addUnit(r.d, 'u2');
-  const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'] });
+  const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [] });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;
   keepRevision(r.ctx.runDir, v);
@@ -699,7 +732,7 @@ test('reverse.spec-preimage-exact: a checkpoint that revised a spec a machine `s
       x['rev'] = 3;
       (x['facts'] as Json[]).push({ id: 'F9', text: 'the checkpoint narrowed mul', state: 'active' });
     });
-    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'] });
+    const v = evaluateRevision(rctxOf(r), readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'bundle', job: CKPT, cites: ['V-1' as never], evidence: ['the park of u1'], admits: [] });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind !== 'accepted') return;
     keepRevision(r.ctx.runDir, v);
@@ -732,7 +765,7 @@ test('reverse.obligation-fresh-rev: a checkpoint that amended I-1 (rev 1 → 2) 
     const revision = revisionInForce(r.ctx.runDir, inForce);
     const current = inForceFiles(r.ctx.runDir, r.journal.view, inForce, revision, absPath(d.planPath), absPath(d.repo));
     const amended = { ...OBLIGATIONS, obligations: [obligation('I-1', 'mul multiplies.', { rev: 2, proofJudgment: { verdict: 'proves', obligationRev: 2, laneRev: LANE_REV, witness: { lane: 'journey', testIds: ['t-I-1'] } } }), OBLIGATIONS.obligations[1]] };
-    const proposer = { type: 'bundle' as const, job: CKPT, cites: ['V-1' as never], evidence: ['zero is handled by I-2'] };
+    const proposer = { type: 'bundle' as const, job: CKPT, cites: ['V-1' as never], evidence: ['zero is handled by I-2'], admits: [] };
     const v = evaluateRevision(rctxOf(r), { ...current, obligations: { path: current.obligations!.path, bytes: Buffer.from(JSON.stringify(amended)) } }, proposer);
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind !== 'accepted') return;
@@ -773,13 +806,13 @@ test('split.checkpoint-drop-divergence: a checkpoint split may drop text only ci
     const proposal = { ...current, obligations: { path: current.obligations!.path, bytes: Buffer.from(JSON.stringify(split)) } };
     const byArchitect = evaluateRevision(rctxOf(r), proposal, { type: 'apply' });
     assert.ok(byArchitect.kind === 'rejected' && byArchitect.reasons.some((x) => /I-1's children drop parent text: "mul\(0, x\) is 0\."/.test(x)));
-    const uncited = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', job: CKPT, cites: [], evidence: ['zero is handled by I-2'] });
+    const uncited = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', job: CKPT, cites: [], evidence: ['zero is handled by I-2'], admits: [] });
     assert.ok(uncited.kind === 'rejected' && uncited.reasons.some((x) => /I-1's split drops parent text without citing a vision clause/.test(x)));
-    const v = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'] });
+    const v = evaluateRevision(rctxOf(r), proposal, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'], admits: [] });
     assert.equal(v.kind, 'accepted', JSON.stringify(v));
     if (v.kind !== 'accepted') return;
     assert.equal(v.draft.divergences.length, 1);
-    const committed = await commitUnderFence(ctxOf(r), v, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'] }, { type: 'bundle', job: CKPT }, { type: 'job', job: CKPT });
+    const committed = await commitUnderFence(ctxOf(r), v, { type: 'bundle', cites: ['V-2' as never], job: CKPT, evidence: ['zero is handled by I-2'], admits: [] }, { type: 'bundle', job: CKPT }, { type: 'job', job: CKPT });
     assert.equal(committed.kind, 'applied', JSON.stringify(committed));
     const [d1] = r.journal.view.holistic().divergences;
     assert.ok(d1 !== undefined);

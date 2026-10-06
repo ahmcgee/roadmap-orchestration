@@ -269,9 +269,24 @@ const ROWS: readonly Row[] = [
       r.journal.begin({ kind: 'worktree.create', key: opKey('worktree:u1:unit'), parent, deadlineAt: null, body: () => ({
         expect: { path: absPath(tmpDir('apply-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
       }) });
+      // The executor restarted with the attempt open: crash-abandoned (M4a rev 3, `openAttempt`).
+      r.journal.fact({ kind: 'executor-started', generation: 2 });
     },
     edit: revise,
     expect: [/unit u1 has build attempt 2 cut short by a crash/],
+  },
+  {
+    // classify.open-attempt-running-vs-abandoned (M4a rev 3, C5, R50): an attempt started under the running executor is live.
+    name: 'rev + 1 of a unit running an attempt: refused until its stage boundary',
+    setup: (r) => {
+      inFlight(r);
+      const parent = { type: 'stage', unit: U1, stage: 'build', attempt: 2 } as const;
+      r.journal.begin({ kind: 'worktree.create', key: opKey('worktree:u1:unit'), parent, deadlineAt: null, body: () => ({
+        expect: { path: absPath(tmpDir('apply-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
+      }) });
+    },
+    edit: revise,
+    expect: [/unit u1 is running build attempt 2; apply the edit at its stage boundary/],
   },
   {
     name: 'a pending revision taken back: withdrawn',

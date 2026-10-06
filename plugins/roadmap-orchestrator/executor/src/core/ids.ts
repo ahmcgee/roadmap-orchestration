@@ -332,12 +332,40 @@ export const phaseQuestionIdOf = P.of;
 export const phaseQuestionSeq = P.n;
 
 // ---------------------------------------------------------------------------------------------------
-// The canonical order of numbered ids (`<letter>-<n>`: V, Q, I, F, D, T, B, M, P and the ruling ids C). Every list of
+// M4a rev 3 ids (SCHEMAS.md "M4a rev 3").
+
+/** A plan's known defect: `K-<n>`, plan-scoped and never reused (`plan.knownDefects`, F4). */
+export type KnownDefectId = Brand<string, 'KnownDefectId'>;
+const K = numbered('KnownDefectId', 'K');
+export const knownDefectId: IdReader<KnownDefectId> = K.read;
+export const knownDefectIdOf = K.of;
+
+/** A checkpoint opportunity: `O-<n>`, arc-scoped, numbered in the order the arc's admits record them (OR-A1). */
+export type OpportunityId = Brand<string, 'OpportunityId'>;
+const O = numbered('OpportunityId', 'O');
+export const opportunityId: IdReader<OpportunityId> = O.read;
+export const opportunityIdOf = O.of;
+export const opportunitySeq = O.n;
+
+/**
+ * A spec's witness item: `W-<n>`, a spec item id like an acceptance clause's (unique among the spec's items, never
+ * reused); the next one is the next free `W-n` of the spec (R59).
+ */
+export type WitnessItemId = Brand<string, 'WitnessItemId'>;
+const W = numbered('WitnessItemId', 'W');
+export const witnessItemId: IdReader<WitnessItemId> = W.read;
+export const witnessItemIdOf = W.of;
+export const witnessItemSeq = W.n;
+
+// ---------------------------------------------------------------------------------------------------
+// The canonical order of numbered ids (`<letter>-<n>`: V, Q, I, F, D, T, B, M, P, K, O, W and the ruling ids C). Every list of
 // them, in a record or in code, is in this one order: by letter, then by `<n>` as a number (T-9 < T-10 < T-100).
 // Validators read such lists with `idsAscending`; code writes them with `canonicalIds` (or sorts with `compareIds`).
 // Plain string order stays for keys that are not numbered ids (paths, slugs, job and needs-user ids).
 
-export type NumberedId = VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | AmendmentId | PhaseQuestionId | RulingId;
+export type NumberedId =
+  | VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | AmendmentId | PhaseQuestionId | RulingId | KnownDefectId
+  | OpportunityId | WitnessItemId;
 
 const NUMBERED_ID = /^([A-Z])-([0-9]+)$/;
 

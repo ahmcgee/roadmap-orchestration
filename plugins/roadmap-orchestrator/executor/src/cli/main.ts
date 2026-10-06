@@ -20,6 +20,9 @@
 // refused row (78); `brief` prints the payload (`--json`) or its Markdown, and `--ack` prints the commands it enqueued, or
 // the stale ids (78); `pr` prints the pull request; `issues` prints the capture (or writes `--out`), or the refused row
 // (78); `chain status` prints the chain. Step 0a placed every module at its final path; the landing steps replace them.
+// M4a rev 3 host acts: `witness-check` prints `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78);
+// `resume-arc` prints `{resumed: false, reason}` or the relaunched supervisor's line; `inputs export` prints the export's
+// `export.json`. `apply --ruling` lands ruling sidecars with the edits (I2). Step N0 placed each module at its final path.
 //
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
 import { existsSync, readFileSync } from 'node:fs';
@@ -34,6 +37,10 @@ import { corpusPin } from '../commands/corpus.ts';
 import { captureIssues } from '../commands/issues.ts';
 import { phase0Check } from '../commands/phase0.ts';
 import { openPr } from '../commands/pr.ts';
+import { exportInputs } from '../commands/inputs.ts';
+import { resumeArc } from '../commands/resumearc.ts';
+import { witnessCheck } from '../commands/witnesscheck.ts';
+import { notYet } from '../core/notyet.ts';
 import { readJson } from '../core/fsx.ts';
 import type { ArcId, PlanRev } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
@@ -96,6 +103,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'run-only':
       return submit(command.run, hostDir, { type: 'run-only', units: command.units });
     case 'apply': {
+      if (command.rulings.length > 0) return notYet('apply --ruling', 'N3');
       const run = locate(command.run, hostDir);
       const start = startOf(run);
       if (command.dryRun) {
@@ -195,6 +203,29 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     }
     case 'chain-status':
       process.stdout.write(`${canonicalJson(await chainStatus({ repo: repoOf(command.repo) }))}\n`);
+      return;
+    case 'witness-check': {
+      const outcome = await witnessCheck({ laneFile: absPath(resolve(command.laneFile)), cwd: absPath(process.cwd()) });
+      if (outcome.kind === 'passed') {
+        process.stdout.write(`${canonicalJson({ passed: true })}\n`);
+        return;
+      }
+      process.stdout.write(`${canonicalJson({ missing: outcome.missing, failed: outcome.failed, malformed: outcome.malformed })}\n`);
+      process.exitCode = EXIT_REFUSED;
+      return;
+    }
+    case 'resume-arc': {
+      const outcome = await resumeArc({ hostDir, repo: repoOf(command.repo) });
+      if (!outcome.resumed) {
+        process.stdout.write(`${canonicalJson({ resumed: false, reason: outcome.reason })}\n`);
+        return;
+      }
+      process.stdout.write(`${outcome.line}\n`);
+      process.exitCode = outcome.code;
+      return;
+    }
+    case 'inputs-export':
+      process.stdout.write(`${canonicalJson(await exportInputs({ repo: repoOf(command.repo), arc: command.arc, out: absPath(resolve(command.out)) }))}\n`);
       return;
   }
 }

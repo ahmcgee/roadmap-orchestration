@@ -73,6 +73,7 @@ import {
   recordedCall, salvage, teardown,
 } from './stages.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
+import { notYet } from '../core/notyet.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
 
 export type UnitResult =
@@ -280,6 +281,9 @@ async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): P
 /** Runs the stage `target` names, from inputs read back from the journal. */
 async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: StageOutcomeFact): Promise<StageDone<Target['stage']> | Cancelled> {
   switch (target.stage) {
+    case 'prepare':
+      // M4a rev 3 (F4): only a lanes `known-defect` sends a unit back to prepare, and no stage records one before N3.
+      return notYet(`unit ${unit.id}: prepare after a known defect`, 'N3');
     case 'reproduce':
       return reproduce(ctx, unit);
     case 'plan-check':

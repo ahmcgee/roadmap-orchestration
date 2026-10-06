@@ -5,9 +5,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, type OpOutcome, parentUnit } from '../core/events.ts';
-import { type ClauseId, type LaneId, type Sha256Hex, specRev, canonicalIds } from '../core/ids.ts';
+import { type ClauseId, type LaneId, type Sha256Hex, type WitnessItemId, specRev, canonicalIds } from '../core/ids.ts';
 import type { IntentBody, Reconciler } from '../core/interfaces.ts';
-import type { SpecM1, SpecPatch, SpecPatchOp, SpecSection } from '../core/records.ts';
+import { type SpecM1, type SpecPatch, type SpecPatchOp, type SpecSection, specWitnesses } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { reconcileSpecPatch } from '../recover/spec.ts';
 import { SPEC_INPUT, keepInput, keptInput } from '../input/inforce.ts';
@@ -44,11 +44,11 @@ export class SpecPatchOpError extends Error {
   }
 }
 
-type Item = SpecM1[SpecSection][number];
+type Item = SpecM1['lanes'][number] | SpecM1['acceptance'][number] | SpecM1['decisions'][number] | SpecM1['facts'][number] | ReturnType<typeof specWitnesses>[number];
 type Sections = Record<SpecSection, Item[]>;
 type Located = Readonly<{ section: SpecSection; index: number; item: Item }>;
 
-function locate(sections: Sections, id: LaneId | ClauseId): Located | null {
+function locate(sections: Sections, id: LaneId | ClauseId | WitnessItemId): Located | null {
   for (const section of Object.keys(sections) as SpecSection[]) {
     const index = sections[section].findIndex((i) => i.id === id);
     if (index !== -1) return { section, index, item: sections[section][index]! };
@@ -105,13 +105,15 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
     acceptance: [...spec.acceptance],
     decisions: [...spec.decisions],
     facts: [...spec.facts],
+    witnesses: [...specWitnesses(spec)],
   };
   let cites = spec.cites;
   patch.ops.forEach((op, i) => {
     if (op.op === 'cite') cites = { contracts: union(cites.contracts, op.contracts), rulings: canonicalIds([...cites.rulings, ...op.rulings]) };
     else applyOp(sections, op, i);
   });
-  // Each add and replace put an item of its own section's type into that section.
+  // Each add and replace put an item of its own section's type into that section. `witnesses` (M4a rev 3) stays absent
+  // until a patch adds the first item, so a spec without one keeps its bytes' shape (absent: none).
   return {
     ...spec,
     rev: specRev(spec.rev + 1),
@@ -119,6 +121,7 @@ export function applySpecPatch(spec: SpecM1, patch: SpecPatch): SpecM1 {
     acceptance: sections.acceptance as SpecM1['acceptance'],
     decisions: sections.decisions as SpecM1['decisions'],
     facts: sections.facts as SpecM1['facts'],
+    ...(sections.witnesses.length === 0 ? {} : { witnesses: sections.witnesses as NonNullable<SpecM1['witnesses']> }),
     cites,
   };
 }

@@ -16,7 +16,7 @@
 // runs, adapted: nobody answers mid-task, so an open question is decided, recorded in decisions.json and the work goes
 // on; a question or a pause for confirmation never ends the run; the last-paragraph check before ending the turn.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText, buildChecksText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `You are the implementer for one unit of a roadmap build, working alone and unattended in a git worktree. Nobody is watching and nobody will answer a question. The run ends when you return your final structured report; after it, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a separate reviewer gates the result against the spec.
@@ -81,7 +81,7 @@ Fix exactly what failed and what the directives name, nothing adjacent. Do not r
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -113,5 +113,5 @@ ${fastLanesText(i.worktree, i.fastLanes)}
 
 ${i.fixRound === null
     ? `Implement unit ${i.spec.unit} (spec revision ${i.spec.rev}) in ${i.worktree} until every acceptance clause holds and every fast lane passes, then return your report.`
-    : `Carry out this fix round for unit ${i.spec.unit} in ${i.worktree}, run the fast lanes, then return your report.`}`,
+    : `Carry out this fix round for unit ${i.spec.unit} in ${i.worktree}, run the fast lanes, then return your report.`}${buildChecksText(i.witnessChecks, i.assess)}`,
 };

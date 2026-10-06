@@ -55,7 +55,7 @@ describe('fold derives', () => {
     assert.deepEqual(state.openIntents.map((i) => i.op), [op(4), op(13)]);
     // Stage starts: plan-check#1, build#1, build#2. The retry at seq 7 is not a new start.
     const u1 = newUnitState(U1, 'build', null);
-    assert.deepEqual(state.units, [{ ...u1, counters: { ...u1.counters, attempts: 3 }, open: { stage: 'build', attempt: 2 } }], 'build#2 has no outcome: open');
+    assert.deepEqual(state.units, [{ ...u1, counters: { ...u1.counters, attempts: 3 }, open: { stage: 'build', attempt: 2, seq: 13 } }], 'build#2 has no outcome: open (first started at seq 13)');
     assert.deepEqual(state.needsUser, ['nu-9']);
     assert.deepEqual(state.meter, [
       { charge: { type: 'role', role: 'build' }, routingRev: REV, known: 1, unavailable: 1, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: 0 },
@@ -84,7 +84,7 @@ describe('fold derives', () => {
       park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null, bounds: DEFAULT_BOUNDS, entry: null, steering: null,
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
-        attempts: 7, chargeableFailures: 1, redirects: 1, reviseRounds: 0, candidateReds: 0,
+        attempts: 7, chargeableFailures: 1, redirects: 1, reviseRounds: 0, candidateReds: 0, smokeRounds: 0,
         retries: { 'plan-check': 0, build: 1, lanes: 0, gate: 0 },
       },
     }]);
@@ -126,7 +126,7 @@ describe('fold derives', () => {
       backendParks: [], resources: [], runOnly: null, resolvedEdges: [],
       holistic: {
         on: false, witnessed: [], latched: [], findings: [], audits: [], auditRequests: [], docsCovered: [], docsPublished: [], checkpoints: [], divergences: [],
-        digests: [], steered: [], mergedIn: [], debt: [], amendments: [], intake: [], packReviews: [], captures: [], draining: null, completion: null,
+        digests: [], steered: [], mergedIn: [], debt: [], amendments: [], intake: [], packReviews: [], captures: [], draining: null, completion: null, laneReuses: [], certificates: [], smokeRuns: [], corroborations: [],
       },
     });
   });

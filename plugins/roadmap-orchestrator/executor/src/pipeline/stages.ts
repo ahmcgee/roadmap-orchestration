@@ -775,6 +775,8 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...lib,
       planCheckNotes: planCheckNotes(ctx, unit.id),
       fastLanes: activeFastLanes(spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope, fixRound: call.fixRound,
+      // M4a rev 3 (D1, E): witness-check commands and the in-session assessment land in N3.
+      witnessChecks: [], assess: false,
     }),
     schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
   });

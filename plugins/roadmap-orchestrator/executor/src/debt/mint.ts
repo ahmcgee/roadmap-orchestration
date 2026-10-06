@@ -17,8 +17,14 @@ export type DebtCandidate =
 export class DebtRefusedError extends Error {}
 
 function sameSource(a: DebtSource, b: DebtSource): boolean {
-  if (a.type === 'gate') return b.type === 'gate' && a.unit === b.unit && a.attempt === b.attempt && a.index === b.index;
-  return b.type === 'finding' && a.finding === b.finding;
+  switch (a.type) {
+    case 'gate':
+      return b.type === 'gate' && a.unit === b.unit && a.attempt === b.attempt && a.index === b.index;
+    case 'finding':
+      return b.type === 'finding' && a.finding === b.finding;
+    case 'admit':
+      return b.type === 'admit' && a.job === b.job && a.index === b.index;
+  }
 }
 
 /**

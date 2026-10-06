@@ -230,6 +230,37 @@ describe('spec patch', () => {
   });
 });
 
+describe('spec witnesses (M4a rev 3)', () => {
+  it('spec.witnesses-section-patch-and-render: witness items enter by the patch channel, render after the facts, and a spec without them is unchanged', () => {
+    const item = { id: 'W-1', lane: 'journey', testId: 'widget renders twice', clause: 'A1', skeleton: 'render, render, assert two frames' };
+    const one = applySpecPatch(SPEC, patch([{ op: 'add', section: 'witnesses', item }]));
+    assert.deepEqual(one.witnesses, [{ ...item, state: 'active' }]);
+    assert.deepEqual(specM1(JSON.parse(specBytes(one).toString('utf8')), 'spec'), one, 'the patched spec reads back');
+    // An id the spec holds in any section is reused; replace and strike reach the witnesses section.
+    assert.throws(() => applySpecPatch(one, patch([{ op: 'add', section: 'witnesses', item: { ...item, id: 'W-1' } }], 2)), (e: unknown) => e instanceof SpecPatchOpError && e.reason === 'id-reused');
+    assert.throws(() => applySpecPatch(SPEC, patch([{ op: 'add', section: 'facts', item: { id: 'A1', text: 't' } }])), (e: unknown) => e instanceof SpecPatchOpError && e.reason === 'id-reused');
+    const two = applySpecPatch(one, patch([{ op: 'replace', section: 'witnesses', item: { ...item, testId: 'widget renders' } }, { op: 'add', section: 'witnesses', item: { ...item, id: 'W-2' } }], 2));
+    assert.deepEqual(two.witnesses?.map((w) => [w.id, w.testId]), [['W-1', 'widget renders'], ['W-2', 'widget renders twice']]);
+    assert.throws(() => applySpecPatch(two, patch([{ op: 'replace', section: 'facts', item: { id: 'W-1', text: 't' } }], 3)), (e: unknown) => e instanceof SpecPatchOpError && e.reason === 'wrong-section');
+    const struck = applySpecPatch(two, patch([{ op: 'strike', id: 'W-2' }], 3));
+    assert.equal(struck.witnesses?.[1]?.state, 'struck');
+    const md = renderSpec(struck);
+    assert.ok(md.indexOf('## Witnesses') > md.indexOf('## Facts') && md.indexOf('## Witnesses') < md.indexOf('## Cites'), md);
+    assert.match(md, /- `W-1` \[active\] lane `journey` test `widget renders` witnesses `A1`\n  - skeleton: render, render, assert two frames/);
+    assert.match(md, /- `W-2` \[struck\]/);
+    // A spec without witnesses, patched elsewhere, keeps no witnesses field and renders no section.
+    const plain = applySpecPatch(SPEC, patch([{ op: 'add', section: 'facts', item: { id: 'F2', text: 'Blue is #00f.' } }]));
+    assert.equal('witnesses' in plain, false);
+    assert.doesNotMatch(renderSpec(plain), /## Witnesses/);
+  });
+
+  it('a spec lane\'s inputs render beside its evidence', () => {
+    const spec = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**', 'package.json'] }] }, 'spec');
+    assert.match(renderSpec(spec), /  - inputs: `package.json`, `src\/widget\/\*\*`/);
+    assert.doesNotMatch(renderSpec(SPEC), /inputs:/);
+  });
+});
+
 describe('spec.patch op and reconciler', () => {
   function childEnv(trigger: string | undefined): NodeJS.ProcessEnv {
     const env = { ...process.env };

@@ -112,6 +112,8 @@ export interface JournalView {
   integrationHead(): Sha | null;
   /** M3 (A20, H5): the seq of the latest record that is work (`isWork`); `gc` seals an arc whose completion is after it. */
   lastWorkSeq(): number;
+  /** M4a rev 3 (R50): the seq of the latest `executor-started` fact, 0 before one (`openAttempt`). */
+  lastExecutorStarted(): number;
   /** M3: the holistic layer's fold (findings, audits, checkpoints, divergences, completion, …). */
   holistic(): HolisticFold;
 }

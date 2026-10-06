@@ -15,9 +15,9 @@ import {
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import type { JsonValue } from '../core/json.ts';
-import { BOUND_FIELDS, type Bounds, type NoteDef, type SpecPatchOp, specPatchOp } from '../core/records.ts';
+import { BOUND_FIELDS, type Bounds, type NoteDef, SPEC_SECTIONS, type SpecPatchOp, specPatchOp } from '../core/records.ts';
 import {
-  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
+  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
 import { type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
@@ -26,7 +26,7 @@ import {
   type PackTarget, type WitnessRef, observationKey, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
+import { buildExperimentsDefault, checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
 import {
   JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
 } from '../routing/types.ts';
@@ -133,7 +133,7 @@ const wireOp: Read<SpecPatchOp> = (value, path) => {
   const f = new Fields(value, path);
   const op = f.get('op', oneOf(['add', 'replace', 'strike', 'defer', 'cite'] as const));
   if (op === 'strike' || op === 'defer' || op === 'cite') return specPatchOp(value, path);
-  if (f.get('section', oneOf(['lanes', 'acceptance', 'decisions', 'facts'] as const)) !== 'lanes') return specPatchOp(value, path);
+  if (f.get('section', oneOf(SPEC_SECTIONS)) !== 'lanes') return specPatchOp(value, path);
   const item = new Fields(f.get('item', (v) => v), `${path}.item`);
   const env = new Fields(item.get('env', (v) => v), `${path}.item.env`);
   const pairs = env.get('set', arrayOf(object((g) => ({ name: g.get('name', envName), value: g.get('value', text) }))));
@@ -165,10 +165,66 @@ export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
   return planCheckOutput(value, 'planCheck');
 }
 
+// M4a rev 3 (E, R59): the acceptance-shape plan-check of an efficient builder under `by-builder`. Its redirect may only add
+// or replace witness items and facts, and cite; witness items enter the spec through this one patch channel, their ids
+// the next free `W-n` the prompt states (the patch engine refuses a reused id: `id-reused`).
+const S_WITNESS_ITEM = sObj({ id: S_STR, lane: S_STR, testId: S_STR, clause: S_STR, skeleton: S_STR });
+export const PLAN_CHECK_ACCEPTANCE_SCHEMA: Schema = sObj({
+  decision: sEnum(PLAN_CHECK_DECISIONS),
+  reasons: sArr(S_STR),
+  patch: sNullable(sArr({
+    anyOf: [...itemOps('witnesses', S_WITNESS_ITEM), ...itemOps('facts', S_NOTE_ITEM), sObj({ op: sEnum(['cite']), contracts: sArr(S_STR), rulings: sArr(S_STR) })],
+  })),
+  risk: sEnum(RISK_TIERS),
+  notes: S_STR,
+  premises: S_PREMISES,
+  visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
+});
+
+/** The acceptance shape's answer: a plan-check answer whose redirect ops are witness or fact adds and replaces, or cites. */
+export function validatePlanCheckAcceptanceOutput(value: unknown): PlanCheckOutput {
+  const out = planCheckOutput(value, 'planCheck');
+  (out.patch ?? []).forEach((op, i) => {
+    const ok = op.op === 'cite' || ((op.op === 'add' || op.op === 'replace') && (op.section === 'witnesses' || op.section === 'facts'));
+    if (!ok) throw new SchemaError(`planCheck.patch[${i}]`, 'an add or replace of a witnesses or facts item, or a cite (the acceptance shape)', op);
+  });
+  return out;
+}
+
+// M4a rev 3 (E, Q18, R55): the in-session assessment, the first of a frontier build's two invocations: plan-check's slice.
+export type PlanAssessment = Readonly<{
+  feasible: boolean;
+  /** The risk floor the assessor judges; below the pin is malformed, above it raises the unit's risk. */
+  riskFloor: RiskTier;
+  visionConflict: readonly VisionConflict[];
+  premises: readonly Premise[];
+  notes: string;
+}>;
+export type PlanAssessmentOutput = Readonly<{ planAssessment: PlanAssessment }>;
+export const PLAN_ASSESSMENT_SCHEMA: Schema = sObj({
+  planAssessment: sObj({
+    feasible: S_BOOL, riskFloor: sEnum(RISK_TIERS), visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })), premises: S_PREMISES, notes: S_STR,
+  }),
+});
+export const planAssessmentOutput: Read<PlanAssessmentOutput> = object((f) => ({
+  planAssessment: f.get('planAssessment', object((g) => ({
+    feasible: g.get('feasible', bool),
+    riskFloor: g.get('riskFloor', oneOf(RISK_TIERS)),
+    visionConflict: g.get('visionConflict', arrayOf(visionConflict)),
+    premises: g.get('premises', arrayOf(premise)),
+    notes: g.get('notes', text),
+  }))),
+}));
+export function validatePlanAssessment(value: unknown): PlanAssessmentOutput {
+  return planAssessmentOutput(value, 'build');
+}
+
 // ---------------------------------------------------------------------------------------------------
 // build
 
 export type LaneRun = Readonly<{ lane: LaneId; exit: number }>;
+/** M4a rev 3 (I3, F25): anything else the implementer ran, named, with its argv and exit. */
+export type Experiment = Readonly<{ name: string; argv: readonly string[]; exit: number }>;
 export type BuildOutput = Readonly<{
   /** Two or three sentences: what changed and why. */
   summary: string;
@@ -178,8 +234,25 @@ export type BuildOutput = Readonly<{
   lanesRun: readonly LaneRun[];
   /** What kept the unit from being complete; empty when it is. Decisions go to decisions.json, never here. */
   blockers: readonly string[];
+  /** M4a rev 3 (I3): every other command it ran (never a fast lane); a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
+  experiments: readonly Experiment[];
 }>;
 
+/** The build answer's schema; `lanes` (M4a rev 3, I3) the spec's fast lane ids, which `lanesRun[].lane` then enumerates. */
+export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
+  return sObj({
+    summary: S_STR,
+    changedPaths: sArr(S_STR),
+    lanesRun: sArr(sObj({ lane: lanes === null || lanes.length === 0 ? S_STR : sEnum(lanes), exit: S_INT })),
+    blockers: sArr(S_STR),
+    experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
+  });
+}
+/**
+ * The build modules' schema as calls write it today, without `experiments`. TEMPORARY (step N0): step N3 makes each build
+ * call write `buildSchemaFor(<its spec's fast lanes>)` and the modules' schema `buildSchemaFor(null)`, then deletes this
+ * literal (one schema for the role).
+ */
 export const BUILD_SCHEMA: Schema = sObj({
   summary: S_STR,
   changedPaths: sArr(S_STR),
@@ -189,15 +262,25 @@ export const BUILD_SCHEMA: Schema = sObj({
 
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
 
-export const buildOutput: Read<BuildOutput> = object((f) => ({
-  summary: f.get('summary', str),
-  changedPaths: f.get('changedPaths', arrayOf(str)),
-  lanesRun: f.get('lanesRun', arrayOf(object((g) => ({
-    lane: g.get('lane', (v, p): LaneId => laneId(v, p)),
-    exit: g.get('exit', int(0, 255)),
-  })))),
-  blockers: f.get('blockers', arrayOf(str)),
-}));
+const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
+
+/** A build answer; `lanes` (M4a rev 3, I3): the spec's fast lanes, the only lanes `lanesRun` may name (null: any lane id). */
+export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutput> {
+  return object((f) => {
+    const experiments = f.optional('experiments', arrayOf(experiment));
+    return {
+      summary: f.get('summary', str),
+      changedPaths: f.get('changedPaths', arrayOf(str)),
+      lanesRun: f.get('lanesRun', arrayOf(object((g) => ({
+        lane: g.get('lane', (v, p): LaneId => (lanes === null ? laneId(v, p) : oneOf(lanes)(v, p) as LaneId)),
+        exit: g.get('exit', int(0, 255)),
+      })))),
+      blockers: f.get('blockers', arrayOf(str)),
+      experiments: experiments ?? buildExperimentsDefault(),
+    };
+  });
+}
+export const buildOutput: Read<BuildOutput> = buildOutputFor(null);
 
 export function validateBuildOutput(value: unknown): BuildOutput {
   return buildOutput(value, 'build');

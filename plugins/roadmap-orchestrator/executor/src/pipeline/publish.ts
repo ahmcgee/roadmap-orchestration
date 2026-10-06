@@ -74,7 +74,7 @@ import { docsTransientViolations } from '../git/transient.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { brakesOn, obligationEffects } from '../holistic/table.ts';
-import { type ArcLaneDef, type Obligations, type RulingSidecar, isExempt, parseObligations, parseRulingSidecar } from '../holistic/types.ts';
+import { type ArcLaneDef, type Conversion, type Obligations, type RulingSidecar, isExempt, parseObligations, parseRulingSidecar } from '../holistic/types.ts';
 import {
   OBLIGATIONS_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
 } from '../input/inforce.ts';
@@ -220,15 +220,36 @@ function landedSidecars(ctx: Reader, payload: RevisionPayload): readonly RulingS
 
 /**
  * The unit a banked item belongs to (`ledgerAfterArc`): a gate note's own; a deferred finding's owner (the unit its
- * deferral minted it under). A finding the fold does not hold is a bug.
+ * deferral minted it under); (M4a rev 3) a converted admit's unit, as its bundle's decision record names it. A finding or
+ * conversion the log does not hold is a bug.
  */
 export function debtUnitOf(view: JournalView): UnitOfSource {
   return (source) => {
-    if (source.type === 'gate') return source.unit;
-    const finding = view.holistic().findings.find((f) => f.id === source.finding);
-    if (finding === undefined) throw new Error(`debt banked from ${source.finding}, which the fold does not hold`);
-    return finding.owner;
+    switch (source.type) {
+      case 'gate':
+        return source.unit;
+      case 'finding': {
+        const finding = view.holistic().findings.find((f) => f.id === source.finding);
+        if (finding === undefined) throw new Error(`debt banked from ${source.finding}, which the fold does not hold`);
+        return finding.owner;
+      }
+      case 'admit': {
+        const unit = conversionsOf(view, source.job).find((c) => c.index === source.index)?.unit;
+        if (unit === undefined) throw new Error(`debt banked from ${source.job} op ${source.index}, which its decision record does not convert`);
+        return unit;
+      }
+    }
   };
+}
+
+/** The conversions a checkpoint's decision record holds (M4a rev 3, Q4): its applied revision's source, or its all-converted no-op. */
+export function conversionsOf(view: JournalView, job: JobId): readonly Conversion[] {
+  for (const i of view.opsOf('revision.commit')) {
+    const s = i.expect.source;
+    if (s.type === 'bundle' && s.job === job) return s.conversions ?? [];
+  }
+  const decided = view.holistic().checkpoints.find((c) => c.inputs.job === job)?.decided ?? null;
+  return decided?.kind === 'no-op' ? decided.conversions ?? [] : [];
 }
 
 /**

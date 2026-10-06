@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId,
+  visionClauseId, invocationId, opIdOf, witnessItemId,
 } from '../src/core/ids.ts';
 import {
   DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
@@ -103,12 +103,13 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null,
+      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: false,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
+      witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }], assess: true,
     },
   ],
   gate: [
@@ -116,8 +117,8 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
       diff: { base: SHA_A, head: SHA_B, text: 'DIFF-A' },
-      laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null }],
-      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [] }, priorRound: null,
+      laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
+      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -125,11 +126,19 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)],
       diff: { base: SHA_B, head: SHA_A, text: 'DIFF-B' },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
-        ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] } }],
+        ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
+        reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')] },
       priorRound: {
         directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null }],
         premises: [premise('PREMISE-B', 'src/b/x.ts')], fixPaths: [repoPath('src/b/x.ts')], changedPremiseFiles: ['src/b/x.ts'],
+      },
+      checks: {
+        witnesses: {
+          required: [{ lane: laneId('journey'), testId: 'WITNESS-B', source: { type: 'witness-item', id: witnessItemId('W-1') }, role: 'target' }],
+          missing: [{ lane: laneId('journey'), testId: 'WITNESS-B' }], failed: [],
+        },
+        smoke: { killed: [], survived: [{ lane: laneId('journey'), testId: 'SURVIVOR-B' }], inconclusive: [], notRun: null },
       },
     },
   ],
@@ -137,13 +146,14 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { from: SHA_A, to: SHA_B, diff: 'RANGE-A' },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'),
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
     },
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: { from: SHA_B, to: SHA_A, diff: 'RANGE-B' },
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: 'OWNER-B' }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
+      specsOnly: [unitId('u-two')],
     },
   ],
   checkpoint: [
@@ -152,6 +162,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
       contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', issues: { type: 'captured', issues: [] },
+      manifest: [], specs: [], nextRulingId: rulingId('C-2'), closeout: null, issuesUnchangedSince: null,
     },
     {
       vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40, cause: { stage: 'candidate', attempt: 9, outcome: 'red', reason: 'candidate-red', design: false, detail: ['TRIGGER-B'] } },
@@ -160,6 +171,9 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       divergences: [{ id: divergenceId('D-1'), type: 'plan-departed', what: 'DIVERGENCE-B' }], contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')],
       index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'), target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') },
       direction: 'DIR-B', issues: { type: 'captured', issues: [capturedIssue(7, 'ISSUE-B')] },
+      manifest: [{ kind: 'plan', id: 'plan', path: absPath('/run/inputs/MANIFEST-B.plan.json'), sha256: sha256('b'.repeat(64)) }],
+      specs: [{ unit: unitId('u-two'), rev: specRev(3), markdown: 'SPECS-B', occupied: ['A1', 'W-1'] }],
+      nextRulingId: rulingId('C-9'), closeout: { since: jobId('ckpt', 1) }, issuesUnchangedSince: jobId('ckpt', 1),
     },
   ],
   packReview: [

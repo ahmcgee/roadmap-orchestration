@@ -24,7 +24,7 @@ const T = { timeout: 60_000 };
 const req = (r: Partial<ResourceRequest>): ResourceRequest => ({ named: [], pools: [], cpu: 0, publication: false, ...r });
 const holderOf = (unit: string, attempt = 1): StageHolder => stageHolder('build', attempt, unitId(unit));
 const rank = (unit: string, waitStartSeq: number, extra: Partial<Rank> = {}): Rank => ({
-  unit: unitId(unit), origin: 'planned', waitStartSeq, bypassMerges: 0, promoted: false, planIndex: 0, ...extra,
+  unit: unitId(unit), priority: 'normal', origin: 'planned', waitStartSeq, bypassMerges: 0, promoted: false, planIndex: 0, ...extra,
 });
 
 /** Starts a wait and records its answer once it settles. */

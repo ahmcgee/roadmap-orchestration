@@ -283,6 +283,8 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, selected(ctx, unit, tip, head), tip),
       diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
       laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
+      // M4a rev 3 (D1, D2): the executable checks report here once N3 runs them.
+      checks: { witnesses: null, smoke: null },
     });
     const fingerprint = fingerprintAt(ctx, unit, tip);
     writeJudgmentInputs(ctx, parent, { tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint });

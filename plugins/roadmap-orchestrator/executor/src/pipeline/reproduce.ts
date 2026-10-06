@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { OutcomeStage } from '../core/events.ts';
+import { mutantSubjectDefault } from '../core/upgrade.ts';
 import { type FindingId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type UnitId, invocationId, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -404,7 +405,9 @@ function codeDismissals(ctx: StageContext): readonly FindingId[] {
     if (d === null || d.stage !== 'reproduce' || d.outcome !== 'not-reproduced') continue;
     const killed = view.opsOf('proc.spawn').flatMap((i) => {
       const s = i.expect.subject;
-      return i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'reproduce' && i.parent.attempt === d.attempt && s.purpose === 'mutant' ? [s.finding] : [];
+      if (!(i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'reproduce' && i.parent.attempt === d.attempt && s.purpose === 'mutant')) return [];
+      const of = mutantSubjectDefault(s);
+      return of.type === 'finding' ? [of.finding] : [];
     }).at(-1);
     if (killed === undefined) throw new Error(`unit ${unit.id}: reproduce attempt ${d.attempt} decided not-reproduced without a mutant run`);
     const finding = view.holistic().findings.find((f) => f.id === killed);

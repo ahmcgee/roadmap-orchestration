@@ -2,12 +2,17 @@
 // item, the Phase-0 disposition and the `debt-banked` fact's source. Types and readers only; A4 owns the behaviour
 // (src/debt/{ledger,mint,render}.ts): `debtKey`, minting, dedupe, rendering.
 import {
-  type ArcId, type DebtId, type FindingId, type RulingId, type Sha256Hex, type UnitId, arcId, debtId, debtSeq, findingId, rulingId, sha256, unitId, compareIds,
+  type ArcId, type DebtId, type FindingId, type JobId, type RulingId, type Sha256Hex, type UnitId, arcId, debtId, debtSeq, findingId, jobIdOfKind, rulingId, sha256, unitId,
+  compareIds,
 } from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, str, tagged } from '../core/validate.ts';
 
-/** Why an item was banked (R7): a gate `note` finding on an approved attempt, or a P2/P3 finding with no obligation a checkpoint deferred. */
-export const BANK_REASONS = ['gate-note', 'finding-deferred'] as const;
+/**
+ * Why an item was banked (R7): a gate `note` finding on an approved attempt, or a P2/P3 finding with no obligation a
+ * checkpoint deferred; since M4a rev 3 (LR-k, R48) an opportunity's second follow-up repair that code converted
+ * (`opportunity-overrun`: it names the opportunity, never a finding, so correctness never banks).
+ */
+export const BANK_REASONS = ['gate-note', 'finding-deferred', 'opportunity-overrun'] as const;
 export type BankReason = (typeof BANK_REASONS)[number];
 export const DEBT_STATES = ['open', 'promoted', 'resolved'] as const;
 export type DebtState = (typeof DEBT_STATES)[number];
@@ -69,10 +74,11 @@ export function parseDebtLedger(value: unknown): DebtLedger {
   return debtLedger(value, 'debt');
 }
 
-/** Where a `debt-banked` fact came from; banking is idempotent per source. */
+/** Where a `debt-banked` fact came from; banking is idempotent per source. M4a rev 3: a converted checkpoint admit (`index`: its op's). */
 export type DebtSource =
   | Readonly<{ type: 'gate'; unit: UnitId; attempt: number; index: number }>
-  | Readonly<{ type: 'finding'; finding: FindingId }>;
+  | Readonly<{ type: 'finding'; finding: FindingId }>
+  | Readonly<{ type: 'admit'; job: JobId; index: number }>;
 
 export const debtSource: Read<DebtSource> = tagged('type', {
   gate: object((f): DebtSource => ({
@@ -80,4 +86,5 @@ export const debtSource: Read<DebtSource> = tagged('type', {
     index: f.get('index', nat),
   })),
   finding: object((f): DebtSource => ({ type: f.get('type', literal('finding')), finding: f.get('finding', (v, p) => findingId(v, p)) })),
+  admit: object((f): DebtSource => ({ type: f.get('type', literal('admit')), job: f.get('job', (v, p) => jobIdOfKind('ckpt')(v, p)), index: f.get('index', nat) })),
 });

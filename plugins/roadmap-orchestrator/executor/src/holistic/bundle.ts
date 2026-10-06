@@ -685,6 +685,8 @@ function proposerOf(a: Activation) {
   return {
     type: 'bundle' as const, job: a.job, cites: canonicalIds(from.flatMap((op) => op.cites)),
     evidence: [...new Set(from.flatMap((op) => op.evidence))],
+    // M4a rev 3 (OR-A1): the admit classes land with `classifyAdmits` (N2); until then a bundle admits no opportunity.
+    admits: [],
   };
 }
 

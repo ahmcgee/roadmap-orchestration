@@ -6,8 +6,9 @@
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
-import type { OutcomeStage } from '../core/events.ts';
-import type { DivergenceId, FindingId, JobId, LaneId, RulingId, Sha, SpecRev, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { OutcomeStage, TestRef } from '../core/events.ts';
+import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
@@ -77,6 +78,8 @@ export type LaneLedgerEntry = Readonly<{
   evidenceDir: AbsPath;
   /** The gitignored files the lane wrote, and what evidence captured; null when not recorded. */
   ignored: IgnoredCensus | null;
+  /** M4a rev 3 (F1a): the earlier execution this lane's pass was reused from (its SHA and invocation); null when it ran. */
+  reused: Readonly<{ at: Sha; inv: InvocationId }> | null;
 }>;
 
 /** A checkout a plan-check reads: a detached tree at `at`. */
@@ -149,6 +152,30 @@ export type BuildInputs = Readonly<{
   worktree: AbsPath;
   scope: readonly RepoPattern[];
   fixRound: FixRound | null;
+  /**
+   * M4a rev 3 (D1, R56): per fast required witness lane, the exact `roadmap witness-check --lane-file <file>` command the
+   * implementer runs after its last change; empty outside a corpus arc or without required witnesses.
+   */
+  witnessChecks: readonly WitnessCheckCommand[];
+  /** M4a rev 3 (E, R55): this call is the in-session assessment (read-only, `PLAN_ASSESSMENT_SCHEMA`), not the build. */
+  assess: boolean;
+}>;
+
+/** One fast lane's witness check, as the build prompt names it. */
+export type WitnessCheckCommand = Readonly<{ lane: LaneId; command: string }>;
+
+/** Why mutation smoke did not run (D2): low risk, no targets, a target lane without `testPaths`, a tests-only diff, the allowance spent. */
+export const SMOKE_NOT_RUN = ['low-risk', 'no-targets', 'no-test-paths', 'tests-only-diff', 'allowance'] as const;
+export type SmokeNotRun = (typeof SMOKE_NOT_RUN)[number];
+
+/**
+ * M4a rev 3 (D1, D2): what the executable checks before the gate found. `witnesses`: the required ids and the ones still
+ * missing or failing (null: the check did not apply, an `architecture-doc` arc); `smoke`: each target's verdict, or why it
+ * did not run (null: did not apply). Survivors after the smoke bound reach the gate here (R38).
+ */
+export type GateChecks = Readonly<{
+  witnesses: Readonly<{ required: readonly RequiredWitness[]; missing: readonly TestRef[]; failed: readonly TestRef[] }> | null;
+  smoke: Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[]; notRun: SmokeNotRun | null }> | null;
 }>;
 
 export type GateInputs = Readonly<{
@@ -170,6 +197,8 @@ export type GateInputs = Readonly<{
   scope: Readonly<{ patterns: readonly RepoPattern[]; growth: readonly RepoPath[] }>;
   /** Later gate rounds rule on their own prior round (§3, sf16); null on the first round. */
   priorRound: GatePriorRound | null;
+  /** M4a rev 3: the executable checks' results (`GateChecks`). */
+  checks: GateChecks;
 }>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -219,6 +248,8 @@ export type LensInputs = Readonly<{
   target: TargetInput;
   /** The audit's detached worktree at the audited SHA, the lens's cwd. */
   checkout: AbsPath;
+  /** M4a rev 3 (H2, R61): a specs-only drift's changed units (the vision lens reads their spec deltas only); null: a full audit. */
+  specsOnly: readonly UnitId[] | null;
 }>;
 
 /**
@@ -254,7 +285,25 @@ export type CheckpointInputs = Readonly<{
   direction: string;
   /** M4a: the issues captured for this checkpoint (trusted, LR-d), or why none were captured (R21). */
   issues: CheckpointIssuesInput;
+  /** M4a rev 3 (H4, F08): every captured input, content-addressed in the run dir; read only through these paths. */
+  manifest: readonly ManifestEntry[];
+  /** M4a rev 3 (H4, F21): every non-retired unit's spec in full, with the item ids it holds (`add` needs a new one). */
+  specs: readonly CheckpointSpec[];
+  /** M4a rev 3 (C3, H4): the ledger's next ruling id (numeric, no padding); several rulings take consecutive ids from it. */
+  nextRulingId: RulingId;
+  /** M4a rev 3 (H5, R65): a delta-only closeout since the no-op checkpoint `since`; null: a full checkpoint. */
+  closeout: Readonly<{ since: JobId }> | null;
+  /** M4a rev 3 (H5, F27): the issues and their grounds are unchanged since that checkpoint's dispositions; null: listed. */
+  issuesUnchangedSince: JobId | null;
 }>;
+
+/** What a checkpoint manifest entry names (H4). */
+export const MANIFEST_KINDS = ['plan', 'spec', 'ledger', 'sidecar', 'obligations', 'vision', 'phase0', 'issues'] as const;
+export type ManifestKind = (typeof MANIFEST_KINDS)[number];
+/** One captured input: its kind, its id within the kind (a unit, a ruling, or the kind's name), its kept path and hash. */
+export type ManifestEntry = Readonly<{ kind: ManifestKind; id: string; path: AbsPath; sha256: Sha256Hex }>;
+/** A unit's spec as a checkpoint reads it: rendered in full, with every item id it holds. */
+export type CheckpointSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: string; occupied: readonly string[] }>;
 
 /**
  * A checkpoint's issues as its prompt gets them: the kept capture's issues, each body and comment already wrapped by
@@ -289,14 +338,15 @@ export type RoleInputs = {
 
 export const ROLE_INPUTS = {
   planCheck: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
-  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
+  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'checks',
   ],
-  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout'],
+  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
     'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'issues',
+    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
@@ -399,8 +449,47 @@ export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {
   if (ledger.length === 0) return '(no lanes ran)';
   return ledger.map((l) => {
     const ignored = l.ignored === null ? null : ignoredText(l.ignored);
-    return `- ${l.lane}: ${l.verdict}, exit ${l.exitCode ?? 'none'} (expected ${l.expectedExit}); argv ${JSON.stringify(l.argv)}; evidence ${l.evidenceDir}${ignored === null ? '' : `; ${ignored}`}`;
+    const reused = l.reused === null ? '' : `; reused from ${l.reused.at} (${l.reused.inv}), inputs unchanged`;
+    return `- ${l.lane}: ${l.verdict}, exit ${l.exitCode ?? 'none'} (expected ${l.expectedExit}); argv ${JSON.stringify(l.argv)}; evidence ${l.evidenceDir}${ignored === null ? '' : `; ${ignored}`}${reused}`;
   }).join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// M4a rev 3 (step N0): the new inputs as data blocks, empty while they carry nothing (so a prompt without them renders as
+// before). Step N4 writes their instructions.
+
+const refsText = (refs: readonly TestRef[]): string => (refs.length === 0 ? '(none)' : refs.map((r) => `${r.lane} ${r.testId}`).join('; '));
+
+/** The gate's executable checks, or nothing when neither applied. */
+export function gateChecksText(c: GateChecks): string {
+  if (c.witnesses === null && c.smoke === null) return '';
+  const lines = [
+    ...(c.witnesses === null ? [] : [`witnesses required: ${c.witnesses.required.length}; missing: ${refsText(c.witnesses.missing)}; failed: ${refsText(c.witnesses.failed)}`]),
+    ...(c.smoke === null ? [] : [c.smoke.notRun !== null
+      ? `mutation smoke: not run (${c.smoke.notRun})`
+      : `mutation smoke: killed ${refsText(c.smoke.killed)}; survived ${refsText(c.smoke.survived)}; inconclusive ${refsText(c.smoke.inconclusive)}`]),
+  ];
+  return `\n\n<executable_checks>\n${lines.join('\n')}\n</executable_checks>`;
+}
+
+/** The build's witness checks and the assess marker, or nothing for a plain build without required witnesses. */
+export function buildChecksText(witnessChecks: readonly WitnessCheckCommand[], assess: boolean): string {
+  const checks = witnessChecks.length === 0 ? '' : `\n\n<witness_checks>\n${witnessChecks.map((w) => `- ${w.lane}: ${w.command}`).join('\n')}\n</witness_checks>`;
+  return `${checks}${assess ? '\n\n<assess>true</assess>' : ''}`;
+}
+
+/** A lens's specs-only scope, or nothing for a full audit. */
+export function specsOnlyText(specsOnly: readonly UnitId[] | null): string {
+  return specsOnly === null ? '' : `\n\n<specs_only>\n${specsOnly.join('\n')}\n</specs_only>`;
+}
+
+/** The checkpoint's manifest, embedded specs, next ruling id, closeout and issue reuse. */
+export function checkpointRev3Text(i: Pick<CheckpointInputs, 'manifest' | 'specs' | 'nextRulingId' | 'closeout' | 'issuesUnchangedSince'>): string {
+  const manifest = i.manifest.length === 0 ? '' : `\n\n<input_manifest>\n${i.manifest.map((m) => `- ${m.kind} ${m.id}: ${m.path} sha256:${m.sha256}`).join('\n')}\n</input_manifest>`;
+  const specs = i.specs.length === 0 ? '' : `\n\n${documentsXml(i.specs.map((s) => ({ source: `spec of unit ${s.unit}, revision ${s.rev}; item ids held: ${s.occupied.join(', ')}`, content: s.markdown })))}`;
+  const closeout = i.closeout === null ? '' : `\n\n<closeout since="${i.closeout.since}"/>`;
+  const issues = i.issuesUnchangedSince === null ? '' : `\n\n<issues_unchanged since="${i.issuesUnchangedSince}"/>`;
+  return `${manifest}${specs}\n\n<next_ruling_id>${i.nextRulingId}</next_ruling_id>${closeout}${issues}`;
 }
 
 /** Bytes as a reader scans them: B, KiB or MiB. */

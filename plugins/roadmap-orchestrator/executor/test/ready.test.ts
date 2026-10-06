@@ -320,8 +320,8 @@ describe('priority and aging (F17)', () => {
     log.merge(X3, 1);
     const three = ready(inputOf(log, plan));
     assert.deepEqual(three.map((r) => r.rank), [
-      { unit: P, origin: 'planned', waitStartSeq: 1, bypassMerges: 3, promoted: true, planIndex: 0 },
-      { unit: K, origin: 'checkpoint', waitStartSeq: added, bypassMerges: 3, promoted: true, planIndex: 4 },
+      { unit: P, priority: 'normal', origin: 'planned', waitStartSeq: 1, bypassMerges: 3, promoted: true, planIndex: 0 },
+      { unit: K, priority: 'normal', origin: 'checkpoint', waitStartSeq: added, bypassMerges: 3, promoted: true, planIndex: 4 },
     ], 'both promoted: the older planned unit first');
     const view = log.view();
     assert.ok(compareRank(rankOf(view, plan, P), rankOf(view, plan, K)) < 0);

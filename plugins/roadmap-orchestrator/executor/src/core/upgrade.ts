@@ -5,7 +5,9 @@
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
 import type { ClassCatalogue } from '../routing/classes.ts';
-import type { CensusEntry, Obligations } from '../holistic/types.ts';
+import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
+import type { MutantOf, RevisionSource } from './events.ts';
+import type { FindingId, LaneId } from './ids.ts';
 
 const warned = new Set<string>();
 
@@ -73,3 +75,59 @@ export const DEV6_CLASS_CATALOGUE: ClassCatalogue = {
     summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
   },
 };
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.6 → M4a rev 3 (still 1.0.0-dev.7, LR-g: no version bump). Byte-preserving as above; SCHEMAS.md "M4a rev 3:
+// upgrade additions". Delete with the dev.6 layer (BACKLOG "Scaffolding to delete").
+
+/** A 1.0.0-dev.6 dispatch record's bounds lack the smoke bounds (D2): read as the built-in ones. */
+export function dev6SmokeBounds(): Readonly<{ smokeRounds: number; smokeRuns: number }> {
+  warnDefaulted('dispatch.bounds.smoke', 'a dispatch record without smokeRounds and smokeRuns (written before M4a rev 3); read as 1 and 2');
+  return { smokeRounds: 1, smokeRuns: 2 };
+}
+
+/**
+ * A recorded lane rev equal to the lane's minimal form (`evidenceExcludes: []` omitted), as a generator hashing raw input
+ * wrote it before 1.0.0-dev.7 (F15, run 5), compares equal to the normalised rev (`laneRevMatches`); warned once per lane.
+ */
+export function minimalLaneRev(lane: LaneId): true {
+  warnDefaulted(`lane-rev.minimal.${lane}`, `lane ${lane}: a recorded rev of its minimal form (default fields omitted, before 1.0.0-dev.7) compares equal to its normalised rev`);
+  return true;
+}
+
+/**
+ * What a mutant spawn subject or `mutant.apply` intent was made for: its `of`, or a 1.0.0-dev.6 record's `finding`
+ * (a finding's mutant, B3), read as `of: finding`.
+ */
+export function mutantSubjectDefault(x: Readonly<{ of: MutantOf }> | Readonly<{ finding: FindingId }>): MutantOf {
+  if ('of' in x) return x.of;
+  warnDefaulted('mutant.finding', 'a mutant record naming finding (written before M4a rev 3); read as of: finding');
+  return { type: 'finding', finding: x.finding };
+}
+
+/**
+ * The host signature table at 1.0.0-dev.6 (0a58349), frozen: a lane or journey spawn without `redRev` (an unstamped
+ * dev.6 execution) is classified by it, never by the grown table, so its read-back never changes (Q20).
+ */
+export const HOST_SIGNATURES_DEV6 = [
+  { id: 'golangci-lint-lock', pattern: /parallel golangci-lint is running/i },
+  { id: 'kind-boot-timeout', pattern: /failed to create cluster:.*(timed out waiting for the condition|failed to init node with kubeadm)/i },
+  { id: 'eagain', pattern: /\bEAGAIN\b|Resource temporarily unavailable/ },
+  { id: 'enospc', pattern: /\bENOSPC\b|No space left on device/ },
+] as const satisfies readonly Readonly<{ id: string; pattern: RegExp }>[];
+
+/** A build answer's `experiments` (I3): a completed but unrecorded 1.0.0-dev.6 answer that recovery consumes has none. */
+export function buildExperimentsDefault(): readonly never[] {
+  warnDefaulted('build.experiments', 'a build answer without experiments (written before M4a rev 3); read as none');
+  return [];
+}
+
+/**
+ * A bundle revision's admit classification (OR-A1, Q4): its recorded `admits` and `conversions`, or `unclassified` for a
+ * bundle that records none (a 1.0.0-dev.6 arc's, or an `architecture-doc` arc's, LR-h), which never counts against an
+ * opportunity budget or a follow-up.
+ */
+export function bundleClassesOf(source: Extract<RevisionSource, { type: 'bundle' }>): Readonly<{ admits: readonly ClassifiedAdmit[]; conversions: readonly Conversion[] }> | 'unclassified' {
+  if (source.admits !== undefined && source.conversions !== undefined) return { admits: source.admits, conversions: source.conversions };
+  return 'unclassified';
+}

@@ -40,8 +40,11 @@ export type Command =
   | Readonly<{ command: 'ack'; id: NeedsUserId; choice: string | null; run: RunLocator }>
   | Readonly<{ command: 'resume'; target: ResumeTarget; run: RunLocator }>
   | Readonly<{ command: 'sweep'; resource: ResourceName | null; run: RunLocator }>
-  /** Put the edited plan.json and specs in force; `dryRun` classifies them read-only and queues nothing. */
-  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; run: RunLocator }>
+  /**
+   * Put the edited plan.json and specs in force; `dryRun` classifies them read-only and queues nothing. `rulings` (M4a
+   * rev 3, I2): ruling sidecar files (`--ruling`, repeatable, in the order given) landed with the edits as one revision.
+   */
+  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; rulings: readonly string[]; run: RunLocator }>
   /** A contingent edge's condition is met, on the architect's evidence (M2). */
   | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
   /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
@@ -70,17 +73,27 @@ export type Command =
   /** `issues`: the canonical issue capture, to stdout or (`out`) a file by atomic rename. */
   | Readonly<{ command: 'issues'; repo: string; out: string | null }>
   /** `chain status`: the chain derived from refs, the ack log and K. */
-  | Readonly<{ command: 'chain-status'; repo: string }>;
+  | Readonly<{ command: 'chain-status'; repo: string }>
+  // M4a rev 3 host acts (no host lock; not queued): src/commands/{witnesscheck,resumearc,inputs}.ts.
+  /** `witness-check --lane-file <file>` (D1, R56): run one witness lane in the cwd and compare its required ids (exit 0, or 78). */
+  | Readonly<{ command: 'witness-check'; laneFile: string }>
+  /** `resume-arc --repo <repo>` (F9): restart the supervisor of this repo's arc whose owner died; a no-op otherwise. */
+  | Readonly<{ command: 'resume-arc'; repo: string }>
+  /** `inputs export --repo <repo> --arc <arc> --out <dir>` (I1, F17): the arc's current input view, read-only, into a new dir. */
+  | Readonly<{ command: 'inputs-export'; repo: string; arc: ArcId; out: string }>;
 
 /** What `phase0 check` reads: a plan file in the working tree, or every input by the digests `refs/roadmap/<arc>` recorded (K20). */
 export type Phase0Source = Readonly<{ type: 'plan'; plan: string }> | Readonly<{ type: 'ref'; arc: ArcId }>;
 
-type Parsed = Readonly<{ positionals: readonly string[]; flags: ReadonlyMap<string, string | true> }>;
+type Parsed = Readonly<{ positionals: readonly string[]; flags: ReadonlyMap<string, string | true | readonly string[]> }>;
 
-/** `--name value` options and `--name` switches; each at most once; nothing outside `allowed`. */
-function parseRest(argv: readonly string[], allowed: Readonly<Record<string, 'value' | 'switch'>>, command: string): Parsed {
+/**
+ * `--name value` options and `--name` switches, each at most once, and `many` options (`--name value`, repeatable, in the
+ * order given); nothing outside `allowed`.
+ */
+function parseRest(argv: readonly string[], allowed: Readonly<Record<string, 'value' | 'switch' | 'many'>>, command: string): Parsed {
   const positionals: string[] = [];
-  const flags = new Map<string, string | true>();
+  const flags = new Map<string, string | true | readonly string[]>();
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] as string;
     if (!arg.startsWith('--')) {
@@ -90,14 +103,14 @@ function parseRest(argv: readonly string[], allowed: Readonly<Record<string, 'va
     const name = arg.slice(2);
     const kind = allowed[name];
     if (kind === undefined) throw new CliError(`${command}: unknown option ${arg}`);
-    if (flags.has(name)) throw new CliError(`${command}: ${arg} given twice`);
+    if (flags.has(name) && kind !== 'many') throw new CliError(`${command}: ${arg} given twice`);
     if (kind === 'switch') {
       flags.set(name, true);
       continue;
     }
     const value = argv[i + 1];
     if (value === undefined || value.startsWith('--')) throw new CliError(`${command}: ${arg} needs a value`);
-    flags.set(name, value);
+    flags.set(name, kind === 'many' ? [...(flags.get(name) as readonly string[] | undefined ?? []), value] : value);
     i++;
   }
   return { positionals, flags };
@@ -106,6 +119,12 @@ function parseRest(argv: readonly string[], allowed: Readonly<Record<string, 'va
 function value(p: Parsed, name: string): string | undefined {
   const v = p.flags.get(name);
   return typeof v === 'string' ? v : undefined;
+}
+
+/** A `many` option's values, in the order given ([] when absent). */
+function values(p: Parsed, name: string): readonly string[] {
+  const v = p.flags.get(name);
+  return Array.isArray(v) ? v : [];
 }
 
 function positionals(p: Parsed, command: string, max: number): readonly string[] {
@@ -214,11 +233,13 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, resource: r === undefined ? null : arg(command, '--resource', resourceName, r), run: locator(p, command) };
     }
     case 'apply': {
-      const p = parseRest(rest, { ...LOCATOR, 'expect-rev': 'value', 'dry-run': 'switch' }, command);
+      const p = parseRest(rest, { ...LOCATOR, 'expect-rev': 'value', 'dry-run': 'switch', ruling: 'many' }, command);
       positionals(p, command, 0);
       const rev = value(p, 'expect-rev');
       if (rev !== undefined && !/^[1-9][0-9]*$/.test(rev)) throw new CliError(`apply: --expect-rev takes a plan revision (a positive integer), got ${JSON.stringify(rev)}`);
-      return { command, expectRev: rev === undefined ? null : planRev(Number(rev)), dryRun: p.flags.has('dry-run'), run: locator(p, command) };
+      const rulings = values(p, 'ruling');
+      if (new Set(rulings).size !== rulings.length) throw new CliError('apply: a --ruling file given twice');
+      return { command, expectRev: rev === undefined ? null : planRev(Number(rev)), dryRun: p.flags.has('dry-run'), rulings, run: locator(p, command) };
     }
     case 'resolve-edge': {
       const p = parseRest(rest, { ...LOCATOR, evidence: 'value' }, command);
@@ -325,9 +346,29 @@ export function parseCommand(argv: readonly string[]): Command {
       positionals(p, 'chain status', 0);
       return { command: 'chain-status', repo: required(p, 'chain status', 'repo', '<path>') };
     }
+    case 'witness-check': {
+      const p = parseRest(rest, { 'lane-file': 'value' }, command);
+      positionals(p, command, 0);
+      return { command, laneFile: required(p, command, 'lane-file', '<file>') };
+    }
+    case 'resume-arc': {
+      const p = parseRest(rest, { repo: 'value' }, command);
+      positionals(p, command, 0);
+      return { command, repo: required(p, command, 'repo', '<path>') };
+    }
+    case 'inputs': {
+      const [sub, ...args] = rest;
+      if (sub !== 'export') throw new CliError(`inputs: expected the subcommand export, got ${JSON.stringify(sub ?? '')}`);
+      const p = parseRest(args, { repo: 'value', arc: 'value', out: 'value' }, 'inputs export');
+      positionals(p, 'inputs export', 0);
+      return {
+        command: 'inputs-export', repo: required(p, 'inputs export', 'repo', '<path>'), arc: arg('inputs export', '--arc', arcId, required(p, 'inputs export', 'arc', '<arc>')),
+        out: required(p, 'inputs export', 'out', '<dir>'),
+      };
+    }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status, witness-check, resume-arc, inputs export`,
       );
   }
 }
