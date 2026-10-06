@@ -117,6 +117,12 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **gpt-5.6-sol is not available on a ChatGPT Codex account** (400 `invalid_request_error`, 2026-10-06). No class binds
+  it; a repo rebind to sol would fail at the preflight smoke. Trigger: a routing that seats sol, or the account
+  changing; then probe sol again or drop it from `CODEX_MODELS`.
+- **`log.test` "10x the lines costs under 15x the CPU"** fails under heavy host load (seen once in a full run with
+  agents active; passes alone). Trigger: a failure on a calm host.
+
 - **An unanswered non-blocking request holds its generation open.** A checkpoint bundle request nobody answers keeps
   that generation non-quiescent, so an otherwise finished arc stays `running` on a visible open item (declined or
   applied requests settle it). Trigger: an arc idling on an unanswered request; then surface it as `blocked` with the
