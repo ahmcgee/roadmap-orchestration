@@ -9,7 +9,8 @@
 //      design park on a lineage the checkpoint already respecified (OR-Q1: the second goes to the owner).
 //   1. A running job (captured, undecided) resumes from its recorded inputs. Otherwise the first due trigger, parks
 //      first (they hold units), then completed audits in order. A trigger is due while it has no job, or its latest job
-//      was rejected (`stale` or `evidence`: re-evaluated whole; `invalid`: once, its prompt carrying the rejected
+//      was rejected (`stale` or `evidence`: re-evaluated whole; `busy` (M4a rev 3, C5): once every open attempt it named
+//      has closed, so no paid call is made while a unit it changes is mid-stage; `invalid`: once, its prompt carrying the rejected
 //      job's reasons verbatim (`priorInvalid`), the second goes to the owner), or its
 //      latest job's bundle request was acknowledged `apply` (the next job enacts that bundle: no call, the brakes and
 //      draining skipped, staleness and the rest checked as ever); a request answered otherwise ends the trigger's decision
@@ -28,9 +29,14 @@
 //      job), `@cpu`×1 under the job, in a detached checkout `<job>.checkpoint` of the captured head, the prompt rendered
 //      from the recorded inputs alone: the vision first and in full (by its kept bytes), the trigger and head, vision
 //      coverage, the findings, the obligations with their observations on the head, the uncovered divergences, the plan
-//      in force at the captured rev (units with state, edges, limits and routing, and one unit's spec in force as the
-//      shape an `admit`'s spec takes), the contracts at the head, the rulings, the direction, the captured issues; a
-//      corpus arc's materialised pin is readable beside the checkout (`targetDirs`). A resumed job consumes a
+//      in force at the captured rev (units with state, edges, limits and routing), the contracts at the head, the
+//      rulings, the direction, the captured issues; a corpus arc's materialised pin is readable beside the checkout
+//      (`targetDirs`). M4a rev 3 (H4, F08, F16, F21): the input manifest (every captured input by kind, id, kept path and
+//      sha256: the only way to read one), every non-retired unit's spec in full with the item ids it holds, and the
+//      ledger's next ruling id. H5 (R65): after a `no-op` decision, a non-final audit checkpoint whose findings,
+//      obligations, ledger, plan and specs, issue capture and observation verdicts are as that no-op saw them renders a
+//      closeout (`closeout{since}`): the findings and specs are not repeated. Issues unchanged since the latest decided
+//      checkpoint, on unchanged grounds, are not listed (`issuesUnchangedSince`, src/holistic/intake.ts `issueReuse`). A resumed job consumes a
 //      call it made; a call interrupted (a pause, a stop, a backend park) leaves the job running and a later run asks
 //      again as the next attempt. A refusal, malformed answer or fault is an invalid decision.
 //   5. The activation (src/holistic/bundle.ts): `plan-applied{source: bundle{job}}` or `bundle-decided`; then (an
@@ -43,14 +49,17 @@ import { crashPoint } from '../core/crash.ts';
 import type { CheckpointIssues, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type InvocationId, type JobId, type LaneId, type Sha, type UnitId, parseInvocationId, canonicalIds } from '../core/ids.ts';
+import { type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, parseInvocationId, canonicalIds } from '../core/ids.ts';
 import { BACKEND_PARK_CLASSES } from '../core/events.ts';
-import { DEFAULT_BOUNDS } from '../core/records.ts';
-import type { CheckpointState } from '../core/state.ts';
+import { DEFAULT_BOUNDS, specWitnesses } from '../core/records.ts';
+import { type CheckpointState, openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { git, revParse } from '../git/git.ts';
-import { OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles, keptInput, payloadAtRev, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
+import {
+  ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles, inputPath, keptInput, payloadAtRev, requirePlanInForce,
+  revisionInForce,
+} from '../input/inforce.ts';
 import { DEFAULT_CONVERGENCE_K, type PlanM1, advancesOf, parsePlan } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
@@ -61,18 +70,19 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { candidateRedCause } from '../pipeline/unit.ts';
 import { architecture, docAt, inMs, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
-import { type CheckpointInputs, type FindingView, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
+import { type CheckpointInputs, type CheckpointSpec, type FindingView, type ManifestEntry, type ManifestKind, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
 import { type CheckpointOutput, validateCheckpointOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
+import { renderSpec } from '../spec/render.ts';
 import { nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, rewitnessP1s, withCpu } from './audit.ts';
-import { type Activation, type BundleDecision, type Captured, type CheckpointContext, activate, raiseOnce, settleDecided, vectorAt } from './bundle.ts';
+import { type Activation, type BundleDecision, type Captured, type CheckpointContext, activate, effectiveOps, raiseOnce, settleDecided, vectorAt } from './bundle.ts';
 import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
-import { captureCheckpointIssues, issuesInputOf } from './intake.ts';
+import { captureCheckpointIssues, issueReuse, issuesInputOf } from './intake.ts';
 import { keyOf } from './observe.ts';
 import { type CheckpointTrigger, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
@@ -142,7 +152,7 @@ export function outputOf(ctx: CheckpointContext, job: JobId): Readonly<{ output:
   return approved(ctx, prev) ? outputOf(ctx, prev!.inputs.job) : null;
 }
 
-/** Every applied bundle so far, in log order: its job, its revision.commit's seq, its ops. */
+/** Every applied bundle so far, in log order: its job, its revision.commit's seq, its effective ops (converted admits dropped, Q4). */
 function appliedBundles(ctx: CheckpointContext): readonly AppliedBundle[] {
   const view = ctx.journal.view;
   return view.opsOf('revision.commit').flatMap((commit) => {
@@ -150,7 +160,7 @@ function appliedBundles(ctx: CheckpointContext): readonly AppliedBundle[] {
     const job = commit.expect.source.job;
     const out = outputOf(ctx, job);
     if (out === null) throw new Error(`${job} applied a bundle, but its output is not recorded`);
-    return [{ job, seq: Number(commit.op.slice(commit.op.lastIndexOf('/') + 1)), ops: out.output.ops }];
+    return [{ job, seq: Number(commit.op.slice(commit.op.lastIndexOf('/') + 1)), ops: effectiveOps(view, job, out.output) }];
   });
 }
 
@@ -244,6 +254,13 @@ function dueAgain(ctx: CheckpointContext, last: CheckpointState | undefined): bo
   if (last === undefined) return true;
   const d = last.decided;
   if (d === null) throw new Error(`${last.inputs.job} is running; it resumes before any trigger is due`);
+  if (d.kind === 'rejected' && d.reason === 'busy') {
+    // C5 (R50): due once every attempt it named has closed (none open, or another one).
+    return (d.units ?? []).every((b) => {
+      const open = openAttempt(ctx.journal.view, b.unit);
+      return open === null || open.stage !== b.stage || open.attempt !== b.attempt;
+    });
+  }
   if (d.kind === 'rejected') return true;
   return approved(ctx, last);
 }
@@ -336,12 +353,11 @@ function recorded(ctx: CheckpointContext, s: Captured): Recorded {
 }
 
 /**
- * The plan in force at the captured rev, rendered: each unit with its state, edges, limits and routing layer, the arc's
- * limits, and one unit's spec in force as the shape an `admit`'s spec text takes (B4 carry-forward).
+ * The plan in force at the captured rev, rendered: each unit with its state, edges, limits and routing layer, and the
+ * arc's limits. The specs are embedded beside it, every one in full (H4): an `admit`'s spec takes their shape.
  */
 function renderPlan(ctx: CheckpointContext, s: Captured, r: Recorded): string {
   const view = ctx.journal.view;
-  const payload = payloadAt(ctx, r.planRev);
   const lines = r.plan.units.map((u) => {
     const st = view.unit(u.id);
     const parts = [
@@ -355,18 +371,69 @@ function renderPlan(ctx: CheckpointContext, s: Captured, r: Recorded): string {
     ];
     return `- ${u.id}: ${parts.join('; ')}`;
   });
-  const example = r.plan.units[0];
-  const exampleSha = example === undefined ? undefined : payload.manifest.specs[example.id];
-  const shape = example === undefined || exampleSha === undefined
-    ? 'No unit spec is in force to show as an example.'
-    : `The spec in force of ${example.id}, the shape an admit's spec text takes (a new unit's spec is rev 1 and names its own unit id; a repair unit lists what it repairs in repairs):\n${JSON.stringify(parseSpec(kept(ctx, exampleSha, SPEC_INPUT), absPath(join(ctx.planFile, '..', example.spec))), null, 2)}`;
   return [
     `Plan rev ${r.planRev}. Units, in plan order:`,
     ...lines,
     `Arc limits: ${canonicalJson(r.plan.limits ?? {})} (convergenceK ${r.plan.limits?.convergenceK ?? DEFAULT_CONVERGENCE_K}).`,
-    '',
-    shape,
   ].join('\n');
+}
+
+/**
+ * H4 (F08): every input the checkpoint was captured on, content-addressed in the run dir: the plan, each spec, the ledger
+ * and its sidecars, the obligations, the vision, the Phase-0 record and the issue capture.
+ */
+function manifestOf(ctx: CheckpointContext, s: Captured): readonly ManifestEntry[] {
+  const m = payloadAt(ctx, s.vector.plan).manifest;
+  const entry = (kind: ManifestKind, id: string, sha256: Sha256Hex, ext: string): ManifestEntry => ({ kind, id, path: inputPath(ctx.runDir, sha256, ext), sha256 });
+  if (s.vector.ledgerSha256 === null) throw new Error(`${s.job}: a holistic revision keeps its ledger`);
+  return [
+    entry('plan', 'plan', m.planSha256, PLAN_INPUT),
+    ...Object.entries(m.specs).sort(([a], [b]) => (a < b ? -1 : 1)).map(([unit, sha]) => entry('spec', unit, sha, SPEC_INPUT)),
+    entry('ledger', 'rulings', s.vector.ledgerSha256, RULINGS_INPUT),
+    ...Object.entries(m.rulings.sidecars).map(([id, sha]) => entry('sidecar', id, sha, RULING_INPUT)),
+    ...(s.vector.obligationsSha256 === null ? [] : [entry('obligations', 'obligations', s.vector.obligationsSha256, OBLIGATIONS_INPUT)]),
+    entry('vision', 'vision', s.visionSha256, VISION_INPUT),
+    ...(m.phase0 === undefined ? [] : [entry('phase0', 'phase0', m.phase0, PHASE0_INPUT)]),
+    ...(s.issues?.type === 'captured' ? [entry('issues', 'issues', s.issues.sha256, ISSUES_INPUT)] : []),
+  ];
+}
+
+/** H4 (F21): every non-retired unit's spec in force at the captured rev, in plan order, rendered, with every item id it holds. */
+function specsOf(ctx: CheckpointContext, r: Recorded): readonly CheckpointSpec[] {
+  const view = ctx.journal.view;
+  const m = payloadAt(ctx, r.planRev).manifest;
+  return r.plan.units.flatMap((u) => {
+    const status = view.unit(u.id).status;
+    const sha = m.specs[u.id];
+    if (status === 'retired' || status === 'cut' || status === 'superseded' || sha === undefined) return [];
+    const spec = parseSpec(kept(ctx, sha, SPEC_INPUT), absPath(join(ctx.planFile, '..', u.spec)));
+    const occupied = [...spec.lanes, ...spec.acceptance, ...spec.decisions, ...spec.facts, ...specWitnesses(spec)].map((i) => i.id as string);
+    return [{ unit: u.id, rev: spec.rev, markdown: renderSpec(spec), occupied }];
+  });
+}
+
+/** Whether audit `job` ran for the arc's final trigger (H5: a final checkpoint always renders in full). */
+function finalAudit(ctx: CheckpointContext, job: JobId): boolean {
+  return ctx.journal.view.holistic().audits.find((x) => x.started.job === job)?.started.triggers.some((t) => t.type === 'final') ?? false;
+}
+
+/**
+ * H5 (F11, R65): the no-op checkpoint this one closes out, or null (a full render). The latest checkpoint decided before
+ * `s` decided `no-op`, `s` is an audit's and not the final one, and since that no-op's capture the active findings, the
+ * vision, obligations, ledger, plan and specs, the issue capture and every obligation's verdict on the head are equal.
+ */
+function closeoutOf(ctx: CheckpointContext, s: Captured, r: Recorded): CheckpointInputs['closeout'] {
+  if (s.trigger.type !== 'audit' || finalAudit(ctx, s.trigger.job)) return null;
+  const prev = ctx.journal.view.holistic().checkpoints.filter((c) => c.inputs.seq < s.seq && c.decided !== null).at(-1);
+  if (prev?.decided?.kind !== 'no-op') return null;
+  const was = prev.inputs;
+  const same = canonicalJson(was.findings) === canonicalJson(s.findings)
+    && canonicalJson({ ...was.vector, contracts: [] }) === canonicalJson({ ...s.vector, contracts: [] })
+    && canonicalJson(was.issues ?? null) === canonicalJson(s.issues ?? null);
+  if (!same) return null;
+  const obligations = r.obligations?.obligations ?? [];
+  const verdicts = (head: Sha) => observedViews(ctx, r.obligations, obligations, head).map((v) => [v.obligation.id, v.observation?.verdict ?? null]);
+  return canonicalJson(verdicts(was.headSha)) === canonicalJson(verdicts(s.headSha)) ? { since: was.job } : null;
 }
 
 function findingViews(ctx: CheckpointContext, ids: readonly Captured['findings'][number][]): readonly FindingView[] {
@@ -411,6 +478,8 @@ function priorInvalid(ctx: CheckpointContext, job: JobId): CheckpointInputs['pri
 
 function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): CheckpointInputs {
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
+  const closeout = closeoutOf(ctx, s, r);
+  const reuse = issueReuse(ctx.journal.view, ctx.runDir, s);
   const sidecars = Object.entries(payloadAt(ctx, r.planRev).manifest.rulings.sidecars)
     .map(([, sha]) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
   return {
@@ -419,7 +488,8 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     priorInvalid: priorInvalid(ctx, s.job),
     head: s.headSha,
     plan: renderPlan(ctx, s, r),
-    findings: findingViews(ctx, s.findings),
+    // A closeout (H5) repeats neither the findings nor the specs the no-op it follows weighed.
+    findings: closeout === null ? findingViews(ctx, s.findings) : [],
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, s.headSha),
     coverage: visionCoverage(r.vision, advancesOf(r.plan), r.obligations, sidecars.map((x) => ({ id: x.id, cites: x.cites }))),
     divergences: uncoveredDivergences(ctx.journal.view).map((d) => ({ id: d.id, type: d.type, what: d.what })),
@@ -428,13 +498,12 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
     target: architecture(ctx, s.headSha),
     direction: r.plan.direction,
-    issues: issuesInputOf(ctx.runDir, s),
-    // M4a rev 3 (H4, H5): the manifest, embedded specs, closeout and issue reuse land in N2; the next ruling id is the ledger's.
-    manifest: [],
-    specs: [],
+    issues: issuesInputOf(ctx.runDir, s, reuse),
+    manifest: manifestOf(ctx, s),
+    specs: closeout === null ? specsOf(ctx, r) : [],
     nextRulingId: nextRulingId(rulings),
-    closeout: null,
-    issuesUnchangedSince: null,
+    closeout,
+    issuesUnchangedSince: reuse?.since ?? null,
   };
 }
 
