@@ -7,7 +7,7 @@
 // names only one (pid, start). The supervisor (src/supervisor.ts) and the executor (src/executor.ts) use these.
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { atomicJson, canonicalJson, exclusiveCreate, readJson } from '../core/fsx.ts';
+import { atomicJson, canonicalJson, exclusivePublish, readJson } from '../core/fsx.ts';
 import { type HandshakeFile, type HostOwner, type ProcIdentity, handshakeFile, hostOwner } from '../core/records.ts';
 import type { AbsPath, Nonce } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
@@ -43,10 +43,13 @@ export function verifyOwner(dir: AbsPath, claim: ClaimRef, self: ProcIdentity): 
   return { kind: 'verified', owner };
 }
 
-/** Supervisor side: write-once, after the owner record naming the executor is durable. */
+/**
+ * Supervisor side: write-once, after the owner record naming the executor is durable. Published whole (by link): the
+ * executor polls for the file and reads it as soon as it exists, so an empty or partial one would crash it.
+ */
 export function createHandshake(dir: AbsPath, claim: ClaimRef): void {
   const file: HandshakeFile = { v: SCHEMA_VERSION, nonce: claim.nonce, generation: claim.generation };
-  exclusiveCreate(handshakePath(dir, claim.generation), canonicalJson(file));
+  exclusivePublish(handshakePath(dir, claim.generation), canonicalJson(file));
 }
 
 export class HandshakeTimeoutError extends Error {
