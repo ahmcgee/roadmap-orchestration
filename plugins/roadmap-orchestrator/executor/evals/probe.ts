@@ -2,7 +2,7 @@
 // authenticated CLIs, through src/preflight/smoke.ts. Pennies per run. Checks:
 //
 //   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it
-//   codex.fresh/resume  gpt-5.6-sol, effort low, strict schema; the resume continues the fresh thread
+//   codex.fresh/resume  gpt-5.6-luna, effort low, strict schema; the resume continues the fresh thread
 //   shell.lane          a real shell command through the runner, graded on exit code and stdout
 //   claude.judgment     claude-opus-5-5 (effort high) judgment argv: --system-prompt, and --add-dir reading an evidence
 //                       dir outside the cwd (the answer must carry a token only that dir holds); reads.json
@@ -21,7 +21,7 @@
 //                       reason pause, as the executor's interruptLive runs it); the file is deleted and the
 //                       launch-assigned session resumed with a CONTINUE_DIRECTIVE-style message: the answer
 //                       must carry the token, which only the killed conversation holds
-//   codex.killed-resume the same with gpt-5.6-sol, effort low: killed after thread.started and the file;
+//   codex.killed-resume the same with gpt-5.6-luna, effort low: killed after thread.started and the file;
 //                       the resume uses the thread id the adapter read into result.json
 //   m3.lens             lens.arc seat (claude-opus-5-5): the real lens prompt module and LENS_SCHEMA over a tiny
 //                       fixture (2-clause vision, one obligation, a trivial diff), inputs built as production
@@ -92,7 +92,9 @@ import { runnerFiles } from '../src/runner/files.ts';
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } as const;
 const SONNET = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' } as const;
-const SOL = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' } as const;
+// The Codex triple the routing actually seats (efficient class under `default`); gpt-5.6-sol is not available on a ChatGPT
+// Codex account (400, 2026-10-06) and no class binds it.
+const LUNA = { backend: 'codex', model: 'gpt-5.6-luna', effort: 'low' } as const;
 const SYSTEM = 'You are a probe of an unattended build orchestrator. Do exactly what the message asks, then answer in the structured format requested.';
 
 const strict = (properties: Readonly<Record<string, JsonValue>>): JsonValue =>
@@ -279,7 +281,7 @@ async function main(): Promise<void> {
   const isOk = (v: JsonValue): boolean => JSON.stringify(v) === '{"ok":true}';
   const fresh = await backend(ctx, 'codex.fresh', {
     check: 'codex-fresh', routingRev: rev, tier: 'med', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: codexDir,
-    request: { kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'fresh' } },
+    request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'fresh' } },
   }, isOk);
   const thread = fresh.result.role === 'build' ? fresh.result.session : null;
   if (thread === null) {
@@ -287,7 +289,7 @@ async function main(): Promise<void> {
   } else {
     const resumed = await backend(ctx, 'codex.resume', {
       check: 'codex-resume', routingRev: rev, tier: 'med', system: SYSTEM, rendered: 'Reply with the same JSON object again.', schema: okSchema, cwd: codexDir,
-      request: { kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'resume', id: thread } },
+      request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'resume', id: thread } },
     }, isOk);
     if (resumed.result.role === 'build' && resumed.result.session !== thread) report(false, 'codex.resume-session', `resumed ${thread}, got ${resumed.result.session}`);
   }
@@ -381,9 +383,9 @@ async function main(): Promise<void> {
   const codexBase = { routingRev: rev, tier: 'med', system: SYSTEM, schema: tokenSchema, cwd: codexKillDir } as const;
   await killedResume(ctx, 'codex.killed-resume', {
     ...codexBase, check: 'codex-killed', rendered: killTask(codexToken),
-    request: { kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'fresh' } },
+    request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'fresh' } },
   }, (invDir) => existsSync(codexKillFile) && existsSync(join(invDir, STDOUT_FILE)) && readFileSync(join(invDir, STDOUT_FILE), 'utf8').includes('"thread.started"'),
-  (id) => ({ kind: 'codex-build', triple: SOL, session: { backend: 'codex', mode: 'resume', id } }), () => rmSync(codexKillFile),
+  (id) => ({ kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'resume', id } }), () => rmSync(codexKillFile),
   { ...codexBase, check: 'codex-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: codexToken }));
 
   // M3 judgment roles: the real prompt modules and strict schemas, on their own seats, holistic routing in force.
@@ -650,14 +652,14 @@ async function main(): Promise<void> {
   const codexFresh = await backend(ctx, 'effort.codex.fresh', {
     check: 'effort-codex-fresh', routingRev: rev, tier: 'med', system: SYSTEM, schema: wordSchema, cwd: effortCodexDir,
     rendered: 'Remember the word "kestrel". Reply with {"word": "kestrel"}.',
-    request: { kind: 'codex-build', triple: { ...SOL, effort: 'low' }, session: { backend: 'codex', mode: 'fresh' } },
+    request: { kind: 'codex-build', triple: { ...LUNA, effort: 'low' }, session: { backend: 'codex', mode: 'fresh' } },
   }, isKestrel);
   const effortThread = codexFresh.result.role === 'build' ? codexFresh.result.session : null;
   if (effortThread !== null) {
     await backend(ctx, 'effort.codex.resume-medium', {
       check: 'effort-codex-resume', routingRev: rev, tier: 'med', system: SYSTEM, schema: wordSchema, cwd: effortCodexDir,
       rendered: 'Which word did I ask you to remember? Reply with {"word": "<it>"}.',
-      request: { kind: 'codex-build', triple: { ...SOL, effort: 'medium' }, session: { backend: 'codex', mode: 'resume', id: effortThread } },
+      request: { kind: 'codex-build', triple: { ...LUNA, effort: 'medium' }, session: { backend: 'codex', mode: 'resume', id: effortThread } },
     }, isKestrel);
   }
 
