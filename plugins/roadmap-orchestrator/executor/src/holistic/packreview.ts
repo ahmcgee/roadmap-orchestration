@@ -18,6 +18,14 @@
 //   closed lost is asked again once) ends the job
 //   `abandoned` with one blocking `pack-review` item saying so: the architect fixes the pack (a new key, so a new
 //   review) or acknowledges it.
+// - **Delta re-review** (M4a rev 3, H3, F07): the first review is full. A later one follows the latest completed review
+//   before it (`previousReview`) and reads only what changed since (the plan, vision, obligations, rules index and Phase-0
+//   record stay whole as the frame; specs only those changed) plus every earlier finding still unresolved
+//   (`unresolvedAfter`: that review's findings and the ones it kept `still-open`, each by its origin `(job, index)`).
+//   Its answer dispositions each of them exactly once (`resolved | still-open | withdrawn`; a missing, extra or repeated
+//   one is a malformed report), recorded in `pack-review-ended{dispositions}`. A blocking finding kept `still-open` holds
+//   admission through the new review's item. All of it is derived from the log and the kept inputs, so a resumed review
+//   renders the same delta.
 // - **Hold** (K14, H9, R25), a pure function of the started and ended facts, the items and the current key: before the
 //   first admission, admission is held while a review is running or due, or while the latest ended review with the
 //   current key has an open item (src/needsuser.ts `supersededPackItems`: a later review's end supersedes every earlier
@@ -26,7 +34,7 @@
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type JobId, type NeedsUserId, type Sha256Hex, parseInvocationId, sha256 } from '../core/ids.ts';
+import { type JobId, type NeedsUserId, type Sha256Hex, parseInvocationId, parseJobId, sha256 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Parent } from '../core/events.ts';
@@ -46,7 +54,7 @@ import { removeJobCheckouts } from '../pipeline/lanes.ts';
 import { inMs } from '../pipeline/stages.ts';
 import { parsePhase0Record } from '../phase0/types.ts';
 import { promptFor } from '../prompts/index.ts';
-import { type PackReviewPromptInputs, visionInputOf } from '../prompts/inputs.ts';
+import { type PackReviewDelta, type PackReviewPromptInputs, type PreviousPackFinding, visionInputOf } from '../prompts/inputs.ts';
 import { type PackReviewOutput, validatePackReviewOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { renderSpec } from '../spec/render.ts';
@@ -111,8 +119,40 @@ export type PackReviewStatus =
   /** A review with the current key ended and nothing of it is open. */
   | Readonly<{ kind: 'clear'; job: JobId }>;
 
-/** Whether an ended review calls for its blocking item: a blocking finding, or no valid report at all. */
-const needsItem = (r: PackReviewState): boolean => r.ended !== null && (r.ended.outcome === 'abandoned' || r.ended.findings.some((f) => f.severity === 'blocking'));
+/** The finding `(job, index)` of an ended review; one the log does not hold fails loud. */
+function findingOf(view: JournalView, job: JobId, index: number): PackFinding {
+  const f = view.holistic().packReviews.find((r) => r.started.job === job)?.ended?.findings[index];
+  if (f === undefined) throw new Error(`pack finding ${job}#${index} was never reported`);
+  return f;
+}
+
+/** The earlier findings a completed review kept `still-open`, by origin. */
+function keptOpen(view: JournalView, r: PackReviewState): readonly PreviousPackFinding[] {
+  return (r.ended?.dispositions ?? []).filter((d) => d.disposition === 'still-open').map((d) => ({ job: d.job, finding: findingOf(view, d.job, d.index) }));
+}
+
+/** The findings still unresolved after completed review `r`: the ones it kept `still-open`, then its own, by origin. */
+export function unresolvedAfter(view: JournalView, r: PackReviewState): readonly PreviousPackFinding[] {
+  if (r.ended?.outcome !== 'completed') throw new Error(`${r.started.job} did not complete`);
+  return [...keptOpen(view, r), ...r.ended.findings.map((finding) => ({ job: r.started.job, finding }))];
+}
+
+/** The latest review that completed before review `job` started: what a delta re-review follows; null for a full review. */
+export function previousReview(view: JournalView, job: JobId): PackReviewState | null {
+  const reviews = view.holistic().packReviews;
+  const at = reviews.findIndex((r) => r.started.job === job);
+  if (at < 0) throw new Error(`${job} has not started`);
+  return reviews.slice(0, at).filter((r) => r.ended?.outcome === 'completed').at(-1) ?? null;
+}
+
+/** The blocking findings an ended review holds admission on: the earlier ones it kept `still-open`, and its own. */
+function blockingOf(view: JournalView, r: PackReviewState): readonly PreviousPackFinding[] {
+  if (r.ended === null) return [];
+  return [...keptOpen(view, r), ...r.ended.findings.map((finding) => ({ job: r.started.job, finding }))].filter((p) => p.finding.severity === 'blocking');
+}
+
+/** Whether an ended review calls for its blocking item: a blocking finding (its own or kept open), or no valid report at all. */
+const needsItem = (view: JournalView, r: PackReviewState): boolean => r.ended !== null && (r.ended.outcome === 'abandoned' || blockingOf(view, r).length > 0);
 
 export function packReviewStatus(ctx: CheckpointContext): PackReviewStatus {
   const view = ctx.journal.view;
@@ -125,7 +165,7 @@ export function packReviewStatus(ctx: CheckpointContext): PackReviewStatus {
   const matching = reviews.filter((r) => r.started.key === key).at(-1);
   if (matching === undefined) return { kind: 'due' };
   const { job } = matching.started;
-  if (!needsItem(matching)) return { kind: 'clear', job };
+  if (!needsItem(view, matching)) return { kind: 'clear', job };
   const item = packItemOf(view, job);
   if (item === null) return { kind: 'held', job, needsUser: null };
   const open = view.ackOf(item) === null && !supersededPackItems(view).has(item);
@@ -177,14 +217,40 @@ export function keptPackInputs(ctx: CheckpointContext, r: PackReviewState): Pack
   return inputs;
 }
 
-/** The prompt's inputs, rendered from the kept inputs alone. */
-function promptInputs(ctx: CheckpointContext, inputs: PackReviewInputs): PackReviewPromptInputs {
+/** What changed in the pack from `before` (an earlier review's kept inputs) to `after`, in a fixed order. */
+export function packChanges(before: PackReviewInputs, after: PackReviewInputs): readonly string[] {
+  const was = new Map(before.specs.map((s) => [s.unit, s.sha256]));
+  const now = new Set(after.specs.map((s) => s.unit));
+  return [
+    ...(before.planSha256 === after.planSha256 ? [] : ['plan']),
+    ...after.specs.flatMap((s) => (was.get(s.unit) === s.sha256 ? [] : [`spec ${s.unit}`])),
+    ...before.specs.flatMap((s) => (now.has(s.unit) ? [] : [`spec ${s.unit} removed`])),
+    ...(before.obligationsSha256 === after.obligationsSha256 ? [] : ['obligations']),
+    ...(before.corpusPinSha256 === after.corpusPinSha256 ? [] : ['corpus pin']),
+    ...(before.phase0Sha256 === after.phase0Sha256 ? [] : ['phase0']),
+    ...(before.visionSha256 === after.visionSha256 ? [] : ['vision']),
+    ...(before.head === after.head ? [] : ['head']),
+    ...(before.routingRev === after.routingRev ? [] : ['routing']),
+  ];
+}
+
+/** A review's delta (H3): null for a full review, else what changed since the review it follows and what is unresolved. */
+export function deltaOf(ctx: CheckpointContext, inputs: PackReviewInputs): PackReviewDelta | null {
+  const view = ctx.journal.view;
+  const previous = previousReview(view, inputs.job);
+  if (previous === null) return null;
+  return { since: previous.started.job, changed: packChanges(keptPackInputs(ctx, previous), inputs), previous: unresolvedAfter(view, previous) };
+}
+
+/** The prompt's inputs, rendered from the kept inputs (and the earlier reviews the log holds) alone. */
+function promptInputs(ctx: CheckpointContext, inputs: PackReviewInputs, delta: PackReviewDelta | null): PackReviewPromptInputs {
   const plan = parsePlan(json(kept(ctx, inputs.planSha256, PLAN_INPUT)));
   const shaOf = new Map(inputs.specs.map((s) => [s.unit as string, s.sha256]));
+  const changed = delta === null ? null : new Set(delta.changed);
   return {
     vision: visionInputOf(parseVision(json(kept(ctx, inputs.visionSha256, VISION_INPUT))), advancesOf(plan)),
     plan: `Plan rev ${inputs.planRev} (the plan file in force):\n${JSON.stringify(plan, null, 2)}`,
-    specs: plan.units.map((u) => {
+    specs: plan.units.filter((u) => changed === null || changed.has(`spec ${u.id}`)).map((u) => {
       const sha = shaOf.get(u.id);
       if (sha === undefined) throw new Error(`${inputs.job}: unit ${u.id} is planned but its inputs name no spec`);
       const spec = parseSpec(kept(ctx, sha, SPEC_INPUT), absPath(join(ctx.planFile, '..', u.spec)));
@@ -193,7 +259,26 @@ function promptInputs(ctx: CheckpointContext, inputs: PackReviewInputs): PackRev
     obligations: parseObligations(json(kept(ctx, inputs.obligationsSha256, OBLIGATIONS_INPUT))),
     rulesIndex: parseCorpusPin(json(kept(ctx, inputs.corpusPinSha256, CORPUS_INPUT))).rules,
     phase0: parsePhase0Record(json(kept(ctx, inputs.phase0Sha256, PHASE0_INPUT))),
+    delta,
   };
+}
+
+/**
+ * Why an answer's dispositions are not exactly one for each unresolved earlier finding of `delta` (none for a full
+ * review), or null.
+ */
+export function dispositionProblem(delta: PackReviewDelta | null, output: PackReviewOutput): string | null {
+  const key = (job: string, index: number): string => `${job}#${index}`;
+  const expected = new Set((delta?.previous ?? []).map((p) => key(p.job, p.finding.index)));
+  const seen = new Set<string>();
+  for (const d of output.dispositions) {
+    const k = key(d.job, d.index);
+    if (!expected.has(k)) return `dispositions: ${k} is not an unresolved earlier finding`;
+    if (seen.has(k)) return `dispositions: ${k} twice`;
+    seen.add(k);
+  }
+  const missing = [...expected].filter((k) => !seen.has(k));
+  return missing.length === 0 ? null : `dispositions: none for ${missing.join(', ')}`;
 }
 
 type Asked =
@@ -202,18 +287,25 @@ type Asked =
   | Readonly<{ kind: 'interrupted'; detail: string }>
   | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' }>;
 
-/** Reads a call: an output, a failure (no valid report), or an interruption (its park or usage-limit item written). */
-function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome): Asked {
+/**
+ * Reads a call: an output, a failure (no valid report: malformed, or dispositions not matching `delta`), or an
+ * interruption (its park or usage-limit item written).
+ */
+function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome, delta: PackReviewDelta | null): Asked {
   if (called.kind === 'lost') return { kind: 'failed', detail: `${called.inv} was lost with its runner` };
   const v = verdictOf(ctx, jobParent(job), called);
   switch (v.kind) {
-    case 'success':
+    case 'success': {
+      let output: PackReviewOutput;
       try {
-        return { kind: 'output', output: validatePackReviewOutput(v.value) };
+        output = validatePackReviewOutput(v.value);
       } catch (error) {
         if (error instanceof SchemaError) return { kind: 'failed', detail: `malformed report: ${error.message}` };
         throw error;
       }
+      const problem = dispositionProblem(delta, output);
+      return problem === null ? { kind: 'output', output } : { kind: 'failed', detail: `malformed report: ${problem}` };
+    }
     case 'interrupted': {
       if (v.needsUser !== null) {
         const parent: Parent = { type: 'op', op: parseInvocationId(called.inv).op };
@@ -227,13 +319,13 @@ function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome): A
 }
 
 /** The job's call: one it made and consumes, or a new attempt from the kept inputs (cwd: a checkout of their head). */
-async function ask(ctx: CheckpointContext, inputs: PackReviewInputs): Promise<Asked> {
+async function ask(ctx: CheckpointContext, inputs: PackReviewInputs, delta: PackReviewDelta | null): Promise<Asked> {
   const { job } = inputs;
   for (let attempt = 1; ; attempt++) {
     const recorded = recordedArcCall(ctx, job, 'packReview', attempt);
     if (recorded !== null && interruptedCall(recorded)) continue;
     // A call recovery closed lost (its runner died with the executor) is asked again, as a checkpoint's is; a second loss fails.
-    if (recorded !== null && recorded.kind === 'result') return read(ctx, job, recorded);
+    if (recorded !== null && recorded.kind === 'result') return read(ctx, job, recorded, delta);
     const why = skip(ctx);
     if (why !== null) return { kind: 'skipped', reason: why };
     const { triple } = arcSeat(ctx, 'packReview');
@@ -241,29 +333,30 @@ async function ask(ctx: CheckpointContext, inputs: PackReviewInputs): Promise<As
     const checkout: AbsPath = absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.review`));
     await removeJobCheckouts(ctx, job);
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, jobParent(job), { path: checkout, checkout: { type: 'detached', at: inputs.head } });
-    const rendered = prompt.render(promptInputs(ctx, inputs));
+    const rendered = prompt.render(promptInputs(ctx, inputs, delta));
     const called = await withCpu(ctx, job, () => callArcRole(ctx, {
       job, role: 'packReview', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [],
       deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
     }));
     await removeCheckout(ctx, job, checkout);
-    return read(ctx, job, called);
+    return read(ctx, job, called, delta);
   }
 }
 
 /** The blocking `pack-review` item of an ended review that calls for one (`needsItem`); `detail`: why no report was valid. */
-function itemContent(r: PackReviewState, detail: string | null): NeedsUserContent {
+function itemContent(view: JournalView, r: PackReviewState, detail: string | null): NeedsUserContent {
   const { job } = r.started;
   const ended = r.ended!;
-  const blocking = ended.findings.filter((f) => f.severity === 'blocking');
+  const blocking = blockingOf(view, r);
   const target = (f: PackFinding): string => (f.target.type === 'plan' ? 'the plan' : f.target.type === 'census' ? `census ${f.target.rule}` : `${f.target.type} ${f.target.id}`);
+  const name = (p: PreviousPackFinding): string => (p.job === job ? `#${p.finding.index}` : `${p.job}#${p.finding.index}, still open`);
   return {
     blocking: true,
     subject: { type: 'arc' },
     reason: 'pack-review',
     summary: ended.outcome === 'abandoned'
       ? `The pack review ${job} gave no valid report${detail === null ? '' : ` (${detail})`}. No unit is admitted until the pack is reviewed or this item is acknowledged.`
-      : `The pack review ${job} reports ${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'}: ${blocking.map((f) => `#${f.index} (${target(f)}): ${f.claim}`).join('; ')}. No unit is admitted until the pack is fixed or this item is acknowledged.`,
+      : `The pack review ${job} reports ${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'}: ${blocking.map((p) => `${name(p)} (${target(p.finding)}): ${p.finding.claim}`).join('; ')}. No unit is admitted until the pack is fixed or this item is acknowledged.`,
     recommendation: 'Adjudicate each finding: fix the pack with `roadmap apply` (a new pack, so a new review supersedes this one), or acknowledge this item to admit units on the pack as it is.',
     options: [],
     evidence: [],
@@ -277,8 +370,8 @@ function itemContent(r: PackReviewState, detail: string | null): NeedsUserConten
 export function settlePackReviews(ctx: CheckpointContext, detail: Readonly<{ job: JobId; text: string }> | null = null): void {
   const view = ctx.journal.view;
   for (const r of view.holistic().packReviews) {
-    if (!needsItem(r) || packItemOf(view, r.started.job) !== null) continue;
-    raiseNeedsUser(ctx.journal, ctx.runDir, itemContent(r, detail?.job === r.started.job ? detail.text : null), jobParent(r.started.job));
+    if (!needsItem(view, r) || packItemOf(view, r.started.job) !== null) continue;
+    raiseNeedsUser(ctx.journal, ctx.runDir, itemContent(view, r, detail?.job === r.started.job ? detail.text : null), jobParent(r.started.job));
   }
 }
 
@@ -308,13 +401,17 @@ export async function runPackReview(ctx: CheckpointContext): Promise<PackReviewO
   const inputs = keptPackInputs(ctx, r);
   const { job } = inputs;
   await removeJobCheckouts(ctx, job);
-  const asked = await ask(ctx, inputs);
+  const delta = deltaOf(ctx, inputs);
+  const asked = await ask(ctx, inputs, delta);
   if (asked.kind === 'skipped') return asked;
   if (asked.kind === 'interrupted') return { kind: 'interrupted', job, detail: asked.detail };
   crashPoint('packreview.after-call');
   const findings: readonly PackFinding[] = asked.kind === 'output' ? asked.output.findings.map((f, index) => ({ index, ...f })) : [];
   const outcome = asked.kind === 'output' ? 'completed' : 'abandoned';
-  ctx.journal.fact({ kind: 'pack-review-ended', job, outcome, findings });
+  const dispositions = asked.kind === 'output' && delta !== null
+    ? { dispositions: [...asked.output.dispositions].sort((a, b) => parseJobId(a.job).n - parseJobId(b.job).n || a.index - b.index) }
+    : {};
+  ctx.journal.fact({ kind: 'pack-review-ended', job, outcome, findings, ...dispositions });
   crashPoint('packreview.after-ended');
   settlePackReviews(ctx, asked.kind === 'failed' ? { job, text: asked.detail } : null);
   return { kind: 'ended', job, outcome, needsUser: packItemOf(ctx.journal.view, job) };

@@ -69,7 +69,9 @@ const JOBS_1: readonly Step[] = [
     claim: 'guard\'s spec does not say that a refused booking writes nothing, so a ledger left half-written would pass its gate.',
     evidence: [{ path: 'docs/corpus/0030_Bookings.md', line: 22 }],
   }]),
-  packReviewStep('review-2', [{ severity: 'note', target: packTargetOf.unit('confirm'), claim: 'confirm depends on every registered vessel having a phone number; the register has one for each today.' }]),
+  packReviewStep('review-2', [{ severity: 'note', target: packTargetOf.unit('confirm'), claim: 'confirm depends on every registered vessel having a phone number; the register has one for each today.' }], [], [
+    { job: 'review-1', index: 0, disposition: 'resolved' },
+  ]),
   lensStep('audit-1', 'vision', [{ severity: 'P3', obligation: null, visionClauses: ['V-5'], claim: DEFERRED_CLAIM, cause: 'no cancellation template is sent', evidence: [{ path: 'src/cli.js', line: 50 }] }]),
   checkpointStep('ckpt-1', checkpointAnswer({
     decision: 'no-op',

@@ -2,7 +2,7 @@
 // git, real processes, the fake claude answering the review calls by job. Named tests: packreview.key-excludes-job,
 // packreview.holds-admission, packreview.ack-releases, packreview.key-pending-holds, packreview.superseded-by-rereview,
 // packreview.none-after-first-admission, packreview.abandoned, packreview.consumed-on-restart,
-// packreview.inputs-only-on-recovery, and the
+// packreview.inputs-only-on-recovery, packreview.delta-rereview-dispositions (M4a rev 3, N5), and the
 // crash cells of the matrix row PACK_REVIEW_JOB.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -38,6 +38,8 @@ const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 120_000;
 
 const BLOCKING = [{ severity: 'blocking', target: packTargetOf.unit('u1'), claim: 'u1 cannot be built: its scope misses the berth module.' }, { severity: 'note', claim: 'The cut line is vague.' }] as const;
+/** review-2's dispositions of review-1's two BLOCKING findings: both resolved by the fixed pack. */
+const RESOLVES_BLOCKING = [{ job: 'review-1', index: 0, disposition: 'resolved' }, { job: 'review-1', index: 1, disposition: 'resolved' }] as const;
 const reviewCalls = (a: CorpusHolisticArc): readonly string[] => readCalls(a.d.scenarioPath).flatMap((c) => (c.unit?.startsWith('review-') ? [c.unit] : []));
 const stdinOf = (a: CorpusHolisticArc, job: string): string => readCalls(a.d.scenarioPath).find((c) => c.unit === job)!.stdin;
 const itemsOf = (r: ArcRun, reason: string): readonly NeedsUserId[] =>
@@ -136,7 +138,7 @@ describe('the hold before the first admission (K14, H9)', () => {
   });
 
   test('packreview.superseded-by-rereview: an apply that fixes the pack makes a new key; the re-review\'s end supersedes the earlier item, which holds and blocks nothing', T, async () => {
-    const x = await arcWith([packReviewStep('review-1', BLOCKING), packReviewStep('review-2')]);
+    const x = await arcWith([packReviewStep('review-1', BLOCKING), packReviewStep('review-2', [], [], RESOLVES_BLOCKING)]);
     try {
       const first = await runPackReview(x.ctx);
       assert.ok(first.kind === 'ended' && first.needsUser !== null);
@@ -185,6 +187,44 @@ describe('the hold before the first admission (K14, H9)', () => {
       x.r.journal.close();
     }
   });
+});
+
+test('packreview.delta-rereview-dispositions (H3): a re-review reads what changed and the unresolved earlier findings, dispositions each once; a blocking one kept still-open holds; a missing disposition is malformed; an abandoned review is skipped over', T, async () => {
+  const x = await arcWith([
+    packReviewStep('review-1', BLOCKING),
+    packReviewStep('review-2', [{ severity: 'note', claim: 'NEW-IN-2' }], [], [{ job: 'review-1', index: 0, disposition: 'still-open' }, { job: 'review-1', index: 1, disposition: 'resolved' }]),
+    packReviewStep('review-3', [], [], [{ job: 'review-1', index: 0, disposition: 'resolved' }]),
+    packReviewStep('review-4', [], [], [{ job: 'review-1', index: 0, disposition: 'resolved' }, { job: 'review-2', index: 0, disposition: 'withdrawn' }]),
+  ]);
+  try {
+    const first = await runPackReview(x.ctx);
+    assert.ok(first.kind === 'ended' && first.needsUser !== null);
+    assert.doesNotMatch(stdinOf(x.a, 'review-1'), /<delta/, 'the first review is full');
+    await x.editPack('Berth booking, still with u1 unscoped.');
+    const second = await runPackReview(x.ctx);
+    assert.ok(second.kind === 'ended' && second.outcome === 'completed' && second.needsUser !== null, JSON.stringify(second));
+    const stdin = stdinOf(x.a, 'review-2');
+    assert.match(stdin, /<delta since="review-1">\n<changed>\nplan\n<\/changed>/, 'the plan changed, no spec');
+    assert.match(stdin, /- review-1#0 \[blocking\] unit u1: u1 cannot be built/);
+    assert.match(stdin, /- review-1#1 \[note\] plan: The cut line is vague\./);
+    assert.doesNotMatch(stdin, /<specs>\s*<documents>\s*<document/, 'no unchanged spec embedded');
+    assert.deepEqual(factsOfKind(x.r, 'pack-review-ended')[1]!.dispositions, [{ job: 'review-1', index: 0, disposition: 'still-open' }, { job: 'review-1', index: 1, disposition: 'resolved' }]);
+    assert.match(readNeedsUser(x.r.ctx.runDir, second.needsUser)!.summary, /review-1#0, still open \(unit u1\): u1 cannot be built/, 'the still-open blocking finding holds through the new item');
+    assert.deepEqual(packReviewStatus(x.ctx), { kind: 'held', job: 'review-2', needsUser: second.needsUser });
+
+    await x.editPack('Berth booking, a third draft.');
+    const third = await runPackReview(x.ctx);
+    assert.ok(third.kind === 'ended' && third.outcome === 'abandoned', JSON.stringify(third));
+    assert.match(readNeedsUser(x.r.ctx.runDir, third.needsUser!)!.summary, /dispositions: none for review-2#0/);
+
+    await x.editPack('Berth booking with u1 scoped to the berth module.');
+    const fourth = await runPackReview(x.ctx);
+    assert.deepEqual(fourth, { kind: 'ended', job: 'review-4', outcome: 'completed', needsUser: null });
+    assert.match(stdinOf(x.a, 'review-4'), /<delta since="review-2">/, 'the abandoned review-3 is skipped over');
+    assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-4' });
+  } finally {
+    x.r.journal.close();
+  }
 });
 
 // ---------------------------------------------------------------------------------------------------

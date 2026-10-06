@@ -3,15 +3,23 @@
 // witness lanes scripted per tree. Named tests: cadence.triggers, cadence.final-outstanding-lenses (H9),
 // audit.immutable-inputs, audit.coverage, audit.race-ends-before-merge and audit.race-merge-during-audit (both race
 // orders), audit.owed, audit.skipped-on-park, audit.starts-in-ff-window (H2), coverage.docs-edge-contiguous (H8), coverage.docs-edge-subsumed,
-// coverage.vision-reset (H3), and the crash cells of the matrix row AUDIT_JOB (test/matrix.ts).
+// coverage.vision-reset (H3), the crash cells of the matrix row AUDIT_JOB (test/matrix.ts), and M4a rev 3 (N5):
+// cadence.spec-only-bundle-vision-lens-only, cadence.obligation-bundle-full-drift, audit.cross-lens-merge-corroborated,
+// audit.cross-lens-different-cause-separate (with the corrupt-patch refusal at admission).
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, test } from 'node:test';
-import { applyCommand } from '../src/commands/apply.ts';
+import { applyCommand, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type CommandId, type Sha, commandId, sha } from '../src/core/ids.ts';
+import { type CommandId, type Sha, commandId, findingId, jobId, sha, visionClauseId } from '../src/core/ids.ts';
+import { absPath, branchName } from '../src/core/values.ts';
+import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
+import { corroborateFinding } from '../src/holistic/findings.ts';
+import { readInputFiles } from '../src/input/inforce.ts';
+import { commitRevision } from '../src/recover/revision.ts';
+import { fakeDocs } from './fixtures/docs-fake.ts';
 import { readJournal } from '../src/core/log.ts';
 import { type AuditContext, runAudit } from '../src/holistic/audit.ts';
 import { type Cadence, cadence } from '../src/holistic/cadence.ts';
@@ -28,7 +36,7 @@ import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { AUDIT_JOB, crashCells } from './matrix.ts';
 import { auditArc, auditContext, factsOf, mapped, moduleFiles, unitSteps } from './fixtures/audit-common.ts';
-import { VISION } from './fixtures/brake-common.ts';
+import { VISION, obligationsJson } from './fixtures/brake-common.ts';
 import { API_OP, barrierSuite, closedAs, ruleRecord, submitRule } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll } from './fixtures/stage-common.ts';
 import { type ArcRun, applyBody, contextFor, stepUntil } from './fixtures/unit-common.ts';
@@ -569,4 +577,133 @@ describe(`matrix row ${AUDIT_JOB}`, () => {
       }
     });
   }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// M4a rev 3 (step N5): change-sensitive drift (H2, R61) and cross-lens dedupe within one audit (H7, R62), with a
+// vacuity draft whose mutant patch is corrupt refused at admission (H6).
+
+const CKPT = jobId('ckpt', 1);
+
+/** The checkpoint whose bundle the next revision comes from (its generation numbers the audit the revision triggers). */
+function checkpointInputs(r: ArcRun): void {
+  const visionSha256 = r.journal.view.planApplied()!.visionSha256!;
+  r.journal.fact({
+    kind: 'checkpoint-inputs', job: CKPT, trigger: { type: 'audit', job: jobId('audit', 9) }, generation: 1,
+    vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256, contracts: [] },
+    headSha: head(r.d.repo), visionSha256, findings: [], observations: [],
+  });
+}
+
+/** Commits the plan files as they stand now as a revision of checkpoint `ckpt-1`'s bundle. */
+async function bundleRevision(r: ArcRun): Promise<void> {
+  checkpointInputs(r);
+  const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: { profile: 'default', config: null } } as const;
+  const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [] });
+  assert.equal(v.kind, 'accepted', JSON.stringify(v));
+  if (v.kind !== 'accepted') return;
+  keepRevision(r.ctx.runDir, v);
+  const committed = await commitRevision({ journal: r.journal, runDir: r.ctx.runDir, docs: fakeDocs(r.journal, absPath(r.d.repo), branchName('main')) },
+    payloadOf(v.draft, { type: 'bundle', job: CKPT }), { type: 'job', job: CKPT });
+  assert.equal(committed.kind, 'applied', JSON.stringify(committed));
+}
+
+const editJsonFile = (path: string, edit: (v: Record<string, unknown>) => Record<string, unknown>): void =>
+  writeFileSync(path, JSON.stringify(edit(JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>)));
+const L3: readonly Lens[] = ['drift', 'invariants', 'vision'];
+
+describe('change-sensitive drift (M4a rev 3, H2)', () => {
+  test('cadence.spec-only-bundle-vision-lens-only: a bundle revision changing only a unit\'s spec records drift{specsOnly} and runs the vision lens alone over that spec; the code lenses keep their watermarks', T, async () => {
+    const { d } = auditArc({ steps: [lensStep('audit-1', 'vision')], units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L3] } });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      const before = watermarks(ctx, L3);
+      editJsonFile(join(d.planPath, '..', 'u2.json'), (s) => ({ ...s, acceptance: [...(s['acceptance'] as unknown[]), { id: 'A9', clause: 'div rounds toward zero.', failLoudIfUndelivered: false, state: 'active' }] }));
+      await bundleRevision(r);
+      assert.deepEqual(r.journal.view.planApplied()!.changes.map((c) => c.type), ['spec']);
+      assert.deepEqual(cadence(ctx, ctx.clock)!.plan, { triggers: [{ type: 'drift', planRev: 2, specsOnly: ['u2'] }], lenses: ['vision'], generation: 2 });
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.deepEqual(lensCalls(r).map((c) => `${c.unit}:${c.lens}`), ['audit-1:vision'], 'no code lens ran');
+      const stdin = lensCalls(r)[0]!.stdin;
+      assert.match(stdin, /<specs_only>[\s\S]*spec of unit u2, revision 1[\s\S]*div rounds toward zero\.[\s\S]*<\/specs_only>/, 'the lens reads the changed spec, embedded');
+      assert.doesNotMatch(stdin, /spec of unit u1/, 'and only it');
+      assert.deepEqual(watermarks(ctx, ['drift', 'invariants']), before.filter(([l]) => l !== 'vision'), 'the code lenses keep their watermarks');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('cadence.obligation-bundle-full-drift: a bundle revision changing the obligations drifts fully (L ∩ {drift, vision}), its lenses reading the whole tree', T, async () => {
+    const { d, control } = auditArc({ steps: [lensStep('audit-1', 'vision'), lensStep('audit-1', 'drift')], units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L3] } });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      const obligations = [...I1.obligations, { id: 'I-2', testIds: ['t2'] }];
+      writeFileSync(join(d.planPath, '..', 'obligations.json'), JSON.stringify(obligationsJson({ obligations, mapping: mapped(['I-1', 'I-2']) }, control)));
+      editJsonFile(join(d.planPath, '..', 'u1.json'), (s) => ({ ...s, obligations: ['I-1', 'I-2'] }));
+      await bundleRevision(r);
+      assert.ok(r.journal.view.planApplied()!.changes.some((c) => c.type === 'obligation'), JSON.stringify(r.journal.view.planApplied()!.changes));
+      assert.deepEqual(cadence(ctx, ctx.clock)!.plan, { triggers: [{ type: 'drift', planRev: 2 }], lenses: ['drift', 'vision'], generation: 2 });
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.doesNotMatch(lensCalls(r)[0]!.stdin, /<specs_only>/, 'a full drift');
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
+  const SAME = { obligation: 'I-1', cause: 'mul: returns a float for integer inputs', evidence: [{ path: 'src/mul.js', line: 2 }] } as const;
+
+  test('audit.cross-lens-merge-corroborated: a second lens\'s draft with the same repo evidence paths, obligation and cause corroborates the first lens\'s finding (its claim kept), opening none; a resumed audit writes it once', T, async () => {
+    const { d } = auditArc({
+      steps: [lensStep('audit-1', 'vision', [{ ...SAME, claim: 'mul breaks V-2\'s exact answer' }]), lensStep('audit-1', 'invariants', [{ ...SAME, claim: 'mul violates I-1', severity: 'P1' }])],
+      units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: [...L2] },
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      requestAudit(r);
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      const h = r.journal.view.holistic();
+      assert.deepEqual(h.findings.map((f) => [f.id, f.lens, f.claim]), [['F-1', 'vision', 'mul breaks V-2\'s exact answer']], 'one finding');
+      assert.deepEqual(h.corroborations.map((c) => [c.id, c.lens, c.claim]), [['F-1', 'invariants', 'mul violates I-1']], 'the second lens\'s rationale kept');
+      assert.deepEqual(ended(r)[0]!.findings, ['F-1']);
+      corroborateFinding(r.journal, findingId('F-1'), 'invariants', 'mul violates I-1');
+      assert.equal(r.journal.view.holistic().corroborations.length, 1, 'idempotent: a resumed audit asking the lens again writes nothing new');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('audit.cross-lens-different-cause-separate: drafts differing in cause or in repo evidence paths stay separate findings; a vacuity draft whose mutant patch is corrupt is refused at admission with its stderr (findings.corrupt-patch-refused)', T, async () => {
+    const { d } = auditArc({
+      steps: [
+        lensStep('audit-1', 'vision', [{ ...SAME, claim: 'vision' }]),
+        lensStep('audit-1', 'invariants', [{ ...SAME, cause: 'mul: overflows past 2^53', claim: 'other cause' }, { ...SAME, evidence: [{ path: 'src/add.js', line: 1 }], claim: 'other path' }]),
+        lensStep('audit-1', 'vacuity', [{ ...SAME, claim: 'corrupt mutant', mutant: { patch: 'this is not a patch\n', lane: 'journey' } }]),
+      ],
+      units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: ['invariants', 'vacuity', 'vision'] },
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      requestAudit(r);
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      const h = r.journal.view.holistic();
+      assert.deepEqual(h.findings.map((f) => [f.id, f.lens, f.claim]), [['F-1', 'vision', 'vision'], ['F-2', 'invariants', 'other cause'], ['F-3', 'invariants', 'other path']]);
+      assert.deepEqual(h.corroborations, [], 'nothing merged across lenses');
+      assert.equal(out.refused.length, 1, 'the corrupt vacuity draft is refused');
+      assert.deepEqual([out.refused[0]!.lens, out.refused[0]!.claim], ['vacuity', 'corrupt mutant']);
+      assert.match(out.refused[0]!.stderr, /patch/i, 'the stderr is kept');
+      assert.deepEqual(readdirSync(join(r.ctx.runDir, 'inputs')).filter((f) => f.endsWith(`.${MUTANT_PATCH_INPUT}`)), [], 'a corrupt patch is never kept');
+    } finally {
+      r.journal.close();
+    }
+  });
 });

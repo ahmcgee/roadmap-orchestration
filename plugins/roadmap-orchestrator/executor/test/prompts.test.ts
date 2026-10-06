@@ -153,7 +153,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: 'OWNER-B' }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
-      specsOnly: [unitId('u-two')],
+      specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
     },
   ],
   checkpoint: [
@@ -179,11 +179,15 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   packReview: [
     {
       vision: vision(1, 'VISION-A'), plan: 'PLAN-A', specs: [spec(1, 'SPEC-A')], obligations: packObligations('OBLIGATION-A'),
-      rulesIndex: [pinnedRule('T-1', 'RULE-A')], phase0: phase0Of('WHY-A'),
+      rulesIndex: [pinnedRule('T-1', 'RULE-A')], phase0: phase0Of('WHY-A'), delta: null,
     },
     {
       vision: vision(2, 'VISION-B'), plan: 'PLAN-B', specs: [spec(2, 'SPEC-B')], obligations: packObligations('OBLIGATION-B'),
       rulesIndex: [pinnedRule('T-2', 'RULE-B')], phase0: phase0Of('WHY-B'),
+      delta: {
+        since: jobId('review', 1), changed: ['spec u-two'],
+        previous: [{ job: jobId('review', 1), finding: { index: 0, severity: 'blocking', target: { type: 'unit', id: unitId('u-two') }, claim: 'PREVIOUS-B', evidence: [] } }],
+      },
     },
   ],
 };
@@ -191,7 +195,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
 const OUTPUTS: { readonly [R in Role]: unknown } = {
   packReview: {
     findings: [{ severity: 'blocking', target: { type: 'census', rule: 'T-1' }, claim: 'T-1 has no census entry', evidence: [{ path: 'obligations.json', line: 1 }] }],
-    reasons: ['the census misses T-1'], premises: [],
+    dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
   },
   planCheck: {
     decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],

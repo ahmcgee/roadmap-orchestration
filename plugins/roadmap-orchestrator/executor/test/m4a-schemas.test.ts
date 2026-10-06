@@ -307,7 +307,7 @@ describe('Phase 0, issues, debt and pack review', () => {
     assert.equal(packReviewKey(inputs), packReviewKey(again));
     assert.notEqual(packReviewKey(inputs), packReviewKey(parsePackReviewInputs({ ...packInputs, phase0Sha256: H2 })));
     assert.throws(() => parsePackReviewInputs({ ...packInputs, job: 'ckpt-1' }), /job/);
-    const out = { findings: [{ severity: 'note', target: { type: 'plan' }, claim: 'c', evidence: [] }], reasons: ['r'], premises: [] };
+    const out = { findings: [{ severity: 'note', target: { type: 'plan' }, claim: 'c', evidence: [] }], dispositions: [], reasons: ['r'], premises: [] };
     same(validatePackReviewOutput, out);
   });
 });

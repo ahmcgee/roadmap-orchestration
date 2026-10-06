@@ -1,6 +1,7 @@
 // M4a step C1: `roadmap phase0 check` and the shared Phase-0 rows (src/phase0/rows.ts) over real repos, real pins
 // (`roadmap corpus pin`), real issue captures against the fake forge and real snapshot refs for the chain (src/chain.ts).
-// The classifier's and the apply's and start's sides are test/phase0-apply.test.ts.
+// The classifier's and the apply's and start's sides are test/phase0-apply.test.ts. M4a rev 3 (N5):
+// phase0.spec-census-mismatch-row.
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -140,6 +141,28 @@ describe('phase0 check', () => {
     } finally {
       j.close();
     }
+  });
+});
+
+describe('the pack\'s specs against the census (M4a rev 3, H3)', () => {
+  it('phase0.spec-census-mismatch-row: a spec declaring an obligation whose rule the census does not give it, and an acceptance clause naming an out-of-slice rule, are rows', T, async () => {
+    const a = await corpusArc();
+    await green(a);
+    const pin = parseCorpusPin(JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')));
+    const t2 = pin.rules.find((r) => r.id === 'T-2')!;
+    editJsonFile(join(a.planDir, 'obligations.json'), (o) => {
+      const i1 = (o['obligations'] as Json[])[0]!;
+      return { ...o, obligations: [i1, { ...i1, id: 'I-2', statement: 'A booking names one berth.', rule: { id: 'T-2', textSha256: t2.textSha256 }, state: { type: 'deferred', ruling: 'C-1' } }] };
+    });
+    await green(a);
+    editJsonFile(join(a.planDir, 'u1.json'), (s) => ({
+      ...s, obligations: ['I-1', 'I-2'],
+      acceptance: [...(s['acceptance'] as Json[]), { id: 'A2', clause: 'A booking names its berth (T-2), as T-1 needs.', failLoudIfUndelivered: false, state: 'active' }, { id: 'A3', clause: 'T-2 again.', failLoudIfUndelivered: false, state: 'struck' }],
+    }));
+    assert.deepEqual(await phase0Problems(a), [
+      { type: 'spec-census-mismatch', unit: 'u1', item: 'I-2', rule: 'T-2', state: 'out-of-slice' },
+      { type: 'spec-census-mismatch', unit: 'u1', item: 'A2', rule: 'T-2', state: 'out-of-slice' },
+    ], 'the binding I-1 on its own rule and a struck clause are fine');
   });
 });
 

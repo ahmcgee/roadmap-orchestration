@@ -16,7 +16,7 @@ import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { CliError, runDir, type Phase0Source } from '../input/cli.ts';
 import {
-  CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, VISION_INPUT, readInputFiles,
+  CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, readInputFiles,
 } from '../input/inforce.ts';
 import { holisticNeedsCorpus, FRESH_START, FROM_REF, type Phase0Input, phase0InputOf, phase0Rows, visionAndObligations } from '../phase0/rows.ts';
 import { gitCommonDir, legacyRoadmapDir, loadPlan, planInvalidCheck, readRepoConfig, revisionInputRows, routingCheck, specLaneCheck } from '../preflight/checks.ts';
@@ -81,6 +81,7 @@ function fromRef(repo: AbsPath, source: Extract<Phase0Source, { type: 'ref' }>):
     repo, plan: ref.plan, config: null, where: `refs/roadmap/${ref.arc} at ${ref.commit}`,
     pin: kept(m.corpus, CORPUS_INPUT), guide: kept(m.corpusGuide, CORPUS_GUIDE_INPUT), phase0: kept(m.phase0, PHASE0_INPUT),
     capture: kept(m.phase0Issues, ISSUES_INPUT), obligations: kept(m.obligations, OBLIGATIONS_INPUT), vision: kept(m.vision, VISION_INPUT),
+    specs: new Map(ref.plan.units.map((u) => [u.id, kept(m.specs[u.id], SPEC_INPUT)])),
     ledger: parseRulings(ref.input(m.rulings.ledgerSha256, RULINGS_INPUT).toString('utf8'), `refs/roadmap/${ref.arc} (the rulings ledger)`),
   };
   return { rows: phase0Rows(input, FROM_REF).rows, input };
