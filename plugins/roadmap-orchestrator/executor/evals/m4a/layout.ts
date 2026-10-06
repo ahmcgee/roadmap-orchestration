@@ -12,6 +12,8 @@
 //   fake/             --fake only: per-arc backend scenarios and shims (arc-<n>/), the host dir, the scripted root's state
 //   transcript.jsonl  every session turn's stream-json, one event per line, each tagged with its turn
 //   canary.json       the real forge before and after (real runs)
+//   diagnostics/      the session-end copy of each arc's needs-user files and the turn stderr tails (driver)
+//   costs.jsonl       per-invocation and per-turn cost rows, unknowns explicit (transcript.ts)
 //   report.json       written by the driver, read by check
 import { join } from 'node:path';
 
@@ -45,6 +47,8 @@ export type Layout = Readonly<{
   fake: string;
   transcript: string;
   canary: string;
+  diagnostics: string;
+  costs: string;
   report: string;
 }>;
 
@@ -71,6 +75,8 @@ export function layout(dir: string): Layout {
     fake: join(dir, 'fake'),
     transcript: join(dir, 'transcript.jsonl'),
     canary: join(dir, 'canary.json'),
+    diagnostics: join(dir, 'diagnostics'),
+    costs: join(dir, 'costs.jsonl'),
     report: join(dir, 'report.json'),
   };
 }

@@ -7,8 +7,10 @@
 // stream-json --verbose` (bypass kept: the skill needs Bash; LR-f), resumed by `--resume <session>` turn after turn;
 // hard timeout 360 min. Paid M4a run 1: without the last two the session saw the owner's claude.ai connectors and wrote
 // an auto-memory note into the owner's Claude project dir for the fixture cwd; a turn whose init event still names an
-// MCP server or a memory path is killed and fails the session (`isolation`). Fake: the scripted root agent (fake-root.ts,
-// one process per turn, the same stream-json) against the fake backends; hard timeout 30 min. After each turn:
+// MCP server or a memory path is killed and fails the session (`isolation`). The turn cap equals the session cap (paid
+// run 9 died to a 120-minute turn cap in the middle of in-turn supervision); a turn killed at its cap ends the run
+// `turn-timeout`, never `session-failed`. Fake: the scripted root agent (fake-root.ts, one process per turn, the same
+// stream-json) against the fake backends; hard timeout 30 min. After each turn:
 //   - a final text with the skill's session-end line `ROADMAP-SESSION: stopped <reason>` ends the session (reason in
 //     the skill's closed set: k-limit, vision-silent, owner);
 //   - a final text ending in numbered questions goes to the owner simulator, its last numbered block only (paid M4a
@@ -18,9 +20,13 @@
 //     keyword stub) given only the answer key's owner answers released so far (`from: arc-1-complete` once the first
 //     arc's completion is in its ref), told to answer from them alone, else "no view: keep your working assumption";
 //   - any other final text is the skill's headless wait (no Monitor): the driver tails `roadmap watch` on the arc it
-//     last saw holding the host and resumes the session with the first new needs-user lines, or the run reaching
-//     complete, refused or no-owner (R12), debounced 3 s. With nothing to wait on (no arc seen, or the last one ended
-//     and was reported) and nothing asked, it nudges the session, at most 3 times in a row (`stalled`).
+//     last saw holding the host and resumes the session only on an actionable event (`WakeFilter`, F26): a new
+//     needs-user item, the run reaching complete, refused or no-owner, a constraint change (the run newly held,
+//     blocked or draining) or no state change for STALL_MIN minutes; routine transitions are absorbed. Debounced 3 s.
+//     With nothing to wait on (no arc seen, or the last one ended and was reported) and nothing asked, it nudges the
+//     session, at most 3 times in a row (`stalled`).
+//   - at the end, whatever the end (a `finally`), an arc of this product still holding the host is stopped with the
+//     staged `roadmap stop` and the claim awaited (`released`; criterion `host-released`).
 //
 // Isolation (LR-f, L1, K6, H1). The driver stages the plugin (this repository's plugins/roadmap-orchestrator without
 // executor/evals, executor/test, node_modules) into the fixture and launches every session with an allowlisted env
@@ -33,6 +39,11 @@
 // every tool input and result. After the session the driver overwrites the live corpus and `.roadmap/` files in the
 // product's working tree (uncommitted), so check.ts's `phase0 check --from-ref` proves it reads the refs alone (K20).
 //
+// Forensics (F29, F30). The report names each arc's terminal seq (its latest `arc-completed`, else the seq when the
+// session ended) and counts the events written after it (`postRun`: the executor winding down, the driver's own stop);
+// `diagnostics/` keeps the session-end copy of each arc's needs-user files and the turn stderr tails; `costs.jsonl`
+// holds one row per invocation and per turn with the unknowns explicit (transcript.ts).
+//
 // Fake runs add two devices (story only): once the second arc holds the host, the forge flips to PUBLIC + ALL and arc
 // 2's pack review is released from its barrier (scenario.ts), so a checkpoint capture meets an untrusted policy.
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
@@ -44,7 +55,13 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { arcsWithRefs, completedHeadOf, readArcRef } from '../../src/chain.ts';
 import { HOST_DIR } from '../../src/host/hostdir.ts';
 import { readClaim } from '../../src/host/lock.ts';
+import { type Event } from '../../src/core/events.ts';
+import { arcId } from '../../src/core/ids.ts';
+import { readJournal } from '../../src/core/log.ts';
 import { absPath, type AbsPath } from '../../src/core/values.ts';
+import { gitCommonDir } from '../../src/git/git.ts';
+import { runDir } from '../../src/input/cli.ts';
+import { PROFILES, type ProfileName } from '../../src/routing/types.ts';
 import { readStore, writeStore } from '../../test/fakes/gh-store.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
 import { type FakeScript, arcShims, fakeHostDir, fakeScript } from './fake-root.ts';
@@ -52,18 +69,24 @@ import { CORPUS_ROOT } from './golden.ts';
 import { type Layout, SESSION_END, STOP_REASONS, type StopReason, layout } from './layout.ts';
 import { POLICY_FLIP_BARRIER, arcSteps } from './scenario.ts';
 import { json } from './setup.ts';
-import { ANSWER_KEY, needles, repositoryPaths, scanTranscript } from './transcript.ts';
+import { ANSWER_KEY, exportCosts, needles, repositoryPaths, scanTranscript } from './transcript.ts';
 
 export const REPORT_SCHEMA = 'roadmap/m4a-report';
 const PLUGIN_SOURCE = fileURLToPath(new URL('../../../', import.meta.url));
 const FAKE_ROOT = fileURLToPath(new URL('./fake-root.ts', import.meta.url));
 const STAGE_CLI = fileURLToPath(new URL('./stage-cli.ts', import.meta.url));
 
-export const LIMITS = {
-  real: { sessionMs: 360 * 60_000, turnMs: 120 * 60_000 },
-  fake: { sessionMs: 30 * 60_000, turnMs: 10 * 60_000 },
-} as const;
+/** The turn cap is the session cap: a turn may use all the session's time (A1). */
+export type Limits = Readonly<{ sessionMs: number; turnMs: number }>;
+export const LIMITS: Readonly<{ real: Limits; fake: Limits }> = {
+  real: { sessionMs: 360 * 60_000, turnMs: 360 * 60_000 },
+  fake: { sessionMs: 30 * 60_000, turnMs: 30 * 60_000 },
+};
+/** Minutes without a state change after which the root is woken (F26; unmeasured, run 10 measures it). */
+export const STALL_MIN = 30;
 const WAKE_DEBOUNCE_MS = 3_000;
+/** How long the end-of-run stop waits for the host claim to clear. */
+const RELEASE_WAIT_MS = 5 * 60_000;
 const MAX_NUDGES = 3;
 
 // ---------------------------------------------------------------------------------------------------
@@ -245,12 +268,21 @@ export type Devices = {
   policyFix: { at: string } | null;
 };
 
-export type EndedBy = 'stopped' | 'timeout' | 'stalled' | 'session-failed';
+/** `timeout`: the session cap passed between turns; `turn-timeout`: a turn was killed at its cap (never `session-failed`). */
+export type EndedBy = 'stopped' | 'timeout' | 'turn-timeout' | 'stalled' | 'session-failed';
+
+/** An arc of this product that held the host when the session ended: stopped by the driver, and whether the claim cleared. */
+export type Released = Readonly<{ arc: string; stopped: boolean; detail: string }>;
+/** One arc's forensics: the seq of its terminal state, and the events written after it. */
+export type ArcForensics = Readonly<{ arc: string; terminalSeq: number; lastSeq: number }>;
+export type PostRun = Readonly<{ arc: string; fromSeq: number; events: number }>;
 
 export type Report = Readonly<{
   schema: typeof REPORT_SCHEMA;
   mode: 'real' | 'fake';
   script: FakeScript | null;
+  /** The routing profile every arc was told to start under (`criterion profile`). */
+  profile: ProfileName;
   startedAt: string;
   endedAt: string;
   endedBy: EndedBy;
@@ -265,23 +297,30 @@ export type Report = Readonly<{
   owner: readonly OwnerExchange[];
   devices: Devices;
   scrambled: readonly string[];
+  /** Arcs still holding the host when the session ended, stopped by the driver (empty: none did). */
+  released: readonly Released[];
+  arcs: readonly ArcForensics[];
+  postRun: readonly PostRun[];
 }>;
 
 type Mode = Readonly<{ kind: 'real' }> | Readonly<{ kind: 'fake'; script: FakeScript }>;
 
-const INITIAL_PROMPT = [
+export const initialPrompt = (profile: ProfileName): string => [
   'You are the root agent of a roadmap-orchestrator session over this product repository (`tidewater`), run headless:',
   'nobody watches this session. Use the orchestrate skill of the roadmap-orchestrator plugin from start to finish:',
   'bootstrap, then Phase 0, arcs and chaining toward the target state the corpus in docs/corpus describes.',
-  'The owner answers only the numbered questions you end a turn with. While an arc runs, end your turn: the harness',
-  'resumes you on `roadmap watch` events. End the session with the skill\'s session-end line.',
+  'The owner answers only the numbered questions you end a turn with. While an arc runs, you may wait on `roadmap watch`',
+  'under Monitor or end your turn; both are supported. If you end your turn, the harness resumes you on actionable',
+  '`roadmap watch` events only (a needs-user item, a terminal state, a changed constraint, a stall).',
+  'End the session with the skill\'s session-end line.',
+  `Start every arc with \`--profile ${profile}\`; never change it.`,
 ].join('\n');
 
 /**
  * One turn: launch or resume, stream events into the transcript, return the final text and session id, or the
  * isolation breach its init event shows (an MCP server or a memory path), on which the turn is killed.
  */
-async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number): Promise<{ session: string | null; result: string | null; exit: number | null; isolation: string | null }> {
+async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number): Promise<{ session: string | null; result: string | null; exit: number | null; isolation: string | null; timedOut: boolean }> {
   const argv = mode.kind === 'real'
     ? ['claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--plugin-dir', l.plugin, '--permission-mode', 'bypassPermissions', ...CLAUDE_ISOLATION, '--output-format', 'stream-json', '--verbose', ...(session === null ? [] : ['--resume', session]), prompt]] as const
     : [process.execPath, [FAKE_ROOT, '--fixture', l.dir, '--script', mode.script, ...(session === null ? [] : ['--resume', session]), '--', prompt]] as const;
@@ -319,12 +358,16 @@ async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, strin
   });
   child.stderr!.setEncoding('utf8');
   child.stderr!.on('data', (chunk: string) => void (stderr += chunk));
-  const timer = setTimeout(() => child.kill('SIGTERM'), Math.max(0, deadline - Date.now()));
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGTERM');
+  }, Math.max(0, deadline - Date.now()));
   const exit = await new Promise<number | null>((done) => child.on('close', (code) => done(code)));
   clearTimeout(timer);
   await Promise.all(writes);
   if (exit !== 0) writeFileSync(join(l.dir, `turn-${n}.stderr`), stderr);
-  return { session: sid, result, exit, isolation };
+  return { session: sid, result, exit, isolation, timedOut };
 }
 
 /** The roadmap CLI as the session runs it (real: the staged bin with HOST_DIR; fake: stage-cli with the fixture's host). */
@@ -334,17 +377,75 @@ function roadmapArgv(l: Layout, mode: Mode, args: readonly string[]): readonly [
     : [process.execPath, [STAGE_CLI, l.plugin, fakeHostDir(l.dir), ...args]];
 }
 
-type Watched = { arc: string | null; terminal: Set<string>; items: Set<string>; arcsSeen: string[] };
-
-const TERMINAL_RUN = ['complete', 'refused', 'no-owner'];
+/** Run states that end the wait: the run is over (a needs-user item aside, nothing more happens without the root). */
+const TERMINAL_RUN: readonly string[] = ['complete', 'refused', 'no-owner'];
+/** Run states that are a changed constraint: paused or a parked backend (held), work waiting on the architect (blocked), admissions closed (draining). */
+const CONSTRAINT_RUN: readonly string[] = ['held', 'blocked', 'draining'];
 
 /** A needs-user item's wake key: ids are arc-scoped, so the arc is part of it. */
 export const wakeKey = (arc: string, id: string): string => `${arc}:${id}`;
 
 /**
- * Waits for the next wake-up of the arc last seen holding the host: new needs-user lines, or its run reaching a
- * terminal state. Returns the lines; '' at the deadline; null when there is nothing to wait on (no arc seen, or the last
- * one no longer holds the host and its end was already reported).
+ * What wakes the root agent (F26): a needs-user item not seen before, the run reaching a terminal state, a changed
+ * constraint (the run newly `held`, `blocked` or `draining`), or no state change for STALL_MIN minutes. Everything else
+ * `roadmap watch` streams (owner liveness, acks, a unit moving between stages, gates, lanes, publication) is absorbed.
+ * It lives across the watch processes of one run: a restarted watch re-emits its current state, which wakes nothing twice.
+ */
+export class WakeFilter {
+  private readonly items = new Set<string>();
+  private readonly terminal = new Set<string>();
+  private run: string | null = null;
+  private units: string | null = null;
+  private changedAt: number;
+  constructor(now: number) {
+    this.changedAt = now;
+  }
+
+  /** The line to wake the root on, or null for a routine one. */
+  feed(arc: string, line: string, now: number): string | null {
+    const e = JSON.parse(line) as { event: string; id?: string; run?: string };
+    if (e.event === 'needs-user' && e.id !== undefined) {
+      const key = wakeKey(arc, e.id);
+      if (this.items.has(key)) return null;
+      this.items.add(key);
+      return line;
+    }
+    if (e.event !== 'units' || e.run === undefined) return null;
+    const stateChanged = line !== this.units;
+    if (stateChanged) this.changedAt = now;
+    this.units = line;
+    const previous = this.run;
+    this.run = e.run;
+    if (TERMINAL_RUN.includes(e.run)) {
+      if (this.terminal.has(`${arc}:${e.run}`)) return null;
+      this.terminal.add(`${arc}:${e.run}`);
+      return line;
+    }
+    return CONSTRAINT_RUN.includes(e.run) && e.run !== previous ? line : null;
+  }
+
+  /** Whether the run's unit states have not changed for STALL_MIN minutes. */
+  stalled(now: number): boolean {
+    return now - this.changedAt >= STALL_MIN * 60_000;
+  }
+
+  /** A wake went to the root: the stall clock restarts. */
+  woke(now: number): void {
+    this.changedAt = now;
+  }
+
+  /** Whether `arc` already reached a terminal state the root was told about. */
+  ended(arc: string): boolean {
+    return [...this.terminal].some((t) => t.startsWith(`${arc}:`));
+  }
+}
+
+type Watched = { arc: string | null; arcsSeen: string[]; filter: WakeFilter };
+
+/**
+ * Waits for the next wake-up of the arc last seen holding the host (`WakeFilter`). Returns the lines; '' at the
+ * deadline; null when there is nothing to wait on (no arc seen, or the last one no longer holds the host and its end was
+ * already reported).
  */
 async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, w: Watched, deadline: number, onArc: (arc: string) => void): Promise<string | null> {
   const hostDir = mode.kind === 'real' ? HOST_DIR : absPath(fakeHostDir(l.dir));
@@ -355,7 +456,7 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
   }
   if (w.arc === null) return null;
   const held = claim !== null && claim.arc === w.arc;
-  if (!held && [...w.terminal].some((t) => t.startsWith(`${w.arc}:`))) return null;
+  if (!held && w.filter.ended(w.arc)) return null;
   const arc = w.arc;
   onArc(arc);
   const [cmd, args] = roadmapArgv(l, mode, ['watch', '--repo', l.product, '--arc', arc]);
@@ -369,14 +470,10 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
     for (let i = buffered.indexOf('\n'); i >= 0; i = buffered.indexOf('\n')) {
       const line = buffered.slice(0, i);
       buffered = buffered.slice(i + 1);
-      const e = JSON.parse(line) as { event: string; id?: string; run?: string };
-      const fresh = (e.event === 'needs-user' && e.id !== undefined && !w.items.has(wakeKey(arc, e.id)))
-        || (e.event === 'units' && e.run !== undefined && TERMINAL_RUN.includes(e.run) && !w.terminal.has(`${w.arc}:${e.run}`));
       // Item ids are arc-scoped (paid run 2: arc 2's nu-31 was taken for arc 1's and never woke the session).
-      if (e.event === 'needs-user' && e.id !== undefined) w.items.add(wakeKey(arc, e.id));
-      if (e.event === 'units' && e.run !== undefined && TERMINAL_RUN.includes(e.run)) w.terminal.add(`${w.arc}:${e.run}`);
-      if (fresh) {
-        lines.push(line);
+      const woken = w.filter.feed(arc, line, Date.now());
+      if (woken !== null) {
+        lines.push(woken);
         firstAt ??= Date.now();
       }
     }
@@ -386,9 +483,16 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
   child.stderr.on('data', (c: string) => void (stderr += c));
   let exited = false;
   child.on('close', () => void (exited = true));
-  while (!exited && Date.now() < deadline && (firstAt === null || Date.now() - firstAt < WAKE_DEBOUNCE_MS)) await sleep(250);
+  while (!exited && Date.now() < deadline && (firstAt === null || Date.now() - firstAt < WAKE_DEBOUNCE_MS)) {
+    if (firstAt === null && w.filter.stalled(Date.now())) {
+      lines.push(JSON.stringify({ event: 'stall', quietMin: STALL_MIN }));
+      firstAt = Date.now();
+    }
+    await sleep(250);
+  }
   child.kill('SIGTERM');
   if (exited && lines.length === 0) throw new Error(`roadmap watch exited: ${stderr}`);
+  if (lines.length > 0) w.filter.woke(Date.now());
   return lines.length === 0 ? '' : `roadmap watch (arc ${w.arc}):\n${lines.join('\n')}`;
 }
 
@@ -418,7 +522,73 @@ export function prepareFake(l: Layout): void {
   mkdirSync(fakeHostDir(l.dir), { recursive: true });
 }
 
-export async function drive(dir: string, mode: Mode): Promise<Report> {
+// ---------------------------------------------------------------------------------------------------
+// The end of the run: release the host, then the forensics
+
+/**
+ * Stops the arc of `product` that holds the host, if any, and waits for the claim to clear (A2). `stop` runs the staged
+ * `roadmap stop` and returns its exit status. A claim of another repo is never touched.
+ */
+export async function stopHeldArc(hostDir: AbsPath, product: AbsPath, stop: (arc: string) => number | null, waitMs: number): Promise<readonly Released[]> {
+  const claim = readClaim(hostDir);
+  if (claim === null || claim.repo !== product) return [];
+  const status = stop(claim.arc);
+  const t0 = Date.now();
+  for (;;) {
+    const now = readClaim(hostDir);
+    if (now === null || now.nonce !== claim.nonce) {
+      return [{ arc: claim.arc, stopped: status === 0, detail: `roadmap stop exited ${status}; the claim cleared after ${Date.now() - t0} ms` }];
+    }
+    if (Date.now() - t0 >= waitMs) return [{ arc: claim.arc, stopped: false, detail: `roadmap stop exited ${status}; the claim was still held after ${waitMs} ms` }];
+    await sleep(250);
+  }
+}
+
+/** The part of an event the forensics read. */
+export type SeqEvent = Readonly<{ seq: number; type: string; fact?: Readonly<{ kind: string }> }>;
+
+/** The arc's terminal seq: its latest `arc-completed` up to the session's end, else the seq the session ended at. */
+export function arcForensics(arc: string, events: readonly SeqEvent[], sessionEndSeq: number): ArcForensics {
+  const completed = events.filter((e) => e.type === 'fact' && e.fact?.kind === 'arc-completed' && e.seq <= sessionEndSeq).at(-1);
+  return { arc, terminalSeq: completed?.seq ?? sessionEndSeq, lastSeq: events.at(-1)?.seq ?? 0 };
+}
+
+/** The events written after an arc's terminal state (F29): null when there are none. */
+export const postRunOf = (a: ArcForensics): PostRun | null => (a.lastSeq > a.terminalSeq ? { arc: a.arc, fromSeq: a.terminalSeq + 1, events: a.lastSeq - a.terminalSeq } : null);
+
+/** The product's arcs that have a run dir (the executor's runtime dir under the git common dir). */
+function runDirs(product: AbsPath): readonly Readonly<{ arc: string; dir: AbsPath }>[] {
+  const common = gitCommonDir(product);
+  const root = join(common, 'roadmap-runtime');
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => ({ arc: e.name, dir: runDir(common, arcId(e.name)) })).sort((a, b) => a.arc.localeCompare(b.arc));
+}
+
+/** The last complete line's seq of an arc's `events.jsonl` (the log may be mid-append; a torn tail is not a line). */
+function lastSeq(dir: AbsPath): number {
+  const file = join(dir, 'events.jsonl');
+  if (!existsSync(file)) return 0;
+  const text = readFileSync(file, 'utf8');
+  const lines = text.slice(0, text.lastIndexOf('\n') + 1).split('\n').filter((x) => x !== '');
+  return lines.length === 0 ? 0 : (JSON.parse(lines.at(-1)!) as { seq: number }).seq;
+}
+
+/** Copies what the report cites into `<dir>/diagnostics/`: each arc's needs-user files and the turn stderr tails. */
+function snapshotDiagnostics(l: Layout, arcs: readonly Readonly<{ arc: string; dir: AbsPath }>[]): void {
+  mkdirSync(l.diagnostics, { recursive: true });
+  for (const a of arcs) {
+    const nu = join(a.dir, 'needs-user');
+    if (existsSync(nu)) cpSync(nu, join(l.diagnostics, a.arc, 'needs-user'), { recursive: true });
+  }
+  for (const f of readdirSync(l.dir).filter((x) => /^turn-\d+\.stderr$/.test(x))) {
+    writeFileSync(join(l.diagnostics, `${f}.tail`), readFileSync(join(l.dir, f), 'utf8').split('\n').slice(-200).join('\n'));
+  }
+}
+
+export type DriveOptions = Readonly<{ profile?: ProfileName; limits?: Limits }>;
+
+export async function drive(dir: string, mode: Mode, options: DriveOptions = {}): Promise<Report> {
+  const profile = options.profile ?? 'default';
   const l = layout(dir);
   if (!existsSync(l.product)) throw new Error(`${dir} holds no fixture: run evals/m4a/setup.ts first`);
   if (existsSync(l.report) || existsSync(l.transcript)) throw new Error(`${l.report} or the transcript exists: a fixture dir is run once`);
@@ -432,14 +602,14 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
   if (mode.kind === 'fake') prepareFake(l);
   const env = launchEnv(l, process.env);
   const startedAt = new Date();
-  const limits = mode.kind === 'real' ? LIMITS.real : LIMITS.fake;
+  const limits = options.limits ?? (mode.kind === 'real' ? LIMITS.real : LIMITS.fake);
   const deadline = startedAt.getTime() + limits.sessionMs;
   const before = mode.kind === 'real' ? forgeCanary() : null;
 
   const devices: Devices = { policyFlip: null, policyFix: null };
   const owner: OwnerExchange[] = [];
   const turns: Turn[] = [];
-  const watched: Watched = { arc: null, terminal: new Set(), items: new Set(), arcsSeen: [] };
+  const watched: Watched = { arc: null, arcsSeen: [], filter: new WakeFilter(Date.now()) };
   const ownerCtx: OwnerCtx = { l, env, fake: mode.kind === 'fake', devices };
   const onArc = (arc: string): void => {
     if (mode.kind !== 'fake' || mode.script !== 'story' || devices.policyFlip !== null || watched.arcsSeen.indexOf(arc) !== 1) return;
@@ -453,9 +623,12 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
   let stopReason: StopReason | null = null;
   let failure: string | null = null;
   let session: string | null = null;
-  let prompt = INITIAL_PROMPT;
+  let prompt = initialPrompt(profile);
   let kind: Turn['kind'] = 'start';
   let nudges = 0;
+  let released: readonly Released[] = [];
+  const sessionEnd = new Map<string, number>();
+  const product = absPath(l.product);
   try {
     for (let n = 1; Date.now() < deadline; n++) {
       const t0 = Date.now();
@@ -467,8 +640,13 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
         failure = r.isolation;
         break;
       }
+      if (r.timedOut) {
+        endedBy = 'turn-timeout';
+        failure = `turn ${n} was killed at its ${limits.turnMs} ms cap (turn-${n}.stderr)`;
+        break;
+      }
       if (r.exit !== 0 || r.result === null) {
-        endedBy = Date.now() >= deadline ? 'timeout' : 'session-failed';
+        endedBy = 'session-failed';
         failure = `turn ${n} exited ${r.exit}${r.result === null ? ' without a result' : ''} (turn-${n}.stderr)`;
         break;
       }
@@ -510,6 +688,15 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
   } catch (error) {
     endedBy = 'session-failed';
     failure = (error as Error).stack ?? String(error);
+  } finally {
+    // The session is over, however it ended: keep its end state, then release the host (A2) so the next run can start.
+    const dirs = runDirs(product);
+    for (const a of dirs) sessionEnd.set(a.arc, lastSeq(a.dir));
+    snapshotDiagnostics(l, dirs);
+    released = await stopHeldArc(mode.kind === 'real' ? HOST_DIR : absPath(fakeHostDir(l.dir)), product, (arc) => {
+      const [cmd, args] = roadmapArgv(l, mode, ['stop', '--repo', l.product, '--arc', arc]);
+      return spawnSync(cmd, [...args], { cwd: l.product, env, encoding: 'utf8', timeout: RELEASE_WAIT_MS }).status;
+    }, RELEASE_WAIT_MS);
   }
 
   let canary: Report['canary'] = null;
@@ -518,10 +705,14 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
     writeFileSync(l.canary, json({ before, after }));
     canary = { equal: JSON.stringify(before) === JSON.stringify(after) };
   }
+  const journals = runDirs(product).filter((a) => existsSync(join(a.dir, 'events.jsonl'))).map((a) => ({ arc: a.arc, events: readJournal(a.dir, arcId(a.arc)).events as readonly Event[] }));
+  const arcs = journals.map((j) => arcForensics(j.arc, j.events, sessionEnd.get(j.arc) ?? 0));
+  exportCosts(l, journals.map((j, i) => ({ ...j, terminalSeq: arcs[i]!.terminalSeq })));
   const report: Report = {
     schema: REPORT_SCHEMA,
     mode: mode.kind,
     script: mode.kind === 'fake' ? mode.script : null,
+    profile,
     startedAt: startedAt.toISOString(),
     endedAt: new Date().toISOString(),
     endedBy, stopReason, failure,
@@ -531,6 +722,8 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
     transcriptHits: scanTranscript(l.transcript, needles()),
     turns, owner, devices,
     scrambled: scramble(l),
+    released, arcs,
+    postRun: arcs.flatMap((a) => postRunOf(a) ?? []),
   };
   writeFileSync(l.report, json(report), { flag: 'wx' });
   return report;
@@ -539,11 +732,18 @@ export async function drive(dir: string, mode: Mode): Promise<Report> {
 
 if (import.meta.main) {
   const [dir, ...rest] = process.argv.slice(2);
-  const usage = 'usage: node evals/m4a/driver.ts <dir> [--fake story|vision-silent]';
-  if (dir === undefined || !(rest.length === 0 || (rest.length === 2 && rest[0] === '--fake'))) throw new Error(usage);
-  const mode: Mode = rest.length === 0 ? { kind: 'real' } : { kind: 'fake', script: fakeScript(rest[1]!) };
-  const report = await drive(resolve(dir), mode);
+  const usage = 'usage: node evals/m4a/driver.ts <dir> [--profile default|claude-only] [--fake story|vision-silent]';
+  const flags = new Map<string, string>();
+  for (let i = 0; i < rest.length; i += 2) {
+    if (!['--profile', '--fake'].includes(rest[i]!) || rest[i + 1] === undefined || flags.has(rest[i]!)) throw new Error(usage);
+    flags.set(rest[i]!, rest[i + 1]!);
+  }
+  if (dir === undefined) throw new Error(usage);
+  const profile = flags.get('--profile') ?? 'default';
+  if (!(PROFILES as readonly string[]).includes(profile)) throw new Error(`${usage}: profile ${profile}`);
+  const fake = flags.get('--fake');
+  const mode: Mode = fake === undefined ? { kind: 'real' } : { kind: 'fake', script: fakeScript(fake) };
+  const report = await drive(resolve(dir), mode, { profile: profile as ProfileName });
   process.stdout.write(`${JSON.stringify({ report: layout(resolve(dir)).report, endedBy: report.endedBy, stopReason: report.stopReason, turns: report.turns.length, failure: report.failure })}\n`);
   process.exitCode = report.endedBy === 'stopped' ? 0 : 1;
 }
-
