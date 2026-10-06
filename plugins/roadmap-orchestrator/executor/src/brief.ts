@@ -37,7 +37,7 @@ import { observationOf, observationStore } from './holistic/observe.ts';
 import { parseObligations } from './holistic/types.ts';
 import { OBLIGATIONS_INPUT, PHASE0_INPUT, REVISION_INPUT, RULING_INPUT } from './input/inforce.ts';
 import { CliError, runDir } from './input/cli.ts';
-import { NEEDS_USER_DIR } from './needsuser.ts';
+import { NEEDS_USER_DIR, openNeedsUser } from './needsuser.ts';
 import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefPayload, type BriefPr, type CoverageEntry, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
 import { readRepoConfig } from './preflight/checks.ts';
 import { meterOf } from './meter.ts';
@@ -147,7 +147,7 @@ const live = (repo: AbsPath, ref: ArcRef): boolean => existsSync(runDir(gitCommo
 
 /** The arc's open, non-blocking digest and convergence-bound items (R10), by the records its ref keeps. */
 function itemsOf(repo: AbsPath, ref: ArcRef): readonly AckItem[] {
-  return ref.view.needsUser().filter((n) => n.ack === null && !n.blocking).flatMap((n) => {
+  return openNeedsUser(ref.view).filter((n) => !n.blocking).flatMap((n) => {
     const bytes = refBlob(repo, ref, `${NEEDS_USER_DIR}/${n.id}.json`);
     if (bytes === null) throw new Error(`${ref.arc}: its ref keeps no record of the raised item ${n.id}`);
     const reason = needsUserRecord(JSON.parse(bytes), `${ref.arc}:${n.id}`).reason;

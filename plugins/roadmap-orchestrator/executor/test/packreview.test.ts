@@ -1,6 +1,7 @@
 // M4a step C3: the pack review (src/holistic/packreview.ts) and its hold in the scheduler, over real corpus arcs: real
 // git, real processes, the fake claude answering the review calls by job. Named tests: packreview.key-excludes-job,
-// packreview.holds-admission, packreview.ack-releases, packreview.key-pending-holds, packreview.superseded-by-rereview,
+// packreview.holds-admission, packreview.ack-releases, packreview.key-pending-holds, packreview.superseded-by-rereview (with
+// R-17: status, watch and --actionable drop the superseded item),
 // packreview.none-after-first-admission, packreview.abandoned, packreview.consumed-on-restart,
 // packreview.inputs-only-on-recovery, packreview.delta-rereview-dispositions (M4a rev 3, N5),
 // packreview.no-review-between-rule-and-apply (M4a rev 3, I2), and the
@@ -18,7 +19,9 @@ import { readJournal } from '../src/core/log.ts';
 import { PACK_REVIEW_INPUT } from '../src/input/inforce.ts';
 import { PACK_REVIEW_INPUTS_SCHEMA, parsePackReviewInputs } from '../src/holistic/types.ts';
 import { packReviewKey, packReviewPending, packReviewStatus, requiredInputs, runPackReview } from '../src/holistic/packreview.ts';
-import { blockingItems, openBlocking, readNeedsUser, supersededPackItems } from '../src/needsuser.ts';
+import { blockingItems, openBlocking, openNeedsUser, readNeedsUser, supersededPackItems } from '../src/needsuser.ts';
+import { status } from '../src/status.ts';
+import { ActionableFilter, watch } from '../src/watch.ts';
 import { recover } from '../src/recover/recover.ts';
 import { arcHolds, holisticContexts } from '../src/schedule/scheduler.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -160,6 +163,28 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.equal(x.r.journal.view.ackOf(first.needsUser), null, 'without an ack');
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-2' });
       assert.ok(!x.holds().includes('pack-review'));
+      // R-17 (paid M4a run 10): one predicate drops it wherever open items are listed: status, the brief, watch --actionable.
+      const { runDir, hostDir } = x.r.ctx;
+      const arc = x.r.journal.view.arc;
+      assert.deepEqual(openNeedsUser(x.r.journal.view).map((n) => n.id), []);
+      const s = status(runDir, arc, hostDir);
+      assert.deepEqual(s.needsUser, [], 'status lists no superseded item');
+      assert.deepEqual(s.packReview!.reviews.map((v) => [v.job, v.needsUser, v.superseded]), [['review-1', first.needsUser, true], ['review-2', null, false]], 'packReview still shows it, superseded');
+      const lines: string[] = [];
+      const stop = new AbortController();
+      const watching = watch(runDir, arc, hostDir, (l) => lines.push(l), stop.signal);
+      await until(() => lines.some((l) => l.includes('"event":"units"')), WAIT_MS, 'the first watch poll');
+      stop.abort();
+      await watching;
+      const events = lines.map((l) => JSON.parse(l) as { event: string; id?: string });
+      const at = (event: string): number => events.findIndex((e) => e.event === event && e.id === first.needsUser);
+      assert.ok(at('superseded') >= 0 && at('superseded') < at('needs-user'), `the superseded line precedes the item's: ${lines.join(' | ')}`);
+      const filter = new ActionableFilter(0);
+      const woke = lines.flatMap((l) => {
+        const out = filter.feed(arc, l, 0);
+        return out === null ? [] : [JSON.parse(out) as { event: string }];
+      });
+      assert.deepEqual(woke.filter((e) => e.event === 'needs-user'), [], '--actionable does not wake on the superseded item');
     } finally {
       x.r.journal.close();
     }

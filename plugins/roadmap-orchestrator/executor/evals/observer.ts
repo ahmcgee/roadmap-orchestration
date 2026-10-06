@@ -65,14 +65,21 @@ function newestTail(dir: string, prefix: string, suffix: string): string[] {
     .map((x) => x.f);
 }
 
+/** The fixture's product repo, and its arcs: each dir under its roadmap-runtime holding an events.jsonl. */
+const productOf = (fixtureDir: string): string => join(fixtureDir, 'stage/product');
+const runtimeOf = (fixtureDir: string): string => join(productOf(fixtureDir), '.git/roadmap-runtime');
+const arcsOf = (fixtureDir: string): string[] => {
+  const runtime = runtimeOf(fixtureDir);
+  return existsSync(runtime) ? readdirSync(runtime).filter((a) => existsSync(join(runtime, a, 'events.jsonl'))).sort() : [];
+};
+
 /** The delta since `cursor`, as prompt text, plus the advanced cursor. Pure of side effects except reading. */
 export function collectDelta(fixtureDir: string, cursor: Cursor, hostDir: string): { text: string; cursor: Cursor } {
   const sections: string[] = [];
   const seq = { ...cursor.seq };
-  const runtime = join(fixtureDir, 'stage/product/.git/roadmap-runtime');
+  const runtime = runtimeOf(fixtureDir);
   const needsUser = new Set(cursor.needsUser);
-  const arcs = existsSync(runtime) ? readdirSync(runtime) : [];
-  for (const arc of arcs) {
+  for (const arc of arcsOf(fixtureDir)) {
     const fresh: string[] = [];
     let max = seq[arc] ?? 0;
     for (const l of lines(join(runtime, arc, 'events.jsonl'))) {
@@ -114,11 +121,19 @@ export function collectDelta(fixtureDir: string, cursor: Cursor, hostDir: string
   return { text: tail(sections.join('\n\n'), DELTA_CAP), cursor: next };
 }
 
+/**
+ * Each arc's status, named by the fixture's identity (`--repo <product> --arc <arc>`), never the host-global default: once
+ * the run ends no arc holds the host and a bare `status` exits 64 (paid M4a run 10, R-19).
+ */
 function statusSnapshot(fixtureDir: string): string {
   const bin = join(fixtureDir, 'stage/plugin/executor/bin/roadmap');
   if (!existsSync(bin)) return `(no staged plugin at ${bin})`;
-  const r = spawnSync(bin, ['status'], { cwd: join(fixtureDir, 'stage/product'), encoding: 'utf8', timeout: 60_000 });
-  return r.status === 0 ? tail(r.stdout, 20_000) : `(status failed: exit ${String(r.status)} ${clip(r.stderr ?? '', 500)})`;
+  const arcs = arcsOf(fixtureDir);
+  if (arcs.length === 0) return '(no arc has started)';
+  return arcs.map((arc) => {
+    const r = spawnSync(bin, ['status', '--repo', productOf(fixtureDir), '--arc', arc], { cwd: productOf(fixtureDir), encoding: 'utf8', timeout: 60_000 });
+    return `## status arc=${arc}\n${r.status === 0 ? tail(r.stdout, 20_000) : `(status failed: exit ${String(r.status)} ${clip(r.stderr ?? '', 500)})`}`;
+  }).join('\n\n');
 }
 
 const PREAMBLE = `You are a read-only observer of a roadmap-orchestrator arc run (a paid fixture). You never act on the run; you only report.
@@ -127,7 +142,9 @@ Pipeline, briefly: a root agent session (Claude, the "architect") drives a detac
 owns every backend call, git ref, lock and evidence dir, and appends facts to a per-arc events.jsonl (seq-ordered). Work flows:
 plan-check (the plan is vetted against the corpus/vision), build (implementer lanes in git worktrees, possibly parallel), gate
 (judgment on each lane's output), candidate merge into an integration branch, lens audits, checkpoint bundles (holistic
-reconcile to the vision), and needs-user items raised when the architect must decide. Executor source for reference:
+reconcile to the vision), and needs-user items raised when the architect must decide. An audit asks each lens of its
+\`audit-started.lenses\` once, in run order (vision first, then the rest ascending): its \`arc-backend\` spawns' \`attempt\` is
+that lens's ordinal, not a retry, and each finding names its lens. Executor source for reference:
 ${REPO_EXECUTOR} (src/, SCHEMAS.md, ../skills). The fixture dir is your cwd; you may read any file under it.
 
 Below is the DELTA since your last tick, then your previous observations. Report NEW issues only (do not repeat earlier ones unless

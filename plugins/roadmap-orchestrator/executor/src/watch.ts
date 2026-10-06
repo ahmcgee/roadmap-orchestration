@@ -7,6 +7,10 @@
 //   {"event":"ack","id","command","choice"}                                an acknowledgement file
 //   {"event":"owner","state":"alive"|"dead"|"none","generation","pid"}     on the first poll and every change
 //   {"event":"units","run":<run.state>,"units":{<unit>:<state>}}           on the first poll and every change
+//   {"event":"superseded","id"}                                            an item a later one superseded (K14: a pack review's)
+//
+// A `superseded` line comes before any `needs-user` line of its poll, as an ack file sorts before its item: a reader that
+// drops answered items (`--actionable`) sees the answer first (paid M4a run 10, R-17).
 //
 // Every raised item is a `needs-user` line, blocking or not: the Monitor wakes the session on each (DESIGN §2), so the
 // holistic layer's items wake it as any other does: `owner-request`, the `divergence-digest`, the `convergence-bound`
@@ -16,7 +20,7 @@
 //
 // `roadmap watch --actionable` (run 10, B) prints only what the architect acts on (`ActionableFilter`, the one rule; the
 // M4a driver resumes its headless session through it too): a needs-user item not seen before and not already
-// acknowledged, the run reaching a terminal state (`complete`, `refused`, `no-owner`; once per state), a changed
+// acknowledged or superseded, the run reaching a terminal state (`complete`, `refused`, `no-owner`; once per state), a changed
 // constraint (the run newly `held`, `blocked` or `draining`), and `{"event":"stall","quietMin":30}` after STALL_MIN
 // minutes with no change of the parallel view (once per quiet stretch). Owner lines, acks and routine unit moves are
 // absorbed. A fresh process starts with nothing seen: it re-emits the open items and a terminal or constrained run.
@@ -81,7 +85,7 @@ export class ActionableFilter {
   /** The line itself when it is actionable, else null. */
   feed(arc: string, line: string, now: number): string | null {
     const e = JSON.parse(line) as { event: string; id?: string; run?: string };
-    if (e.event === 'ack' && e.id !== undefined) {
+    if ((e.event === 'ack' || e.event === 'superseded') && e.id !== undefined) {
       this.acked.add(itemKey(arc, e.id));
       return null;
     }
@@ -148,12 +152,25 @@ export async function watch(
 ): Promise<void> {
   const seenItems = new Set<string>();
   const seenAcks = new Set<string>();
+  const seenSuperseded = new Set<string>();
   let owner: string | null = null;
   let key: string | null = null;
   let units: string | null = null;
+  let view: ReturnType<typeof unitStates> | null = null;
   const dir = join(runDir, NEEDS_USER_DIR);
   while (!signal.aborted) {
     const names = existsSync(dir) ? readdirSync(dir).sort() : [];
+    const state = canonicalJson({ event: 'owner', ...ownerState(runDir, hostDir) });
+    const next = viewKey(runDir, names, state);
+    if (next !== key || view === null) {
+      key = next;
+      view = unitStates(runDir, arc, hostDir);
+    }
+    for (const id of view.superseded) {
+      if (seenSuperseded.has(id)) continue;
+      seenSuperseded.add(id);
+      emit(canonicalJson({ event: 'superseded', id }));
+    }
     for (const name of names) {
       const item = ITEM.exec(name);
       if (item !== null && !seenItems.has(item[1] as string)) {
@@ -170,19 +187,14 @@ export async function watch(
         emit(canonicalJson({ event: 'ack', id: a.id, command: a.command, choice: a.choice }));
       }
     }
-    const state = canonicalJson({ event: 'owner', ...ownerState(runDir, hostDir) });
     if (state !== owner) {
       owner = state;
       emit(state);
     }
-    const next = viewKey(runDir, names, state);
-    if (next !== key) {
-      key = next;
-      const line = canonicalJson({ event: 'units', ...unitStates(runDir, arc, hostDir) });
-      if (line !== units) {
-        units = line;
-        emit(line);
-      }
+    const line = canonicalJson({ event: 'units', run: view.run, units: view.units });
+    if (line !== units) {
+      units = line;
+      emit(line);
     }
     afterPoll();
     try {

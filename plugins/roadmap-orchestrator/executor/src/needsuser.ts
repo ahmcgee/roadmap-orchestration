@@ -26,7 +26,7 @@ import { crashPoint } from './core/crash.ts';
 import { type IntentOf, type Parent, parentUnit } from './core/events.ts';
 import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
 import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
-import type { Journal, JournalView, Reconciler } from './core/interfaces.ts';
+import type { Journal, JournalView, NeedsUserState, Reconciler } from './core/interfaces.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import {
   NEEDS_USER_REASONS, NON_BLOCKING_M3_REASONS, type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord,
@@ -139,10 +139,19 @@ export function supersededPackItems(view: JournalView): ReadonlySet<NeedsUserId>
   }));
 }
 
-/** Raised, blocking, not acknowledged and not superseded: what keeps a parked unit's arc from being terminal-complete. */
-export function openBlocking(view: JournalView): readonly NeedsUserId[] {
+/**
+ * The one predicate of an open journal item (paid M4a run 10, R-17): raised, not acknowledged and not superseded (K14).
+ * Everything that lists open items reads it: `status.needsUser`, the brief's items, the scheduler's holds and the terminal
+ * predicate. `watch` streams files, so it reads the superseded set alone (`supersededPackItems`, a `superseded` line).
+ */
+export function openNeedsUser(view: JournalView): readonly NeedsUserState[] {
   const superseded = supersededPackItems(view);
-  return view.needsUser().filter((n) => n.blocking && n.ack === null && !superseded.has(n.id)).map((n) => n.id);
+  return view.needsUser().filter((n) => n.ack === null && !superseded.has(n.id));
+}
+
+/** Open (`openNeedsUser`) and blocking: what keeps a parked unit's arc from being terminal-complete. */
+export function openBlocking(view: JournalView): readonly NeedsUserId[] {
+  return openNeedsUser(view).filter((n) => n.blocking).map((n) => n.id);
 }
 
 /** A needs-user record from its file, or null when absent. Invalid content throws. */

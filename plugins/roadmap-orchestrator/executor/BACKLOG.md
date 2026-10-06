@@ -117,6 +117,14 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **A lens that answers invalid abandons its audit, retried only after `wallClockMin`** (run 10 round 2, R-16 review):
+  `runAudit` asks the remaining lenses, ends `abandoned`, and the cadence's `retry` waits the period (default 360 min),
+  a final audit included, then asks every owed lens again, those that reported on the same (head, vision, obligations)
+  included. Not seen in run 10 (every audit completed). Trigger: an `abandoned` audit in a paid run; then retry the
+  invalid lens once with its reasons inside the audit, and drop from a retry the lenses whose key is unchanged.
+- **The checkpoint capture wait bound** (`CAPTURE_WAIT_MAX_MIN`, 15 min, R-15) is a guess from run 10's gate-to-ff of
+  about 1 min. Trigger: a paid run where a checkpoint waited the full bound, or captured stale with the bound spent.
+
 - **gpt-5.6-sol is not available on a ChatGPT Codex account** (400 `invalid_request_error`, 2026-10-06). No class binds
   it; a repo rebind to sol would fail at the preflight smoke. Trigger: a routing that seats sol, or the account
   changing; then probe sol again or drop it from `CODEX_MODELS`.

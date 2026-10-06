@@ -39,9 +39,10 @@
 //               unresolved edge, a dead dependency, a tripped breaker)
 //     running   otherwise (every unit settled: the executor is about to end)
 //
-// `needsUser` lists every unacknowledged item: those the log raised, and the file-only ones outside it (the
-// supervisor's `sup-<gen>-<n>`, a refused claim's `host-<kind>-<n>`), read from `needs-user/`; an item is
-// acknowledged once the log holds its ack fact, as the executor reads it.
+// `needsUser` lists every open item: those the log raised that are neither acknowledged nor superseded (src/needsuser.ts
+// `openNeedsUser`: a `pack-review` item a later review's end superseded is listed only under `packReview`), and the
+// file-only ones outside it (the supervisor's `sup-<gen>-<n>`, a refused claim's `host-<kind>-<n>`), read from
+// `needs-user/`; an item is acknowledged once the log holds its ack fact, as the executor reads it.
 //
 // M3 (§2.4 additions; the holistic keys are vacuous in an arc without the layer):
 //   run.state     `draining` (a live executor that would run, with admissions closed); in a holistic arc `complete`
@@ -125,7 +126,7 @@ import {
 } from './core/records.ts';
 import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
-import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, recordOf, supersededPackItems } from './needsuser.ts';
+import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededPackItems } from './needsuser.ts';
 import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
@@ -928,11 +929,11 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
 }
 
 /** The run's state and each unit's, compactly: what `watch` streams. */
-export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Readonly<{ run: ArcState; units: Readonly<Record<string, string>> }> {
+export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[] }> {
   const d = derive(runDir, arc, hostDir);
   const units: Record<string, string> = {};
   for (const l of d.units) units[l.unit] = compactState(l);
-  return { run: d.state, units };
+  return { run: d.state, units, superseded: [...supersededPackItems(d.view)].sort() };
 }
 
 /** `running:build#3`, `waiting:deps=u1,u2`, `waiting:resources`, `awaiting-admission:paused,drain`, `parked:retryable`, or the bare state. */
@@ -1573,7 +1574,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const unresolvedRevs = [...new Set(meter.bySeat.filter((t) => !tables.has(t.routingRev)).map((t) => t.routingRev))].sort();
 
   const needsUser: readonly OpenItem[] = [
-    ...view.needsUser().filter((n) => n.ack === null).map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),
+    ...openNeedsUser(view).map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),
     ...fileNeedsUser(runDir, view).map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking })),
   ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const commands = commandsOf(runDir, arc);

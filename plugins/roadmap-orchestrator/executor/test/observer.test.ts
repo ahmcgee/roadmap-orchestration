@@ -31,7 +31,7 @@ describe('observer', () => {
     assert.equal(invalid.length, 2);
   });
 
-  it('observer.once: delta, cursor, observations file and stdout lines', async () => {
+  it('observer.once: delta, cursor, observations file and stdout lines; status by the fixture\'s repo and arc (R-19)', async () => {
     const dir = tmpDir('observer');
     const bin = join(dir, 'bin');
     const host = join(dir, 'host');
@@ -45,6 +45,10 @@ describe('observer', () => {
     writeFileSync(join(fx, 'transcript.jsonl'), `${JSON.stringify({ turn: 1, event: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'TRMARK' } }] } } })}\n`);
     writeFileSync(join(host, 'executor.1.err'), 'HOSTERR1\n');
     fakeCodex(bin, `${A}\n${H}\n${N}\ngarbage`);
+    // R-19: the staged CLI is asked per arc, by the fixture's identity.
+    const roadmap = join(fx, 'stage/plugin/executor/bin/roadmap');
+    mkdirSync(join(fx, 'stage/plugin/executor/bin'), { recursive: true });
+    writeFileSync(roadmap, `#!/bin/sh\necho "STATUSARGS $*"\n`, { mode: 0o755 });
     const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: dir };
     const run = () => runUntilExit(process.execPath, [OBSERVER, fx, '--once', '--model', 'm-x', '--host-dir', host], { env, timeoutMs: 60_000 });
 
@@ -56,6 +60,7 @@ describe('observer', () => {
     assert.match(first.stdout, /^OBSERVER tick 1 ok 3 invalid 1$/m);
     const prompt1 = readFileSync(join(bin, 'stdin.0'), 'utf8');
     for (const m of ['EV1', 'EV2', 'NUMARK', 'TRMARK', 'HOSTERR1']) assert.ok(prompt1.includes(m), m);
+    assert.ok(prompt1.includes(`## status arc=arc-a\nSTATUSARGS status --repo ${join(fx, 'stage/product')} --arc arc-a`), prompt1.slice(0, 3000));
     assert.match(readFileSync(join(bin, 'argv'), 'utf8'), /read-only[\s\S]*m-x/);
     const obs = readFileSync(join(fx, 'observer/observations.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.equal(obs.length, 4);

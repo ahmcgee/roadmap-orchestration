@@ -2426,7 +2426,8 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
    must name that capture's sha. Each violation fails the fold.
 2. **Superseded pack items** (K14, `supersededPackItems`, src/needsuser.ts): the item of every review ended before the latest
    ended one is superseded: it neither blocks completion (`openBlocking`) nor holds admission, and `status.packReview`
-   shows it `superseded`.
+   shows it `superseded`. It is not open (`openNeedsUser`, run 10 round 2): `status.needsUser` and `watch --actionable`
+   leave it out.
 3. **An abandoned review**: a call that gives no valid report (a refusal, a malformed answer, a fault, lost twice: a call
    recovery closed lost is asked again once, as a checkpoint's is, D0) ends `pack-review-ended{abandoned, findings: []}` with one blocking `pack-review` item saying so; the architect fixes the pack
    (a new key: a superseding review) or acknowledges it.
@@ -2854,7 +2855,7 @@ The record rows are in "Record evolution" (M4a rev 3 table, "run 10"). Behaviour
   questions (the open `P-n` top 5 with working assumptions, plus new ones); the next arc's Phase 0 starts after that turn
   boundary, applying any answer received.
 - **B. `roadmap watch --actionable`** (src/watch.ts `ActionableFilter`, `watchActionable`): prints only a `needs-user` line
-  of an item not seen and not already acknowledged, a `units` line of the run reaching `complete`, `refused` or `no-owner`
+  of an item not seen and not already acknowledged or superseded (round 2, R-17), a `units` line of the run reaching `complete`, `refused` or `no-owner`
   (once per state) or newly `held`, `blocked` or `draining`, and `{"event":"stall","quietMin":30}` after `STALL_MIN` (30)
   minutes with no change of the parallel view (once per quiet stretch). The M4a driver keeps one `ActionableFilter` across a
   run's watch processes; nothing is persisted. CLI: `Command.watch + actionable: boolean`.
@@ -2877,3 +2878,28 @@ The record rows are in "Record evolution" (M4a rev 3 table, "run 10"). Behaviour
   close-out publication renders the ledger into `debt.md`. A finding over an obligation is untouched.
 - Crash row "close-out settlement" (test/matrix.ts): labels `closeout.after-request-amendment`,
   `closeout.after-deferred-debt`; the next settlement finds the amendment and the debt item by source.
+
+## Run 10, round 2 (paid M4a run 10 efficiency findings; still 1.0.0-dev.7)
+
+No record changes and no new writes (so no crash rows): each is a read-side rule.
+
+- **R-15. The checkpoint capture waits at the publication boundary** (src/holistic/checkpoint.ts `publishing`,
+  `CAPTURE_WAIT_MAX_MIN`). A due checkpoint that would make a call (not an enactment) does not capture while a unit is at
+  `gate`, `candidate` or `ff`, or is `active` with its latest outcome `gate approve` and no open attempt, or the
+  `integration-slot` is not free (any publication: a unit's, a docs or a batch one). `runCheckpoint` returns
+  `skipped{reason: publishing}`, writing nothing; the scheduler asks again after `HOLISTIC_RETRY_MS`. Bound: once
+  `clock(since) ≥ 15` minutes (`since`: the trigger's audit-ended seq, its park's seq, or its previous job's capture
+  seq; the scheduler's `processClock`), it captures anyway. Evidence: ckpt-3 (clear-cancellations seq 1496) captured while
+  refusal-next-steps was at gate (seq 1482), which published at seq 1540, 4 s later; ckpt-3 was rejected (1564) and ckpt-4
+  re-ran (1566–1584).
+- **R-16. One lens call per lens per audit** (unchanged; test `audit.one-call-per-lens`). audit-4's four spawns (seq 1616,
+  1629, 1642, 1655) were its four lenses in run order (vision F-19/F-20, drift F-21/F-22, invariants F-23/F-24, vacuity
+  F-25) over a new range (66bc65f→24ad8b0, `audit-ended` 1667); the `arc-backend` subject's `attempt` is the lens's
+  ordinal. The observer's preamble now says so.
+- **R-17. One predicate of an open item** (src/needsuser.ts `openNeedsUser`: not acknowledged, not superseded):
+  `status.needsUser`, the brief's items, the scheduler's batch holds and `openBlocking` read it. `watch` streams
+  `{"event":"superseded","id"}` for each item a later pack review superseded, before that poll's `needs-user` lines;
+  `--actionable` (`ActionableFilter`) treats it as an acknowledgement, so a superseded item never wakes the architect.
+  `status.packReview.reviews[].superseded` still shows it.
+- **R-19. The observer's status snapshot** (evals/observer.ts) runs `roadmap status --repo <fixture>/stage/product --arc
+  <arc>` for each arc under its roadmap-runtime, never the host-global default (exit 64 once no arc holds the host).

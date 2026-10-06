@@ -123,7 +123,7 @@ import type { RoutingBase } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
 import { type PlanM1, type PlanUnit, lensSetOf } from '../input/plan.ts';
-import { type BlockingItem, blockingItems, holdsUnit, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
+import { type BlockingItem, blockingItems, holdsUnit, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue, trippedTargets } from '../park/schedule.ts';
 import { baselineDue, runBaseline } from '../pipeline/baseline.ts';
@@ -620,7 +620,7 @@ const batchReserveOps = (view: JournalView, finding: FindingId): readonly OpId[]
 export function batchSuspended(view: JournalView, finding: FindingId): boolean {
   const ops = new Set<string>(batchReserveOps(view, finding));
   if (ops.size === 0) return false;
-  const open = new Set(view.needsUser().filter((n) => n.blocking && n.ack === null).map((n) => n.id));
+  const open = new Set(openBlocking(view));
   return view.opsOf('needsuser.raise').some((i) => i.parent.type === 'op' && ops.has(i.parent.op) && open.has(i.expect.id));
 }
 

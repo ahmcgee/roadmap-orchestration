@@ -1,7 +1,7 @@
 // M3 step B5: the cadence audit (src/holistic/{audit,cadence,coverage}.ts) and the arc roles' call (src/pipeline/dispatch.ts
 // `callArcRole`), over real arcs: real git, real processes, the fake claude answering lens calls keyed by job and lens, fake
 // witness lanes scripted per tree. Named tests: cadence.triggers, cadence.final-outstanding-lenses (H9),
-// audit.immutable-inputs, audit.coverage, audit.race-ends-before-merge and audit.race-merge-during-audit (both race
+// audit.immutable-inputs, audit.coverage, audit.one-call-per-lens (R-16), audit.race-ends-before-merge and audit.race-merge-during-audit (both race
 // orders), audit.owed, audit.skipped-on-park, audit.starts-in-ff-window (H2), coverage.docs-edge-contiguous (H8), coverage.docs-edge-subsumed,
 // coverage.vision-reset (H3), the crash cells of the matrix row AUDIT_JOB (test/matrix.ts), and M4a rev 3 (N5):
 // cadence.spec-only-bundle-vision-lens-only, cadence.obligation-bundle-full-drift, audit.cross-lens-merge-corroborated,
@@ -243,6 +243,31 @@ describe('the audit job', () => {
       assert.ok(second.kind === 'ended' && second.outcome === 'completed', JSON.stringify(second));
       assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'vision', from: S1, to: S2 }], 'it discharges only its lens');
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true], ['vision', S2, false]]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('audit.one-call-per-lens (paid M4a run 10, R-16): an audit asks each lens of its plan exactly once, the vision first; the spawn\'s attempt is the lens\'s ordinal in that order, never a retry', T, async () => {
+    const ALL: readonly Lens[] = ['drift', 'invariants', 'vacuity', 'vision'];
+    const { d } = auditArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...['vision', 'drift', 'invariants', 'vacuity'].map((l) => lensStep('audit-1', l as Lens))],
+      units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
+      audit: { every: 5, lenses: [...ALL] },
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+      requestAudit(r);
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.deepEqual(lensCalls(r).map((c) => c.lens), ['vision', 'drift', 'invariants', 'vacuity']);
+      const spawns = r.journal.view.opsOf('proc.spawn').filter((i) => i.parent.type === 'job' && i.parent.job === 'audit-1');
+      assert.deepEqual(spawns.map((i) => (i.expect.subject.purpose === 'arc-backend' ? i.expect.subject.attempt : null)), [1, 2, 3, 4]);
+      assert.deepEqual(ended(r)[0]!.covered.map((c) => c.lens), [...ALL], 'one range per lens');
+      assert.deepEqual(await runAudit(ctx), { kind: 'none' }, 'nothing asks a lens again on the unchanged head');
+      assert.equal(lensCalls(r).length, 4);
     } finally {
       r.journal.close();
     }

@@ -8,7 +8,8 @@
 // bundle.evidence-malformed-or-empty-rejected, bundle.evidence-selection-loss-rejected,
 // bundle.evidence-env-or-rev-differs-rejected, bundle.ruling-corpus-consistency-stamped, bundle.ruling-id-leading-zero,
 // bundle.split-census-out-of-slice-moved, bundle.split-census-other-state-reason, bundle.busy-live-attempt,
-// checkpoint.busy-waits-for-boundary, classify.open-attempt-running-vs-abandoned, checkpoint.manifest-content-addressed,
+// checkpoint.busy-waits-for-boundary, classify.open-attempt-running-vs-abandoned, checkpoint.capture-waits-for-publication and
+// checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
 // checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
 // checkpoint.final-always-full, intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists.
 import assert from 'node:assert/strict';
@@ -21,7 +22,7 @@ import type { EnvId, InvocationId, LaneId, LaneRev, Sha, Sha256Hex } from '../sr
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { evidenceDiffers, numericId, numericRulingIds } from '../src/holistic/bundle.ts';
-import { runCheckpoint } from '../src/holistic/checkpoint.ts';
+import { CAPTURE_WAIT_MAX_MIN, publishing, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import type { Observation } from '../src/holistic/observe.ts';
 import type { WitnessRecord } from '../src/holistic/types.ts';
 import { requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
@@ -34,7 +35,7 @@ import { withForge } from './helpers/corpusarc.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
 import { VALID_OP, checkpointAnswer, checkpointStep, intakeOutcome, lensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { admitOp, checkpointArc, checkpointContext, completedAudit, factsOfKind, visionLenses } from './fixtures/checkpoint-common.ts';
 import { type CorpusHolisticArc, corpusHolisticArc, forgeEnv } from './fixtures/corpus-holistic.ts';
@@ -448,6 +449,52 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
       writeFileSync(spec, was);
       release(x.a.d.scenarioDir, 'pc');
       await unit;
+    } finally {
+      x.r.journal.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// R-15 (paid M4a run 10): the capture waits at the publication boundary
+
+const gateBarrier = { type: 'barrier', name: 'gate', timeoutMs: 120_000 } as const;
+const toGate = (): readonly Step[] => [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [gateBarrier])];
+
+describe('the capture waits for a publication in flight (R-15)', () => {
+  test('checkpoint.capture-waits-for-publication: a due checkpoint captures nothing while a unit is at gate or approved before its candidate; it captures the head the unit published', T, async () => {
+    const x = await arc([...toGate(), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
+    try {
+      const gated = stepTo(x.ctx, 'u1', (f) => f.stage === 'gate');
+      await reached(x.a.d.scenarioDir, 'gate', 120_000);
+      assert.match(publishing(x.r.journal.view).join('; '), /^u1 at gate attempt \d+$/);
+      assert.deepEqual(await run(x), { kind: 'skipped', reason: 'publishing' });
+      release(x.a.d.scenarioDir, 'gate');
+      await gated;
+      assert.match(publishing(x.r.journal.view).join('; '), /^u1 approved at gate attempt \d+$/);
+      assert.deepEqual(await run(x), { kind: 'skipped', reason: 'publishing' });
+      assert.deepEqual(factsOfKind(x.r, 'checkpoint-inputs'), [], 'nothing captured, nothing asked');
+      assert.deepEqual(ckptCalls(x), []);
+      assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
+      assert.deepEqual(publishing(x.r.journal.view), []);
+      const out = await run(x);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
+      assert.equal(factsOfKind(x.r, 'checkpoint-inputs')[0]!.headSha, git(x.a.d.repo, 'rev-parse', 'main'), 'the capture is the published head');
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('checkpoint.capture-wait-bounded: a trigger that has waited CAPTURE_WAIT_MAX_MIN captures with the publication still in flight', T, async () => {
+    const x = await arc([...toGate(), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
+    try {
+      const gated = stepTo(x.ctx, 'u1', (f) => f.stage === 'gate');
+      await reached(x.a.d.scenarioDir, 'gate', 120_000);
+      assert.deepEqual(await withForge(x.a.forge, () => runCheckpoint({ ...x.ctx, clock: () => CAPTURE_WAIT_MAX_MIN - 1 })), { kind: 'skipped', reason: 'publishing' });
+      const out = await withForge(x.a.forge, () => runCheckpoint({ ...x.ctx, clock: () => CAPTURE_WAIT_MAX_MIN }));
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
+      release(x.a.d.scenarioDir, 'gate');
+      await gated;
     } finally {
       x.r.journal.close();
     }

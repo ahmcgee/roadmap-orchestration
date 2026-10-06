@@ -16,6 +16,12 @@
 //      draining skipped, staleness and the rest checked as ever); a request answered otherwise ends the trigger's decision
 //      (its generation quiescent, `quiescentGenerations`). A due job is skipped, writing nothing, while the
 //      checkpoint seat's backend is parked or the arc is paused or stopped.
+//   1b. Paid M4a run 10 (R-15): a due job that would make a call does not capture while a publication would move the head
+//      under it (`publishing`: a unit at gate, approved and not yet at its candidate, at candidate or ff, or the
+//      integration slot held by any publication, a docs or batch one included); it is skipped, writing nothing, and asked
+//      again at the boundary, so its capture is not stale on arrival. The wait is bounded: once the trigger has waited
+//      CAPTURE_WAIT_MAX_MIN (by the scheduler's clock, from its audit's end, its park, or its previous job's capture),
+//      it captures whatever is in flight, so a steady stream of publications cannot starve it.
 //   2. Before the capture: for an audit's trigger, its cited P1s re-witnessed on the head (B5's `rewitnessP1s`, the
 //      race of §2.5); after an evidence rejection, the lanes of the observations it cited re-witnessed on the head.
 //   3. The capture (H2, A19), under the revision fence in one synchronous step: `checkpoint-inputs{job, trigger,
@@ -49,7 +55,7 @@ import { crashPoint } from '../core/crash.ts';
 import type { CheckpointIssues, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, parseInvocationId, canonicalIds } from '../core/ids.ts';
+import { type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, INTEGRATION_SLOT, parseInvocationId, canonicalIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { BACKEND_PARK_CLASSES } from '../core/events.ts';
 import { DEFAULT_BOUNDS, specWitnesses } from '../core/records.ts';
@@ -74,6 +80,7 @@ import { promptFor } from '../prompts/index.ts';
 import { type CheckpointInputs, type CheckpointSpec, type FindingView, type ManifestEntry, type ManifestKind, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
 import { type CheckpointOutput, validateCheckpointOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
+import { entryOf, isFree, resourceTable } from '../resources/reserve.ts';
 import { renderSpec } from '../spec/render.ts';
 import { nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
@@ -95,9 +102,9 @@ export type CheckpointOutcome =
   | Readonly<{ kind: 'none' }>
   /**
    * Due, but not asked: the checkpoint backend is parked, or the arc is paused or stopped; or (M4a) an untrusted issue
-   * policy's item is open and the job waits uncaptured (R31).
+   * policy's item is open and the job waits uncaptured (R31); or (R-15) a publication is in flight (`publishing`).
    */
-  | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' | 'issue-policy-untrusted' }>
+  | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' | 'issue-policy-untrusted' | 'publishing' }>
   /** The call was interrupted (a pause, a stop, a backend park): the job stays running and resumes at a later call. */
   | Readonly<{ kind: 'interrupted'; job: JobId; detail: string }>
   | Readonly<{ kind: 'decided'; job: JobId; trigger: CheckpointTrigger; decision: BundleDecision }>;
@@ -242,7 +249,8 @@ function raiseRespecSecond(ctx: CheckpointContext): void {
   }
 }
 
-type Due = Readonly<{ trigger: CheckpointTrigger; generation: number; prev: CheckpointState | null }>;
+/** `since`: the seq from which the trigger has waited (its audit's end, its park, or its previous job's capture). */
+type Due = Readonly<{ trigger: CheckpointTrigger; generation: number; prev: CheckpointState | null; since: number }>;
 
 /** The latest generation any audit or checkpoint recorded (1 before any). */
 function latestGeneration(ctx: CheckpointContext): number {
@@ -289,12 +297,12 @@ function dueTrigger(ctx: CheckpointContext): Due | null {
   const fold = ctx.journal.view.holistic();
   const latest = (t: CheckpointTrigger): CheckpointState | undefined => fold.checkpoints.filter((c) => triggerKey(c.inputs.trigger) === triggerKey(t)).at(-1);
   const parks = designParks(ctx).filter((p) => earlierRespecs(ctx, p.unit, p.seq).length === 0)
-    .map((p) => ({ trigger: { type: 'park', unit: p.unit, seq: p.seq } as CheckpointTrigger, generation: latestGeneration(ctx) }));
-  const audits = fold.audits.filter((a) => a.ended?.outcome === 'completed')
-    .map((a) => ({ trigger: { type: 'audit', job: a.started.job } as CheckpointTrigger, generation: a.started.generation }));
-  for (const t of [...parks, ...audits]) {
+    .map((p) => ({ trigger: { type: 'park', unit: p.unit, seq: p.seq } as CheckpointTrigger, generation: latestGeneration(ctx), at: p.seq }));
+  const audits = fold.audits.flatMap((a) => (a.ended?.outcome === 'completed'
+    ? [{ trigger: { type: 'audit', job: a.started.job } as CheckpointTrigger, generation: a.started.generation, at: a.ended.seq }] : []));
+  for (const { at, ...t } of [...parks, ...audits]) {
     const last = latest(t.trigger);
-    if (dueAgain(ctx, last)) return { ...t, prev: last ?? null };
+    if (dueAgain(ctx, last)) return { ...t, prev: last ?? null, since: last?.inputs.seq ?? at };
   }
   return null;
 }
@@ -305,6 +313,28 @@ export function checkpointSkip(ctx: CheckpointContext): 'backend-parked' | 'paus
   const control = view.control();
   if (control.stop !== null || control.pausedAll) return 'paused';
   return view.parkedBackends().includes(arcSeat(ctx, 'checkpoint').triple.backend) ? 'backend-parked' : null;
+}
+
+/** R-15: how long a due checkpoint waits for the publications in flight before it captures anyway (see the header). */
+export const CAPTURE_WAIT_MAX_MIN = 15;
+
+/** The judgment stages and publication steps after which a unit's publication moves the integration head. */
+const PUBLISHING_STAGES: readonly string[] = ['gate', 'candidate', 'ff'];
+
+/**
+ * R-15 (paid M4a run 10: ckpt-3 captured while refusal-next-steps was at gate, which published 4 s later): what would move
+ * the integration head under a capture now: each unit at gate, candidate or ff, or approved and not yet at its candidate,
+ * and the integration slot when any publication holds it (a unit's, a docs or a batch one). Empty: a capture now is not
+ * stale on arrival.
+ */
+export function publishing(view: JournalView): readonly string[] {
+  const out = view.plannedUnits().flatMap((unit) => {
+    const open = openAttempt(view, unit);
+    if (open !== null) return PUBLISHING_STAGES.includes(open.stage) ? [`${unit} at ${open.stage} attempt ${open.attempt}`] : [];
+    const u = view.unit(unit);
+    return u.status === 'active' && u.decided?.stage === 'gate' && u.decided.outcome === 'approve' ? [`${unit} approved at gate attempt ${u.decided.attempt}`] : [];
+  });
+  return isFree(entryOf(resourceTable(view), INTEGRATION_SLOT)) ? out : [...out, 'the integration slot is held'];
 }
 
 /** Whether a checkpoint is running or due now (the scheduler's question before it calls `runCheckpoint`). */
@@ -647,6 +677,8 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
     if (!approved(ctx, due.prev)) {
       const skip = checkpointSkip(ctx);
       if (skip !== null) return { kind: 'skipped', reason: skip };
+      // R-15: a paid call waits at the publication boundary, bounded (see the header).
+      if (publishing(ctx.journal.view).length > 0 && ctx.clock(due.since) < CAPTURE_WAIT_MAX_MIN) return { kind: 'skipped', reason: 'publishing' };
     }
     if (due.trigger.type === 'audit') await rewitnessP1s(ctx, due.trigger.job);
     if (due.prev !== null) await rewitnessCited(ctx, due.prev);

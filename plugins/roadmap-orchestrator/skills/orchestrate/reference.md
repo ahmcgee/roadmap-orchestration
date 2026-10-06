@@ -242,12 +242,14 @@ or docs publication), and anything not yet published to the ref is not in it.
 ## watch
 
 `{"event":"needs-user", id, blocking, reason, subject, summary}` for every raised item, blocking or not;
-`{"event":"ack", id, command, choice}`; `{"event":"owner", state, generation, pid}`; `{"event":"units", run,
+`{"event":"ack", id, command, choice}`; `{"event":"superseded", id}` for an item a later pack review superseded;
+`{"event":"owner", state, generation, pid}`; `{"event":"units", run,
 units: {<unit>: <state>}}` with compact states (`running:build#3`, `waiting:deps=u1`, `parked:retryable`,
 `awaiting-admission:known-defect`, `merged`). Plain `watch` streams every change. `watch --actionable` prints only
-the wakes: a `needs-user` line for an item not seen before and not already acknowledged, the `units` line of `run`
+the wakes: a `needs-user` line for an item not seen before and not already acknowledged or superseded, the `units` line of `run`
 reaching `complete`, `refused` or `no-owner` (once each) or newly `held`, `blocked` or `draining`, and
-`{"event":"stall","quietMin":30}` after 30 minutes with no change. Owner, ack and routine `units` lines are dropped. A
+`{"event":"stall","quietMin":30}` after 30 minutes with no change. Owner, ack, superseded and routine `units` lines are
+dropped. `status.needsUser` lists open items only: a superseded one shows under `packReview` alone. A
 fresh `--actionable` process starts with nothing seen: it prints the open items and a terminal or constrained run
 again.
 
