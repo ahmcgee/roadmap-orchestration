@@ -26,7 +26,7 @@ import { type InvocationId, type JobId, parseInvocationId } from '../../src/core
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import { checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../helpers/holistic.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
@@ -105,7 +105,7 @@ function asideAdmit(r: ExecRun): JsonValue {
   const spec = JSON.parse(readFileSync(join(r.planPath, '..', 'u1.json'), 'utf8')) as Json;
   return {
     op: 'admit', unit: { id: 'aside', risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' },
-    spec: JSON.stringify({ ...spec, unit: 'aside', rev: 1, obligations: ['I-1'] }), targets: [], cites: ['V-1'], evidence: ['scripted evidence'],
+    spec: admitSpecWire({ ...spec, unit: 'aside', rev: 1, obligations: ['I-1'] }), targets: [], cites: ['V-1'], evidence: ['scripted evidence'],
   };
 }
 

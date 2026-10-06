@@ -20,9 +20,11 @@
 //     keyword stub) given only the answer key's owner answers released so far (`from: arc-1-complete` once the first
 //     arc's completion is in its ref), told to answer from them alone, else "no view: keep your working assumption";
 //   - any other final text is the skill's headless wait (no Monitor): the driver tails `roadmap watch` on the arc it
-//     last saw holding the host and resumes the session only on an actionable event (`WakeFilter`, F26): a new
-//     needs-user item, the run reaching complete, refused or no-owner, a constraint change (the run newly held,
-//     blocked or draining) or no state change for STALL_MIN minutes; routine transitions are absorbed. Debounced 3 s.
+//     last saw holding the host and resumes the session only on an actionable event (F26; the executor's one rule,
+//     src/watch.ts `ActionableFilter`, which `roadmap watch --actionable` applies too, one instance kept across the
+//     run's watch processes): a new needs-user item, the run reaching complete, refused or no-owner, a constraint change
+//     (the run newly held, blocked or draining) or no state change for STALL_MIN minutes; routine transitions are
+//     absorbed. Debounced 3 s.
 //     With nothing to wait on (no arc seen, or the last one ended and was reported) and nothing asked, it nudges the
 //     session, at most 3 times in a row (`stalled`).
 //   - at the end, whatever the end (a `finally`), an arc of this product still holding the host is stopped with the
@@ -58,6 +60,7 @@ import { readClaim } from '../../src/host/lock.ts';
 import { type Event } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
+import { ActionableFilter, stallLine } from '../../src/watch.ts';
 import { absPath, type AbsPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
 import { runDir } from '../../src/input/cli.ts';
@@ -82,8 +85,6 @@ export const LIMITS: Readonly<{ real: Limits; fake: Limits }> = {
   real: { sessionMs: 360 * 60_000, turnMs: 360 * 60_000 },
   fake: { sessionMs: 30 * 60_000, turnMs: 30 * 60_000 },
 };
-/** Minutes without a state change after which the root is woken (F26; unmeasured, run 10 measures it). */
-export const STALL_MIN = 30;
 const WAKE_DEBOUNCE_MS = 3_000;
 /** How long the end-of-run stop waits for the host claim to clear. */
 const RELEASE_WAIT_MS = 5 * 60_000;
@@ -309,7 +310,7 @@ export const initialPrompt = (profile: ProfileName): string => [
   'You are the root agent of a roadmap-orchestrator session over this product repository (`tidewater`), run headless:',
   'nobody watches this session. Use the orchestrate skill of the roadmap-orchestrator plugin from start to finish:',
   'bootstrap, then Phase 0, arcs and chaining toward the target state the corpus in docs/corpus describes.',
-  'The owner answers only the numbered questions you end a turn with. While an arc runs, you may wait on `roadmap watch`',
+  'The owner answers only the numbered questions you end a turn with. While an arc runs, you may wait on `roadmap watch --actionable`',
   'under Monitor or end your turn; both are supported. If you end your turn, the harness resumes you on actionable',
   '`roadmap watch` events only (a needs-user item, a terminal state, a changed constraint, a stall).',
   'End the session with the skill\'s session-end line.',
@@ -377,73 +378,10 @@ function roadmapArgv(l: Layout, mode: Mode, args: readonly string[]): readonly [
     : [process.execPath, [STAGE_CLI, l.plugin, fakeHostDir(l.dir), ...args]];
 }
 
-/** Run states that end the wait: the run is over (a needs-user item aside, nothing more happens without the root). */
-const TERMINAL_RUN: readonly string[] = ['complete', 'refused', 'no-owner'];
-/** Run states that are a changed constraint: paused or a parked backend (held), work waiting on the architect (blocked), admissions closed (draining). */
-const CONSTRAINT_RUN: readonly string[] = ['held', 'blocked', 'draining'];
-
-/** A needs-user item's wake key: ids are arc-scoped, so the arc is part of it. */
-export const wakeKey = (arc: string, id: string): string => `${arc}:${id}`;
+type Watched = { arc: string | null; arcsSeen: string[]; filter: ActionableFilter };
 
 /**
- * What wakes the root agent (F26): a needs-user item not seen before, the run reaching a terminal state, a changed
- * constraint (the run newly `held`, `blocked` or `draining`), or no state change for STALL_MIN minutes. Everything else
- * `roadmap watch` streams (owner liveness, acks, a unit moving between stages, gates, lanes, publication) is absorbed.
- * It lives across the watch processes of one run: a restarted watch re-emits its current state, which wakes nothing twice.
- */
-export class WakeFilter {
-  private readonly items = new Set<string>();
-  private readonly terminal = new Set<string>();
-  private run: string | null = null;
-  private units: string | null = null;
-  private changedAt: number;
-  constructor(now: number) {
-    this.changedAt = now;
-  }
-
-  /** The line to wake the root on, or null for a routine one. */
-  feed(arc: string, line: string, now: number): string | null {
-    const e = JSON.parse(line) as { event: string; id?: string; run?: string };
-    if (e.event === 'needs-user' && e.id !== undefined) {
-      const key = wakeKey(arc, e.id);
-      if (this.items.has(key)) return null;
-      this.items.add(key);
-      return line;
-    }
-    if (e.event !== 'units' || e.run === undefined) return null;
-    const stateChanged = line !== this.units;
-    if (stateChanged) this.changedAt = now;
-    this.units = line;
-    const previous = this.run;
-    this.run = e.run;
-    if (TERMINAL_RUN.includes(e.run)) {
-      if (this.terminal.has(`${arc}:${e.run}`)) return null;
-      this.terminal.add(`${arc}:${e.run}`);
-      return line;
-    }
-    return CONSTRAINT_RUN.includes(e.run) && e.run !== previous ? line : null;
-  }
-
-  /** Whether the run's unit states have not changed for STALL_MIN minutes. */
-  stalled(now: number): boolean {
-    return now - this.changedAt >= STALL_MIN * 60_000;
-  }
-
-  /** A wake went to the root: the stall clock restarts. */
-  woke(now: number): void {
-    this.changedAt = now;
-  }
-
-  /** Whether `arc` already reached a terminal state the root was told about. */
-  ended(arc: string): boolean {
-    return [...this.terminal].some((t) => t.startsWith(`${arc}:`));
-  }
-}
-
-type Watched = { arc: string | null; arcsSeen: string[]; filter: WakeFilter };
-
-/**
- * Waits for the next wake-up of the arc last seen holding the host (`WakeFilter`). Returns the lines; '' at the
+ * Waits for the next wake-up of the arc last seen holding the host (src/watch.ts `ActionableFilter`, kept across the run's watch processes). Returns the lines; '' at the
  * deadline; null when there is nothing to wait on (no arc seen, or the last one no longer holds the host and its end was
  * already reported).
  */
@@ -485,7 +423,7 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
   child.on('close', () => void (exited = true));
   while (!exited && Date.now() < deadline && (firstAt === null || Date.now() - firstAt < WAKE_DEBOUNCE_MS)) {
     if (firstAt === null && w.filter.stalled(Date.now())) {
-      lines.push(JSON.stringify({ event: 'stall', quietMin: STALL_MIN }));
+      lines.push(stallLine());
       firstAt = Date.now();
     }
     await sleep(250);
@@ -609,7 +547,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
   const devices: Devices = { policyFlip: null, policyFix: null };
   const owner: OwnerExchange[] = [];
   const turns: Turn[] = [];
-  const watched: Watched = { arc: null, arcsSeen: [], filter: new WakeFilter(Date.now()) };
+  const watched: Watched = { arc: null, arcsSeen: [], filter: new ActionableFilter(Date.now()) };
   const ownerCtx: OwnerCtx = { l, env, fake: mode.kind === 'fake', devices };
   const onArc = (arc: string): void => {
     if (mode.kind !== 'fake' || mode.script !== 'story' || devices.policyFlip !== null || watched.arcsSeen.indexOf(arc) !== 1) return;

@@ -1,7 +1,8 @@
 // M4a rev 3 step N0: the records frozen before their behaviour lands (SCHEMAS.md "M4a rev 3"). Round trips of every new
 // record and arm (byte-identical through the canonical reader), the refusals that keep illegal states out, the dev.6
 // read-time defaults (`upgrade.defaults-rev3`), the lane-rev normalisation (F7), the open-attempt reading (R50), the new
-// plan and spec fields, the role schemas and the CLI forms.
+// plan and spec fields, the role schemas and the CLI forms. Run 10 (D): checkpoint.admit-spec-schema, checkpoint.admit-spec-read,
+// upgrade.admit-spec-text.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, serializeEvent } from '../src/core/events.ts';
@@ -15,7 +16,7 @@ import {
   HOST_SIGNATURES_DEV6, buildExperimentsDefault, bundleClassesOf, dev6SmokeBounds, mutantSubjectDefault,
 } from '../src/core/upgrade.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { isoTime } from '../src/core/values.ts';
+import { absPath, isoTime } from '../src/core/values.ts';
 import { debtSource } from '../src/debt/types.ts';
 import { HOST_SIGNATURES } from '../src/host/signatures.ts';
 import { type ArcLaneDef, admitClass, conversion, laneRevMatches, laneRevOf, parseObligations, witnessLaneFile } from '../src/holistic/types.ts';
@@ -23,8 +24,11 @@ import { CliError, parseCommand } from '../src/input/cli.ts';
 import { knownDefectsOf, parsePlan, planCheckShapeOf, priorityOf } from '../src/input/plan.ts';
 import { DETAILED_OUTCOMES, STAGE_OUTCOME_KINDS } from '../src/core/events.ts';
 import {
-  BUILD_SCHEMA, PLAN_ASSESSMENT_SCHEMA, buildOutputFor, buildSchemaFor, validateBuildOutput, validatePlanAssessment, validatePlanCheckAcceptanceOutput,
+  BUILD_SCHEMA, CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, buildOutputFor, buildSchemaFor, validateBuildOutput, validateCheckpointOutput, validatePlanAssessment,
+  validatePlanCheckAcceptanceOutput,
 } from '../src/prompts/schemas.ts';
+import { schemaViolation } from '../src/backends/adapter.ts';
+import { parseSpec, specBytes } from '../src/spec/spec.ts';
 import { compareRank } from '../src/schedule/types.ts';
 import { canonicalJson as cj } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
@@ -443,5 +447,54 @@ describe('cli.m4a-rev3', () => {
     refuses(['apply', '--ruling', 'a.json', '--ruling', 'a.json'], /given twice/);
     refuses(['apply', '--dry-run', '--dry-run'], /given twice/);
     void commandId;
+  });
+});
+
+describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', () => {
+  const wire = {
+    schema: 'roadmap/spec-m1', unit: 'gap', rev: 1, scope: ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
+    lanes: [{
+      id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: [{ name: 'TZ', value: 'UTC' }], pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
+      evidenceGlobs: [], evidenceExcludes: [], state: 'active',
+    }],
+    acceptance: [{ id: 'A1', clause: 'A booking names one berth.', failLoudIfUndelivered: true, state: 'active' }],
+    obligations: [], repairs: ['F-1'],
+  };
+  const admit = (spec: unknown) => ({
+    op: 'admit', unit: { id: 'gap', risk: 'low', scope: ['src/**'], after: [], origin: 'repair' }, spec, targets: [], cites: ['V-1'], evidence: ['F-1'],
+  });
+  const answer = (spec: unknown) => ({
+    decision: 'bundle', reasons: ['r'], ops: [admit(spec)], rulings: [], findingDispositions: [], interpretations: [],
+    cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [], corpusAmendments: [], issueIntake: [],
+  });
+
+  it('checkpoint.admit-spec-schema: the wire object conforms; JSON text or a spec missing a field is a schema violation the adapter catches', () => {
+    assert.equal(schemaViolation(CHECKPOINT_SCHEMA, answer(wire)), null);
+    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer(JSON.stringify(wire))) ?? '', /ops\[0\]/);
+    const { acceptance: _a, ...missing } = wire;
+    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer(missing)) ?? '', /ops\[0\]/);
+    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer({ ...wire, schema: 'roadmap/spec-m2' })) ?? '', /ops\[0\]/);
+    assert.match(schemaViolation(CHECKPOINT_SCHEMA, answer({ ...wire, witnesses: [] })) ?? '', /ops\[0\]/, 'no witness items in an admit');
+  });
+
+  it('checkpoint.admit-spec-read: the reader turns the wire object into spec.json\'s canonical text (env.set a map, empty lists absent) and refuses a spec the spec reader refuses', () => {
+    const out = validateCheckpointOutput(answer(wire));
+    const op = out.ops[0]!;
+    assert.equal(op.op, 'admit');
+    if (op.op !== 'admit') return;
+    const spec = parseSpec(Buffer.from(op.spec, 'utf8'), absPath('/gap.json'));
+    assert.equal(op.spec, specBytes(spec).toString('utf8'), 'canonical text');
+    assert.deepEqual(spec.lanes[0]!.env, { set: { TZ: 'UTC' }, pass: [] });
+    assert.equal(spec.obligations, undefined, 'obligations [] reads as none');
+    assert.deepEqual(spec.repairs, ['F-1']);
+    assert.throws(() => validateCheckpointOutput(answer({ ...wire, acceptance: [] })), (e: unknown) => e instanceof SchemaError && e.field.startsWith('checkpoint.ops[0].spec'));
+    assert.throws(() => validateCheckpointOutput(answer({ ...wire, facts: [{ id: 'A1', text: 't', state: 'active' }] })), /a unique id/);
+    assert.throws(() => validateCheckpointOutput(answer({ ...wire, lanes: [{ ...wire.lanes[0], env: { set: [{ name: 'A', value: '1' }, { name: 'A', value: '2' }], pass: [] } }] })), SchemaError);
+  });
+
+  it('upgrade.admit-spec-text: an answer recorded before run 10 holds the spec as JSON text, read as written', () => {
+    const text = JSON.stringify({ unit: 'anything' });
+    const op = validateCheckpointOutput(answer(text)).ops[0]!;
+    assert.ok(op.op === 'admit' && op.spec === text);
   });
 });

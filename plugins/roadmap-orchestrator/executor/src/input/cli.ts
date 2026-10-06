@@ -34,7 +34,8 @@ export type Command =
   | Readonly<{ command: 'version' }>
   | Readonly<{ command: 'start'; args: StartArgs }>
   | Readonly<{ command: 'status'; run: RunLocator }>
-  | Readonly<{ command: 'watch'; run: RunLocator }>
+  /** `actionable` (`--actionable`): only what the architect acts on (src/watch.ts `ActionableFilter`). */
+  | Readonly<{ command: 'watch'; actionable: boolean; run: RunLocator }>
   | Readonly<{ command: 'stop'; run: RunLocator }>
   | Readonly<{ command: 'pause'; target: PauseTarget; run: RunLocator }>
   | Readonly<{ command: 'ack'; id: NeedsUserId; choice: string | null; run: RunLocator }>
@@ -195,8 +196,12 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     case 'start':
       return { command: 'start', args: parseStartArgs(rest) };
+    case 'watch': {
+      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch' }, command);
+      positionals(p, command, 0);
+      return { command, actionable: p.flags.has('actionable'), run: locator(p, command) };
+    }
     case 'status':
-    case 'watch':
     case 'stop': {
       const p = parseRest(rest, LOCATOR, command);
       positionals(p, command, 0);

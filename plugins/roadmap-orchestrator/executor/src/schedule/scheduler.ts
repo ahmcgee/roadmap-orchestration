@@ -85,7 +85,9 @@
 // superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
 // no lens of L with an outstanding range, no owed trigger; no checkpoint due or running; the latest generation
 // quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
-// change; every non-exempt obligation held on the head. The close-out (A8, `publishCloseOut`) runs once all but
+// change; every non-exempt obligation held on the head. With only quiescence, the close-out and the obligations left,
+// the close-out settlement runs first (run 10, src/holistic/closeout.ts `settleCloseOut`: unanswered bundle requests
+// declined, a corpus arc's open P2/P3 findings with no obligation banked). The close-out (A8, `publishCloseOut`) runs once all but
 // itself and the obligations hold (its lanes witness every arc lane on the head it publishes, or on the head alone
 // when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
 // the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
@@ -110,6 +112,7 @@ import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
 import { type AuditContext, auditPending, raiseAuditOwed, runAudit } from '../holistic/audit.ts';
 import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.ts';
 import { type CheckpointContext, type DesignParkRoute, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
+import { settleCloseOut } from '../holistic/closeout.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
@@ -384,6 +387,9 @@ export function raiseResult(ctx: StageContext, unit: UnitId, result: UnitResult,
 
 // ---------------------------------------------------------------------------------------------------
 // The completion predicate (§2.10)
+
+/** The blockers the close-out settles alongside (run 10, E and F; src/holistic/closeout.ts): with only these left, it runs. */
+const CLOSE_OUT_BLOCKERS = ['generation-not-quiescent', 'close-out', 'obligations-not-discharged'] as const satisfies readonly CompletionBlocker[];
 
 /** Why a holistic arc is not `complete` now: each condition of §2.10 that fails, in this order. */
 export const COMPLETION_BLOCKERS = [
@@ -1106,6 +1112,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
    */
   const ended = async (blocking: readonly BlockingItem[]): Promise<SchedulerEnd | null> => {
     const blockers = completionBlockers(h, { blocking: blocking.length, pending: 0 });
+    // Run 10 (E, F): nothing but the close-out left, the close-out settlement first (unanswered requests declined, open
+    // P2/P3 findings with no obligation banked); what it wrote is read again next time round.
+    const settling = view().holistic().on && blockers.every((b) => (CLOSE_OUT_BLOCKERS as readonly string[]).includes(b));
+    if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.checkpoint)) return null;
     if (blockers.length === 0) {
       completeArc(x.stage);
       if (view().holistic().completion !== null) await terminalSnapshot(x.stage);

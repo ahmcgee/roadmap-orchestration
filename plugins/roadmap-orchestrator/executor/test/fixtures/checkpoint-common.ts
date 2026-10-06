@@ -13,7 +13,7 @@ import { runAudit } from '../../src/holistic/audit.ts';
 import type { CheckpointContext } from '../../src/holistic/checkpoint.ts';
 import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { lensStep } from '../helpers/holistic.ts';
+import { admitSpecWire, lensStep } from '../helpers/holistic.ts';
 import { type AuditArcOptions, auditArc, auditContext, factsOf } from './audit-common.ts';
 import { type ArcDescriptor, type ArcRun, applyBody } from './unit-common.ts';
 
@@ -75,12 +75,12 @@ export async function applyVision(r: ArcRun, w: Wired, clauses: readonly Json[])
 export const limitsOp = (field: string, value: number, evidence: readonly string[] = ['scripted evidence']): JsonValue =>
   ({ op: 'limits', unit: null, limits: [{ field, value }], cites: ['V-1'], evidence: [...evidence] });
 
-/** An `admit` of `id`: u1's spec file renamed to `id` at rev 1, `lanes` replacing its lanes when given. */
+/** An `admit` of `id`: u1's spec file renamed to `id` at rev 1 (in the admit wire form), `lanes` replacing its lanes when given. */
 export function admitOp(d: ArcDescriptor, id: string, lanes?: readonly Json[]): JsonValue {
   const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
-  const text = JSON.stringify({ ...spec, unit: id, rev: 1, ...(lanes === undefined ? {} : { lanes }) });
   return {
-    op: 'admit', unit: { id, risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' }, spec: text, targets: [],
+    op: 'admit', unit: { id, risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' },
+    spec: admitSpecWire({ ...spec, unit: id, rev: 1, ...(lanes === undefined ? {} : { lanes }) }), targets: [],
     cites: ['V-1'], evidence: ['scripted evidence'],
   };
 }

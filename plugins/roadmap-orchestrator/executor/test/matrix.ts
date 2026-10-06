@@ -132,6 +132,7 @@ export const PLANCHECK_ACCEPTANCE = 'plan-check acceptance patch (M4a rev 3 N3: 
 export const PLANCHECK_IN_SESSION = 'plan-check in-session (M4a rev 3 N3: a frontier builder\'s dispatch pinned, no call, then the outcome in-session)';
 export const BUILD_ASSESS = 'build assess (M4a rev 3 N3: the fresh build\'s assessment call, its result read, findings and risk, then the implementing call resuming its session)';
 export const PREPARE_KNOWN_DEFECT = 'prepare known-defect (M4a rev 3 N3: a unit released from its known-defect hold merges the tip in, attempt-scoped, snapshots, then the outcome)';
+export const CLOSE_OUT_SETTLEMENT = 'close-out settlement (run 10 E, F: an unanswered bundle request\'s corpus amendment, then its decline; an open P2/P3 finding with no obligation banked, then deferred)';
 export const ADMIT_CONVERSIONS = 'admit conversions (M4a rev 3 N2: a decision record holding conversions, then settlement: each conversion\'s corpus amendment, a follow-up overrun\'s debt item naming the opportunity)';
 export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
 export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
@@ -1919,6 +1920,23 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the decision durable with its conversions, the amendment (and for an overrun the debt item) written or not: the restart settles from the record (never classifying again, never asking again), writing each missing amendment and debt item once by source; one amendment per conversion, one opportunity-overrun debt item naming O-1',
       },
       B5: { status: 'excluded', why: 'the settlement is idempotent by source: settling again writes nothing' },
+    },
+  },
+  {
+    // Run 10 (src/holistic/closeout.ts `settleCloseOut`): the facts the close-out settlement writes, idempotent by source.
+    // Crashed in test/closeout.test.ts (a corpus arc with ckpt-2's unanswered request, F-1 a P2 with no obligation).
+    row: CLOSE_OUT_SETTLEMENT,
+    test: 'test/closeout.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn one' },
+      B2: { status: 'excluded', why: 'no intent: the settlement is written from the log, the request and the findings it reads' },
+      B3: { status: 'excluded', why: 'nothing is acted between the facts but their appends' },
+      B4: {
+        status: 'crash',
+        labels: ['closeout.after-request-amendment', 'closeout.after-deferred-debt'],
+        recovery: 'the request\'s amendment written and its decline not, or F-1\'s debt item written and its ruling not: the next settlement finds the amendment and the debt item by source, writes the decline or the ruling once; one amendment, one decline, one debt item, F-1 ruled deferred by code, F-2 untouched',
+      },
+      B5: { status: 'excluded', why: 'the settlement is idempotent: settling again writes nothing' },
     },
   },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },

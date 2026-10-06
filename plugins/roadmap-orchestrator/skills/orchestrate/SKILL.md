@@ -164,15 +164,20 @@ corpus arc (`holistic-needs-corpus`). An arc started on an older release keeps i
 
 ## Running an arc
 
-Wait on `roadmap watch` under Monitor, with a timeout, and wake only on what is actionable ("Supervising the
-executor"). Without a Monitor tool, end your turn while the arc runs; the harness resumes you on the next actionable
-watch event. Read `status` on each wake.
+Wait only on `roadmap watch --actionable` under Monitor, with a timeout, or end your turn: it prints only what is
+actionable ("Supervising the executor"), so every line it prints is a wake. Without a Monitor tool, end your turn
+while the arc runs; the harness resumes you on the next actionable event. Never wait on plain `roadmap watch` and
+never poll `status` in a loop: a turn kept open on routine events is the session's largest cost. Read `status` on
+each wake.
 
 - **Needs-user items** are yours to adjudicate, except owner-only acts. Read the item file and its evidence in
   full before you act or ack. The recommendation says which procedure applies; "Handling parks" below has them.
 - **The checkpoint acts first.** In a holistic arc it rules toward the vision and records every departure as a
   divergence. Read `divergences` and `decisionsSince`; reverse with `roadmap reverse <D-n>` or an `apply` when it
-  read the vision wrong. A `bundle-request` is yours: `ack` it with `--choice apply` or `--choice reject`.
+  read the vision wrong. A `bundle-request` is yours: `ack` it with `--choice apply` or `--choice reject`; one the
+  executor cannot apply offers `--choice acknowledge` (you made the change with `apply`, or none is needed) or
+  `--choice decline`. One still unanswered when only the close-out is left is declined by the executor, and its
+  proposal becomes an amendment for the next Phase 0: a non-blocking item never holds completion.
 - **Checkpoint admits** (corpus arcs). Code classes every unit a checkpoint admits (`status.admits`): `repair`
   (something broken, or a delivered obligation not holding), `oversight` (a gap within the slice's clauses) or
   `opportunity` (it advances a clause outside the slice; its clauses join `advances`). An admit must cite every
@@ -197,9 +202,10 @@ watch event. Read `status` on each wake.
 Read only `status`, `brief --json`, needs-user item files and the evidence an item names; never poll in a tight
 loop, never read lane output an item does not point at.
 
-**Wake rule.** Wake on a needs-user item, the run reaching a terminal state (`complete`, `refused`, `no-owner`), a
-changed constraint (the run newly `held`, `blocked` or `draining`) or a measured stall (no state change for 30
-minutes). Unit moves between stages, gates, lanes and publications are routine: say nothing about them.
+**Wake rule** (`watch --actionable` applies it): wake on a needs-user item, the run reaching a terminal state
+(`complete`, `refused`, `no-owner`), a changed constraint (the run newly `held`, `blocked` or `draining`) or a
+measured stall (no state change for 30 minutes). Unit moves between stages, gates, lanes and publications are
+routine: say nothing about them.
 
 **Operate** only through the sanctioned levers: `pause`, `resume`, `resume --backend`, `ack`, `apply` (re-entry,
 priority, known defects and `--ruling` included), `rule`, `steer`, `reverse`, `merge-in`, `audit`,
@@ -251,8 +257,14 @@ Phase 0 under way. While an arc runs, one `roadmap apply` carries it:
   same apply.
 - The next between-arc commit carries that corpus edit again: the integration branch never had it.
 
-Check in at every arc completion (the chain boundary), at a stop, and when the owner returns. In an unattended
-chain a check-in does not wait: carry on with the working assumptions.
+Check in at every arc completion (the chain boundary), at every event worth a brief (a stop, a blocking item you
+cannot decide, the owner returning). **A check-in ends the turn**: the brief, your preface, then the numbered
+questions, and nothing after them (at a stop, the session-end line comes last: "Chaining"). Before it, start
+nothing that needs an answer: the next arc's Phase 0 waits for the turn boundary. It never blocks on the answer:
+the session continues when you are resumed, by the owner's reply or by the next wake. In an unattended session make
+sure something resumes you before you end the turn (the harness, a scheduled wake-up, or a Monitor on
+`watch --actionable` still running). On resuming, apply any answer at once ("An owner's answer"), keep the working
+assumptions for the rest, and start the next arc's Phase 0 then, never inside the check-in's turn.
 
 **The ack** is the owner's. Run `roadmap brief --repo <repo> --ack <briefId>` only when the owner acknowledged that
 brief. It acknowledges the brief's non-blocking digest and convergence items and moves "since"; acknowledged starts
@@ -266,7 +278,7 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 1. `roadmap pr --repo <repo> --arc <arc>`: pushes the arc branch and opens or updates its PR. The first arc's PR
    targets `main`, each later one the previous arc's branch; the body lists the arc's amendments and says to merge
    with merge commits.
-2. Check in.
+2. Check in: end the turn with the questions ("Check-ins"). Everything below runs after you are resumed.
 3. `roadmap chain status --repo <repo>`. When `unackedStarts` has K or more arcs, the next start would be refused
    `chain-invalid{limit}`: stop with reason `k-limit`.
 4. Choose the next slice from the census, per the vision: `sliceCandidates` from `phase0 check`, ranked by the

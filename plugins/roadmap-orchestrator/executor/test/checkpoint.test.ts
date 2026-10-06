@@ -121,7 +121,7 @@ describe('the checkpoint and its bundle', () => {
       const second = await runCheckpoint(ctx);
       assert.ok(second.kind === 'decided' && second.decision.kind === 'requested' && second.decision.reason === 'bundle-request', JSON.stringify(second));
       const n = item(r, second.decision.needsUser);
-      assert.deepEqual([n.blocking, n.options], [false, []], 'non-blocking, and nothing to apply as proposed');
+      assert.deepEqual([n.blocking, n.options.map((o) => o.id)], [false, ['acknowledge', 'decline']], 'non-blocking, nothing to apply as proposed: acknowledge or decline (run 10, E)');
       // The retry read the first attempt's invalid reasons verbatim (paid m3 run 9: ckpt-3 repeated ckpt-2's mistakes).
       const stdin = (job: string) => readCalls(d.scenarioPath).find((c) => c.unit === job)!.stdin;
       assert.doesNotMatch(stdin('ckpt-1'), /<prior_attempt>/);
@@ -365,8 +365,8 @@ describe('the activation checks', () => {
     const { ctx } = checkpointContext(r);
     try {
       const op = admitOp(d, 'u2') as Record<string, JsonValue>;
-      const { obligations: _declared, ...spec } = JSON.parse(op['spec'] as string) as Record<string, JsonValue>;
-      appendSteps(d, [checkpointStep('ckpt-1', bundle([{ ...op, spec: JSON.stringify(spec) }]))]);
+      const spec = op['spec'] as Record<string, JsonValue>;
+      appendSteps(d, [checkpointStep('ckpt-1', bundle([{ ...op, spec: { ...spec, obligations: [] } }]))]);
       await completedAudit(r, ctx);
       const out = await runCheckpoint(ctx);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
@@ -580,8 +580,8 @@ describe('P1s and their repair (paid m3 run 9)', () => {
     const { ctx } = checkpointContext(r);
     try {
       const op = admitOp(d, 'r1') as Record<string, JsonValue>;
-      const spec = { ...(JSON.parse(op['spec'] as string) as Record<string, JsonValue>), repairs: ['F-1'] };
-      const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec: JSON.stringify(spec) };
+      const spec = { ...(op['spec'] as Record<string, JsonValue>), repairs: ['F-1'] };
+      const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec };
       const accepting = checkpointAnswer({ decision: 'bundle', ops: [repair], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'handled by r1' }] });
       appendSteps(d, [
         checkpointStep('ckpt-1', accepting), checkpointStep('ckpt-2', bundle([repair])),

@@ -6,7 +6,7 @@ import {
   type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type IssueId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
   type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId, issueId, issueNumber,
   amendmentRefKey, compareIds, idList, jobIdOf, needsUserId, obligationId, phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, type BriefId,
-  type FindingId, type OpportunityId, findingId, opportunityId,
+  type FindingId, type OpportunityId, type WitnessItemId, findingId, opportunityId, witnessItemId,
 } from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type IsoTime, type PlanPath, type RepoPath, isoTime, planPath, repoPath } from '../core/values.ts';
@@ -172,10 +172,10 @@ export type Phase0Problem =
   | Readonly<{ type: 'question-reused'; id: PhaseQuestionId }>
   /**
    * M4a rev 3 (H3, F07): a pack spec's item that disagrees with the census: a declared obligation (`I-n`) whose rule's
-   * census state is not `obligation` naming it or its split parent, or an acceptance clause (`A-n`) naming a rule whose
-   * census state is `out-of-slice`. `state` is the rule's census state.
+   * census state is not `obligation` naming it or its split parent, or an acceptance clause (`A-n`) or (run 10) witness
+   * item (`W-n`) naming a rule whose census state is `out-of-slice`. `state` is the rule's census state.
    */
-  | Readonly<{ type: 'spec-census-mismatch'; unit: UnitId; item: ObligationId | ClauseId; rule: RuleId; state: CensusStateName }>;
+  | Readonly<{ type: 'spec-census-mismatch'; unit: UnitId; item: ObligationId | ClauseId | WitnessItemId; rule: RuleId; state: CensusStateName }>;
 
 const ruleSet: Read<readonly RuleId[]> = idList(ruleR);
 const issueProblem = (type: 'intake-missing' | 'intake-unknown' | 'intake-duplicate'): Read<Phase0Problem> =>
@@ -197,7 +197,7 @@ export const phase0Problem: Read<Phase0Problem> = tagged('type', {
   'question-reused': object((f): Phase0Problem => ({ type: f.get('type', literal('question-reused')), id: f.get('id', (v, p) => phaseQuestionId(v, p)) })),
   'spec-census-mismatch': object((f): Phase0Problem => ({
     type: f.get('type', literal('spec-census-mismatch')), unit: f.get('unit', (v, p) => unitId(v, p)),
-    item: f.get('item', (v, p) => (typeof v === 'string' && /^I-[0-9]+$/.test(v) ? obligationId(v, p) : clauseId(v, p))),
+    item: f.get('item', (v, p) => (typeof v === 'string' && /^I-[0-9]+$/.test(v) ? obligationId(v, p) : typeof v === 'string' && /^W-[0-9]+$/.test(v) ? witnessItemId(v, p) : clauseId(v, p))),
     rule: f.get('rule', ruleR), state: f.get('state', oneOf(CENSUS_STATES)),
   })),
 });

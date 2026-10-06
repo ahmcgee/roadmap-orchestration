@@ -87,6 +87,9 @@
 //   spec obligations, repairs   declared obligations exist and cover every non-exempt obligation a mapping pattern
 //                               that may overlap the unit's scope names (prefix-conservative); a `repair` unit
 //                               declares repairs, each an obligation or a finding of the arc
+//   specs ↔ census (run 10, C)  a corpus arc: every spec of the revision against its census (`spec-census-mismatch`,
+//                               src/holistic/rederive.ts `specCensusMismatches`, the Phase-0 rows' one predicate), for
+//                               every proposer: an apply's or a bundle's revision cannot break what the start held
 //
 // `commandScope` (A12) is the units a mutation must find idle or awaiting admission: an apply's follow from
 // its classification.
@@ -109,6 +112,7 @@ import { SchemaError } from '../core/validate.ts';
 import type { AbsPath, RepoPattern } from '../core/values.ts';
 import { undispositioned } from '../host/residues.ts';
 import { classifyObligations } from '../holistic/obligations.ts';
+import { specCensusMismatches } from '../holistic/rederive.ts';
 import { type ClassifiedAdmit, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { advancesReasons, visionEditReasons } from '../holistic/vision.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
@@ -806,6 +810,7 @@ export function classify(input: ClassifyInput): Classified {
   const obligations = obligationRows(input, inputs, reasons);
   changes.push(...obligations.changes);
   specRows(input, inputs, specs, changes, reasons);
+  censusRows(input, inputs, specs, reasons);
   corpusRows(input, inputs, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons };
@@ -965,6 +970,27 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
     const bad = repairs.filter((r) => (r.startsWith('F-') ? !findings.has(r) : !byId.has(r as ObligationId)));
     if (bad.length > 0) reasons.push(`unit ${unit.id} repairs ${bad.join(', ')}, which the arc does not hold`);
   }
+}
+
+/**
+ * Run 10 (C): the specs against the census hold at every revision, not only at the start (src/holistic/rederive.ts
+ * `specCensusMismatches`, the Phase-0 rows' predicate), over every spec of the revision. One reason, the Phase-0 row as
+ * the start and `phase0 check` print it; a bundle's says how the checkpoint fixes it.
+ */
+function censusRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<UnitId, SpecM1>, reasons: string[]): void {
+  const census = inputs.obligations?.census;
+  if (input.next.plan.target !== 'corpus' || inputs.obligations === null || census === undefined) return;
+  const problems = specCensusMismatches(input.next.plan.units.flatMap((u) => specs.get(u.id) ?? []), inputs.obligations, census);
+  if (problems.length === 0) return;
+  const row = canonicalJson({ kind: 'phase0-invalid', problems });
+  if (input.proposer.type !== 'bundle') {
+    reasons.push(row);
+    return;
+  }
+  const fixes = problems.map((p) => (p.item.startsWith('I-')
+    ? `unit ${p.unit} declares ${p.item}, on ${p.rule}, whose census state is ${p.state}: declare only obligations the census names for their rule`
+    : `unit ${p.unit}'s ${p.item.startsWith('W-') ? 'witness item' : 'acceptance clause'} ${p.item} names ${p.rule}, which is out of slice: to work on ${p.rule}, admit it as a target of an opportunity whose obligation split anchors a child at ${p.rule} (the census moves), or drop the ${p.rule} citation from ${p.item}`));
+  reasons.push(`${row}: ${fixes.join('; ')}`);
 }
 
 /**

@@ -9,7 +9,7 @@ import { describe, it } from 'node:test';
 import { type ApplyVerdict, evaluateApply, evaluateRevision } from '../src/commands/apply.ts';
 import { corpusPin } from '../src/commands/corpus.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
-import { commandId, sha } from '../src/core/ids.ts';
+import { commandId, jobId, sha, visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson, sha256Hex } from '../src/core/json.ts';
 import { EVENTS_FILE, type OpenJournal, openJournal } from '../src/core/log.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
@@ -284,6 +284,30 @@ describe('Phase-0 record edits and the census', () => {
       const reasons = rejected(await apply(a, j));
       assert.ok(reasons.includes(canonicalJson({ kind: 'phase0-invalid', problems: [{ type: 'census-dangling', rules: ['T-9'] }] })), JSON.stringify(reasons));
       census(base.map((e) => (e['rule'] === 'T-2' ? { rule: 'T-2', state: { type: 'untestable' } } : e)));
+      accepted(await apply(a, j));
+    } finally {
+      j.close();
+    }
+  });
+});
+
+describe('the specs against the census at every revision (run 10, C)', () => {
+  it('classify.spec-census-every-revision: an apply or a bundle whose spec cites an out-of-slice rule is refused by the classifier with the row; the bundle is told how to fix it', T, async () => {
+    const { a, j } = await arcInForce();
+    try {
+      editJsonFile(join(a.planDir, 'u1.json'), (s) => ({
+        ...s, rev: 2, acceptance: [...(s['acceptance'] as Json[]), { id: 'A2', clause: 'A booking names its berth (T-2).', failLoudIfUndelivered: false, state: 'active' }],
+      }));
+      const row = canonicalJson({ kind: 'phase0-invalid', problems: [{ type: 'spec-census-mismatch', unit: 'u1', item: 'A2', rule: 'T-2', state: 'out-of-slice' }] });
+      assert.deepEqual(rejected(await apply(a, j)), [row], 'the apply: the classifier\'s row alone, naming unit, item and rule');
+      const ctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE };
+      const bundle = evaluateRevision(ctx, filesOf(a), { type: 'bundle', job: jobId('ckpt', 1), cites: [visionClauseId('V-1')], evidence: ['e'], admits: [] });
+      assert.equal(bundle.kind, 'rejected');
+      if (bundle.kind !== 'rejected') return;
+      assert.deepEqual(bundle.reasons, [
+        `${row}: unit u1's acceptance clause A2 names T-2, which is out of slice: to work on T-2, admit it as a target of an opportunity whose obligation split anchors a child at T-2 (the census moves), or drop the T-2 citation from A2`,
+      ]);
+      editJsonFile(join(a.planDir, 'u1.json'), (s) => ({ ...s, acceptance: (s['acceptance'] as Json[]).map((x) => (x['id'] === 'A2' ? { ...x, clause: 'A booking names its berth.' } : x)) }));
       accepted(await apply(a, j));
     } finally {
       j.close();

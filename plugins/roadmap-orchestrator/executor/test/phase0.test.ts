@@ -1,7 +1,7 @@
 // M4a step C1: `roadmap phase0 check` and the shared Phase-0 rows (src/phase0/rows.ts) over real repos, real pins
 // (`roadmap corpus pin`), real issue captures against the fake forge and real snapshot refs for the chain (src/chain.ts).
 // The classifier's and the apply's and start's sides are test/phase0-apply.test.ts. M4a rev 3 (N5):
-// phase0.spec-census-mismatch-row.
+// phase0.spec-census-mismatch-row. Run 10 (C): phase0.spec-census-witness-items.
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,7 +9,9 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { acksDir, amendmentsOf, arcsWithRefs, chainBack, completedHeadOf, readArcRef } from '../src/chain.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
-import { amendmentIdOf, arcId, divergenceIdOf, ruleId } from '../src/core/ids.ts';
+import { amendmentIdOf, arcId, divergenceIdOf, obligationId, ruleId } from '../src/core/ids.ts';
+import { specM1 } from '../src/core/records.ts';
+import { specCensusMismatches } from '../src/holistic/rederive.ts';
 import { canonicalJson, sha256Hex } from '../src/core/json.ts';
 import { repoPath } from '../src/core/values.ts';
 import { debtKey } from '../src/debt/ledger.ts';
@@ -163,6 +165,27 @@ describe('the pack\'s specs against the census (M4a rev 3, H3)', () => {
       { type: 'spec-census-mismatch', unit: 'u1', item: 'I-2', rule: 'T-2', state: 'out-of-slice' },
       { type: 'spec-census-mismatch', unit: 'u1', item: 'A2', rule: 'T-2', state: 'out-of-slice' },
     ], 'the binding I-1 on its own rule and a struck clause are fine');
+  });
+});
+
+describe('the one spec-census predicate (run 10, C)', () => {
+  it('phase0.spec-census-witness-items: an active witness item naming an out-of-slice rule in its test id or skeleton is a mismatch; a struck one, an in-slice rule and an acceptance clause on another rule are not', () => {
+    const spec = specM1({
+      schema: 'roadmap/spec-m1', unit: 'u1', rev: 2, lanes: [], scope: ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
+      acceptance: [{ id: 'A1', clause: 'A booking names one berth (T-1).', failLoudIfUndelivered: false, state: 'active' }],
+      witnesses: [
+        { id: 'W-1', lane: 'journey', testId: 'refusal names T-2', clause: 'A1', skeleton: 'book twice', state: 'active' },
+        { id: 'W-2', lane: 'journey', testId: 'next steps', clause: 'A1', skeleton: 'assert the T-2 next step', state: 'active' },
+        { id: 'W-3', lane: 'journey', testId: 'old', clause: 'A1', skeleton: 'T-2', state: 'struck' },
+        { id: 'W-4', lane: 'journey', testId: 'in slice', clause: 'A1', skeleton: 'T-1 holds', state: 'active' },
+      ],
+    }, 'spec');
+    const obligations = { obligations: [] } as unknown as Parameters<typeof specCensusMismatches>[1];
+    const census = [{ rule: ruleId('T-1'), state: { type: 'obligation' as const, id: obligationId('I-1') } }, { rule: ruleId('T-2'), state: { type: 'out-of-slice' as const } }];
+    assert.deepEqual(specCensusMismatches([spec], obligations, census), [
+      { type: 'spec-census-mismatch', unit: 'u1', item: 'W-1', rule: 'T-2', state: 'out-of-slice' },
+      { type: 'spec-census-mismatch', unit: 'u1', item: 'W-2', rule: 'T-2', state: 'out-of-slice' },
+    ]);
   });
 });
 

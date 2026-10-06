@@ -36,12 +36,19 @@ describe('cli', () => {
 
   for (const command of ['status', 'watch', 'stop'] as const) {
     it(`${command} locates the run by host claim or by --repo/--arc`, () => {
-      assert.deepEqual(parseCommand([command]), { command, run: HOST });
-      assert.deepEqual(parseCommand([command, ...EXPLICIT]), { command, run: EXPLICIT_RUN });
+      const extra = command === 'watch' ? { actionable: false } : {};
+      assert.deepEqual(parseCommand([command]), { command, ...extra, run: HOST });
+      assert.deepEqual(parseCommand([command, ...EXPLICIT]), { command, ...extra, run: EXPLICIT_RUN });
       assert.throws(() => parseCommand([command, '--repo', '/r']), /--repo and --arc go together/);
       assert.throws(() => parseCommand([command, 'extra']), /unexpected argument/);
     });
   }
+
+  it('watch --actionable', () => {
+    assert.deepEqual(parseCommand(['watch', '--actionable']), { command: 'watch', actionable: true, run: HOST });
+    assert.deepEqual(parseCommand(['watch', '--actionable', ...EXPLICIT]), { command: 'watch', actionable: true, run: EXPLICIT_RUN });
+    assert.throws(() => parseCommand(['status', '--actionable']), /unknown option --actionable/);
+  });
 
   it('pause <unit> | --all', () => {
     assert.deepEqual(parseCommand(['pause', 'u1']), { command: 'pause', target: { type: 'unit', unit: 'u1' }, run: HOST });

@@ -278,6 +278,8 @@ function ack(ctx: CommandContext, id: CommandId, body: Extract<CommandBody, { ty
   const view = ctx.journal.view;
   const item = readNeedsUser(ctx.runDir, body.needsUser);
   if (item === null) return { kind: 'rejected', reason: `unknown needs-user ${body.needsUser}` };
+  const closed = view.ackOf(body.needsUser);
+  if (closed !== null && closed.command === null) return { kind: 'rejected', reason: `needs-user ${body.needsUser} was declined by the executor at the close-out (nobody answered it)` };
   const by = ackedBy(ctx, body.needsUser);
   if (by !== null && by !== id) return { kind: 'rejected', reason: `needs-user ${body.needsUser} is already acknowledged by ${by}` };
   if (body.choice !== null && !item.options.some((o) => o.id === body.choice)) {

@@ -51,6 +51,15 @@ export function admitTargetsDefault(): readonly never[] {
   return [];
 }
 
+/**
+ * A checkpoint `admit` op's `spec` (run 10, D): the model now writes it as an object the schema constrains; an answer
+ * recorded before wrote its JSON text, read as written (the bundle's spec reader validates it, as it did then).
+ */
+export function admitSpecTextDefault(text: string): string {
+  warnDefaulted('checkpoint.admit.spec', 'an admit op whose spec is JSON text (a checkpoint answer written before run 10); read as written');
+  return text;
+}
+
 /** A split child's `rule` (M4a): absent on a recorded dev.6 answer, whose children are docRef-anchored; read as null. */
 export function splitChildRuleDefault(): null {
   warnDefaulted('checkpoint.splitChild.rule', 'a split child without rule (a checkpoint answer written before 1.0.0-dev.7); read as null');

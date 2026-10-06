@@ -699,13 +699,16 @@ export type HolisticFact =
 
 /**
  * Where a corpus amendment came from (M4a): a checkpoint's proposal, a divergence code derived it from, or an issue's
- * intake; since M4a rev 3 (R35) a checkpoint `admit` op code converted (`index` the op's, `reason` the conversion's).
+ * intake; since M4a rev 3 (R35) a checkpoint `admit` op code converted (`index` the op's, `reason` the conversion's); since
+ * run 10 (E) a bundle request the close-out declined.
  */
 export type AmendmentSource =
   | Readonly<{ type: 'checkpoint'; job: JobId; index: number }>
   | Readonly<{ type: 'divergence'; divergence: DivergenceId }>
   | Readonly<{ type: 'issue'; job: JobId; issue: IssueId }>
-  | Readonly<{ type: 'admit'; job: JobId; index: number; reason: ConversionReason }>;
+  | Readonly<{ type: 'admit'; job: JobId; index: number; reason: ConversionReason }>
+  /** Run 10 (E): a non-blocking bundle request of checkpoint `job` nobody answered by the close-out, declined by the executor. */
+  | Readonly<{ type: 'request'; job: JobId; needsUser: NeedsUserId }>;
 
 /** A checkpoint's issues (M4a, R21): the kept capture, or why none was taken (non-fatal, never a park). */
 export type CheckpointIssues = Readonly<{ type: 'captured'; sha256: Sha256Hex }> | Readonly<{ type: 'unavailable'; reason: string }>;
@@ -737,6 +740,13 @@ export type M4aFact =
   | Readonly<{ kind: 'smoke-ran'; unit: UnitId; attempt: number; key: Sha256Hex; verdict: SmokeVerdict }>
   /** A second lens's draft merged into finding `id` within one audit (H7, R62): its lens and claim, kept as its rationale. */
   | Readonly<{ kind: 'finding-corroborated'; id: FindingId; lens: LensKindName; claim: string }>
+  /**
+   * Run 10 (E): the executor declined a non-blocking needs-user item nobody answered by the close-out (a `bundle-request`),
+   * so a non-blocking item never holds completion. It closes the item as an acknowledgement would (`choice`: the item's
+   * declining option, `reject` or `decline`, null when it offers none), with no `.ack.json` twin; at most once per id, and
+   * never with a `needs-user-acked`.
+   */
+  | Readonly<{ kind: 'needs-user-declined'; id: NeedsUserId; choice: string | null; reason: string }>
   /** A proposed change to the corpus, dispositioned at the next Phase 0. */
   | Readonly<{ kind: 'corpus-amendment'; id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string; evidence: readonly string[] }>
   /** A checkpoint's one outcome for one captured issue; once per `(job, issue)`. */
@@ -1464,6 +1474,9 @@ const amendmentSource: Read<AmendmentSource> = tagged('type', {
   admit: object((f): AmendmentSource => ({
     type: f.get('type', literal('admit')), job: f.get('job', ckptJobR), index: f.get('index', nat), reason: f.get('reason', oneOf(CONVERSION_REASONS)),
   })),
+  request: object((f): AmendmentSource => ({
+    type: f.get('type', literal('request')), job: f.get('job', ckptJobR), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
+  })),
 });
 
 const testRef: Read<TestRef> = object((f) => ({ lane: f.get('lane', laneR), testId: f.get('testId', str) }));
@@ -1501,6 +1514,10 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     kind: f.get('kind', literal('smoke-ran')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), key: f.get('key', sha256R), verdict: f.get('verdict', smokeVerdict),
   })),
   'finding-corroborated': object((f): Fact => ({ kind: f.get('kind', literal('finding-corroborated')), id: f.get('id', findingR), lens: f.get('lens', lensR), claim: f.get('claim', str) })),
+  'needs-user-declined': object((f): Fact => ({
+    kind: f.get('kind', literal('needs-user-declined')), id: f.get('id', (v, p): NeedsUserId => needsUserId(v, p)), choice: f.get('choice', nullable(optionId)),
+    reason: f.get('reason', str),
+  })),
   'corpus-amendment': object((f): Fact => ({
     kind: f.get('kind', literal('corpus-amendment')), id: f.get('id', (v, p) => amendmentId(v, p)), source: f.get('source', amendmentSource),
     rules: f.get('rules', ruleList), proposal: f.get('proposal', str), why: f.get('why', str), evidence: f.get('evidence', arrayOf(str)),

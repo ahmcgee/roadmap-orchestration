@@ -11,11 +11,9 @@
 //   2-3. census    one state per active pinned rule, none dangling, every obligation's rule resolved: a binding one's
 //                  active, an exempt one's active or retired (LR-C1-2; src/holistic/rederive.ts `censusProblems`). An
 //                  exempt obligation need not be in the census. A corpus arc names its obligations file (LR-0a-2).
-//                  Then the pack's specs against the census (M4a rev 3, H3, F07; `spec-census-mismatch`): an obligation
-//                  a spec declares whose rule has a census state other than `obligation` naming it or its split
-//                  ancestor (the reader makes that hold for a binding one, so in practice an exempt obligation on a rule
-//                  the census puts out of slice, untestable, prod-only or on another obligation; an exempt one on a
-//                  retired rule has no state), and an active acceptance clause naming (`T-n`) an out-of-slice rule.
+//                  Then the pack's specs against the census (M4a rev 3, H3, F07; `spec-census-mismatch`, the one
+//                  predicate src/holistic/rederive.ts `specCensusMismatches`, which the classifier also runs on every
+//                  revision: run 10, C).
 //   4. debt        every open item of the baseline's `debt.md` block dispositioned (`debt-undispositioned`); a third
 //                  `keep` of an item kept in each of the two previous arcs needs a question whose text names the item
 //                  (`debt-kept-twice-unasked`); question ids against the chain closure (`question-reused`, H23).
@@ -34,8 +32,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, questionClosure, unackedStarts } from '../chain.ts';
-import { type ArcId, type DebtId, type IssueId, type RuleId, type UnitId, issueId, phaseQuestionSeq, sha } from '../core/ids.ts';
-import { type SpecM1, specObligations } from '../core/records.ts';
+import { type ArcId, type DebtId, type IssueId, type UnitId, issueId, phaseQuestionSeq, sha } from '../core/ids.ts';
+import type { SpecM1 } from '../core/records.ts';
 import { sha256Hex } from '../core/json.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
@@ -52,9 +50,9 @@ import { queryPolicy } from '../forge/policy.ts';
 import { trusted } from '../forge/trust.ts';
 import { type IssueCapture, parseIssueCapture, sameRepo } from '../forge/types.ts';
 import { git, gitRun } from '../git/git.ts';
-import { censusProblems } from '../holistic/rederive.ts';
+import { censusProblems, specCensusMismatches } from '../holistic/rederive.ts';
 import {
-  type CensusEntry, type CensusState, type ObligationDef, type Obligations, type Vision, obligationSource, parseObligations, parseVision,
+  type Obligations, type Vision, parseObligations, parseVision,
 } from '../holistic/types.ts';
 import { visionUnconfirmed } from '../holistic/vision.ts';
 import { mayOverlap } from '../input/classify.ts';
@@ -163,7 +161,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     if (obligations.census === undefined) rows.push(schemaRow('plan.holistic.obligations', `${where('the obligations')}: a corpus arc's obligations are rule-anchored with a census`));
     else {
       p0.push(...censusProblems({ ...obligations, census: obligations.census }, pin));
-      p0.push(...specCensusProblems(input, obligations, obligations.census));
+      p0.push(...specCensusMismatches(parsedSpecs(input), obligations, obligations.census));
     }
   }
   // 4-5. Debt, questions, amendments, intake.
@@ -242,8 +240,6 @@ function overlapProblems(plan: PlanM1, pin: CorpusPin, guide: CorpusGuide): read
 // ---------------------------------------------------------------------------------------------------
 // 3. The pack's specs against the census (H3)
 
-const RULE_MENTION = /(?<![A-Za-z0-9-])T-[1-9][0-9]*(?![0-9])/g;
-
 /**
  * The specs of the plan's units that parse, in plan order: one absent or unparsable is the spec rows' to report, so the
  * path given to the parser is never shown.
@@ -259,36 +255,6 @@ function parsedSpecs(input: Phase0Input): readonly SpecM1[] {
       throw error;
     }
   });
-}
-
-function specCensusProblems(input: Phase0Input, obligations: Obligations, census: readonly CensusEntry[]): readonly Phase0Problem[] {
-  const stateOf = new Map<RuleId, CensusState>(census.map((e) => [e.rule, e.state]));
-  const byId = new Map(obligations.obligations.map((o) => [o.id, o]));
-  const out: Phase0Problem[] = [];
-  for (const spec of parsedSpecs(input)) {
-    for (const id of specObligations(spec)) {
-      const o = byId.get(id);
-      if (o === undefined) continue;
-      const source = obligationSource(o);
-      if (source.kind !== 'rule') continue;
-      const rule = source.rule.id;
-      const state = stateOf.get(rule);
-      if (state === undefined) continue;
-      let named = false;
-      for (let at: ObligationDef | undefined = o; at !== undefined && !named; at = at.parent === undefined ? undefined : byId.get(at.parent)) {
-        named = state.type === 'obligation' && state.id === at.id;
-      }
-      if (!named) out.push({ type: 'spec-census-mismatch', unit: spec.unit, item: id, rule, state: state.type });
-    }
-    for (const a of spec.acceptance) {
-      if (a.state !== 'active') continue;
-      for (const mention of new Set(a.clause.match(RULE_MENTION) ?? [])) {
-        const rule = mention as RuleId;
-        if (stateOf.get(rule)?.type === 'out-of-slice') out.push({ type: 'spec-census-mismatch', unit: spec.unit, item: a.id, rule, state: 'out-of-slice' });
-      }
-    }
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -14,7 +14,8 @@ import { arcId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { type ArcForensics, LIMITS, STALL_MIN, WakeFilter, arcForensics, drive, initialPrompt, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
+import { type ArcForensics, LIMITS, arcForensics, drive, initialPrompt, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
+import { ActionableFilter, STALL_MIN } from '../src/watch.ts';
 import { CRITERIA, LEVERS, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, profileVerdict } from '../evals/m4a/check.ts';
 import { layout } from '../evals/m4a/layout.ts';
 import { costTotals, exportCosts, invocationCosts, rootCosts } from '../evals/m4a/transcript.ts';
@@ -33,7 +34,7 @@ test('evals-m4a.turn-cap-equals-session: a turn may use the whole session, real 
   for (const mode of ['real', 'fake'] as const) assert.equal(LIMITS[mode].turnMs, LIMITS[mode].sessionMs, `${mode}: the turn cap is the session cap`);
   assert.equal(LIMITS.real.sessionMs, 360 * 60_000);
   const prompt = initialPrompt('claude-only');
-  assert.match(prompt, /you may wait on `roadmap watch`\s+under Monitor or end your turn; both are supported/);
+  assert.match(prompt, /you may wait on `roadmap watch --actionable`\s+under Monitor or end your turn; both are supported/);
   assert.match(prompt, /Start every arc with `--profile claude-only`; never change it\./);
   assert.match(initialPrompt('default'), /--profile default/);
 });
@@ -171,7 +172,7 @@ const MIN = 60_000;
 
 test('evals-m4a.watch-absorbs-routine: the root wakes only on a new needs-user item, a terminal state, a changed constraint or a stall', () => {
   const t0 = 1_000_000;
-  const f = new WakeFilter(t0);
+  const f = new ActionableFilter(t0);
   const wakes: string[] = [];
   const feed = (line: string, at: number, arc = 'a1'): void => {
     const w = f.feed(arc, line, at);
@@ -183,9 +184,12 @@ test('evals-m4a.watch-absorbs-routine: the root wakes only on a new needs-user i
   feed(units('running', 'running:build#1'), t0 + MIN);
   feed(units('running', 'running:gate#1'), t0 + 2 * MIN);
   feed(units('running', 'running:lanes#1'), t0 + 3 * MIN);
-  feed(JSON.stringify({ event: 'ack', id: 'nu-1', command: 'c', choice: null }), t0 + 4 * MIN);
+  feed(JSON.stringify({ event: 'ack', id: 'nu-0', command: 'c', choice: null }), t0 + 4 * MIN);
   feed(units('draining-not-a-state-but-routine', 'merged'), t0 + 5 * MIN);
   assert.deepEqual(wakes, [], 'routine transitions are absorbed');
+  // An item already acknowledged when it is seen (a restarted watch lists the ack before the item) is not actionable.
+  feed(needsUser('nu-0'), t0 + 5 * MIN);
+  assert.deepEqual(wakes, [], 'an acknowledged item wakes nothing');
 
   // A needs-user item wakes once; a restarted watch re-emitting it does not wake again; the next arc's same id does.
   feed(needsUser('nu-1'), t0 + 6 * MIN);
@@ -219,7 +223,7 @@ test('evals-m4a.watch-absorbs-routine: the root wakes only on a new needs-user i
 test('evals-m4a.watch-absorbs-routine: a stall is no state change for STALL_MIN minutes, measured from the last change or wake', () => {
   assert.equal(STALL_MIN, 30);
   const t0 = 5_000_000;
-  const f = new WakeFilter(t0);
+  const f = new ActionableFilter(t0);
   assert.equal(f.stalled(t0 + 29 * MIN), false);
   assert.equal(f.stalled(t0 + 30 * MIN), true);
   // A state change restarts the clock; the same line again does not.

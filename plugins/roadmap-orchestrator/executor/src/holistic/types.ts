@@ -680,7 +680,8 @@ export type FindingSource = Readonly<{ type: 'job'; job: JobId }> | Readonly<{ t
 /** A vacuity finding's mutant: the patch (kept content-addressed) and the lane that should kill it. */
 export type MutantRef = Readonly<{ patchSha256: Sha256Hex; lane: LaneId }>;
 /** Who ruled a finding: a checkpoint's `findingDispositions`, a ruling, or code (a mutant not reproduced). */
-export type FindingRuledBy = Readonly<{ type: 'checkpoint'; job: JobId }> | Readonly<{ type: 'ruling'; ruling: RulingId }> | Readonly<{ type: 'code'; reason: 'not-reproduced' }>;
+/** `code`: a reproduce that killed the mutant dismisses its finding (`not-reproduced`); run 10 (F) the close-out defers an open P2/P3 with no obligation (`close-out`). */
+export type FindingRuledBy = Readonly<{ type: 'checkpoint'; job: JobId }> | Readonly<{ type: 'ruling'; ruling: RulingId }> | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>;
 export const FINDING_DISPOSITIONS = ['dismissed', 'deferred', 'accepted'] as const;
 export type FindingDisposition = (typeof FINDING_DISPOSITIONS)[number];
 /** A `finding-transition`'s target. */
@@ -724,7 +725,7 @@ export const findingTo: Read<FindingTo> = tagged('state', {
     by: f.get('by', tagged<'checkpoint' | 'ruling' | 'code', FindingRuledBy>('type', {
       checkpoint: object((g) => ({ type: g.get('type', literal('checkpoint')), job: g.get('job', jobR) })),
       ruling: object((g) => ({ type: g.get('type', literal('ruling')), ruling: g.get('ruling', rid) })),
-      code: object((g) => ({ type: g.get('type', literal('code')), reason: g.get('reason', literal('not-reproduced')) })),
+      code: object((g) => ({ type: g.get('type', literal('code')), reason: g.get('reason', oneOf(['not-reproduced', 'close-out'] as const)) })),
     })),
   })),
 });

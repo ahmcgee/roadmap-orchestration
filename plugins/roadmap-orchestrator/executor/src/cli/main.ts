@@ -57,7 +57,7 @@ import { gitCommonDir, readRepoConfig } from '../preflight/checks.ts';
 import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
 import { status } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
-import { watch } from '../watch.ts';
+import { watch, watchActionable } from '../watch.ts';
 
 const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
 
@@ -124,7 +124,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       const run = locate(command.run, hostDir);
       const stop = new AbortController();
       for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => stop.abort());
-      await watch(run.runDir, run.arc, hostDir, (line) => process.stdout.write(`${line}\n`), stop.signal);
+      await (command.actionable ? watchActionable : watch)(run.runDir, run.arc, hostDir, (line) => process.stdout.write(`${line}\n`), stop.signal);
       return;
     }
     case 'start': {

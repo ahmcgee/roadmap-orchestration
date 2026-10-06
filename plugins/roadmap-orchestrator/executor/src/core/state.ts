@@ -997,6 +997,11 @@ export class Fold implements JournalView {
         this.#smokeRuns.push({ ...rest, seq: at.seq });
         return;
       }
+      case 'needs-user-declined':
+        if (!this.#needsUser.has(f.id)) fail(`needs-user-declined of ${f.id}, which was never raised`);
+        if (this.#acks.has(f.id)) fail(`needs-user ${f.id} declined after it was closed`);
+        this.#acks.set(f.id, { command: null, choice: f.choice });
+        return;
       case 'finding-corroborated': {
         if (!this.#findings.has(f.id)) fail(`finding-corroborated of ${f.id}, which was never opened`);
         const { kind: _k, ...rest } = f;

@@ -15,7 +15,7 @@ import {
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import type { JsonValue } from '../core/json.ts';
-import { BOUND_FIELDS, type Bounds, type NoteDef, SPEC_SECTIONS, type SpecPatchOp, specPatchOp } from '../core/records.ts';
+import { BOUND_FIELDS, type Bounds, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecPatchOp, specM1, specPatchOp } from '../core/records.ts';
 import {
   Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
@@ -26,7 +26,8 @@ import {
   type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { admitTargetsDefault, buildExperimentsDefault, checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
+import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
+import { specBytes } from '../spec/spec.ts';
 import {
   JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
 } from '../routing/types.ts';
@@ -92,7 +93,7 @@ export type PlanCheckOutput =
 
 // A lane's `env.set` is a map in spec.json, but a strict schema cannot describe open maps, so the model
 // writes it as [{name, value}] and the validator converts before handing the op to records.ts.
-const S_LANE_ITEM = sObj({
+const LANE_ITEM_FIELDS = {
   id: S_STR,
   argv: sArr(S_STR),
   cwd: S_STR,
@@ -102,9 +103,14 @@ const S_LANE_ITEM = sObj({
   resources: sArr(S_STR),
   evidenceGlobs: sArr(S_STR),
   evidenceExcludes: sArr(S_STR),
-});
-const S_ACCEPTANCE_ITEM = sObj({ id: S_STR, clause: S_STR, failLoudIfUndelivered: S_BOOL });
-const S_NOTE_ITEM = sObj({ id: S_STR, text: S_STR });
+} as const;
+const ACCEPTANCE_ITEM_FIELDS = { id: S_STR, clause: S_STR, failLoudIfUndelivered: S_BOOL } as const;
+const NOTE_ITEM_FIELDS = { id: S_STR, text: S_STR } as const;
+const S_LANE_ITEM = sObj(LANE_ITEM_FIELDS);
+const S_ACCEPTANCE_ITEM = sObj(ACCEPTANCE_ITEM_FIELDS);
+const S_NOTE_ITEM = sObj(NOTE_ITEM_FIELDS);
+/** A spec item as spec.json holds it: the patch item's fields and its state. */
+const sStated = (fields: { readonly [key: string]: Schema }): Schema => sObj({ ...fields, state: sEnum(['active', 'struck', 'deferred']) });
 const itemOps = (section: string, item: Schema): Schema[] =>
   ['add', 'replace'].map((op) => sObj({ op: sEnum([op]), section: sEnum([section]), item }));
 const S_PATCH_OP: Schema = {
@@ -128,19 +134,24 @@ export const PLAN_CHECK_SCHEMA: Schema = sObj({
   visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
 });
 
+/** A lane item's wire form: its env.set arrives as [{name, value}] and becomes the map spec.json holds. */
+function laneFromWire(value: unknown, path: string): unknown {
+  const item = new Fields(value, path);
+  const env = new Fields(item.get('env', (v) => v), `${path}.env`);
+  const pairs = env.get('set', arrayOf(object((g) => ({ name: g.get('name', envName), value: g.get('value', text) }))));
+  assertUnique(pairs, (p) => p.name, `${path}.env.set`);
+  const v = value as { readonly env: object };
+  return { ...v, env: { ...v.env, set: Object.fromEntries(pairs.map((p) => [p.name, p.value])) } };
+}
+
 /** The wire form of one op: a lane item's env.set arrives as [{name, value}]. */
 const wireOp: Read<SpecPatchOp> = (value, path) => {
   const f = new Fields(value, path);
   const op = f.get('op', oneOf(['add', 'replace', 'strike', 'defer', 'cite'] as const));
   if (op === 'strike' || op === 'defer' || op === 'cite') return specPatchOp(value, path);
   if (f.get('section', oneOf(SPEC_SECTIONS)) !== 'lanes') return specPatchOp(value, path);
-  const item = new Fields(f.get('item', (v) => v), `${path}.item`);
-  const env = new Fields(item.get('env', (v) => v), `${path}.item.env`);
-  const pairs = env.get('set', arrayOf(object((g) => ({ name: g.get('name', envName), value: g.get('value', text) }))));
-  assertUnique(pairs, (p) => p.name, `${path}.item.env.set`);
-  const set = Object.fromEntries(pairs.map((p) => [p.name, p.value]));
-  const v = value as { readonly item: { readonly env: object } };
-  return specPatchOp({ ...v, item: { ...v.item, env: { ...v.item.env, set } } }, path);
+  const v = value as { readonly item: unknown };
+  return specPatchOp({ ...v, item: laneFromWire(v.item, `${path}.item`) }, path);
 };
 
 // Reads at validation time, after the M3 helpers below are initialised.
@@ -443,7 +454,8 @@ export type SplitChild = Readonly<{
 /**
  * One op of a bundle (closed; A16: nothing here touches the vision, resource declarations, `.roadmap/config.json`,
  * `gc` or ref deletion, which are owner-only and reachable only as `request`). `admit.spec` is the new unit's
- * spec.json as text (validated by the spec reader at activation); `rule.ruling` names one of the output's `rulings`.
+ * spec.json as canonical text (the model writes it as an object, `S_ADMIT_SPEC`, validated by the spec reader when the
+ * answer is read; run 10, D); `rule.ruling` names one of the output's `rulings`.
  */
 export type BundleOpBody =
   /**
@@ -506,12 +518,34 @@ const S_SPLIT_CHILD = sObj({
   deliveredBy: S_IDS,
 });
 
+/**
+ * An admit's spec (run 10, D): the new unit's spec.json as an object, structurally (the spec-m1 fields, each item with
+ * its state; a lane's env.set as [{name, value}], as a patch writes it; `obligations` and `repairs` [] for none), so a
+ * malformed one is a schema violation the adapter catches before the bundle is decided. No witness items: they enter a
+ * spec only through a patch (R59). A lane's optional `cpu` and `inputs` are not offered: an admitted lane takes its
+ * tier's defaults.
+ */
+const S_ADMIT_SPEC = sObj({
+  schema: sEnum([SPEC_SCHEMA]),
+  unit: S_STR,
+  rev: S_INT,
+  lanes: sArr(sStated(LANE_ITEM_FIELDS)),
+  acceptance: sArr(sStated(ACCEPTANCE_ITEM_FIELDS)),
+  scope: S_IDS,
+  resources: S_IDS,
+  decisions: sArr(sStated(NOTE_ITEM_FIELDS)),
+  facts: sArr(sStated(NOTE_ITEM_FIELDS)),
+  cites: sObj({ contracts: S_IDS, rulings: S_IDS }),
+  obligations: S_IDS,
+  repairs: S_IDS,
+});
+
 export const CHECKPOINT_SCHEMA: Schema = sObj({
   decision: sEnum(CHECKPOINT_DECISIONS),
   reasons: sArr(S_STR),
   ops: sArr({
     anyOf: [
-      opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_STR, targets: S_IDS }),
+      opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
       opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
       opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR) }),
       opSchema('cut', { unit: S_STR, reason: S_STR }),
@@ -588,6 +622,24 @@ const issueIntakeEntries: Read<CheckpointOutput['issueIntake']> = arrayOf(object
   issue: g.get('issue', (v, p): IssueId => issueId(v, p)), outcome: g.get('outcome', checkpointIssueOutcome),
 })));
 
+/**
+ * An admit's spec (run 10, D): the wire object read into spec.json's canonical text, validated by the spec reader here, so
+ * a malformed spec fails the answer, never the bundle. A recorded answer from before has the text itself
+ * (`admitSpecTextDefault`).
+ */
+const admitSpec: Read<string> = (value, path) => {
+  if (typeof value === 'string') return admitSpecTextDefault(value);
+  const f = new Fields(value, path);
+  const lanes = f.get('lanes', arrayOf((v) => v));
+  const v = value as Record<string, unknown>;
+  const { obligations, repairs, ...rest } = v;
+  const listed = (key: string, list: unknown): Record<string, unknown> => (Array.isArray(list) && list.length === 0 ? {} : { [key]: list });
+  const spec = specM1({
+    ...rest, lanes: lanes.map((l, i) => laneFromWire(l, `${path}.lanes[${i}]`)), ...listed('obligations', obligations), ...listed('repairs', repairs),
+  }, path);
+  return specBytes(spec).toString('utf8');
+};
+
 function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
   switch (op) {
     case 'admit':
@@ -597,7 +649,7 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
           id: g.get('id', unitR), risk: g.get('risk', oneOf(RISK_TIERS)), scope: g.get('scope', uniqueIds((v, p) => repoPattern(v, p), { nonEmpty: true })),
           after: g.get('after', uniqueIds(unitR)), origin: g.get('origin', oneOf(['checkpoint', 'repair'] as const)),
         }))),
-        spec: f.get('spec', str),
+        spec: f.get('spec', admitSpec),
         targets: f.optional('targets', ruleList) ?? admitTargetsDefault(),
       };
     case 'patch-spec':

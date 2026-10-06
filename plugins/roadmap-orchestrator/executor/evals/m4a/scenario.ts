@@ -25,7 +25,7 @@
 import type { JsonValue } from '../../src/core/json.ts';
 import { ASSESSED_DIRECTIVE } from '../../src/prompts/directives.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
-import { checkpointAnswer, checkpointStep, intakeOutcome, lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, intakeOutcome, lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
 import type { ClaudeAct, Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
 import { FILES, LANES, OPPORTUNITY, filesOf, specOf } from './golden.ts';
@@ -142,7 +142,7 @@ function admitOp(id: keyof typeof OPPORTUNITY): JsonValue {
   const o = OPPORTUNITY[id];
   const spec = specOf({ id: o.unit.id, scope: o.unit.scope, unitLane: o.unitLane, acceptance: o.acceptance });
   return {
-    op: 'admit', unit: { ...o.unit, scope: [...o.unit.scope], after: [...o.unit.after] }, spec: JSON.stringify(spec), targets: [],
+    op: 'admit', unit: { ...o.unit, scope: [...o.unit.scope], after: [...o.unit.after] }, spec: admitSpecWire(spec), targets: [],
     cites: [...o.cites], evidence: [o.why],
   };
 }

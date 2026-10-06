@@ -164,6 +164,19 @@ const opText = (op: BundleOp): string => {
   return `${canonicalJson(body)} citing ${cites.join(', ')}`;
 };
 
+/**
+ * Run 10 (E): a request the executor cannot apply (an invalid bundle, a checkpoint failing twice) always offers both
+ * answers explicitly; at the close-out an unanswered one is declined (src/holistic/closeout.ts).
+ */
+export const INVALID_REQUEST_OPTIONS = [
+  { id: 'acknowledge', label: 'Handled: any change it needs was made with roadmap apply (or none is needed)' },
+  { id: 'decline', label: 'Drop the request' },
+] as const;
+
+/**
+ * A non-blocking `bundle-request` (A9): `applicable` offers `apply` or `reject`; an invalid one `acknowledge` or `decline`
+ * (`INVALID_REQUEST_OPTIONS`).
+ */
 function bundleRequest(ctx: CheckpointContext, a: Activation, why: string, applicable: boolean): NeedsUserId {
   return raiseOnce(ctx, a.job, {
     blocking: false,
@@ -172,8 +185,8 @@ function bundleRequest(ctx: CheckpointContext, a: Activation, why: string, appli
     summary: `Checkpoint ${a.job} proposes a bundle it may not apply by itself: ${why}. Units keep running. Its ops: ${a.output.ops.map(opText).join('; ')}.`,
     recommendation: applicable
       ? 'Choose `apply` to have the executor apply it as proposed (checked again against the arc then: a stale bundle is re-evaluated), or `reject` to drop it.'
-      : 'It cannot be applied as proposed. Make the change yourself with `roadmap apply` if it is wanted, then acknowledge this item.',
-    options: applicable ? [{ id: 'apply', label: 'Apply the bundle as proposed' }, { id: 'reject', label: 'Drop the bundle' }] : [],
+      : 'It cannot be applied as proposed. Make the change yourself with `roadmap apply` if it is wanted, then choose `acknowledge`; or choose `decline` to drop it.',
+    options: applicable ? [{ id: 'apply', label: 'Apply the bundle as proposed' }, { id: 'reject', label: 'Drop the bundle' }] : INVALID_REQUEST_OPTIONS,
     evidence: [],
   });
 }

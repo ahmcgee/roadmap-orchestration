@@ -118,7 +118,8 @@ export interface JournalView {
   holistic(): HolisticFold;
 }
 
-export type NeedsUserAckState = Readonly<{ command: CommandId; choice: string | null }>;
+/** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
+export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;
 export type NeedsUserState = Readonly<{ id: NeedsUserId; blocking: boolean; ack: NeedsUserAckState | null }>;
 /** `stop`: the stop command recorded, if any. A pause of every unit and pauses of single units are kept apart. */
 export type ControlState = Readonly<{ stop: CommandId | null; pausedAll: boolean; pausedUnits: readonly UnitId[] }>;

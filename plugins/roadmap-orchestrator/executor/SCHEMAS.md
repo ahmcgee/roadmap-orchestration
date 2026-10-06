@@ -159,6 +159,12 @@ warning per process each, BACKLOG "Scaffolding to delete", dev.6 layer), the res
 | Lane dir | `+ red.json` (`RedFile`) | read only for a `redRev`-stamped run; an unstamped run classifies with `HOST_SIGNATURES_DEV6` |
 | Build answer (`buildOutput`) | `+ experiments: [{name, argv, exit}]`; per-call schema `buildSchemaFor(lanes)` (`lanesRun[].lane` an enum of the spec's lanes) | `experiments: []` (`buildExperimentsDefault`: a completed-unrecorded dev.6 answer recovery consumes) |
 | Lane revs (F7) | `laneRevOf` hashes the lane re-read through its reader | a recorded rev of the minimal form (`evidenceExcludes: []` omitted) matches (`laneRevMatches`, `minimalLaneRev`); the executor's dev.6 revs are the normalised form already |
+| Checkpoint answer, admit op (run 10, D) | `spec`: an object `CHECKPOINT_SCHEMA` constrains (`S_ADMIT_SPEC`: the spec-m1 fields, items with state, lane `env.set` as `[{name, value}]`, `obligations`/`repairs` `[]` for none; no witnesses, no lane `cpu`/`inputs`), read into spec.json's canonical text by the spec reader | JSON text reads as written (`admitSpecTextDefault`, scaffolding; the bundle's spec reader validates it as before) |
+| `corpus-amendment.source` (run 10, E) | `+ request{job, needsUser}` | none |
+| Facts (run 10, E) | `+ needs-user-declined{id, choice: string \| null, reason}` | none |
+| `finding-transition` (run 10, F) | `ruled.by: code{reason + close-out}` | none |
+| `Phase0Problem.spec-census-mismatch` (run 10, C) | `item + W-n` (a witness item) | none |
+| `bundle-request` needs-user items (run 10, E) | an invalid request's (and a twice-failed checkpoint's) `options: [acknowledge, decline]` | an older item's `[]` reads as written; declined at the close-out with `choice: null` |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -340,7 +346,7 @@ in the line belongs to `arc`.
 | `dispatch` | `record: DispatchRecord` |
 | `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable, park?, cause?`: one per `(unit, stage, attempt)`; see below |
 | `backend-park` | `backend, class: usage-limit\|capacity\|outage, inv\|null`: a failed invocation whose backend reported a usage-limit or capacity error parks that backend arc-wide (lead ruling, 11b); `outage` (M2, A18, `inv` null exactly then) is a failed smoke on a supervisor respawn. The fact's seq is the park's epoch (F12): see "M2: backend parks" |
-| `needs-user-acked` | `id, command, choice\|null`: at most one per id, any id form; the file twin is `<id>.ack.json` (step 13) |
+| `needs-user-acked` | `id, command, choice\|null`: at most one per id, any id form; the file twin is `<id>.ack.json` (step 13). Never with a `needs-user-declined` of the same id (run 10: the fold's ack state `{command: null, choice}`) |
 | `paused` | `command, target: unit{unit}\|all`: the durable pause marker the driver consults (step 13) |
 | `stop-requested` | `command`: the durable stop marker (step 13) |
 | `executor-started` | `generation`: written at every start once the journal is open; clears the stop marker (a stop ends one run, not the arc). Pause markers and holds persist until `resume` (lead ruling, 13b) |
@@ -1275,7 +1281,7 @@ added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`, `a
 | `witnessed` | `lane, laneRev, envId, treeSha, inv, recordsSha256, purpose: witness\|mutant, for: candidate{unit, attempt} \| job{job} \| mutant{finding, of}`; `purpose: mutant` exactly with `for: mutant` (G13: never certifies). Batch lanes are `job{batch-n}` (H4) |
 | `obligation-latched` | `obligation, unit, treeSha`: after `ff{published}`, before the snapshot; once per obligation |
 | `finding-opened` | `id, key (findingKey = sha256 of canonical {lens, obligation, cause}), lens: LensKind\|witness\|plan-check, severity: P1\|P2\|P3, obligation\|null, visionClauses (ascending), claim, evidence: [{path, blob\|null}], mutant: {patchSha256, lane}\|null (vacuity only), source: job{job} \| stage{unit, stage: plan-check, attempt}, gateHadPassed`. Plan-check (R17) opens only P3 findings citing clauses, from its attempt (the only `stage` source); a `witness` finding is a P1 over its obligation; a `vision` finding is P2 or P3 |
-| `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced}}` |
+| `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced \| close-out}}` (`close-out`: run 10, F) |
 | `audit-started` | `job (audit-n), triggers: [cadence \| unwitnessed{obligation} \| drift{planRev} \| wall-clock \| requested{command} \| final] (non-empty), generation, lenses (ascending, a subset of L), integrationSha, planRev, ledgerSha256\|null, obligationsSha256\|null, visionSha256, owners: [{unit, head}] (ascending), priorFindings, highWater` |
 | `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens), findings, suppressed, outcome: completed\|abandoned` |
 | `docs-covered` | `pub, from: U, to: D` (A17, H8) |
@@ -1398,7 +1404,8 @@ work, whose queue is empty, whose head is in integration history and whose ref v
     `arc-completed.units` (the merged units) are fixed as in the table above.
 11. **`gc` takes `--repo`**: run dirs live under a repo's git common dir.
 12. **The checkpoint output carries sidecars and a new unit's spec as JSON text** (`rulings`, `admit.spec`),
-    validated by their own readers at activation, so the strict output schema stays finite.
+    validated by their own readers at activation, so the strict output schema stays finite. Run 10 (D) replaced
+    `admit.spec`: the model writes an object the schema constrains, read by the spec reader with the answer.
 
 **Choices made in M3 A1** (anchors, contract ops, ruling validation, the obligation classifier, impact selection;
 src/docs/contracts.ts, src/spec/rulings.ts, src/holistic/{obligations,impact,rederive}.ts):
@@ -2805,7 +2812,9 @@ sections and marks converted amendments.
     blocking finding kept `still-open` keeps holding admission.
 21. **Spec-census row (N5, H3, F07; src/phase0/rows.ts).** `spec-census-mismatch{unit, item, rule, state}`: a declared
     obligation whose rule's census state is not `obligation` naming it or a split ancestor, or an active acceptance
-    clause naming (`T-n` in its text) an `out-of-slice` rule.
+    clause naming (`T-n` in its text) an `out-of-slice` rule. Run 10 (C): an active witness item too (its test id or
+    skeleton), and the one predicate (`specCensusMismatches`, src/holistic/rederive.ts) runs in the classifier on every
+    revision ("Run 10, round 1").
 
 **Readings of step N6:**
 
@@ -2833,3 +2842,35 @@ sections and marks converted amendments.
    evidence is gone (gc, or a restore from the ref). Lanes the spec in force no longer declares are listed: the records need no definition.
 6. **The drift indicator reads `advances ∪ OC`** (S ∪ OC, since S = advances \ OC) and counts a finding opened in any
    state, so a resolved drift stays visible as history; the brief shows only non-empty lines.
+
+## Run 10, round 1 (paid M4a run 10 follow-up; still 1.0.0-dev.7)
+
+The record rows are in "Record evolution" (M4a rev 3 table, "run 10"). Behaviour:
+
+- **A. Check-in at the chain boundary** (skill only): a check-in ends the turn with the brief, the preface and the numbered
+  questions (the open `P-n` top 5 with working assumptions, plus new ones); the next arc's Phase 0 starts after that turn
+  boundary, applying any answer received.
+- **B. `roadmap watch --actionable`** (src/watch.ts `ActionableFilter`, `watchActionable`): prints only a `needs-user` line
+  of an item not seen and not already acknowledged, a `units` line of the run reaching `complete`, `refused` or `no-owner`
+  (once per state) or newly `held`, `blocked` or `draining`, and `{"event":"stall","quietMin":30}` after `STALL_MIN` (30)
+  minutes with no change of the parallel view (once per quiet stretch). The M4a driver keeps one `ActionableFilter` across a
+  run's watch processes; nothing is persisted. CLI: `Command.watch + actionable: boolean`.
+- **C. Specs against the census on every revision**: `classify` runs `specCensusMismatches` over every spec of a corpus
+  arc's revision, whoever proposes it. The reason is the row as `start` prints it (`canonicalJson({kind:
+  'phase0-invalid', problems})`); a bundle's adds per problem how to fix it (target the rule through an opportunity whose
+  split anchors a child at it, so the census moves, or drop the citation). A plan-check redirect's `spec.patch` is not a
+  revision and is not checked (BACKLOG).
+- **D. Admit spec shape**: see the record row; a malformed admit spec is a schema violation (the adapter's) or a reader
+  refusal of the answer, never a bundle rejection after the call.
+- **E. Requests never hold completion**: an invalid `bundle-request` (and a twice-failed checkpoint's) offers `acknowledge`
+  and `decline`. When every completion blocker left is `generation-not-quiescent`, `close-out` or
+  `obligations-not-discharged` (or none) and no obligation is observed not held, the scheduler runs `settleCloseOut`
+  (src/holistic/closeout.ts) before completing or starting the close-out: each unanswered `bundle-request` gets, in a
+  corpus arc, an amendment `source: request{job, needsUser}` (proposal the item's summary), then `needs-user-declined{id,
+  choice: its reject or decline option (null when it offers none), reason}`. The fold closes the item (`ackOf` →
+  `{command: null, choice}`); a later `ack` is rejected. No `.ack.json` twin.
+- **F. Findings at the close-out**: in the same settlement, a corpus arc's every active P2 or P3 finding with no obligation
+  is banked (`mintDebt` `finding-deferred`, idempotent by source), then ruled `deferred` by `code{close-out}`; the
+  close-out publication renders the ledger into `debt.md`. A finding over an obligation is untouched.
+- Crash row "close-out settlement" (test/matrix.ts): labels `closeout.after-request-amendment`,
+  `closeout.after-deferred-debt`; the next settlement finds the amendment and the debt item by source.

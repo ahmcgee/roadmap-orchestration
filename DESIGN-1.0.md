@@ -47,6 +47,9 @@ defects hold their units uncharged, and units take a priority; `resume-arc`, `wi
 `apply --ruling`; the root agent's supervision and operator log; change-sensitive drift, an immutable checkpoint
 manifest, closeout deltas and issue reuse; a Phase-0 spec-census cross-check and delta pack re-review. The new checks
 and the admit classes apply to corpus arcs only (LR-h).
+Its run-10 follow-up (A-M4-29): a check-in ends the turn; `watch --actionable`; the spec-census cross-check on every
+revision; a structurally constrained admit spec; at the close-out, unanswered bundle requests declined and open
+unobligated findings banked as debt.
 
 ## 1. What the system is for
 
@@ -728,6 +731,9 @@ write its failure matrix (each step × process death).
 
 **Phase 0 (A-M4-28).** The shared Phase-0 rows gain `spec-census-mismatch`: a pack spec's declared obligation whose
 rule's census state is not `obligation` for it or its split parent, or an acceptance item naming an out-of-slice rule.
+A-M4-29 (run 10): a witness item naming one too, and the one predicate holds on every revision (the classifier runs
+it for an `apply` and a bundle alike); a checkpoint that wants an out-of-slice rule moves its census state through an
+opportunity's split child or drops the citation. The checkpoint writes an admit's spec as a schema-constrained object.
 A pack re-review after a required review reads the changed pack files and the previous review's unresolved findings,
 giving each a disposition (`resolved`, `still-open`, `withdrawn`); the first review stays full.
 
@@ -811,7 +817,11 @@ command.
   on the current head, split parents per the transition table (§2.8); no blocking `needs-user` unacknowledged
   (non-blocking items do not block); no pending command; no lens in L with an outstanding range, no owed audit,
   and the latest generation quiescent under the current vision; the close-out publication done, or nothing to
-  change; no own-arc residue. Then `arc-completed{planRev, head, highWater, units}` and the terminal snapshot
+  change; no own-arc residue. **Close-out settlement (A-M4-29, run 10).** When nothing but quiescence, the close-out
+  and the obligations' witnesses on the head is left, the executor declines every unanswered `bundle-request` (a
+  corpus arc carries its proposal to the next Phase 0 as an amendment), so a non-blocking item never holds
+  completion; and a corpus arc banks every open P2/P3 finding with no obligation as `finding-deferred` debt, ruled
+  deferred by code, so the next Phase 0 dispositions it. A finding over an obligation never banks. Then `arc-completed{planRev, head, highWater, units}` and the terminal snapshot
   (§2.9). **Completion (A20)** is **active** while the plan rev and the integration head are unchanged (used by
   resume and `status`); an admitting `apply` or a reopen invalidates it. It is **sealed** (used by `gc`) when its
   verified head is still in the integration history and its own log and queue hold no later work; head equality
@@ -1084,8 +1094,11 @@ fails the run on any answer-key or real-repository access.
 
 **Supervision and run 10 (A-M4-26; OR-A3, OR-A2).** The root agent observes cheaply (status on every wake, at most one
 read per 15 quiet minutes between wakes) and wakes only on actionable events (a needs-user item, a terminal state,
-changed constraints, a measured stall); it operates only through the sanctioned levers and never patches the plugin or
-a run dir. Each intervention (a lever used on its own initiative) is one entry in the operator log
+changed constraints, a measured stall); since A-M4-29 the executor applies that one rule (`roadmap watch
+--actionable`), the root waits only on it or ends its turn, and the fixture's harness wakes through the same filter.
+It operates only through the sanctioned levers and never patches the plugin or a run dir. A check-in (every arc
+completion and every brief-worthy event) ends the turn with its numbered questions; the next arc's Phase 0 starts after
+that boundary, applying any answer received, and never blocks on one. Each intervention (a lever used on its own initiative) is one entry in the operator log
 (`roadmap-inputs/skill-feedback.md`, outside the product repo); the fixture counts interventions per lever as an
 executor-quality metric. The fixture's turn cap is the session cap; it releases the host claim it leaves, restores a
 scrambled tree on any exit, checks the arc's profile, records each arc's terminal seq and post-run activity, and

@@ -27,7 +27,8 @@ import { parseDebtBlock } from '../src/docs/debt.ts';
 import { readStore, writeStore } from './fakes/gh-store.ts';
 import { verdictProblems, stageTree } from '../evals/m4a/adjudicate.ts';
 import { type CheckResult, CRITERIA, LEVERS, arcView, chainOf, parseOperatorLog } from '../evals/m4a/check.ts';
-import { type OwnerCtx, type Report, codeAnswer, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin, wakeKey } from '../evals/m4a/driver.ts';
+import { type OwnerCtx, type Report, codeAnswer, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin } from '../evals/m4a/driver.ts';
+import { itemKey } from '../src/watch.ts';
 import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
 import { FILES, LANES, SLOW_LANE, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
 import { DRIFT_CHECKPOINT } from '../evals/m4a/scenario.ts';
@@ -573,5 +574,5 @@ test('evals-m4a.owner-code-answers (paid run 2): a brief-ack question naming `k-
 });
 
 test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id reused by the next arc still wakes the session', () => {
-  assert.notEqual(wakeKey('no-double-promise', 'nu-31'), wakeKey('berth-that-fits', 'nu-31'));
+  assert.notEqual(itemKey('no-double-promise', 'nu-31'), itemKey('berth-that-fits', 'nu-31'));
 });

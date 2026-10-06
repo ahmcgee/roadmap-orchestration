@@ -14,6 +14,13 @@
 // watch.m3-kinds), and M4a's blocking `pack-review` and `issue-policy-untrusted`. `run` may be `draining` (admissions
 // closed). A headless driver resumes its session on these lines and on `run` reaching `complete` (M4a R12).
 //
+// `roadmap watch --actionable` (run 10, B) prints only what the architect acts on (`ActionableFilter`, the one rule; the
+// M4a driver resumes its headless session through it too): a needs-user item not seen before and not already
+// acknowledged, the run reaching a terminal state (`complete`, `refused`, `no-owner`; once per state), a changed
+// constraint (the run newly `held`, `blocked` or `draining`), and `{"event":"stall","quietMin":30}` after STALL_MIN
+// minutes with no change of the parallel view (once per quiet stretch). Owner lines, acks and routine unit moves are
+// absorbed. A fresh process starts with nothing seen: it re-emits the open items and a terminal or constrained run.
+//
 // A unit's state is `status`'s, compact (`compactState`): `running:build#3`, `waiting:deps=u1`,
 // `waiting:resources`, `awaiting-admission:paused`, `awaiting-admission:known-defect` (M4a rev 3: held at prepare by a
 // plan known defect until its fixer merges), `parked:retryable`, `merged`… The view is re-derived
@@ -31,6 +38,8 @@ import { SCHED_FILE } from './schedule/scheduler.ts';
 import { ownerState, unitStates } from './status.ts';
 
 export const WATCH_POLL_MS = 500;
+/** Minutes without a change of the parallel view after which `--actionable` reports a stall. */
+export const STALL_MIN = 30;
 
 const ITEM = /^((?:nu|sup|host)-[a-z0-9-]+)\.json$/;
 const ACK = /^((?:nu|sup|host)-[a-z0-9-]+)\.ack\.json$/;
@@ -46,8 +55,97 @@ function viewKey(runDir: AbsPath, names: readonly string[], owner: string): stri
   return `${stamp(EVENTS_FILE)} ${stamp(SCHED_FILE)} ${names.length} ${owner}`;
 }
 
-/** Polls until `signal` aborts; `emit` receives each event line (without its newline). */
-export async function watch(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, emit: (line: string) => void, signal: AbortSignal): Promise<void> {
+/** Run states that end a wait: nothing more happens without the architect. */
+const TERMINAL_RUN: readonly string[] = ['complete', 'refused', 'no-owner'];
+/** Run states that are a changed constraint: paused or a parked backend (held), work waiting on the architect (blocked), admissions closed (draining). */
+const CONSTRAINT_RUN: readonly string[] = ['held', 'blocked', 'draining'];
+
+/** A needs-user item's key across arcs: ids are arc-scoped. */
+export const itemKey = (arc: string, id: string): string => `${arc}:${id}`;
+
+/**
+ * The one rule of what is actionable in a watch stream (see the header). It lives across watch processes when its owner
+ * keeps it (the M4a driver feeds one instance every raw stream of a run), so a restarted watch wakes nothing twice.
+ */
+export class ActionableFilter {
+  private readonly items = new Set<string>();
+  private readonly acked = new Set<string>();
+  private readonly terminal = new Set<string>();
+  private run: string | null = null;
+  private units: string | null = null;
+  private changedAt: number;
+  constructor(now: number) {
+    this.changedAt = now;
+  }
+
+  /** The line itself when it is actionable, else null. */
+  feed(arc: string, line: string, now: number): string | null {
+    const e = JSON.parse(line) as { event: string; id?: string; run?: string };
+    if (e.event === 'ack' && e.id !== undefined) {
+      this.acked.add(itemKey(arc, e.id));
+      return null;
+    }
+    if (e.event === 'needs-user' && e.id !== undefined) {
+      const key = itemKey(arc, e.id);
+      if (this.items.has(key) || this.acked.has(key)) return null;
+      this.items.add(key);
+      return line;
+    }
+    if (e.event !== 'units' || e.run === undefined) return null;
+    if (line !== this.units) this.changedAt = now;
+    this.units = line;
+    const previous = this.run;
+    this.run = e.run;
+    if (TERMINAL_RUN.includes(e.run)) {
+      if (this.terminal.has(`${arc}:${e.run}`)) return null;
+      this.terminal.add(`${arc}:${e.run}`);
+      return line;
+    }
+    return CONSTRAINT_RUN.includes(e.run) && e.run !== previous ? line : null;
+  }
+
+  /** Whether the parallel view has not changed for STALL_MIN minutes (since the last change or wake). */
+  stalled(now: number): boolean {
+    return now - this.changedAt >= STALL_MIN * 60_000;
+  }
+
+  /** A wake went out: the stall clock restarts. */
+  woke(now: number): void {
+    this.changedAt = now;
+  }
+
+  /** Whether `arc` already reached a terminal state this filter passed on. */
+  ended(arc: string): boolean {
+    return [...this.terminal].some((t) => t.startsWith(`${arc}:`));
+  }
+}
+
+/** The stall line `--actionable` prints. */
+export const stallLine = (): string => canonicalJson({ event: 'stall', quietMin: STALL_MIN });
+
+/** `roadmap watch --actionable`: `watch` through an `ActionableFilter`, plus a stall line per quiet stretch. */
+export async function watchActionable(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, emit: (line: string) => void, signal: AbortSignal): Promise<void> {
+  const filter = new ActionableFilter(Date.now());
+  const pass = (line: string): void => {
+    const out = filter.feed(arc, line, Date.now());
+    if (out === null) return;
+    filter.woke(Date.now());
+    emit(out);
+  };
+  await watch(runDir, arc, hostDir, pass, signal, () => {
+    if (!filter.stalled(Date.now())) return;
+    filter.woke(Date.now());
+    emit(stallLine());
+  });
+}
+
+/**
+ * Polls until `signal` aborts; `emit` receives each event line (without its newline). `afterPoll` (`--actionable`'s
+ * stall check) runs once after every poll.
+ */
+export async function watch(
+  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, emit: (line: string) => void, signal: AbortSignal, afterPoll: () => void = () => {},
+): Promise<void> {
   const seenItems = new Set<string>();
   const seenAcks = new Set<string>();
   let owner: string | null = null;
@@ -86,6 +184,7 @@ export async function watch(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, emit:
         emit(line);
       }
     }
+    afterPoll();
     try {
       await sleep(WATCH_POLL_MS, undefined, { signal });
     } catch (error) {

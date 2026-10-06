@@ -78,7 +78,7 @@ import { renderSpec } from '../spec/render.ts';
 import { nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, rewitnessP1s, withCpu } from './audit.ts';
-import { type Activation, type BundleDecision, type Captured, type CheckpointContext, activate, effectiveOps, raiseOnce, settleDecided, vectorAt } from './bundle.ts';
+import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, activate, effectiveOps, raiseOnce, settleDecided, vectorAt } from './bundle.ts';
 import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
@@ -613,8 +613,8 @@ function failedTwice(ctx: CheckpointContext, job: JobId, detail: string) {
     subject: { type: 'arc' },
     reason: 'bundle-request',
     summary: `Checkpoint ${job} gave no valid decision a second time for its trigger (${detail}). Units keep running; the trigger waits for the owner.`,
-    recommendation: 'Read the checkpoint calls\' evidence; make any change the arc needs with `roadmap apply`, then acknowledge this item.',
-    options: [],
+    recommendation: 'Read the checkpoint calls\' evidence; make any change the arc needs with `roadmap apply`, then choose `acknowledge`; or choose `decline` to drop it.',
+    options: INVALID_REQUEST_OPTIONS,
     evidence: [],
   });
 }

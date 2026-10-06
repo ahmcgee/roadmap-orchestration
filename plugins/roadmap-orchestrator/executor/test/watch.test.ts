@@ -14,7 +14,7 @@ import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { HOST_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
 import { publishOwner } from '../src/host/owner.ts';
 import { needsUserAckPath, raiseNeedsUser } from '../src/needsuser.ts';
-import { WATCH_POLL_MS, watch } from '../src/watch.ts';
+import { WATCH_POLL_MS, watch, watchActionable } from '../src/watch.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { claimRecord } from './fixtures/host-records.ts';
 
@@ -111,5 +111,46 @@ test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-
   } finally {
     stop.abort();
     await watching;
+  }
+});
+
+test('watch.actionable: `--actionable` prints only the open items not seen, each once, and the run reaching a terminal state; owner lines, acks and routine views are absorbed', { timeout: 30_000 }, async () => {
+  const runDir = absPath(tmpDir('watch-act-run'));
+  const hostDir = openHostDir(absPath(join(tmpDir('watch-act-host'), 'roadmap')));
+  const arc = arcId(`w-${randomBytes(5).toString('hex')}`);
+  const executor = spawn('sleep', ['300'], { stdio: 'ignore' });
+  assert.ok(executor.pid !== undefined);
+  const { pid, start } = identityOf(executor.pid);
+  const exited = new Promise((resolve) => executor.once('exit', resolve));
+  const claim = { ...claimRecord({ supervisor: { pid: process.pid, start: identityOf(process.pid).start }, bootId: readBootId(), arc }), runDir };
+  atomicJson(hostPath(hostDir, HOST_LOCK), claim);
+  publishOwner(hostDir, claim, { pid, start });
+
+  const journal = openJournal(runDir, arc);
+  const raise = (summary: string) => raiseNeedsUser(journal, runDir, {
+    blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary, recommendation: 'look', options: [], evidence: [],
+  }, { type: 'arc' });
+  const answered = raise('answered before the watch');
+  exclusiveCreate(needsUserAckPath(runDir, answered), canonicalJson({ v: SCHEMA_VERSION, id: answered, command: commandId('cmd-00000000000000ab'), choice: null, at: isoTimeOf(new Date()) }));
+  const open = raise('open before the watch');
+
+  const lines: Line[] = [];
+  const stop = new AbortController();
+  const watching = watchActionable(runDir, arc, hostDir, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
+  try {
+    await until(lines, (l) => l['id'] === open, 2_000, 'the open item');
+    const later = raise('raised while watching');
+    journal.close();
+    await until(lines, (l) => l['id'] === later, 2_000, 'the new item');
+    executor.kill('SIGKILL');
+    await exited;
+    const ended = await until(lines, (l) => l['event'] === 'units', 2_000, 'the terminal state');
+    assert.equal(ended['run'], 'no-owner');
+    await sleep(3 * WATCH_POLL_MS);
+    assert.deepEqual(lines.map((l) => (l['event'] === 'needs-user' ? l['id'] : `${String(l['event'])} ${String(l['run'])}`)), [open, later, 'units no-owner'], 'nothing else, each once');
+  } finally {
+    stop.abort();
+    await watching;
+    if (executor.exitCode === null && executor.signalCode === null) executor.kill('SIGKILL');
   }
 });

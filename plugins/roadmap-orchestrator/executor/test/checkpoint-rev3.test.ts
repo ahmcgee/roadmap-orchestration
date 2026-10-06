@@ -190,8 +190,8 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
 
   test('bundle.follow-up-overrun-converts-with-debt (LR-k): O-1 merges; a finding on its code; the first repair follows O-1 up, the second converts with an amendment and a debt item naming O-1', T, async () => {
     const repairOf = (a: CorpusHolisticArc, id: string): JsonValue => {
-      const op = admitStep(a, id, ['V-3']) as Json & { spec: string; unit: Json };
-      return { ...op, unit: { ...op.unit, origin: 'repair' }, spec: JSON.stringify({ ...(JSON.parse(op.spec) as Json), repairs: ['F-1'] }) } as JsonValue;
+      const op = admitStep(a, id, ['V-3']) as Json & { spec: Json; unit: Json };
+      return { ...op, unit: { ...op.unit, origin: 'repair' }, spec: { ...op.spec, repairs: ['F-1'] } } as JsonValue;
     };
     const a = await corpusHolisticArc([lensStep('audit-1', 'vision')], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
     appendSteps(a.d, [

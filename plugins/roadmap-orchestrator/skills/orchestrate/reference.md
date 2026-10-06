@@ -32,7 +32,8 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
 - `roadmap status`: the run as one JSON object ("status" below).
-- `roadmap watch`: one JSON line per event until killed; run it under Monitor with a timeout ("watch" below).
+- `roadmap watch [--actionable]`: one JSON line per event until killed; `--actionable` prints only what you act on.
+  Wait on `roadmap watch --actionable` under Monitor with a timeout ("watch" below).
 - `roadmap stop`: park everything, tear down, release the host lock.
 - `roadmap pause (<unit> | --all)`: kill and tear down; commits and worktree stay as left; the unit holds at its stage.
 - `roadmap resume [<unit> | --backend claude|codex]`: no argument clears pauses and holds (a held build continues
@@ -243,9 +244,12 @@ or docs publication), and anything not yet published to the ref is not in it.
 `{"event":"needs-user", id, blocking, reason, subject, summary}` for every raised item, blocking or not;
 `{"event":"ack", id, command, choice}`; `{"event":"owner", state, generation, pid}`; `{"event":"units", run,
 units: {<unit>: <state>}}` with compact states (`running:build#3`, `waiting:deps=u1`, `parked:retryable`,
-`awaiting-admission:known-defect`, `merged`). Watch streams every change; wake only on a new `needs-user` line, `run`
-reaching `complete`, `refused` or `no-owner`, `run` newly `held`, `blocked` or `draining`, or no change for 30
-minutes. Every other line is routine.
+`awaiting-admission:known-defect`, `merged`). Plain `watch` streams every change. `watch --actionable` prints only
+the wakes: a `needs-user` line for an item not seen before and not already acknowledged, the `units` line of `run`
+reaching `complete`, `refused` or `no-owner` (once each) or newly `held`, `blocked` or `draining`, and
+`{"event":"stall","quietMin":30}` after 30 minutes with no change. Owner, ack and routine `units` lines are dropped. A
+fresh `--actionable` process starts with nothing seen: it prints the open items and a terminal or constrained run
+again.
 
 ## Refusals
 
@@ -266,7 +270,7 @@ minutes. Every other line is routine.
 | `holistic-needs-corpus` | a fresh holistic plan names `architectureDoc` | make it a corpus arc |
 | `vision-unconfirmed{ref, expected, actual}` | `.roadmap/vision.json` unconfirmed, or its `corpus:` hash differs from the pinned vision document (`actual` null: no such pinned file) | run the `vision` skill; commit; re-pin |
 | `corpus-invalid{problems}` | `pin-drift`, `rule-reused{id}`, `rule-retired-reappears{id}`, `rules-in-vision`, `guide-missing`, `source-unreadable{detail}`, `source-remote-mismatch`, `scope-overlaps-corpus{unit}`, `contract-overlaps-corpus{path}` | re-pin after any corpus change; a new meaning takes a new id; no rules block in the vision document; scopes and contracts stay off corpus files |
-| `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `intake-missing{issue}`, `intake-unknown{issue}`, `intake-duplicate{issue}`, `capture-missing`, `capture-foreign{expected, actual}`, `question-reused{id}`, `spec-census-mismatch{unit, item, rule, state}` (a spec declares an obligation whose rule's census is not that obligation, or an acceptance item names an `out-of-slice` rule) | complete the Phase-0 record or obligations; re-capture issues for this repo; align the spec with the census |
+| `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `intake-missing{issue}`, `intake-unknown{issue}`, `intake-duplicate{issue}`, `capture-missing`, `capture-foreign{expected, actual}`, `question-reused{id}`, `spec-census-mismatch{unit, item, rule, state}` (a spec declares an obligation whose rule's census is not that obligation, or an acceptance clause or witness item names an `out-of-slice` rule; checked on every revision, so `apply` refuses it too) | complete the Phase-0 record or obligations; re-capture issues for this repo; align the spec with the census |
 | `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K |
 | `issue-policy-untrusted{visibility, policy}` | anyone can open issues | the owner restricts issue creation to collaborators or disables issues |
 | `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |
@@ -292,8 +296,13 @@ Blocking unless noted. Read the item file before acting.
   `previous-arc-unreconciled`): SKILL.md "Handling parks"; never edit host files. `supervisor-crash-limit` is an
   executor defect: report it and stop the session, never patch the plugin.
 - Non-blocking: `park-escalated`, `env-blocked` (a retryable park probing for long), `bundle-request` (`--choice
-  apply|reject`), `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest` (the brief ack
+  apply|reject`; one the executor cannot apply: `--choice acknowledge|decline`; still unanswered when only the
+  close-out is left, the executor declines it, a corpus arc's with an amendment `source: request`, and a later ack is
+  rejected), `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest` (the brief ack
   acknowledges the digest and convergence-bound items).
+- At the close-out of a corpus arc, every open P2 or P3 finding that names no obligation is banked as
+  `finding-deferred` debt and ruled deferred (`by: code{close-out}`): the next Phase 0 dispositions it. A finding over
+  an obligation never banks.
 - Holistic, blocking: `obligation-baseline` (a must-hold obligation not held at the baseline: fix the obligation
   or the plan), `finding-p1-escalated`, `new-finding-draining`, `not-reproduced`, `owner-request` (an owner-only act:
   ask the owner).

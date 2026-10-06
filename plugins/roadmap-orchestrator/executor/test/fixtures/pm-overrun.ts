@@ -42,8 +42,8 @@ const admitCiting = (a: CorpusHolisticArc, id: string, cites: readonly string[])
 
 /** A repair admit of `id` repairing F-1, citing V-3. */
 function repairOf(a: CorpusHolisticArc, id: string): JsonValue {
-  const op = admitCiting(a, id, ['V-3']) as Json & { spec: string; unit: Json };
-  return { ...op, unit: { ...op.unit, origin: 'repair' }, spec: JSON.stringify({ ...(JSON.parse(op.spec) as Json), repairs: ['F-1'] }) } as JsonValue;
+  const op = admitCiting(a, id, ['V-3']) as Json & { spec: Json; unit: Json };
+  return { ...op, unit: { ...op.unit, origin: 'repair' }, spec: { ...op.spec, repairs: ['F-1'] } } as JsonValue;
 }
 
 /** The checkpoint context the story's jobs run under: the plan in force (with its admitted units) and their routing. */

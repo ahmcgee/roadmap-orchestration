@@ -40,6 +40,21 @@ export function lensAnswer(findings: readonly LensFindingSpec[] = []): JsonValue
 
 const cites = { cites: ['V-1'], evidence: ['scripted evidence'] } as const;
 
+/**
+ * A spec.json object in the checkpoint's admit wire form (run 10, D; src/prompts/schemas.ts `S_ADMIT_SPEC`): each lane's
+ * env.set as [{name, value}] and its evidenceExcludes present, `obligations` and `repairs` [] when absent. A lane's `cpu`
+ * or `inputs` and witness items have no wire form: they throw.
+ */
+export function admitSpecWire(spec: Readonly<Record<string, unknown>>): JsonValue {
+  if (spec['witnesses'] !== undefined) throw new Error('an admitted spec holds no witness items');
+  const lanes = ((spec['lanes'] ?? []) as Readonly<Record<string, unknown>>[]).map((l) => {
+    if (l['cpu'] !== undefined || l['inputs'] !== undefined) throw new Error(`lane ${String(l['id'])}: cpu and inputs have no admit wire form`);
+    const env = l['env'] as Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }>;
+    return { ...l, evidenceExcludes: l['evidenceExcludes'] ?? [], env: { ...env, set: Object.entries(env.set).map(([name, value]) => ({ name, value })) } };
+  });
+  return { ...spec, lanes, obligations: spec['obligations'] ?? [], repairs: spec['repairs'] ?? [] } as unknown as JsonValue;
+}
+
 /** An op the reader accepts and activation accepts on a plan with a unit `unit`: an arc-wide limits change. */
 export const VALID_OP: JsonValue = { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 3 }], ...cites };
 /** An op the reader accepts but activation refuses: it cuts a unit the plan does not have and cites a clause the vision lacks. */

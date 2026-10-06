@@ -117,16 +117,16 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **A plan-check redirect can still cite an out-of-slice rule** (run 10, C). The spec-census predicate runs on every
+  revision (`apply`, a bundle), but a plan-check redirect's `spec.patch` is no revision and is not checked, so it can
+  add an acceptance clause or witness item naming an `out-of-slice` rule; the next `apply` is then refused until the
+  citation goes. Trigger: a redirect that does it; then refuse such a patch as `malformed` in the plan-check stage.
+
 - **gpt-5.6-sol is not available on a ChatGPT Codex account** (400 `invalid_request_error`, 2026-10-06). No class binds
   it; a repo rebind to sol would fail at the preflight smoke. Trigger: a routing that seats sol, or the account
   changing; then probe sol again or drop it from `CODEX_MODELS`.
 - **`log.test` "10x the lines costs under 15x the CPU"** fails under heavy host load (seen once in a full run with
   agents active; passes alone). Trigger: a failure on a calm host.
-
-- **An unanswered non-blocking request holds its generation open.** A checkpoint bundle request nobody answers keeps
-  that generation non-quiescent, so an otherwise finished arc stays `running` on a visible open item (declined or
-  applied requests settle it). Trigger: an arc idling on an unanswered request; then surface it as `blocked` with the
-  item named, or escalate the last obstacle to blocking.
 
 - **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
   same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
@@ -225,7 +225,8 @@ None.
     (`Dev6MutantSubject`, `MutantApplyExpect`); `buildExperimentsDefault` (a build answer without `experiments`);
     `minimalLaneRev` and `laneRevMatches`'s minimal-form arm; `bundleClassesOf`'s `unclassified` reading (with the
     `architecture-doc` variant below); `dev6SmokeBounds` and `BoundsRecord`'s optional smoke bounds;
-    `admitTargetsDefault` (a checkpoint admit op recorded without `targets`, before LR-m: read as none).
+    `admitTargetsDefault` (a checkpoint admit op recorded without `targets`, before LR-m: read as none);
+    `admitSpecTextDefault` (run 10: a checkpoint admit op whose `spec` is JSON text, read as written).
   - With them, the holistic `architecture-doc` variant and the `docRef` obligation arm in holistic arcs: anchor checks
     at the tip, `contractRevs` carrying the architecture doc, an `apply` adding `holistic` to an `architecture-doc` arc.
     Lasting, not scaffolding: the `architecture-doc` variant of a non-holistic arc, `target-kind-changed`, a fingerprint
