@@ -14,6 +14,9 @@
 // questions whose working assumptions are provisional (DESIGN §2.8 amendment).
 // M4a (reviewed 2026-10-03 against the same guides): the `target` input, the architecture doc or, in a corpus arc,
 // the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
+// M4a rev 3 (reviewed 2026-10-06 against the same guides): `cause` as "<affected operation>: <failure condition>",
+// lens-agnostic, since one audit merges findings across lenses on paths, obligation and cause (H7, R62); a specs-only
+// drift runs the vision lens over the changed specs alone (H2, R61).
 import type { LensInputs, PromptModule } from '../inputs.ts';
 import {
   documentsXml, findingViewsText, obligationsText, pasted, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
@@ -57,7 +60,7 @@ Report a finding only when all three hold: the problem is on the audited tree; y
 </severity>
 
 <output>
-Each finding has: severity; obligation, the I-n id it concerns or null; visionClauses, the active V-n ids it bears on (empty only when it bears on none); claim, one plain sentence saying what is wrong and where; cause, a short stable name for the root cause in lowercase words, the text any audit would give this same defect, since the executor dedupes on obligation and cause; evidence, the files and lines you read; mutant, null except on a vacuity finding. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, at most ${MAX_PREMISES}, each with the file and line you read it at.
+Each finding has: severity; obligation, the I-n id it concerns or null; visionClauses, the active V-n ids it bears on (empty only when it bears on none); claim, one plain sentence saying what is wrong and where; cause, the root cause as "<affected operation>: <failure condition>" in lowercase words (for example "export write: file renamed before its contents are flushed"), describing the defect itself and not your lens's angle on it, so that any lens finding this same defect would write the same text: the executor merges findings of one audit that share their evidence paths, obligation and cause, and dedupes across audits on obligation and cause; evidence, the files and lines you read; mutant, null except on a vacuity finding. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, at most ${MAX_PREMISES}, each with the file and line you read it at.
 </output>`;
 
 /** Each lens's own brief (§2.5; A15 adds `vision`). The first line is the one marker naming the lens. */

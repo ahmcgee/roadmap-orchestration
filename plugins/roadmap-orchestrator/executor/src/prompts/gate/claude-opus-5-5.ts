@@ -14,6 +14,10 @@
 // observations, never their vision clauses (R17: the gate grades spec and contracts, not the vision).
 // M4a (reviewed 2026-10-03 against the same guides): the `target` input, the architecture doc or, in a corpus arc,
 // the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
+// M4a rev 3 (reviewed 2026-10-06 against the same guides): the executable checks run before the gate (witness presence,
+// mutation smoke with killed, survived and inconclusive; D1, D2, R38), reused lanes; the defect classes of D3 (real
+// clock or host time zone, a fixed date the change invalidates, a real wait in a fast lane, a negative witness that
+// bypasses the entry point) and of H1 (a transaction step moved without a failure matrix).
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
   bullets, documentsXml, findingsText, laneLedgerText, obligationsText, pasted, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
@@ -40,7 +44,7 @@ Host facts are never a verdict. Sibling units' lanes and the orchestrator's proc
 </how_to_grade>
 
 <finding_bar>
-Report a finding only when all three hold: this diff introduced the problem, or the spec requires something the diff omits; you can state the evidence in one sentence; and it is one of (1) incorrect behaviour, (2) a spec, contract or ruling violation, (3) an acceptance clause left untested or a test that would pass if the behaviour were wrong, (4) scope creep: behaviour or files the spec did not ask for. Nothing else qualifies: not style, naming or formatting, nothing a linter or type checker enforces, no preference without a defect behind it, never one defect twice under two headings. Under-reporting a real defect and over-reporting a non-defect are both failures here: every blocking finding becomes a fix round, and every fix widens the diff that must be read again.
+Report a finding only when all three hold: this diff introduced the problem, or the spec requires something the diff omits; you can state the evidence in one sentence; and it is one of (1) incorrect behaviour, (2) a spec, contract or ruling violation, (3) an acceptance clause left untested or a test that would pass if the behaviour were wrong, (4) scope creep: behaviour or files the spec did not ask for. Nothing else qualifies: not style, naming or formatting, nothing a linter or type checker enforces, no preference without a defect behind it, never one defect twice under two headings. These are always defects of kind (3), whatever the lanes say: a test that reads the real clock or the host time zone instead of a pinned clock; a fixed date the change makes invalid, or one that will expire; a real wait in a fast lane, where the timeout should be injected and the production default checked separately; a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point with an injected fixture. A change that moves a step of a transaction (staging, a save, a publication, a rollback) is a defect of kind (1) unless a failure matrix in the spec or decisions.json shows what each step leaves when the process dies before or after it, and the code matches every cell. Under-reporting a real defect and over-reporting a non-defect are both failures here: every blocking finding becomes a fix round, and every fix widens the diff that must be read again.
 
 A finding is blocking when the merge cannot carry it: a correctness defect, a contract or ruling violation, or an untested acceptance clause. Everything else is a note, recorded and never a fix round. Report only what affects correctness or the spec's stated acceptance.
 </finding_bar>
@@ -48,6 +52,10 @@ A finding is blocking when the merge cannot carry it: a correctness defect, a co
 <obligations>
 <obligations> lists the obligations this change selects: owner-approved claims about the product, each with the witness tests that prove it and its latest observation. The executor runs the witness lanes on the integration candidate and holds the merge on any selected obligation that does not hold, so you do not re-run them. Judge whether the diff breaks or weakens one: a change that makes an obligation's statement false, or that edits its witness test so the test would pass with the statement false, is a blocking finding that names the obligation id.
 </obligations>
+
+<executable_checks>
+In a corpus arc the executor runs two checks before you, and the executable checks block gives their results; you do not re-run them. Witness presence looked up every required witness test by its exact id on the arc lanes: a required test still missing or failing is a blocking finding that names it. Mutation smoke reverted the unit's production change, kept its test files, and ran the target witness tests again. A killed test failed without the change, so it shows the change. A survived test passed without it, so it does not show what the change does: that is a blocking finding (an acceptance clause left untested) unless the behaviour it checks existed before this unit, which you confirm in the code and record as a note. An inconclusive result proves nothing either way: read that test yourself. When smoke did not run, the block says why, and you judge the tests by reading them. A lane the ledger marks reused passed at an earlier commit whose declared inputs this change leaves untouched; its record stands as evidence for this head.
+</executable_checks>
 
 <scope>
 The scope envelope was pinned at dispatch. Rule on each path listed as scope growth with its own finding: a note when the path was necessary to satisfy the spec (say why), a blocking finding with a directive to revert it when it is creep. Growth is a signal to you, never a licence to review those files as if they were in scope.

@@ -596,6 +596,8 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
       // R17: the vision in force, read-only context (the module marks it non-directive).
       vision: visionInput(ctx),
+      // M4a rev 3 (E): the acceptance shape of an efficient builder's check lands in N3.
+      acceptance: null,
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
     return { checkouts, rendered, target };
@@ -776,7 +778,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
       planCheckNotes: planCheckNotes(ctx, unit.id),
       fastLanes: activeFastLanes(spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope, fixRound: call.fixRound,
       // M4a rev 3 (D1, E): witness-check commands and the in-session assessment land in N3.
-      witnessChecks: [], assess: false,
+      witnessChecks: [], assess: null,
     }),
     schema: prompt.schema, cwd: round.worktree, deadlineAt: round.deadlineAt,
   });

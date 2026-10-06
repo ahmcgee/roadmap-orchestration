@@ -15,9 +15,11 @@
 // forecloses a horizon clause, or rests costly-to-undo on an open question's assumption, is a visionConflict.
 // M4a (reviewed 2026-10-03 against the same guides): the `target` input, the architecture doc or, in a corpus arc,
 // the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
+// M4a rev 3 (reviewed 2026-10-06 against the same guides): as the Opus plan-check, the failure matrix (F03, H1), the
+// clock and entry-point defect classes (D3) and the acceptance shape (E, R59).
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
+  acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
 } from '../inputs.ts';
 import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
@@ -40,7 +42,9 @@ You check that the spec is coherent and buildable. Look for:
 4. Lanes the executor cannot run as written. It runs argv exactly, with no shell, from a clean checkout, with only the declared environment, and passes a lane when its exit code equals expectedExit. argv[0] must be on the lane's PATH or a file in the repository; pipes, &&, ! and redirection work only inside a script or shell the lane calls; a required failure is stated by expectedExit or asserted inside a script; a lane that needs environment a project target supplies calls that target. Fast lanes are the implementer's inner loop; estate lanes run only under the executor.
 5. Acceptance clauses no lane or test could show to hold, or that a test could pass while the behaviour is wrong.
 6. Host conditions written as requirements. Sibling units' lanes, the orchestrator's processes and host load are normal here, so a clause demanding a quiet host, no other processes, or a wall-clock ceiling can never be met; treat it as a spec defect.
-7. Design that will cost the roadmap later: complexity that does not pay for itself, structure that makes the next change harder, reuse missed, or a choice that closes a door the Direction needs open. Redirect on this ground only when the cost is concrete and you can name it.
+7. Transactions. A spec that orders or reorders the steps of a transaction (staging, a ledger or file save, a publication, a rollback) carries a failure matrix: each step against the process dying before it, after it, and the step itself failing, with what the product holds in each cell. When the spec has none, or a cell leaves a state its clauses forbid, redirect: add the matrix as a facts item, each cell checked against the code. Read the earlier repairs of the same transaction (their specs' facts, the code's history) first and keep their cells: a repair that fixes one cell by breaking another is the defect this check exists to stop.
+8. Time and entry points. A clause or test that depends on the date or the time zone pins the product's own clock seam in every test, the existing tests the change affects included. These are defects to redirect on: a test reading the real clock or the host time zone; a fixed date the change invalidates, or one that will expire; a real wait in a fast lane (the timeout is injected, and the production default is checked separately); a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point, the command a user runs, with an injected fixture.
+9. Design that will cost the roadmap later: complexity that does not pay for itself, structure that makes the next change harder, reuse missed, or a choice that closes a door the Direction needs open. Redirect on this ground only when the cost is concrete and you can name it.
 
 Report only what affects correctness or the spec's stated acceptance. You review the spec, not the implementation. When the unit continues a branch that already holds code, a defect in that code is for the build and the gate: write it in notes as a fact for them, and never redirect on implementation defects alone. A facts item in a redirect is right only when the spec is otherwise wrong.
 
@@ -101,7 +105,7 @@ ${visionText(i.vision)}
 export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -132,7 +136,7 @@ ${checkouts(i)}
 
 <lane_programs>
 ${laneProgramsText(i.lanePrograms)}
-</lane_programs>${priorRound(i)}${visionContext(i)}
+</lane_programs>${priorRound(i)}${visionContext(i)}${acceptanceShapeText(i.acceptance)}
 
 Check the spec of unit ${i.spec.unit}, revision ${i.spec.rev}, against these documents and the checkouts. Go through every acceptance clause and every lane, then return your decision.`,
 };
