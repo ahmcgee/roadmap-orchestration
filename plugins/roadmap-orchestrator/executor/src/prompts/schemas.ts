@@ -249,16 +249,10 @@ export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
   });
 }
 /**
- * The build modules' schema as calls write it today, without `experiments`. TEMPORARY (step N0): step N3 makes each build
- * call write `buildSchemaFor(<its spec's fast lanes>)` and the modules' schema `buildSchemaFor(null)`, then deletes this
- * literal (one schema for the role).
+ * The build role's schema as its prompt modules carry it: any lane id (I3). Each build call writes its own,
+ * `buildSchemaFor(<its spec's fast lanes>)` (src/pipeline/stages.ts `buildLaneIds`), and its answer is read with the same lanes.
  */
-export const BUILD_SCHEMA: Schema = sObj({
-  summary: S_STR,
-  changedPaths: sArr(S_STR),
-  lanesRun: sArr(sObj({ lane: S_STR, exit: S_INT })),
-  blockers: sArr(S_STR),
-});
+export const BUILD_SCHEMA: Schema = buildSchemaFor(null);
 
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
 

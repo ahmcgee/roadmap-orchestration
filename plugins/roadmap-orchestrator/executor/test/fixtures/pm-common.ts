@@ -29,7 +29,7 @@ import { absPath } from '../../src/core/values.ts';
 import { type ExitReason } from '../../src/executor.ts';
 import { lastGeneration } from '../../src/host/lock.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
-import { RESOLVE_DIRECTIVE } from '../../src/pipeline/rounds.ts';
+import { RESOLVE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
 import { BACKOFF_MS, executorLogs, lastLine } from '../../src/supervisor.ts';
 import { reached, release } from '../helpers/barrier.ts';

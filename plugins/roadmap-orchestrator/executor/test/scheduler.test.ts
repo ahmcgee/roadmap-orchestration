@@ -19,7 +19,7 @@ import { readJournal } from '../src/core/log.ts';
 import { Fold } from '../src/core/state.ts';
 import { absPath, isoTime, repoPattern } from '../src/core/values.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
-import { CONTINUE_DIRECTIVE } from '../src/pipeline/rounds.ts';
+import { CONTINUE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { recover } from '../src/recover/recover.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { unitSettled } from '../src/schedule/scheduler.ts';
@@ -335,7 +335,7 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
       ...of('u1', [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/one.js': 'export const one = 1;\n' }), gateStep({ decision: 'approve' })]),
       ...of('u2', [
         planCheckStep({ decision: 'approve', risk: 'high' }),
-        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [] } }] },
+        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [] } }] },
         gateStep({ decision: 'approve' }),
       ]),
       { as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'emit', value: OK }] },

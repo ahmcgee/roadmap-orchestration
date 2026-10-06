@@ -628,6 +628,15 @@ export const unitWorktree = (root: AbsPath, arc: ArcId, unit: UnitId): AbsPath =
 /** A lanes attempt's clean detached checkout of the salvage SHA. */
 export const verificationWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.verify-${attempt}`));
+/**
+ * M4a rev 3 (D1): a lanes attempt's own detached checkout of the salvage SHA for its witness presence check (the arc's
+ * required witness lanes), never the verification checkout the gate reads.
+ */
+export const witnessWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>
+  absPath(join(root, arc, `${unit}.witness-${attempt}`));
+/** M4a rev 3 (D2): a lanes attempt's detached checkout of the salvage SHA with its production diff reverted (mutation smoke). */
+export const smokeWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>
+  absPath(join(root, arc, `${unit}.smoke-${attempt}`));
 
 export type StageParent = Extract<Parent, { type: 'stage' }>;
 

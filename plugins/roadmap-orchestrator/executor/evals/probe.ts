@@ -343,7 +343,7 @@ async function main(): Promise<void> {
   if (sonnet.result.outcome.kind === 'success' && !existsSync(join(sonnetDir, 'probe.txt'))) report(false, 'sonnet.build.write', `no ${sonnetDir}/probe.txt`);
 
   // Killed mid-run, then resumed: the token is in the killed conversation only (its file is deleted first).
-  // The resume message is CONTINUE_DIRECTIVE's opening (rounds.ts); its evidence-dir sentence has no referent here.
+  // The resume message is CONTINUE_DIRECTIVE's opening (src/prompts/directives.ts); its evidence-dir sentence has no referent here.
   const killTask = (t: string): string =>
     `This task has three steps. 1. Create the file killed.txt in the current directory containing exactly ${t}. 2. Run the shell command \`sleep 90\` and wait for it to finish. 3. Reply with {"token": "<the token you wrote in step 1>"}.`;
   const CONTINUE = 'You were paused partway through this task and are now resumed. Continue from where you stopped; do not restart. The sleep of step 2 has already finished; do not run it again.';

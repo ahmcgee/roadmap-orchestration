@@ -40,15 +40,27 @@
 // code's dismissal of a mutant a reproduce killed). A candidate red on a surviving mutant gets its fix round from the
 // mutant's run (`mutantFix`).
 //
+// M4a rev 3: a lanes `known-defect` (F4) sends the unit to `prepare` (prepare.ts), held by admission until the defect's
+// fixer merges. A lanes fix round is rebuilt from the recorded outcome (`lanesFixRound`): a red or dirty series, missing
+// witnesses (D1), smoke survivors (D2), or a witness check whose own checkout was left dirty. A resume round quotes why
+// the answer it follows was malformed (I3); the retry of a malformed in-session assessment assesses again, fresh (E).
+//
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
 import { scan } from '../contain/proc.ts';
 import { crashPoint } from '../core/crash.ts';
-import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact } from '../core/events.ts';
-import { type InvocationId, type OpId, type ResourceInstance, type UnitId, invocationId } from '../core/ids.ts';
+import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact, type TestRef, testRefKey } from '../core/events.ts';
+import { canonicalJson } from '../core/json.ts';
+import { mutantSubjectDefault } from '../core/upgrade.ts';
+import { SchemaError } from '../core/validate.ts';
+import { patternPath } from '../git/evidence.ts';
+import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
+import type { RequiredWitness } from '../holistic/required.ts';
+import { buildOutputFor } from '../prompts/schemas.ts';
+import { type InvocationId, type OpId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
 import type { EntryPoint, UnitState } from '../core/state.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
@@ -57,7 +69,9 @@ import { capturedEvidence } from '../git/evidence.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type NextStage, nextStage } from '../schedule/ready.ts';
 import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
-import { type Cancelled, type StageContext, type StageParent, dispatchOf, isCancelled, runOp, unitBranch, unitWorktree, verificationWorktree, workDir } from './dispatch.ts';
+import {
+  type Cancelled, type StageContext, type StageParent, dispatchOf, evidenceRoot, isCancelled, runOp, unitBranch, unitWorktree, verificationWorktree, witnessWorktree, workDir,
+} from './dispatch.ts';
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
 import { batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
@@ -66,14 +80,15 @@ import type { FixRound } from '../prompts/inputs.ts';
 import { prepare } from './prepare.ts';
 import { mutantFix, reproduce, specFacts, syncRepairs } from './reproduce.ts';
 import {
-  type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound, steerBrief,
+  type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound, smokeFixRound, steerBrief,
+  witnessCheckoutFixRound, witnessFixRound,
 } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildRead, evidence, failedFacts, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck, quiesce, record,
-  recordedCall, salvage, teardown,
+  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck,
+  quiesce, record, recordedCall, salvage, teardown,
 } from './stages.ts';
+import { requiredAt } from './witnesscheck.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
-import { notYet } from '../core/notyet.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
 
 export type UnitResult =
@@ -210,8 +225,104 @@ export function candidateRedCause(ctx: StageContext, unit: PlanUnit, at: StagePa
   return [...suite.filter((l) => l.verdict !== 'pass').map((l) => `Suite lane ${l.lane} ended ${l.verdict} on the candidate.`), ...fix.directives];
 }
 
+/**
+ * I3 (F25): why the build answer that decided `f` (a malformed build) did not validate, for the resume round to quote: the
+ * schema error of its recorded answer, or the uncommitted merge of a resolve round; null when the call left no answer.
+ */
+function malformedError(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): string | null {
+  const called = recordedCall(ctx, stageParent(f));
+  if (called?.kind !== 'result') return null;
+  // The adapter already refused an answer its call's schema does not admit (a lane outside the enum): its reason.
+  if (called.result.outcome.kind === 'malformed') return called.result.outcome.detail;
+  if (called.result.outcome.kind !== 'success') return null;
+  try {
+    buildOutputFor(buildLaneIds(loadUnitSpec(ctx, unit).spec))(called.result.outcome.value, 'build');
+  } catch (error) {
+    if (error instanceof SchemaError) return error.message;
+    throw error;
+  }
+  return 'the report claimed success, but the merge of the integration branch is not committed on the unit branch';
+}
+
+/** The evidence dirs of the arc lanes a lanes attempt's witness check ran (D1), in log order. */
+function witnessEvidence(ctx: StageContext, parent: StageParent): readonly AbsPath[] {
+  return attemptSpawns(ctx, parent).flatMap((i) => {
+    const s = i.expect.subject;
+    return s.purpose === 'journey' ? [candidateLaneDir(ctx.runDir, parent.unit, parent.attempt, 'arc', s.lane, basename(invocationDir(ctx.runDir, invocationId(i.op, i.ordinal))))] : [];
+  });
+}
+
+/** The evidence dirs of the smoke runs whose verdict lanes attempt `parent` recorded (its own, or the reused key's), in log order. */
+function smokeEvidence(ctx: StageContext, parent: StageParent): readonly AbsPath[] {
+  const runs = ctx.journal.view.holistic().smokeRuns.filter((r) => r.unit === parent.unit);
+  const key = runs.find((r) => r.attempt === parent.attempt)?.key;
+  if (key === undefined) throw new Error(`unit ${parent.unit}: lanes attempt ${parent.attempt} recorded smoke survivors without a smoke-ran`);
+  const attempts = new Set(runs.filter((r) => r.key === key).map((r) => r.attempt));
+  return ctx.journal.view.opsOf('proc.spawn').flatMap((i) => {
+    const s = i.expect.subject;
+    if (s.purpose !== 'mutant') return [];
+    const of = mutantSubjectDefault(s);
+    if (of.type !== 'smoke' || of.unit !== parent.unit || !attempts.has(of.attempt)) return [];
+    return [smokeLaneDir(ctx.runDir, of.unit, of.attempt, s.lane, basename(invocationDir(ctx.runDir, invocationId(i.op, i.ordinal))))];
+  });
+}
+
+/** The spawns a stage attempt made, in log order. */
+const attemptSpawns = (ctx: StageContext, parent: StageParent) =>
+  ctx.journal.view.opsOf('proc.spawn').filter((i) => canonicalJson(i.parent) === canonicalJson(parent));
+
+/** Required tests of a recorded outcome that are still required now (a revision since may have dropped some). */
+function stillRequired(refs: readonly TestRef[], required: readonly RequiredWitness[]): readonly TestRef[] {
+  const keys = new Set(required.map(testRefKey));
+  return refs.filter((r) => keys.has(testRefKey(r)));
+}
+
+/** The fix round after lanes attempt `f` (red, not certified, witnesses missing, smoke survivors), from what it recorded. */
+function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, tip: Sha): DecidedRound {
+  const view = ctx.journal.view;
+  const { spec } = loadUnitSpec(ctx, unit);
+  const parent = stageParent(f);
+  const root = specSeriesRoot(ctx.runDir, parent);
+  const ledger = seriesLedger(ctx, parent, spec.lanes, tip, root);
+  switch (f.outcome) {
+    case 'witnesses-missing': {
+      if (f.detail?.kind !== 'witnesses-missing') throw new Error(`unit ${unit.id}: lanes#${f.attempt} witnesses-missing without its detail`);
+      const required = requiredAt(ctx, unit, tip);
+      const missing = stillRequired(f.detail.missing, required);
+      const failed = stillRequired(f.detail.failed, required);
+      if (missing.length + failed.length === 0) throw new Error(`unit ${unit.id}: lanes#${f.attempt} named witnesses a revision has since stopped requiring; nothing is left to fix`);
+      return witnessFixRound(missing, failed, required, witnessEvidence(ctx, parent), ledger, tip);
+    }
+    case 'smoke-survived': {
+      if (f.detail?.kind !== 'smoke-survived') throw new Error(`unit ${unit.id}: lanes#${f.attempt} smoke-survived without its detail`);
+      const required = requiredAt(ctx, unit, tip);
+      const survived = stillRequired(f.detail.testIds, required);
+      if (survived.length === 0) throw new Error(`unit ${unit.id}: lanes#${f.attempt} named survivors a revision has since stopped requiring; nothing is left to fix`);
+      return smokeFixRound(survived, required, smokeEvidence(ctx, parent), ledger, tip);
+    }
+    case 'not-certified': {
+      const dirty = seriesDirty(view, root);
+      if (dirty.length > 0) return laneFixRound(ledger, dirty, tip);
+      // D1: the witness lanes left their own checkout dirty or moved (the spec series was clean).
+      const witnessRoot = absPath(join(evidenceRoot(ctx.runDir, parent), 'journey'));
+      const dest = absPath(join(witnessRoot, `_dirty-${basename(witnessWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt))}`));
+      const snap = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest);
+      return witnessCheckoutFixRound(snap === undefined ? [] : snap.expect.globs.map(patternPath), [...witnessEvidence(ctx, parent), ...(snap === undefined ? [] : [dest])], ledger, tip);
+    }
+    default:
+      return laneFixRound(ledger, seriesDirty(view, root), tip);
+  }
+}
+
 /** The build round `round` after the decision `f`, with the inputs its kind needs. */
 function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): DecidedRound {
+  // E (R55): the retry of a malformed in-session assessment assesses again, fresh; any other malformed answer's resume
+  // round quotes why it was malformed (I3).
+  if (round === 'resume') {
+    const last = recordedCall(ctx, stageParent(f));
+    if (last !== null && isAssessCall(ctx, last.inv)) return { kind: 'fresh' };
+    return { kind: 'resume', error: malformedError(ctx, unit, f) };
+  }
   if (round !== 'fix') return { kind: round };
   const view = ctx.journal.view;
   const { spec } = loadUnitSpec(ctx, unit);
@@ -225,11 +336,8 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
   // The series' own verification checkout (Q3), while it is still there.
   const verificationOf = (parent: StageParent) => seriesTree(view, parent, verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt));
   switch (f.stage) {
-    case 'lanes': {
-      const parent = stageParent(f);
-      const root = specSeriesRoot(ctx.runDir, parent);
-      return laneFixRound(seriesLedger(ctx, parent, spec.lanes, tip, root), seriesDirty(view, root), tip);
-    }
+    case 'lanes':
+      return lanesFixRound(ctx, unit, f, tip);
     case 'gate': {
       const parent = specSeries();
       return gateReviseRound(gateDirectives(ctx, stageParent(f)), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
@@ -284,8 +392,8 @@ async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): P
 async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: StageOutcomeFact): Promise<StageDone<Target['stage']> | Cancelled> {
   switch (target.stage) {
     case 'prepare':
-      // M4a rev 3 (F4): only a lanes `known-defect` sends a unit back to prepare, and no stage records one before N3.
-      return notYet(`unit ${unit.id}: prepare after a known defect`, 'N3');
+      // M4a rev 3 (F4): a lanes `known-defect` sends the unit back to prepare once its fixer merged (prepare.ts).
+      return prepare(ctx, unit);
     case 'reproduce':
       return reproduce(ctx, unit);
     case 'plan-check':
@@ -396,6 +504,9 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
       // Against the attempt's recorded inputs (F1): a gate at the tip and head it judged, not the current ones.
       return consumeJudgment(ctx, unit, parent, called);
     case 'build': {
+      // E (R55): a crash after the in-session assessment, before the implementing call: the build runs again as a new
+      // attempt, which reads the completed assessment instead of asking again (stages.ts `crashedAssessment`).
+      if (isAssessCall(ctx, called.inv)) return null;
       const holder: StageHolder = { type: 'stage', unit: unit.id, stage: 'build', attempt: open.attempt };
       // Recovery cleaned the dead attempt's reservation; a teardown that failed there is this attempt's outcome.
       const failed = [...resourceTable(ctx.journal.view)].flatMap(([r, e]) => (e.status.state === 'cleanup-failed' && sameHolder(e.status.holder, holder) ? [r as ResourceInstance] : []));

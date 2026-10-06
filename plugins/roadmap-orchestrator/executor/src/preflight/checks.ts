@@ -71,7 +71,7 @@ import {
   type RepoConfig, type ResolvedRouting, planStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
 } from '../routing/layers.ts';
 import type { ProfileName } from '../routing/types.ts';
-import { type Ruling, loadRulings } from '../spec/rulings.ts';
+import { type Ruling, loadRulings, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, parseSpec } from '../spec/spec.ts';
 import { resolveArgv0 } from './argv0.ts';
 import { type SmokePark, type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeOutages, smokeRejections } from './smoke.ts';
@@ -145,9 +145,16 @@ function specs(context: StartupContext): ReadonlyMap<UnitId, SpecOrRejection> {
 
 const isSpec = (s: SpecOrRejection): s is SpecM1 => !('kind' in s);
 
-/** The rulings ledger, or its schema rejection. */
+/** The rulings ledger (the bytes the context carries, else the file), or its schema rejection. */
 function ledger(context: StartupContext): readonly Ruling[] | Rejection<'plan-invalid'> {
   const file = join(planDir(context), context.plan.rulings);
+  if (context.ledger !== undefined) {
+    try {
+      return parseRulings(context.ledger.toString('utf8'), file);
+    } catch (error) {
+      return schemaRejection(error);
+    }
+  }
   if (!existsSync(file)) return { kind: 'plan-invalid', problem: { type: 'schema', field: 'plan.rulings', detail: `${file} does not exist` } };
   try {
     return loadRulings(file);

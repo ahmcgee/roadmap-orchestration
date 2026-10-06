@@ -11,13 +11,21 @@
 // src/pipeline/reproduce.ts `specFacts`): whether it is a vacuity repair that reproduces its mutant first (its first
 // stage is `reproduce`, not plan-check), and the obligations it repairs, which exempt it from an active P1's
 // `finding-blocked` at candidate admission (G10). Repair units rank first (R6, `ORIGIN_RANK`).
+//
+// M4a rev 3: a unit's plan `priority` ranks first (F1b, R42, `compareRank`). Known defects (F4, R49): one predicate,
+// `knownDefectActive`, decides whether a plan entry holds a unit (the lanes stage's matching, admission, status): the
+// entry is in the plan in force (same id and content), its fixer's lineage head is not merged, and the unit is outside
+// the fixer's lineage. A unit whose decided outcome is lanes `known-defect{id}` waits at `prepare` under
+// `known-defect{id, fixUnit}` while the plan's entry of that id is active for it; a removed entry releases it.
 import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarget } from '../core/events.ts';
 import type { ObligationId, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
 import { p1Blocking } from '../holistic/findings.ts';
-import { type PlanM1, type PlanUnit, priorityOf } from '../input/plan.ts';
+import { canonicalJson } from '../core/json.ts';
+import { lineageMembers } from '../input/envelope.ts';
+import { type KnownDefect, type PlanM1, type PlanUnit, knownDefectsOf, priorityOf } from '../input/plan.ts';
 import { judgmentSeat, decidedBy } from '../pipeline/transitions.ts';
 import type { Backend, JudgmentRole, RoutingTable } from '../routing/types.ts';
 import { effectiveDependency } from './graph.ts';
@@ -113,10 +121,11 @@ function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlySet<Obli
  * `admit` under the routing in force (each unit's, M3: its layer on the arc's stack): every constraint that holds for the unit's stage now, or admit. Pause,
  * drain and run-only hold per unit; a parked backend (any class) and a tripped breaker only for the stages
  * that need them; `base-red` and an active P1 over a selected obligation (M3, G10; `specOf` names the unit's repairs)
- * for candidates; recovery-required, log-corrupt, the supervisor crash limit and host items for every stage (A17).
+ * for candidates; a known defect active for the unit (M4a rev 3, F4) for its `prepare` after a lanes `known-defect`;
+ * recovery-required, log-corrupt, the supervisor crash limit and host items for every stage (A17).
  */
 export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFactsOf): Admit {
-  return ({ view, unit, stage, blocking, drains, tripped }: AdmitInput): Admission => {
+  return ({ view, plan, unit, stage, blocking, drains, tripped }: AdmitInput): Admission => {
     const c: AdmissionConstraint[] = [];
     const control = view.control();
     if (control.pausedAll) c.push({ type: 'paused', scope: 'arc' });
@@ -132,9 +141,45 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
       const block = findingBlock(view, unit.id, specOf(unit).repairs);
       if (block !== null) c.push(block);
     }
+    if (stage === 'prepare') {
+      const hold = knownDefectHold(view, plan, unit.id);
+      if (hold !== null) c.push(hold);
+    }
     for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
     return c.length === 0 ? { kind: 'admit' } : { kind: 'wait', constraints: c };
   };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Known defects (M4a rev 3, F4, R49)
+
+/**
+ * THE known-defect predicate (Q9): `k` is in `plan` (the plan in force; by id and content, so a removed or retargeted
+ * entry is inactive at once), the head of `k.fixUnit`'s lineage (the fixer, then each unit re-entering the previous one)
+ * is not merged, and `unit` is not in that lineage (the fixer is never held by its own defect).
+ */
+export function knownDefectActive(view: JournalView, plan: PlanM1, k: KnownDefect, unit: UnitId): boolean {
+  const entry = canonicalJson(k);
+  if (!knownDefectsOf(plan).some((e) => canonicalJson(e) === entry)) return false;
+  const lineage = lineageMembers(view, k.fixUnit);
+  return view.unit(lineage.at(-1)!).status !== 'retired' && !lineage.includes(unit);
+}
+
+/** The plan's known defects active for `unit` (`knownDefectActive`), in plan order. */
+export const activeKnownDefects = (view: JournalView, plan: PlanM1, unit: UnitId): readonly KnownDefect[] =>
+  knownDefectsOf(plan).filter((k) => knownDefectActive(view, plan, k, unit));
+
+/**
+ * The known defect holding `unit`'s `prepare` (F4): its decided outcome is lanes `known-defect{id}` and the plan's entry
+ * `id` is active for it; null otherwise (a removed entry, or its fixer's lineage merged, releases it).
+ */
+function knownDefectHold(view: JournalView, plan: PlanM1, unit: UnitId): Extract<AdmissionConstraint, { type: 'known-defect' }> | null {
+  const d = view.unit(unit).decided;
+  if (d?.stage !== 'lanes' || d.outcome !== 'known-defect') return null;
+  if (d.detail?.kind !== 'known-defect') throw new Error(`unit ${unit}: its lanes known-defect outcome (attempt ${d.attempt}) names no known defect`);
+  const id = d.detail.id;
+  const k = knownDefectsOf(plan).find((e) => e.id === id);
+  return k !== undefined && knownDefectActive(view, plan, k, unit) ? { type: 'known-defect', id, fixUnit: k.fixUnit } : null;
 }
 
 // ---------------------------------------------------------------------------------------------------

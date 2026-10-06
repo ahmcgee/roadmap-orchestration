@@ -62,7 +62,7 @@ import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import { type PlanUnit, targetDocumentPaths } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
-import type { GatePriorRound } from '../prompts/inputs.ts';
+import type { GateChecks, GatePriorRound } from '../prompts/inputs.ts';
 import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -74,6 +74,8 @@ import {
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { gateSmokeChecks } from './smoke.ts';
+import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
@@ -249,6 +251,16 @@ type GateCapture =
     dirs: readonly AbsPath[];
   }>;
 
+/**
+ * M4a rev 3 (D1, D2, R38): what the executable checks of lanes attempt `series` found at `head`: the witnesses it requires
+ * (a gate follows only a green check, so none missing or failing) and its smoke's verdict, or why the smoke did not run;
+ * both null outside a corpus arc.
+ */
+function gateChecks(ctx: StageContext, unit: PlanUnit, series: StageParent, head: Sha): GateChecks {
+  const witnesses = gateWitnessChecks(ctx, unit, head);
+  return { witnesses, smoke: witnesses === null ? null : gateSmokeChecks(ctx, unit, series, head, witnesses.required) };
+}
+
 export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone | Cancelled> {
   const parent = at(start(ctx, unit.id, 'gate'), 'gate');
   // A cancelled task captures nothing (its `@cpu` wait, after the capture, would be cancelled at once).
@@ -283,8 +295,8 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, selected(ctx, unit, tip, head), tip),
       diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
       laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
-      // M4a rev 3 (D1, D2): the executable checks report here once N3 runs them.
-      checks: { witnesses: null, smoke: null },
+      // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
+      checks: gateChecks(ctx, unit, series, head),
     });
     const fingerprint = fingerprintAt(ctx, unit, tip);
     writeJudgmentInputs(ctx, parent, { tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint });

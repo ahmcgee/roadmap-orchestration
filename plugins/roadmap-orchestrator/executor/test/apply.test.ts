@@ -3,11 +3,13 @@
 // the log, with and without a fact; an apply's rejections (a stale expectRev, files changed since they were
 // hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
-// apply.crash-cells, apply.recovered-after-start; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
+// apply.crash-cells, apply.recovered-after-start; M4a rev 3 (N3): classify.priority-edit-no-drain,
+// classify.plan-check-shape-edit, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
+// classify.knowndefect-cut-fixer-refused, classify.reentry-widen-with-ruling, classify.reentry-widen-without-ruling-refused; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
 // apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
 // apply.stale-after-evidence-revision.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
@@ -18,7 +20,7 @@ import { openJournal, readJournal } from '../src/core/log.ts';
 import type { CommandBody, ResidueKey } from '../src/core/records.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
 import { absPath } from '../src/core/values.ts';
-import { type Classified, classify, commandScope } from '../src/input/classify.ts';
+import { type Classified, changesScope, classify, commandScope } from '../src/input/classify.ts';
 import {
   PLAN_INPUT, SPEC_INPUT, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, revisionInForce, specShaInForce,
 } from '../src/input/inforce.ts';
@@ -480,10 +482,10 @@ const M2_ROWS: readonly Row[] = [
     expect: [/^unit u4 re-enters u1, which this apply cuts$/],
   },
   {
-    name: 'apply.reenter-envelope: a scope beyond the lineage\'s first pin: refused',
+    name: 'apply.reenter-envelope: a scope beyond the lineage\'s envelope, no ruling cited: refused',
     setup: parkAtGate,
     edit: reenter('u4', 'u1', { scope: ['src/lib/**', 'docs/**'] }),
-    expect: [/^unit u4: scope docs\/\*\* lies outside its lineage's envelope contracts\/\*\*, src\/\*\*, test\/\*\* \(u1's first pin\)$/],
+    expect: [/^unit u4: scope docs\/\*\* lies outside its lineage's envelope contracts\/\*\*, src\/\*\*, test\/\*\* \(every scope u1's lineage was dispatched with\), and its spec cites no active ruling for u4 that names exactly those patterns$/],
   },
   { name: 'apply.reenter-risk-floor: a risk below the lineage\'s floor: refused', setup: parkAtGate, edit: reenter('u4', 'u1', { risk: 'low' }), expect: [/^unit u4: risk low is below its lineage's floor med$/] },
   {
@@ -595,6 +597,151 @@ describe('apply.classifier-table: one row per edit class of an apply against the
 
 describe('apply.classifier-table M2: cut, re-entry, the effective graph, pools, capacity, started order', () => {
   for (const row of M2_ROWS) runRow(row);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// M4a rev 3 rows (N3): priority (F1b), known defects (F4), the plan-check shape (E), re-entry widening (F5)
+
+const KD = (id: string, fixUnit: string, lane = 'mul'): Json => ({ id, match: { type: 'lane', lane }, fixUnit });
+const withKnownDefects = (...defects: Json[]) => (d: ArcDescriptor): void => editPlan(d, (p) => void (p['knownDefects'] = defects));
+const merge = (unit: string) => (r: ArcRun): void => {
+  pin(r, unit);
+  decide(r, unit, 'snapshot', 'published', 'retire');
+};
+/** Adds ruling `id` to the ledger and its sidecar (an architect's decision applying to `units`), before the arc starts. */
+const withRuling = (id: string, statement: string, units: readonly string[]) => (d: ArcDescriptor): void => {
+  const ledger = join(d.planPath, '..', 'rulings.md');
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}${id} — ${statement}\n`);
+  mkdirSync(`${ledger}.d`, { recursive: true });
+  writeFileSync(join(`${ledger}.d`, `${id}.json`), JSON.stringify({
+    schema: 'roadmap/ruling-m3', id, statement, kind: 'decision', ruledBy: { type: 'architect' }, trigger: 'phase 0', supersedes: [], condition: null,
+    docRefs: [{ path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module', relation: 'consistent' }], contractRefs: [], contractOps: [],
+    obligations: [], obligationDispositions: [], cites: [], evidence: [], appliesTo: { type: 'units', units }, lifetime: 'arc', status: 'active',
+    consistency: { verdict: 'consistent', judgedRevs: { head: 'b'.repeat(40), ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
+  }));
+};
+const citing = (unit: string, ...rulings: string[]) => (d: ArcDescriptor): void => editSpec(d, unit, (s) => void (s['cites'] = { contracts: ['contracts/api.md'], rulings }));
+
+const M4A_ROWS: readonly Row[] = [
+  {
+    name: 'classify.knowndefect-refusals: a fixUnit the plan does not hold',
+    edit: withKnownDefects(KD('K-1', 'u9')),
+    expect: [/^known-defect-fix-unit: K-1 names fixUnit u9, which the plan does not hold$/],
+  },
+  {
+    name: 'classify.knowndefect-refusals: a merged fixUnit',
+    setup: merge('u3'),
+    edit: withKnownDefects(KD('K-1', 'u3')),
+    expect: [/^known-defect-fix-unit: K-1 names fixUnit u3, whose lineage \(head u3\) is merged$/],
+  },
+  {
+    name: 'classify.knowndefect-refusals: a cut fixUnit',
+    edit: (d) => {
+      cutUnits('u3')(d);
+      withKnownDefects(KD('K-1', 'u3'))(d);
+    },
+    expect: [/^known-defect-fix-unit: K-1 names fixUnit u3, whose lineage \(head u3\) is cut$/],
+  },
+  {
+    name: 'classify.knowndefect-refusals: a lane no spec in force declares',
+    edit: withKnownDefects(KD('K-1', 'u3', 'nope')),
+    expect: [/^known-defect-lane: K-1 matches lane nope, which no spec in force declares$/],
+  },
+  {
+    name: 'classify.knowndefect-refusals: a valid entry is `known-defects`',
+    edit: withKnownDefects(KD('K-1', 'u3')),
+    expect: () => [{ type: 'known-defects' }],
+  },
+  {
+    name: 'classify.knowndefect-cycle-refused: the fixer runs after a unit its defect holds',
+    units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', after: ['u1'] }],
+    edit: withKnownDefects(KD('K-1', 'u3')),
+    expect: [/^known-defect-cycle: .* has a cycle: u1 → u3 → u1$/],
+  },
+  {
+    name: 'classify.knowndefect-cut-fixer-refused: cutting the fixer an unedited entry names',
+    before: withKnownDefects(KD('K-1', 'u3')),
+    edit: cutUnits('u3'),
+    expect: [/^known-defect-fix-unit: K-1 names fixUnit u3, whose lineage this apply cuts \(u3\); edit or remove K-1 in the same apply$/],
+  },
+  {
+    name: 'classify.knowndefect-cut-fixer-refused: the same apply removing the entry: now',
+    before: withKnownDefects(KD('K-1', 'u3')),
+    edit: (d) => {
+      cutUnits('u3')(d);
+      editPlan(d, (p) => void delete p['knownDefects']);
+    },
+    expect: () => [cutChange('u3'), { type: 'known-defects' }],
+  },
+  {
+    name: 'classify.priority-edit-no-drain: a merged unit\'s priority is fixed',
+    setup: merge('u1'),
+    edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u1')['priority'] = 'high')),
+    expect: [/^unit u1 is merged; its priority is fixed$/],
+  },
+  {
+    name: 'classify.reentry-widen-with-ruling: a scope beyond the envelope on a cited ruling naming exactly the added patterns',
+    before: withRuling('C-2', 'u4 may also edit `docs/**`.', ['u4']),
+    setup: parkAtGate,
+    edit: (d) => {
+      reenter('u4', 'u1', { scope: ['src/**', 'docs/**'] })(d);
+      citing('u4', 'C-1', 'C-2')(d);
+    },
+    expect: () => [
+      { type: 'unit-added', unit: unitId('u4') },
+      { type: 'unit-reentered', unit: unitId('u4'), reenters: U1, reset: false, widened: { patterns: ['docs/**'], ruling: 'C-2' } },
+    ] as unknown as readonly PlanChange[],
+  },
+  {
+    name: 'classify.reentry-widen-without-ruling-refused: a cited ruling naming other patterns does not widen',
+    before: withRuling('C-2', 'u4 may also edit `docs/**` and `lib/**`.', ['u4']),
+    setup: parkAtGate,
+    edit: (d) => {
+      reenter('u4', 'u1', { scope: ['src/**', 'docs/**'] })(d);
+      citing('u4', 'C-1', 'C-2')(d);
+    },
+    expect: [/^unit u4: scope docs\/\*\* lies outside its lineage's envelope .*and its spec cites no active ruling for u4 that names exactly those patterns$/],
+  },
+];
+
+describe('apply.classifier-table M4a rev 3: priority, known defects, plan-check shape, re-entry widening', () => {
+  for (const row of M4A_ROWS) runRow(row);
+});
+
+describe('M4a rev 3 edits that drain nothing', () => {
+  /** The accepted changes of an edit and their command scope. */
+  const scopeOf = (edit: (d: ArcDescriptor) => void, setup: (r: ArcRun) => void = () => {}) => {
+    const d = setupArc({ steps: [], units: THREE });
+    sizeCpu(d);
+    const r = contextFor(d);
+    try {
+      setup(r);
+      const cur = r.ctx.plan();
+      edit(d);
+      const v = classifyNow(r);
+      if (v.kind !== 'accepted') return assert.fail(JSON.stringify(v));
+      return { changes: v.changes, scope: changesScope(v.changes, cur, readInputFiles(absPath(d.planPath), absPath(d.repo)).plan) };
+    } finally {
+      r.journal.close();
+    }
+  };
+
+  test('classify.priority-edit-no-drain: a running unit\'s priority is `unit-priority`, scope none', T, () => {
+    assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (unitJson(p, 'u1')['priority'] = 'high')), inFlight), {
+      changes: [{ type: 'unit-priority', unit: U1 }], scope: { type: 'none' },
+    });
+  });
+
+  test('classify.plan-check-shape-edit: `plan-check-shape`, scope none; absent and `uniform` are the same shape', T, () => {
+    assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape: 'by-builder' }))), {
+      changes: [{ type: 'plan-check-shape' }], scope: { type: 'none' },
+    });
+    assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape: 'uniform' }))), { changes: [], scope: { type: 'none' } });
+  });
+
+  test('classify.knowndefect-refusals: a valid known-defects edit drains nothing', T, () => {
+    assert.deepEqual(scopeOf(withKnownDefects(KD('K-1', 'u3')), inFlight), { changes: [{ type: 'known-defects' }], scope: { type: 'none' } });
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------

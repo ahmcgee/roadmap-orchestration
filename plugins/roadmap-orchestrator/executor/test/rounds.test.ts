@@ -14,9 +14,8 @@ import { mergeHead } from '../src/git/mergein.ts';
 import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
 import { implementerDispatch, pinDispatch, unitBranch, workDir } from '../src/pipeline/dispatch.ts';
 import { prepare } from '../src/pipeline/prepare.ts';
-import {
-  NO_SESSION_NOTE, RESOLVE_DIRECTIVE, type RoundInput, callRound, escalateImplementer, escalation, prepareRound, stalledRounds,
-} from '../src/pipeline/rounds.ts';
+import { type RoundInput, callRound, escalateImplementer, escalation, prepareRound, stalledRounds } from '../src/pipeline/rounds.ts';
+import { NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type LanesDone, at, build, buildRead, evidence, lanes, loadUnitSpec, planCheck, quiesce, record, salvage, start, teardown } from '../src/pipeline/stages.ts';
 import { type StageOutcome, outcomeFact } from '../src/pipeline/transitions.ts';
 import { promptFor } from '../src/prompts/index.ts';
@@ -71,7 +70,7 @@ test('rounds.d4-decide: a fix round after a stalled one escalates to build.high 
   // Pure: only a fix round escalates, only when build.<tier> is not build.high's triple.
   const routing = run.ctx.routing(null);
   assert.deepEqual(escalation(log, routing, U1, FIX), { kind: 'escalate', from: 'med', stalled: fix });
-  assert.deepEqual(escalation(log, routing, U1, { kind: 'resume' }), { kind: 'none', why: 'not-a-fix-round' });
+  assert.deepEqual(escalation(log, routing, U1, { kind: 'resume', error: null }), { kind: 'none', why: 'not-a-fix-round' });
   const sameHigh = { ...routing, table: { ...routing.table, build: { ...routing.table.build, med: routing.table.build.high } } };
   assert.deepEqual(escalation(log, sameHigh, U1, FIX), { kind: 'none', why: 'same-triple' });
 

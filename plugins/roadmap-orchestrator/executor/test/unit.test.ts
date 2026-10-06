@@ -14,7 +14,7 @@ import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
-import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/pipeline/rounds.ts';
+import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { reached, release } from './helpers/barrier.ts';

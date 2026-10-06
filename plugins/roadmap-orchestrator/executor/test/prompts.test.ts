@@ -211,7 +211,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     ],
   },
   build: {
-    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [],
+    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [],
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],

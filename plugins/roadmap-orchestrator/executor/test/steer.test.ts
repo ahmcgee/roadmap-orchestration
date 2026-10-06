@@ -17,7 +17,8 @@ import { type CommandId, type NeedsUserId, arcId, commandId } from '../src/core/
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
-import { BRIEF_INPUT, STEER_DIRECTIVE } from '../src/pipeline/rounds.ts';
+import { BRIEF_INPUT } from '../src/pipeline/rounds.ts';
+import { STEER_DIRECTIVE } from '../src/prompts/directives.ts';
 import { keptInput } from '../src/input/inforce.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';

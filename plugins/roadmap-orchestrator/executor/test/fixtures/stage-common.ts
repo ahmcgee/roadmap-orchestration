@@ -232,7 +232,7 @@ export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}): Step {
   };
 }
 
-export const BUILD_REPORT = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [] } as const;
+export const BUILD_REPORT = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [] } as const;
 
 /** Stdin-matching pattern for a failing lane's stdout/stderr dir of this run, as a fix round lists it. */
 export function laneEvidencePattern(run: StageRun, lane: string): string {
