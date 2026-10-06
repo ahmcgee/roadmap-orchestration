@@ -24,7 +24,10 @@ PATH and logged in): the backend smoke, Codex fresh and resume, a real shell lan
 implementer argvs, the Fable id pin, and (M3) one real call each of the lens, checkpoint and vision-aware plan-check
 prompt modules over tiny fixtures on their own seats; (M4a) the forge functions read-only against the real repository
 (identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
-call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2). Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
+call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) the in-session assessment (frontier Opus medium,
+read-only, the worktree unchanged), the acceptance-shape plan-check (witness items through the patch channel), a checkpoint admit
+carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
+medium build under the per-call build schema (`experiments`). Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
 its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies.
 
 ## The M1 fixture

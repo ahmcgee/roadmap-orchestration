@@ -37,24 +37,37 @@
 //   m4a.pack-review     packReview.arc (frontier, corpus arc scope): the real prompt module over a tiny corpus pack; the
 //                       answer must validate against PackReviewOutput
 //   m4a.checkpoint-summit  checkpoint.arc (summit): the real checkpoint module; the output must validate
+//   m4a3.assess         (M4a rev 3, E) frontier (claude-opus-5-5 medium) in-session assessment: the real build prompt module
+//                       with `assess` set, PLAN_ASSESSMENT_SCHEMA, in a git worktree; the answer must validate
+//                       (validatePlanAssessment) and HEAD, tracked and untracked state must be unchanged
+//   m4a3.plan-check-acceptance  the acceptance-shape plan-check (planCheck.med, PLAN_CHECK_ACCEPTANCE_SCHEMA, next witness id
+//                       W-1): validatePlanCheckAcceptanceOutput accepts it and its redirect adds witness items
+//   m4a3.checkpoint-targets  the checkpoint (corpus arc, summit seat) told to admit one unit: the answer validates and the
+//                       admit carries `targets`
+//   m4a3.witness-check  `roadmap witness-check` over a real `node --test` run of a 2-test file with the node-test witness
+//                       reporter: exit 0 when both required ids pass, 78 listing the missing id when one is absent
+//   m4a3.sonnet-build   claude-sonnet-5-5 medium build through the real build prompt and buildSchemaFor (`experiments`): the
+//                       answer validates (buildOutputFor), the fast lane is reported, the file exists
 //   effort.*            (OI-2) a session started at one effort, resumed at another: claude (high then medium), codex
 //                       (low then medium); reports whether each CLI accepts the change
 //
 // Each check prints `PASS|FAIL <name> <detail>`; then one `USAGE <backend> <role> ...` line per pair.
 // Exits non-zero on any FAIL. The run dir (journal, invocation dirs) is kept and printed for inspection.
 import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
 import { ghApi, resolveRepo } from '../src/forge/gh.ts';
+import { canonicalJson } from '../src/core/json.ts';
+import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { fetchIssueCapture } from '../src/forge/issues.ts';
 import { queryPolicy } from '../src/forge/policy.ts';
 import { trusted } from '../src/forge/trust.ts';
 import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
 import {
-  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId, visionClauseId,
+  type ImplementerSessionId, witnessItemId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId, visionClauseId,
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
@@ -63,8 +76,11 @@ import { type AbsPath, absPath, repoPath, repoPattern } from '../src/core/values
 import { type ObligationDef, parseObligations } from '../src/holistic/types.ts';
 import { parsePhase0Record } from '../src/phase0/types.ts';
 import { promptFor } from '../src/prompts/index.ts';
-import type { ArchitectureInput, CheckpointInputs, LensInputs, ObligationView, PackReviewPromptInputs, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
-import { ROLE_VALIDATORS, type RoleOutputs } from '../src/prompts/schemas.ts';
+import type { ArchitectureInput, BuildInputs, CheckpointInputs, LensInputs, ObligationView, PackReviewPromptInputs, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
+import {
+  PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, ROLE_VALIDATORS, type RoleOutputs, buildOutputFor, buildSchemaFor, validatePlanAssessment, validatePlanCheckAcceptanceOutput,
+} from '../src/prompts/schemas.ts';
+import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import {
   type BackendInvocation, type InvocationContext, type Invoked, SMOKE_SCHEMA, backendEnv, invokeBackend, invokeCommand, smoke, smokeRejections,
 } from '../src/preflight/smoke.ts';
@@ -478,6 +494,140 @@ async function main(): Promise<void> {
   } catch (e) {
     report(false, 'm4a.pack-review.build', e instanceof Error ? e.message : String(e));
   }
+
+  // M4a rev 3: the new schemas and prompt modules against the real CLIs, validated by the executor's own readers.
+  const rev3 = (name: string, body: () => Promise<void>): Promise<void> =>
+    body().catch((e: unknown) => report(false, `${name}.error`, e instanceof Error ? (e.stack ?? e.message) : String(e)));
+  const gitRepo = (path: string, files: Readonly<Record<string, string>>): AbsPath => {
+    const d = dir(path);
+    for (const [name, text] of Object.entries(files)) {
+      mkdirSync(join(d, name, '..'), { recursive: true });
+      writeFileSync(join(d, name), text);
+    }
+    const g = (...args: string[]): string => execFileSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', ...args], { cwd: d, encoding: 'utf8' });
+    g('init', '--quiet');
+    g('add', '-A');
+    g('commit', '--quiet', '-m', 'fixture');
+    return d;
+  };
+  const treeOf = (d: string): string =>
+    `${execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d, encoding: 'utf8' })}${execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: d, encoding: 'utf8' })}`;
+  const UNIT = laneId('unit');
+  const buildSpec = '# Unit u-hello\n\n## Acceptance\n- A1: the file hello.txt exists in the repository root and contains the word hello.\n\n## Lanes\n- unit (fast): `sh -c "grep -q hello hello.txt"`';
+  const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
+  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath, assess: BuildInputs['assess']): BuildInputs => ({
+    spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane],
+    evidenceDir, worktree, scope: [repoPattern('hello.txt')], fixRound: null, witnessChecks: [], assess,
+  });
+
+  // (1) The in-session assessment: frontier Opus medium, read-only, PLAN_ASSESSMENT_SCHEMA, the worktree left as found.
+  await rev3('m4a3.assess', async () => {
+    const worktree = gitRepo(join(root, 'assess-repo'), { 'convert.ts': 'export const toFahrenheit = (c: number): number => Math.round(c * 9 / 5 + 32);\n' });
+    const evidenceDir = dir(join(root, 'assess-evidence'));
+    const prompt = promptFor('build', OPUS.model);
+    const before = treeOf(worktree);
+    await backend(ctx, 'm4a3.assess', {
+      check: 'm4a3-assess', routingRev: rev, tier: 'med', system: prompt.system, schema: PLAN_ASSESSMENT_SCHEMA, cwd: worktree,
+      rendered: prompt.render(buildInputs(worktree, evidenceDir, { risk: 'low', vision: MINI_VISION })),
+      request: { kind: 'claude-build', triple: { ...OPUS, effort: 'medium' }, session: freshClaudeImplementerSession(), evidenceDirs: [evidenceDir] },
+    }, (v) => {
+      try {
+        const a = validatePlanAssessment(v).planAssessment;
+        report(true, 'm4a3.assess.validate', `feasible=${a.feasible} riskFloor=${a.riskFloor} visionConflicts=${a.visionConflict.length} premises=${a.premises.length}`);
+        return true;
+      } catch (e) {
+        report(false, 'm4a3.assess.validate', e instanceof Error ? e.message : String(e));
+        return false;
+      }
+    });
+    const after = treeOf(worktree);
+    report(before === after, 'm4a3.assess.unchanged', before === after ? 'HEAD and the working tree are as the assessment found them' : `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
+  });
+
+  // (2) The acceptance-shape plan-check: PLAN_CHECK_ACCEPTANCE_SCHEMA, witness items through the patch channel.
+  await rev3('m4a3.plan-check-acceptance', async () => {
+    const accInputs: PlanCheckInputs = { ...planCheckInputs, acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [laneId('unit')] } };
+    const call = { ...seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm4a3-plan-check-acceptance', m3Dir, accInputs), schema: PLAN_CHECK_ACCEPTANCE_SCHEMA };
+    await backend(ctx, 'm4a3.plan-check-acceptance', call, (v) => {
+      try {
+        const out = validatePlanCheckAcceptanceOutput(v);
+        const witnesses = (out.patch ?? []).filter((op) => (op.op === 'add' || op.op === 'replace') && op.section === 'witnesses');
+        const ok = out.decision === 'redirect' && witnesses.length > 0;
+        report(ok, 'm4a3.plan-check-acceptance.witnesses', `decision=${out.decision} witnessOps=${witnesses.length} ops=${JSON.stringify(out.patch)}`);
+        return ok;
+      } catch (e) {
+        report(false, 'm4a3.plan-check-acceptance.validate', e instanceof Error ? e.message : String(e));
+        return false;
+      }
+    });
+  });
+
+  // (3) A checkpoint answer under the new schema: an admit with `targets`.
+  await rev3('m4a3.checkpoint-targets', async () => {
+    const corpusDir = dir(join(root, 'm4a-corpus'));
+    const corpusInputs: CheckpointInputs = {
+      ...checkpointInputs,
+      target: { kind: 'corpus', dir: corpusDir, visionDoc: null, rulesIndex: rules.map((r) => ({ id: ruleId(r.id), textSha256: sha256(r.textSha256), text: r.text, file: repoPath(r.file), section: r.section })) },
+      direction: 'Owner direction, binding: admit exactly one new unit now. Its id is u-celsius, risk low, scope convert.ts, after nothing, origin checkpoint; it delivers rule T-2 (toCelsius(32) returns 0), so T-2 is its target. Cite clause V-1 and the plan as evidence.',
+    };
+    await backend(ctx, 'm4a3.checkpoint-targets', seatCall(corpusArc, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm4a3-checkpoint-targets', m4Dir, corpusInputs), (v) => {
+      try {
+        const out = ROLE_VALIDATORS.checkpoint(v);
+        const admits = out.ops.flatMap((o) => (o.op === 'admit' ? [o] : []));
+        const ok = admits.some((o) => o.targets.length > 0);
+        report(ok, 'm4a3.checkpoint-targets.admit', `decision=${out.decision} admits=${JSON.stringify(admits.map((o) => ({ unit: o.unit.id, targets: o.targets })))}`);
+        return ok;
+      } catch (e) {
+        report(false, 'm4a3.checkpoint-targets.validate', e instanceof Error ? e.message : String(e));
+        return false;
+      }
+    });
+  });
+
+  // (4) roadmap witness-check over a real node --test run with the node-test witness reporter.
+  await rev3('m4a3.witness-check', async () => {
+    const repo = gitRepo(join(root, 'witness-repo'), {
+      'test/w.test.mjs': "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('adds', () => assert.equal(1 + 1, 2));\ntest('subtracts', () => assert.equal(2 - 1, 1));\n",
+    });
+    const check = (name: string, required: readonly string[]): ReturnType<typeof spawnSync> => {
+      const laneFile = join(dir(join(root, 'witness-lanes')), `${name}.json`);
+      writeFileSync(laneFile, `${canonicalJson({
+        v: SCHEMA_VERSION, lane: 'unit', argv: [process.execPath, '--test', 'test/w.test.mjs'], cwd: '.', env: { set: {}, pass: [] }, reporter: 'node-test', required: [...required].sort(),
+      })}\n`);
+      return spawnSync(process.execPath, [ROADMAP_BIN, 'witness-check', '--lane-file', laneFile], { cwd: repo, env: { HOME: process.env['HOME'] ?? '/', PATH: process.env['PATH'] ?? '' }, encoding: 'utf8', timeout: 120_000 });
+    };
+    const green = check('green', ['adds', 'subtracts']);
+    report(green.status === 0 && green.stdout === '{"passed":true}\n', 'm4a3.witness-check.pass', `exit=${green.status} stdout=${JSON.stringify(green.stdout)}`);
+    const red = check('missing', ['adds', 'subtracts', 'divides']);
+    const body = JSON.parse(red.stdout === '' ? 'null' : String(red.stdout)) as { missing?: { testId: string }[]; failed?: unknown[] } | null;
+    report(red.status === 78 && JSON.stringify(body?.missing) === JSON.stringify([{ lane: 'unit', testId: 'divides' }]) && body?.failed?.length === 0,
+      'm4a3.witness-check.missing', `exit=${red.status} stdout=${JSON.stringify(red.stdout)}`);
+  });
+
+  // (5) Sonnet 5.5 medium build under the per-call build schema (`experiments`).
+  await rev3('m4a3.sonnet-build', async () => {
+    const worktree = gitRepo(join(root, 'sonnet-b-repo'), { 'README.md': 'fixture\n' });
+    const evidenceDir = dir(join(root, 'sonnet-b-evidence'));
+    const prompt = promptFor('build', SONNET.model);
+    const lanes = [UNIT];
+    await backend(ctx, 'm4a3.sonnet-build', {
+      check: 'm4a3-sonnet-build', routingRev: rev, tier: 'med', system: prompt.system, schema: buildSchemaFor(lanes), cwd: worktree,
+      rendered: prompt.render(buildInputs(worktree, evidenceDir, null)),
+      request: { kind: 'claude-build', triple: SONNET, session: freshClaudeImplementerSession(), evidenceDirs: [evidenceDir] },
+    }, (v) => {
+      try {
+        const out = buildOutputFor(lanes)(v, 'build');
+        const ran = out.lanesRun.some((l) => l.lane === UNIT && l.exit === 0);
+        const wrote = existsSync(join(worktree, 'hello.txt'));
+        report(ran && wrote && out.blockers.length === 0, 'm4a3.sonnet-build.answer',
+          `lanesRun=${JSON.stringify(out.lanesRun)} experiments=${JSON.stringify(out.experiments)} blockers=${JSON.stringify(out.blockers)} hello.txt=${wrote}`);
+        return true;
+      } catch (e) {
+        report(false, 'm4a3.sonnet-build.validate', e instanceof Error ? e.message : String(e));
+        return false;
+      }
+    });
+  });
 
   // Effort-changed resume (OI-2): the same session, a different effort.
   const wordSchema = strict({ word: { type: 'string' } });
