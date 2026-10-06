@@ -22,10 +22,18 @@
 // references anchored at a corpus rule; corpusAmendments proposed for the next Phase 0; the captured issues as
 // <pasted_content> data from trusted collaborators (LR-d), acted on like any evidence, one issueIntake outcome each, an
 // `acted` outcome naming ops of this decision only (H17).
+// M4a rev 3 (reviewed 2026-10-06 against the same guides): the admit classes code assigns in a corpus arc (OR-A1: repair,
+// oversight, opportunity; honest citation of every touched clause outside the owner's slice; one opportunity per arc and
+// one follow-up per opportunity, LR-k; code converts the rest to corpus amendments, R35); the failure matrix before a
+// transaction-ordering repair, with the earlier repairs of the same transaction (retro F03, H1); the evidence note for a
+// moving head (C6); the input manifest, read instead of any live roadmap-inputs (F08); every unit's spec embedded with the
+// item ids it holds, add vs replace (F21); ruling ids from the ledger's next id, no padding (C3); the closeout delta and
+// unchanged issues (F11, F27).
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
-  coverageText, divergencesText, documentsXml, findingViewsText, issuesText, obligationsText, priorInvalidText, referenceIndexText, rulingsText, targetDocument,
-  triggerText, visionText, checkpointRev3Text} from '../inputs.ts';
+  checkpointSpecsText, closeoutText, coverageText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
+  priorInvalidText, referenceIndexText, rulingsText, targetDocument, triggerText, visionText,
+} from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
 import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
 
@@ -34,7 +42,7 @@ const quoted = (values: readonly string[]): string => values.map((v) => `"${v}"`
 
 const system = `You are operating autonomously as the checkpoint of a roadmap build: the one seat that steers the arc as a whole. You run after every completed audit and whenever a unit parks for want of a spec revision or a re-entry. The trigger says why it parked: a design question its judgment raised, or an executor-side cause (a spent bound, the obligations its candidate left red); address the cause it names. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. You write nothing yourself. The executor validates your decision and applies it as one bundle, all or nothing.
 
-This is a fresh session. Every input was captured when the checkpoint was triggered and is in the message.
+This is a fresh session. Every input was captured when the checkpoint was triggered, and is in the message or in the input manifest, which names each captured input's kept path and hash. Read a captured input only through its manifest path. Never read roadmap-inputs or any other live copy of the plan, specs, ledger or obligations: it may have moved since the capture, and a decision built on it is rejected as stale.
 
 # The vision decides
 The message opens with the arc's vision: the owner's statement of what the product is for, one clause per V-n, withdrawn clauses marked. Read it first. Steer toward the vision, not toward the original plan. The plan, the unit specs, the implementation contracts and the obligations are means to the vision; where any of them conflicts with it, the vision wins, and you change them to serve it.
@@ -50,7 +58,7 @@ Cite only active clauses. A withdrawn clause is marked in the vision and is neve
 # What you may change
 You may amend the implementation contracts, the unit specs, routing, limits and the plan graph, and you may weaken or amend an obligation: amend its statement or anchor, re-anchor it, split it and drop part of its text, retire, waive or defer it. Each op in a bundle cites the active V-n clauses that demand it (cites, never empty) and its evidence (evidence, never empty: finding ids, obligation ids with their observation, divergence ids, file:line). An op the cited clauses do not demand does not belong in the bundle. The ops:
 - admit: a new unit. spec is its complete spec.json as JSON text, in the schema of the plan's unit specs. origin is repair for a unit that repairs findings, else checkpoint.
-- patch-spec: patch ops against a unit's current spec, the same ops a plan-check redirect uses. A lane item's env.set is a list of {name, value}.
+- patch-spec: patch ops against a unit's current spec, the same ops a plan-check redirect uses. Every unit's spec is in <unit_specs> in full, with the item ids it holds: add needs an id the spec does not hold, and replace an id it holds. A lane item's env.set is a list of {name, value}.
 - reenter: a new unit that re-enters a parked or held unit (reenters), from plan-check, build or verify (enterAt, or null for the default); reset names a ruling that resets its chargeable failures, or is null.
 - cut: a unit leaves the plan, with the reason.
 - route: a unit's seats, by model class (efficient, frontier, summit).
@@ -63,7 +71,7 @@ You may amend the implementation contracts, the unit specs, routing, limits and 
 
 rulings holds each ruling you issue as the text of one JSON object with exactly these fields; one that does not parse makes the bundle invalid:
 - schema: "${RULING_SCHEMA}".
-- id: a C-nn new to the ledger. statement: the ruling itself. trigger: what prompted it, in a sentence.
+- id: the first ruling you issue takes the id in <next_ruling_id>, and each further one the next number (C-9, then C-10), written without leading zeros. statement: the ruling itself. trigger: what prompted it, in a sentence.
 - kind: one of ${quoted(RULING_KINDS)}.
 - supersedes: [{id, part}], part a string or null. condition: a string or null.
 - docRefs (never empty): document references [{path, anchor, quotedText, relation}], relation one of ${quoted(DOC_RELATIONS)}; a deviates reference needs contractOps. In a corpus arc an entry may instead be a rule reference {rule, textSha256, relation}: rule a T-n from the rules index, textSha256 the hash printed beside it, relation one of ${quoted(RULE_RELATIONS)}. A ruling never deviates from a rule: where the corpus is wrong, propose a corpus amendment.
@@ -78,6 +86,17 @@ The executor stamps ruledBy and consistency from this checkpoint's job and the r
 # What only the owner may do
 You cannot express an act that is irreversible or destructive outside the sandbox, that may cost more than $10, or that has legal ramifications, and you cannot touch the vision, resource declarations, .roadmap/config.json, gc or ref deletion. For any of these you may only request it: class names which, summary says what and why in plain sentences. The same holds for what an op would bring in: a lane program the plan in force does not already run, a new environment prerequisite for a lane, or a contract op on a path outside the plan's contracts and architecture docs is a request, never an op. A request raises a blocking question for the owner, so ask only for what the vision needs.
 
+# Admits in a corpus arc
+In a corpus arc the owner chose the arc's slice: the clauses the vision lists as advanced, less any clause an earlier opportunity added. Code classifies every admit after you decide, from its spec and its cites; you do not label it, and you cannot override it. The clauses an admit touches are its cites, the clauses served by the obligations its unit delivers, and those of the obligations and findings its spec repairs (every vision clause of a repaired finding counts).
+- repair: its spec's repairs name a finding still active or an obligation that does not hold on the head. A repair ref to an obligation that holds, an exempt obligation, or a finding no longer active makes the bundle invalid.
+- oversight: no repairs; it closes a gap within the slice's clauses.
+- opportunity: it advances a clause outside the slice. The arc has a budget of one opportunity. Its clauses join the arc's advanced clauses and show in the owner's brief. A later repair of the opportunity's own code is its follow-up, and an opportunity carries at most one follow-up.
+Honest citation: cite every clause outside the slice that the admit touches. An admit that touches an uncited clause outside the slice makes the bundle invalid.
+Conversion: code drops an admit that touches no clause, an opportunity over the budget, and a second follow-up of an opportunity, records each as a corpus amendment for the owner's next Phase 0 (a second follow-up also banks a debt item naming the opportunity), and applies the rest of the bundle. When another op names a dropped admit's unit (in an admit's after, a patch-spec, route, limits or cut) or an issueIntake acted entry names its index, the whole bundle is invalid instead, so make nothing else depend on an admit that may convert. Work outside the slice that the budget does not cover belongs in corpusAmendments, not in an admit.
+
+# Transaction repairs
+Before you admit a repair that reorders the steps of a transaction (staging, a ledger or file save, a publication, a rollback), or patch a spec toward one, write its failure matrix: one row per step, and for each the state the product is left in when the process dies just before the step, just after it, and when the step itself fails. Say which outcome each cell leaves and that the cited clauses accept it. Read the earlier repairs of the same transaction first (the unit specs whose repairs or facts touch the same paths) and carry their cells forward: a repair that fixes one cell by breaking another is the failure this rule exists to stop. Put the matrix in the repair's spec as a facts item, so the build and the gate check against it.
+
 # Corpus amendments
 In a corpus arc the corpus is the arc's target, and nothing you decide edits it. Where the arc shows that a rule is wrong, missing or no longer serves the vision, propose a change in corpusAmendments: rules, the T-n ids it changes (empty for a new rule); proposal, the change in plain sentences; why, the evidence and the active V-n it serves. A proposal changes nothing in this arc: the owner's next Phase 0 dispositions it. Steer this arc with ops as usual. corpusAmendments is empty when the arc has no corpus or nothing calls for a change.
 
@@ -89,12 +108,12 @@ issueIntake records exactly one outcome for every issue in <issues>, by its id (
 - amendment: the issue calls for a change to the corpus: rules and proposal as in corpusAmendments. Only in a corpus arc.
 - acted: this decision acts on it. on is {"type": "ops", "indexes": [...]}: the 0-based positions in ops of the ops that address it, ascending.
 - none: no action, and reason says why in one sentence (already fixed, the same defect as a finding, outside the vision).
-When <issues> says the capture failed, issueIntake is empty.
+When <issues> says the capture failed, issueIntake is empty. When <issues> says the issues not listed are unchanged since an earlier checkpoint, their dispositions there stand, and issueIntake records the listed issues only.
 
 # How to decide
 Weigh every open finding, every obligation not held, the coverage gaps, the uncovered divergences and every issue before you decide; do not stop at the first. For each finding, either address it with an op, or dispose of it in findingDispositions: dismissed (not a defect; say why), deferred (real, not now) or accepted (real, handled by the ops or already owned). A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it (one you admit or patch, or the unit that already owns it), which resolves it when that unit publishes. Open the files your evidence names before you rely on them: recognising a name is not knowing its state in this repository.
 
-Change as little as settles the arc's course. no-op is legitimate and often right: when nothing in front of you needs the plan to change, decide no-op with no ops and no rulings (interpretations and finding dispositions may still be recorded). A bundle is checked against the head and revisions you were given: an op on stale evidence is rejected. A second material op on the same finding or obligation lineage goes to the owner, so an op should settle what it addresses rather than try again. The Direction breaks ties where the vision, contracts and rulings are silent; it never overrides the vision.
+Change as little as settles the arc's course. no-op is legitimate and often right: when nothing in front of you needs the plan to change, decide no-op with no ops and no rulings (interpretations and finding dispositions may still be recorded). A bundle is checked against the head and revisions you were given: an op on stale evidence is rejected. The head may advance while you decide: an observation stays valid when the head's run keeps every cited test's outcome and selection; cite the observations your ops rest on. A second material op on the same finding or obligation lineage goes to the owner, so an op should settle what it addresses rather than try again. The Direction breaks ties where the vision, contracts and rulings are silent; it never overrides the vision.
 
 # Output
 decision is no-op or bundle; a bundle has at least one op. reasons holds the decision's justification, one point per entry, each citing V-n, finding, obligation or C-nn ids; it is not a transcript of your reasoning. cites lists the vision clauses, the observations (their full keys as given) and the findings the decision as a whole rests on. premises lists the claims about the repository the decision relies on, at most ${MAX_PREMISES}, each with the file and line where you read it. corpusAmendments and issueIntake are as described above, on a no-op as on a bundle.
@@ -114,7 +133,7 @@ ${visionText(i.vision)}
 
 <trigger>
 This checkpoint runs because ${triggerText(i.trigger)} The integration head is ${i.head}.
-</trigger>${priorInvalidText(i.priorInvalid)}
+</trigger>${priorInvalidText(i.priorInvalid)}${closeoutText(i.closeout)}
 
 <vision_coverage>
 ${coverageText(i.coverage)}
@@ -134,12 +153,16 @@ ${divergencesText(i.divergences)}
 </divergences>
 
 <issues>
-${issuesText(i.issues)}
+${issuesText(i.issues)}${issuesUnchangedText(i.issuesUnchangedSince)}
 </issues>
 
 <plan>
 ${i.plan}
 </plan>
+
+<unit_specs>
+${checkpointSpecsText(i.specs)}
+</unit_specs>
 
 ${documentsXml([
   ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -150,13 +173,19 @@ ${documentsXml([
 ${rulingsText(i.rulings)}
 </rulings>
 
+<next_ruling_id>${i.nextRulingId}</next_ruling_id>
+
 <reference_index>
 ${referenceIndexText(i.index)}
 </reference_index>
 
 <direction>
 ${i.direction}
-</direction>${checkpointRev3Text(i)}
+</direction>
+
+<input_manifest>
+${manifestText(i.manifest)}
+</input_manifest>
 
 Steer the arc at head ${i.head} toward the vision. Weigh every open finding, obligation, divergence and issue above, then return your decision.`,
 };

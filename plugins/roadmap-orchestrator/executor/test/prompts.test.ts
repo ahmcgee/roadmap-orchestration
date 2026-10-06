@@ -14,9 +14,10 @@ import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
 import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, validateBuildOutput, validateCheckpointOutput, validateDecisionsFile,
-  validateGateOutput, validatePackReviewOutput, validatePlanCheckOutput,
+  CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
+  validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
+import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
 import { MODEL_IDS, PROFILES, ROLES, type Role, atSeat } from '../src/routing/types.ts';
 
@@ -84,7 +85,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null,
+      priorRound: null, vision: null, acceptance: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -97,19 +98,21 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         patchedRev: specRev(2), changedPremiseFiles: ['src/b/x.ts'],
       },
       vision: vision(2, 'VISION-B'),
+      acceptance: { nextWitnessId: witnessItemId('W-3'), arcLanes: [laneId('journey'), laneId('e2e')] },
     },
   ],
   build: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: false,
+      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
-      witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }], assess: true,
+      witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
+      assess: { risk: 'high', vision: vision(2, 'VISION-B') },
     },
   ],
   gate: [
@@ -653,7 +656,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
 
   it('checkpoint issues: trusted data in <pasted_content> under their issue ids, acted on like evidence; an unavailable capture says why', () => {
     const mod = promptFor('checkpoint', 'claude-fable-5-1');
-    const text = mod.render(SAMPLES.checkpoint[1]);
+    const text = mod.render({ ...SAMPLES.checkpoint[1], issuesUnchangedSince: null });
     assert.match(text, /<issues>\nissue-7 \[roadmap:bug\], title "Title 7":\n<pasted_content id="issue-7">\nISSUE-B\n<\/pasted_content id="issue-7">\nComment issue-7\/c-3 \(OWNER\):\n<pasted_content id="issue-7\/c-3">\nISSUE-B comment\n<\/pasted_content id="issue-7\/c-3">\n<\/issues>/);
     assert.match(mod.render(SAMPLES.checkpoint[0]), /<issues>\n\(no open roadmap:bug or roadmap:feedback issues\)\n<\/issues>/);
     assert.match(mod.render({ ...SAMPLES.checkpoint[0], issues: { type: 'unavailable', reason: 'gh timed out' } }), /The issue capture failed \(gh timed out\)\. There are no issues this checkpoint; issueIntake is empty\./);
@@ -715,7 +718,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     ]) assert.match(sys, needle);
     assert.equal(promptFor('build', 'claude-sonnet-5-5'), promptFor('build', 'claude-opus-5-5'));
     const sonnet = PROMPTS.build['claude-sonnet-5-5'];
-    assert.ok(sonnet.type === 'inherits' && sonnet.reviewed.startsWith('2026-10-03: ') && /unattended/.test(sonnet.reviewed));
+    assert.ok(sonnet.type === 'inherits' && sonnet.reviewed.startsWith('2026-10-06: ') && /unattended/.test(sonnet.reviewed) && /in-session assessment/.test(sonnet.reviewed));
   });
 
   it('the sanitiser under a stable id: an issue body cannot close its own block', () => {
@@ -723,5 +726,187 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.ok(p.startsWith('<pasted_content id="issue-4">\n'));
     assert.equal(p.match(/<\/pasted_content/g)?.length, 1);
     assert.equal(pasted('diff', 'b'), pastedAs(pasted('diff', 'b').slice(20, 28), 'b'));
+  });
+});
+
+type SchemaObject = Readonly<{ required: readonly string[]; properties: { readonly [k: string]: JsonValue } }>;
+/** The object schemas at `path` (property names; arrays and anyOf branches are looked through). */
+function objectsAt(schema: JsonValue, path: readonly string[]): readonly SchemaObject[] {
+  const expand = (v: JsonValue): readonly SchemaObject[] => {
+    const s = v as { readonly [k: string]: JsonValue };
+    if (s['anyOf'] !== undefined) return (s['anyOf'] as JsonValue[]).flatMap(expand);
+    if (s['type'] === 'array') return expand(s['items'] as JsonValue);
+    return s['type'] === 'object' ? [s as unknown as SchemaObject] : [];
+  };
+  return path.reduce<readonly SchemaObject[]>((cur, p) => cur.flatMap((o) => (o.properties[p] === undefined ? [] : expand(o.properties[p]))), expand(schema));
+}
+/** The keys the schema requires of the answer's objects at each path, ascending: the fields a prompt must describe. */
+const requiredKeys = (schema: JsonValue, ...paths: readonly (readonly string[])[]): readonly string[] =>
+  [...new Set((paths.length === 0 ? [[]] : paths).flatMap((p) => objectsAt(schema, p).flatMap((o) => o.required)))].sort();
+const namesEvery = (text: string, keys: readonly string[], what: string): void => {
+  for (const k of keys) assert.match(text, new RegExp(`\\b${k}\\b`), `${what}: names ${k}`);
+};
+
+describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-session assessment, the checkpoint admits', () => {
+  const BUILDERS = ['claude-opus-5-5', 'gpt-5.6-luna'] as const;
+  const JUDGES = ['claude-opus-5-5', 'claude-fable-5-1'] as const;
+
+  it('prompts.build-witness-commands: each lane\'s exact witness check, run after the last change; a checklist by exact test id; negative witnesses on the entry point; experiments', () => {
+    for (const model of BUILDERS) {
+      const mod = promptFor('build', model);
+      const plain = mod.render({ ...SAMPLES.build[0] });
+      assert.doesNotMatch(plain, /witness-check/, `${model}: no witness checks without required witnesses`);
+      const text = mod.render({ ...SAMPLES.build[1], assess: null, fixRound: null });
+      assert.match(text, /- journey:\n {2}roadmap witness-check --lane-file \/run\/ev\/b\/witness\/journey\.json/, `${model}: the exact command per lane`);
+      assert.match(text, /every fast lane and witness check passes/, `${model}: the ask names the witness checks`);
+      for (const needle of [/after your last change/, /exactly the id the spec gives/, /witness item/, /missing or failing id is a blocker/,
+        /real entry point/, /injected/, /never a helper|calls a helper directly/, /experiments/, /never a fast lane/]) {
+        assert.match(mod.system + text, needle, `build/${model}: ${needle}`);
+      }
+      // prompt fields == schema required: the report the schema asks for is the report the prompt describes.
+      namesEvery(mod.system, requiredKeys(buildSchemaFor(null)), `build/${model}`);
+    }
+  });
+
+  it('prompts.build-assess-directive: a read-only first invocation answered as planAssessment, the pinned floor, the vision as context', () => {
+    for (const model of BUILDERS) {
+      const mod = promptFor('build', model);
+      assert.doesNotMatch(mod.render(SAMPLES.build[0]), /planAssessment|assessment/, `${model}: no assessment in a build`);
+      const text = mod.render(SAMPLES.build[1]);
+      for (const needle of [/This invocation is the assessment, not the build/, /Change nothing now/, /makes the assessment malformed/, /The pinned floor is high; never answer below it/,
+        /the build resumes this session afterwards/, /as read-only context/, /V-1 \(world\): VISION-B/, /return planAssessment|only the planAssessment object/]) {
+        assert.match(text, needle, `build/${model}: ${needle}`);
+      }
+      assert.doesNotMatch(text.slice(text.lastIndexOf('\n\n')), /Implement unit/, `${model}: the ask is the assessment`);
+      namesEvery(text, requiredKeys(PLAN_ASSESSMENT_SCHEMA, [], ['planAssessment']), `assess/${model}`);
+      const noVision = mod.render({ ...SAMPLES.build[1], assess: { risk: 'low', vision: null } });
+      assert.match(noVision, /This arc has no vision, so visionConflict is empty\./);
+      assert.match(noVision, /The pinned floor is low/);
+    }
+  });
+
+  it('prompts.plancheck-acceptance-shape: witness items through the patch channel only, ids from the next free W-n, the arc lanes named', () => {
+    for (const model of JUDGES) {
+      const mod = promptFor('planCheck', model);
+      assert.doesNotMatch(mod.render(SAMPLES.planCheck[0]), /acceptance_shape|W-\d/, `${model}: the uniform check has no acceptance shape`);
+      const text = mod.render(SAMPLES.planCheck[1]);
+      for (const needle of [/<acceptance_shape>/, /may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted/,
+        /a new item takes the next free id, W-3, and further new items the ids after it in order, written without leading zeros/,
+        /lane: one of the arc lanes: journey, e2e/, /testId: the test's exact id/, /" > "/, /skeleton/, /real entry point/,
+        /sends the unit back while one is missing or failing/]) {
+        assert.match(text, needle, `planCheck/${model}: ${needle}`);
+      }
+      namesEvery(mod.system + text, requiredKeys(PLAN_CHECK_ACCEPTANCE_SCHEMA, [], ['patch'], ['patch', 'item']), `planCheck acceptance/${model}`);
+      const noLanes = mod.render({ ...SAMPLES.planCheck[1], acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [] } });
+      assert.match(noLanes, /this arc declares no arc lanes/);
+    }
+    const answer = {
+      ...(OUTPUTS.planCheck as Record<string, unknown>),
+      patch: [{ op: 'add', section: 'witnesses', item: { id: 'W-3', lane: 'journey', testId: 'export > writes the header', clause: 'A1', skeleton: 'Runs the export command on a fixture register and asserts the header row.' } }],
+    };
+    assert.ok(conforms(PLAN_CHECK_ACCEPTANCE_SCHEMA, answer));
+    validatePlanCheckAcceptanceOutput(answer);
+  });
+
+  it('plan-check: the failure matrix before a transaction ordering, earlier repairs carried in; clock and entry-point defects (F03, D3)', () => {
+    for (const model of JUDGES) {
+      const sys = promptFor('planCheck', model).system;
+      for (const needle of [/failure matrix/, /staging, a ledger or file save, a publication, a rollback/, /process dying before it, after it/, /earlier repairs of the same transaction/,
+        /add the matrix as a facts item/, /real clock or the host time zone/, /fixed date the change invalidates/, /real wait in a fast lane/, /negative witness/, /real entry point/,
+        /existing tests the change affects/]) {
+        assert.match(sys, needle, `planCheck/${model}: ${needle}`);
+      }
+    }
+  });
+
+  it('gate: the executable checks block (missing with what requires it, killed, survived, inconclusive, why smoke did not run) and the D3 and H1 defect classes', () => {
+    for (const model of JUDGES) {
+      const mod = promptFor('gate', model);
+      assert.doesNotMatch(mod.render(SAMPLES.gate[0]), /executable_checks/, `${model}: no block when neither check applied`);
+      const text = mod.render(SAMPLES.gate[1]);
+      assert.match(text, /<executable_checks>\nWitness presence: 1 required witness test on the arc lanes at this head\.\n- missing \(absent, skipped, selected zero times, or a malformed record\): journey WITNESS-B \(W-1, target\)\n- failing: none\nMutation smoke \(the unit's production change reverted, its test files kept, the target witness tests run again\):\n- killed: none\n- survived: journey SURVIVOR-B\n- inconclusive: none\n<\/executable_checks>/, model);
+      const notRun = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: { killed: [], survived: [], inconclusive: [], notRun: 'no-test-paths' } } });
+      assert.match(notRun, /<executable_checks>\nMutation smoke did not run: a target lane declares no testPaths, so its test files cannot be told from production code\.\n<\/executable_checks>/);
+      for (const needle of [/A killed test failed without the change/, /A survived test passed without it/, /unless the behaviour it checks existed before this unit/,
+        /An inconclusive result proves nothing either way/, /a required test still missing or failing is a blocking finding/, /marks reused/,
+        /real clock or the host time zone/, /fixed date the change makes invalid/, /real wait in a fast lane/, /calls a helper instead of driving the real entry point/,
+        /moves a step of a transaction .* unless a failure matrix/]) {
+        assert.match(mod.system, needle, `gate/${model}: ${needle}`);
+      }
+      assert.doesNotMatch(mod.system + text, /\bvision\b|V-1|serves/i, `${model}: still no vision in the gate`);
+    }
+  });
+
+  it('prompts.checkpoint-failure-matrix: a matrix of each step against process death before admitting an ordering repair, prior repairs of the transaction carried in, put in the spec', () => {
+    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    for (const needle of [/# Transaction repairs/, /reorders the steps of a transaction \(staging, a ledger or file save, a publication, a rollback\)/, /write its failure matrix/,
+      /process dies just before the step, just after it, and when the step itself fails/, /Read the earlier repairs of the same transaction first/,
+      /Put the matrix in the repair's spec as a facts item/]) assert.match(sys, needle);
+  });
+
+  it('checkpoint admits (OR-A1, LR-k, R35): code classifies; honest citation; one opportunity, one follow-up; the rest converts to amendments', () => {
+    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    for (const needle of [/# Admits in a corpus arc/, /Code classifies every admit after you decide/, /you do not label it/, /- repair: /, /- oversight: /, /- opportunity: /,
+      /budget of one opportunity/, /at most one follow-up/, /Honest citation: cite every clause outside the slice that the admit touches/,
+      /code drops an admit that touches no clause, an opportunity over the budget, and a second follow-up/, /corpus amendment for the owner's next Phase 0/,
+      /banks a debt item naming the opportunity/, /the whole bundle is invalid instead/, /repair ref to an obligation that holds, an exempt obligation, or a finding no longer active/]) {
+      assert.match(sys, needle);
+    }
+  });
+
+  it('checkpoint inputs (H4, H5, C3, C6): the manifest, never live roadmap-inputs; every spec with its held ids; add vs replace; the next ruling id; the evidence note; closeout; unchanged issues', () => {
+    const mod = promptFor('checkpoint', 'claude-fable-5-1');
+    for (const needle of [/Read a captured input only through its manifest path\. Never read roadmap-inputs/, /add needs an id the spec does not hold, and replace an id it holds/,
+      /takes the id in <next_ruling_id>, and each further one the next number \(C-9, then C-10\), written without leading zeros/,
+      /The head may advance while you decide: an observation stays valid when the head's run keeps every cited test's outcome and selection; cite the observations your ops rest on\./,
+      /issueIntake records the listed issues only/]) assert.match(mod.system, needle);
+    assert.doesNotMatch(mod.system, /C-nn new to the ledger/);
+    const text = mod.render(SAMPLES.checkpoint[1]);
+    assert.match(text, /<input_manifest>\n- plan plan: \/run\/inputs\/MANIFEST-B\.plan\.json sha256:b{64}\n<\/input_manifest>/);
+    assert.match(text, /<unit_specs>\n<documents>\n<document index="1">\n<source>spec of unit u-two, revision 3; item ids it holds: A1, W-1<\/source>\n<document_content>\nSPECS-B/);
+    assert.match(text, /<next_ruling_id>C-9<\/next_ruling_id>/);
+    assert.match(text, /<\/trigger>[^]*<closeout since="ckpt-1">\nThe previous checkpoint, ckpt-1, decided no-op[^]*Weigh only what changed\.[^]*<\/closeout>/);
+    assert.match(text, /Every open issue not listed above is unchanged since checkpoint ckpt-1, on unchanged grounds: its disposition there stands, and issueIntake records none for it\.\n<\/issues>/);
+    const first = mod.render(SAMPLES.checkpoint[0]);
+    assert.doesNotMatch(first, /<closeout|unchanged since checkpoint/);
+    assert.match(first, /<input_manifest>\n\(none\)\n<\/input_manifest>/);
+    assert.match(first, /<unit_specs>\n\(no unit specs\)\n<\/unit_specs>/);
+  });
+
+  it('prompts.lens-cause-shape: cause as "<affected operation>: <failure condition>", lens-agnostic; a specs-only drift judges the changed specs against the vision', () => {
+    const mod = promptFor('lens', 'claude-opus-5-5');
+    assert.match(mod.system, /cause, the root cause as "<affected operation>: <failure condition>" in lowercase words/);
+    assert.match(mod.system, /not your lens's angle on it, so that any lens finding this same defect would write the same text/);
+    assert.match(mod.system, /merges findings of one audit that share their evidence paths, obligation and cause/);
+    assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /specs_only/);
+    assert.match(mod.render(SAMPLES.lens[1]), /<specs_only>\nThis audit runs because a plan revision changed only these units' specs[^]*\n- u-two\nJudge what those specs now ask for against the vision\. Do not audit the code again\.\n<\/specs_only>/);
+  });
+
+  it('pack review: spec to rule to census cross-check; deterministic time fixtures, existing tests included; negative witnesses on the real entry point (F07, F12, F19, F20)', () => {
+    const sys = promptFor('packReview', 'claude-opus-5-5').system;
+    for (const needle of [/Cross-check each spec through its rules to the census/, /whose rule's census state is not obligation for it/, /naming a rule the census marks out-of-slice/,
+      /do not pin the product's own clock seam/, /the existing tests the change affects included/, /real clock or the host time zone/, /fixed date the change invalidates/,
+      /real wait in a fast lane/, /calls a helper instead of driving the real entry point/]) assert.match(sys, needle);
+  });
+
+  it('fix-round directives: witnesses missing or failing name what requires them; smoke survivors; a repeated red is not flaky', () => {
+    const required = [
+      { lane: laneId('journey'), testId: 'a > b', source: { type: 'obligation' as const, id: obligationId('I-3') }, role: 'target' as const },
+      { lane: laneId('journey'), testId: 'a > b', source: { type: 'witness-item' as const, id: witnessItemId('W-2') }, role: 'target' as const },
+      { lane: laneId('journey'), testId: 'c', source: { type: 'obligation' as const, id: obligationId('I-4') }, role: 'preservation' as const },
+    ];
+    const d = witnessFixDirectives([{ lane: laneId('journey'), testId: 'a > b' }], [{ lane: laneId('journey'), testId: 'c' }], required);
+    assert.equal(d.length, 3);
+    assert.match(d[0]!, /the gate is not called until every one does/);
+    assert.match(d[1]!, /^Missing: test "a > b" on lane journey, which witnesses I-3 \(what this unit delivers or repairs\) and W-2 \(what this unit delivers or repairs\)\. No test with exactly this id ran/);
+    assert.match(d[2]!, /^Failing: test "c" on lane journey, which witnesses I-4 \(a must-hold this unit keeps\)\. .*never weaken, skip or rename the test/);
+    assert.throws(() => witnessFixDirectives([], [], required), /names a missing or failing test/);
+    assert.throws(() => witnessFixDirectives([{ lane: laneId('journey'), testId: 'z' }], [], required), /not a required witness/);
+    const s = smokeFixDirectives([{ lane: laneId('journey'), testId: 'a > b' }], required);
+    assert.match(s[0]!, /reverted this unit's production changes, kept its test files/);
+    assert.match(s[1]!, /^Survived: test "a > b" on lane journey/);
+    assert.match(s[2]!, /already existed before this unit, leave that test as it is/);
+    assert.throws(() => smokeFixDirectives([], required), /names a surviving test/);
+    assert.match(repeatRedDirective(laneId('unit'), { attempt: 2 }), /^Lane unit failed exactly as it did in attempt 2: .* deterministic, not flaky/);
   });
 });

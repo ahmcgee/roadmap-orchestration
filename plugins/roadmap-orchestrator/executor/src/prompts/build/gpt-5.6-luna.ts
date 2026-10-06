@@ -14,8 +14,11 @@
 // executor's UNIT_POLICY, overriding AGENTS.md and the like (feedback item 20; Codex reads the repo's
 // AGENTS.md, which in arc 1 granted cloud use and sudo installs); cited documents in full and an index for
 // the rest (items 6, 12); the plan-check's notes as facts about existing code (item 26).
+// M4a rev 3 (reviewed 2026-10-06 against the same guides): a success criterion that every acceptance clause and witness
+// item maps to a test by its exact id (retro F05); the per-lane witness check commands (D1, R56); negative witnesses
+// through the real entry point (F20); `experiments` in the output; the read-only in-session assessment (E, R55).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, bullets, fastLanesText, referenceIndexText, rulingsText, buildChecksText } from '../inputs.ts';
+import { UNIT_POLICY, assessText, bullets, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
@@ -30,6 +33,7 @@ Make every acceptance clause in the spec hold, with every fast lane passing, and
 # Success criteria
 - Each acceptance clause holds. Where a clause admits a test, a test demonstrates it and fails if the behaviour is broken (break it, see the test fail, restore).
 - Every fast lane was run exactly as listed after your last change and exited with its expected code.
+- Every acceptance clause and every witness item in the spec maps to a test that exists under exactly the id the spec gives and runs in its lane; the executor looks each required witness test up by that id before the gate. Each witness check in the message, run after your last change, exits 0.
 - Every decision the spec left open, where a competent engineer could have chosen otherwise, is in ${DECISIONS_FILE}.
 - The change does what the spec asks and nothing more.
 
@@ -39,6 +43,7 @@ Make every acceptance clause in the spec hold, with every fast lane passing, and
 - The spec is authoritative; contracts and rulings (C-nn) bind as written. Cited ones are in the message; the rest are indexed there, and you read one (a contract from the repository, a ruling from the ledger file named in the index) when your change touches it. If one contradicts what the spec requires, do not work around it: it is a blocker.
 - Plan-check notes are facts a reviewer found about the code before your build; confirm one before relying on it.
 - Follow the codebase's conventions, helpers and patterns. Search for prior art before adding a helper. No broad try/catch: let errors surface.
+- A negative witness (a test that something does not happen) drives the real entry point, the command or call a user makes, with its fixture injected the way production reads it, never a helper called directly.
 - Tests: never weaken, skip or delete a test to get green; never write a test asserting behaviour you believe is wrong; no hard-coded answers shaped to the tests.
 - Git: do not push, rebase, reset --hard, checkout --, switch or delete branches, or amend and rewrite commits. Never revert changes you did not make. Committing is optional; the executor commits in-scope work after you exit. If you commit, commit on the current branch.
 - Host: sibling units and the orchestrator run here. Do not kill processes you did not start. Do not run estate lanes or start the clusters, containers or services they use. Work only in the worktree and the evidence directory.
@@ -52,9 +57,10 @@ Use the shell with an explicit working directory for every command, rg for searc
 - Ambiguity is not a reason to stop: take the reading the spec's wording and the surrounding code most directly support, and record it in ${DECISIONS_FILE}.
 - Blocked (a contract contradicts the spec, a lane cannot run for an environment reason, the fix would need a change outside scope): finish everything that does not depend on it, list it in blockers, stop.
 - If you are re-reading or re-editing the same files without progress, stop and report it as a blocker.
+- A witness check that still reports a missing or failing id is a blocker.
 
 # Output
-Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run with its exit code. blockers: what keeps the unit from being complete; empty when complete. Decisions go in ${DECISIONS_FILE}, not in this object.`;
+Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete; empty when complete. Decisions go in ${DECISIONS_FILE}, not in this object.`;
 
 function fixRound(i: BuildInputs): string {
   if (i.fixRound === null) return '';
@@ -66,6 +72,23 @@ ${bullets(i.fixRound.failingEvidenceDirs, '(no failing lanes)')}
 Directives:
 ${bullets(i.fixRound.directives, '(none)')}
 Fix exactly what failed and what the directives name. Carry out each directive, or list in blockers why it is wrong and leave the code. Then rerun every fast lane. Stop when they pass; anything past the repairs is scope creep.`;
+}
+
+function witnessChecks(i: BuildInputs): string {
+  if (i.witnessChecks.length === 0) return '';
+  return `
+
+# Witness checks
+Run each after your last change, beside the fast lanes, until it exits 0:
+${i.witnessChecks.map((w) => `- ${w.lane}:\n  ${w.command}`).join('\n')}`;
+}
+
+/** The assessment (read-only, its own answer), a fresh build, or a fix round. */
+function task(i: BuildInputs): string {
+  if (i.assess !== null) return `${assessText(i.assess)}\n\nAssess unit ${i.spec.unit} in ${i.worktree} without changing anything; your final message is only the planAssessment object.`;
+  return i.fixRound === null
+    ? `Implement unit ${i.spec.unit} in ${i.worktree} until every acceptance clause holds and every fast lane${i.witnessChecks.length === 0 ? '' : ' and witness check'} passes.`
+    : `Complete the fix round for unit ${i.spec.unit} in ${i.worktree}.`;
 }
 
 export const PROMPT: PromptModule<'build'> = {
@@ -94,10 +117,8 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 ${bullets(i.scope, '(empty)')}
 
 # Fast lanes
-${fastLanesText(i.worktree, i.fastLanes)}${fixRound(i)}
+${fastLanesText(i.worktree, i.fastLanes)}${witnessChecks(i)}${fixRound(i)}
 
 # Task
-${i.fixRound === null
-    ? `Implement unit ${i.spec.unit} in ${i.worktree} until every acceptance clause holds and every fast lane passes.`
-    : `Complete the fix round for unit ${i.spec.unit} in ${i.worktree}.`}${buildChecksText(i.witnessChecks, i.assess)}`,
+${task(i)}`,
 };
