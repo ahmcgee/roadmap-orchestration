@@ -750,8 +750,8 @@ collects every kept input a `plan-applied` or payload names (plan, specs, ledger
 `revision.json`, and the corpus guide, pin and pinned files, the Phase-0 record and its issue capture); every
 checkpoint's kept issue capture and every pack review's kept inputs; every spec a `spec.patch` produced; the spec bytes each `dispatch` and `judgment-inputs` fact
 names; the `routingProvenance` of every `routingRev` (§4); `start.json`; every witness record a `witnessed` fact
-names; every consumed judgment `result.json` and `reads.json`; needs-user records and acks; and evidence
-manifests. `verifySnapshot` checks every item's hash against the record naming it, and the ref alone restores a
+names; every consumed judgment `result.json` and `reads.json`; each red spec lane's persisted class (`red.json`,
+which `status` lane failures read); needs-user records and acks; and evidence manifests. `verifySnapshot` checks every item's hash against the record naming it, and the ref alone restores a
 deleted run dir to the same fold and `status`. A **terminal snapshot** follows `arc-completed`, including when
 close-out had nothing to change; recovery republishes it when the ref lags (G8).
 

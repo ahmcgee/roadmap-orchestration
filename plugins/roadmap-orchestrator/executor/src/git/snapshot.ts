@@ -23,8 +23,10 @@
 // | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (a job's, a candidate's or a mutant's run): its `witness.json` |
 // | `needs-user/<id>.json`, `<id>.ack.json`| a done `needsuser.raise` intent; a `needs-user-acked` fact          |
 // | `evidence-manifests/<seq>.json`        | a done `evidence.snapshot` (the manifest only, never raw evidence) |
+// | `evidence/<unit>/<attempt>-lanes/      | a red done spec-lane `proc.spawn` stamped with `redRev` (M4a rev 3): |
+// | <lane>/red.json`                       | the first run's persisted red class, when written (status' failures) |
 //
-// Paths that name a run-dir file mirror it (`inputs/`, `inv/`, `needs-user/`, `start.json`,
+// Paths that name a run-dir file mirror it (`inputs/`, `inv/`, `needs-user/`, `start.json`, a lane's `red.json`,
 // `events.jsonl`, `state.json`), so the run dir's records are restored by copying the tree into it. A witness run
 // keeps its `witness.json` in its own execution's dir (`witnessDir`, written by src/pipeline/lanes.ts
 // `runJourneySeries`): a job's `<runDir>/evidence/jobs/<job>/arc-<lane>-<inv>/` (`jobLaneDir`), a unit candidate's
@@ -69,6 +71,7 @@ import {
 import { NEEDS_USER_DIR, needsUserAckPath } from '../needsuser.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { manifestPath } from './evidence.ts';
+import { RED_FILE } from '../core/records.ts';
 import { MUTANT_PATCH_INPUT } from './mutant.ts';
 import { type Identity, catFileType, commitTree, git, gitRun, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
 
@@ -151,6 +154,8 @@ type Source =
   /** A witness run keeps its record in its execution's dir (`witnessDir`): `<dir>/witness.json`. */
   | Readonly<{ type: 'witness'; fact: WitnessedFact }>
   | Readonly<{ type: 'file'; path: AbsPath }>
+  /** A spec lane's red class, at its run-dir path (written after its spawn's done: absent after a crash before the write). */
+  | Readonly<{ type: 'red'; path: RepoPath }>
   | Readonly<{ type: 'ack'; id: NeedsUserId }>;
 
 type Item = Readonly<{
@@ -158,7 +163,7 @@ type Item = Readonly<{
   namedBy: NamedBy;
   /** The sha256 the naming record states; null when it names the file without one. */
   sha256: Sha256Hex | null;
-  /** Only a backend call's reads.json: a Claude call writes one, a Codex call none. */
+  /** A backend call's reads.json (a Claude call writes one, a Codex call none) and a red lane's red.json. */
   optional: boolean;
   source: Source;
   /** start.json only: the generation the naming `executor-started` fact records. */
@@ -236,6 +241,14 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
           const dir = `${INV_DIR}/${invocationDirName(inv)}`;
           add({ path: repoPath(`${dir}/reads.json`), namedBy: by, sha256: null, optional: true, source: { type: 'inv', inv, file: 'reads.json' } });
           add({ path: repoPath(`${dir}/result.json`), namedBy: by, sha256: e.outcome.resultSha256, source: { type: 'inv', inv, file: 'result.json' } });
+        }
+        // A red spec lane's class (redlane.ts), in its first run's dir under the lanes attempt's evidence root
+        // (src/pipeline/dispatch.ts `evidenceRoot`, lanes.ts `specSeriesRoot`); a red rerun names the same path.
+        const s = intent.expect.subject;
+        const verdict = e.outcome.summary.type === 'command' ? e.outcome.summary.verdict : null;
+        if (s.purpose === 'lane' && s.set === 'spec' && s.redRev !== undefined && (verdict === 'fail' || verdict === 'stall') && intent.parent.type === 'stage') {
+          const path = repoPath(`evidence/${s.unit}/${intent.parent.attempt}-${intent.parent.stage}/${s.lane}/${RED_FILE}`);
+          add({ path, namedBy: by, sha256: null, optional: true, source: { type: 'red', path } });
         }
       }
       continue;
@@ -409,6 +422,10 @@ export function collectSnapshot(request: SnapshotPublishRequest): Collected {
         return mustRead(join(witnessDir(runDir, source.fact), WITNESS_RECORD_FILE), `${source.fact.lane} witness record (${source.fact.inv})`);
       case 'file':
         return mustRead(source.path, 'named record');
+      case 'red': {
+        const path = join(runDir, source.path);
+        return existsSync(path) ? readFileSync(path) : null;
+      }
       case 'ack':
         return mustRead(needsUserAckPath(runDir, source.id), 'needs-user acknowledgement');
     }
@@ -471,7 +488,7 @@ class Mismatch extends Error {}
 /**
  * Re-reads a snapshot commit: its tree holds `manifest.json` and exactly the files it lists, each hashing as
  * listed; `events.jsonl` ends at the manifest's high-water mark; and the listed files are exactly the closure the
- * tree's own events and payloads name (reads.json where a call wrote one), each with its naming record, hashing as
+ * tree's own events and payloads name (reads.json where a call wrote one, red.json where a red lane's class was written), each with its naming record, hashing as
  * that record states.
  */
 export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification {

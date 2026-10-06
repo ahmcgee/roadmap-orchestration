@@ -1571,7 +1571,10 @@ residues, the snapshot closure):
    outputs, the specs `dispatch`, `judgment-inputs` and `reopened` name, `steered` briefs); `start.json` (named by the
    latest `executor-started`, its generation matching); every done backend or arc-backend spawn's `result.json`
    (`reads.json` where written); each `witnessed` fact's record (a job's, a candidate's or a mutant's run) as
-   `witness/<seq>-<ord>.json`; needs-user records and acks; evidence manifests. `manifest.json` entries carry `namedBy: log | event{seq} | item{path}`;
+   `witness/<seq>-<ord>.json`; needs-user records and acks; evidence manifests; each red `redRev`-stamped spec lane's
+   `red.json` at its run-dir path `evidence/<unit>/<attempt>-lanes/<lane>/red.json` (named by the red spawn's done,
+   optional: absent after a crash before the write; M4a rev 3, so `status.units[].failures` restores from the ref
+   alone). `manifest.json` entries carry `namedBy: log | event{seq} | item{path}`;
    `verifySnapshot` recomputes the closure from the tree's own events and payloads and requires exactly that set, each
    file hashing as listed and as its naming record states. A run dir holds start.json before any snapshot.
    `namedBy` is required (M4a X0 deleted the dev.5 allowlist reading). Not yet in the closure: commands and their
@@ -2567,7 +2570,8 @@ only a dev.6 record's `finding` reads through `mutantSubjectDefault`. A smoke ru
 **Red class** (`<laneDir>/red.json`, `RedFile`, `RED_FILE`; written by N1): `{v, class: host-signature{signatures} |
 signature-without-evidence{signatures} | diagnostic | repeat{attempt, inv}, failure: Sha256Hex (the run's failure
 signature), redRev}`; `signatures` non-empty, in `HOST_SIGNATURES` table order, each once. Required before any rerun of
-a `redRev`-stamped run; an unstamped (dev.6) run has none and classifies with `HOST_SIGNATURES_DEV6`.
+a `redRev`-stamped run; an unstamped (dev.6) run has none and classifies with `HOST_SIGNATURES_DEV6`. A spec lane's
+`red.json` is an authoritative record: the snapshot closure carries it ("Choices made in M3 A4", item 9), raw evidence never.
 
 **Witness presence** (`src/holistic/required.ts`, pure, final). `requiredWitnesses(view, obligations, unit, spec, at:
 {sha, isAncestor})` → `RequiredWitness[]` `{lane, testId, source: obligation{id} | witness-item{id}, role: target |
@@ -2625,8 +2629,11 @@ no-claim | other-repo | alive | complete | refused | already-resumed}` or the re
 
 **Status and brief (step N6; `src/status.ts`, `src/brief.ts`, `src/pipeline/failures.ts`).** `Status` adds:
 - `units[].failures: [{stage: lanes, attempt, lane, class: red | flaky | repeat, hostSuspected: {signatures, busy} |
-  null}]` (`laneFailures`: each closed lanes attempt's spec series read back through `seriesLedger`, a red or flaky
-  record each; `flaky` before `repeat` before `red`); a lanes park's needs-user summary appends the same as one sentence
+  null}]` (`laneFailures`: from authoritative records only, so the snapshot ref alone restores it (DESIGN §2.9): each
+  closed lanes attempt's spec lane spawns, their done verdicts, and the first run's `red.json`, never raw evidence.
+  `diagnostic` → `flaky` when the rerun passed, else `red`; `repeat` → `repeat`; `host-signature` → `red` with
+  `{signatures, busy: true}` unless its rerun passed (then not listed); `signature-without-evidence` → `red` with
+  `{signatures, busy: false}`; a red with no `red.json` (a crash before the write) → `red`, null); a lanes park's needs-user summary appends the same as one sentence
   (`failuresText`, src/pipeline/unit.ts `haltNeedsUser`).
 - `units[].running.lane: {id, set: spec | suite | journey | mutant, inv, startedAt} | null` (8c: the latest open lane,
   journey or mutant spawn of the running attempt; `startedAt` its intent's time).
@@ -2820,7 +2827,9 @@ sections and marks converted amendments.
    a product-repo file (a corpus arc's vision) under `repo/`. The corpus guide is not exported (the baseline's, never
    edited by an apply); the corpus files the pin names are not either.
 5. **Lane failures list spec series only** (the `lanes` stage's); a candidate's suite reds are the candidate's outcome
-   and `base-red` items. An open lanes attempt is not read, nor one that ran a lane the spec in force no longer declares
-   (an applied spec edit dropped it: no definition to read its records with).
+   and `base-red` items. An open lanes attempt is not read, nor a lane whose spawns are not all done (cut short by a
+   crash: unknown). A red run whose spawn has no `redRev` (dev.6: its class was never persisted) is re-derived from its
+   raw evidence with `HOST_SIGNATURES_DEV6` (`dev6RedClass`, temporary adoption scaffolding) and not listed once that
+   evidence is gone (gc, or a restore from the ref). Lanes the spec in force no longer declares are listed: the records need no definition.
 6. **The drift indicator reads `advances ∪ OC`** (S ∪ OC, since S = advances \ OC) and counts a finding opened in any
    state, so a resolved drift stays visible as history; the brief shows only non-empty lines.

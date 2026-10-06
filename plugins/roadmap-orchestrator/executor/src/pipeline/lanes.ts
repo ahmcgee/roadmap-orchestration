@@ -341,6 +341,18 @@ function redClassOf(run: LaneRun): RedClass | null {
   return readRedClass(run.evidenceDir)?.class ?? null;
 }
 
+/**
+ * 1.0.0-dev.6 adoption (temporary scaffolding, deleted with `HOST_SIGNATURES_DEV6`): the class of an unstamped red run,
+ * which dev.6 never persisted, re-derived from its raw evidence with the frozen table, as `redClassOf` does; null once
+ * that evidence is gone (gc, or a run dir restored from the snapshot ref, which never carries raw output).
+ */
+export function dev6RedClass(runDir: AbsPath, inv: InvocationId, dir: AbsPath): RedClass | null {
+  const invDir = invocationDir(runDir, inv);
+  const output = [join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)];
+  if (!output.every((f) => existsSync(f))) return null;
+  return classifyRed({ signatures: outputSignatures(output, HOST_SIGNATURES_DEV6), host: readLaneHost(dir) }, null);
+}
+
 /** A lane's record from its first run and its rerun, if any: the reading `redLane` made live (redlane.ts). */
 function laneRecord(first: LaneRun, rerun: LaneRun | null): LaneRecord {
   const cls = redClassOf(first);

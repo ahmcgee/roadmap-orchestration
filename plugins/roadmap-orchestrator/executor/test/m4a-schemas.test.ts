@@ -463,11 +463,17 @@ describe('startup rows, brief and ack', () => {
           { issue: 'issue-4', job: 'ckpt-2', outcome: { type: 'finding', finding: 'F-2' } },
         ],
         questions: [{ id: 'P-4', rank: 1, text: 't', assumption: 'a', state: { type: 'open' } }],
-        amendments: [{ id: 'arc-2/M-1', rules: ['T-2'], proposal: 'p' }],
+        amendments: [
+          { id: 'arc-2/M-1', rules: ['T-2'], proposal: 'p', admit: null },
+          { id: 'arc-2/M-2', rules: [], proposal: 'q', admit: { job: 'ckpt-2', index: 0, reason: 'unrelated' } },
+        ],
         packReviewNotes: [{ job: 'review-1', index: 1, claim: 'the cut line is vague' }],
         census: { held: 3, obligationRules: 4, outOfSlice: 2, untestable: 1, prodOnly: 1 },
         timings: [{ stage: 'build', count: 3, p50Ms: 60_000, maxMs: 90_000 }],
         pr: { type: 'pr', number: 7, url: 'https://example.invalid/pull/7', state: 'open', base: 'arc-1', needsRebase: false },
+        admits: [{ job: 'ckpt-2', index: 1, unit: 'u2', class: 'opportunity', clauses: ['V-2'], followUp: 'O-1' }],
+        opportunities: [{ id: 'O-1', clauses: ['V-2'], units: ['u2'], followUps: 1, spentUsd: 1.5, overrun: [] }],
+        drift: [{ unit: 'u3', job: 'ckpt-2', findings: [{ id: 'F-2', clauses: ['V-1'] }] }],
       }],
     };
     same(parseBriefPayload, payload);

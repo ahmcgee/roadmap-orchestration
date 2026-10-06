@@ -6,16 +6,17 @@
 // status.running-lane, status.drainfor-after-rejected-apply, status.known-defect-holds, status.checkpoint-busy-wait,
 // status.drift-indicator, brief.admits-and-opportunities, needsuser.reentry-text-prepare-creates-branch.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import { brief } from '../src/commands/brief.ts';
-import { arcId, laneId, unitId } from '../src/core/ids.ts';
+import { arcId, laneId, sha, unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import type { LaneDef } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
-import { snapshotRequestOf } from '../src/git/snapshot.ts';
+import { git, gitRun, lsTree } from '../src/git/git.ts';
+import { snapshotRef, snapshotRequestOf, verifySnapshot } from '../src/git/snapshot.ts';
 import { runCheckpoint } from '../src/holistic/checkpoint.ts';
 import type { HostSample } from '../src/host/sample.ts';
 import { reentryRecommendation } from '../src/needsuser.ts';
@@ -94,7 +95,26 @@ describe('lane failures (F3)', () => {
     const s = status(run.runDir, run.journal.view.arc, run.ctx.hostDir);
     assert.deepEqual(s.units[0]?.failures, expected, 'status lists the same, read back from the evidence');
     assert.equal(failuresText(expected), 'Lane failures: lanes#1 flaky flaky; lanes#2 oom red host-suspected (oom-kill; host busy).');
+
+    // DESIGN §2.9: the failures derive from what the snapshot carries (the log and each red run's red.json), never raw
+    // evidence: the run dir deleted and restored from the ref alone lists the same.
+    const arc = run.journal.view.arc;
+    await runOp(run.journal, snapshotPublishOp(run.repo), `snapshot:${arc}`, snapshotRequestOf({
+      view: run.journal.view, runDir: run.runDir, identity: executorIdentity(), message: `roadmap ${arc}: snapshot\n`,
+    }));
     run.journal.close();
+    const at = sha(git(run.repo, ['rev-parse', snapshotRef(arc)]).trim());
+    const check = verifySnapshot(run.repo, at);
+    assert.equal(check.kind, 'verified', check.kind === 'mismatch' ? check.detail : '');
+    const reds = lsTree(run.repo, at).map((e) => e.path).filter((p) => p.endsWith('/red.json'));
+    assert.deepEqual(reds, ['evidence/u1/1-lanes/flaky/red.json', 'evidence/u1/2-lanes/oom/red.json'], 'each red run\'s class is in the snapshot');
+    rmSync(run.runDir, { recursive: true, force: true });
+    for (const e of lsTree(run.repo, at)) {
+      if (e.path === 'manifest.json') continue;
+      mkdirSync(dirname(join(run.runDir, e.path)), { recursive: true });
+      writeFileSync(join(run.runDir, e.path), gitRun(run.repo, ['cat-file', 'blob', e.object]).stdout);
+    }
+    assert.deepEqual(status(run.runDir, arc, run.ctx.hostDir).units[0]?.failures, expected, 'restored from the ref alone');
   });
 });
 

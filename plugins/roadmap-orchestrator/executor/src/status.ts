@@ -85,7 +85,8 @@
 //
 // M4a rev 3 (SCHEMAS "M4a rev 3", status rows):
 //   units[].failures   each lanes attempt's red, flaky or repeat lane, with its host-suspected signatures (F3,
-//                      src/pipeline/failures.ts); the lanes park's needs-user lists the same
+//                      src/pipeline/failures.ts: the log and each red run's red.json, never raw evidence); the lanes
+//                      park's needs-user lists the same
 //   units[].running.lane  the lane, journey or mutant run open in the running attempt now (8c)
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
@@ -282,7 +283,7 @@ export type UnitStatusLine = Readonly<{
   /** M4a rev 3 (F3): its lanes attempts' red, flaky and repeat lanes, host-suspected ones marked (src/pipeline/failures.ts). */
   failures: readonly LaneFailure[];
 }>;
-/** A unit's line as `derive` (and `watch`) reads it: everything but the failures, which read evidence files. */
+/** A unit's line as `derive` (and `watch`) reads it: everything but the failures, which read each red lane's `red.json`. */
 type UnitCore = Omit<UnitStatusLine, 'failures'>;
 
 /** The routing in force for the latest start, as classes: never a model. */
@@ -1562,18 +1563,6 @@ export function admitViews(view: JournalView, repo: AbsPath, plan: PlanM1, meter
   return { admits, opportunities, drift };
 }
 
-/** Each unit's lane failures (F3), through a read-only stage context; none before a start. */
-function failuresOf(d: Derived, hostDir: AbsPath, runDir: AbsPath): (unit: UnitId) => readonly LaneFailure[] {
-  const { start, inForce } = d;
-  if (start === null || inForce === null) return () => [];
-  const ctx = readOnlyContexts({
-    view: d.view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
-    routingBase: { profile: start.record.profile, config: readRepoConfig(start.record.repo) },
-  }).audit;
-  const units = new Map(inForce.plan.units.map((u) => [u.id, u]));
-  return (id) => laneFailures(ctx, units.get(id)!);
-}
-
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const d = derive(runDir, arc, hostDir);
   const { view, events, start, inForce } = d;
@@ -1608,13 +1597,12 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const h = on === null || start === null || inForce === null ? null : holisticReader(runDir, hostDir, d, inForce);
   const corpus = revision?.corpus ?? null;
   const reader = on === null || start === null ? null : { journal: { view }, runDir, planFile: start.record.planFile, repo: on.repo };
-  const failures = failuresOf(d, hostDir, runDir);
   const admitted = on === null || corpus === null ? NO_ADMITS : admitViews(view, on.repo, on.plan, meter);
 
   return {
     arc,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
-    units: d.units.map((l) => ({ ...l, failures: failures(l.unit) })),
+    units: d.units.map((l) => ({ ...l, failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }) })),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
     needsUser,
