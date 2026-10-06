@@ -61,6 +61,12 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'revision.commit.after-intent': R('reconciled'),
   'revision.commit.after-fact': R('reconciled'),
   'unit.after-stage': NONE,
+  // M4a rev 3 N1: a lane-reused fact written, the next lane not begun; a clean census, the series-certified fact unwritten
+  // (the series is then uncertified: never reused, its lanes run again); a red class's red.json written, its rerun not begun
+  // (the stage runs again as a new attempt, reading the class back). Every op is closed: nothing for recovery to reconcile.
+  'lanes.after-reused': NONE,
+  'lanes.after-census-before-certified': NONE,
+  'redlane.after-class': NONE,
   'recover.before-op': NONE,
   'recover.after-op': NONE,
   // M3 B7: arc-completed written, its terminal snapshot not: nothing open; the restart publishes the snapshot.

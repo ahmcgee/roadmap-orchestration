@@ -35,6 +35,7 @@ import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { commitAll, git, tmpDir, writeFiles } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
+import { LANE_REUSE, RED_CLASS, SERIES_CERTIFIED, crashCells } from './matrix.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { wire } from './fixtures/publish-common.ts';
 import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, admitAll, keptSpec, planCheckStep, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
@@ -404,6 +405,9 @@ const STABLE: LaneJson = { id: 'stable', argv: ['node', '--test', 'test/add.test
 const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'] };
 const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  return a + b;\n}\n' };
 
+/** The one label a crash row's cell crashes (test/matrix.ts). */
+const labelOf = (row: string): string => crashCells(row).map((c) => c.label).join();
+
 async function crashThenResume(steps: Parameters<typeof setupArc>[0]['steps'], label: string): Promise<Readonly<{ d: ReturnType<typeof setupArc> }>> {
   const d = setupArc({ steps, units: [{ id: 'u1', lanes: [STABLE, MUL_LANE] }] });
   const trigger = writeTrigger(tmpDir('rev3-crash'), { label, occurrence: 1, unit: 'u1' });
@@ -434,7 +438,7 @@ const FIX_OUTCOMES = [
 
 describe('crash rows', () => {
   test('crash LANE_REUSE (lanes.after-reused): killed after recording a reuse across the fix commit; the restart reuses again, never runs the lane twice', T, async () => {
-    const { d } = await crashThenResume(FIX_STEPS, 'lanes.after-reused');
+    const { d } = await crashThenResume(FIX_STEPS, labelOf(LANE_REUSE));
     assert.deepEqual(outcomes(d), FIX_OUTCOMES, 'the same outcomes as an uncrashed run');
     assert.equal(arcSpawns(d, 'stable').length, 1, 'the stable lane ran once: reused after the fix, and again after the crash');
     const reused = factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused');
@@ -445,7 +449,7 @@ describe('crash rows', () => {
   });
 
   test('lanes.reuse-requires-certificate / crash SERIES_CERTIFIED (lanes.after-census-before-certified): killed before the certificate; the restart reruns every lane', T, async () => {
-    const { d } = await crashThenResume([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })], 'lanes.after-census-before-certified');
+    const { d } = await crashThenResume([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })], labelOf(SERIES_CERTIFIED));
     assert.deepEqual(outcomes(d), [
       'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released',
       'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published',
@@ -456,7 +460,7 @@ describe('crash rows', () => {
   });
 
   test('crash RED_CLASS (redlane.after-class): killed after the class is persisted, before the rerun; the restart reruns the series, the class kept', T, async () => {
-    const { d } = await crashThenResume(FIX_STEPS, 'redlane.after-class');
+    const { d } = await crashThenResume(FIX_STEPS, labelOf(RED_CLASS));
     assert.deepEqual(outcomes(d), FIX_OUTCOMES);
     const muls = arcSpawns(d, 'mul');
     // The crashed lanes attempt ran mul once; the next ran it and its diagnostic rerun; the one after the fix once.

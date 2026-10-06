@@ -122,6 +122,9 @@ export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReview
 export const ISSUE_CAPTURE = 'checkpoint issue capture (M4a ISSUE_CAPTURE: identity, policy, fetch, the capture kept, issues-captured, checkpoint-inputs)';
 export const CORPUS_AMENDMENT = 'corpus amendments and issue intake (M4a CORPUS_AMENDMENT / ISSUE_INTAKE: after the decision, corpus-amendment and issue-intake facts keyed by source)';
 export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
+export const LANE_REUSE = 'lane reuse (M4a rev 3 N1 LANE_REUSE: a spec lane reused from a certified series, lane-reused keyed (parent, lane), then the remaining lanes)';
+export const SERIES_CERTIFIED = 'series certificate (M4a rev 3 N1 SERIES_CERTIFIED: lanes, a clean census, the checkout\'s removal, then series-certified)';
+export const RED_CLASS = 'red class (M4a rev 3 N1 RED_CLASS: a red run\'s evidence and host.json, red.json write-once, then the rerun decision)';
 export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
 export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
 export const FIXTURE_CONFLICT = 'fixture: conflict → merge-in → resolve';
@@ -150,12 +153,14 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'salvage.act-end', 'candidate.act-end', 'ff.act-end',
     'snapshot.act-end', 'spec.patch.after-write', 'revision.commit.after-fact',
   ],
-  B5: ['spawn.after-done', 'resource.after-done', 'unit.after-stage', 'recover.after-op'],
+  B5: ['spawn.after-done', 'resource.after-done', 'unit.after-stage', 'recover.after-op', 'lanes.after-census-before-certified'],
 };
 /** A supervised run to its end adds its completion (M3 B7: every arc writes `arc-completed`, then its terminal snapshot). */
 const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B5: ['complete.after-fact'] };
-/** The bumpy run adds the merge-in's conflicted path. */
-const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], ...COMPLETE_LABELS };
+/** The bumpy run adds the merge-in's conflicted path and the red lane's persisted class (M4a rev 3 N1: red.json written, the rerun not begun). */
+const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = {
+  B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], B5: ['complete.after-fact', 'redlane.after-class'],
+};
 
 /**
  * The labels the holistic whole-pipeline row crashes (test/fixtures/pm-holistic.ts `sampleHolistic` selects the
@@ -178,7 +183,10 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
     'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
     'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'issues.after-keep', 'amendment.after-decided', 'debt.after-approval',
   ],
-  B5: ['spawn.after-done', 'resource.after-done', 'latch.after-fact', 'audit.after-ended', 'docs.after-snapshot', 'complete.after-fact'],
+  B5: [
+    'spawn.after-done', 'resource.after-done', 'latch.after-fact', 'audit.after-ended', 'docs.after-snapshot', 'complete.after-fact',
+    'lanes.after-census-before-certified', 'redlane.after-class',
+  ],
 };
 
 const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
@@ -1077,13 +1085,13 @@ export const MATRIX: readonly Row[] = [
     cells: jobCells([
       'resource.after-intent', 'resource.after-done', 'candidate.act-start', 'candidate.after-commit-tree', 'candidate.act-end', 'batch.after-candidate',
       ...JOB_OPS.filter((l) => !l.startsWith('resource.')), 'evidence.after-partial-copy', ...LOG_APPENDS, 'ff.act-start', 'ff.act-end', 'snapshot.act-start',
-      'snapshot.after-commit-tree', 'snapshot.act-end',
+      'snapshot.after-commit-tree', 'snapshot.act-end', 'lanes.after-census-before-certified',
     ], {
       B1: 'a batch lane\'s witness lost: the lane runs again and witnesses once more',
       B2: 'the batch\'s slot reserve, chained candidate.merge, checkout, lane or batch ff durable, not acted: closed (the ff unpublished at T: a batch CAS is never redone), the batch holder abandoned and batch-1 run again as its next attempt, published once',
       B3: 'inside the chain\'s act, a checkout or a lane: redone to the same commits, or adopted; the batch published once',
       B4: 'the candidate made (abandoned, run again), or the batch ff moved integration with no done (reconciled published, finishBatch writes the snapshot and releases); both members retired by the one ff',
-      B5: 'nothing open: the batch goes on from its records',
+      B5: 'nothing open (a clean lane census with no series-certified: the series uncertified, its lanes run again): the batch goes on from its records',
     }, 'peer u3: its build open at the crash, adopted (or re-adapted once it exited) and consumed once; it merges after the batch; F-1 resolved once', 'no batch label falls on this boundary'),
   },
   {
@@ -1112,7 +1120,7 @@ export const MATRIX: readonly Row[] = [
       'launch.after-spawn', 'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'spawn.after-done', 'evidence.act-start',
       'evidence.after-partial-copy', 'evidence.act-end', 'worktree.remove.act-start', 'worktree.remove.inside', 'docs.after-lanes', 'ff.act-start', 'ff.act-end',
       'revision.commit.after-docs', ...LOG_APPENDS, 'revision.commit.after-fact', 'snapshot.act-start', 'snapshot.after-commit-tree', 'snapshot.act-end',
-      'docs.after-snapshot', 'command.apply.after-effect', 'command.apply.after-receipt',
+      'docs.after-snapshot', 'command.apply.after-effect', 'command.apply.after-receipt', 'lanes.after-census-before-certified',
     ], {
       B1: 'the rule\'s plan-applied lost inside its revision.commit: finished from its payload (reconciled) with the docs ff it published',
       B2: 'the preempt kill or the publication\'s op open: the kill finished, the candidate\'s slot released, the lane closed; an unpublished docs holder abandoned and the rule re-evaluated and published once',
@@ -1689,6 +1697,57 @@ export const MATRIX: readonly Row[] = [
         recovery: 'every ack enqueued, the marker still pending: the rerun finds each command file with its own bytes (enqueues nothing again) and commits the marker; each command once',
       },
       B5: { status: 'excluded', why: 'the committed marker is the ack\'s last write; a rerun of a committed id reports its commands and writes nothing' },
+    },
+  },
+  {
+    // A spec lane reused across a fix commit (test/lanes-rev3.test.ts, driven in a child that a restart resumes): the
+    // lane-reused fact is the row's only durable effect; the lanes stage a crash cuts short is abandoned and recomputed.
+    row: LANE_REUSE,
+    test: 'test/lanes-rev3.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'no intent: lane-reused is a fact written from a certified series read from the log; there is no op to be open before it' },
+      B3: { status: 'excluded', why: 'no act: a reuse runs nothing (no spawn, no checkout), only the fact append B1 covers' },
+      B4: { status: 'excluded', why: 'no act to complete before a done: the fact is the whole of the reuse' },
+      B5: {
+        status: 'crash',
+        labels: ['lanes.after-reused'],
+        recovery: 'the lane-reused fact durable, the lane\'s record not yet in the stage\'s ledger: nothing is open; the crashed attempt is abandoned and the restart reuses again from the same certified series (a second lane-reused, both from the one execution); the lane runs once overall, no backend call twice, the outcomes of an uncrashed run',
+      },
+    },
+  },
+  {
+    // A spec series' certificate (the lanes stage; test/lanes-rev3.test.ts) and a journey series' (the arc lane): lost, the
+    // series is merely uncertified. The whole-pipeline rows (straight, bumpy, holistic) crash it as well, inside real arcs.
+    row: SERIES_CERTIFIED,
+    test: 'test/lanes-rev3.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'no intent: series-certified is a fact; the evidence snapshot and worktree.remove before it are the evidence.* and worktree.* rows\' ops' },
+      B3: { status: 'excluded', why: 'no act between the census and the fact beyond the fact\'s append B1 covers' },
+      B4: { status: 'excluded', why: 'every op before the census is done; no act is complete without its done here' },
+      B5: {
+        status: 'crash',
+        labels: ['lanes.after-census-before-certified'],
+        recovery: 'the census clean, every op done, series-certified unwritten: nothing is open; the series is uncertified, so it is never reused and its lanes run again as a new attempt (each lane twice overall, no lane-reused); the outcomes of an uncrashed run',
+      },
+    },
+  },
+  {
+    // A red run's class (test/lanes-rev3.test.ts, driven in a child that a restart resumes): `red.json` is written once,
+    // beside the run's evidence, before the rerun decision. The whole-pipeline rows (bumpy, holistic) crash it inside real arcs.
+    row: RED_CLASS,
+    test: 'test/lanes-rev3.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'red.json is one write-once file publish, not a journal append: a torn file cannot exist (exclusive publish), and a missing one is B5\'s state' },
+      B2: { status: 'excluded', why: 'no intent: the class is derived from the run\'s recorded evidence and host.json, never an op of its own' },
+      B3: { status: 'excluded', why: 'the exclusive publish is one atomic act: there is no state inside it' },
+      B4: { status: 'excluded', why: 'no done: red.json has no op; the file existing is its completion, which B5 crashes' },
+      B5: {
+        status: 'crash',
+        labels: ['redlane.after-class'],
+        recovery: 'the class persisted, the rerun not begun: the crashed lanes attempt is abandoned; the restart runs the series again (its first run, then the diagnostic rerun) and the crashed attempt\'s class stays on disk; the outcomes of an uncrashed run',
+      },
     },
   },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },
