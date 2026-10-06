@@ -26,16 +26,16 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { OutcomeStage } from '../core/events.ts';
+import type { MutantOf, OutcomeStage, WitnessFor } from '../core/events.ts';
 import { mutantSubjectDefault } from '../core/upgrade.ts';
-import { type FindingId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import { type FindingId, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specRepairs } from '../core/records.ts';
 import type { FindingState, UnitState } from '../core/state.ts';
 import { type AbsPath, absPath, isoTimeOf, repoPattern } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
-import { mutantPatchPath } from '../git/mutant.ts';
+import { mutantPatchPath, patchedTree } from '../git/mutant.ts';
 import { mutantLaneDir } from '../git/snapshot.ts';
 import { type RepairProgress, type RepairUnit, isActive, repairedObligations, ruleFinding, syncFindings } from '../holistic/findings.ts';
 import { verdictOf } from '../holistic/observe.ts';
@@ -118,7 +118,7 @@ function mutantVerdict(record: WitnessRecord, witness: WitnessRef | null, lane: 
 }
 
 /** Removes a mutant worktree, citing `evidence` (the run's output, or a snapshot of nothing when no lane ran). */
-async function removeMutantWorktree(ctx: StageContext, parent: StageParent, path: AbsPath, evidence: OpId | null): Promise<void> {
+export async function removeMutantWorktree(ctx: StageContext, parent: StageParent, path: AbsPath, evidence: OpId | null): Promise<void> {
   const cited = evidence ?? (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
     source: path, globs: [], dest: absPath(join(evidenceRoot(ctx.runDir, parent), `_mutant-${basename(path)}`)),
   })).op;
@@ -127,70 +127,107 @@ async function removeMutantWorktree(ctx: StageContext, parent: StageParent, path
 
 /**
  * Removes every mutant worktree of `unit` an earlier attempt applied and a crash left (its `mutant.apply` done, no done
- * `worktree.remove` of its path), each citing a snapshot of nothing.
+ * `worktree.remove` of its path), each citing a snapshot of nothing: a finding's or a smoke's.
  */
-async function removeLeftovers(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<void> {
+export async function removeMutantLeftovers(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<void> {
   const view = ctx.journal.view;
   const removed = new Set(view.opsOf('worktree.remove').filter((i) => view.doneOf(i.op) !== null).map((i) => i.expect.path));
   const left = view.opsOf('mutant.apply').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && view.doneOf(i.op) !== null && !removed.has(i.expect.worktree));
   for (const i of left) if (existsSync(i.expect.worktree)) await removeMutantWorktree(ctx, parent, i.expect.worktree, null);
 }
 
+/** A mutant applied in its worktree: the patched tree, or why the patch does not apply (the worktree is then removed). */
+export type AppliedMutant = Readonly<{ kind: 'applied'; tree: Sha }> | Readonly<{ kind: 'inapplicable'; detail: string }>;
+
 /**
- * Applies the target's mutant at `commit` and runs its lane on the patched tree under the attempt's holder (`held`: the
- * pool instances its reservation holds), keeping the run's evidence and witness record in its own dir and naming the
- * record by a `witnessed{purpose: mutant}` fact; the worktree is removed before it returns.
+ * `mutant.apply` of the kept patch `patchSha256` at `at`, `of` a finding or a smoke, in `worktree`. A patch that does not
+ * apply leaves a clean checkout, removed here citing a snapshot of nothing. The patch must not be corrupt (callers check
+ * `patchedTree` first; `prepare` refuses one).
  */
-async function runMutant(ctx: StageContext, parent: StageParent, target: MutantTarget, commit: Sha, held: readonly ResourceUnit[]): Promise<MutantRun> {
-  const { finding, lane } = target;
-  const worktree = mutantWorktree(ctx, parent, finding.id);
-  const intent = await runOp(ctx.journal, mutantApplyOp(ctx.repo, ctx.runDir), `mutant:${parent.unit}`, parent, {
-    worktree, at: commit, finding: finding.id, patchSha256: finding.mutant.patchSha256,
-  });
+export async function applyMutant(
+  ctx: StageContext, parent: StageParent, request: Readonly<{ worktree: AbsPath; at: Sha; of: MutantOf; patchSha256: Sha256Hex }>,
+): Promise<AppliedMutant> {
+  const intent = await runOp(ctx.journal, mutantApplyOp(ctx.repo, ctx.runDir), `mutant:${parent.unit}`, parent, request);
   crashPoint('mutant.after-done', parent.unit);
   const applied = ctx.journal.view.doneOf(intent.op);
   if (applied === null || applied.kind !== 'mutant.apply') throw new Error(`${intent.op}: mutant.apply is not done`);
   if (applied.outcome.kind === 'inapplicable') {
-    await removeMutantWorktree(ctx, parent, worktree, null);
+    await removeMutantWorktree(ctx, parent, request.worktree, null);
     return { kind: 'inapplicable', detail: applied.outcome.detail };
   }
-  const tree = applied.outcome.tree;
-  const dirOf = (invDir: string): AbsPath => mutantLaneDir(ctx.runDir, finding.id, lane.id, basename(invDir));
+  return { kind: 'applied', tree: applied.outcome.tree };
+}
+
+/** One lane's run on a patched tree: its witness record and evidence, or why it has no record. */
+export type MutantLaneRun =
+  | Readonly<{ kind: 'ran'; record: WitnessRecord; dir: AbsPath; evidence: OpId }>
+  | Readonly<{ kind: 'blocked'; detail: string; dir: AbsPath; evidence: OpId }>
+  | Readonly<{ kind: 'interrupted'; reason: LaneCancel; dir: AbsPath; evidence: OpId }>;
+
+/**
+ * Runs arc lane `lane` in the mutant worktree (the patched `tree`, made `of` a finding or a smoke) under the attempt's
+ * holder (`held`: the pool instances its reservation holds), keeping the run's evidence and witness record under
+ * `dirOf(invDir)` and naming the record by a `witnessed{purpose: mutant, for}` fact (G13: never certifying).
+ */
+export async function runMutantLane(
+  ctx: StageContext, parent: StageParent,
+  run: Readonly<{ of: MutantOf; lane: ArcLaneDef; worktree: AbsPath; tree: Sha; dirOf: (invDir: string) => AbsPath; for: WitnessFor; held: readonly ResourceUnit[] }>,
+): Promise<MutantLaneRun> {
+  const { lane, worktree, tree } = run;
   const outcome = await invoke(ctx.journal, ctx.containment, {
     runDir: ctx.runDir,
     origin: { type: 'new', key: opKey(`lane:${parent.unit}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + LANE_DEADLINE_MS)) },
-    subject: { purpose: 'mutant', finding: finding.id, lane: lane.id, laneRev: laneRevOf(lane), tree },
+    subject: { purpose: 'mutant', of: run.of, lane: lane.id, laneRev: laneRevOf(lane), tree },
     launch: (invDir) => {
-      mkdirSync(dirOf(invDir), { recursive: true });
+      mkdirSync(run.dirOf(invDir), { recursive: true });
       return {
-        argv: lane.argv, cwd: absPath(join(worktree, lane.cwd)), env: mutantEnv(ctx, parent.unit, lane, held, absPath(join(dirOf(invDir), WITNESS_LINES))), stdinPath: null,
+        argv: lane.argv, cwd: absPath(join(worktree, lane.cwd)), env: mutantEnv(ctx, parent.unit, lane, run.held, absPath(join(run.dirOf(invDir), WITNESS_LINES))), stdinPath: null,
         stallMs: LANE_STALL_MS, graceMs: LANE_GRACE_MS, terminal: { type: 'command', purpose: 'lane', expectedExit: lane.expectedExit },
       };
     },
   });
   const invDir = invocationDir(ctx.runDir, outcome.inv);
-  const dir = dirOf(invDir);
+  const dir = run.dirOf(invDir);
   mkdirSync(dir, { recursive: true });
   const evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
     source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
   })).op;
-  let result: MutantRun;
-  if (outcome.kind === 'lost') result = { kind: 'blocked', detail: `${outcome.inv} was lost with its runner` };
-  else if (outcome.result.type !== 'command') throw new Error(`${outcome.inv}: a mutant lane produced a ${outcome.result.type} result`);
-  else if (outcome.result.verdict === 'cancelled') result = { kind: 'interrupted', reason: outcome.result.reason };
-  else if (outcome.result.verdict === 'process-fault') result = { kind: 'blocked', detail: `${outcome.inv} ended by a process fault` };
-  else {
-    const tests = collectWitness(lane.reporter, { witnessFile: absPath(join(dir, WITNESS_LINES)), stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
-    const record = witnessRecordOf({ lane, envId: laneEnvId(ctx, lane), treeSha: tree, inv: outcome.inv, purpose: 'mutant' }, tests);
-    const recordsSha256 = writeWitnessRecord(dir, record);
-    ctx.journal.fact({
-      kind: 'witnessed', lane: record.lane, laneRev: record.laneRev, envId: record.envId, treeSha: tree, inv: outcome.inv, recordsSha256, purpose: 'mutant',
-      for: { type: 'mutant', finding: finding.id, of: commit },
-    });
-    result = { kind: 'ran', verdict: mutantVerdict(record, target.witness, lane), dir };
+  if (outcome.kind === 'lost') return { kind: 'blocked', detail: `${outcome.inv} was lost with its runner`, dir, evidence };
+  if (outcome.result.type !== 'command') throw new Error(`${outcome.inv}: a mutant lane produced a ${outcome.result.type} result`);
+  if (outcome.result.verdict === 'cancelled') return { kind: 'interrupted', reason: outcome.result.reason, dir, evidence };
+  if (outcome.result.verdict === 'process-fault') return { kind: 'blocked', detail: `${outcome.inv} ended by a process fault`, dir, evidence };
+  const tests = collectWitness(lane.reporter, { witnessFile: absPath(join(dir, WITNESS_LINES)), stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
+  const record = witnessRecordOf({ lane, envId: laneEnvId(ctx, lane), treeSha: tree, inv: outcome.inv, purpose: 'mutant' }, tests);
+  const recordsSha256 = writeWitnessRecord(dir, record);
+  ctx.journal.fact({
+    kind: 'witnessed', lane: record.lane, laneRev: record.laneRev, envId: record.envId, treeSha: tree, inv: outcome.inv, recordsSha256, purpose: 'mutant', for: run.for,
+  });
+  return { kind: 'ran', record, dir, evidence };
+}
+
+/**
+ * Applies the target's mutant at `commit` and runs its lane on the patched tree under the attempt's holder (`held`),
+ * keeping the run's evidence and witness record in its own dir; the worktree is removed before it returns. A corrupt
+ * patch (H6) is inapplicable here, with git's reason, and nothing is applied.
+ */
+async function runMutant(ctx: StageContext, parent: StageParent, target: MutantTarget, commit: Sha, held: readonly ResourceUnit[]): Promise<MutantRun> {
+  const { finding, lane } = target;
+  const made = patchedTree(ctx.repo, commit, mutantPatchPath(ctx.runDir, finding.mutant.patchSha256));
+  if (made.kind === 'corrupt') return { kind: 'inapplicable', detail: made.detail };
+  const worktree = mutantWorktree(ctx, parent, finding.id);
+  const of: MutantOf = { type: 'finding', finding: finding.id };
+  const applied = await applyMutant(ctx, parent, { worktree, at: commit, of, patchSha256: finding.mutant.patchSha256 });
+  if (applied.kind === 'inapplicable') return applied;
+  const ran = await runMutantLane(ctx, parent, {
+    of, lane, worktree, tree: applied.tree, dirOf: (invDir) => mutantLaneDir(ctx.runDir, finding.id, lane.id, basename(invDir)),
+    for: { type: 'mutant', finding: finding.id, of: commit }, held,
+  });
+  await removeMutantWorktree(ctx, parent, worktree, ran.evidence);
+  switch (ran.kind) {
+    case 'ran': return { kind: 'ran', verdict: mutantVerdict(ran.record, target.witness, lane), dir: ran.dir };
+    case 'blocked': return { kind: 'blocked', detail: ran.detail };
+    case 'interrupted': return { kind: 'interrupted', reason: ran.reason };
   }
-  await removeMutantWorktree(ctx, parent, worktree, evidence);
-  return result;
 }
 
 /** The reporter's file of a mutant run, in its execution's dir (as a journey lane's). */
@@ -260,7 +297,7 @@ export async function reproduce(ctx: StageContext, unit: PlanUnit): Promise<Stag
     if (reserved.kind === 'interrupted') return record(ctx, parent, 'interrupted');
     if (reserved.kind === 'occupied') return record(ctx, parent, 'blocked', reserved.needsUser);
     if (reserved.kind === 'cleanup-failed') return record(ctx, parent, 'cleanup-failed', null, failedFacts(reserved.failed));
-    if (first) await removeLeftovers(ctx, unit.id, parent);
+    if (first) await removeMutantLeftovers(ctx, unit.id, parent);
     first = false;
     const ran = await runMutant(ctx, parent, target, integrationTip(ctx), reserved.reservation?.resources ?? []);
     const failed = await release(ctx, parent, reserved.reservation);
@@ -311,7 +348,7 @@ export type MutantEnd =
 export async function mutantAcceptance(ctx: StageContext, unit: PlanUnit, parent: StageParent, commit: Sha): Promise<MutantEnd> {
   const targets = vacuityTargets(ctx.journal.view.holistic().findings, specRepairs(loadUnitSpec(ctx, unit).spec));
   if (targets.length === 0) return { kind: 'green' };
-  await removeLeftovers(ctx, unit.id, parent);
+  await removeMutantLeftovers(ctx, unit.id, parent);
   let survived = false;
   for (const finding of targets) {
     const target = mutantTarget(ctx, finding);

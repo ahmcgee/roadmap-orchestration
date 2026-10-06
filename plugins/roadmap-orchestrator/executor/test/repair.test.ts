@@ -66,7 +66,7 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.ok(w !== undefined);
       assert.deepEqual([w.treeSha, w.for, w.lane], [patchedTip, { type: 'mutant', finding: 'F-1', of: tip }, 'journey']);
       const [spawn] = mutantRuns(r);
-      assert.deepEqual(spawn!.expect.subject, { purpose: 'mutant', finding: 'F-1', lane: 'journey', laneRev: w.laneRev, tree: patchedTip });
+      assert.deepEqual(spawn!.expect.subject, { purpose: 'mutant', of: { type: 'finding', finding: 'F-1' }, lane: 'journey', laneRev: w.laneRev, tree: patchedTip });
       assert.deepEqual(spawn!.parent, { type: 'stage', unit: 'v1', stage: 'reproduce', attempt: 1 });
       const apply = r.journal.view.opsOf('mutant.apply')[0]!;
       assert.deepEqual([apply.expect.at, mutantSubjectDefault(apply.expect), r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, { type: 'finding', finding: 'F-1' }, { kind: 'applied', tree: patchedTip }]);

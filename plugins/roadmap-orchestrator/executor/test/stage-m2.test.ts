@@ -21,7 +21,7 @@ import { type StageContext, type StageParent, isCancelled, unitBranch } from '..
 import { consumeJudgment, fingerprintAt, gate } from '../src/pipeline/gate.ts';
 import { candidate, ff, snapshot } from '../src/pipeline/integrate.ts';
 import { reserveNow } from '../src/pipeline/lanes.ts';
-import { NO_SESSION_NOTE } from '../src/pipeline/rounds.ts';
+import { NO_SESSION_NOTE } from '../src/prompts/directives.ts';
 import {
   type BuildRun, type LanesDone, at, build, evidence, lanes, planCheck, quiesce, record, recordedCall, salvage, start, teardown,
 } from '../src/pipeline/stages.ts';

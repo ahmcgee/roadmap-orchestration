@@ -5,6 +5,7 @@
 // apply.stale-base, apply.route-unit, apply.route-unsupported, apply.limits-below-spent, apply.obligation-added,
 // apply.obligation-witness, apply.obligation-split, apply.obligation-disposed, apply.obligation-restored-edited,
 // apply.obligation-split-parent-stays, apply.scope-growth-ruling, apply.holistic-add, apply.core-proposal,
+// apply.ruling-sidecar-one-revision, apply.ruling-sidecar-invalid-refused (M4a rev 3, I2),
 // startup.obligation-dropped, reverse.preimage-restores,
 // reverse.conflict-refused, reverse.repair-unit-refused, reverse.spec-preimage-exact, reverse.obligation-fresh-rev,
 // split.checkpoint-drop-divergence, fence.capture-waits,
@@ -31,7 +32,9 @@ import { openJournal, readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { absPath, branchName, branchRef } from '../src/core/values.ts';
 import { renderInvariants } from '../src/docs/invariants.ts';
-import { type DivergenceDraft, laneRevOf, parseObligations } from '../src/holistic/types.ts';
+import { type DivergenceDraft, laneRevOf, parseObligations, parseRulingSidecar } from '../src/holistic/types.ts';
+import { rulingContextAt } from '../src/pipeline/publish.ts';
+import { consistencyRevs } from '../src/spec/rulings.ts';
 import { commandScope } from '../src/input/classify.ts';
 import {
   RENDER_INPUT, type RoutingBase, inForceFiles, keptInput, keptPayload, readInputFiles, recordPlan, requirePlanInForce, revisionInForce,
@@ -442,6 +445,86 @@ test('apply.scope-growth-ruling: a dispatched unit\'s scope grows only with a ci
     const ok = await command(r, applyBody(d));
     assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
     assert.deepEqual(lastApplied(r).changes.map((c) => c.type), ['unit-changed', 'spec']);
+  } finally {
+    r.journal.close();
+  }
+});
+
+/**
+ * A ruling record outside the ledger (what `apply --ruling` names): `statement` applying to `units`, its consistency
+ * judged fresh against the revisions in force (`consistencyRevs`); its path and hash as the CLI queues them.
+ */
+function rulingFile(r: ArcRun, id: string, statement: string, units: readonly string[], judged: Json = {}): Readonly<{ path: ReturnType<typeof absPath>; sha256: ReturnType<typeof sha256> }> {
+  const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
+  const draft = sidecar(id, statement, { kind: 'decision', appliesTo: { type: 'units', units } });
+  const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: absPath(r.d.repo) }, tip));
+  if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
+  const path = absPath(join(tmpDir('apply-ruling'), `${id}.json`));
+  writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...(draft['consistency'] as Json), judgedRevs: { ...fresh.revs, ...judged } } }, null, 2)}\n`);
+  return { path, sha256: sha256(fileSha256Bytes(readFileSync(path))) };
+}
+
+test('apply.ruling-sidecar-one-revision: `apply --ruling` lands the ruling and the edits that cite it as one revision, then writes the ledger back', T, async () => {
+  const d = setupArc({ steps: [] });
+  recordFirst(d);
+  const r = contextFor(d);
+  try {
+    pin(r, 'u1');
+    const before = applied(r).length;
+    const ruling = rulingFile(r, 'C-2', 'u1 may also edit `docs/**`.', ['u1']);
+    editPlan(d, (p) => void (p.units[0]!['scope'] = ['src/**', 'test/**', 'contracts/**', 'docs/**']));
+    editSpec(d, 'u1', (s) => {
+      s['rev'] = 2;
+      s['scope'] = ['src/**', 'test/**', 'contracts/**', 'docs/**'];
+      s['cites'] = { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2'] };
+    });
+    // The edits alone cite a ruling the ledger does not hold: refused, nothing in force.
+    assert.match(reasonOf((await command(r, applyBody(d))).outcome), /without its spec citing an active ruling for u1/);
+    // The unknown-cite row reads the revision's ledger: a ruling in neither the ledger nor the records is still refused.
+    editSpec(d, 'u1', (s) => void (s['cites'] = { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2', 'C-9'] }));
+    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [ruling] } as CommandBody)).outcome), /"cite":"C-9","type":"unknown-cite"/);
+    editSpec(d, 'u1', (s) => void (s['cites'] = { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2'] }));
+    const ok = await command(r, { ...applyBody(d), rulings: [ruling] } as CommandBody);
+    assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
+    const revs = applied(r).slice(before);
+    assert.equal(revs.length, 1, 'one revision');
+    const fact = revs[0]!;
+    assert.deepEqual(fact.changes.map((c) => c.type), ['unit-changed', 'spec']);
+    const manifest = keptPayload(r.ctx.runDir, fact.payloadSha256).manifest;
+    assert.deepEqual(Object.keys(manifest.rulings.sidecars), ['C-2'], 'the ruling is in the same revision as the edits');
+    assert.equal(manifest.rulings.sidecars['C-2' as never], ruling.sha256, 'its bytes as recorded');
+    assert.match(readFileSync(ledgerPathOf(d), 'utf8'), /^C-2 — u1 may also edit `docs\/\*\*`\.$/m, 'the live ledger written back');
+    assert.equal(fileSha256(absPath(join(`${ledgerPathOf(d)}.d`, 'C-2.json'))), ruling.sha256, 'the sidecar written beside it');
+    // The ledger is the one in force again: a plain apply over the same files changes nothing.
+    assert.equal((await command(r, applyBody(d))).outcome.kind, 'applied');
+    assert.equal(applied(r).length, before + 1);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('apply.ruling-sidecar-invalid-refused: a ruling `rule` would refuse (stale consistency, a wrong id, an unknown unit) refuses the apply, edits and all', T, async () => {
+  const d = setupArc({ steps: [] });
+  recordFirst(d);
+  const r = contextFor(d);
+  try {
+    const before = applied(r).length;
+    editPlan(d, (p) => void (p['direction'] = 'Keep it smaller.'));
+    const stale = rulingFile(r, 'C-2', 'u1 stays small.', ['u1'], { ledgerSha256: HEX64 });
+    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [stale] } as CommandBody)).outcome), /C-2's consistency is stale/);
+    const wrongId = rulingFile(r, 'C-3', 'u1 stays small.', ['u1']);
+    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [wrongId] } as CommandBody)).outcome), /C-3 is not the ledger's next id \(C-2\)/);
+    const unknownUnit = rulingFile(r, 'C-2', 'u9 stays small.', ['u9']);
+    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [unknownUnit] } as CommandBody)).outcome), /C-2 applies to u9, which is not a planned unit/);
+    // Two records land in order: the second is validated against the ledger after the first.
+    const first = rulingFile(r, 'C-2', 'u1 stays small.', ['u1']);
+    const second = rulingFile(r, 'C-2', 'u1 stays tidy.', ['u1']);
+    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [first, second] } as CommandBody)).outcome), /C-2 is already in the ledger/);
+    // A record changed since the CLI hashed it.
+    writeFileSync(first.path, '{}');
+    assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [first] } as CommandBody)).outcome), /changed since the command hashed it/);
+    assert.equal(applied(r).length, before, 'nothing in force');
+    assert.doesNotMatch(readFileSync(ledgerPathOf(d), 'utf8'), /C-2/, 'the ledger untouched');
   } finally {
     r.journal.close();
   }

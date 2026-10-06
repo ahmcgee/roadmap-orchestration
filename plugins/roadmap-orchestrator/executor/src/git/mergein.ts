@@ -6,7 +6,8 @@
 // inputs recorded), CASes the branch and moves the worktree's index and files to it (`read-tree -m -u`).
 // A conflicting merge records the conflict set; act runs the real `git merge --no-commit --no-ff T`, which
 // leaves conflict markers in the files and MERGE_HEAD = T for the implementer. After the implementer
-// resolves and commits, HEAD has parents [old, T]: the `completed` state (`mergeinCompleted`).
+// resolves and commits, HEAD has parents [old, T]: the `completed` state (`mergeinCompleted`); a resolve round may commit
+// more on top of it (`resolvedHead`, M4a rev 3 8d).
 //
 // Every state is classified by HEAD and MERGE_HEAD (`classifyMergein`), which verify and the reconciler
 // share. The diff base after a merge-in is `diffBase(T, branch)` (transient.ts), which is then T.
@@ -125,6 +126,22 @@ export function mergeinCompleted(intent: IntentOf<'mergein.prepare'>): Extract<O
   const state = classifyMergein(intent);
   if (state.kind !== 'completed') throw new MergeinStateError(intent.expect.worktree, `not completed: ${state.kind}${state.kind === 'foreign' ? ` (${state.detail})` : ''}`);
   return { kind: 'completed', head: state.head };
+}
+
+/**
+ * M4a rev 3 (F8 8d): the head a resolve round left, when it holds the completed merge: HEAD on the branch is the merge M
+ * (parents [old, T]) or descends from it through first-parent, non-merge commits only (the implementer committed follow-up
+ * work after the merge), with no merge in progress and nothing unmerged. Null for anything else.
+ */
+export function resolvedHead(intent: IntentOf<'mergein.prepare'>): Sha | null {
+  const { worktree, branch, old, integrationTip } = intent.expect;
+  if (symbolicHead(worktree) !== branch || mergeHead(worktree) !== null || unmergedPaths(worktree).length > 0) return null;
+  const head = revParse(worktree, 'HEAD');
+  // The first-parent chain from HEAD back to (excluding) old, newest first: `<commit> <parent>...` per line.
+  const chain = git(worktree, ['rev-list', '--first-parent', '--parents', head, `^${old}`]).split('\n').filter((l) => l !== '').map((l) => l.split(' '));
+  const merge = chain.at(-1);
+  if (merge === undefined || merge.length !== 3 || merge[1] !== old || merge[2] !== integrationTip) return null;
+  return chain.slice(0, -1).every((c) => c.length === 2) ? head : null;
 }
 
 // ---------------------------------------------------------------------------------------------------

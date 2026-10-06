@@ -40,13 +40,12 @@ import { openPr } from '../commands/pr.ts';
 import { exportInputs } from '../commands/inputs.ts';
 import { resumeArc } from '../commands/resumearc.ts';
 import { witnessCheck } from '../commands/witnesscheck.ts';
-import { notYet } from '../core/notyet.ts';
 import { readJson } from '../core/fsx.ts';
 import type { ArcId, PlanRev } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { sha256 } from '../core/ids.ts';
-import { type CommandBody, type RunStart, runStart } from '../core/records.ts';
+import { type CommandBody, type HashedFile, type RunStart, runStart } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { START_FILE } from '../executor.ts';
 import { readInputFiles, revisionManifestOf } from '../input/inforce.ts';
@@ -103,11 +102,12 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'run-only':
       return submit(command.run, hostDir, { type: 'run-only', units: command.units });
     case 'apply': {
-      if (command.rulings.length > 0) return notYet('apply --ruling', 'N3');
       const run = locate(command.run, hostDir);
       const start = startOf(run);
+      // M4a rev 3 (I2): each `--ruling` sidecar hashed like a `rule` record, in the order given.
+      const rulings = command.rulings.map((f) => hashedFile('apply --ruling', f));
       if (command.dryRun) {
-        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, command.expectRev))}\n`);
+        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, command.expectRev, rulings))}\n`);
         return;
       }
       let manifest: ReturnType<typeof revisionManifestOf>;
@@ -118,7 +118,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
         throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
       }
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
-      return submit(command.run, hostDir, { type: 'apply', expectRev: command.expectRev, manifest });
+      return submit(command.run, hostDir, { type: 'apply', expectRev: command.expectRev, manifest, ...(rulings.length === 0 ? {} : { rulings }) });
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
@@ -253,11 +253,11 @@ function startOf(run: Run): RunStart {
 }
 
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
-async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null): Promise<unknown> {
+async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null, rulings: readonly HashedFile[]): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
     runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo) },
-    laneEnv: process.env, manifest: null, expectRev,
+    laneEnv: process.env, manifest: null, expectRev, rulings,
   });
   switch (verdict.kind) {
     case 'rejected':

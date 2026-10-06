@@ -7,9 +7,10 @@
 //             session is resumed instead, told by RESPEC_DIRECTIVE that the spec it now reads was amended
 //             and that the worktree holds its earlier work;
 //   fix       resume the implementer session with the failing lanes' evidence dirs and any directives (the
-//             gate's, or the executor's for a dirty checkout), in the unit worktree at the salvage SHA; the
-//             verification checkout of the failed series is removed first, citing its evidence snapshot;
-//   resume    the one uncharged resume after a malformed report;
+//             gate's, or the executor's for a dirty checkout, missing witnesses or smoke survivors: M4a rev 3,
+//             `witnessFixRound`, `smokeFixRound`), in the unit worktree at the salvage SHA; the verification
+//             checkout of the failed series is removed first, citing its evidence snapshot;
+//   resume    the one uncharged resume after a malformed report, told why it was malformed (I3);
 //   resolve   resume after a conflicted merge-in: "resolve and commit";
 //   steer     (M3, R11) the architect's alternate implementer entry (`roadmap steer`, unit.ts): a fresh session on
 //             the kept worktree, the brief as its one directive, its window the steer's budget; uncharged. A
@@ -62,6 +63,8 @@
 // invocation (dispatch.ts); after a crash, as the next attempt of the build, which inherits the lost call's
 // deadline (`crashLostDeadline`).
 //
+// Every directive's text is src/prompts/directives.ts's (one canonical place).
+//
 // Codex resume collision (DESIGN-1.0.md §3 "Codex facts"): a `codex exec resume` that dies at once because
 // the thread is still held by a live session is a transient, not a verdict on the unit. `callImplementer`
 // retries such a call once, as a new invocation with the same deadline.
@@ -69,7 +72,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { freshClaudeImplementerSession } from '../backends/argv.ts';
-import type { IntentOf } from '../core/events.ts';
+import type { IntentOf, TestRef } from '../core/events.ts';
+import type { RequiredWitness } from '../holistic/required.ts';
 import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type Sha256Hex, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
@@ -78,10 +82,13 @@ import { type LogSnapshot, readJournal } from '../core/log.ts';
 import { type Bounds, type ImplementerSession, STDERR_FILE } from '../core/records.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import type { RiskTier } from '../routing/types.ts';
-import { type AbsPath, type IsoTime, type RefName, branchRef, isoTimeOf } from '../core/values.ts';
+import { type AbsPath, type IsoTime, type RefName, type RepoPath, branchRef, isoTimeOf } from '../core/values.ts';
 import { refTarget, revParse } from '../git/git.ts';
 import { type FixRound, ignoredText } from '../prompts/inputs.ts';
-import { DECISIONS_FILE } from '../prompts/schemas.ts';
+import {
+  CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, STEER_DIRECTIVE, dirtyLanesDirective, flakyLaneDirective, movedHeadDirective,
+  repeatRedDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives,
+} from '../prompts/directives.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
   type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, implementerSeatRev, minutesMs, runOp, sameSession, seatTripleOf, sessionNeverPersisted, unitBranch,
@@ -92,14 +99,6 @@ import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, remo
 import { type BuildRound, decidedBy } from './transitions.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 
-
-export const RESUME_DIRECTIVE = 'Your previous final report did not match the required structured format. Do not change any code: return the structured report for the work in this worktree now.';
-export const NO_SESSION_NOTE = 'No earlier session of yours exists for this unit, so this is a fresh session: the worktree holds the work done so far. Read it before you change anything.';
-export const RESOLVE_DIRECTIVE = 'Integration was merged into this branch and the merge conflicted: resolve and commit. Resolve every conflict in the worktree, then commit the merge on the current branch (no other changes in that commit), run the fast lanes and return your report.';
-export const RESPEC_DIRECTIVE = 'The architect amended this unit\'s spec after your earlier work on it; the spec in this message is the amended revision and replaces the one you worked from. The worktree holds your earlier work, committed. Bring the work in line with the amended spec, run the fast lanes and return your report.';
-export const CONTINUE_DIRECTIVE = `You were paused partway through this task and are now resumed. The worktree holds your work so far, including uncommitted changes. Continue from where you stopped; do not restart. The evidence directory named in this message is new: rewrite ${DECISIONS_FILE} there, complete, with every decision so far.`;
-/** A steer round's directive (R11): the architect's brief follows it verbatim. */
-export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief within the unit\'s scope, run the fast lanes and return your report. The brief:';
 
 /** A steer's brief, kept content-addressed by `roadmap steer` (src/commands/steer.ts) as `inputs/<sha256>.brief.md`. */
 export const BRIEF_INPUT = 'brief.md';
@@ -124,7 +123,8 @@ export type DecidedRound =
     /** The unit worktree must be clean at this commit. */
     salvage: Sha;
   }>
-  | Readonly<{ kind: 'resume' }>
+  /** I3 (F25): `error` the validation error of the malformed report it follows, quoted to the session; null when unknown. */
+  | Readonly<{ kind: 'resume'; error: string | null }>
   | Readonly<{ kind: 'resolve' }>
   /** M3 (R11): the steer round a `steered` fact asks for: the brief's text and the budget (its window). */
   | Readonly<{ kind: 'steer'; brief: string; budgetMin: number }>;
@@ -170,15 +170,17 @@ export function decidedRound(input: RoundInput): BuildRound {
 
 /**
  * What a fix round is told about its failing lanes beyond their evidence: that a lane the stall watchdog
- * killed hung (its output alone does not say so), that a flaky lane passed its diagnostic rerun (redlane.ts),
- * and each lane's ignored-output census.
+ * killed hung (its output alone does not say so), that a red lane repeated the unit's earlier red exactly and so was
+ * not rerun (F2, `LaneRecord.repeat`), that a flaky lane passed its diagnostic rerun (redlane.ts), and each lane's
+ * ignored-output census. The text is src/prompts/directives.ts's.
  */
 export function failingLaneDirectives(failing: readonly LaneRecord[]): readonly string[] {
   return failing.flatMap((l) => {
     const ignored = l.ignored === null ? null : ignoredText(l.ignored);
     return [
-      ...(l.verdict === 'stall' ? [`Lane ${l.lane} hung: it made no progress (no CPU time, no output, no process started or ended) for ${LANE_STALL_MS / 60_000} minutes and was killed. Its output so far is in the evidence. Find and fix what it waits on.`] : []),
-      ...(l.flaky && l.diagnostic !== null ? [`Lane ${l.lane} is flaky: it failed, then passed when the executor reran it at the same commit; its passing rerun's evidence is in ${l.diagnostic.evidenceDir}. A flaky lane counts as red: find what makes it nondeterministic and make it pass every time.`] : []),
+      ...(l.verdict === 'stall' ? [stalledLaneDirective(l.lane, LANE_STALL_MS)] : []),
+      ...(l.repeat === null ? [] : [repeatRedDirective(l.lane, l.repeat)]),
+      ...(l.flaky && l.diagnostic !== null ? [flakyLaneDirective(l.lane, l.diagnostic.evidenceDir)] : []),
       ...(ignored === null ? [] : [`Lane ${l.lane} ${ignored}.`]),
     ];
   });
@@ -196,10 +198,30 @@ export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly stri
     kind: 'fix',
     fix: {
       failingEvidenceDirs: ledger.flatMap((l) => l.fixDirs),
-      directives: [`The lanes changed these paths in a clean checkout of your commit: ${dirty.join(', ')}. A lane may write only ignored paths; make the lanes leave every tracked and unignored file as committed.`],
+      directives: [dirtyLanesDirective(dirty)],
     },
     ledger, verification: null, salvage,
   };
+}
+
+/**
+ * M4a rev 3 (D1): the fix round after `witnesses-missing`: each required test still missing or failing, with what requires
+ * it (`required`, at the salvage SHA), and the witness lanes' evidence; over the green spec series (`ledger`).
+ */
+export function witnessFixRound(
+  missing: readonly TestRef[], failed: readonly TestRef[], required: readonly RequiredWitness[], evidence: readonly AbsPath[], ledger: readonly LaneRecord[], salvage: Sha,
+): DecidedRound {
+  return { kind: 'fix', fix: { failingEvidenceDirs: evidence, directives: witnessFixDirectives(missing, failed, required) }, ledger, verification: null, salvage };
+}
+
+/** M4a rev 3 (D1): the fix round after a witness check whose own checkout the lanes left dirty or moved (`not-certified`). */
+export function witnessCheckoutFixRound(dirty: readonly RepoPath[], evidence: readonly AbsPath[], ledger: readonly LaneRecord[], salvage: Sha): DecidedRound {
+  return { kind: 'fix', fix: { failingEvidenceDirs: evidence, directives: [dirty.length === 0 ? movedHeadDirective() : dirtyLanesDirective(dirty)] }, ledger, verification: null, salvage };
+}
+
+/** M4a rev 3 (D2): the fix round after `smoke-survived`: each surviving target, with the smoke runs' evidence. */
+export function smokeFixRound(survived: readonly TestRef[], required: readonly RequiredWitness[], evidence: readonly AbsPath[], ledger: readonly LaneRecord[], salvage: Sha): DecidedRound {
+  return { kind: 'fix', fix: { failingEvidenceDirs: evidence, directives: smokeFixDirectives(survived, required) }, ledger, verification: null, salvage };
 }
 
 /** The fix round after a gate revise (step 12): the gate's directives, over the green series it judged. */
@@ -287,7 +309,7 @@ function onSeat(dispatch: ImplementerDispatch, earlier: SeatedSession | null): I
   return earlier !== null && sameSession(seatTripleOf(earlier.seatRev), dispatch.triple) ? earlier.id : null;
 }
 
-function freshSession(dispatch: ImplementerDispatch): ImplementerSession {
+export function freshSession(dispatch: ImplementerDispatch): ImplementerSession {
   return dispatch.triple.backend === 'claude' ? freshClaudeImplementerSession() : { backend: 'codex', mode: 'fresh' };
 }
 
@@ -301,7 +323,7 @@ function sessionOf(dispatch: ImplementerDispatch, id: ImplementerSessionId | nul
  * The call of a round that resumes session `id` with `fix`, and its fresh variant: a fresh session told so by
  * NO_SESSION_NOTE. With no session to resume the round is that fresh variant.
  */
-function resumed(
+export function resumed(
   dispatch: ImplementerDispatch, id: ImplementerSessionId | null, fix: FixRound, evidenceDirs: readonly AbsPath[],
 ): RoundCall & Readonly<{ fresh: RoundCall | null }> {
   const fresh: RoundCall = { session: freshSession(dispatch), fixRound: { ...fix, directives: [...fix.directives, NO_SESSION_NOTE] }, evidenceDirs };
@@ -313,7 +335,7 @@ function roundInputs(round: DecidedRound): FixRound | null {
   switch (round.kind) {
     case 'fresh': return null;
     case 'fix': return round.fix;
-    case 'resume': return { failingEvidenceDirs: [], directives: [RESUME_DIRECTIVE] };
+    case 'resume': return { failingEvidenceDirs: [], directives: resumeDirectives(round.error) };
     case 'resolve': return { failingEvidenceDirs: [], directives: [RESOLVE_DIRECTIVE] };
     case 'steer': return { failingEvidenceDirs: [], directives: [STEER_DIRECTIVE, round.brief] };
   }

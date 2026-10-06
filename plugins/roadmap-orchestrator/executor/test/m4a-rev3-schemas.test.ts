@@ -9,7 +9,7 @@ import {
   InvalidIdError, arcId, commandId, jobId, knownDefectId, laneId, opId, opKey, opportunityId, sha, sha256, unitId, witnessItemId,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { DEFAULT_BOUNDS, boundsOfRecord, dispatchRecord, laneDef, redFile, specM1, specPatchOp } from '../src/core/records.ts';
+import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, dispatchRecord, laneDef, redFile, specM1, specPatchOp } from '../src/core/records.ts';
 import { Fold, openAttempt } from '../src/core/state.ts';
 import {
   HOST_SIGNATURES_DEV6, buildExperimentsDefault, bundleClassesOf, dev6SmokeBounds, mutantSubjectDefault,
@@ -297,6 +297,19 @@ describe('m4a-rev3 plan and spec', () => {
   });
 });
 
+describe('m4a-rev3 apply body (I2, step N3)', () => {
+  it('apply.body-rulings: `rulings` round-trips in the order given; absent reads as none, byte-preserving; empty is refused', () => {
+    const H = 'a'.repeat(64);
+    const plain = { type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: null } };
+    assert.deepEqual(commandBody(plain, 'b'), plain);
+    assert.equal(cj(commandBody(plain, 'b')), cj(plain), 'a queued dev.6 apply reads back byte-identical');
+    const ruled = { ...plain, rulings: [{ path: '/r/C-3.json', sha256: H }, { path: '/r/C-2.json', sha256: 'b'.repeat(64) }] };
+    assert.deepEqual(commandBody(ruled, 'b'), ruled);
+    assert.throws(() => commandBody({ ...plain, rulings: [] }, 'b'), /rulings/);
+    assert.throws(() => commandBody({ ...plain, rulings: [{ path: 'relative.json', sha256: H }] }, 'b'), /path/);
+  });
+});
+
 describe('m4a-rev3 role schemas', () => {
   it('the build answer: experiments, and a per-call lane enum', () => {
     const answer = { summary: 's', changedPaths: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }] };
@@ -306,7 +319,8 @@ describe('m4a-rev3 role schemas', () => {
     const schema = buildSchemaFor([laneId('lint'), laneId('unit')]) as { properties: { lanesRun: { items: { properties: { lane: unknown } } }; experiments: unknown } };
     assert.deepEqual(schema.properties.lanesRun.items.properties.lane, { type: 'string', enum: ['lint', 'unit'] });
     assert.ok(schema.properties.experiments !== undefined);
-    assert.ok(!('experiments' in (BUILD_SCHEMA as { properties: object }).properties), 'the modules keep the pre-N3 schema until the build call writes its own');
+    assert.deepEqual(BUILD_SCHEMA, buildSchemaFor(null), 'one schema for the build role: the modules carry buildSchemaFor(null), each call its own lanes');
+    assert.ok('experiments' in (BUILD_SCHEMA as { properties: object }).properties);
   });
 
   it('the in-session assessment and the acceptance-shape plan-check', () => {

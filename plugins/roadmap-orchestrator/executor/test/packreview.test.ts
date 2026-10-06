@@ -2,10 +2,11 @@
 // git, real processes, the fake claude answering the review calls by job. Named tests: packreview.key-excludes-job,
 // packreview.holds-admission, packreview.ack-releases, packreview.key-pending-holds, packreview.superseded-by-rereview,
 // packreview.none-after-first-admission, packreview.abandoned, packreview.consumed-on-restart,
-// packreview.inputs-only-on-recovery, packreview.delta-rereview-dispositions (M4a rev 3, N5), and the
+// packreview.inputs-only-on-recovery, packreview.delta-rereview-dispositions (M4a rev 3, N5),
+// packreview.no-review-between-rule-and-apply (M4a rev 3, I2), and the
 // crash cells of the matrix row PACK_REVIEW_JOB.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, test } from 'node:test';
@@ -32,7 +33,14 @@ import { until } from './fixtures/exec-common.ts';
 import { followContext, stepTo } from './fixtures/route-common.ts';
 import { startHolistic } from './fixtures/sched-m3-common.ts';
 import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, contextFor } from './fixtures/unit-common.ts';
+import { type ArcRun, applyBody, contextFor } from './fixtures/unit-common.ts';
+import { sha256Hex } from '../src/core/json.ts';
+import { sha, sha256 } from '../src/core/ids.ts';
+import { absPath } from '../src/core/values.ts';
+import { parseRulingSidecar } from '../src/holistic/types.ts';
+import { keptPayload } from '../src/input/inforce.ts';
+import { rulingContextAt } from '../src/pipeline/publish.ts';
+import { consistencyRevs } from '../src/spec/rulings.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 120_000;
@@ -187,6 +195,44 @@ describe('the hold before the first admission (K14, H9)', () => {
       x.r.journal.close();
     }
   });
+});
+
+test('packreview.no-review-between-rule-and-apply (I2): `apply --ruling` lands the ruling and its dependent edit as one revision, so the only key a review can bind is the whole pack\'s', T, async () => {
+  const x = await arcWith([packReviewStep('review-1')]);
+  try {
+    const r = x.r;
+    const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
+    const draft = {
+      schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'Berth booking comes before tide windows.', kind: 'decision', ruledBy: { type: 'architect' }, trigger: 'pack',
+      supersedes: [], condition: null, docRefs: [{ path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module', relation: 'consistent' }],
+      contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: [], evidence: [], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
+      consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
+    };
+    const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: absPath(r.d.repo) }, tip));
+    if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
+    const path = absPath(join(tmpDir('packreview-ruling'), 'C-2.json'));
+    writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...draft.consistency, judgedRevs: fresh.revs } }, null, 2)}\n`);
+    // The dependent edit: the plan's direction now states what the ruling decides.
+    const plan = JSON.parse(readFileSync(r.d.planPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(r.d.planPath, JSON.stringify({ ...plan, direction: 'Berth booking first, per C-2.' }));
+    const out = await applyCommand(x.w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, {
+      ...applyBody(r.d), rulings: [{ path, sha256: sha256(sha256Hex(readFileSync(path))) }],
+    } as Parameters<typeof submitCommand>[2]));
+    assert.equal(out.kind, 'applied', JSON.stringify(out));
+    const revisions = factsOfKind(r, 'plan-applied');
+    assert.deepEqual(revisions.map((f) => f.rev), [1, 2], 'one revision for the ruling and its edit: none holds the ruling alone');
+    const manifest = keptPayload(r.ctx.runDir, revisions[1]!.payloadSha256).manifest;
+    assert.deepEqual(Object.keys(manifest.rulings.sidecars), ['C-2']);
+    assert.deepEqual(revisions[1]!.changes, [{ type: 'plan-field', field: 'direction' }]);
+    const review = await runPackReview(x.ctx);
+    assert.deepEqual(review, { kind: 'ended', job: 'review-1', outcome: 'completed', needsUser: null });
+    const started = factsOfKind(r, 'pack-review-started');
+    assert.deepEqual(started.map((f) => f.planRev), [2], 'the one review reads the revision holding both');
+    assert.match(stdinOf(x.a, 'review-1'), /Berth booking first, per C-2\./);
+    assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-1' });
+  } finally {
+    x.r.journal.close();
+  }
 });
 
 test('packreview.delta-rereview-dispositions (H3): a re-review reads what changed and the unresolved earlier findings, dispositions each once; a blocking one kept still-open holds; a missing disposition is malformed; an abandoned review is skipped over', T, async () => {

@@ -14,7 +14,7 @@ import { type NeedsUserId, commandId, invocationId } from '../src/core/ids.ts';
 import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { NO_SESSION_NOTE, RESPEC_DIRECTIVE } from '../src/pipeline/rounds.ts';
+import { NO_SESSION_NOTE, RESPEC_DIRECTIVE } from '../src/prompts/directives.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
 import { keptSpecPath } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';

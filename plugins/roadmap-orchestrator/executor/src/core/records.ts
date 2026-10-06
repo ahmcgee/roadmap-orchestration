@@ -79,6 +79,9 @@ const unit: Read<UnitId> = (v, p) => unitId(v, p);
 const commitSha: Read<Sha> = (v, p) => sha(v, p);
 const rev: Read<RoutingRev> = (v, p) => routingRev(v, p);
 const abs: Read<AbsPath> = (v, p) => absPath(v, p);
+/** A file a command names by path, hashed by the CLI (sha256 over its bytes) when it queued the command. */
+export type HashedFile = Readonly<{ path: AbsPath; sha256: Sha256Hex }>;
+const hashedFile: Read<HashedFile> = object((f) => ({ path: f.get('path', abs), sha256: f.get('sha256', (v, p) => sha256(v, p)) }));
 const time: Read<IsoTime> = (v, p) => isoTime(v, p);
 const resource: Read<ResourceName> = (v, p) => resourceName(v, p);
 /** argv[0] names the program; a later argument may be empty (`claude --setting-sources ''`). */
@@ -1194,9 +1197,11 @@ export type CommandBody =
   /**
    * `roadmap apply`: make the plan and specs the manifest hashes the plan in force (the executor re-reads the
    * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
-   * or null to apply over whatever is in force. A mutation.
+   * or null to apply over whatever is in force. A mutation. M4a rev 3 (I2): `rulings`, the ruling sidecar files of
+   * `--ruling` (each hashed like a `rule` record, in the order given; absent: none, lasting), landed with the edits as one
+   * revision.
    */
-  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: RevisionManifest }>
+  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: RevisionManifest; rulings?: readonly HashedFile[] }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
@@ -1253,11 +1258,15 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   resume: object((f): CommandBody => ({ type: f.get('type', literal('resume')), target: f.get('target', resumeTarget) })),
   sweep: object((f): CommandBody => ({ type: f.get('type', literal('sweep')), resource: f.get('resource', nullable(resource)) })),
-  apply: object((f): CommandBody => ({
-    type: f.get('type', literal('apply')),
-    expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
-    manifest: f.get('manifest', applyManifest),
-  })),
+  apply: object((f): CommandBody => {
+    const out = {
+      type: f.get('type', literal('apply')),
+      expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
+      manifest: f.get('manifest', applyManifest),
+    };
+    const rulings = f.optional('rulings', arrayOf(hashedFile, { nonEmpty: true }));
+    return rulings === undefined ? out : { ...out, rulings };
+  }),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
   })),

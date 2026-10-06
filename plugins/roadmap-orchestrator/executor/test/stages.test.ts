@@ -14,7 +14,8 @@ import { isoTimeOf } from '../src/core/values.ts';
 import { EVENTS_FILE, STATE_FILE, openJournal } from '../src/core/log.ts';
 import { implementerDispatch, judgmentDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
-import { NO_SESSION_NOTE, RESUME_DIRECTIVE, type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
+import { type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
+import { NO_SESSION_NOTE, RESUME_DIRECTIVE } from '../src/prompts/directives.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import {
   type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, library, loadUnitSpec, planCheck, quiesce, salvage, teardown,
@@ -251,7 +252,7 @@ test('rounds.resume-without-session-starts-fresh: after a malformed fresh build 
   const malformed = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(malformed.outcome.kind, 'malformed');
   assert.equal(show(malformed.next), 'build/resume@med');
-  const b = started(await build(run.ctx, run.unit, { kind: 'resume' }));
+  const b = started(await build(run.ctx, run.unit, { kind: 'resume', error: null }));
   assert.equal(b.outcome.kind, 'success');
   assert.ok(launchedFresh(run), 'the resume round\'s launch.json records a fresh session');
   const calls = readCalls(run.scenario.path);

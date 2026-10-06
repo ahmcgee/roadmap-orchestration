@@ -61,7 +61,7 @@ async function repin(a: CorpusArc, commit: string): Promise<string> {
 function apply(a: CorpusArc, j: OpenJournal): Promise<ApplyVerdict> {
   return evaluateApply({
     runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), repo: a.repo, planFile: a.planPath, routingBase: BASE,
-    laneEnv: process.env, manifest: null, expectRev: null,
+    laneEnv: process.env, manifest: null, expectRev: null, rulings: [],
   });
 }
 

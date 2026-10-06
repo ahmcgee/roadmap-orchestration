@@ -98,7 +98,7 @@ import { RESIDUE_ARCHIVE, bodyOf, readResidues, recordDisposition, recordResidue
 import { requirePlanInForce } from '../../src/input/inforce.ts';
 import { overCapacity } from '../../src/resources/pool.ts';
 import { bytesSha256, loadSpec } from '../../src/spec/spec.ts';
-import { CONTINUE_DIRECTIVE } from '../../src/pipeline/rounds.ts';
+import { CONTINUE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { seatTripleOf } from '../../src/pipeline/dispatch.ts';
 import { meterOf } from '../../src/meter.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
@@ -1001,7 +1001,7 @@ test('upgrade.dev6-rebind-inflight: a dev.6 build at build.high stopped mid-buil
   const [smokeClaude, smokeCodex, gate] = headFakeSteps({ steps: [c.pageId.gate] }, 'default');
   const build: Step = {
     as: 'claude', expect: { argv: ['--effort', 'medium', '--resume', session], argvLacks: ['--session-id'], stdinContains: [CONTINUE_DIRECTIVE] },
-    acts: [...c.pageId.build.acts, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [] } }],
+    acts: [...c.pageId.build.acts, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [] } }],
   };
   let r: HeadRun;
   track(scope);

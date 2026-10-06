@@ -12,7 +12,7 @@ import type { Event, Fact } from '../src/core/events.ts';
 import { type CommandId, commandId, unitId } from '../src/core/ids.ts';
 import { terminalReceipt } from '../src/commands/queue.ts';
 import { absPath } from '../src/core/values.ts';
-import { CONTINUE_DIRECTIVE, RESPEC_DIRECTIVE } from '../src/pipeline/rounds.ts';
+import { CONTINUE_DIRECTIVE, RESPEC_DIRECTIVE } from '../src/prompts/directives.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertNoSurvivors } from './helpers/reap.ts';
 import { type CodexAct, type Step, readCalls } from './helpers/scenario.ts';

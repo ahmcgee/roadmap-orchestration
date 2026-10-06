@@ -57,7 +57,13 @@
 //            (`corpus`) and a Phase-0 record edit (`phase0`); the shared Phase-0 rows (src/phase0/rows.ts) run over
 //            every apply (`tree-uncommitted`, `vision-unconfirmed`, `corpus-invalid`, `phase0-invalid` are rejected
 //            receipt reasons, as are the classifier's `target-kind-changed` and `chain-immutable`), and the corpus
-//            files the re-derived pin read are kept before the commit. Mutation.
+//            files the re-derived pin read are kept before the commit. M4a rev 3 (I2): `apply --ruling <sidecar>`
+//            (the body's `rulings`, each hashed by the CLI) lands those rulings with the edits as ONE revision: each
+//            record validated as `rule` validates it (src/commands/rule.ts `rulingReasons`) against the revision being
+//            built, landed by the one ruling path (src/input/classify.ts `withRulings`) on the ledger in force (a
+//            differing live ledger or sidecar is refused), then the ledger, sidecars and obligations written back as
+//            `rule` writes them (only where the files still hold what the apply read). A pack review keyed on the
+//            revision never sees the rulings without their dependent edits. Mutation.
 //   reverse  (M3, H13) `reverse <D-n>`: a fresh compensating revision built from the divergence's preimage and
 //            committed like any revision (src/commands/reverse.ts). Mutation, scope the arc.
 //   resolve-edge, run-only: facts about the graph (src/commands/graph.ts). Mutations with an empty scope.
@@ -86,11 +92,11 @@ import { canonicalJson } from '../core/json.ts';
 import { exclusivePublish } from '../core/fsx.ts';
 import { JUDGMENT_STAGES, probeTargetKey } from '../core/events.ts';
 import {
-  type CommandId, type NeedsUserId, type PlanRev, type ResourceInstance, type ResourceName, type UnitId, invocationId, opKey, parseResourceUnit,
+  type CommandId, type NeedsUserId, type PlanRev, type ResourceInstance, type ResourceName, type RulingId, type UnitId, invocationId, opKey, parseResourceUnit,
   planRev, resourceInstance, canonicalIds,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { CommandBody, CommandFile, NeedsUserAck, ResidueKey, RevisionManifest, Stage } from '../core/records.ts';
+import type { CommandBody, CommandFile, HashedFile, NeedsUserAck, ResidueKey, RevisionManifest, Stage } from '../core/records.ts';
 import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
@@ -102,9 +108,9 @@ import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
 import { type AbsPath, type RepoPath, absPath, isoTimeOf, repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
-import { type NextInputs, type Proposer, applyProposal, classify } from '../input/classify.ts';
+import { type NextInputs, type Proposer, type RulingRecord, applyProposal, classify, readRulingRecord, withRulings } from '../input/classify.ts';
 import {
-  type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepCorpusFiles, keepInput, keepRevisionFiles, planInForce, planRouting,
+  type InForce, type InputFiles, RENDER_INPUT, type RevisionInForce, type RoutingBase, keepCorpusFiles, keepInput, keepRevisionFiles, keptPayload, planInForce, planRouting,
   readInputFiles, requirePlanInForce, revisionInForce, revisionManifestOf, routingProvenanceOf,
 } from '../input/inforce.ts';
 import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '../needsuser.ts';
@@ -131,7 +137,7 @@ import { resolveEdge, runOnly } from './graph.ts';
 import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
 import { mergeIn } from './mergein.ts';
 import { reverse } from './reverse.ts';
-import { rule } from './rule.ts';
+import { rule, rulingReasons, writeBack, writeBackAfter, writtenBackOf } from './rule.ts';
 import { steer } from './steer.ts';
 
 /**
@@ -662,6 +668,8 @@ export type ApplyInput = RevisionContext & Readonly<{
   /** The manifest the command carries (null for a dry run, which hashes the files itself), and its expectRev. */
   manifest: RevisionManifest | null;
   expectRev: PlanRev | null;
+  /** M4a rev 3 (I2): the `--ruling` records, in order, landed with the edits. */
+  rulings: readonly HashedFile[];
 }>;
 
 export type ApplyVerdict =
@@ -669,7 +677,11 @@ export type ApplyVerdict =
   | Readonly<{ kind: 'unchanged'; rev: PlanRev }>
   /** `smoke`: backends the new routings seat that the routing in force did not; they must pass a smoke first. */
   /** `corpusFiles`: a corpus arc's corpus files as its pin re-derived them (kept before the commit, M4a). */
-  | Readonly<{ kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[]; corpusFiles: readonly SourceFile[] }>;
+  /** `rulings`: the ids its `--ruling` records land (I2), for the commit's proposer. */
+  | Readonly<{
+    kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[]; corpusFiles: readonly SourceFile[];
+    rulings: readonly RulingId[];
+  }>;
 
 /** One rejection per line of text, for a receipt's reason and the dry run. */
 const rowText = (r: StartupRejection): string => canonicalJson(r);
@@ -709,20 +721,35 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
     if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
     return { kind: 'rejected', reasons: [`${input.planFile} does not load: ${error.message}`] };
   }
-  let proposal: InputFiles = files;
+  const read = input.rulings.map(readRulingRecord);
+  const unread = read.filter((r): r is string => typeof r === 'string');
+  if (unread.length > 0) return { kind: 'rejected', reasons: unread };
+  const records = read as readonly RulingRecord[];
+  let proposal: InputFiles;
   if (input.manifest !== null) {
-    const p = applyProposal(files, input.manifest);
+    const p = applyProposal(files, input.manifest, records);
     if ('reasons' in p) return { kind: 'rejected', reasons: p.reasons };
     proposal = p.next;
   } else {
     const m = revisionManifestOf(files);
     if ('missing' in m) return { kind: 'rejected', reasons: m.missing };
+    proposal = withRulings(files, records);
   }
-  const verdict = evaluateRevision(input, proposal, { type: 'apply' });
+  const proposer: Proposer = records.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: records.map((r) => r.sidecar.id) };
+  if (records.length > 0) {
+    const live = revisionManifestOf(files);
+    const inForceRulings = revisionInForce(input.runDir, inForce).manifest.rulings;
+    if ('missing' in live || canonicalJson(live.rulings) !== canonicalJson(inForceRulings)) {
+      return { kind: 'rejected', reasons: [`the rulings ledger ${files.ledger.path} or its sidecars differ from the ledger in force: \`apply --ruling\` lands its rulings on the ledger in force; leave the ledger and its sidecars as they are`] };
+    }
+    const why = rulingReasons({ journal: { view: input.view }, runDir: input.runDir, planFile: input.planFile, repo: input.repo }, files, records);
+    if (why.length > 0) return { kind: 'rejected', reasons: why };
+  }
+  const verdict = evaluateRevision(input, proposal, proposer);
   if (verdict.kind !== 'accepted') return verdict;
   const context: StartupContext = {
     repo: input.repo, planFile: input.planFile, plan: proposal.plan, specOf: (u) => proposal.specs.get(u.id)?.bytes ?? null, profile: input.routingBase.profile,
-    runDir: input.runDir, hostDir: input.hostDir,
+    runDir: input.runDir, hostDir: input.hostDir, ...(records.length === 0 || proposal.ledger.bytes === null ? {} : { ledger: proposal.ledger.bytes }),
   };
   const routingChanged = verdict.routings.length > 0 || verdict.draft.changes.some((c) => c.type === 'holistic');
   // M4a: the shared Phase-0 rows (src/phase0/rows.ts) over the proposal: the tree, and for a corpus arc the pin
@@ -732,7 +759,7 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   if (rows.length > 0) return { kind: 'rejected', reasons: rows.map(rowText) };
   const before = new Set(backendsOf(planRouting(input.routingBase, inForce.plan)));
   const smoke = [...new Set(verdict.routings.flatMap((r) => backendsOf(r)))].filter((b) => !before.has(b)).sort();
-  return { kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke, corpusFiles: p0.opened?.files ?? [] };
+  return { kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke, corpusFiles: p0.opened?.files ?? [], rulings: records.map((r) => r.sidecar.id) };
 }
 
 /** The apply's manifest is the revision in force already. */
@@ -747,14 +774,18 @@ function alreadyInForce(ctx: CommandContext, manifest: RevisionManifest): PlanRe
 async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<CommandBody, { type: 'apply' }>): Promise<Effect> {
   // Run again after a crash past the fact: it is the postcondition.
   const done = ctx.journal.view.planAppliedBy(id);
-  if (done !== null) return { kind: 'applied', verified: appliedText(done.rev, done.changes) };
+  const rulings = body.rulings ?? [];
+  if (done !== null) {
+    return { kind: 'applied', verified: [...appliedText(done.rev, done.changes), ...(rulings.length === 0 ? [] : writeBackAfter(ctx, done.rev, writtenBackOf(body.manifest)))] };
+  }
   // Its content in force already, put there by another (a start after a crash that cut this apply short
   // between keeping the bytes and its fact reads the same files): applied, whatever revision it expected.
-  const inForceRev = alreadyInForce(ctx, body.manifest);
+  // (Not for `--ruling`: a manifest of the files as they are says nothing about its rulings.)
+  const inForceRev = rulings.length === 0 ? alreadyInForce(ctx, body.manifest) : null;
   if (inForceRev !== null) return { kind: 'applied', verified: [`the files are the plan in force already (rev ${inForceRev}): nothing to apply`] };
   const verdict = await evaluateApply({
     runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, repo: ctx.repo, planFile: ctx.planFile, routingBase: ctx.routingBase,
-    laneEnv: ctx.laneEnv, manifest: body.manifest, expectRev: body.expectRev,
+    laneEnv: ctx.laneEnv, manifest: body.manifest, expectRev: body.expectRev, rulings,
   });
   switch (verdict.kind) {
     case 'rejected':
@@ -776,9 +807,11 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
       }
       // The corpus files the re-derived pin read, kept before the commit names them (content-addressed: idempotent).
       keepCorpusFiles(ctx.runDir, verdict.corpusFiles);
-      const committed = await commitUnderFence(ctx, verdict.evaluated, { type: 'apply' }, { type: 'command', command: id }, parentOf(id));
+      const proposer: Proposer = rulings.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: verdict.rulings };
+      const committed = await commitUnderFence(ctx, verdict.evaluated, proposer, { type: 'command', command: id }, parentOf(id));
       if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
-      return { kind: 'applied', verified: appliedText(committed.fact.rev, committed.fact.changes) };
+      const written = rulings.length === 0 ? [] : writeBack(ctx, writtenBackOf(body.manifest), writtenBackOf(keptPayload(ctx.runDir, committed.fact.payloadSha256).manifest));
+      return { kind: 'applied', verified: [...appliedText(committed.fact.rev, committed.fact.changes), ...written] };
     }
   }
 }

@@ -135,6 +135,7 @@ warning per process each, BACKLOG "Scaffolding to delete", dev.6 layer), the res
 | obligations file | `ArcLaneDef + testPaths?: RepoPattern[]` (non-empty) | none: smoke `notRun{no-test-paths}` (lasting) |
 | `SpecPatchOp` | `section + witnesses` (`SPEC_SECTIONS`) | none (old patches never name it) |
 | `PlanChange` | `+ unit-priority{unit}`, `+ known-defects`, `+ plan-check-shape`; `unit-reentered + widened?: {patterns (ascending, non-empty), ruling}` | none |
+| `apply` command body (`commands/incoming/<id>.json`; I2, step N3) | `+ rulings?: [{path: AbsPath, sha256}]` (`HashedFile`, non-empty, in the order given): the `--ruling` sidecars, landed with the edits as one revision | none (absent: a plain apply; lasting); bytes and `commandSha256` never rewritten |
 | `RevisionSource.bundle` (`revision.commit` expect, `plan-applied` source, revision payload) | `+ admits?: ClassifiedAdmit[]`, `+ conversions?: Conversion[]` (both or neither; each ascending by op index, no index in both) | absent: `unclassified`, never counted against a budget or a follow-up (`bundleClassesOf`; also every `architecture-doc` arc's, LR-h) |
 | `bundle-decided.outcome` | `rejected.reason + busy` with `units: [{unit, stage, attempt}]` (exactly on `busy`, non-empty); `no-op + conversions?` (non-empty) | none; no conversions |
 | `corpus-amendment.source` | `+ admit{job, index, reason: unrelated \| over-budget \| follow-up-overrun}` | none |
@@ -2606,10 +2607,11 @@ producers pass `[]`, `null` and `false` until their steps land, except `nextRuli
 0 `{passed: true}`, or 78 `{missing, failed, malformed}`), `resume-arc --repo <path>` (`{resumed: false, reason:
 no-claim | other-repo | alive | complete | refused | already-resumed}` or the relaunched supervisor's line),
 `inputs export --repo <path> --arc <arc> --out <dir>` (prints `export.json {planRev, specRevs}`); `apply --ruling
-<file>` (repeatable). The modules (`src/commands/{witnesscheck,resumearc,inputs}.ts`, and `src/input/envelope.ts`,
-`src/holistic/admits.ts`, `src/pipeline/{witnesscheck,smoke}.ts`) export their final signatures; their bodies, and
-`apply --ruling`, throw `NotYetError` (`src/core/notyet.ts`, scaffolding gone before the PR) until N2, N3 or N6
-replaces them.
+<file>` (repeatable; queued, each file hashed into the body's `rulings`, step N3). The modules
+(`src/commands/{witnesscheck,resumearc,inputs}.ts`, `src/holistic/admits.ts`, `src/pipeline/{witnesscheck,smoke}.ts`)
+export their final signatures; their bodies throw `NotYetError` (`src/core/notyet.ts`, scaffolding gone before the PR)
+until N2, N3 or N6 replaces them. `src/input/envelope.ts` (N3): `lineageEnvelope(view, root)`, `withinEnvelope`,
+`rulingNaming` (the scope-growth ruling rule).
 
 **Readings of step N0:**
 

@@ -20,7 +20,7 @@ import { START_WAIT_MS } from '../src/supervisor.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
-import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE } from '../src/pipeline/rounds.ts';
+import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE } from '../src/prompts/directives.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git } from './helpers/repo.ts';
