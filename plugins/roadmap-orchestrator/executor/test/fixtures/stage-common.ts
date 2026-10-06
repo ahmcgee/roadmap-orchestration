@@ -57,6 +57,8 @@ export type LaneJson = Readonly<{
   resources?: readonly string[];
   evidenceGlobs?: readonly string[];
   evidenceExcludes?: readonly string[];
+  /** M4a rev 3 (F1a): a spec lane's inputs. */
+  inputs?: readonly string[];
 }>;
 
 /** The fixture's own test lane: fails until `add` is fixed, printing ADD-MARKER. */
@@ -92,7 +94,7 @@ function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
-    ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), state: 'active',
+    ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }), state: 'active',
   };
 }
 

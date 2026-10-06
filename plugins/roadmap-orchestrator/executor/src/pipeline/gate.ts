@@ -70,7 +70,7 @@ import type { JsonValue } from '../core/json.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 import {
   type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, cancelledNow, dispatchOf, isCancelled, judgmentDeadlineMs,
-  judgmentDispatch, unitBranch, verdictOf,
+  judgmentDispatch, unitBranch, verdictOf, verificationWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { latestSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
@@ -265,7 +265,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     // An approved empty diff is refused at the gate (DESIGN §3 "Merge"); with nothing to judge, no call is made.
     if (paths.length === 0) return { kind: 'empty-diff' };
     const series = latestSeries(ctx.journal.view, unit.id, 'spec');
-    const tree = series === null ? null : seriesTree(ctx.journal.view, series);
+    const tree = series === null ? null : seriesTree(ctx.journal.view, series, verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, series.attempt));
     if (series === null || tree === null || tree.at !== head) throw new Error(`gate of ${unit.id}: no green verification checkout at ${head}`);
     const seated = judgmentDispatch(ctx, unit.id, 'gate');
     if (seated.kind !== 'pinned') return { kind: 'routing-changed', needsUser: seated.needsUser };

@@ -57,7 +57,7 @@ import { capturedEvidence } from '../git/evidence.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type NextStage, nextStage } from '../schedule/ready.ts';
 import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
-import { type Cancelled, type StageContext, type StageParent, dispatchOf, isCancelled, runOp, unitBranch, unitWorktree, workDir } from './dispatch.ts';
+import { type Cancelled, type StageContext, type StageParent, dispatchOf, isCancelled, runOp, unitBranch, unitWorktree, verificationWorktree, workDir } from './dispatch.ts';
 import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
 import { batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, snapshot } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
@@ -222,6 +222,8 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
     if (parent === null) throw new Error(`unit ${unit.id}: a fix round after ${f.stage} ${f.outcome}, but no spec lanes ran`);
     return parent;
   };
+  // The series' own verification checkout (Q3), while it is still there.
+  const verificationOf = (parent: StageParent) => seriesTree(view, parent, verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt));
   switch (f.stage) {
     case 'lanes': {
       const parent = stageParent(f);
@@ -230,11 +232,11 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
     }
     case 'gate': {
       const parent = specSeries();
-      return gateReviseRound(gateDirectives(ctx, stageParent(f)), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), seriesTree(view, parent), tip);
+      return gateReviseRound(gateDirectives(ctx, stageParent(f)), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
     }
     case 'candidate': {
       const parent = specSeries();
-      const verification = seriesTree(view, parent);
+      const verification = verificationOf(parent);
       if (f.outcome === 'transient-violation') {
         return candidateFixRound(candidateRefusalFix(ctx, unit), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verification, tip);
       }

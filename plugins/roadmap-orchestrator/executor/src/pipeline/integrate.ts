@@ -23,7 +23,10 @@
 //                detached checkout: red there too → `base-red` (uncharged), else a fix round (C);
 //              - green → in a holistic arc, the held-claims brake (M3 B2, below): the arc lanes witnessing the
 //                obligations the approval selects run on the candidate as journey lanes; red claims take the same
-//                path, witnessing T alone (`base-red`, `red`, or green by the known-regression rule);
+//                path, witnessing T alone (`base-red`, `red`, or green by the known-regression rule). A suite lane
+//                identical to one of those arc lanes (argv, cwd, declared env, expected exit: `sameExecution`, M4a
+//                rev 3 F6) runs once in the suite with the arc lane's reporter env: its run is the suite lane's
+//                verdict and the arc lane's observation, which the brake's journey series then reuses;
 //              - green, for a vacuity repair (M3 B3): each mutant it repairs applied to the candidate and its lane
 //                run (reproduce.ts `mutantAcceptance`); a mutant the candidate does not kill → `red` (charged);
 //              - green → ff.
@@ -90,7 +93,7 @@ import {
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
   type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, intact, journeyRed, laneEnvId, laneRuntime, observations, removeJobCheckouts,
-  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, suiteJourneyLane,
+  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns,
 } from './lanes.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, latestMergein, loadUnitSpec, record, start } from './stages.ts';
@@ -178,10 +181,11 @@ const baseSeriesRoot = (runDir: AbsPath, parent: StageParent): AbsPath => absPat
 
 /**
  * A suite series on `checkout`, its checkout removed afterwards (citing the series' evidence). Its lanes take
- * their own sets while the publication holds the slot (the one hold-and-wait, A1).
+ * their own sets while the publication holds the slot (the one hold-and-wait, A1). `standIns`: suite lanes identical
+ * to an arc lane the held claims will witness on this tree (F6): each runs once, as both, and the claims reuse it.
  */
-async function suite(ctx: StageContext, parent: StageParent, checkout: WorktreeCreateRequest, root: AbsPath): Promise<Series> {
-  const series = await runLaneSeries(ctx, parent, seriesOrder(ctx.plan().suite.lanes), 'suite', checkout, root, laneRuntime(ctx, parent.unit), false);
+async function suite(ctx: StageContext, parent: StageParent, checkout: WorktreeCreateRequest, root: AbsPath, standIns: ReadonlyMap<LaneId, ArcLaneDef>): Promise<Series> {
+  const series = await runLaneSeries(ctx, parent, seriesOrder(ctx.plan().suite.lanes), 'suite', checkout, root, laneRuntime(ctx, parent.unit), false, standIns);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -212,14 +216,17 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       const op = candidateMergeOp(ctx.repo);
       const intent = await runPrepared(ctx.journal, op, `candidate:${unit.id}`, parent, await op.prepare(decision.plan));
       if (ctx.signal.reason === 'preempt') return ended('preempted');
-      const onCandidate = await suite(ctx, parent, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent));
+      // F6: a suite lane identical to an arc lane the held claims witness runs once on the candidate, as both.
+      const claims = unitClaims(ctx, unit, intent.expect.integrationTip, intent.expect.unitCommit);
+      const standIns = suiteStandIns(ctx.plan().suite.lanes, claims === null || claims.selected.size === 0 ? [] : claims.lanes);
+      const onCandidate = await suite(ctx, parent, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent), standIns);
       const fault = seriesFault(onCandidate);
       if (fault !== null) return fault;
       if (!failed(onCandidate)) return heldClaims(ctx, unit, parent, intent);
       if (ctx.signal.reason === 'preempt') return ended('preempted');
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
-      const alone = await suite(ctx, parent, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent));
+      const alone = await suite(ctx, parent, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent), new Map());
       const baseFault = seriesFault(alone);
       if (baseFault !== null) return baseFault;
       if (!failed(alone)) return ended('red');
@@ -921,9 +928,12 @@ export function batchHolderPublished(view: JournalView, holder: BatchHolder): bo
 /** The grade of a tree with no claims: nothing selected, nothing failing. */
 const NO_CLAIMS: TreeGrade = { effects: new Map(), red: [], background: new Map(), unexplained: [], intact: true };
 
-/** A batch's suite lanes that ran red count as failures nothing explains (the red-suite path). */
-const withSuite = (g: TreeGrade, runs: readonly JourneyRun[]): TreeGrade =>
-  ({ ...g, unexplained: [...new Set([...g.unexplained, ...runs.filter((r) => r.record === null && journeyRed(r)).map((r) => r.lane)])].sort() });
+/**
+ * A batch's suite lanes that ran red count as failures nothing explains (the red-suite path): a suite lane's run, or
+ * the run of an arc lane standing in for one (`standIns`, F6).
+ */
+const withSuite = (g: TreeGrade, runs: readonly JourneyRun[], standIns: ReadonlySet<LaneId>): TreeGrade =>
+  ({ ...g, unexplained: [...new Set([...g.unexplained, ...runs.filter((r) => (r.record === null || standIns.has(r.lane)) && journeyRed(r)).map((r) => r.lane)])].sort() });
 
 /**
  * Publishes the approved `members` (at least two) repairing `finding` as one batch candidate. A batch whose ff published
@@ -980,8 +990,18 @@ export async function publishBatch(ctx: BatchContext, finding: FindingId, member
   const repairs = new Set(sorted.flatMap((u) => [...repairedObligations(ctx, u)]));
   const claims = claimsOf(ctx, obligations, sorted.map((u) => u.id), ids, repairs);
   const owner = { type: 'job', job, acquireFirst: ctx.acquireFirst } as const;
-  const lanes = [...plan.suite.lanes.map(suiteJourneyLane), ...(claims?.lanes ?? []).map(arcJourneyLane)];
-  const suiteRed = (r: JourneyRun): boolean => r.record === null && journeyRed(r);
+  // F6: a suite lane identical to a claimed arc lane runs once, in the suite's place, as both.
+  const claimed = claims?.lanes ?? [];
+  const standIns = suiteStandIns(plan.suite.lanes, claimed);
+  const standing = new Set([...standIns.values()].map((l) => l.id));
+  const lanes = [
+    ...plan.suite.lanes.map((l) => {
+      const arc = standIns.get(l.id);
+      return arc === undefined ? suiteJourneyLane(l) : standInJourneyLane(arc);
+    }),
+    ...claimed.filter((l) => !standing.has(l.id)).map(arcJourneyLane),
+  ];
+  const suiteRed = (r: JourneyRun): boolean => (r.record === null || standing.has(r.lane)) && journeyRed(r);
   const onCandidate = await runJourneySeries(ctx, owner, lanes, candidateWorktreeRequest(cand), { reuse: true, stop: suiteRed });
   if (onCandidate.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: onCandidate.end });
   const p1 = p1Obligations(ctx.journal.view);
@@ -989,7 +1009,7 @@ export async function publishBatch(ctx: BatchContext, finding: FindingId, member
   const gradeOn = (series: JourneySeries, on: 'candidate' | 'tip'): TreeGrade => ({
     ...withSuite(claims === null ? NO_CLAIMS : on === 'candidate'
       ? gradeTree(claims, series.runs, claims.completing, claims.repairs, p1)
-      : gradeTree(claims, series.runs, new Set(), new Set(), p1), series.runs),
+      : gradeTree(claims, series.runs, new Set(), new Set(), p1), series.runs, standing),
     intact: intact(series),
   });
   const grade = gradeOn(onCandidate, 'candidate');

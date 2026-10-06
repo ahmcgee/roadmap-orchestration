@@ -5,7 +5,18 @@
 //
 // Every pattern is hand-written from the tools' documented messages, never captured from an arc: re-derive
 // them once arcs have recorded real host-caused reds.
+//
+// The table is revisioned (M4a rev 3, F3, Q20): every lane and journey spawn is stamped with `HOST_SIGNATURES_REV`
+// (`redRev`) before it runs, and a red run's class is persisted in its `red.json`, so growing the table never changes
+// how an earlier run reads back. An unstamped run (1.0.0-dev.6) classifies with the frozen `HOST_SIGNATURES_DEV6`
+// (src/core/upgrade.ts).
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+
+/**
+ * The revision of `HOST_SIGNATURES` a spawn is stamped with. Revision 1 was the 1.0.0-dev.6 table
+ * (`HOST_SIGNATURES_DEV6`), which no spawn carries; bump it with every change to the table.
+ */
+export const HOST_SIGNATURES_REV = 2;
 
 export const HOST_SIGNATURES = [
   // golangci-lint refuses to run beside another instance holding its lock.
@@ -16,16 +27,25 @@ export const HOST_SIGNATURES = [
   { id: 'eagain', pattern: /\bEAGAIN\b|Resource temporarily unavailable/ },
   // The disk (or an inode table) is full.
   { id: 'enospc', pattern: /\bENOSPC\b|No space left on device/ },
+  // Revision 2 (dx2 5): a Kubernetes control plane too loaded to answer its store.
+  { id: 'etcd-request-timeout', pattern: /etcdserver: request timed out/ },
+  // The container runtime could not stop a container (a wedged or overloaded daemon).
+  { id: 'container-kill', pattern: /could not kill (the )?container/i },
+  // The kernel's (or a container's) out-of-memory killer ended a process.
+  { id: 'oom-kill', pattern: /\bOOMKilled\b|Out of memory: Killed process/ },
 ] as const satisfies readonly Readonly<{ id: string; pattern: RegExp }>[];
 
 export type HostSignatureId = (typeof HOST_SIGNATURES)[number]['id'];
+
+/** A signature table: the current one, or a frozen earlier revision whose ids are among the current ones. */
+export type SignatureTable = readonly Readonly<{ id: HostSignatureId; pattern: RegExp }>[];
 
 /** How much of each output file's tail is searched: a signature is near where the lane died. */
 export const SIGNATURE_TAIL_BYTES = 1 << 20;
 
 /** The signatures `text` matches, in table order. */
-export function matchSignatures(text: string): readonly HostSignatureId[] {
-  return HOST_SIGNATURES.filter((s) => s.pattern.test(text)).map((s) => s.id);
+export function matchSignatures(text: string, table: SignatureTable = HOST_SIGNATURES): readonly HostSignatureId[] {
+  return table.filter((s) => s.pattern.test(text)).map((s) => s.id);
 }
 
 /** The last `SIGNATURE_TAIL_BYTES` of a file, as text. */
@@ -47,8 +67,11 @@ function tail(path: string): string {
   }
 }
 
-/** The signatures in the tails of a lane's output files (its stdout and stderr), in table order. */
-export function outputSignatures(paths: readonly string[]): readonly HostSignatureId[] {
-  const found = new Set(paths.flatMap((p) => matchSignatures(tail(p))));
-  return HOST_SIGNATURES.map((s) => s.id).filter((id) => found.has(id));
+/** The signatures of `table` in the tails of a lane's output files (its stdout and stderr), in table order. */
+export function outputSignatures(paths: readonly string[], table: SignatureTable = HOST_SIGNATURES): readonly HostSignatureId[] {
+  const found = new Set(paths.flatMap((p) => matchSignatures(tail(p), table)));
+  return table.map((s) => s.id).filter((id) => found.has(id));
 }
+
+/** The last `SIGNATURE_TAIL_BYTES` of a lane's output file, as text (what the failure signature reads). */
+export const outputTail = (path: string): string => tail(path);
