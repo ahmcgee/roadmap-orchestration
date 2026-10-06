@@ -15,7 +15,9 @@ import {
   type ArcId, type EdgeId, type KnownDefectId, type LaneId, type ResourceName, type RulingId, type Sha, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId,
   edgeId, knownDefectId, laneId, resourceName, rulingId, sha, unitId, visionClauseId, idList,
 } from '../core/ids.ts';
-import { BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type LaneDef, type LaneEnv, laneDef, laneEnv, refuseLaneInputs } from '../core/records.ts';
+import {
+  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
+} from '../core/records.ts';
 import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
 import {
@@ -130,7 +132,6 @@ export const priorityOf = (unit: PlanUnit): UnitPriority => unit.priority ?? 'no
  * output tail contains `contains` (`match: output`, a substring, never a regex), waits uncharged at `prepare` while
  * `knownDefectActive` (src/schedule/ready.ts) holds: until `fixUnit`'s lineage merges. Ids are plan-scoped and never reused.
  */
-export type KnownDefectMatch = Readonly<{ type: 'lane'; lane: LaneId }> | Readonly<{ type: 'output'; lane: LaneId; contains: string }>;
 export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId }>;
 
 /** M4a rev 3 (E, R40): how plan-check runs, per builder class (`by-builder`) or for every unit alike (`uniform`, the default). */
@@ -347,10 +348,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
 
 const knownDefect: Read<KnownDefect> = object((f) => ({
   id: f.get('id', (v, p) => knownDefectId(v, p)),
-  match: f.get('match', tagged<'lane' | 'output', KnownDefectMatch>('type', {
-    lane: object((g) => ({ type: g.get('type', literal('lane')), lane: g.get('lane', (v, p) => laneId(v, p)) })),
-    output: object((g) => ({ type: g.get('type', literal('output')), lane: g.get('lane', (v, p) => laneId(v, p)), contains: g.get('contains', str) })),
-  })),
+  match: f.get('match', knownDefectMatch),
   fixUnit: f.get('fixUnit', (v, p) => unitId(v, p)),
 }));
 

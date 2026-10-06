@@ -106,8 +106,10 @@ export const smokeTargets = (required: readonly RequiredWitness[]): readonly Req
  * parse (their tests are among `missing`). At most one record per lane.
  */
 export type MissingWitnesses = Readonly<{ missing: readonly TestRef[]; failed: readonly TestRef[]; malformed: readonly LaneId[] }>;
-export function missingWitnesses(records: readonly WitnessRecord[], required: readonly TestRef[]): MissingWitnesses {
-  const byLane = new Map<LaneId, WitnessRecord>();
+/** What the comparator reads of a lane run's witness record (`roadmap witness-check` has no invocation or tree identity). */
+export type LaneWitnesses = Pick<WitnessRecord, 'lane' | 'records' | 'malformed'>;
+export function missingWitnesses(records: readonly LaneWitnesses[], required: readonly TestRef[]): MissingWitnesses {
+  const byLane = new Map<LaneId, LaneWitnesses>();
   for (const r of records) {
     if (byLane.has(r.lane)) throw new Error(`missingWitnesses: two records of lane ${r.lane} (one aggregated record per lane)`);
     byLane.set(r.lane, r);

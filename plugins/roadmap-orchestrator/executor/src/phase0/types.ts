@@ -6,6 +6,7 @@ import {
   type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type IssueId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
   type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId, issueId, issueNumber,
   amendmentRefKey, compareIds, idList, jobIdOf, needsUserId, obligationId, phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, type BriefId,
+  type FindingId, type OpportunityId, findingId, opportunityId,
 } from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type IsoTime, type PlanPath, type RepoPath, isoTime, planPath, repoPath } from '../core/values.ts';
@@ -14,7 +15,7 @@ import {
   type IssueIntakeOutcome, type Phase0IntakeOutcome, type RepoIdentity, ISSUE_CREATION_POLICIES, REPO_VISIBILITIES, type IssueCreationPolicy,
   type RepoVisibility, issueIntakeOutcome, phase0IntakeOutcome, repoIdentity,
 } from '../forge/types.ts';
-import { CENSUS_STATES, DIVERGENCE_KINDS, type DivergenceKind } from '../holistic/types.ts';
+import { CENSUS_STATES, CONVERSION_REASONS, DIVERGENCE_KINDS, type ConversionReason, type DivergenceKind } from '../holistic/types.ts';
 
 /** A census state's name (`obligation`, `out-of-slice`, `untestable`, `prod-only`). */
 export type CensusStateName = (typeof CENSUS_STATES)[number];
@@ -300,14 +301,32 @@ export type BriefArc = Readonly<{
   /** `job` null: the arc's Phase-0 intake; else a checkpoint's. */
   intake: readonly (Readonly<{ issue: IssueId; job: null; outcome: Phase0IntakeOutcome }> | Readonly<{ issue: IssueId; job: JobId; outcome: IssueIntakeOutcome }>)[];
   questions: readonly Readonly<{ id: PhaseQuestionId; rank: number; text: string; assumption: string; state: QuestionState }>[];
-  amendments: readonly Readonly<{ id: AmendmentRef; rules: readonly RuleId[]; proposal: string }>[];
+  /** M4a rev 3 (OR-A1): `admit` names the converted checkpoint admit an amendment came from (R35); null otherwise. */
+  amendments: readonly Readonly<{ id: AmendmentRef; rules: readonly RuleId[]; proposal: string; admit: BriefConversion | null }>[];
   /** The pack reviews' `note` findings (a blocking one is its review's needs-user item), each by `(job, index)` (K13). */
   packReviewNotes: readonly Readonly<{ job: JobId; index: number; claim: string }>[];
   /** `% held` = held / obligationRules (obligation-state rules held on the head); null outside a corpus arc. */
   census: Readonly<{ held: number; obligationRules: number; outOfSlice: number; untestable: number; prodOnly: number }> | null;
   timings: readonly StageTiming[];
   pr: BriefPr;
+  /** M4a rev 3 (OR-A1; corpus arcs, empty elsewhere): the checkpoint admits the delta classified, in log order. */
+  admits: readonly BriefAdmit[];
+  /** The arc's opportunities at its ref (not a delta). */
+  opportunities: readonly BriefOpportunity[];
+  /** The drift indicator at the ref: each merged non-opportunity admit with findings attributed to its merge outside the slice. */
+  drift: readonly BriefDrift[];
 }>;
+
+export const ADMIT_CLASS_NAMES = ['repair', 'oversight', 'opportunity'] as const;
+export type BriefConversion = Readonly<{ job: JobId; index: number; reason: ConversionReason }>;
+export type BriefAdmit = Readonly<{
+  job: JobId; index: number; unit: UnitId; class: (typeof ADMIT_CLASS_NAMES)[number]; clauses: readonly VisionClauseId[]; followUp: OpportunityId | null;
+}>;
+export type BriefOpportunity = Readonly<{
+  id: OpportunityId; clauses: readonly VisionClauseId[]; units: readonly UnitId[]; followUps: number; spentUsd: number;
+  overrun: readonly Readonly<{ job: JobId; index: number }>[];
+}>;
+export type BriefDrift = Readonly<{ unit: UnitId; job: JobId; findings: readonly Readonly<{ id: FindingId; clauses: readonly VisionClauseId[] }>[] }>;
 
 export type BriefPayload = Readonly<{
   schema: typeof BRIEF_SCHEMA;
@@ -332,6 +351,14 @@ const briefIntake: Read<BriefArc['intake'][number]> = object((f) => {
   const job = f.get('job', nullable((v, p) => jobIdOf(v, p)));
   return job === null ? { issue, job, outcome: f.get('outcome', phase0IntakeOutcome) } : { issue, job, outcome: f.get('outcome', issueIntakeOutcome) };
 });
+const briefConversion: Read<BriefConversion> = object((g) => ({
+  job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), reason: g.get('reason', oneOf(CONVERSION_REASONS)),
+}));
+/** A non-negative finite number (a spend in USD). */
+const nonNegative: Read<number> = (v, p) => {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new SchemaError(p, 'a non-negative number', v);
+  return v;
+};
 const briefArc: Read<BriefArc> = object((f) => ({
   arc: f.get('arc', (v, p) => arcId(v, p)),
   slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true, legacyStringOrder: true })), why: g.get('why', str) })))),
@@ -348,7 +375,9 @@ const briefArc: Read<BriefArc> = object((f) => ({
   questions: f.get('questions', arrayOf(object((g) => ({
     id: g.get('id', (v, p) => phaseQuestionId(v, p)), rank: g.get('rank', positive), text: g.get('text', str), assumption: g.get('assumption', str), state: g.get('state', questionState),
   })))),
-  amendments: f.get('amendments', arrayOf(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), rules: g.get('rules', rules), proposal: g.get('proposal', str) })))),
+  amendments: f.get('amendments', arrayOf(object((g) => ({
+    id: g.get('id', (v, p) => amendmentRef(v, p)), rules: g.get('rules', rules), proposal: g.get('proposal', str), admit: g.get('admit', nullable(briefConversion)),
+  })))),
   packReviewNotes: f.get('packReviewNotes', arrayOf(object((g) => ({ job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), claim: g.get('claim', str) })))),
   census: f.get('census', nullable(object((g) => ({
     held: g.get('held', nat), obligationRules: g.get('obligationRules', nat), outOfSlice: g.get('outOfSlice', nat), untestable: g.get('untestable', nat), prodOnly: g.get('prodOnly', nat),
@@ -358,6 +387,18 @@ const briefArc: Read<BriefArc> = object((f) => ({
     count: g.get('count', positive), p50Ms: g.get('p50Ms', nat), maxMs: g.get('maxMs', nat),
   })))),
   pr: f.get('pr', briefPr),
+  admits: f.get('admits', arrayOf(object((g): BriefAdmit => ({
+    job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), unit: g.get('unit', (v, p) => unitId(v, p)), class: g.get('class', oneOf(ADMIT_CLASS_NAMES)),
+    clauses: g.get('clauses', idList(vidR)), followUp: g.get('followUp', nullable((v, p) => opportunityId(v, p))),
+  })))),
+  opportunities: f.get('opportunities', arrayOf(object((g): BriefOpportunity => ({
+    id: g.get('id', (v, p) => opportunityId(v, p)), clauses: g.get('clauses', idList(vidR, { nonEmpty: true })), units: g.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
+    followUps: g.get('followUps', nat), spentUsd: g.get('spentUsd', nonNegative), overrun: g.get('overrun', arrayOf(object((h) => ({ job: h.get('job', (v, p) => jobIdOf(v, p)), index: h.get('index', nat) })))),
+  })))),
+  drift: f.get('drift', arrayOf(object((g): BriefDrift => ({
+    unit: g.get('unit', (v, p) => unitId(v, p)), job: g.get('job', (v, p) => jobIdOf(v, p)),
+    findings: g.get('findings', arrayOf(object((h) => ({ id: h.get('id', (v, p) => findingId(v, p)), clauses: h.get('clauses', idList(vidR, { nonEmpty: true })) })), { nonEmpty: true })),
+  })))),
 }));
 
 export const briefPayload: Read<BriefPayload> = object((f) => {

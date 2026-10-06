@@ -131,7 +131,7 @@ const AUDIT_LENSES: ReadonlySet<string> = new Set(LENS_KINDS);
 const repoPath = (p: string): boolean => !p.startsWith('/') && !p.startsWith('../') && p !== '..';
 
 /** The units a finding's attribution names (R46); empty: unattributable. */
-export function findingAttribution(w: AdmitWorld, f: AdmitFinding): readonly UnitId[] {
+export function findingAttribution(w: Pick<AdmitWorld, 'audits' | 'merges'>, f: Pick<AdmitFinding, 'source' | 'lens' | 'paths'>): readonly UnitId[] {
   if (f.source.type !== 'job' || f.lens === 'issue' || f.lens === 'plan-check') return [];
   const ranges = w.audits.get(f.source.job) ?? [];
   const covered = f.lens === 'witness' ? ranges : AUDIT_LENSES.has(f.lens) ? ranges.filter((r) => r.lens === f.lens) : [];

@@ -17,9 +17,9 @@ import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIde
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
   COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
-  type DispatchRecord, type KillReason, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
+  type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
   type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type UsageUnavailableReason, approvalFingerprint, containmentMode,
-  dispatchRecord, killReason, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
+  dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
   usageUnavailableReason,
 } from './records.ts';
 import {
@@ -484,12 +484,13 @@ export const testRefKey = (t: TestRef): string => `${t.lane}\u0000${t.testId}`;
 /**
  * What an outcome carries beyond its name (M4a rev 3), present exactly on these outcomes: `witnesses-missing` (the
  * required ids absent, zero-selected, skipped or malformed: `missing`; failing: `failed`), `smoke-survived` (the
- * surviving targets and their obligations), `known-defect` (the plan entry hit), build `infeasible` (the assessment's notes).
+ * surviving targets and their obligations), `known-defect` (the plan entry hit: its id and the match it hit, so an edited
+ * match releases the hold, src/schedule/ready.ts), build `infeasible` (the assessment's notes).
  */
 export type StageOutcomeDetail =
   | Readonly<{ kind: 'witnesses-missing'; missing: readonly TestRef[]; failed: readonly TestRef[] }>
   | Readonly<{ kind: 'smoke-survived'; obligations: readonly ObligationId[]; testIds: readonly TestRef[] }>
-  | Readonly<{ kind: 'known-defect'; id: KnownDefectId }>
+  | Readonly<{ kind: 'known-defect'; id: KnownDefectId; match: KnownDefectMatch }>
   | Readonly<{ kind: 'infeasible'; notes: string }>;
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
@@ -1403,7 +1404,9 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   'smoke-survived': object((f): StageOutcomeDetail => ({
     kind: f.get('kind', literal('smoke-survived')), obligations: f.get('obligations', idList(obligationR)), testIds: f.get('testIds', testRefs({ nonEmpty: true })),
   })),
-  'known-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('known-defect')), id: f.get('id', (v, p) => knownDefectId(v, p)) })),
+  'known-defect': object((f): StageOutcomeDetail => ({
+    kind: f.get('kind', literal('known-defect')), id: f.get('id', (v, p) => knownDefectId(v, p)), match: f.get('match', knownDefectMatch),
+  })),
   infeasible: object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('infeasible')), notes: f.get('notes', str) })),
 });
 

@@ -194,7 +194,7 @@ describe('m4a-rev3 facts and outcomes', () => {
     const missing = { kind: 'witnesses-missing', missing: [{ lane: 'journey', testId: 't1' }], failed: [{ lane: 'journey', testId: 't2' }] };
     roundTrip(outcome('lanes', 'witnesses-missing', 'advance', true, missing));
     roundTrip(outcome('lanes', 'smoke-survived', 'smoke', true, { kind: 'smoke-survived', obligations: ['I-2'], testIds: [{ lane: 'journey', testId: 't2' }] }));
-    roundTrip(outcome('lanes', 'known-defect', 'advance', false, { kind: 'known-defect', id: 'K-1' }));
+    roundTrip(outcome('lanes', 'known-defect', 'advance', false, { kind: 'known-defect', id: 'K-1', match: { type: 'output', lane: 'mul', contains: 'boom' } }));
     roundTrip(outcome('build', 'infeasible', 'park', false, { kind: 'infeasible', notes: 'the corpus forbids it' }));
     roundTrip(outcome('build', 'risk-raised', 'advance', false));
     roundTrip(outcome('plan-check', 'in-session', 'advance', false));

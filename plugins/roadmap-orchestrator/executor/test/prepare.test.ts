@@ -16,7 +16,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, test } from 'node:test';
-import { type UnitId, knownDefectIdOf, rulingId, unitId } from '../src/core/ids.ts';
+import { type UnitId, knownDefectIdOf, laneId, rulingId, unitId } from '../src/core/ids.ts';
 import { absPath, repoPattern } from '../src/core/values.ts';
 import { capturedEvidence } from '../src/git/evidence.ts';
 import { mergeHead } from '../src/git/mergein.ts';
@@ -258,7 +258,7 @@ function knownDefectArc(tip: 'conflict' | 'clean'): Readonly<{ d: ArcDescriptor;
 /** u1's next lanes attempt records `known-defect{K-1}`, as the lanes stage does. */
 function hitKnownDefect(r: ArcRun): void {
   const attempt = r.journal.view.unit(U1).counters.attempts + 1;
-  r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt, outcome: 'known-defect', class: 'advance', chargeable: false, detail: { kind: 'known-defect', id: K1 } });
+  r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt, outcome: 'known-defect', class: 'advance', chargeable: false, detail: { kind: 'known-defect', id: K1, match: { type: 'lane', lane: laneId('mul') } } });
 }
 
 /** The integration tip moves on: a conflicting change to src/add.js, or an unrelated file. */

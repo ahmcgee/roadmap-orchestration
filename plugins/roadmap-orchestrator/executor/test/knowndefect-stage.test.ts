@@ -84,7 +84,7 @@ const HELD_BY_K1 = { kind: 'wait', constraints: [{ type: 'known-defect', id: 'K-
 function assertHeld(r: ArcRun): StageOutcomeFact {
   const f = lanesFacts(r.d, 'u1').at(-1)!;
   assert.equal(f.outcome, 'known-defect');
-  assert.deepEqual(f.detail, { kind: 'known-defect', id: 'K-1' });
+  assert.deepEqual(f.detail, { kind: 'known-defect', id: 'K-1', match: r.ctx.plan().knownDefects?.[0]?.match });
   assert.equal(f.chargeable, false, 'a known defect is uncharged');
   assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.deepEqual(admission(r, 'u1', 'prepare'), HELD_BY_K1, 'admission holds prepare while the fixer is unmerged');

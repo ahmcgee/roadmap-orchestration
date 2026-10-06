@@ -73,7 +73,7 @@ import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence, holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type ImplementerSessionId, type InvocationId, witnessItemIdOf, witnessItemSeq, type JudgmentSessionId, type KnownDefectId, type LaneId, type ResourceInstance, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
+  type ImplementerSessionId, type InvocationId, witnessItemIdOf, witnessItemSeq, type JudgmentSessionId, type LaneId, type ResourceInstance, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -91,7 +91,7 @@ import {
   type CorpusInForce, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput,
   keptPayload, parseUnitSpec, requirePlanInForce, revisionInForce, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
-import { type PlanUnit, advancesOf, knownDefectsOf, parsePlan, planCheckShapeOf, targetDocumentPaths, targetDocuments } from '../input/plan.ts';
+import { type KnownDefect, type PlanUnit, advancesOf, knownDefectsOf, parsePlan, planCheckShapeOf, targetDocumentPaths, targetDocuments } from '../input/plan.ts';
 import { type CorpusView, materialiseCorpus } from '../corpus/materialise.ts';
 import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
@@ -1215,16 +1215,16 @@ function outputTail(path: string): string {
 }
 
 /**
- * M4a rev 3 (F4, R49): the plan known defect this unit hits, or null. `lane` matches before any lane runs: an active entry
+ * M4a rev 3 (F4, R49): the plan known defect this unit hits (its entry), or null. `lane` matches before any lane runs: an active entry
  * whose lane the unit's active spec declares. `output` matches a red lane of `ledger`: an active entry on that lane whose
  * `contains` is in the tail of the counted run's stdout or stderr. Activity is `knownDefectActive`'s alone.
  */
-function knownDefectHit(ctx: StageContext, unit: PlanUnit, spec: SpecM1, ledger: readonly LaneRecord[] | null): KnownDefectId | null {
+function knownDefectHit(ctx: StageContext, unit: PlanUnit, spec: SpecM1, ledger: readonly LaneRecord[] | null): KnownDefect | null {
   const plan = ctx.plan();
   const active = knownDefectsOf(plan).filter((k) => knownDefectActive(ctx.journal.view, plan, k, unit.id));
   for (const k of active) {
     if (ledger === null) {
-      if (k.match.type === 'lane' && spec.lanes.some((l) => l.id === k.match.lane && l.state === 'active')) return k.id;
+      if (k.match.type === 'lane' && spec.lanes.some((l) => l.id === k.match.lane && l.state === 'active')) return k;
       continue;
     }
     if (k.match.type !== 'output') continue;
@@ -1234,7 +1234,7 @@ function knownDefectHit(ctx: StageContext, unit: PlanUnit, spec: SpecM1, ledger:
       const dir = invocationDir(ctx.runDir, l.inv);
       return outputTail(join(dir, STDOUT_FILE)).includes(contains) || outputTail(join(dir, STDERR_FILE)).includes(contains);
     });
-    if (hit) return k.id;
+    if (hit) return k;
   }
   return null;
 }
@@ -1291,7 +1291,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (cancelled !== null) return cancelled;
   const held = knownDefectHit(ctx, unit, spec, null);
   if (held !== null) {
-    return { ...record(ctx, parent, 'known-defect', null, NO_PARK_FACTS, undefined, { kind: 'known-defect', id: held }), at: salvaged, ledger: [], verification: null, fix: null };
+    return { ...record(ctx, parent, 'known-defect', null, NO_PARK_FACTS, undefined, { kind: 'known-defect', id: held.id, match: held.match }), at: salvaged, ledger: [], verification: null, fix: null };
   }
   const entry = seriesEntry(ctx, order);
   const entered = await enter(ctx, stageHolder(parent), entry);
@@ -1309,7 +1309,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // F4: a red lane whose output names a known defect is that defect (uncharged), not a red series.
   if (verdict.kind === 'red') {
     const hit = knownDefectHit(ctx, unit, spec, series.ledger);
-    if (hit !== null) verdict = { kind: 'known-defect', detail: { kind: 'known-defect', id: hit } };
+    if (hit !== null) verdict = { kind: 'known-defect', detail: { kind: 'known-defect', id: hit.id, match: hit.match } };
   }
   // D1, D2 (corpus arcs): only after a green certified spec series.
   if (verdict.kind === 'green' && checksApply(ctx)) verdict = await executableChecks(ctx, unit, parent, salvaged, rt);

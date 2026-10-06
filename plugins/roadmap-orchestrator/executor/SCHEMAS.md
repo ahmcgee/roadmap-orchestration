@@ -147,7 +147,10 @@ warning per process each, BACKLOG "Scaffolding to delete", dev.6 layer), the res
 | `proc.spawn` subject `journey` | `+ redRev?` | as above |
 | `proc.spawn` subject `mutant`, `mutant.apply` expect | `of: MutantOf` (`finding{finding} \| smoke{unit, attempt}`) in place of `finding`; exactly one of the two | a `finding` field reads as written and as `of: finding` (`mutantSubjectDefault`) |
 | `witnessed.for` | `+ smoke{unit, attempt, of}` (purpose `mutant`: never certifies) | none |
-| `stage-outcome` | outcomes lanes `+ witnesses-missing, smoke-survived, known-defect`, plan-check `+ in-session`, build `+ infeasible, risk-raised`; class `+ smoke`; `+ detail?` exactly on `DETAILED_OUTCOMES` | none |
+| `stage-outcome` | outcomes lanes `+ witnesses-missing, smoke-survived, known-defect`, plan-check `+ in-session`, build `+ infeasible, risk-raised`; class `+ smoke`; `+ detail?` exactly on `DETAILED_OUTCOMES` (`known-defect{id, match}`: the entry's match as hit, step N6) | none |
+| Checkpoint answer (`CheckpointOutput`, the recorded call's `result.json`) | admit op `+ targets: T-n[]` (LR-m, step N2; required by `CHECKPOINT_SCHEMA`) | `[]` (`admitTargetsDefault`, scaffolding: an answer recorded before LR-m classifies on its structural targets) |
+| `pack-review-ended` | `+ dispositions?: [{job, index, disposition: resolved \| still-open \| withdrawn}]` (a delta re-review's, step N5; refused on an abandoned review) | absent: a full review (lasting) |
+| `status`, brief payload (`roadmap/brief-m4`) | additive keys ("M4a rev 3", status and brief, step N6) | none: never persisted (an ack keeps only its coverage vector and items) |
 | `Bounds` (`DispatchRecord.bounds`, plan and unit `limits`) | `+ smokeRounds` (default 1), `+ smokeRuns` (default 2), both or neither in a record (`BoundsRecord`) | a dev.6 record's bounds without them read as written and as 1 and 2 (`dev6SmokeBounds`, through `boundsOfRecord`) |
 | `UnitCounters` (fold) | `+ smokeRounds` | 0 (none spent) |
 | `UnitState.open` (fold) | `+ seq` (the first start's) | derived |
@@ -2483,7 +2486,8 @@ next free `W-n` is the next one).
 lane} | {type: output, lane, contains: string (a substring, never a regex)}, fixUnit}`; unit `priority?: normal | high`;
 `planCheck?: {shape: uniform | by-builder}`. Read through `knownDefectsOf`, `priorityOf`, `planCheckShapeOf`. Suite lanes
 may not declare `inputs` (a schema error at `plan.suite.lanes[i].inputs`). Which `fixUnit` and `lane` a known defect may
-name, and the combined dependency and hold graph's cycle check, are classifier rows (N3).
+name, and the combined dependency and hold graph's cycle check, are classifier rows (N3: `known-defect-fix-unit`,
+`known-defect-lane`, `known-defect-cycle`; `src/input/classify.ts` `knownDefectRows`).
 
 **Spec** (`src/core/records.ts`). `SpecM1 + witnesses?: Stated<WitnessItemDef>[]`, `WitnessItemDef = {id: W-n, lane:
 LaneId (an arc lane), testId, clause: ClauseId (the acceptance clause it witnesses), skeleton}`; `specWitnesses(spec)`.
@@ -2539,7 +2543,7 @@ edit reads it: `live` → "is running <stage> attempt n; apply the edit at its s
 plan-check `+ in-session` (E); build `+ infeasible`, `risk-raised` (E). `OUTCOME_CLASSES + smoke`. `StageOutcomeFact +
 detail?: StageOutcomeDetail`, present exactly on `DETAILED_OUTCOMES`: `witnesses-missing{missing: TestRef[], failed:
 TestRef[]}` (not both empty), `smoke-survived{obligations: I-n[], testIds: TestRef[] (non-empty)}`, `known-defect{id:
-K-n}`, build `infeasible{notes}`. The fold lets a unit whose decided outcome is lanes `known-defect` record a `prepare`
+K-n, match}` (the entry's `match` as the unit hit it, `KnownDefectMatch` in src/core/records.ts), build `infeasible{notes}`. The fold lets a unit whose decided outcome is lanes `known-defect` record a `prepare`
 outcome without a lineage.
 
 **Transition rows** (`src/pipeline/transitions.ts`, final): plan-check `in-session` → `build('fresh')`; build `infeasible` →
@@ -2547,7 +2551,7 @@ park `escalation`, design (a build has no escalation seat to route up to; readin
 `build('fresh')`; lanes `witnesses-missing` → charged `build('fix')`, `smoke-survived` → the bounded `smoke` round
 (`smokeRounds`, charged, `build('fix')`; past the bound `go(gate)`), `known-defect` → `prepare` (uncharged). A bounded
 round's `then` may be a `go` (the smoke round's), read back by `decidedBy` as its target. `Target` admits `prepare`;
-the unit driver's `prepare` arm throws `NotYetError` until N3. `ROUND_COUNTERS.smoke = smokeRounds`.
+the unit driver's `prepare` arm takes a known-defect unit back (N3; readings of steps N1–N5, 14). `ROUND_COUNTERS.smoke = smokeRounds`.
 
 **Bounds**: `+ smokeRounds` (default 1), `+ smokeRuns` (default 2), in `BOUND_FIELDS` (so plan and unit `limits` take
 them). A dispatch record's `BoundsRecord` holds both or neither (a dev.6 record's); `boundsOfRecord` completes it.
@@ -2556,8 +2560,8 @@ them). A dispatch record's `BoundsRecord` holds both or neither (a dev.6 record'
 envId, argv0: {path, sha256} | null}`; journey `+ redRev?`; mutant `of: MutantOf` (`finding{finding} | smoke{unit,
 attempt}`), or a dev.6 subject's `finding` (`Dev6MutantSubject`), exactly one; `mutant.apply` expect likewise
 (`MutantApplyExpect`). `WitnessFor + smoke{unit, attempt, of}`; a `witnessed` fact's purpose is `mutant` exactly for a
-`mutant` or `smoke` subject. Until N3 switches them, the M3 writers still write `finding` (read through
-`mutantSubjectDefault`). A smoke run's evidence dir is `evidence/<unit>/<attempt>-lanes/smoke/<lane>-<seq>-<ordinal>`
+`mutant` or `smoke` subject. Every writer writes `of` (N3: src/pipeline/reproduce.ts `of: finding`, smoke.ts `of: smoke`);
+only a dev.6 record's `finding` reads through `mutantSubjectDefault`. A smoke run's evidence dir is `evidence/<unit>/<attempt>-lanes/smoke/<lane>-<seq>-<ordinal>`
 (`smokeLaneDir`, src/git/snapshot.ts).
 
 **Red class** (`<laneDir>/red.json`, `RedFile`, `RED_FILE`; written by N1): `{v, class: host-signature{signatures} |
@@ -2585,20 +2589,28 @@ cwd (relative to the worktree), env: {set, pass}, reporter, required: string[] (
 
 **Role schemas** (`src/prompts/schemas.ts`). `BuildOutput + experiments: [{name, argv (non-empty), exit}]`;
 `buildSchemaFor(lanes | null)` (the per-call schema: `lanesRun[].lane` an enum of the spec's fast lanes when it has any;
-`experiments`) and `buildOutputFor(lanes | null)` (the validator, a lane outside `lanes` refused). `BUILD_SCHEMA` stays
-the pre-N3 shape until N3 writes the per-call schema (scaffolding). `PLAN_ASSESSMENT_SCHEMA` / `validatePlanAssessment`:
+`experiments`) and `buildOutputFor(lanes | null)` (the validator, a lane outside `lanes` refused). `BUILD_SCHEMA` is `buildSchemaFor(null)`,
+the role's one schema as its prompt modules carry it (N3 deleted the pre-N3 literal); each call writes its own over
+`buildLaneIds(spec)` (src/pipeline/stages.ts). `PackReviewOutput + dispositions: PackDisposition[]` (N5: `{job: review-n,
+index, disposition: resolved | still-open | withdrawn}`, `PACK_DISPOSITIONS`; empty on a full review). Checkpoint `admit`
+op `+ targets: T-n[]` (N2, LR-m; `CHECKPOINT_SCHEMA` requires it; a recorded answer without it reads `[]` through
+`admitTargetsDefault`, src/core/upgrade.ts, scaffolding with a logged warning). `PLAN_ASSESSMENT_SCHEMA` / `validatePlanAssessment`:
 `{planAssessment: {feasible, riskFloor, visionConflict[], premises, notes}}`. `PLAN_CHECK_ACCEPTANCE_SCHEMA` /
 `validatePlanCheckAcceptanceOutput`: a plan-check answer whose redirect ops are `add`/`replace` in `witnesses` or `facts`,
 or `cite` (anything else is a SchemaError: `malformed`).
 
-**Prompt inputs** (`src/prompts/inputs.ts`; N4 writes their text, N0 renders each as a data block only when it carries
-something): `GateInputs + checks: GateChecks = {witnesses: {required, missing, failed} | null, smoke: {killed,
+**Prompt inputs** (`src/prompts/inputs.ts`; N4 wrote their text, each rendered only when it carries something):
+`GateInputs + checks: GateChecks = {witnesses: {required, missing, failed} | null, smoke: {killed,
 survived, inconclusive, notRun: SmokeNotRun | null} | null}` (`SMOKE_NOT_RUN = low-risk | no-targets | no-test-paths |
 tests-only-diff | allowance`); `LaneLedgerEntry + reused: {at, inv} | null`; `BuildInputs + witnessChecks: [{lane,
-command}] + assess: boolean`; `CheckpointInputs + manifest: [{kind: plan | spec | ledger | sidecar | obligations |
+command}] + assess: {risk: RiskTier, vision: VisionInput | null} | null` (`BuildAssess`, N4: the pinned floor the
+answer may not go below and the vision its conflicts cite; null: the build itself); `PlanCheckInputs + acceptance:
+{nextWitnessId: W-n, arcLanes: LaneId[]} | null` (`PlanCheckAcceptance`, N4; null: the uniform check); `CheckpointInputs + manifest: [{kind: plan | spec | ledger | sidecar | obligations |
 vision | phase0 | issues, id, path, sha256}] + specs: [{unit, rev, markdown, occupied: item ids}] + nextRulingId +
-closeout: {since: JobId} | null + issuesUnchangedSince: JobId | null`; `LensInputs + specsOnly: UnitId[] | null`. The
-producers pass `[]`, `null` and `false` until their steps land, except `nextRulingId` (the ledger's, `nextRulingId`).
+closeout: {since: JobId} | null + issuesUnchangedSince: JobId | null`; `LensInputs + specsOnly: RenderedSpec[] | null` (N5: each changed spec rendered in full at the audited plan rev, was
+`UnitId[]`); `PackReviewPromptInputs + delta: {since: JobId, changed: string[], previous: [{job, finding: PackFinding}]}
+| null` (`PackReviewDelta`, N5). Every producer is live: `nextRulingId` is src/spec/rulings.ts's (one past the ledger's
+highest, `C-1` on an empty ledger).
 
 **Scheduling** (`src/schedule/types.ts`): `AdmissionConstraint + known-defect{id, fixUnit}`; `Rank + priority`;
 `compareRank`: `high` first, then promoted, origin, age, plan index (R42).
@@ -2607,11 +2619,37 @@ producers pass `[]`, `null` and `false` until their steps land, except `nextRuli
 0 `{passed: true}`, or 78 `{missing, failed, malformed}`), `resume-arc --repo <path>` (`{resumed: false, reason:
 no-claim | other-repo | alive | complete | refused | already-resumed}` or the relaunched supervisor's line),
 `inputs export --repo <path> --arc <arc> --out <dir>` (prints `export.json {planRev, specRevs}`); `apply --ruling
-<file>` (repeatable; queued, each file hashed into the body's `rulings`, step N3). The modules
-(`src/commands/{witnesscheck,resumearc,inputs}.ts`, `src/holistic/admits.ts`, `src/pipeline/{witnesscheck,smoke}.ts`)
-export their final signatures; their bodies throw `NotYetError` (`src/core/notyet.ts`, scaffolding gone before the PR)
-until N2, N3 or N6 replaces them. `src/input/envelope.ts` (N3): `lineageEnvelope(view, root)`, `withinEnvelope`,
-`rulingNaming` (the scope-growth ruling rule).
+<file>` (repeatable; queued, each file hashed into the body's `rulings`, step N3). Step N6 landed the three host acts
+(readings below) and deleted `src/core/notyet.ts` with the last placeholder. `src/input/envelope.ts` (N3):
+`lineageEnvelope(view, root)`, `withinEnvelope`, `rulingNaming` (the scope-growth ruling rule).
+
+**Status and brief (step N6; `src/status.ts`, `src/brief.ts`, `src/pipeline/failures.ts`).** `Status` adds:
+- `units[].failures: [{stage: lanes, attempt, lane, class: red | flaky | repeat, hostSuspected: {signatures, busy} |
+  null}]` (`laneFailures`: each closed lanes attempt's spec series read back through `seriesLedger`, a red or flaky
+  record each; `flaky` before `repeat` before `red`); a lanes park's needs-user summary appends the same as one sentence
+  (`failuresText`, src/pipeline/unit.ts `haltNeedsUser`).
+- `units[].running.lane: {id, set: spec | suite | journey | mutant, inv, startedAt} | null` (8c: the latest open lane,
+  journey or mutant spawn of the running attempt; `startedAt` its intent's time).
+- `units[].priority.priority` (F1b: the rank's first key).
+- `knownDefects: [{id, match, fixUnit, fixMerged, holds: UnitId[]}]` (each plan entry; `holds`: the units whose
+  admission waits under it now). A held unit's obligations wait for reason `waiting-dep`.
+- `checkpointWaits: [{job, waitingFor: BusyAttempt[], line}]` (C5: each trigger's latest checkpoint rejected `busy` whose
+  named attempts are still open, `stillBusy`, the predicate `dueAgain` reads; `line` = "checkpoint <job> waiting for
+  <unit> <stage>, … boundary").
+- `admits: [{seq, job, index, unit, class: repair | oversight | opportunity, clauses, followUp}]`, `opportunities: [{id,
+  clauses, units, followUps, spentUsd, overrun: [{job, index}]}]`, `drift: [{unit, job, class, merged, findings: [{id,
+  severity, clauses, claim}]}]` (`admitViews`, corpus arcs; empty elsewhere). `units` = the opportunity's unit, its
+  follow-ups' units and every unit re-entering them; `spentUsd` their calls' list-price cost (`meter.byUnit`, rounded to
+  cents); `overrun` the `follow-up-overrun` conversions naming it. **Drift indicator**: one line per recorded admit not
+  classed opportunity whose lineage has a merged unit: the findings (any state) attributed to those merges by
+  `findingAttribution` (R46, over `integrationHistory`, the positions and ranges classification reads) whose
+  `visionClauses` are non-empty and lie wholly outside `holistic.advances ∪ OC`. No semantic check: findings without
+  clauses, or attributed elsewhere, are not seen.
+
+The brief payload's `BriefArc` (src/phase0/types.ts) adds `admits` (those whose commit is in the delta), `opportunities`
+(at the ref), `drift` (the non-empty lines at the ref, finding ids and clauses), and `amendments[].admit: {job, index,
+reason} | null` (the converted admit an amendment came from); the Markdown renders "Admits", "Opportunities" and "Drift"
+sections and marks converted amendments.
 
 **Readings of step N0:**
 
@@ -2625,3 +2663,164 @@ until N2, N3 or N6 replaces them. `src/input/envelope.ts` (N3): `lineageEnvelope
    made explicit. The minimal form accepted for compatibility is the one F15's generator wrote.
 4. **`missingWitnesses` also reports `malformed` lanes** (their ids are in `missing` too): `witness-check` prints them.
 5. **Smoke run evidence** lives under the lanes attempt that ran it (`smokeLaneDir`).
+
+**Readings of steps N1–N5:**
+
+1. **Lane reuse (N1, F1a, R52; src/pipeline/lanes.ts).** A spec lane spawn is stamped with `identity` (`laneIdentity`:
+   `laneRevOf`, `envIdOf`, argv[0]'s realpath and the sha256 of its bytes, or null when it is no program); a suite lane
+   spawn carries none and is never reused. `reusablePass` reuses the unit's latest earlier execution of the lane when it
+   passed (not flaky, not a repeat), its identity is equal, `certifiedRun` holds, and it ran at this SHA, or the lane is
+   fast, declares `inputs`, argv[0] is a resolved program and the diff between the SHAs touches none of them. The series
+   writes `lane-reused` before the lane would have run and skips it; `seriesLedger` reads the execution's record back
+   (`reusedRecord`) with `LaneLedgerEntry.reused` set, which the gate's ledger shows. A series whose every lane is reused
+   still makes its verification checkout and certifies it (crash label `lanes.after-reused`).
+2. **Series certificates (N1, Q12, R51).** `series-certified` is written after the census found the checkout clean
+   (crash label `lanes.after-census-before-certified`). `certifiedRun(inv)`: a certificate under the run's parent, at its
+   SHA, after its spawn, whose checkout holds the run's launch cwd. Lane reuse and a journey series' reuse
+   (`certifiedObservations`) read only certified runs. `seriesTree(view, parent, path)` takes the series' own checkout
+   path (Q3): a lanes attempt now makes witness and smoke checkouts beside its verification checkout.
+3. **Red class (N1, F2, F3; src/pipeline/redlane.ts).** `classifyRed(first, repeat)`: signatures first (busy host
+   `host-signature`, else `signature-without-evidence`); `repeat{attempt, inv}` only without a signature, on a host its
+   samples show clear at both ends; else `diagnostic`. `writeRedClass` publishes `red.json` write-once before the rerun
+   decision (crash label `redlane.after-class`); `redLane` takes the persisted class. The failure signature
+   (`failureSignature`, R53) is sha256 of `{verdict, exitCode, line}`, `line` the last non-empty stderr line (else
+   stdout's) with timestamps, the checkout path, hex runs of 7+ and digit runs masked; it is specific when a word outside
+   `GENERIC_SUMMARY_WORDS` survives, and only a specific one is looked up. `repeatOf` walks the unit's lane history back:
+   a pass or a reuse ends it; the latest red must be confirmed (its `red.json` a `diagnostic` whose rerun stayed red, or
+   a `repeat`), not flaky, with equal `failure`, `laneRev` and `envId`. A repeat is red without a rerun; its fix round
+   gets `repeatRedDirective`. Journey series go through the same protocol. `LaneRecord` (in memory) `+ repeat: RepeatOf |
+   null`, `+ hostSuspected: {signatures, busy} | null` (the first run's signatures, F3).
+4. **Host signatures revision 2 (N1; src/host/signatures.ts).** `HOST_SIGNATURES_REV = 2` adds `etcd-request-timeout`,
+   `container-kill`, `oom-kill`; `matchSignatures` and `outputSignatures` take a `SignatureTable` (default the current
+   one), so an unstamped run reads with `HOST_SIGNATURES_DEV6`.
+5. **One execution for identical suite and arc lanes (N1, F6, R63).** `sameExecution(suite, arc)`: equal argv, cwd,
+   `env.set`, sorted `env.pass` and expected exit. `suiteStandIns` maps a suite lane to the first such arc lane the held
+   claims will witness; on a unit's candidate and in a batch (src/pipeline/integrate.ts) the stand-in runs once in the
+   suite lane's place with the reporter env (`standInJourneyLane`): its exit is the suite lane's verdict (red counts as
+   unexplained suite red) and its record the arc lane's observation, which the claims reuse. The base-alone suite run
+   takes no stand-ins.
+6. **Admit classification (N2, LR-m; src/holistic/admits.ts, bundle.ts).** Scope is the op's declared `targets` (each
+   in the census in force) ∪ the structural floor (the rules of the non-exempt obligations the spec declares, impact-
+   mapped ones excluded, that the unit delivers after this bundle's ops, or that the repair refs name), plus its cites;
+   a finding's `visionClauses` and free-text `T-n` mentions are context only. Opportunity work: a scoped rule whose
+   census state is `out-of-slice`, or a cited world clause outside the owner slice. The reasons it emits (each makes the
+   bundle `invalid`): `repair-ref-resolved` (no active captured finding, or no obligation in force), `repair-ref-exempt`,
+   `repair-ref-holds`, `target-unknown`, `dishonest-citation` (an out-of-slice rule scoped and no outside clause cited);
+   and `conversionReasons` (R35): another op or an `acted` intake naming a converted admit. A converted admit is dropped
+   and the proposal rebuilt from the effective ops (`effectiveOps`, which the brakes count).
+7. **Settlement of conversions (N2, R35).** `settleConversions` reads the decision record, never classifies again: each
+   conversion an amendment `source: admit{job, index, reason}` (crash label `bundle.after-conversion-amendment`), and a
+   `follow-up-overrun` also a `debt-banked` of reason `opportunity-overrun` naming its opportunity (src/debt/mint.ts;
+   `bundle.after-overrun-debt`). Idempotent by source.
+8. **Busy (N2, C5).** Step 0 of `decide`, before staleness: ops naming a unit with an open attempt are `rejected{busy,
+   units}`, never counted toward `secondInvalid`; the checkpoint is due again once every attempt it named has closed
+   (src/holistic/checkpoint.ts).
+9. **Evidence, rulings, census moves (N2, C1–C4; bundle.ts).** `evidenceDiffers(cited, head)` is step 5's per-test
+   comparator: same lane rev and env id, neither record malformed, the cited one non-empty, every cited test the same
+   outcome on the head with no fewer selected (tests the head adds never matter). A checkpoint's ruling is stamped
+   `judgedRevs` from the capture (head, ledger, obligations, vision, and `corpusSha256` in a corpus arc).
+   `numericRulingIds` reads model-written ruling ids in numeric form (`C-01` is `C-1`) and a drafted sidecar's id lists
+   are put in canonical order; stored records are never rewritten. `censusMove`: a split child anchored at an
+   `out-of-slice` rule moves that census entry to `obligation{child}` when the child serves only the owner slice and this
+   bundle's opportunities; any other state, or a wider child, is a reason naming the fix.
+10. **Checkpoint inputs (N2, H4, H5; checkpoint.ts, intake.ts).** `manifestOf` lists every captured input content-
+    addressed (plan, each spec, the ledger and each sidecar, obligations, vision, phase0, issues); `specsOf` every
+    non-retired unit's spec in plan order with its occupied ids (lanes, acceptance, decisions, facts, witnesses).
+    `closeoutOf`: when the latest checkpoint decided before this capture was a `no-op`, this one is an audit's and not the
+    final one, and findings, vision, obligations, ledger, plan, specs, issue capture and every obligation's verdict on the
+    head are unchanged since, the prompt is a closeout without findings or specs. `issueReuse`: when the grounds
+    (obligations, ledger, pin) are unchanged since the latest decided checkpoint, an issue byte-equal to its capture keeps
+    its outcome; the prompt lists only the others, the answer may omit it, and `settleIntake` carries it (an `acted` one
+    as `none`).
+11. **Witness presence and lane files (N3, D1, R56; src/pipeline/witnesscheck.ts).** After a green certified spec series
+    in a corpus arc with obligations in force (`checksApply`), the required arc lanes run once at the salvage SHA as a
+    journey series in `witnessWorktree` (`<unit>.witness-<attempt>`), reusing certified observations only. Outcomes:
+    `skip` (nothing required), `green`, `witnesses-missing`, `not-certified` (its checkout left dirty or moved: a fix
+    round), `blocked`, `interrupted`, `occupied`, `cleanup-failed`. Before each build call the fast required witness
+    lanes' files are published write-once (`publishWitnessLaneFiles`; the same bytes again, else fail loud) with their
+    `roadmap witness-check --lane-file` commands. The gate's `checks` are `gateWitnessChecks` and `gateSmokeChecks` of
+    the series it judges.
+12. **Mutation smoke (N3, D2, Q15–Q17, Q25; src/pipeline/smoke.ts).** `notRun` reasons in order: `low-risk` (the pinned
+    floor), `no-targets`, `no-test-paths`, `tests-only-diff`, then `allowance` (the unit's smoke `mutant.apply` intents,
+    blocked runs and crash retries included, reach `smokeRuns`). The key is sha256 of the kept reverse patch's sha256 and
+    each target lane's rev, env id and target tests; an earlier `smoke-ran` of the unit with that key is reused (a new
+    `smoke-ran` for this attempt, nothing runs). Every target is inconclusive, with a `smoke-ran`, when the production
+    diff holds a binary path or a rename (keyed by the diff itself, nothing made), or the patch is corrupt or does not
+    apply. A target is `killed` on a non-malformed record with `selected > 0` and `fail`, `survived` on `pass`, else
+    inconclusive; any survivor is `smoke-survived`, otherwise (inconclusive ones included) the stage goes on green.
+13. **Plan-check shape and the in-session assessment (N3, E, R40, R55, R59; src/pipeline/stages.ts).** `planCheckShape`:
+    `uniform` unless `by-builder` in a corpus arc with arc lanes; then `build.<floor>`'s class decides (`efficient` →
+    `acceptance`, else `in-session`, recorded without a call). An acceptance call writes `PLAN_CHECK_ACCEPTANCE_SCHEMA`;
+    its witness items must name arc lanes. The fresh build after `in-session` first calls a read-only session answering
+    `PLAN_ASSESSMENT_SCHEMA`: a changed tree, a conflict citing an inactive vision clause, or a floor below the pin is
+    `malformed` (its retry assesses again); conflicts open P3 findings `source: stage{build}`; `feasible: false` is
+    `infeasible{notes}`; a higher floor raises the unit's risk, and is `risk-raised` when the new seat binds another
+    model or backend; otherwise the build resumes the session (`ASSESSED_DIRECTIVE`). A crash after the assessment is
+    consumed by the next attempt (`crashedAssessment`), never asked again.
+14. **Known defects (N3, F4, R49).** `knownDefectActive(view, plan, k, unit)` (src/schedule/ready.ts) is the one
+    predicate: `k` in the plan in force by id and content, its fixer's lineage head not merged, `unit` outside that
+    lineage. The lanes stage matches a `lane` entry before any lane runs and an `output` entry against the last
+    `KNOWN_DEFECT_TAIL_BYTES` (64 KiB) of a red lane's counted stdout or stderr. Admission holds the unit's `prepare`
+    under `known-defect{id, fixUnit}` while the entry is active and still has the match the outcome recorded (step N6);
+    prepare's known-defect arm (src/pipeline/prepare.ts)
+    merges the integration tip into the unit's branch unless it holds it, then snapshots, scoped to the prepare attempts
+    after the outcome (crash label `prepare.known-defect-after-mergein`): `conflicted` (a resolve round) or `clean-verify`.
+15. **Re-entry widening (N3, F5; src/input/envelope.ts, classify.ts, prepare.ts).** A re-entry's scope lies within
+    `lineageEnvelope` (every member's dispatched scopes) or beyond it by exactly the patterns a ruling names
+    (`rulingNaming`: cited by its spec, active, applying to the unit, naming them in backticks), recorded as
+    `unit-reentered.widened{patterns, ruling}`; prepare's dispatch accepts the envelope plus those patterns.
+16. **`apply --ruling` (N3, I2; src/commands/apply.ts, rule.ts).** Each `rulings` entry is read by `readRulingRecord`
+    (its hash, then the sidecar reader); the live ledger and sidecars must equal those in force; `rulingReasons` (the one
+    validation `rule` shares) checks each against the ledger after the ones before it and the units of the revision being
+    built; `withRulings` lands them (shared with `rule`), proposer `apply{rulings}`. The startup check reads the
+    proposal's ledger bytes (`ledger?` in its context, src/preflight/checks.ts): the live file gets them only at
+    write-back (`writeBack`, shared with `rule`; a command already applied finishes it through `writeBackAfter`). A
+    `--ruling` apply never takes the already-in-force shortcut.
+17. **Build schema, resume, resolve (N3, I3, 8d).** Each build call writes `buildSchemaFor(buildLaneIds(spec))` and reads
+    its answer with the same lanes; a resume round quotes why the answer was malformed (`resumeDirectives`,
+    src/pipeline/unit.ts `malformedError`). `resolvedHead` (src/git/mergein.ts): a resolve round may leave HEAD on
+    first-parent non-merge commits after the merge `[old, T]`. Every implementer directive's text lives in
+    src/prompts/directives.ts, from which src/pipeline/rounds.ts builds rounds.
+18. **Specs-only drift and cross-lens corroboration (N5, H2, H7; src/holistic/cadence.ts, audit.ts, findings.ts).**
+    `driftOf`: a bundle revision changing only plan units and their specs (no ledger, contract op, disposition or other
+    change) records `drift{specsOnly}`; an audit all of whose triggers are specs-only (`specsOnlyOf`) runs the vision
+    lens alone (the full drift's lenses when it has none) with `LensInputs.specsOnly`, the code lenses keeping their
+    watermarks. `crossKey` (relative repo evidence paths, obligation, cause; not the lens): within one audit a second
+    lens's equal draft writes `finding-corroborated` (`corroborateFinding`, once) instead of opening a finding.
+19. **Corrupt mutant patches (N5, H6).** `admitMutant` runs `checkPatch` before keeping the patch: a vacuity draft whose
+    patch git cannot parse is refused (nothing opened, git's stderr reported and written to the executor's stderr).
+    `patchedTree` returns `corrupt`; reproduce treats it as inapplicable and smoke as inconclusive, so no `mutant.apply`
+    names one.
+20. **Delta pack re-review (N5, H3; src/holistic/packreview.ts).** The first review, and one after an abandoned one, is
+    full. A later one follows `previousReview` with the changed specs, `packChanges` and `unresolvedAfter` (that review's
+    findings and those it kept `still-open`); its answer dispositions each exactly once (else malformed), recorded as
+    `pack-review-ended.dispositions` (absent on a full review, refused on an abandoned one, unique by `(job, index)`). A
+    blocking finding kept `still-open` keeps holding admission.
+21. **Spec-census row (N5, H3, F07; src/phase0/rows.ts).** `spec-census-mismatch{unit, item, rule, state}`: a declared
+    obligation whose rule's census state is not `obligation` naming it or a split ancestor, or an active acceptance
+    clause naming (`T-n` in its text) an `out-of-slice` rule.
+
+**Readings of step N6:**
+
+1. **An edited match releases the hold** (lead carry-forward; Q9). The lanes `known-defect` detail records the match the
+   unit hit (`{id, match}`); `knownDefectHold` (src/schedule/ready.ts, the one place admission, status and release read)
+   holds only while the plan's entry of that id keeps that match and `knownDefectActive` holds. A changed match releases
+   the unit to `prepare` and lanes, which match the edited entry afresh; a changed `fixUnit` alone keeps the hold under
+   the new fixer (`knowndefect.retargeted-entry`). `knownDefectActive` itself is unchanged (`knowndefect.match-edited-releases`).
+2. **`witness-check` runs the lane as the runner does**: argv verbatim in `<git top level of the cwd>/<cwd>`, only the
+   declared env (`set`, `pass` from its own env; a missing pass variable is a usage error) plus `witnessEnv`; the exit
+   code is not the verdict. The lane's stdout and stderr go to its stderr; the reporter output lives in a fresh
+   `mkdtemp` dir removed afterwards. `missingWitnesses` takes `LaneWitnesses` (`{lane, records, malformed}`), so the CLI
+   needs no invocation identity.
+3. **`resume-arc`**: the claim's `repo` must equal `--repo` (resolved); `ownerState` decides `alive`; `complete` and
+   `refused` are `status`'s run state; a claim without start.json is a usage error. It relaunches with start.json's
+   repo, plan file and resolved profile; exit 75 from the launch (host busy) reads as `already-resumed`.
+4. **`inputs export` layout**: the files `inForceFiles` builds (the plan in force, each unit's spec as an unchanged file
+   would hold it: pending revision, recorded spec, else the manifest's), at their paths relative to the plan's directory;
+   a product-repo file (a corpus arc's vision) under `repo/`. The corpus guide is not exported (the baseline's, never
+   edited by an apply); the corpus files the pin names are not either.
+5. **Lane failures list spec series only** (the `lanes` stage's); a candidate's suite reds are the candidate's outcome
+   and `base-red` items. An open lanes attempt is not read, nor one that ran a lane the spec in force no longer declares
+   (an applied spec edit dropped it: no definition to read its records with).
+6. **The drift indicator reads `advances ∪ OC`** (S ∪ OC, since S = advances \ OC) and counts a finding opened in any
+   state, so a resolved drift stays visible as history; the brief shows only non-empty lines.

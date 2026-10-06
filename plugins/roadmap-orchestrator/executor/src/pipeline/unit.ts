@@ -65,6 +65,7 @@ import type { EntryPoint, UnitState } from '../core/state.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
+import { failuresText, laneFailures } from './failures.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type NextStage, nextStage } from '../schedule/ready.ts';
@@ -160,7 +161,9 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
     blocking: true,
     subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },
     reason,
-    summary: `Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`,
+    // F3: a lanes park lists the unit's lane failures, host-suspected ones marked, so a reset re-entry can cite them.
+    summary: [`Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`, ...(f.stage === 'lanes' ? [failuresText(laneFailures(ctx, unit))] : [])]
+      .filter((x) => x !== '').join(' '),
     recommendation,
     options: [],
     evidence: haltEvidence(ctx, unit, f),

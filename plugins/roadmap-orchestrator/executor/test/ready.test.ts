@@ -393,9 +393,9 @@ describe('known defects (F4)', () => {
   const [F, G, F2] = ['f', 'g', 'f2'].map((x) => unitId(x)) as [UnitId, UnitId, UnitId];
   const kd = (n: number, fixUnit: UnitId): KnownDefect => ({ id: knownDefectIdOf(n), match: { type: 'lane', lane: laneId('mul') }, fixUnit });
   const withDefects = (units: readonly PlanUnit[], defects: readonly KnownDefect[]): PlanM1 => ({ ...planOf(units), knownDefects: defects });
-  /** `u`'s lanes attempt recorded `known-defect{id}` (uncharged; it goes to prepare). */
+  /** `u`'s lanes attempt recorded `known-defect{id, match}` (uncharged; it goes to prepare). */
   const hit = (u: UnitId, attempt: number, k: KnownDefect): LogRecord =>
-    outcome(u, 'lanes', attempt, 'known-defect', 'advance', { detail: { kind: 'known-defect', id: k.id } });
+    outcome(u, 'lanes', attempt, 'known-defect', 'advance', { detail: { kind: 'known-defect', id: k.id, match: k.match } });
   const prepareAdmission = (log: Log, plan: PlanM1, u: UnitId) =>
     admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: plan.units.find((x) => x.id === u)!, stage: 'prepare', blocking: [], drains: [], tripped: [] });
 
@@ -437,6 +437,18 @@ describe('known defects (F4)', () => {
     log.add(dispatch(G));
     log.merge(G, 1);
     assert.deepEqual(prepareAdmission(log, plan, A), { kind: 'admit' }, 'the new fixer merged: released');
+  });
+
+  it('knowndefect.match-edited-releases: an entry whose match is edited releases the unit that hit the old match (its lanes decide again); the same match keeps it held', () => {
+    const k1 = kd(1, F);
+    const log = new Log([A, F]);
+    log.add(dispatch(A), hit(A, 1, k1));
+    assert.deepEqual(prepareAdmission(log, withDefects([unit(A), unit(F)], [k1]), A), { kind: 'wait', constraints: [{ type: 'known-defect', id: k1.id, fixUnit: F }] });
+    const otherLane: KnownDefect = { ...k1, match: { type: 'lane', lane: laneId('other') } };
+    assert.equal(knownDefectActive(log.view(), withDefects([unit(A), unit(F)], [otherLane]), otherLane, A), true, 'the edited entry is itself active');
+    assert.deepEqual(prepareAdmission(log, withDefects([unit(A), unit(F)], [otherLane]), A), { kind: 'admit' }, 'another lane: released');
+    const output: KnownDefect = { ...k1, match: { type: 'output', lane: laneId('mul'), contains: 'boom' } };
+    assert.deepEqual(prepareAdmission(log, withDefects([unit(A), unit(F)], [output]), A), { kind: 'admit' }, 'another match type: released');
   });
 
   it('knowndefect.multiple-defects: a unit is held by the defect it hit; each entry\'s activity is its own', () => {
