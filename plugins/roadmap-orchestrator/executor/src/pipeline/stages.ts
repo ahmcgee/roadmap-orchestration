@@ -94,6 +94,7 @@ import {
 import { type KnownDefect, type PlanUnit, advancesOf, knownDefectsOf, parsePlan, planCheckShapeOf, targetDocumentPaths, targetDocuments } from '../input/plan.ts';
 import { type CorpusView, materialiseCorpus } from '../corpus/materialise.ts';
 import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
+import { specCensusMismatches } from '../holistic/rederive.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
@@ -661,6 +662,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       vision: visionInput(ctx),
       // E (R59): an efficient builder's check under `by-builder` maps acceptance clauses to witness items.
       acceptance: shape === 'acceptance' ? acceptanceOf(ctx, now.spec) : null,
+      priorInvalid: planCheckPriorInvalid(ctx, unit.id, now.spec),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
     return { checkouts, rendered, target };
@@ -685,6 +687,44 @@ function unknownCites(ctx: StageContext, patch: PlanCheckOutput['patch']): boole
   const rulings = ledger(ctx).map((r) => r.id);
   return (patch ?? []).some((op) => op.op === 'cite'
     && (op.contracts.some((c) => !ctx.plan().contracts.includes(c)) || op.rulings.some((r) => !rulings.includes(r))));
+}
+
+/**
+ * Run 10 (C): a redirect's patch keeps the specs consistent with the census, by the one predicate the Phase-0 rows and
+ * every revision's classifier run (src/holistic/rederive.ts `specCensusMismatches`). The mismatches the patched spec
+ * `after` adds over `before`, as the retry reads them; null when it adds none (or the arc has no census).
+ */
+function censusRefusal(ctx: StageContext, before: SpecM1, after: SpecM1): string | null {
+  const obligations = holisticInForce(ctx).obligations;
+  const census = obligations?.census;
+  if (obligations === null || census === undefined) return null;
+  const had = new Set(specCensusMismatches([before], obligations, census).map((p) => canonicalJson(p)));
+  const added = specCensusMismatches([after], obligations, census).filter((p) => !had.has(canonicalJson(p)));
+  if (added.length === 0) return null;
+  return added.map((p) => (p.item.startsWith('I-')
+    ? `unit ${p.unit} declares ${p.item}, on ${p.rule}, whose census state is ${p.state}`
+    : `unit ${p.unit}'s ${p.item.startsWith('W-') ? 'witness item' : 'acceptance clause'} ${p.item} names ${p.rule}, which the census puts out of slice: cite only in-slice rules in an acceptance clause or witness item, or leave ${p.rule} as a note (a facts item, or notes)`)).join('; ');
+}
+
+/**
+ * The census refusal of the unit's latest plan-check answer (`censusRefusal`), for the retry to correct: its redirect
+ * patch re-applied to the spec it judged, still in force (a refused patch leaves the rev); null otherwise.
+ */
+function planCheckPriorInvalid(ctx: StageContext, unit: UnitId, spec: SpecM1): string | null {
+  const spawn = judgmentSpawns(ctx, unit, 'planCheck').at(-1);
+  if (spawn === undefined || spawn.parent.type !== 'stage') return null;
+  const out = judgmentOutput(ctx, spawn, validatePlanCheckOutput);
+  if (out === null || out.patch === null) return null;
+  if (ctx.journal.view.judgmentInputs(unit, 'plan-check', spawn.parent.attempt)?.specRev !== spec.rev) return null;
+  const by = { role: 'planCheck', routingRev: dispatchOf(ctx.journal.view, unit).routingRev, inv: invocationId(spawn.op, spawn.ordinal) } as const;
+  let after: SpecM1;
+  try {
+    after = applySpecPatch(spec, { expectRev: spec.rev, by, ops: out.patch });
+  } catch (error) {
+    if (error instanceof SpecPatchOpError) return null;
+    throw error;
+  }
+  return censusRefusal(ctx, spec, after);
 }
 
 /**
@@ -745,13 +785,16 @@ export async function planCheckRead(
   if (unknownCites(ctx, out.patch)) return done(record(ctx, parent, 'malformed'));
   const patch = out.patch === null ? null : { expectRev: specRev, by: { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv }, ops: out.patch } as const;
   if (patch !== null && applied === null) {
+    let after: SpecM1;
     try {
-      applySpecPatch(spec, patch);
+      after = applySpecPatch(spec, patch);
     } catch (error) {
       // A patch against ids that do not exist, or reusing one, is an unusable judgment.
       if (error instanceof SpecPatchOpError || error instanceof SpecPatchStaleError) return done(record(ctx, parent, 'malformed'));
       throw error;
     }
+    // Run 10 (C): a patch citing an out-of-slice rule is not applied; the retry is told why (`planCheckPriorInvalid`).
+    if (censusRefusal(ctx, spec, after) !== null) return done(record(ctx, parent, 'malformed'));
   }
   if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx, pinned, out.risk, { rev: specRev, sha256: seenSha256 });
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.

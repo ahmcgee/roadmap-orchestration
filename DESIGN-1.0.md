@@ -732,7 +732,7 @@ write its failure matrix (each step × process death).
 **Phase 0 (A-M4-28).** The shared Phase-0 rows gain `spec-census-mismatch`: a pack spec's declared obligation whose
 rule's census state is not `obligation` for it or its split parent, or an acceptance item naming an out-of-slice rule.
 A-M4-29 (run 10): a witness item naming one too, and the one predicate holds on every revision (the classifier runs
-it for an `apply` and a bundle alike); a checkpoint that wants an out-of-slice rule moves its census state through an
+it for an `apply` and a bundle alike) and on a plan-check redirect's patch (refused as malformed, the retry told why); a checkpoint that wants an out-of-slice rule moves its census state through an
 opportunity's split child or drops the citation. The checkpoint writes an admit's spec as a schema-constrained object.
 A pack re-review after a required review reads the changed pack files and the previous review's unresolved findings,
 giving each a disposition (`resolved`, `still-open`, `withdrawn`); the first review stays full.

@@ -117,11 +117,6 @@ None.
 
 ## Watch (act only on the trigger)
 
-- **A plan-check redirect can still cite an out-of-slice rule** (run 10, C). The spec-census predicate runs on every
-  revision (`apply`, a bundle), but a plan-check redirect's `spec.patch` is no revision and is not checked, so it can
-  add an acceptance clause or witness item naming an `out-of-slice` rule; the next `apply` is then refused until the
-  citation goes. Trigger: a redirect that does it; then refuse such a patch as `malformed` in the plan-check stage.
-
 - **gpt-5.6-sol is not available on a ChatGPT Codex account** (400 `invalid_request_error`, 2026-10-06). No class binds
   it; a repo rebind to sol would fail at the preflight smoke. Trigger: a routing that seats sol, or the account
   changing; then probe sol again or drop it from `CODEX_MODELS`.

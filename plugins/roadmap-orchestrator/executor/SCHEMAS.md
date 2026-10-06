@@ -634,7 +634,8 @@ is a plan-check redirect's judgment invocation, or the executor appending the bu
 revision of the spec is pending: the unit re-opens on it, and its next build writes its decisions again); ops `add{section, item} |
 replace{section, item} | strike{id} | defer{id} | cite{contracts, rulings}`, sections `lanes | acceptance |
 decisions | facts`. `cite` adds to `cites` (at least one entry; a repeated cite is already there) and nothing
-removes one; a plan-check redirect citing no plan contract or no ledger ruling is `malformed`. Scope and resources
+removes one; a plan-check redirect citing no plan contract or no ledger ruling is `malformed`, and so (run 10, C) is
+one whose patched spec adds a `spec-census-mismatch` (`specCensusMismatches`): it is not applied. Scope and resources
 are not patchable in M1.
 
 **Lane evidence** (`src/pipeline/lanes.ts`, `src/git/ignored.ts`). Each lane of a series has a dir `<series
@@ -666,7 +667,8 @@ gate `{decision, findings, directives, reasons, premises}`, `premises: [{claim, 
 premises the decision relies on, the next round's handoff). A plan-check's `notes` go to the architect on escalate
 or infeasible; on approve they are facts for the build and the gate, which receive the approving plan-check's
 notes. A plan-check after its own applied redirect gets `priorRound {patch, reasons, premises, patchedRev,
-changedPremiseFiles}`; a gate after its own revise gets `priorRound {directives, findings, premises, fixPaths,
+changedPremiseFiles}`; a plan-check whose previous answer's redirect was refused for the census (its patch re-applied
+to the spec still in force adds a mismatch) gets `priorInvalid` (the unit, item, rule and fix); a gate after its own revise gets `priorRound {directives, findings, premises, fixPaths,
 changedPremiseFiles}`. Changed premise files compare blobs between the commits the prior round read (a plan-check's
 checkouts from its `worktree.create` intents; a gate's verification checkout from its launch cwd) and the current
 ones; a premise path that names no repository file counts as changed.
@@ -2814,7 +2816,8 @@ sections and marks converted amendments.
     obligation whose rule's census state is not `obligation` naming it or a split ancestor, or an active acceptance
     clause naming (`T-n` in its text) an `out-of-slice` rule. Run 10 (C): an active witness item too (its test id or
     skeleton), and the one predicate (`specCensusMismatches`, src/holistic/rederive.ts) runs in the classifier on every
-    revision ("Run 10, round 1").
+    revision ("Run 10, round 1") and on a plan-check redirect's patch, which is then `malformed` and not applied; the
+    retry reads why in `priorInvalid`.
 
 **Readings of step N6:**
 

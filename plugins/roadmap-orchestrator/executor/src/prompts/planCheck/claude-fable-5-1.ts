@@ -17,9 +17,11 @@
 // the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): as the Opus plan-check, the failure matrix (F03, H1), the
 // clock and entry-point defect classes (D3) and the acceptance shape (E, R59).
+// Run 10 (C, 2026-10-06): <prior_attempt> after the ask's inputs carries why the executor refused the previous answer's
+// patch (an acceptance clause or witness item citing an out-of-slice rule), for the retry to correct.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
+  acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
 } from '../inputs.ts';
 import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
@@ -105,7 +107,7 @@ ${visionText(i.vision)}
 export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -136,7 +138,7 @@ ${checkouts(i)}
 
 <lane_programs>
 ${laneProgramsText(i.lanePrograms)}
-</lane_programs>${priorRound(i)}${visionContext(i)}${acceptanceShapeText(i.acceptance)}
+</lane_programs>${priorRound(i)}${visionContext(i)}${acceptanceShapeText(i.acceptance)}${planCheckPriorInvalidText(i.priorInvalid)}
 
 Check the spec of unit ${i.spec.unit}, revision ${i.spec.rev}, against these documents and the checkouts. Go through every acceptance clause and every lane, then return your decision.`,
 };

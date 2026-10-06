@@ -1,5 +1,6 @@
-// M4a rev 3 step N3, E: the plan-check shape by builder class and the in-session assessment, through the unit driver in a
-// corpus arc (real processes, real git, fake backends; test/fixtures/checks-common.ts). Named tests: plancheck.*,
+// M4a rev 3 step N3, E: the plan-check shape by builder class and the in-session assessment (and, run 10 C, the census
+// gate on a redirect's patch), through the unit driver in a corpus arc (real processes, real git, fake backends;
+// test/fixtures/checks-common.ts). Named tests: plancheck.*,
 // build.assess-*, and the crash rows "Plan-check acceptance patch", "Plan-check in-session" and "Build assess" (labels
 // plancheck.after-witness-patch, plancheck.after-pin-in-session, build.after-assess).
 import assert from 'node:assert/strict';
@@ -133,6 +134,40 @@ describe('plan-check shape (E)', () => {
       await stepUntil(r, 'u1', (f) => f.stage === 'plan-check');
       assert.deepEqual(outcomes(a.d), ['plan-check:malformed']);
       assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.rev, 1, 'nothing patched');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // Run 10 (C): a redirect's patch is held to the census by the one predicate (`specCensusMismatches`); the corpus-unit
+  // census puts T-1 in slice (I-1) and every other rule out of slice.
+  const clause = (text: string): JsonValue => ({ op: 'add', section: 'acceptance', item: { id: 'A9', clause: text, failLoudIfUndelivered: false } });
+
+  test('plancheck.census-out-of-slice-refused: a redirect citing an out-of-slice rule is malformed, not applied; the retry is told why', T, async () => {
+    const reason = 'unit u1\'s acceptance clause A9 names T-2, which the census puts out of slice: cite only in-slice rules';
+    const a = await checksArc({
+      steps: [planCheckStep({ decision: 'redirect', patch: [clause('A second berth booking is refused (T-2).')] }), planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] })],
+    });
+    const r = contextFor(a.d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+      assert.deepEqual(outcomes(a.d), ['plan-check:malformed', 'plan-check:approve']);
+      assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.rev, 1, 'nothing patched');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('plancheck.census-in-slice-patched: a redirect citing an in-slice rule patches as before; the next check has no prior attempt', T, async () => {
+    const a = await checksArc({ steps: [planCheckStep({ decision: 'redirect', patch: [clause('A double booking is refused (T-1).')] }), planCheckStep({ decision: 'approve' })] });
+    const r = contextFor(a.d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+      assert.deepEqual(outcomes(a.d), ['plan-check:redirect', 'plan-check:approve']);
+      const spec = loadUnitSpec(r.ctx, r.unit('u1')).spec;
+      assert.equal(spec.rev, 2, 'one machine patch');
+      assert.ok(spec.acceptance.some((c) => c.id === 'A9' && c.state === 'active'));
+      assert.ok(!readCalls(a.d.scenarioPath).filter(isPlanCheck).some((c) => c.stdin.includes('<prior_attempt>')));
     } finally {
       r.journal.close();
     }

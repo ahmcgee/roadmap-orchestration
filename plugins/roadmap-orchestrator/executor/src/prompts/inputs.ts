@@ -142,6 +142,11 @@ export type PlanCheckInputs = Readonly<{
    * (its answer is `PLAN_CHECK_ACCEPTANCE_SCHEMA`); null: the uniform check.
    */
   acceptance: PlanCheckAcceptance | null;
+  /**
+   * Run 10 (C): why the executor refused the unit's previous answer's redirect patch (it cited an out-of-slice rule), for
+   * this retry to correct; null otherwise.
+   */
+  priorInvalid: string | null;
 }>;
 
 /**
@@ -370,7 +375,7 @@ export type RoleInputs = {
 };
 
 export const ROLE_INPUTS = {
-  planCheck: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance'],
+  planCheck: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid'],
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
@@ -556,6 +561,16 @@ ${vision}`;
  * The acceptance shape of a plan-check (E, R59), or nothing for the uniform check: the redirect may only add or replace
  * witness items and facts, and cite; witness items take ids from the spec's next free `W-n`.
  */
+/** Run 10 (C): the previous plan-check answer's refused patch, as the retry reads it (empty when there was none). */
+export function planCheckPriorInvalidText(reason: string | null): string {
+  if (reason === null) return '';
+  return `
+
+<prior_attempt>
+Your previous answer on this unit redirected with a patch the executor refused, so the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
+</prior_attempt>`;
+}
+
 export function acceptanceShapeText(a: PlanCheckAcceptance | null): string {
   if (a === null) return '';
   const lanes = a.arcLanes.length === 0 ? '(none: this arc declares no arc lanes, so no witness item can be written; say so in notes)' : a.arcLanes.join(', ');
