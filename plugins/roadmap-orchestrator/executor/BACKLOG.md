@@ -72,6 +72,11 @@ at triage stay in git history.
 - Records frozen in step 0a (SCHEMAS.md "M4a"); step 0a placed placeholder modules at every final command path, each
   replaced by its landing step (C4 the last, deleting `src/core/notyet.ts`).
 - Directive overflow is not banked (R7): every directive still goes to the fix round.
+- Revision 3.1 (the run-10 batch, steps N0–N9, 2026-10-06): records frozen in step N0 (SCHEMAS.md "M4a rev 3"); N0
+  placed placeholders at `src/commands/{witnesscheck,resumearc,inputs}.ts`, `src/input/envelope.ts`,
+  `src/holistic/admits.ts` and `src/pipeline/{witnesscheck,smoke}.ts`, behind `src/core/notyet.ts` again (with `apply
+  --ruling` and the unit driver's `prepare` arm after a known defect); each landing step replaces its own, and the last
+  deletes `notyet.ts`, before the PR.
 
 ### M4b (after M4a)
 
@@ -179,6 +184,19 @@ None.
   `go` lane and the literal partial bundle. Each has a fake integrated test in `npm test`. Trigger: the first real
   arc to take one; read its log against the fake test.
 
+- **Partial revalidation of a stale-spec bundle** (F09): revalidate only the ops a patch delta touches. Trigger: stale
+  rejections > 2 per paid run.
+- **External-state identity for estate-lane reuse across SHAs** (Q13 remainder: toolchain versions, image digests,
+  service state). Trigger: estate lane time > 20% of a real arc's wall clock.
+- **Shared execution for non-identical but equivalent suite and witness lanes** (F13 remainder). Trigger: duplicate
+  execution > 10% of candidate lane time in a paid run.
+- **Debt and finding provenance** (F23): branch, head and time; historical vs current; effective vs declared
+  activation. Trigger: a real-arc drift finding on generated records.
+- **Stable defect lineage across audits and lenses** beyond equal causes (F24 remainder; within one audit, equal causes
+  merge). Trigger: the run-10 analysis shows ≥3 same-defect findings across audits.
+- **Deterministic safety fixtures for the plan-check shape** (understated risk, infeasible specs) beyond unit tests
+  (Q27 remainder). Trigger: `by-builder` reverted after run 10, or a missed-risk term fires.
+
 ## Scaffolding to delete
 
 - Holistic `architecture-doc` arcs (adopted dev.6 arcs only; a fresh one is refused, D0). With them go the
@@ -198,10 +216,18 @@ None.
     With it goes the dev.7 sentence in `canonicalFingerprint`'s comment (src/pipeline/gate.ts); the set comparison stays.
   - `DEV6_CLASS_CATALOGUE` (K2, step A2) and status's `dev6RevAlias` (K12, step A2), which joins a dev.6 meter row's
     recorded `routingRev` through it.
+  - M4a rev 3 (step N0): `HOST_SIGNATURES_DEV6` and the classification of unstamped (no `redRev`) lane and journey runs
+    by it; `mutantSubjectDefault` and the dev.6 `finding` arms of the mutant spawn subject and `mutant.apply`
+    (`Dev6MutantSubject`, `MutantApplyExpect`); `buildExperimentsDefault` (a build answer without `experiments`);
+    `minimalLaneRev` and `laneRevMatches`'s minimal-form arm; `bundleClassesOf`'s `unclassified` reading (with the
+    `architecture-doc` variant below); `dev6SmokeBounds` and `BoundsRecord`'s optional smoke bounds.
   - With them, the holistic `architecture-doc` variant and the `docRef` obligation arm in holistic arcs: anchor checks
     at the tip, `contractRevs` carrying the architecture doc, an `apply` adding `holistic` to an `architecture-doc` arc.
     Lasting, not scaffolding: the `architecture-doc` variant of a non-holistic arc, `target-kind-changed`, a fingerprint
     without `corpus`, and a sidecar's doc-ref arm for contract docRefs.
+- M4a rev 3 step N0's transitional pieces, before the PR: `src/core/notyet.ts` and its callers (the placeholders listed
+  under M4a); `BUILD_SCHEMA`'s pre-N3 literal (N3 writes each build call's `buildSchemaFor(lanes)` and the modules'
+  `buildSchemaFor(null)`); the M3 mutant writers' `finding` form (N3 writes `of`).
 - Interim M2 shim: `outcomeFact` writing no `park` for a retryable row whose stage names no targets (step 7a,
   src/pipeline/transitions.ts), and the fold's reading of such a fact as an operator park (`unclassedParkRecord`,
   src/core/state.ts). A behaviour shim, not a release layer (kept by M4a step X0).

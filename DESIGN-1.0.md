@@ -1,6 +1,6 @@
 # roadmap-orchestrator 1.0 — design brief (draft for audit)
 
-Status: draft 9, 2026-10-03. Distilled from 0.20.0 (tag `v0.20.0`: its RATIONALE §1–25, DESIGN.md, PROMPT.md and the Codex-native sibling skill,
+Status: draft 10, 2026-10-06. Distilled from 0.20.0 (tag `v0.20.0`: its RATIONALE §1–25, DESIGN.md, PROMPT.md and the Codex-native sibling skill,
 all since removed from the tree), `orchestrator-observations.md`, and arc 1's full `.roadmap/` record (`calibration-0.20.0.md` §3.1–3.23,
 `skill-feedback-0.16.0.md`, the wave 33–38 audits, the architect log, the hand-written boundary patches);
 citations will be folded into RATIONALE 1.0. Draft 3 incorporated the adjudicated cross-model review (gpt-6-astra,
@@ -38,6 +38,15 @@ per rule; the vision lives in the corpus and its confirmation is verified; corpu
 issues trusted by forge policy; pack review as an executor job; the frontier and summit classes rebound, retroactively
 (§4); chained arcs on stacked branches (§2.11); preview deferred to 1.1; `contractRequests` and `owedAfterMerge`
 withdrawn.
+Draft 10 applies the M4a plan's revision 3.1 (the run-10 batch, 2026-10-06; amendments A-M4-20 to A-M4-28): code
+classifies checkpoint admits against the owner-selected slice (OR-A1, one opportunity per arc with one follow-up,
+LR-k); checkpoint evidence is compared per test and a bundle touching a running attempt waits for its boundary;
+witness presence and mutation smoke run before the gate in corpus arcs; plan-check takes its shape from the builder's
+class; lanes are reused under a recorded identity and certificate, reds rerun only when they may be flaky, known
+defects hold their units uncharged, and units take a priority; `resume-arc`, `witness-check`, `inputs export` and
+`apply --ruling`; the root agent's supervision and operator log; change-sensitive drift, an immutable checkpoint
+manifest, closeout deltas and issue reuse; a Phase-0 spec-census cross-check and delta pack re-review. The new checks
+and the admit classes apply to corpus arcs only (LR-h).
 
 ## 1. What the system is for
 
@@ -124,6 +133,29 @@ Later stages bind to the salvage SHA; every judgment stage runs in a fresh sessi
 build session with the failing lanes' evidence dirs. Per-unit counters are cumulative and `monotonic()`:
 `attempts` counts every start; `chargeableFailures` counts design-class failures only and bounds the unit.
 
+**Executable checks before the gate (A-M4-22; corpus arcs, LR-h; LR-j: nothing is judged by reading a test).**
+After a green spec series that wrote its clean certificate, the lanes stage computes the unit's required witnesses
+(the witnesses of the obligations it completes or repairs and its spec's witness items as targets, its declared
+must-holds as preservation) and runs each required arc lane once at the salvage SHA in its own checkout, reusing only
+observations of a certified series. A required id absent, zero-selected, skipped, malformed or failing is
+`witnesses-missing`: a charged fix round listing them, no gate call. Then mutation smoke, for a `med` or `high` unit
+whose targets' lanes declare `testPaths` and whose diff touches production paths: the production diff reverted in a
+detached worktree (a mutant that never certifies), the targets run, each killed, survived or inconclusive (a binary or
+renamed path, or a patch that does not apply, is inconclusive). A survivor is one bounded fix round (`smokeRounds`,
+default 1), then the gate decides with the survivors in its `checks`; one execution per (production diff, witness
+definitions, environment) is reused, at most `smokeRuns` (default 2) per unit. The implementer runs the same comparator:
+its prompt names one `roadmap witness-check --lane-file <f>` command per fast required lane, which runs the lane with
+fresh reporter output. A date- or time-zone-dependent unit's spec pins the product's own clock seam (guidance, R39).
+
+**Plan-check shape (A-M4-23).** `planCheck.shape: uniform | by-builder` (absent: `uniform`; a non-holistic arc is always
+`uniform`). Under `by-builder` a frontier or summit builder makes no plan-check call (`in-session`): its fresh build
+round first assesses in the same session, read-only, answering plan-check's slice `planAssessment {feasible, riskFloor,
+visionConflict[], premises, notes}`; a vision conflict opens a P3 finding, an understated floor is malformed, a raised
+one re-seats the build (`risk-raised`) or rises in place, and `feasible: false` parks the unit for a spec revision
+(`infeasible`); the implementing invocation resumes that session. An efficient builder's plan-check runs the acceptance
+shape: its redirect may only add or replace witness items and facts, and cite; witness items enter the spec only
+through that patch channel, as the next free `W-n`.
+
 ### 2.2 Scheduling
 
 A DAG with resource locks replaces waves. A unit starts when every dependency is merged, its contingent edges are
@@ -201,6 +233,20 @@ that fails partway leaves one residue per failed resource. `start` for any arc r
   `resume --backend <name>` re-runs that backend's preflight smoke before unparking. A usage-limit park dominates
   a retryable park on the same backend, and a probe clears only the park epoch it tested. Nothing brakes before
   the limit; limit hits under parallel burn are measured in arc 2.
+- **Lane efficiency (A-M4-24; every arc).** A spec series reuses a lane's earlier pass of the same unit when its
+  recorded identity (normalised lane rev, environment id, argv[0]'s resolved path and content hash) is today's, its
+  series wrote a clean certificate, and the SHA is the same or (a fast lane declaring `inputs`) the diff since touches
+  none of them; estate lanes reuse at the same SHA only, and a series that reuses every lane still makes and certifies
+  its checkout. Every lane and journey spawn is stamped with the red protocol's revision, and its red class is written
+  once before any rerun; a red repeating the unit's previous non-flaky red of the same lane, rev and environment with a
+  specific failure signature, with no pass between, is not rerun (`repeat`). Host-suspected failures are shown. A
+  suite lane identical to an arc lane (argv, cwd, env, tree) runs once for both. Lane revisions hash the validated,
+  normalised definition everywhere.
+- **Known defects and priority (A-M4-24; opt-in).** `plan.knownDefects [{id: K-n, match: lane | output{contains},
+  fixUnit}]`: a unit matching an active defect records `known-defect` uncharged and waits at `prepare` until the fixer's
+  lineage merges (one predicate, `knownDefectActive`; the fixer is never held by its own defect; the combined dependency
+  and hold graph is cycle-checked; once the fixer merges a later match charges normally). A unit's `priority: high`
+  ranks it before every `normal` waiter, ahead of promotion.
 
 ### 2.3 Architect commands
 
@@ -250,6 +296,14 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 
 Automatic: salvage (arc 1 did it by hand three times); teardown after any kill; the snapshot (§2.9); residue
 compaction at `start` (§2.9).
+
+**M4a rev 3 commands (A-M4-25).** `resume-arc --repo` (a CLI act for a boot hook: restarts the supervisor of the repo's
+arc whose owner died, a no-op otherwise); `witness-check --lane-file` (the implementer's witness comparator, §2.1);
+`inputs export --repo --arc --out` (read-only: the arc's current inputs, every spec at its current rev, for an edit and
+`apply --expect-rev`); `apply --ruling <sidecar>` (repeatable: rulings and the edits that depend on them land as one
+revision). `apply` gains the edit classes `unit-priority`, `known-defects` and `plan-check-shape` (none drains), and a
+re-entry may widen its lineage's scope envelope on an active ruling naming exactly the added patterns. A spec edit of a
+unit whose attempt is running is refused until its stage boundary; one a crash cut short, until the executor records it.
 
 ### 2.4 `status`
 
@@ -322,6 +376,11 @@ them acts (§2.8).
 - **Owed**: a skipped audit keeps its triggers owed; at 2N publications or 2 × `wallClockMin` → a non-blocking
   `audit-owed` (OR-Q2/3; an owed explorer went unrun for 27 waves). The final audit and checkpoint run after the
   last merge; the audit stays open until its generation is quiescent.
+- **Change-sensitive drift (A-M4-27).** A bundle revision that changes only plan units and their specs drifts
+  `specsOnly`: the vision lens alone, over the spec deltas; code lenses keep their watermarks. Within one audit, a
+  lens draft whose (repo evidence paths, obligation, cause) equals a finding the audit already opened merges into it,
+  its rationale kept (`finding-corroborated`). A vacuity finding's mutant patch is syntax-checked at admission; a
+  corrupt patch refuses the draft with git's reason.
 
 ### 2.6 Ruling record
 
@@ -637,6 +696,38 @@ Issue mode). Brakes in code:
   is open every bundle becomes a `bundle-request`. Acknowledging it resets the counter.
 - Every act is a ruling record (§2.6) or a revision, shown in `decisionsSince` and the log. Answering the user
   stays root-only.
+
+**Admit classes (A-M4-20; OR-A1, LR-k; corpus arcs).** Code classifies every checkpoint `admit` against the
+owner-selected slice `S` (`advances` less the arc's opportunity clauses): **repair** (it restores an obligation or
+behaviour that does not hold; its refs are valid: an unheld non-exempt obligation or a captured active finding),
+**oversight** (a gap within `S`'s clauses), **opportunity** (it advances clauses outside `S`, honestly cited; they join
+`advances` and the brief; the budget is one per arc) or it converts. A clause counts as touched by an admit through
+its cites, the obligations its unit delivers, and what it repairs (a mixed finding keeps its out-of-slice clauses);
+obligations an impact mapping merely relates never count. A repair whose attributed units (by finding source and lens
+range, or an obligation's held-to-not-held window) lie wholly in one opportunity's lineage is that opportunity's
+follow-up; an opportunity carries one, and the next converts with a debt item naming it. Ambiguous attribution never
+grants a follow-up. Repair and oversight are always admitted; an unrelated admit, an opportunity over budget and an
+overrun convert: the op is dropped and recorded as a corpus amendment, unless another op or an issue disposition names
+it, which makes the bundle invalid. The classification is persisted in the decision record before any settlement and
+never recomputed. A bundle may add to `advances` exactly its opportunities' clauses; nothing else of `advances` moves
+but by `apply`. `status` and the brief show admits, opportunities and a drift indicator.
+
+**Checkpoint evidence and inputs (A-M4-21, A-M4-27).** A cited observation on another tree stands when the head's run
+of the same lane, at the same lane rev and environment, keeps every cited test's outcome and selection, neither record
+malformed nor the cited one empty. Rulings are stamped with the corpus pin they were judged at; model-written ruling
+ids are read in numeric form; a split child anchored at an out-of-slice rule moves the census when it serves the
+slice, and is refused with the fix otherwise. A bundle touching a unit's running or crash-abandoned attempt is
+rejected `busy` (not counted toward the invalid brake) and decided again only after the attempt's boundary. The
+checkpoint reads an immutable, content-addressed manifest of its inputs (never `roadmap-inputs`) with every unit's
+spec embedded with its occupied item ids and the ledger's next ruling id; after a no-op, a checkpoint whose relevant
+inputs are unchanged renders only the deltas (never the final one), and unchanged issues on unchanged grounds keep
+their dispositions. Before admitting or approving a repair that reorders a transaction, the checkpoint and plan-check
+write its failure matrix (each step × process death).
+
+**Phase 0 (A-M4-28).** The shared Phase-0 rows gain `spec-census-mismatch`: a pack spec's declared obligation whose
+rule's census state is not `obligation` for it or its split parent, or an acceptance item naming an out-of-slice rule.
+A pack re-review after a required review reads the changed pack files and the previous review's unresolved findings,
+giving each a disposition (`resolved`, `still-open`, `withdrawn`); the first review stays full.
 
 ### 2.9 Artifacts
 
@@ -988,6 +1079,15 @@ other questions only from the answer key's owner answers. Planted corpus defects
 the kept pin, census and Phase-0 record, never by file name. A canary snapshots the real forge's refs, issues,
 PRs, comments, labels and releases before and after, and a transcript scan over tool arguments and results
 fails the run on any answer-key or real-repository access.
+
+**Supervision and run 10 (A-M4-26; OR-A3, OR-A2).** The root agent observes cheaply (status on every wake, at most one
+read per 15 quiet minutes between wakes) and wakes only on actionable events (a needs-user item, a terminal state,
+changed constraints, a measured stall); it operates only through the sanctioned levers and never patches the plugin or
+a run dir. Each intervention (a lever used on its own initiative) is one entry in the operator log
+(`roadmap-inputs/skill-feedback.md`, outside the product repo); the fixture counts interventions per lever as an
+executor-quality metric. The fixture's turn cap is the session cap; it releases the host claim it leaves, restores a
+scrambled tree on any exit, checks the arc's profile, records each arc's terminal seq and post-run activity, and
+exports per-invocation cost with explicit unknowns. Run 10 runs once under `--profile claude-only`.
 
 **Acceptance properties**, asserted by each slice as reached: lanes run by the executor verbatim,
 graded by exit code and witness records; fix rounds get evidence dirs in continuous context; diffs are
