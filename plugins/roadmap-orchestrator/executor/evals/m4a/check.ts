@@ -33,6 +33,14 @@
 //   no-model-ids      no model id in either run dir (launch inputs and captured backend output aside) or ref
 //   snapshot-closure  each ref keeps its guide, pin, every pinned file, Phase-0 record and capture, every checkpoint's
 //                     kept issues and every pack review's inputs
+//   host-released     every arc the driver found holding the host when the session ended was stopped and its claim
+//                     cleared (`released`), and no arc of the product holds the host now
+//   profile           each arc's first `plan-applied` routingProvenance.profile is the report's profile (the one the
+//                     session was told to start every arc under)
+//
+// Also reported, never a criterion: `interventions` {n, byLever, malformed} from the architect's operator log
+// (`<fixture>/roadmap-inputs/skill-feedback.md`, SKILL.md "Supervising the executor"); a missing log is 0. The scrambled
+// live inputs are restored when `phase0-green` ends and again in `check`'s `finally`, whatever threw.
 //
 // NOT EXERCISED (the paid run cannot force them; each has a fake integrated test): other-repo and checkout corpus
 // sources, `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n,
@@ -54,9 +62,11 @@ import { parseObligations } from '../../src/holistic/types.ts';
 import { CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT } from '../../src/input/inforce.ts';
 import { runDir } from '../../src/input/cli.ts';
 import { parsePhase0Record } from '../../src/phase0/types.ts';
-import { MODEL_IDS } from '../../src/routing/types.ts';
+import { type HostLockClaim } from '../../src/core/records.ts';
+import { readClaim } from '../../src/host/lock.ts';
+import { MODEL_IDS, type ProfileName } from '../../src/routing/types.ts';
 import { readStore } from '../../test/fakes/gh-store.ts';
-import { DENIED, type Report, UNSTAGED } from './driver.ts';
+import { DENIED, type Released, type Report, UNSTAGED } from './driver.ts';
 import { type ArcView, defectVerdicts, readKey } from './key.ts';
 import { INJECTION_LABEL, INJECTION_MARKER, type Layout, MAIN, layout } from './layout.ts';
 import { SEED_FILE } from './setup.ts';
@@ -68,7 +78,8 @@ export const NOT_EXERCISED = [
 ] as const;
 
 export type Criterion = Readonly<{ name: string; pass: boolean; detail: string }>;
-export type CheckResult = Readonly<{ pass: boolean; criteria: readonly Criterion[]; notExercised: readonly string[] }>;
+/** `interventions` is a metric of the executor's quality (OR-A3), never a criterion: it cannot fail the check. */
+export type CheckResult = Readonly<{ pass: boolean; criteria: readonly Criterion[]; notExercised: readonly string[]; interventions: Interventions }>;
 type Verdict = Readonly<{ pass: boolean; detail: string }>;
 const verdict = (problems: readonly string[], ok: string): Verdict => ({ pass: problems.length === 0, detail: problems.length === 0 ? ok : problems.join('; ') });
 
@@ -150,8 +161,7 @@ async function phase0Green(run: Run): Promise<Verdict> {
     const r = await phase0Check({ repo: run.product, source: { type: 'ref', arc: ref.arc } });
     if (r.rows.length > 0) problems.push(`${ref.arc}: ${JSON.stringify(r.rows)}`);
   }
-  // The from-ref proof is done: put the scrambled inputs back, so the fixture dir is usable by hand and the criteria after this read a sane tree.
-  git(run.product, ['checkout', '--', ...run.report.scrambled]);
+  // `check` restores the scrambled inputs when this criterion ends, a throw included (`SCRAMBLED_CRITERION`).
   return verdict(problems, `both arcs green from their refs, ${run.report.scrambled.length} live files scrambled, then restored`);
 }
 
@@ -345,7 +355,92 @@ function snapshotClosure(run: Run): Verdict {
   return verdict(problems, 'guides, pins, corpus files, Phase-0 records and captures, checkpoint issues and pack-review inputs kept');
 }
 
+/** `host-released` (A2): every arc the driver found holding the host at the end was stopped and its claim cleared, and none holds it now. */
+export function hostReleasedVerdict(released: readonly Released[], claim: HostLockClaim | null, product: AbsPath): Verdict {
+  const problems = released.filter((r) => !r.stopped).map((r) => `${r.arc}: ${r.detail}`);
+  if (claim !== null && claim.repo === product) problems.push(`arc ${claim.arc} of the product holds the host now`);
+  return verdict(problems, released.length === 0 ? 'no arc held the host when the session ended' : `the driver stopped ${released.map((r) => r.arc).join(', ')} and the host cleared`);
+}
+
+function hostReleased(run: Run): Verdict {
+  return hostReleasedVerdict(run.report.released, readClaim(absPath(run.report.hostDir)), run.product);
+}
+
+/** `profile` (A5): each arc's first `plan-applied` was resolved under the profile the session was told to use. */
+export function profileVerdict(expected: ProfileName, found: readonly Readonly<{ arc: string; profile: ProfileName | null }>[]): Verdict {
+  const problems = found.filter((f) => f.profile !== expected).map((f) => `${f.arc} started under ${f.profile ?? 'no plan-applied'}, not ${expected}`);
+  return verdict(problems, `${found.length} arcs started under ${expected}`);
+}
+
+function profile(run: Run): Verdict {
+  const first = (ref: ArcRef): ProfileName | null => {
+    for (const e of ref.events) if (e.type === 'fact' && e.fact.kind === 'plan-applied') return e.fact.routingProvenance.profile;
+    return null;
+  };
+  return profileVerdict(run.report.profile, run.arcs.map((a) => ({ arc: a.arc, profile: first(a) })));
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The interventions metric (OR-A3, A4): the architect's operator log, never a criterion
+
+/** The closed lever list of an operator-log entry (SKILL.md "Supervising the executor"). */
+export const LEVERS = ['pause', 'resume', 'resume --backend', 'ack', 'apply', 'rule', 'steer', 'reverse', 'merge-in', 'audit', 'close-admissions', 'stop', 'start', 'resume-arc', 'gc', 'inputs export'] as const;
+const ENTRY_FIELDS = ['symptom', 'evidence', 'outcome', 'executor change'] as const;
+const ENTRY_HEADING = /^## OP-(\d+) (\d{4}-\d{2}-\d{2}T\S+) arc=(\S+) lever=(.+?)\s*$/;
+
+export type Interventions = Readonly<{ n: number; byLever: Readonly<Record<string, number>>; malformed: readonly string[] }>;
+
+/**
+ * Parses `skill-feedback.md`: entries `## OP-<n> <ISO-8601> arc=<arc> lever=<lever>` followed by the four bullets
+ * `- symptom:`, `- evidence:`, `- outcome:`, `- executor change:`, each non-empty. `n` and `byLever` count the well-formed
+ * entries; a malformed one (bad heading, unknown lever, repeated id, a missing or empty bullet) is listed, never counted.
+ */
+export function parseOperatorLog(text: string): Interventions {
+  const lines = text.split('\n');
+  const starts = lines.flatMap((x, i) => (x.startsWith('## OP-') ? [i] : []));
+  const byLever: Record<string, number> = {};
+  const malformed: string[] = [];
+  const ids = new Set<string>();
+  let n = 0;
+  for (const start of starts) {
+    const next = lines.findIndex((x, i) => i > start && x.startsWith('## '));
+    const body = lines.slice(start + 1, next < 0 ? lines.length : next);
+    const where = `line ${start + 1}`;
+    const m = ENTRY_HEADING.exec(lines[start]!);
+    if (m === null) {
+      malformed.push(`${where}: heading is not "## OP-<n> <ISO-8601> arc=<arc> lever=<lever>"`);
+      continue;
+    }
+    const [, id, at, , lever] = m;
+    const problems: string[] = [];
+    if (Number.isNaN(Date.parse(at!))) problems.push(`${at} is not a time`);
+    if (!(LEVERS as readonly string[]).includes(lever!)) problems.push(`lever "${lever}" is not in the closed list`);
+    if (ids.has(id!)) problems.push(`OP-${id} repeats`);
+    for (const f of ENTRY_FIELDS) {
+      const bullet = body.filter((x) => x.startsWith(`- ${f}:`));
+      if (bullet.length !== 1 || bullet[0]!.slice(f.length + 3).trim() === '') problems.push(`no single non-empty "- ${f}:" bullet`);
+    }
+    ids.add(id!);
+    if (problems.length > 0) {
+      malformed.push(`${where} (OP-${id}): ${problems.join('; ')}`);
+      continue;
+    }
+    n += 1;
+    byLever[lever!] = (byLever[lever!] ?? 0) + 1;
+  }
+  return { n, byLever, malformed };
+}
+
+/** `<fixture>/roadmap-inputs/skill-feedback.md`; a missing file is no intervention. */
+export function interventionsOf(l: Layout): Interventions {
+  const file = join(l.inputs, 'skill-feedback.md');
+  return existsSync(file) ? parseOperatorLog(readFileSync(file, 'utf8')) : { n: 0, byLever: {}, malformed: [] };
+}
+
 type Grade = readonly [string, (run: Run) => Verdict | Promise<Verdict>];
+
+/** The one criterion that reads the product with its live inputs scrambled; `check` restores them when it ends. */
+const SCRAMBLED_CRITERION = 'phase0-green';
 
 export const CRITERIA: readonly Grade[] = [
   ['isolation', isolation],
@@ -361,6 +456,8 @@ export const CRITERIA: readonly Grade[] = [
   ['brief-acked-once', briefAckedOnce],
   ['no-model-ids', noModelIds],
   ['snapshot-closure', snapshotClosure],
+  ['host-released', hostReleased],
+  ['profile', profile],
 ];
 
 /** The product's arcs, with arc 1 (no chain) and arc 2 (chained on arc 1). */
@@ -376,17 +473,32 @@ export async function check(dir: string): Promise<CheckResult> {
   if (!existsSync(l.report)) throw new Error(`${l.report} is missing: run evals/m4a/driver.ts first`);
   const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
   const product = absPath(l.product);
-  const run: Run = { l, report, product, ...chainOf(product) };
-  const criteria: Criterion[] = [];
-  for (const [name, grade] of CRITERIA) {
-    try {
-      const v = await grade(run);
-      criteria.push({ name, pass: v.pass, detail: v.detail });
-    } catch (error) {
-      criteria.push({ name, pass: false, detail: `threw: ${(error as Error).message}` });
+  // The driver scrambled the live inputs so `phase0 check --from-ref` proves it reads the refs alone (K20). Only that
+  // criterion needs them scrambled (the brief of `arc2-chained` reads the live config): the restore runs when it ends,
+  // however it ended, and again in the entry's `finally` for a throw anywhere else, so the fixture is never left scrambled.
+  let restored = false;
+  const restore = (): void => {
+    if (restored) return;
+    if (report.scrambled.length > 0) git(product, ['checkout', '--', ...report.scrambled]);
+    restored = true;
+  };
+  try {
+    const run: Run = { l, report, product, ...chainOf(product) };
+    const criteria: Criterion[] = [];
+    for (const [name, grade] of CRITERIA) {
+      try {
+        const v = await grade(run);
+        criteria.push({ name, pass: v.pass, detail: v.detail });
+      } catch (error) {
+        criteria.push({ name, pass: false, detail: `threw: ${(error as Error).message}` });
+      } finally {
+        if (name === SCRAMBLED_CRITERION) restore();
+      }
     }
+    return { pass: criteria.every((c) => c.pass), criteria, notExercised: [...NOT_EXERCISED], interventions: interventionsOf(l) };
+  } finally {
+    restore();
   }
-  return { pass: criteria.every((c) => c.pass), criteria, notExercised: [...NOT_EXERCISED] };
 }
 
 if (import.meta.main) {
