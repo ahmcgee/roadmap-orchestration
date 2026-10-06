@@ -20,6 +20,9 @@
 //   (its `ack` is enqueued, applied or not): what an ack of the brief acknowledges. Blocking items are never acked by a
 //   brief.
 // - **Chain**: the head's position (1-based), K (`config.chain.k`) and the unacked starts.
+// - **Admits** (M4a rev 3, OR-A1; corpus arcs): the admits classified in the delta (`status`'s `admitViews` over the ref),
+//   the opportunities at the ref, the drift indicator's non-zero lines at the ref (the only check on under-declared admit
+//   targets), and each amendment a converted admit made names that admit.
 // The payload holds no clock; forge state, census figures and timings are in it, so a change of any changes the id.
 import { existsSync } from 'node:fs';
 import { type ArcRef, committedAcks, completedHeadOf, unackedStarts } from './chain.ts';
@@ -37,7 +40,8 @@ import { CliError, runDir } from './input/cli.ts';
 import { NEEDS_USER_DIR } from './needsuser.ts';
 import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefPayload, type BriefPr, type CoverageEntry, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
 import { readRepoConfig } from './preflight/checks.ts';
-import { type Decision, censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
+import { meterOf } from './meter.ts';
+import { type Decision, admitViews, censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
 
 /** The brief's reasons an ack acknowledges (R10): non-blocking, rendered for a live arc. */
 export const ACKED_REASONS = ['divergence-digest', 'convergence-bound'] as const;
@@ -104,6 +108,8 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr): BriefA
     command: (): CommandBody | null => null,
   });
   const inForce = now === undefined ? null : parsePhase0Record(JSON.parse(ref.input(now, PHASE0_INPUT).toString('utf8')));
+  // OR-A1 (corpus arcs): the classified admits, opportunities and drift indicator, by status's rule over the ref's log.
+  const admitted = ref.plan.target === 'corpus' ? admitViews(ref.view, repo, ref.plan, meterOf(ref.events)) : { admits: [], opportunities: [], drift: [] };
   return {
     arc: ref.arc,
     slice: inForce === null ? null : inForce.slice,
@@ -121,12 +127,18 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr): BriefA
       ...facts.flatMap((f) => (f.kind === 'issue-intake' ? [{ issue: f.issue, job: f.job, outcome: f.outcome }] : [])),
     ],
     questions: (record?.questions ?? []).map((q) => ({ id: q.id, rank: q.rank, text: q.text, assumption: q.assumption, state: q.state })),
-    amendments: facts.flatMap((f) => (f.kind === 'corpus-amendment' ? [{ id: amendmentRefOf(ref.arc, f.id), rules: f.rules, proposal: f.proposal }] : [])),
+    amendments: facts.flatMap((f) => (f.kind === 'corpus-amendment' ? [{
+      id: amendmentRefOf(ref.arc, f.id), rules: f.rules, proposal: f.proposal,
+      admit: f.source.type === 'admit' ? { job: f.source.job, index: f.source.index, reason: f.source.reason } : null,
+    }] : [])),
     packReviewNotes: facts.flatMap((f) => (f.kind === 'pack-review-ended'
       ? f.findings.flatMap((x) => (x.severity === 'note' ? [{ job: f.job, index: x.index, claim: x.claim }] : [])) : [])),
     census: censusAt(repo, ref),
     timings: stageTimings(ref.events, from),
     pr,
+    admits: admitted.admits.filter((x) => x.seq > from).map((x) => ({ job: x.job, index: x.index, unit: x.unit, class: x.class, clauses: x.clauses, followUp: x.followUp })),
+    opportunities: admitted.opportunities,
+    drift: admitted.drift.filter((x) => x.findings.length > 0).map((x) => ({ unit: x.unit, job: x.job, findings: x.findings.map((f) => ({ id: f.id, clauses: f.clauses })) })),
   };
 }
 
@@ -205,7 +217,11 @@ function arcMarkdown(a: BriefArc): string {
     section('Debt banked', a.debt.banked.map((d) => `${d.id}: ${d.what}`)),
     section('Debt dispositioned', a.debt.dispositioned.map((d) => `${d.id}: ${canonicalJson(d.disposition).trim()}`)),
     section('Issue intake', a.intake.map((x) => `${x.issue} (${x.job ?? 'Phase 0'}): ${canonicalJson(x.outcome).trim()}`)),
-    section('Amendments', a.amendments.map((x) => `${x.id}${x.rules.length === 0 ? '' : ` (${x.rules.join(', ')})`}: ${x.proposal}`)),
+    section('Amendments', a.amendments.map((x) => `${x.id}${x.rules.length === 0 ? '' : ` (${x.rules.join(', ')})`}${x.admit === null ? ''
+      : ` [converted admit ${x.admit.job}#${x.admit.index}: ${x.admit.reason}]`}: ${x.proposal}`)),
+    section('Admits', a.admits.map((x) => `${x.unit} (${x.job}#${x.index}): ${x.class}${x.clauses.length === 0 ? '' : ` ${x.clauses.join(', ')}`}${x.followUp === null ? '' : `, follow-up of ${x.followUp}`}`)),
+    section('Opportunities', a.opportunities.map((o) => `${o.id} advances ${o.clauses.join(', ')}: units ${o.units.join(', ')}; ${o.followUps} follow-up${o.followUps === 1 ? '' : 's'}; $${o.spentUsd}${o.overrun.length === 0 ? '' : `; overrun by ${o.overrun.map((x) => `${x.job}#${x.index}`).join(', ')}`}`)),
+    section('Drift (findings outside the slice on checkpoint units\' merges)', a.drift.map((d) => `${d.unit} (${d.job}): ${d.findings.length} — ${d.findings.map((f) => `${f.id} ${f.clauses.join(', ')}`).join('; ')}`)),
     section('Pack review notes', a.packReviewNotes.map((n) => `${n.job}#${n.index}: ${n.claim}`)),
     section('Timings', a.timings.map((t) => `${t.stage}: ${t.count} completed, p50 ${Math.round(t.p50Ms / 1000)} s, max ${Math.round(t.maxMs / 1000)} s`)),
   ].join('')}`;

@@ -64,6 +64,7 @@
 import { join } from 'node:path';
 import type { Parent } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import { holdFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
@@ -94,7 +95,7 @@ import { SpecFileError, parseSpec, specBytes } from '../spec/spec.ts';
 import { mintDebt } from '../debt/mint.ts';
 import { baselineDebtAt } from '../phase0/rows.ts';
 import {
-  type AdmitClassification, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, admitOpOf, classifyAdmits, conversionReasons, namedUnits, opportunityClauses,
+  type AdmitClassification, type AdmitOp, type AdmitWorld, type AuditRange, type RecordedAdmit, type UnitMerge, admitOpOf, classifyAdmits, conversionReasons, namedUnits, opportunityClauses,
 } from './admits.ts';
 import { admitSummary, amendmentReasons, appendAmendment, checkpointAmendments, conversionAmendment, divergenceAmendments } from './amendments.ts';
 import type { AuditContext } from './audit.ts';
@@ -818,8 +819,7 @@ function busyAttempts(ctx: CheckpointContext, ops: readonly IndexedOp[]): readon
 }
 
 /** The arc's classified admits so far (the done bundle revisions' sources), in log order; unclassified bundles count none. */
-function recordedAdmits(ctx: CheckpointContext): readonly RecordedAdmit[] {
-  const view = ctx.journal.view;
+export function recordedAdmits(view: JournalView): readonly RecordedAdmit[] {
   return view.opsOf('revision.commit').flatMap((commit) => {
     const source = commit.expect.source;
     if (source.type !== 'bundle' || view.doneOf(commit.op) === null) return [];
@@ -835,6 +835,38 @@ function ownerSlice(plan: PlanM1, recorded: readonly RecordedAdmit[]): ReadonlyS
 }
 
 /**
+ * The integration history attribution reads (R46): each published head's position (the base 0, each published head the
+ * next; `tip` is the base while nothing is published), each unit ff's first-parent paths, and each completed audit's
+ * covered ranges by position. Classification and the drift indicator (status, brief) read the same.
+ */
+export function integrationHistory(view: JournalView, repo: AbsPath, tip: Sha): Readonly<{
+  positions: ReadonlyMap<Sha, number>; merges: readonly UnitMerge[]; audits: ReadonlyMap<JobId, readonly AuditRange[]>;
+}> {
+  const heads = publishedHeads(view);
+  const positions = new Map<Sha, number>();
+  positions.set(heads.length > 0 ? heads[0]!.old : tip, 0);
+  heads.forEach((h, i) => {
+    if (!positions.has(h.head)) positions.set(h.head, i + 1);
+  });
+  const positionOf = (sha: Sha, what: string): number => {
+    const p = positions.get(sha);
+    if (p === undefined) throw new Error(`${what} names ${sha}, no head of the integration history`);
+    return p;
+  };
+  const ffs = new Map(view.opsOf('integration.ff').map((i) => [i.op, i]));
+  const merges = heads.flatMap((h, i): UnitMerge[] => {
+    const parent = ffs.get(h.op)?.parent;
+    if (h.subject !== 'unit' || parent?.type !== 'stage') return [];
+    const paths = git(repo, ['diff', '--name-only', '--no-renames', h.old, h.head]).split('\n').filter((x) => x !== '');
+    return [{ unit: parent.unit, position: i + 1, paths }];
+  });
+  const audits = new Map(view.holistic().audits.flatMap((x) => (x.ended === null ? [] : [[x.started.job, x.ended.covered.map((r): AuditRange => ({
+    lens: r.lens, from: positionOf(r.from, `${x.started.job}'s ${r.lens} range`), to: positionOf(r.to, `${x.started.job}'s ${r.lens} range`),
+  }))] as const])));
+  return { positions, merges, audits };
+}
+
+/**
  * What classification reads (src/holistic/admits.ts), from the log, the revision in force, the obligations after the ops
  * and git: the integration history's positions (the base 0, each published head the next), each unit ff's first-parent
  * paths, each completed audit's covered ranges, the obligations' verdicts on the head and at every published head.
@@ -844,29 +876,8 @@ export function admitWorldOf(
 ): AdmitWorld {
   const view = ctx.journal.view;
   if (revision.vision === null) throw new Error(`${a.job}: admit classes outside a holistic revision`);
-  const heads = publishedHeads(view);
-  const positions = new Map<Sha, number>();
-  // Nothing published yet: the head is the base.
-  positions.set(heads.length > 0 ? heads[0]!.old : integrationHead(ctx), 0);
-  heads.forEach((h, i) => {
-    if (!positions.has(h.head)) positions.set(h.head, i + 1);
-  });
-  const positionOf = (sha: Sha, what: string): number => {
-    const p = positions.get(sha);
-    if (p === undefined) throw new Error(`${a.job}: ${what} names ${sha}, no head of the integration history`);
-    return p;
-  };
-  const ffs = new Map(view.opsOf('integration.ff').map((i) => [i.op, i]));
-  const merges = heads.flatMap((h, i) => {
-    const parent = ffs.get(h.op)?.parent;
-    if (h.subject !== 'unit' || parent?.type !== 'stage') return [];
-    const paths = git(ctx.repo, ['diff', '--name-only', '--no-renames', h.old, h.head]).split('\n').filter((x) => x !== '');
-    return [{ unit: parent.unit, position: i + 1, paths }];
-  });
+  const { positions, merges, audits } = integrationHistory(view, ctx.repo, integrationHead(ctx));
   const fold = view.holistic();
-  const audits = new Map(fold.audits.flatMap((x) => (x.ended === null ? [] : [[x.started.job, x.ended.covered.map((r): AuditRange => ({
-    lens: r.lens, from: positionOf(r.from, `${x.started.job}'s ${r.lens} range`), to: positionOf(r.to, `${x.started.job}'s ${r.lens} range`),
-  }))] as const])));
   const captured = new Set<FindingId>(a.captured.findings);
   const findings = new Map(fold.findings.map((f) => [f.id, {
     id: f.id, active: isActive(f), captured: captured.has(f.id), visionClauses: f.visionClauses, obligation: f.obligation, lens: f.lens, source: f.source,
@@ -960,7 +971,7 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   const all = indexed(a.output.ops);
   // M4a rev 3 (LR-h): admit classes, census moves and opportunities exist in a corpus arc only.
   const corpus = revision.corpus !== null && a.output.decision === 'bundle';
-  const recorded = corpus ? recordedAdmits(ctx) : [];
+  const recorded = corpus ? recordedAdmits(ctx.journal.view) : [];
   const slice = corpus ? ownerSlice(inForce.plan, recorded) : null;
   // Before classification a split child may serve any clause an admit of this bundle cites (a would-be opportunity); the
   // rebuild below checks it against the bundle's actual opportunities.

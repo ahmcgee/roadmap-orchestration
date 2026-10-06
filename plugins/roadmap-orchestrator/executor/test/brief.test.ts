@@ -180,7 +180,7 @@ describe('roadmap brief', () => {
     assert.deepEqual(one.divergences, [{ id: 'D-1', type: 'interpretation', what: 'trust means tested' }]);
     assert.deepEqual(one.digests, [{ needsUser: items.arc1Digest, ids: ['D-1'] }]);
     assert.deepEqual(one.decisions, ['divergence D-1: interpretation: trust means tested (ckpt-1)']);
-    assert.deepEqual(one.amendments, [{ id: 'arc-1/M-1', rules: ['T-2'], proposal: 'Name the tide window in every booking.' }]);
+    assert.deepEqual(one.amendments, [{ id: 'arc-1/M-1', rules: ['T-2'], proposal: 'Name the tide window in every booking.', admit: null }]);
     assert.deepEqual(one.census, { held: 0, obligationRules: 1, outOfSlice: 1, untestable: 1, prodOnly: 0 });
     assert.deepEqual(one.intake, [{ issue: 'issue-1', job: null, outcome: { type: 'none', reason: 'tracked already' } }], 'arc 1\'s Phase-0 intake');
     assert.deepEqual(one.pr, { type: 'none' }, 'arc 1 integrates on main');

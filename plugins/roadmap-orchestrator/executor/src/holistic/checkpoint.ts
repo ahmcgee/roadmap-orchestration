@@ -50,6 +50,7 @@ import type { CheckpointIssues, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, parseInvocationId, canonicalIds } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import { BACKEND_PARK_CLASSES } from '../core/events.ts';
 import { DEFAULT_BOUNDS, specWitnesses } from '../core/records.ts';
 import { type CheckpointState, openAttempt } from '../core/state.ts';
@@ -84,7 +85,7 @@ import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
 import { captureCheckpointIssues, issueReuse, issuesInputOf } from './intake.ts';
 import { keyOf } from './observe.ts';
-import { type CheckpointTrigger, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
+import { type BusyAttempt, type CheckpointTrigger, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
 
 export type { CheckpointContext } from './bundle.ts';
@@ -249,18 +250,36 @@ function latestGeneration(ctx: CheckpointContext): number {
   return Math.max(1, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((c) => c.inputs.generation));
 }
 
+/** A busy rejection's attempts (C5, R50) that are still open: what its trigger waits for before it is due again. */
+export function stillBusy(view: JournalView, last: CheckpointState): readonly BusyAttempt[] {
+  const d = last.decided;
+  if (d?.kind !== 'rejected' || d.reason !== 'busy') return [];
+  return (d.units ?? []).filter((b) => {
+    const open = openAttempt(view, b.unit);
+    return open !== null && open.stage === b.stage && open.attempt === b.attempt;
+  });
+}
+
+/**
+ * The checkpoints waiting at a stage boundary now (status): each trigger's latest job that was rejected `busy` and the
+ * attempts it named that are still open.
+ */
+export function busyWaits(view: JournalView): readonly Readonly<{ job: JobId; waitingFor: readonly BusyAttempt[] }>[] {
+  const latest = new Map<string, CheckpointState>();
+  for (const c of view.holistic().checkpoints) latest.set(triggerKey(c.inputs.trigger), c);
+  return [...latest.values()].sort((a, b) => a.inputs.seq - b.inputs.seq).flatMap((c) => {
+    const waitingFor = stillBusy(view, c);
+    return waitingFor.length === 0 ? [] : [{ job: c.inputs.job, waitingFor }];
+  });
+}
+
 /** Whether a trigger whose latest job is `last` is due again (see the header). */
 function dueAgain(ctx: CheckpointContext, last: CheckpointState | undefined): boolean {
   if (last === undefined) return true;
   const d = last.decided;
   if (d === null) throw new Error(`${last.inputs.job} is running; it resumes before any trigger is due`);
-  if (d.kind === 'rejected' && d.reason === 'busy') {
-    // C5 (R50): due once every attempt it named has closed (none open, or another one).
-    return (d.units ?? []).every((b) => {
-      const open = openAttempt(ctx.journal.view, b.unit);
-      return open === null || open.stage !== b.stage || open.attempt !== b.attempt;
-    });
-  }
+  // C5 (R50): a busy rejection is due once every attempt it named has closed (none open, or another one).
+  if (d.kind === 'rejected' && d.reason === 'busy') return stillBusy(ctx.journal.view, last).length === 0;
   if (d.kind === 'rejected') return true;
   return approved(ctx, last);
 }

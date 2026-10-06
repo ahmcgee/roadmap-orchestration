@@ -15,7 +15,8 @@
 // closed). A headless driver resumes its session on these lines and on `run` reaching `complete` (M4a R12).
 //
 // A unit's state is `status`'s, compact (`compactState`): `running:build#3`, `waiting:deps=u1`,
-// `waiting:resources`, `awaiting-admission:paused`, `parked:retryable`, `merged`… The view is re-derived
+// `waiting:resources`, `awaiting-admission:paused`, `awaiting-admission:known-defect` (M4a rev 3: held at prepare by a
+// plan known defect until its fixer merges), `parked:retryable`, `merged`… The view is re-derived
 // only when the log, sched.json, the needs-user dir or the owner changed. Owner liveness is `status`'s
 // (`ownerState`).
 import { existsSync, readdirSync, statSync } from 'node:fs';

@@ -115,15 +115,20 @@ describe('status.subset', () => {
       issues: null,
       chain: null,
       timings: [],
+      knownDefects: [],
+      checkpointWaits: [],
+      admits: [],
+      opportunities: [],
+      drift: [],
     });
   });
 
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'amendments', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'divergences', 'edges',
-      'findings', 'holds', 'holistic', 'host', 'issues', 'needsUser', 'notYetTrue', 'nowTrue', 'owed', 'packReview', 'parkedBackends', 'plan', 'rejection', 'routing',
-      'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
+      'admits', 'amendments', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred',
+      'divergences', 'drift', 'edges', 'findings', 'holds', 'holistic', 'host', 'issues', 'knownDefects', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
+      'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
     assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));
@@ -132,7 +137,7 @@ describe('status.subset', () => {
     assert.ok(s.run.heartbeatAt !== null, 'the executor wrote its heartbeat');
     assert.deepEqual(s.units, [{
       unit: 'u1', stage: 'retire', status: 'retired', attempts: 12, chargeableFailures: 0, risk: 'med', seat: null,
-      state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, buildTier: 'med', running: null,
+      state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, buildTier: 'med', running: null, failures: [],
     }]);
     assert.deepEqual([s.edges, s.runOnly, s.host.resources, s.host.queue, s.host.probes, s.host.backends], [[], null, [], [], [], []]);
     assert.deepEqual(s.host.pools['@cpu']?.used, 0, 'every token released');

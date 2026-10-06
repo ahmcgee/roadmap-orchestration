@@ -837,6 +837,17 @@ export const specWitnesses = (spec: SpecM1): readonly Stated<WitnessItemDef>[] =
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
 const cid: Read<ClauseId> = (v, p) => clauseId(v, p);
+/**
+ * M4a rev 3 (F4): what a plan known defect matches (src/input/plan.ts `KnownDefect`): a unit declaring lane `lane`, or a red
+ * lane whose output tail contains `contains` (a substring, never a regex). Here, not in plan.ts, because a lanes
+ * `known-defect` outcome records the match it hit (src/core/events.ts).
+ */
+export type KnownDefectMatch = Readonly<{ type: 'lane'; lane: LaneId }> | Readonly<{ type: 'output'; lane: LaneId; contains: string }>;
+export const knownDefectMatch: Read<KnownDefectMatch> = tagged<'lane' | 'output', KnownDefectMatch>('type', {
+  lane: object((g) => ({ type: g.get('type', literal('lane')), lane: g.get('lane', (v, p) => laneId(v, p)) })),
+  output: object((g) => ({ type: g.get('type', literal('output')), lane: g.get('lane', (v, p) => laneId(v, p)), contains: g.get('contains', str) })),
+});
+
 function acceptanceFields(f: Fields): AcceptanceDef {
   return { id: f.get('id', cid), clause: f.get('clause', str), failLoudIfUndelivered: f.get('failLoudIfUndelivered', bool) };
 }

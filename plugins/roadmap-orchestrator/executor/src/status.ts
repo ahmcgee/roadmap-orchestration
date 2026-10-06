@@ -82,6 +82,22 @@
 //   issues        the latest checkpoint capture and the checkpoints' intake outcomes
 //   chain         the chain ending at this arc (src/commands/chain.ts: K, acked starts, PRs non-fatal), its position
 //   timings       per stage, the completed attempts' count, median and maximum (`stageTimings`, LR-c; every arc)
+//
+// M4a rev 3 (SCHEMAS "M4a rev 3", status rows):
+//   units[].failures   each lanes attempt's red, flaky or repeat lane, with its host-suspected signatures (F3,
+//                      src/pipeline/failures.ts); the lanes park's needs-user lists the same
+//   units[].running.lane  the lane, journey or mutant run open in the running attempt now (8c)
+//   units[].priority.priority  the unit's plan priority (F1b), first in its rank
+//   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
+//   checkpointWaits  each checkpoint rejected `busy` still waiting for the attempts it named (C5): "checkpoint <job>
+//                 waiting for <unit> <stage> boundary"
+//   admits        a corpus arc's classified checkpoint admits (OR-A1), in log order
+//   opportunities each opportunity O-n: its clauses, units (its unit, its follow-ups', their lineages), follow-ups, the
+//                 units' spend, and the admits that overran it (converted `follow-up-overrun`)
+//   drift         the drift indicator (B "Visibility"), the only check on under-declared admit targets: per merged
+//                 checkpoint unit not classed opportunity, the findings attributed to its merge (R46, the lens's covered
+//                 range and its paths) whose vision clauses lie wholly outside the owner slice and the opportunities'
+//                 clauses (`advances ∪ OC`)
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -94,13 +110,14 @@ import {
 import { readJson } from './core/fsx.ts';
 import {
   type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev,
-  type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId,
-  commandId, compareResourceUnits, cpuToken, parseJobId, parseOpId, compareIds,
+  type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type InvocationId, type KnownDefectId, type LaneId,
+  type OpportunityId, canonicalIds, commandId, compareResourceUnits, cpuToken, invocationId, parseJobId, parseOpId, compareIds,
 } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
 import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
 import { DEV6_CLASS_CATALOGUE } from './core/upgrade.ts';
+import type { KnownDefectMatch } from './core/records.ts';
 import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
@@ -108,8 +125,13 @@ import {
 import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, recordOf, supersededPackItems } from './needsuser.ts';
-import { type PlanM1, type PlanUnit, advancesOf, lensSetOf, parsePlan } from './input/plan.ts';
-import { type JobTotal, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
+import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
+import { busyWaits } from './holistic/checkpoint.ts';
+import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
+import { findingAttribution } from './holistic/admits.ts';
+import { bundleClassesOf } from './core/upgrade.ts';
+import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
+import { type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { readRepoConfig } from './preflight/checks.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
@@ -153,7 +175,7 @@ import { type Observation, type ObservationStore, type WitnessedEntry, verdictOf
 import {
   type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind,
   type ArcLaneDef, type CensusEntry, type CensusState, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt,
-  observationKeyText, parseRulingSidecar,
+  type AdmitClass, type BusyAttempt, type Conversion, observationKeyText, parseRulingSidecar,
 } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
 
@@ -224,7 +246,14 @@ export type UnitPark = Readonly<{
  * A running unit's stage attempt: `elapsed` ms since its first journaled op (null before one: between ops), the
  * earliest deadline of its open ops, and the resource units the unit holds.
  */
-export type UnitRunning = Readonly<{ stage: Stage; attempt: number; elapsed: number | null; deadline: IsoTime | null; resources: readonly ResourceUnit[] }>;
+export type UnitRunning = Readonly<{
+  stage: Stage; attempt: number; elapsed: number | null; deadline: IsoTime | null; resources: readonly ResourceUnit[];
+  /** M4a rev 3 (8c): the lane run open in the attempt now (the latest open lane, journey or mutant spawn); null between runs. */
+  lane: RunningLane | null;
+}>;
+
+/** A lane run in progress: a spec or suite lane, an arc lane's journey run (witness presence, candidate), or a mutant run. */
+export type RunningLane = Readonly<{ id: LaneId; set: 'spec' | 'suite' | 'journey' | 'mutant'; inv: InvocationId; startedAt: IsoTime }>;
 
 export type UnitStatusLine = Readonly<{
   unit: UnitId;
@@ -240,8 +269,8 @@ export type UnitStatusLine = Readonly<{
   waitingFor: WaitingFor | null;
   /** Every resource unit a holder of this unit holds or is transitioning (its stages, publication, retry), ascending. */
   holds: readonly ResourceUnit[];
-  /** The unit's rank now (F17), while it is active; null otherwise. */
-  priority: Readonly<Pick<Rank, 'origin' | 'waitStartSeq' | 'bypassMerges' | 'promoted'>> | null;
+  /** The unit's rank now (F17; M4a rev 3: its plan `priority` first, F1b), while it is active; null otherwise. */
+  priority: Readonly<Pick<Rank, 'priority' | 'origin' | 'waitStartSeq' | 'bypassMerges' | 'promoted'>> | null;
   park: UnitPark | null;
   /** Set on a unit that re-enters another. */
   lineage: Lineage | null;
@@ -250,7 +279,11 @@ export type UnitStatusLine = Readonly<{
   /** The implementer's seat tier (A11), a tier, never a model; null before the first dispatch. */
   buildTier: RiskTier | null;
   running: UnitRunning | null;
+  /** M4a rev 3 (F3): its lanes attempts' red, flaky and repeat lanes, host-suspected ones marked (src/pipeline/failures.ts). */
+  failures: readonly LaneFailure[];
 }>;
+/** A unit's line as `derive` (and `watch`) reads it: everything but the failures, which read evidence files. */
+type UnitCore = Omit<UnitStatusLine, 'failures'>;
 
 /** The routing in force for the latest start, as classes: never a model. */
 export type RoutingView = Readonly<{
@@ -465,6 +498,41 @@ export type Status = Readonly<{
   chain: ChainView | null;
   /** M4a (LR-c): per stage, the completed attempts' count, median and maximum duration, derived at read time. */
   timings: readonly StageTiming[];
+  /** M4a rev 3 (F4): the plan's known defects in force and the units each holds at prepare now. */
+  knownDefects: readonly KnownDefectView[];
+  /** M4a rev 3 (C5): the checkpoints a `busy` rejection keeps waiting for a stage boundary. */
+  checkpointWaits: readonly CheckpointWait[];
+  /** M4a rev 3 (OR-A1): a corpus arc's classified checkpoint admits; empty in any other arc. */
+  admits: readonly AdmitLine[];
+  opportunities: readonly OpportunityLine[];
+  /** The drift indicator (see the header): one line per merged checkpoint unit not classed opportunity. */
+  drift: readonly DriftLine[];
+}>;
+
+export type KnownDefectView = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId; fixMerged: boolean; holds: readonly UnitId[] }>;
+export type CheckpointWait = Readonly<{ job: JobId; waitingFor: readonly BusyAttempt[]; line: string }>;
+export type AdmitLine = Readonly<{
+  /** The seq of the bundle revision's commit intent that recorded it. */
+  seq: number; job: JobId; index: number; unit: UnitId; class: AdmitClass['type'];
+  /** An oversight's or opportunity's clauses; none for a repair. */
+  clauses: readonly VisionClauseId[];
+  followUp: OpportunityId | null;
+}>;
+export type OpportunityLine = Readonly<{
+  id: OpportunityId; clauses: readonly VisionClauseId[];
+  /** Its unit, its follow-ups' units and every unit re-entering them, ascending. */
+  units: readonly UnitId[];
+  followUps: number;
+  /** What the units' calls cost (list price; calls without a cost add nothing). */
+  spentUsd: number;
+  /** The admits converted `follow-up-overrun` against it (LR-k). */
+  overrun: readonly Readonly<{ job: JobId; index: number }>[];
+}>;
+export type DriftLine = Readonly<{
+  unit: UnitId; job: JobId; class: 'repair' | 'oversight';
+  /** The merged units of its lineage the findings were attributed to. */
+  merged: readonly UnitId[];
+  findings: readonly Readonly<{ id: FindingId; severity: FindingSeverity; clauses: readonly VisionClauseId[]; claim: string }>[];
 }>;
 
 /** How many terminal receipts `status` shows. */
@@ -611,12 +679,30 @@ function attemptStarts(events: readonly Event[]): ReadonlyMap<string, IsoTime> {
   return out;
 }
 
-function runningOf(view: JournalView, u: UnitState, starts: ReadonlyMap<string, IsoTime>, holds: readonly ResourceUnit[], now: number): UnitRunning {
+/** When each intent was appended, by `<op>#<ordinal>`. */
+function intentTimes(events: readonly Event[]): ReadonlyMap<string, IsoTime> {
+  const out = new Map<string, IsoTime>();
+  for (const e of events) if (e.type === 'intent') out.set(`${e.op}#${e.ordinal}`, e.at);
+  return out;
+}
+
+function runningOf(view: JournalView, u: UnitState, times: Readonly<{ starts: ReadonlyMap<string, IsoTime>; intents: ReadonlyMap<string, IsoTime> }>, holds: readonly ResourceUnit[], now: number): UnitRunning {
   const { stage, attempt } = u.open ?? { stage: u.stage, attempt: u.counters.attempts };
-  const started = starts.get(`${u.unit}/${stage}#${attempt}`);
-  const deadlines = view.openIntents().flatMap((i) => (i.parent.type === 'stage' && i.parent.unit === u.unit && i.parent.stage === stage
-    && i.parent.attempt === attempt && i.deadlineAt !== null ? [i.deadlineAt] : [])).sort();
-  return { stage, attempt, elapsed: started === undefined ? null : now - Date.parse(started), deadline: deadlines[0] ?? null, resources: holds };
+  const started = times.starts.get(`${u.unit}/${stage}#${attempt}`);
+  const mine = view.openIntents().filter((i) => i.parent.type === 'stage' && i.parent.unit === u.unit && i.parent.stage === stage && i.parent.attempt === attempt);
+  const deadlines = mine.flatMap((i) => (i.deadlineAt !== null ? [i.deadlineAt] : [])).sort();
+  // 8c: the latest open lane-like spawn of the attempt.
+  let lane: RunningLane | null = null;
+  for (const i of mine) {
+    if (i.kind !== 'proc.spawn') continue;
+    const s = i.expect.subject;
+    const set = s.purpose === 'lane' ? s.set : s.purpose === 'journey' || s.purpose === 'mutant' ? s.purpose : null;
+    if (set === null || (s.purpose !== 'lane' && s.purpose !== 'journey' && s.purpose !== 'mutant')) continue;
+    const startedAt = times.intents.get(`${i.op}#${i.ordinal}`);
+    if (startedAt === undefined) throw new Error(`open intent ${i.op}#${i.ordinal} is not in the log's events`);
+    if (lane === null || startedAt >= lane.startedAt) lane = { id: s.lane, set, inv: invocationId(i.op, i.ordinal), startedAt };
+  }
+  return { stage, attempt, elapsed: started === undefined ? null : now - Date.parse(started), deadline: deadlines[0] ?? null, resources: holds, lane };
 }
 
 /** What the per-unit derivation reads besides the log: the scheduler's view (null without a live executor). */
@@ -663,7 +749,7 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   return { state: 'ready', waitingFor: null };
 }
 
-function unitLine(x: Inputs, unit: PlanUnit, starts: ReadonlyMap<string, IsoTime>, now: number): UnitStatusLine {
+function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyMap<string, IsoTime>; intents: ReadonlyMap<string, IsoTime> }>, now: number): UnitCore {
   const { view, plan } = x;
   const u = view.unit(unit.id);
   const holds = [...view.resources()].filter(([, e]) => {
@@ -713,12 +799,12 @@ function unitLine(x: Inputs, unit: PlanUnit, starts: ReadonlyMap<string, IsoTime
     state,
     waitingFor,
     holds,
-    priority: rank === null ? null : { origin: rank.origin, waitStartSeq: rank.waitStartSeq, bypassMerges: rank.bypassMerges, promoted: rank.promoted },
+    priority: rank === null ? null : { priority: rank.priority, origin: rank.origin, waitStartSeq: rank.waitStartSeq, bypassMerges: rank.bypassMerges, promoted: rank.promoted },
     park: parkOf(view, u),
     lineage: u.lineage,
     supersededBy: u.supersededBy,
     buildTier: u.buildTier,
-    running: state === 'running' || state === 'preparing' ? runningOf(view, u, starts, holds, now) : null,
+    running: state === 'running' || state === 'preparing' ? runningOf(view, u, times, holds, now) : null,
   };
 }
 
@@ -733,13 +819,13 @@ function edgesOf(view: JournalView, plan: PlanM1): readonly EdgeView[] {
 }
 
 /** A unit that moves the run along: it runs, prepares, may start, waits for resources, or waits only on a drain. */
-function moving(l: UnitStatusLine): boolean {
+function moving(l: UnitCore): boolean {
   if (l.state === 'running' || l.state === 'preparing' || l.state === 'ready') return true;
   if (l.state === 'waiting') return l.waitingFor?.resources !== null;
   return l.state === 'awaiting-admission' && (l.waitingFor?.admission ?? []).every((c) => c.type === 'drain');
 }
 
-function runStateOf(view: JournalView, lines: readonly UnitStatusLine[], owner: OwnerState, blocking: readonly BlockingItem[], rejection: RejectionFile | null): ArcState {
+function runStateOf(view: JournalView, lines: readonly UnitCore[], owner: OwnerState, blocking: readonly BlockingItem[], rejection: RejectionFile | null): ArcState {
   const h = view.holistic();
   if (owner.state === 'alive') {
     // §2.10: admissions closed (`close-admissions`) and nothing held, parked or blocked: the arc drains.
@@ -781,7 +867,7 @@ type Derived = Readonly<{
   rejection: RejectionFile | null;
   blocking: readonly BlockingItem[];
   sched: SchedFile | null;
-  units: readonly UnitStatusLine[];
+  units: readonly UnitCore[];
   state: ArcState;
 }>;
 
@@ -832,9 +918,9 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   const inputs: Inputs | null = plan === null ? null : {
     view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
   };
-  const starts = attemptStarts(events);
+  const times = { starts: attemptStarts(events), intents: intentTimes(events) };
   const now = Date.now();
-  const units = inputs === null ? [] : inputs.plan.units.map((u) => unitLine(inputs, u, starts, now));
+  const units = inputs === null ? [] : inputs.plan.units.map((u) => unitLine(inputs, u, times, now));
   return {
     log, events, view, foldMs, plan, start, inForce, resolved, owner, rejection, blocking, sched, units, state: runStateOf(view, units, owner, blocking, rejection),
   };
@@ -849,7 +935,7 @@ export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Reado
 }
 
 /** `running:build#3`, `waiting:deps=u1,u2`, `waiting:resources`, `awaiting-admission:paused,drain`, `parked:retryable`, or the bare state. */
-export function compactState(l: UnitStatusLine): string {
+export function compactState(l: UnitCore): string {
   const w = l.waitingFor;
   if (l.running !== null) return `${l.state}:${l.running.stage}#${l.running.attempt}`;
   if (l.park !== null) return `parked:${l.park.class}${l.park.kind === undefined ? '' : `-${l.park.kind}`}`;
@@ -880,7 +966,7 @@ function ackSeqs(events: readonly Event[]): ReadonlyMap<NeedsUserId, number> {
 }
 
 /** What one unit's state says about an obligation waiting on it (see `ObligationReason`); null for a settled unit. */
-function unitReason(l: UnitStatusLine): Exclude<ObligationReason, 'spec'> | null {
+function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec'> | null {
   const w = l.waitingFor;
   switch (l.state) {
     case 'merged':
@@ -900,6 +986,8 @@ function unitReason(l: UnitStatusLine): Exclude<ObligationReason, 'spec'> | null
       const types = new Set((w?.admission ?? []).map((c) => c.type));
       if (types.has('paused') || types.has('blocking-item') || types.has('run-only')) return 'supervision';
       if (types.has('backend-parked') || types.has('breaker')) return 'host';
+      // A known defect waits on its fixer unit (F4).
+      if (types.has('known-defect')) return 'waiting-dep';
       return 'code';
     }
     case 'running':
@@ -956,7 +1044,7 @@ export function obligationLeaves(view: JournalView, obligations: Obligations, st
 
 /** Each non-exempt obligation on the integration head's tree: now true, or not yet with what it waits on. */
 function truths(
-  runDir: AbsPath, view: JournalView, lines: readonly UnitStatusLine[], obligations: Obligations, tree: Sha,
+  runDir: AbsPath, view: JournalView, lines: readonly UnitCore[], obligations: Obligations, tree: Sha,
 ): Readonly<{ nowTrue: readonly ObligationTruth[]; notYetTrue: readonly ObligationPending[] }> {
   const latched = new Set(view.holistic().latched.map((l) => l.obligation));
   const byUnit = new Map(lines.map((l) => [l.unit, l]));
@@ -1397,6 +1485,95 @@ function chainOf(repo: AbsPath, plan: PlanM1): ChainView {
   return { ...chainStatusOf(repo, links), position: links.length };
 }
 
+// ---------------------------------------------------------------------------------------------------
+// M4a rev 3: known defects, busy checkpoints, admits, opportunities and the drift indicator
+
+/** Each plan known defect in force: its fixer, whether the fixer's lineage merged, and the units admission holds under it now. */
+function knownDefectViews(view: JournalView, plan: PlanM1, lines: readonly UnitCore[]): readonly KnownDefectView[] {
+  return knownDefectsOf(plan).map((k: KnownDefect) => ({
+    id: k.id, match: k.match, fixUnit: k.fixUnit, fixMerged: view.unit(effectiveDependency(view, k.fixUnit)).status === 'retired',
+    holds: lines.filter((l) => (l.waitingFor?.admission ?? []).some((c) => c.type === 'known-defect' && c.id === k.id)).map((l) => l.unit),
+  }));
+}
+
+function checkpointWaitsOf(view: JournalView): readonly CheckpointWait[] {
+  return busyWaits(view).map((w) => ({
+    ...w, line: `checkpoint ${w.job} waiting for ${w.waitingFor.map((b) => `${b.unit} ${b.stage}`).join(', ')} boundary`,
+  }));
+}
+
+export type AdmitViews = Readonly<{ admits: readonly AdmitLine[]; opportunities: readonly OpportunityLine[]; drift: readonly DriftLine[] }>;
+const NO_ADMITS: AdmitViews = { admits: [], opportunities: [], drift: [] };
+
+/** Every conversion the arc recorded: an applied bundle's (its revision source) and an all-converted bundle's (`no-op`). */
+function conversionsAll(view: JournalView): readonly (Conversion & Readonly<{ job: JobId }>)[] {
+  const applied = view.opsOf('revision.commit').flatMap((commit) => {
+    const source = commit.expect.source;
+    if (source.type !== 'bundle' || view.doneOf(commit.op) === null) return [];
+    const classes = bundleClassesOf(source);
+    return classes === 'unclassified' ? [] : classes.conversions.map((c) => ({ job: source.job, ...c }));
+  });
+  const noOps = view.holistic().checkpoints.flatMap((c) => (c.decided?.kind === 'no-op' ? (c.decided.conversions ?? []).map((x) => ({ job: c.inputs.job, ...x })) : []));
+  return [...applied, ...noOps];
+}
+
+/**
+ * A corpus arc's admits, opportunities and drift indicator (B "Visibility", OR-A1): `status` reads them from the run dir,
+ * the brief from an arc's snapshot ref (same log, same rule). `repo` is the product repo the merges' paths are read from.
+ */
+export function admitViews(view: JournalView, repo: AbsPath, plan: PlanM1, meter: Meter): AdmitViews {
+  const recorded = recordedAdmits(view);
+  if (recorded.length === 0 && conversionsAll(view).length === 0) return NO_ADMITS;
+  const seqOf = new Map(view.opsOf('revision.commit').flatMap((c) => (c.expect.source.type === 'bundle' ? [[c.expect.source.job, parseOpId(c.op).seq] as const] : [])));
+  const clausesOf = (c: AdmitClass): readonly VisionClauseId[] => (c.type === 'repair' ? [] : c.clauses);
+  const admits: AdmitLine[] = recorded.map((a) => ({
+    seq: seqOf.get(a.job)!, job: a.job, index: a.index, unit: a.unit, class: a.class.type, clauses: clausesOf(a.class), followUp: a.class.type === 'repair' ? a.class.followUp : null,
+  }));
+  const rootOf = (u: UnitId): UnitId => view.unit(u).lineage?.root ?? u;
+  const lineageOf = (roots: ReadonlySet<UnitId>): readonly UnitId[] => plan.units.map((u) => u.id).filter((u) => roots.has(rootOf(u))).sort();
+  const conversions = conversionsAll(view);
+  const opportunityAdmits = recorded.filter((a): a is typeof a & Readonly<{ class: Extract<AdmitClass, { type: 'opportunity' }> }> => a.class.type === 'opportunity');
+  const opportunities = opportunityAdmits.map((o): OpportunityLine => {
+    const id = o.class.id;
+    const followUps = recorded.filter((a) => a.class.type === 'repair' && a.class.followUp === id);
+    const units = lineageOf(new Set([o.unit, ...followUps.map((a) => a.unit)].map(rootOf)));
+    const spent = meter.byUnit.filter((t) => units.includes(t.unit)).reduce((sum, t) => sum + t.costUsd, 0);
+    return {
+      id, clauses: o.class.clauses, units, followUps: followUps.length, spentUsd: Math.round(spent * 100) / 100,
+      overrun: conversions.filter((c) => c.reason === 'follow-up-overrun' && c.opportunity === id).map((c) => ({ job: c.job, index: c.index })),
+    };
+  });
+
+  // The drift indicator: findings attributed to a non-opportunity admit's merged lineage whose clauses lie wholly outside S ∪ OC.
+  const inScope = new Set([...advancesOf(plan), ...opportunityAdmits.flatMap((o) => o.class.clauses)]);
+  const others = recorded.filter((a) => a.class.type !== 'opportunity');
+  const findings = view.holistic().findings;
+  const history = others.length === 0 ? null : integrationHistory(view, repo, view.integrationHead() ?? plan.baseline);
+  const drift = history === null ? [] : others.flatMap((a): DriftLine[] => {
+    const merged = lineageOf(new Set([rootOf(a.unit)])).filter((u) => view.unit(u).status === 'retired');
+    if (merged.length === 0) return [];
+    const hits = findings.filter((f) => f.visionClauses.length > 0 && f.visionClauses.every((c) => !inScope.has(c))
+      && findingAttribution(history, { source: f.source, lens: f.lens, paths: f.evidence.map((e) => e.path) }).some((u) => merged.includes(u)));
+    return [{
+      unit: a.unit, job: a.job, class: a.class.type as 'repair' | 'oversight', merged,
+      findings: hits.map((f) => ({ id: f.id, severity: f.severity, clauses: canonicalIds(f.visionClauses), claim: f.claim })),
+    }];
+  });
+  return { admits, opportunities, drift };
+}
+
+/** Each unit's lane failures (F3), through a read-only stage context; none before a start. */
+function failuresOf(d: Derived, hostDir: AbsPath, runDir: AbsPath): (unit: UnitId) => readonly LaneFailure[] {
+  const { start, inForce } = d;
+  if (start === null || inForce === null) return () => [];
+  const ctx = readOnlyContexts({
+    view: d.view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
+    routingBase: { profile: start.record.profile, config: readRepoConfig(start.record.repo) },
+  }).audit;
+  const units = new Map(inForce.plan.units.map((u) => [u.id, u]));
+  return (id) => laneFailures(ctx, units.get(id)!);
+}
+
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const d = derive(runDir, arc, hostDir);
   const { view, events, start, inForce } = d;
@@ -1431,11 +1608,13 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const h = on === null || start === null || inForce === null ? null : holisticReader(runDir, hostDir, d, inForce);
   const corpus = revision?.corpus ?? null;
   const reader = on === null || start === null ? null : { journal: { view }, runDir, planFile: start.record.planFile, repo: on.repo };
+  const failures = failuresOf(d, hostDir, runDir);
+  const admitted = on === null || corpus === null ? NO_ADMITS : admitViews(view, on.repo, on.plan, meter);
 
   return {
     arc,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
-    units: d.units,
+    units: d.units.map((l) => ({ ...l, failures: failures(l.unit) })),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
     needsUser,
@@ -1480,6 +1659,9 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     issues: corpus === null ? null : issuesOf(view),
     chain: corpus === null || on === null ? null : chainOf(on.repo, on.plan),
     timings: stageTimings(events),
+    knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
+    checkpointWaits: checkpointWaitsOf(view),
+    ...admitted,
   };
 }
 

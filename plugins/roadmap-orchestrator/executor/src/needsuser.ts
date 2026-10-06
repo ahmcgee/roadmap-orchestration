@@ -181,14 +181,15 @@ export function routingChangedRecommendation(unit: UnitId, floor: RiskTier): str
 }
 
 /**
- * A unit parked anywhere else: M1 does not re-open it (`resume <unit>` is rejected), so the item names the
- * re-entry: a new unit id whose branch starts at the parked unit's tip.
+ * A unit parked anywhere else: `resume <unit>` does not re-open it, so the item names the re-entry: a new unit that
+ * re-enters it (`reenters`), whose `prepare` creates its branch at the parked unit's tip (M2; dx2 8a: never by hand, a
+ * hand-made branch makes that `prepare` fail).
  */
 export function reentryRecommendation(unit: UnitId, stage: Stage, branch: string): string {
-  return `Read the evidence. A park at ${stage} is final in M1: \`roadmap resume ${unit}\` does not re-open it. To re-run the work, `
-    + `add a unit with a new id to the plan (its fixed spec, the same scope), create that unit's branch roadmap/<arc>/<new id> at the tip of `
-    + `${branch}, acknowledge this item, then \`roadmap apply\` the revised plan. Or acknowledge this item to `
-    + 'leave the unit parked.';
+  return `Read the evidence. A park at ${stage} is final: \`roadmap resume ${unit}\` does not re-open it. To re-run the work, `
+    + `add a unit with a new id to the plan that re-enters ${unit} (\`"reenters": {"unit": "${unit}"}\`, its fixed spec, the same scope), `
+    + `acknowledge this item, then \`roadmap apply\` the revised plan: the new unit's prepare creates its branch roadmap/<arc>/<new id> at the `
+    + `tip of ${branch}. Never create that branch by hand. Or acknowledge this item to leave the unit parked.`;
 }
 
 // ---------------------------------------------------------------------------------------------------

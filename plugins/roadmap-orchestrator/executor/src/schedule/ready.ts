@@ -170,16 +170,19 @@ export const activeKnownDefects = (view: JournalView, plan: PlanM1, unit: UnitId
   knownDefectsOf(plan).filter((k) => knownDefectActive(view, plan, k, unit));
 
 /**
- * The known defect holding `unit`'s `prepare` (F4): its decided outcome is lanes `known-defect{id}` and the plan's entry
- * `id` is active for it; null otherwise (a removed entry, or its fixer's lineage merged, releases it).
+ * The known defect holding `unit`'s `prepare` (F4): its decided outcome is lanes `known-defect{id, match}`, the plan's
+ * entry `id` still has that match, and it is active for the unit (`knownDefectActive`); null otherwise. A removed entry,
+ * an edited match (the unit may no longer match it: its lanes decide again) or the fixer's lineage merging releases it;
+ * a changed `fixUnit` alone keeps the hold under the new fixer.
  */
 function knownDefectHold(view: JournalView, plan: PlanM1, unit: UnitId): Extract<AdmissionConstraint, { type: 'known-defect' }> | null {
   const d = view.unit(unit).decided;
   if (d?.stage !== 'lanes' || d.outcome !== 'known-defect') return null;
   if (d.detail?.kind !== 'known-defect') throw new Error(`unit ${unit}: its lanes known-defect outcome (attempt ${d.attempt}) names no known defect`);
-  const id = d.detail.id;
+  const { id, match } = d.detail;
   const k = knownDefectsOf(plan).find((e) => e.id === id);
-  return k !== undefined && knownDefectActive(view, plan, k, unit) ? { type: 'known-defect', id, fixUnit: k.fixUnit } : null;
+  if (k === undefined || canonicalJson(k.match) !== canonicalJson(match)) return null;
+  return knownDefectActive(view, plan, k, unit) ? { type: 'known-defect', id, fixUnit: k.fixUnit } : null;
 }
 
 // ---------------------------------------------------------------------------------------------------
