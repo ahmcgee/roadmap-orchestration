@@ -91,6 +91,27 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'issues.after-keep': NONE,
   'amendment.after-decided': NONE,
   'debt.after-approval': NONE,
+  // M4a rev 3 N3 (a corpus arc's unit stages): the frontier dispatch pinned (in-session unwritten); the assessment read (the
+  // implementing call not begun); the witness lane files published (no build call); the witness check's series certified
+  // (its verdict unwritten); the smoke's patch kept, its mutant applied, its mutant lanes witnessed, its smoke-ran written.
+  // Each op is closed: the stage runs again as a new attempt, consuming what is recorded.
+  'plancheck.after-pin-in-session': NONE,
+  'build.after-assess': NONE,
+  'witnesscheck.after-lane-files': NONE,
+  'witnesscheck.after-witnessed': NONE,
+  'smoke.after-patch-kept': NONE,
+  'smoke.after-apply': NONE,
+  'smoke.after-witnessed': NONE,
+  'smoke.after-ran-before-outcome': NONE,
+  // The smoke's mutant.apply, as the mutant.apply row's: intent durable or its checkout made (redone), the patched tree made
+  // (reconciled), the apply done with its lanes not run (nothing open).
+  'mutant.act-start': R('redone'),
+  'mutant.after-worktree': R('redone'),
+  'mutant.act-end': R('reconciled'),
+  'mutant.after-done': NONE,
+  // M4a rev 3 N2: a decision record's conversion amendment (or an overrun's debt item) written: settled again from the record.
+  'bundle.after-conversion-amendment': NONE,
+  'bundle.after-overrun-debt': NONE,
   // The close-out's docs.commit: open (redone, then the unpublished holder abandoned) or done.
   'docs.act-start': R('redone'),
   'docs.after-commit-tree': R('redone'),

@@ -38,7 +38,7 @@ import type { Owner } from '../helpers/reap.ts';
 import { type FileSet, tmpDir } from '../helpers/repo.ts';
 import { type CodexAct, type Step, readCalls } from '../helpers/scenario.ts';
 import { type ExecOptions, type ExecRun, SMOKE_DEFAULT, cli, execEnv, journalOf, setupExec, until } from './exec-common.ts';
-import { claimOf, ownerOf } from './sup-common.ts';
+import { claimOf, ownerOf, stateOf } from './sup-common.ts';
 import { type LaneJson, planCheckStep } from './stage-common.ts';
 import {
   ADD_BROKEN, ADD_FIXED, MUL, SUITE_LANE, U1, appendSteps, codexStep, gateStep, literal, mulBuild, outcomes, workDirPattern,
@@ -394,7 +394,10 @@ async function restartAdjusted(r: ExecRun, supervisor: ProcIdentity, generation:
     await until(() => statOf(supervisor.pid)?.state === 'T', CRASH_WAIT_MS, `supervisor ${supervisor.pid} to stop itself after generation ${generation}'s crash`);
     const claim = claimOf(r);
     if (claim === null || claim.generation !== generation) {
-      throw new Error(`the supervisor had claimed generation ${claim?.generation ?? 'none'} before it stopped for the scenario to be adjusted for generation ${generation}'s crash`);
+      const err = executorLogs(absPath(r.hostDir), generation).err;
+      const tail = existsSync(err) ? readFileSync(err, 'utf8').split('\n').slice(-30).join('\n') : '(none)';
+      throw new Error(`the supervisor had claimed generation ${claim?.generation ?? 'none'} before it stopped for the scenario to be adjusted for generation ${generation}'s crash; `
+        + `crashes ${JSON.stringify(stateOf(r).crashes)}; generation ${generation}'s stderr tail:\n${tail}`);
     }
     // The owner record names the executor before its handshake, so before any executor label; the trigger
     // is renamed before the SIGKILL, so the executor may still be exiting.
