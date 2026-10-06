@@ -2,14 +2,16 @@
 //   node evals/observer.ts <fixtureDir> [--interval-min 10] [--model gpt-6-astra] [--max-hours 7] [--host-dir D] [--once]
 // Every tick it collects what is new since its cursor (<fixtureDir>/observer/cursor.json), asks a read-only
 // Codex session what looks wrong, appends the parsed observations to <fixtureDir>/observer/observations.jsonl and
-// prints abort/high ones. It never acts on the run. It loops until <fixtureDir>/report.json exists or max-hours.
+// prints abort/high ones (defects and efficiency opportunities: the constraint, redundant calls, avoidable waits). It never
+// acts on the run. It loops until <fixtureDir>/report.json exists or max-hours; at report.json it runs one deep retro pass
+// over the whole run into observer/retro.md (--no-retro skips it).
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SEVERITIES = ['abort', 'high', 'note'] as const;
-const KINDS = ['stall', 'crash-loop', 'churn', 'waste', 'scope-drift', 'wrong-decision', 'harness', 'executor-bug', 'skill-gap', 'cost', 'other'] as const;
+const KINDS = ['stall', 'crash-loop', 'churn', 'waste', 'scope-drift', 'wrong-decision', 'harness', 'executor-bug', 'skill-gap', 'cost', 'efficiency', 'other'] as const;
 type Severity = (typeof SEVERITIES)[number];
 type Kind = (typeof KINDS)[number];
 
@@ -130,10 +132,16 @@ ${REPO_EXECUTOR} (src/, SCHEMAS.md, ../skills). The fixture dir is your cwd; you
 
 Below is the DELTA since your last tick, then your previous observations. Report NEW issues only (do not repeat earlier ones unless
 materially worse). Output ONLY JSON lines, one object per line, no prose, no code fences:
-{"severity":"abort"|"high"|"note","kind":"stall|crash-loop|churn|waste|scope-drift|wrong-decision|harness|executor-bug|skill-gap|cost|other","summary":"...","evidence":["file:line or seq refs"],"suggestion":"..."}
+{"severity":"abort"|"high"|"note","kind":"stall|crash-loop|churn|waste|scope-drift|wrong-decision|harness|executor-bug|skill-gap|cost|efficiency|other","summary":"...","evidence":["file:line or seq refs"],"suggestion":"..."}
 "abort" = the run can no longer produce valid evidence or is burning budget pointlessly (crash loop, stuck with no path, harness
 broken). "high" = a likely defect worth fixing before the next run. "note" = minor. If nothing new, output nothing.
 The suggestion is about fixing the product/harness for the next run, never about acting on this run.
+
+Beyond defects, actively look for chances to raise pipeline efficiency (kind "efficiency"): find the current constraint
+(where wall-clock or Claude spend concentrates: which stage, judgment seat or shared resource work queues on, what sits
+idle), redundant or repeated calls, avoidable waits and round-trips, checks that could run earlier or cheaper, work that
+could be reused. Each efficiency observation names the constraint, the mechanism and an estimate of recoverable
+minutes or spend, with evidence.
 `;
 
 /** JSON lines out of the observer's reply; invalid lines are returned separately. */
@@ -192,6 +200,26 @@ export function tick(opts: Options): string[] {
   return out;
 }
 
+const RETRO = `You are a read-only forensic reviewer of a finished roadmap-orchestrator paid fixture run (your cwd). Never modify
+anything. Read report.json, transcript.jsonl (the root agent session), stage/product/.git/roadmap-runtime/<arc>/ (events.jsonl,
+needs-user/, inv/, evidence/, commands/), stage/roadmap-inputs/ and observer/observations.jsonl. Executor source: ${REPO_EXECUTOR}.
+Produce a ranked list (at most 30) of defects and efficiency opportunities, each: id, severity (high|med|low), category,
+finding, evidence refs (file, seq/line), estimated recoverable minutes or spend, and a concrete fix (code/prompt/skill/harness
+with file paths). Lead with the run's constraint (where wall-clock and Claude spend concentrated) and what would relieve it.
+Then a short section on checkpoint and gate outcomes by cause, and on root-agent interventions.
+`;
+
+/** One deep pass over the whole finished run; writes observer/retro.md. */
+export function retro(opts: Options): string {
+  const dir = join(opts.fixtureDir, 'observer');
+  mkdirSync(dir, { recursive: true });
+  const outPath = join(dir, 'retro.md');
+  const r = spawnSync('codex', ['exec', '-s', 'read-only', '--skip-git-repo-check', '-m', opts.model, '-C', opts.fixtureDir, '-o', outPath, '-'], {
+    input: RETRO, encoding: 'utf8', timeout: 90 * 60_000,
+  });
+  return r.status === 0 && existsSync(outPath) ? `OBSERVER retro ${outPath}` : `OBSERVER retro error status=${String(r.status)} ${clip(r.stderr ?? '', 300)}`;
+}
+
 function main(argv: readonly string[]): void {
   const args = argv.slice(2);
   const flag = (name: string, dflt: string): string => {
@@ -207,7 +235,11 @@ function main(argv: readonly string[]): void {
   for (;;) {
     for (const l of tick(opts)) console.log(l);
     if (once) return;
-    if (existsSync(join(fixtureDir, 'report.json'))) return void console.log('OBSERVER done report.json');
+    if (existsSync(join(fixtureDir, 'report.json'))) {
+      console.log('OBSERVER done report.json');
+      if (!args.includes('--no-retro')) console.log(retro(opts));
+      return;
+    }
     if (Date.now() + intervalMs > deadline) return void console.log('OBSERVER done max-hours');
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, intervalMs);
   }
