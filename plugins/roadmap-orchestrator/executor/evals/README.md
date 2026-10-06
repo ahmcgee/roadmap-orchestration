@@ -367,8 +367,10 @@ the delta since `<dir>/observer/cursor.json` (new events by seq for every arc un
 `stage/product/.git/roadmap-runtime/`, new needs-user files, new root-session `transcript.jsonl` lines summarised
 to tool calls and results, new bytes of the newest host `executor.*.err` / `supervisor.*.err`, and a `status`
 snapshot), capped at 200 KB with the newest kept, and asks a read-only `codex exec` (20 minute timeout) for NEW
-issues only. Replies are JSON lines `{severity: abort|high|note, kind, summary, evidence, suggestion}`; valid ones
+issues only: defects, and efficiency opportunities (kind `efficiency`: the constraint, redundant calls, avoidable waits,
+with an estimate of recoverable minutes or spend). Replies are JSON lines `{severity: abort|high|note, kind, summary, evidence, suggestion}`; valid ones
 are appended to `<dir>/observer/observations.jsonl` with `{tick, at}`, invalid lines are recorded as `{invalid}`.
 stdout carries `OBSERVER abort: ...` / `OBSERVER high: ...` lines and one `OBSERVER tick <n> ok <count>` per tick
 (`OBSERVER tick <n> error codex-failed` retries the same delta next tick). It stops when `<dir>/report.json` exists
-or after `--max-hours`. It never touches the run. Free test: `test/observer.test.ts` (fake `codex` on PATH).
+or after `--max-hours`; at `report.json` it runs one deep retro pass over the whole run into `<dir>/observer/retro.md`
+(90 minute timeout; `--no-retro` skips it). It never touches the run. Free test: `test/observer.test.ts` (fake `codex` on PATH).
