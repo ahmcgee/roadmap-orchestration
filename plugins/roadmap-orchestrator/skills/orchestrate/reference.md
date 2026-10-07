@@ -87,8 +87,11 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
 - `roadmap pr --repo <path> --arc <arc>`: push the completed arc's branch (a leased fast-forward, never `main`) and
   open or update its PR. Prints `{number, url, base, created, retargeted, needsRebase}`. Idempotent. Exits 64 for an arc
   whose ref holds no completion, or whose PR was closed unmerged.
-- `roadmap chain status --repo <path>`: `{arcs: [{arc, previousArc, acked, pr}], k, unackedStarts}`, oldest first.
-  Exits 64 before any snapshot.
+- `roadmap chain status --repo <path>`: `{arcs: [{arc, previousArc, acked, pr}], k, unackedStarts, nextStart}`, oldest
+  first. Exits 64 before any snapshot. `nextStart` answers whether a start chained on the head would pass `start`'s own
+  chain rows that need no plan: `{allowed: true, reason: within-k, k, unacked}` or `{allowed: false, reason}` with reason
+  `limit{k, unacked}`, `k-unset` or `previous-incomplete{arc}` (`unacked` counts that start). Read it; never compute K
+  yourself. `k` is `chain.k` committed at the head arc's baseline, never the live file.
 - `roadmap witness-check --lane-file <file>`: the implementer's command, named in its build prompt. Runs one
   required witness lane in the current worktree with fresh reporter output and checks every required test id: prints
   `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78).
@@ -211,7 +214,9 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
 - Corpus arcs also (null otherwise): `packReview{state: none|running|due|held|clear, reviews[{job, planRev, key,
   outcome, blocking, notes, needsUser, superseded}]}`, `corpus{pinSha256, source{kind, commit, root}, files,
   rules{active, retired, highWater}, phase0Sha256}`, `census{rules[{rule, state, held}], counts, heldPct}`,
-  `debt{banked, ledger}`, `issues{lastCapture, intake}`, `chain{arcs, k, unackedStarts, position}`.
+  `debt{banked, ledger}`, `issues{lastCapture, intake}`, `chain{arcs, k, unackedStarts, nextStart, position}` (the
+  next start after this arc). `status` reads the repo config the arc's revision recorded (routing) and the one committed
+  at its baseline (K), never the live `.roadmap/config.json`.
 - Every arc: `knownDefects[{id, match, fixUnit, fixMerged, holds}]` (the units each holds at prepare now);
   `checkpointWaits[{job, waitingFor, line}]`, a checkpoint rejected `busy` waiting for "<unit> <stage> boundary".
 - Corpus arcs (empty otherwise): `admits[{seq, job, index, unit, class: repair|oversight|opportunity, clauses,
@@ -227,7 +232,7 @@ the first 16 hex of its sha256, so any change (forge state included) is a new id
 - `coverage[{arc, snapshotCommit, highWater}]`: how far each chained arc's ref is covered; the next brief starts
   there.
 - `items[{arc, id}]`: the open non-blocking `divergence-digest` and `convergence-bound` items an ack acknowledges.
-- `chain{position, k, unackedStarts}`.
+- `chain{position, k, unackedStarts, nextStart}`, as `chain status` has them; the Markdown's `next start:` line.
 - `arcs[]`, per chained arc: `slice{advances, why}` (the arc's Phase-0 slice in force, null without a record; you pick it,
   the owner sees it here afterwards), `divergences`, `digests`, `decisions`, `curation`, `corpusDivergences`,
   `debt{banked, dispositioned}`, `intake` (`job` null for Phase 0), `questions`, `amendments`, `packReviewNotes`,
@@ -273,7 +278,7 @@ again.
 | `vision-unconfirmed{ref, expected, actual}` | `.roadmap/vision.json` unconfirmed, or its `corpus:` hash differs from the pinned vision document (`actual` null: no such pinned file) | run the `vision` skill; commit; re-pin |
 | `corpus-invalid{problems}` | `pin-drift`, `rule-reused{id}`, `rule-retired-reappears{id}`, `rules-in-vision`, `guide-missing`, `source-unreadable{detail}`, `source-remote-mismatch`, `scope-overlaps-corpus{unit}`, `contract-overlaps-corpus{path}` | re-pin after any corpus change; a new meaning takes a new id; no rules block in the vision document; scopes and contracts stay off corpus files |
 | `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `intake-missing{issue}`, `intake-unknown{issue}`, `intake-duplicate{issue}`, `capture-missing`, `capture-foreign{expected, actual}`, `question-reused{id}`, `spec-census-mismatch{unit, item, rule, state}` (a spec declares an obligation whose rule's census is not that obligation, or an acceptance clause or witness item names an `out-of-slice` rule; checked on every revision, so `apply` refuses it too) | complete the Phase-0 record or obligations; re-capture issues for this repo; align the spec with the census |
-| `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K |
+| `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K. `chain status` `nextStart` answers `limit`, `k-unset` and `previous-incomplete` before you compose the plan |
 | `issue-policy-untrusted{visibility, policy}` | anyone can open issues | the owner restricts issue creation to collaborators or disables issues |
 | `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |
 

@@ -238,6 +238,15 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       ['needs-user:pack-review'], ['units:complete'],
       ['units:blocked'], ['needs-user:issue-policy-untrusted'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],
     ]);
+    // The chain boundaries (paid run 12): arc 1's check-in is one final message, the numbered questions then the action
+    // taken on resume (arc 2 starts under K = 1: the bootstrap start counts as acked); arc 2's carries the stop.
+    const boundaries = report.turns.filter((t) => t.kind === 'wake' && t.prompt.split('\n').slice(1).some((x) => (JSON.parse(x) as { run?: string }).run === 'complete')).map((t) => t.result);
+    assert.equal(boundaries.length, 2);
+    assert.equal(numberedQuestions(boundaries[0]!).length, 1, boundaries[0] ?? undefined);
+    assert.match(boundaries[0]!, /\n\nOn resume I start arc 2's Phase 0 with these working assumptions\.$/);
+    assert.doesNotMatch(boundaries[0]!, /waiting for your answers|ROADMAP-SESSION/);
+    assert.match(boundaries[1]!, /refuses the next start \(limit: 2 unacked starts with it, K 1\)[\s\S]*\nROADMAP-SESSION: stopped k-limit$/);
+    assert.ok(chainOf(absPath(layout(story.dir).product)).two !== null, 'arc 2 started, chained on arc 1');
     assert.deepEqual(checked.result.interventions, { n: 1, byLever: { pause: 1 }, malformed: [] }, 'the one intervention, logged once');
     assert.deepEqual(report.owner.map((o) => [o.by, o.answer]), [
       ['code', 'K = 1.'], ['code', 'Yes, I accept that slice.'],
@@ -563,6 +572,10 @@ test('evals-m4a.owner-questions (paid run 1): the owner simulator gets the final
     '2. Do you acknowledge brief `0cd1e8d2b06a8a32`?',
   ]);
   assert.deepEqual(numberedQuestions('Arc started; waiting on watch.'), []);
+  // Paid run 12: what follows the block after a blank line (the next action, a merge request) is no question's text.
+  assert.deepEqual(numberedQuestions(['1. Which cutoff holds?', '   *If no view: 24 hours.*', '', 'On resume I start arc 2\'s Phase 0 with these working assumptions.'].join('\n')), [
+    '1. Which cutoff holds? *If no view: 24 hours.*',
+  ]);
 });
 
 test('evals-m4a.owner-code-answers (paid run 2): a brief-ack question naming `k-limit` is not the K question; K is asked case-sensitively', () => {
@@ -571,6 +584,8 @@ test('evals-m4a.owner-code-answers (paid run 2): a brief-ack question naming `k-
   assert.equal(codeAnswer(c, 'K: how many arcs may I run past your last acknowledged brief?'), 'K = 1.');
   assert.equal(codeAnswer(c, 'How many arcs may I run past your last acknowledged brief before I stop and wait (K)? Working assumption: 1.'), 'K = 1.');
   assert.equal(codeAnswer(c, 'Should the cut-off be checked against k-limit style rules?'), null);
+  // Paid run 12: the K question whose working assumption names the brief's ack is still the K question.
+  assert.equal(codeAnswer(c, '1. **K.** How many arcs may I run past your last acknowledged brief before I stop and wait? *If you have no view, I\'ll write `{"chain": {"k": 1}}`: one arc, then I stop until you acknowledge its brief.*'), 'K = 1.');
 });
 
 test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id reused by the next arc still wakes the session', () => {

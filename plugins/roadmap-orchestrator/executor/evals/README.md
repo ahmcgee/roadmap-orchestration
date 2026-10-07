@@ -353,12 +353,14 @@ review holds a blocking finding the root agent fixes by `apply` (the superseding
 its berths witness, so witness presence sends it back before any gate; confirm (high risk, the frontier builder) makes
 no plan-check call, assesses in session and implements in the same session, and mutation smoke finds its W-1 witness
 surviving (one smoke fix round, then the gate decides); a gate note and a deferred lens finding bank debt, a checkpoint
-and an issue derive amendments; after arc 1 the cutoff question goes to the owner stub; arc 2 chains on arc 1 through
+and an issue derive amendments; after arc 1 `chain status` answers `nextStart` within K = 1 (the bootstrap start
+counts as acked) and the check-in, one final message, asks the cutoff question and ends with the action taken on
+resume (arc 2's Phase 0); arc 2 chains on arc 1 through
 one between-arc commit, the forge flips to PUBLIC + ALL mid-arc (the checkpoint's capture raises the blocking item,
 admission is held and the checkpoint waits uncaptured until the owner restores the policy and the root agent acks);
 the next checkpoint admits `fits` as the arc's opportunity (V-7) and converts an over-budget day view into an amendment;
 the root agent pauses notice in a hung lane and resumes it (one operator-log entry), and the resumed attempt reuses the
-first lane's pass; with K = 1 arc 3, whose Phase 0 applies the converted amendment as T-17, is refused
+first lane's pass; `nextStart` refuses `limit`, and arc 3, whose Phase 0 applies the converted amendment as T-17, is refused
 `chain-invalid{limit}` at `phase0 check` and at `start`; stop `k-limit`, every criterion passing. The story waits on
 events, never on time: arc 2's first audit waits at a fake-backend barrier until the root agent has had the run's
 `blocked` wake, and the root agent's in-turn supervision waits on `status` states. `vision-silent`: after arc 1 no

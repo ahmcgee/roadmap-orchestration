@@ -1,8 +1,9 @@
 // `roadmap status`'s M4a keys (src/status.ts; DESIGN-1.0.md §2.4 A-M4-13), in process over a real corpus arc (corpus-unit's:
 // a real repo, a real pin, a real run dir and fold) whose log is written directly with the frozen M4a facts, and the
-// read-time timings over a synthetic log. Named tests: status.corpus-census, status.timings.
+// read-time timings over a synthetic log. Named tests: status.corpus-census, status.recorded-config (paid M4a run 12),
+// status.timings.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, test } from 'node:test';
 import type { Event, Fact } from '../src/core/events.ts';
@@ -65,7 +66,11 @@ describe('status M4a', () => {
       assert.deepEqual(s.holds, ['baseline', 'pack-review']);
       assert.deepEqual([s.amendments, s.debt, s.issues], [[], { banked: [], ledger: [] }, { lastCapture: null, intake: [] }]);
       // The chain of a bootstrap arc integrating on main: position 1, acked, no PR; no K committed in this repo.
-      assert.deepEqual(s.chain, { arcs: [{ arc: r.d.arc, previousArc: null, acked: true, pr: { type: 'none' } }], k: null, unackedStarts: [], position: 1 });
+      // The arc has no ref yet, so the next start waits for it.
+      assert.deepEqual(s.chain, {
+        arcs: [{ arc: r.d.arc, previousArc: null, acked: true, pr: { type: 'none' } }], k: null, unackedStarts: [],
+        nextStart: { allowed: false, reason: 'previous-incomplete', arc: r.d.arc }, position: 1,
+      });
 
       // The journey lane passes t1 on the head's tree: I-1 holds, so T-1 is held (100%).
       witnessHeld(r, journeyOf(r), tipTree(a.d));
@@ -112,6 +117,24 @@ describe('status M4a', () => {
       r.journal.close();
     }
   });
+});
+
+test('status.recorded-config (paid M4a run 12): K is the config committed at the baseline and routing the revision\'s provenance; a changed or scrambled live config changes nothing and crashes nothing', T, async () => {
+  const a = await corpusHolisticArc([], { baseline: { '.roadmap/config.json': `${JSON.stringify({ chain: { k: 2 } })}\n` } });
+  const r = contextFor(a.d);
+  try {
+    // Status as read here, without the fold's own timing (`foldMs` differs between any two reads).
+    const read = async (): Promise<unknown> => JSON.parse(JSON.stringify(await withForge(a.forge, () => statusOf(r)), (key, v: unknown) => (key === 'foldMs' ? undefined : v)));
+    const before = await read();
+    assert.equal((before as Status).chain?.k, 2);
+    const live = join(a.d.repo, '.roadmap', 'config.json');
+    for (const bytes of [`${JSON.stringify({ chain: { k: 5 }, routing: { profile: 'claude-only' } })}\n`, 'Scrambled: not JSON.\n']) {
+      writeFileSync(live, bytes);
+      assert.deepEqual(await read(), before, bytes);
+    }
+  } finally {
+    r.journal.close();
+  }
 });
 
 test('status.timings: per stage in stage order, the completed attempts\' count, lower median and maximum, from the first op to the outcome; an attempt with no op is not timed; `after` counts only later outcomes', () => {

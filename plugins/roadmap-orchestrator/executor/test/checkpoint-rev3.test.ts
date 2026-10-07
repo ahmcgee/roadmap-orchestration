@@ -11,7 +11,8 @@
 // checkpoint.busy-waits-for-boundary, classify.open-attempt-running-vs-abandoned, checkpoint.capture-waits-for-publication and
 // checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
 // checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
-// bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.final-always-full, intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists.
+// bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.refused-carried-across-triggers (paid M4a
+// run 12), checkpoint.final-always-full, intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,7 +38,7 @@ import { VALID_OP, checkpointAnswer, checkpointStep, intakeOutcome, lensStep } f
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
-import { admitOp, checkpointArc, checkpointContext, completedAudit, factsOfKind, visionLenses } from './fixtures/checkpoint-common.ts';
+import { admitOp, applyPlanEdit, checkpointArc, checkpointContext, completedAudit, factsOfKind, visionLenses } from './fixtures/checkpoint-common.ts';
 import { type CorpusHolisticArc, corpusHolisticArc, forgeEnv } from './fixtures/corpus-holistic.ts';
 import { VISION_PATH } from './fixtures/corpus-unit.ts';
 import { followContext, stepTo, unitOf } from './fixtures/route-common.ts';
@@ -573,6 +574,41 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
       assert.equal(tagOf(stdin, 'unit_specs'), '(no unit specs)');
     } finally {
       x.r.journal.close();
+    }
+  });
+
+  test('checkpoint.refused-carried-across-triggers (paid M4a run 12): a later trigger\'s checkpoint reads the proposals refused under the plan rev and why; a new plan rev drops them', T, async () => {
+    const withTargets = (a: CorpusHolisticArc): JsonValue => ({ ...(admitStep(a, 'more', ['V-1']) as Json), targets: ['T-2'] } as JsonValue);
+    for (const replanned of [false, true]) {
+      const x = await arc([]);
+      try {
+        appendSteps(x.a.d, [
+          checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [withTargets(x.a)] })),
+          checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [withTargets(x.a)] })),
+          lensStep('audit-2', 'vision'),
+          checkpointStep('ckpt-3', checkpointAnswer({ decision: 'no-op' })),
+        ]);
+        await run(x);
+        await run(x);
+        assert.deepEqual(decisions(x.r), [['ckpt-1', 'rejected:invalid'], ['ckpt-2', 'requested']]);
+        if (replanned) await applyPlanEdit(x.r, x.w, (plan) => { plan['direction'] = 'Berths first, then the morning view.'; });
+        await completedAudit(x.r, x.ctx);
+        const third = await run(x);
+        assert.ok(third.kind === 'decided' && third.decision.kind === 'no-op', JSON.stringify(third));
+        assert.doesNotMatch(callOf(x, 'ckpt-1').stdin, /<refused_proposals>/);
+        assert.doesNotMatch(callOf(x, 'ckpt-2').stdin, /<refused_proposals>/, 'ckpt-1 is the retry\'s prior attempt, not repeated');
+        const refused = /<refused_proposals>\n([\s\S]*?)\n<\/refused_proposals>/.exec(callOf(x, 'ckpt-3').stdin)?.[1] ?? null;
+        if (replanned) {
+          assert.equal(refused, null, 'refused against plan rev 1; ckpt-3 captures plan rev 2');
+          continue;
+        }
+        const lines = refused!.split('\n').slice(1);
+        assert.equal(lines.length, 2, refused!);
+        assert.match(lines[0]!, /^- ckpt-1 \(rejected as invalid\): op 1 \(admit more\): dishonest-citation: it targets out-of-slice rules T-2/);
+        assert.match(lines[1]!, /^- ckpt-2 \(sent to the owner: not applicable as proposed\): Checkpoint ckpt-2 proposes a bundle it may not apply by itself: it is invalid a second time \(.*dishonest-citation/);
+      } finally {
+        x.r.journal.close();
+      }
     }
   });
 

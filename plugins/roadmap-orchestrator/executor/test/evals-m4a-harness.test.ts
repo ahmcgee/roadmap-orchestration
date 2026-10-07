@@ -54,14 +54,20 @@ const reportOf = (over: Record<string, unknown> = {}): string => JSON.stringify(
 test('evals-m4a.check-restores-on-throw: the scrambled live inputs are restored when the check itself throws', T, async () => {
   const dir = bareFixture();
   const l = layout(dir);
-  writeFileSync(l.report, reportOf({ scrambled: ['a.txt', '.roadmap/config.json'] }));
-  writeFileSync(join(l.product, 'a.txt'), 'Scrambled by the M4a driver.\n');
-  writeFileSync(join(l.product, '.roadmap/config.json'), 'Scrambled by the M4a driver.\n');
+  writeFileSync(l.report, reportOf({ scrambled: ['.roadmap/config.json', '.roadmap/corpus.md', 'a.txt'] }));
+  // As driver.ts `scramble` leaves it: the live bytes backed up first (an absent path as `<path>.absent`), then scrambled.
+  const backup = join(dir, 'diagnostics', 'scramble-backup');
+  mkdirSync(join(backup, '.roadmap'), { recursive: true });
+  writeFileSync(join(backup, 'a.txt'), 'original\n');
+  writeFileSync(join(backup, '.roadmap/config.json'), '{}\n');
+  writeFileSync(join(backup, '.roadmap/corpus.md.absent'), '');
+  for (const p of ['a.txt', '.roadmap/config.json', '.roadmap/corpus.md']) writeFileSync(join(l.product, p), 'Scrambled by the M4a driver.\n');
   // A ref that is no arc snapshot: reading the product's arcs throws before any criterion runs.
   git(l.product, 'update-ref', 'refs/roadmap/arc-x', 'HEAD');
   await assert.rejects(check(dir), /arc-x/);
   assert.equal(readFileSync(join(l.product, 'a.txt'), 'utf8'), 'original\n');
   assert.equal(readFileSync(join(l.product, '.roadmap/config.json'), 'utf8'), '{}\n');
+  assert.ok(!existsSync(join(l.product, '.roadmap/corpus.md')), 'a path absent before the scramble is removed again');
 });
 
 // ---------------------------------------------------------------------------------------------------

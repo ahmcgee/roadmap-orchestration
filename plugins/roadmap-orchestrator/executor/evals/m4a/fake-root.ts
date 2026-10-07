@@ -7,16 +7,17 @@
 //   turn 1     the issue policy (`roadmap issues`), then the bootstrap questions (K, the first slice)
 //   answers    the bootstrap commit on `roadmap-work` (K, the curated corpus, the journeys), arc 1's Phase 0, start
 //   wake-ups   `pack-review` (blocking): fix guard's spec, `apply` (a new key: the superseding review);
-//              `run: complete`: `roadmap pr`, the brief (never acked: the owner has acknowledged none), `chain status`,
-//              then per script:
-//     story          after arc 1, ask the vision-silent cutoff question (P-1); on the answer, the between-arc commit
+//              `run: complete`: `roadmap pr`, the brief (never acked: the owner has acknowledged none), `chain status`
+//              (its `nextStart` decides; nothing here computes K), then per script:
+//     story          after arc 1 (`nextStart` within K), the check-in: the cutoff question (P-1) and, last, the action
+//                    taken on resume (arc 2's Phase 0); on the answer, the between-arc commit
 //                    and arc 2 (run-only cutoff before its start, so notice's admission is the item's to hold). Arc 2's
 //                    wakes, each synchronised on an event rather than a time: `run: blocked` (cutoff merged, notice
 //                    behind run-only): read status, release the audit waiting for this wake (scenario.ts);
 //                    `issue-policy-untrusted`: read the hold, ask the owner to restrict issue creation; on the answer,
 //                    ack, wait in turn (status) for the bundle's drift checkpoint, lift run-only, wait for notice's
 //                    hung `slow` lane and pause notice; `run: held` (with the bundle's divergence digest): resume
-//                    notice and log the intervention (OP-1); after arc 2, chain status shows K reached: the fixture
+//                    notice and log the intervention (OP-1); after arc 2, `nextStart` refuses `limit`: the fixture
 //                    still composes arc 3 (applying arc 2's converted admit as T-17) and shows `phase0 check` and
 //                    `start` refuse it `chain-invalid{limit}`, then stops `k-limit`
 //     vision-silent  after arc 1, a draft of arc 2 whose `phase0 check` reports no slice candidate: stops `vision-silent`
@@ -421,7 +422,8 @@ function arcComplete(c: Ctx, a: ArcState): string {
   const l = layout(c.dir);
   c.t.roadmap(['pr', '--repo', l.product, '--arc', a.arc]);
   c.t.roadmap(['brief', '--repo', l.product]);
-  const chain = JSON.parse(c.t.roadmap(['chain', 'status', '--repo', l.product])) as { k: number | null; unackedStarts: readonly string[] };
+  // The executor answers the next start (SKILL.md "Chaining" step 2); the root agent never computes K itself.
+  const chain = JSON.parse(c.t.roadmap(['chain', 'status', '--repo', l.product])) as { k: number | null; unackedStarts: readonly string[]; nextStart: { allowed: boolean; reason: string } };
   const head = completedHead(c, a);
   if (c.state.script === 'vision-silent') {
     const baseline = betweenArc(c, 2, head);
@@ -432,14 +434,19 @@ function arcComplete(c: Ctx, a: ArcState): string {
     return `Arc ${a.arc} completed; its PR is open against main. phase0 check offers no slice candidate: every world clause of the vision is served and held.\nPlease merge the PR into main with a merge commit.\nROADMAP-SESSION: stopped vision-silent`;
   }
   if (a.n === 1) {
+    // K = 1 and the bootstrap start counts as acked: arc 2 is allowed (paid run 12's root agent stopped here instead).
+    if (chain.nextStart.reason !== 'within-k') throw new Error(`story: after arc 1 the next start should be allowed: ${JSON.stringify(chain)}`);
     c.state.phase = 'cutoff-asked';
+    // The check-in is the turn's final message: preface, questions, then the action taken on resume whatever the answers.
     return [
-      `Arc ${a.arc} completed and its PR is open against main. I chain the next arc (V-5, when plans change) unless you say otherwise.`,
+      `Arc ${a.arc} completed and its PR is open against main. The next start is allowed (K ${chain.k}). I chain the next arc (V-5, when plans change) unless you say otherwise.`,
       '',
       `1. ${ARC1_QUESTION.text} Working assumption: ${ARC1_QUESTION.assumption}`,
+      '',
+      'On resume I start arc 2\'s Phase 0 with these working assumptions.',
     ].join('\n');
   }
-  if (chain.k === null || chain.unackedStarts.length < chain.k) throw new Error(`story: after arc 2 the chain should be at K: ${JSON.stringify(chain)}`);
+  if (chain.nextStart.reason !== 'limit') throw new Error(`story: after arc 2 the next start should be refused at K: ${JSON.stringify(chain)}`);
   // K is reached. The fixture shows the executor's own refusal too: arc 3's inputs, refused at check and at start.
   const baseline = betweenArc(c, 3, head);
   const three = composeArc(c, 3, baseline, { previous: { ...a, head }, answer: 'see P-1' });
@@ -447,7 +454,7 @@ function arcComplete(c: Ctx, a: ArcState): string {
   if (report.rows.length !== 1 || report.rows[0]?.kind !== 'chain-invalid') throw new Error(`story: arc 3's phase0 check should refuse only chain-invalid: ${JSON.stringify(report.rows)}`);
   start(c, three, [78]);
   c.state.phase = 'stopped';
-  return `Arc ${a.arc} completed; its PR is stacked on arc ${c.state.arcs[0]!.arc}'s. ${chain.unackedStarts.length} start(s) are unacknowledged and K is ${chain.k}: I stop here.\nPlease merge the stacked PRs in order, the first into main, each with a merge commit.\nROADMAP-SESSION: stopped k-limit`;
+  return `Arc ${a.arc} completed; its PR is stacked on arc ${c.state.arcs[0]!.arc}'s. chain status refuses the next start (limit: ${chain.unackedStarts.length + 1} unacked starts with it, K ${chain.k}): I stop here.\nPlease merge the stacked PRs in order, the first into main, each with a merge commit.\nROADMAP-SESSION: stopped k-limit`;
 }
 
 function arc2(c: Ctx, answer: string): string {

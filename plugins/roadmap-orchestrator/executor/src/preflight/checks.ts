@@ -42,7 +42,7 @@ import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync,
 import { dirname, join } from 'node:path';
 import { detectContainmentMode } from '../contain/detect.ts';
 import { durableMkdir, readJson } from '../core/fsx.ts';
-import { type ArcId, INTEGRATION_SLOT, type ResourceName, type UnitId, sha } from '../core/ids.ts';
+import { type ArcId, INTEGRATION_SLOT, type ResourceName, type Sha, type UnitId, sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { LogCorruptError, type OpenJournal, openJournal, readJournal } from '../core/log.ts';
 import type { HostLockClaim, LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
@@ -361,10 +361,20 @@ export function specLaneCheck(env: Readonly<Record<string, string | undefined>>)
   };
 }
 
-/** `.roadmap/config.json`, or null when the repo has none. */
+/** `.roadmap/config.json` in the working tree (what a start, `apply` and `phase0 check` read), or null when the repo has none. */
 export function readRepoConfig(repo: AbsPath): RepoConfig | null {
   const path = join(repo, '.roadmap', 'config.json');
   return existsSync(path) ? parseRepoConfig(JSON.parse(readFileSync(path, 'utf8'))) : null;
+}
+
+/**
+ * `.roadmap/config.json` as committed at `commit`, or null when that commit has none: the config an arc started under,
+ * read at its plan's `baseline` (a start refuses `tree-uncommitted` while the live file differs from `HEAD`). Readers
+ * after the start (`status`, `chain status`, the brief) read this, never the mutable live file (paid M4a run 12).
+ */
+export function committedRepoConfig(repo: AbsPath, commit: Sha): RepoConfig | null {
+  const r = gitRun(repo, ['cat-file', 'blob', `${commit}:.roadmap/config.json`], { okCodes: [0, 128] });
+  return r.code === 0 ? parseRepoConfig(JSON.parse(r.stdout)) : null;
 }
 
 /** The stack for this arc: the profile, the repo config's seats and class rebinds, the plan's layer (no per-unit layers in M1). */

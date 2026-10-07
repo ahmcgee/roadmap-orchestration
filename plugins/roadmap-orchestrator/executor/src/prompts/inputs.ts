@@ -291,11 +291,20 @@ export type TriggerView =
   | Readonly<{ type: 'audit'; job: JobId }>
   | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>;
 
+/** A checkpoint decision the executor refused: rejected invalid, or sent to the owner as not applicable as proposed. */
+export type RefusedProposal = Readonly<{ job: JobId; outcome: 'rejected-invalid' | 'owner-request'; reasons: string }>;
+
 export type CheckpointInputs = Readonly<{
   vision: VisionInput;
   trigger: TriggerView;
   /** The previous job of this trigger, when the executor rejected its decision as invalid: its job and reasons verbatim. */
   priorInvalid: Readonly<{ job: JobId; reasons: string }> | null;
+  /**
+   * Paid M4a run 12: the proposals refused earlier under the plan revision of this capture, any trigger (the most recent
+   * few, oldest first; `priorInvalid`'s job excluded), each with the executor's reasons verbatim: what no checkpoint
+   * proposes again unchanged.
+   */
+  refused: readonly RefusedProposal[];
   head: Sha;
   /** The plan in force, rendered: units with their state, edges, limits and routing classes. */
   plan: string;
@@ -383,7 +392,7 @@ export const ROLE_INPUTS = {
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
-    'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'vision', 'trigger', 'priorInvalid', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
@@ -804,6 +813,13 @@ export function divergencesText(divergences: CheckpointInputs['divergences']): s
 export function priorInvalidText(p: CheckpointInputs['priorInvalid']): string {
   if (p === null) return '';
   return `\n\n<prior_attempt>\nThe previous checkpoint on this trigger, ${p.job}, decided a bundle the executor rejected as invalid, for these reasons: ${p.reasons}\nThis is the last attempt: a second invalid decision goes to the owner as a request. Correct each reason above; do not repeat it.\n</prior_attempt>`;
+}
+
+/** The proposals already refused and why, as every checkpoint reads them (empty when there are none). */
+export function refusedText(refused: CheckpointInputs['refused']): string {
+  if (refused.length === 0) return '';
+  const line = (r: RefusedProposal): string => `- ${r.job} (${r.outcome === 'rejected-invalid' ? 'rejected as invalid' : 'sent to the owner: not applicable as proposed'}): ${r.reasons}`;
+  return `\n\n<refused_proposals>\nProposals already refused on this plan revision, and why. Do not propose any of them again unchanged: correct what each reason names, propose something else, or decide no-op.\n${refused.map(line).join('\n')}\n</refused_proposals>`;
 }
 
 /** Why the checkpoint runs, in sentences. */

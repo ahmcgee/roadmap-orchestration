@@ -453,7 +453,7 @@ describe('startup rows, brief and ack', () => {
 
   it('the brief payload round-trips, with no clock field', () => {
     const payload = {
-      schema: 'roadmap/brief-m4', coverage, items, chain: { position: 2, k: 1, unackedStarts: ['arc-2'] },
+      schema: 'roadmap/brief-m4', coverage, items, chain: { position: 2, k: 1, unackedStarts: ['arc-2'], nextStart: { allowed: false, reason: 'limit', k: 1, unacked: 2 } },
       arcs: [{
         arc: 'arc-2', slice: { advances: ['V-1', 'V-2'], why: 'first slice' }, divergences: [{ id: 'D-1', type: 'target-departed', what: 'w' }], digests: [{ needsUser: 'nu-12', ids: ['D-1'] }], decisions: ['d'],
         curation: phase0.curation, corpusDivergences: phase0.corpusDivergences,
@@ -478,6 +478,11 @@ describe('startup rows, brief and ack', () => {
     };
     same(parseBriefPayload, payload);
     assert.doesNotMatch(JSON.stringify(payload), /"at"/, 'no clock field');
+    // The next start's `allowed` is its reason's: a mismatched pair is refused.
+    for (const nextStart of [{ allowed: true, reason: 'within-k', k: 1, unacked: 1 }, { allowed: false, reason: 'k-unset' }, { allowed: false, reason: 'previous-incomplete', arc: 'arc-2' }]) {
+      same(parseBriefPayload, { ...payload, chain: { ...payload.chain, nextStart } });
+    }
+    assert.throws(() => parseBriefPayload({ ...payload, chain: { ...payload.chain, nextStart: { allowed: true, reason: 'limit', k: 1, unacked: 2 } } }), /allowed/);
   });
 });
 

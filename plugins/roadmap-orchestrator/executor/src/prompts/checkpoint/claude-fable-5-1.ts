@@ -32,7 +32,7 @@
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   checkpointSpecsText, closeoutText, coverageText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
-  priorInvalidText, referenceIndexText, rulingsText, targetDocument, triggerText, visionText,
+  priorInvalidText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
 } from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
 import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
@@ -125,7 +125,7 @@ export const PROMPT: PromptModule<'checkpoint'> = {
   system,
   schema: CHECKPOINT_SCHEMA,
   fields: [
-    'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'vision', 'trigger', 'priorInvalid', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   render: (i) => `<vision>
@@ -134,7 +134,7 @@ ${visionText(i.vision)}
 
 <trigger>
 This checkpoint runs because ${triggerText(i.trigger)} The integration head is ${i.head}.
-</trigger>${priorInvalidText(i.priorInvalid)}${closeoutText(i.closeout)}
+</trigger>${priorInvalidText(i.priorInvalid)}${refusedText(i.refused)}${closeoutText(i.closeout)}
 
 <vision_coverage>
 ${coverageText(i.coverage)}

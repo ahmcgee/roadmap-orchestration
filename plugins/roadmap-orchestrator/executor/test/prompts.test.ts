@@ -162,7 +162,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   ],
   checkpoint: [
     {
-      vision: vision(1, 'VISION-A'), trigger: { type: 'audit', job: jobId('audit', 1) }, priorInvalid: null, head: SHA_A, plan: 'PLAN-A', findings: [],
+      vision: vision(1, 'VISION-A'), trigger: { type: 'audit', job: jobId('audit', 1) }, priorInvalid: null, refused: [], head: SHA_A, plan: 'PLAN-A', findings: [],
       obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
       contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', issues: { type: 'captured', issues: [] },
@@ -170,7 +170,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
     {
       vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40, cause: { stage: 'candidate', attempt: 9, outcome: 'red', reason: 'candidate-red', design: false, detail: ['TRIGGER-B'] } },
-      priorInvalid: { job: jobId('ckpt', 2), reasons: 'PRIOR-B' }, head: SHA_B, plan: 'PLAN-B', findings: [findingView('F-2', 'FINDING-B')],
+      priorInvalid: { job: jobId('ckpt', 2), reasons: 'PRIOR-B' }, refused: [{ job: jobId('ckpt', 1), outcome: 'owner-request', reasons: 'REFUSED-B' }], head: SHA_B, plan: 'PLAN-B', findings: [findingView('F-2', 'FINDING-B')],
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], coverage: { unservedAdvanced: [visionClauseId('V-1')], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
       divergences: [{ id: divergenceId('D-1'), type: 'plan-departed', what: 'DIVERGENCE-B' }], contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')],
       index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'), target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') },

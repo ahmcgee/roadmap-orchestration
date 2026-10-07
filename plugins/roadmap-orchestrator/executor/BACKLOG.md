@@ -75,6 +75,10 @@ at triage stay in git history.
 - Revision 3.1 (the run-10 batch, steps N0–N9, 2026-10-06): records frozen in step N0 (SCHEMAS.md "M4a rev 3"); N0
   placed placeholders at every new module path behind `src/core/notyet.ts` again; N2, N3 and N6 replaced them, and N6
   deleted `notyet.ts`.
+- Paid run 12 fixes (2026-10-07): `nextStart` (code owns the chain arithmetic; the skill reads it), the check-in as one
+  final message ending with the next action or the stop, `refused` proposals in every checkpoint's inputs (scoped to the
+  plan rev, not the audit generation: run 12's ckpt-4 was generation 2 and re-proposed generation 1's refusal), and
+  readers after the start never parse the live `.roadmap/config.json`.
 
 ### M4b (after M4a)
 
@@ -116,6 +120,12 @@ at triage stay in git history.
 None.
 
 ## Watch (act only on the trigger)
+
+- **`nextStart` reads K at the chain head's baseline** (paid run 12 fix): a K the owner commits after that baseline is
+  seen only by the next start itself (the live file at `start`), not by `chain status`. Trigger: a session stopping
+  `k-limit` while the owner's newer committed K would allow the start.
+- **No check criterion grades check-in shape on paid runs** (paid run 12: "waiting for your answers" with no questions).
+  The fake story asserts it; a paid run only shows it as a nudge turn. Trigger: a paid run with a nudge after a check-in.
 
 - **A lens that answers invalid abandons its audit, retried only after `wallClockMin`** (run 10 round 2, R-16 review):
   `runAudit` asks the remaining lenses, ends `abandoned`, and the cadence's `retry` waits the period (default 360 min),

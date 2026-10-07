@@ -529,16 +529,44 @@ function priorInvalid(ctx: CheckpointContext, job: JobId): CheckpointInputs['pri
   return d?.kind === 'rejected' && d.reason === 'invalid' ? { job: prev!.inputs.job, reasons: d.detail } : null;
 }
 
+/** How many refused proposals a checkpoint's prompt carries at most: the most recent. */
+export const REFUSED_MAX = 3;
+
+/**
+ * Paid M4a run 12 (ckpt-3 to ckpt-5 re-proposed one invalid split, each a paid call): the decisions captured before `s`
+ * under its plan rev, on any trigger, that the executor refused: rejected `invalid` (its detail), or sent to the owner as
+ * not applicable as proposed (an invalid second decision, or no valid decision twice: the request's summary). The most
+ * recent REFUSED_MAX, oldest first, without `prior` (rendered as `priorInvalid`). A later plan rev drops them: the
+ * plan they were refused against changed.
+ */
+function refusedOf(ctx: CheckpointContext, s: Captured, prior: JobId | null): CheckpointInputs['refused'] {
+  return ctx.journal.view.holistic().checkpoints
+    .filter((c) => c.inputs.seq < s.seq && c.inputs.vector.plan === s.vector.plan && c.inputs.job !== prior)
+    .flatMap((c): CheckpointInputs['refused'] => {
+      const d = c.decided;
+      if (d?.kind === 'rejected' && d.reason === 'invalid') return [{ job: c.inputs.job, outcome: 'rejected-invalid', reasons: d.detail }];
+      if (d?.kind !== 'requested') return [];
+      const id = d.needsUser as Parameters<typeof readNeedsUser>[1];
+      const record = readNeedsUser(ctx.runDir, id);
+      if (record === null) throw new Error(`${c.inputs.job} decided the request ${id}, which has no record`);
+      const notApplicable = canonicalJson(record.options.map((o) => o.id)) === canonicalJson(INVALID_REQUEST_OPTIONS.map((o) => o.id));
+      return notApplicable ? [{ job: c.inputs.job, outcome: 'owner-request', reasons: record.summary }] : [];
+    })
+    .slice(-REFUSED_MAX);
+}
+
 function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): CheckpointInputs {
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
   const closeout = closeoutOf(ctx, s, r);
   const reuse = issueReuse(ctx.journal.view, ctx.runDir, s);
   const sidecars = Object.entries(payloadAt(ctx, r.planRev).manifest.rulings.sidecars)
     .map(([, sha]) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
+  const prior = priorInvalid(ctx, s.job);
   return {
     vision: visionInputOf(r.vision, advancesOf(r.plan)),
     trigger: triggerView(ctx, s.trigger),
-    priorInvalid: priorInvalid(ctx, s.job),
+    priorInvalid: prior,
+    refused: refusedOf(ctx, s, prior?.job ?? null),
     head: s.headSha,
     plan: renderPlan(ctx, s, r),
     // A closeout (H5) repeats neither the findings nor the specs the no-op it follows weighed.

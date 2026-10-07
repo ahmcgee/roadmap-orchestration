@@ -31,7 +31,7 @@
 // disposition of no amendment) is `plan-invalid{schema}` naming it.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, questionClosure, unackedStarts } from '../chain.ts';
+import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
 import { type ArcId, type DebtId, type IssueId, type UnitId, issueId, phaseQuestionSeq, sha } from '../core/ids.ts';
 import type { SpecM1 } from '../core/records.ts';
 import { sha256Hex } from '../core/json.ts';
@@ -377,21 +377,27 @@ function actedReferences(record: Phase0Record, plan: PlanM1, pin: CorpusPin | nu
 /**
  * The first chain problem of a start, in order: the previous arc complete in its verified ref, the baseline one
  * non-merge commit on its completed head touching only `.roadmap/` inputs and same-repo corpus paths, K set, and the
- * unacked starts (this one included) within K. A bootstrap arc (no `chain`) has none.
+ * unacked starts (this one included) within K. A bootstrap arc (no `chain`) has none. The previous-arc and K rows are
+ * src/chain.ts's `previousIncomplete` and `quotaOf`, which `nextStartOf` answers for `chain status` too.
  */
 function chainRow(input: Phase0Input, guide: CorpusGuide | null, arcs: readonly ArcRef[], missing: ArcId | null): ChainProblem | null {
   const chain = input.plan.chain;
   if (chain === undefined) return null;
-  const previous = arcs.at(-1);
-  if (missing === chain.previousArc || previous === undefined) return { type: 'previous-incomplete', arc: chain.previousArc };
-  const completed = completedHeadOf(previous);
-  if (completed === null || !completed.done) return { type: 'previous-incomplete', arc: chain.previousArc };
-  const baseline = baselineProblem(input, chain.previousHead, completed.head, guide);
+  const previous = missing === chain.previousArc ? null : arcs.at(-1) ?? null;
+  const incomplete = previousIncomplete(chain.previousArc, previous);
+  if (incomplete !== null) return incomplete;
+  // No row: the previous arc's ref holds a done completion.
+  const baseline = baselineProblem(input, chain.previousHead, completedHeadOf(previous!)!.head, guide);
   if (baseline !== null) return { type: 'baseline', baseline };
-  const k = input.config?.chain?.k;
-  if (k === undefined) return { type: 'k-unset' };
-  const unacked = unackedStarts(arcs.map((a) => a.arc), committedAcks(input.repo)).length + 1;
-  return unacked > k ? { type: 'limit', k, unacked } : null;
+  const quota = quotaOf(arcs.map((a) => a.arc), input.config?.chain?.k ?? null, committedAcks(input.repo));
+  switch (quota.reason) {
+    case 'within-k':
+      return null;
+    case 'limit':
+      return { type: 'limit', k: quota.k, unacked: quota.unacked };
+    case 'k-unset':
+      return { type: 'k-unset' };
+  }
 }
 
 /** The `.roadmap/` files a between-arc commit may touch besides same-repo corpus paths (OR-L7). */

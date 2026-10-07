@@ -19,14 +19,15 @@
 //   items of every live arc (a run dir in this repo and no done completion in its ref) that no committed ack lists
 //   (its `ack` is enqueued, applied or not): what an ack of the brief acknowledges. Blocking items are never acked by a
 //   brief.
-// - **Chain**: the head's position (1-based), K (`config.chain.k`) and the unacked starts.
+// - **Chain**: the head's position (1-based), K, the unacked starts and the next start (src/commands/chain.ts
+//   `chainQuota`: K committed at the head's baseline, the start predicate src/chain.ts `nextStartOf`).
 // - **Admits** (M4a rev 3, OR-A1; corpus arcs): the admits classified in the delta (`status`'s `admitViews` over the ref),
 //   the opportunities at the ref, the drift indicator's non-zero lines at the ref (the only check on under-declared admit
 //   targets), and each amendment a converted admit made names that admit.
 // The payload holds no clock; forge state, census figures and timings are in it, so a change of any changes the id.
 import { existsSync } from 'node:fs';
-import { type ArcRef, committedAcks, completedHeadOf, unackedStarts } from './chain.ts';
-import { type ChainLink, chainHead, chainTo, linkOf, prsOf } from './commands/chain.ts';
+import { type ArcRef, committedAcks, completedHeadOf } from './chain.ts';
+import { type ChainLink, chainHead, chainQuota, chainTo, linkOf, prsOf } from './commands/chain.ts';
 import { type ArcId, type BriefId, type Sha, amendmentRefOf, briefId, invocationDirName } from './core/ids.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import { type CommandBody, needsUserRecord } from './core/records.ts';
@@ -38,8 +39,7 @@ import { parseObligations } from './holistic/types.ts';
 import { OBLIGATIONS_INPUT, PHASE0_INPUT, REVISION_INPUT, RULING_INPUT } from './input/inforce.ts';
 import { CliError, runDir } from './input/cli.ts';
 import { NEEDS_USER_DIR, openNeedsUser } from './needsuser.ts';
-import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefPayload, type BriefPr, type CoverageEntry, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
-import { readRepoConfig } from './preflight/checks.ts';
+import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
 import { meterOf } from './meter.ts';
 import { type Decision, admitViews, censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
 
@@ -175,7 +175,7 @@ export function computeBrief(repo: AbsPath): Brief {
     schema: BRIEF_SCHEMA,
     coverage: arcs.map((r): CoverageEntry => ({ arc: r.arc, snapshotCommit: r.commit, highWater: r.highWater })),
     items: arcs.filter((r) => live(repo, r)).flatMap((r) => itemsOf(repo, r)).filter((i) => !enqueued.has(itemKey(i))).sort(byKey(itemKey)),
-    chain: { position: chain.length, k: readRepoConfig(repo)?.chain?.k ?? null, unackedStarts: unackedStarts(chain.map((r) => r.arc), acks) },
+    chain: { position: chain.length, ...chainQuota(repo, chain.map((r) => r.arc), { plan: head.plan, ref: head }, acks) },
     arcs: arcs.map((r) => briefArc(repo, r, from.get(r.arc) ?? 0, prs.get(r.arc)!)),
   };
   // The payload is what its reader accepts (the frozen schema): a bug here fails loud, never a malformed brief.
@@ -227,11 +227,26 @@ function arcMarkdown(a: BriefArc): string {
   ].join('')}`;
 }
 
+/** The next start in words: allowed or not, and why. */
+export function nextStartLine(n: NextStart): string {
+  switch (n.reason) {
+    case 'within-k':
+      return `allowed (${n.unacked} unacked start${n.unacked === 1 ? '' : 's'} with it, K ${n.k})`;
+    case 'limit':
+      return `refused: limit (${n.unacked} unacked starts with it, K ${n.k})`;
+    case 'k-unset':
+      return 'refused: K unset';
+    case 'previous-incomplete':
+      return `refused: ${n.arc} is not complete`;
+  }
+}
+
 /** The brief's Markdown, rendered from `payload` alone. */
 export function renderBrief(id: BriefId, payload: BriefPayload): string {
   const ch = payload.chain;
   return `# Roadmap brief ${id}\n\n${list([
     `chain: position ${ch.position}, K ${ch.k ?? 'unset'}, unacked starts: ${ch.unackedStarts.length === 0 ? 'none' : ch.unackedStarts.join(', ')}`,
+    `next start: ${nextStartLine(ch.nextStart)}`,
     `covers: ${payload.coverage.map((c) => `${c.arc} to seq ${c.highWater}`).join(', ')}`,
     `an ack acknowledges: ${payload.items.length === 0 ? 'nothing open' : payload.items.map((i) => `${i.arc}/${i.id}`).join(', ')}`,
     `ack: roadmap brief --repo <repo> --ack ${id}`,

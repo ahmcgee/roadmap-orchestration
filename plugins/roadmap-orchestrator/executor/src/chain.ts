@@ -23,7 +23,7 @@ import { snapshotRef, verifySnapshot } from './git/snapshot.ts';
 import { PHASE0_INPUT, PLAN_INPUT, REVISION_INPUT } from './input/inforce.ts';
 import { type PlanM1, parsePlan } from './input/plan.ts';
 import { parseRevisionPayload } from './core/events.ts';
-import { type AckMarker, type PhaseQuestion, parseAckMarker, parsePhase0Record } from './phase0/types.ts';
+import { type AckMarker, type ChainProblem, type NextStart, type PhaseQuestion, parseAckMarker, parsePhase0Record } from './phase0/types.ts';
 import { ackCommandId, enqueueCommand } from './commands/queue.ts';
 import { crashPoint } from './core/crash.ts';
 import { durableRename } from './core/fsx.ts';
@@ -200,6 +200,33 @@ export function finishPendingAcks(repo: AbsPath): readonly AckMarker[] {
 export function unackedStarts(chain: readonly ArcId[], acks: readonly AckMarker[]): readonly ArcId[] {
   const at = Math.max(0, ...acks.map((a) => chain.indexOf(a.chainHead)));
   return chain.slice(at + 1);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The start predicate (H12, R11): the chain rows that need no plan of the start. `chainRow` (src/phase0/rows.ts) applies
+// them around its baseline rows; `nextStartOf` answers them for the start after the chain's head (`chain status`,
+// `status`, the brief), so the root agent never computes K itself (paid M4a run 12).
+
+/** The previous arc's row: its verified ref (null: none) holds a done completion. */
+export function previousIncomplete(previousArc: ArcId, ref: ArcRef | null): Extract<ChainProblem, { type: 'previous-incomplete' }> | null {
+  const c = ref === null ? null : completedHeadOf(ref);
+  return c === null || !c.done ? { type: 'previous-incomplete', arc: previousArc } : null;
+}
+
+/** K's rows for a start chained on the last arc of `chain` (oldest first): K set, and the unacked starts with this one within K. */
+export type Quota = Exclude<NextStart, Readonly<{ reason: 'previous-incomplete' }>>;
+export function quotaOf(chain: readonly ArcId[], k: number | null, acks: readonly AckMarker[]): Quota {
+  if (k === null) return { allowed: false, reason: 'k-unset' };
+  const unacked = unackedStarts(chain, acks).length + 1;
+  return unacked > k ? { allowed: false, reason: 'limit', k, unacked } : { allowed: true, reason: 'within-k', k, unacked };
+}
+
+/** The start after `head`, the last arc of `chain` (oldest first; null: it has no ref yet): its previous-arc and K rows. */
+export function nextStartOf(chain: readonly ArcId[], head: ArcRef | null, k: number | null, acks: readonly AckMarker[]): NextStart {
+  const last = chain.at(-1);
+  if (last === undefined) throw new Error('the next start of an empty chain');
+  const previous = previousIncomplete(last, head);
+  return previous === null ? quotaOf(chain, k, acks) : { allowed: false, reason: 'previous-incomplete', arc: previous.arc };
 }
 
 /** The questions of the chain closure by id, with the texts seen (one text per id when the closure is consistent). */

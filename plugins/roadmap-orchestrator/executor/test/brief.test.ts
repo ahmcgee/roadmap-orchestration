@@ -2,7 +2,8 @@
 // over real chained corpus arcs: real repos and pins, real run dirs and folds, real snapshot refs (the brief reads only
 // them), the fake forge for the PRs, the CLI as a child for the crash rows (BRIEF_ACK). Named tests:
 // brief.since-ack-across-arcs, brief.coverage-vector, brief.payload-hash-whole, brief.markdown-from-payload,
-// brief.ack-stale-refused, brief.ack-nonblocking-only, brief.ack-crash-rerun, brief.ack-crash-start, brief.ack-ids-ordinal, chain.status-render.
+// brief.ack-stale-refused, brief.ack-nonblocking-only, brief.ack-crash-rerun, brief.ack-crash-start, brief.ack-ids-ordinal, chain.status-render,
+// chain.next-start (paid M4a run 12).
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -172,7 +173,7 @@ describe('roadmap brief', () => {
     const { a2, items } = await chained();
     const first = await payloadOf(a2);
     const p = first.payload;
-    assert.deepEqual(p.chain, { position: 2, k: 1, unackedStarts: ['arc-2'] });
+    assert.deepEqual(p.chain, { position: 2, k: 1, unackedStarts: ['arc-2'], nextStart: { allowed: false, reason: 'previous-incomplete', arc: 'arc-2' } });
     assert.deepEqual(p.arcs.map((x) => x.arc), ['arc-1', 'arc-2']);
     const one = arcOf(p, 'arc-1');
     assert.deepEqual(one.slice, { advances: ['V-1'], why: 'the first slice' }, 'the Phase-0 slice in force (Q19)');
@@ -266,7 +267,7 @@ describe('roadmap brief', () => {
     const b = await payloadOf(a2);
     assert.equal(renderBrief(b.id, parseBriefPayload(JSON.parse(canonicalJson(b.payload)))), b.markdown);
     for (const text of [
-      `# Roadmap brief ${b.id}`, 'chain: position 2, K 1, unacked starts: arc-2', `ack: roadmap brief --repo <repo> --ack ${b.id}`, '### arc-1', '### arc-2', 'slice: advances V-1: the first slice',
+      `# Roadmap brief ${b.id}`, 'chain: position 2, K 1, unacked starts: arc-2', 'next start: refused: arc-2 is not complete', `ack: roadmap brief --repo <repo> --ack ${b.id}`, '### arc-1', '### arc-2', 'slice: advances V-1: the first slice',
       'D-1 interpretation: a berth is a slot', '#### Questions (working assumptions)', '#1 P-1 open: Is the cancellation window 24 h or 48 h? — assuming: 48 h',
       'arc-1/M-1 (T-2): Name the tide window in every booking.', 'B-1: Tidy the berth helpers.', 'review-1#0: the cut line is vague',
       'census: 0% held (0/1 obligation rules held; 1 out of slice, 1 untestable, 0 prod-only)', `arc-2/${items.digest}`,
@@ -379,7 +380,7 @@ test('chain.status-render: the chain oldest first with previous arcs, acked star
       { arc: 'arc-1', previousArc: null, acked: true, pr: { type: 'none' } },
       { arc: 'arc-2', previousArc: 'arc-1', acked: false, pr: { type: 'none' } },
     ],
-    k: 1, unackedStarts: ['arc-2'],
+    k: 1, unackedStarts: ['arc-2'], nextStart: { allowed: false, reason: 'previous-incomplete', arc: 'arc-2' },
   });
   const number = a2.forge.addPull({ head: 'harbour/arc-2', base: 'main' });
   const pr = { type: 'pr', number, url: `https://forge.test/tidewater/harbour/pull/${number}`, state: 'open', base: 'main', needsRebase: false };
@@ -395,4 +396,30 @@ test('chain.status-render: the chain oldest first with previous arcs, acked star
   chmodSync(join(broken, 'gh'), 0o755);
   const down = await withForge({ ...a1.forge, path: `${broken}:${process.env['PATH'] ?? ''}` }, () => chainStatus({ repo: a2.repo }));
   assert.ok(down.arcs.every((x) => x.pr.type === 'unavailable' && /no network/.test(x.pr.reason)), JSON.stringify(down.arcs));
+});
+
+test('chain.next-start (paid M4a run 12): chain status, status and the brief answer the start after the head with the start\'s own predicate; K is committed at the head\'s baseline, never the live file', T, async () => {
+  const unset = await corpusArc({ config: null });
+  await seal(unset);
+  assert.deepEqual((await withForge(unset.forge, () => chainStatus({ repo: unset.repo }))).nextStart, { allowed: false, reason: 'k-unset' });
+
+  const a1 = await corpusArc();
+  const next = async () => (await withForge(a1.forge, () => chainStatus({ repo: a1.repo }))).nextStart;
+  const h1 = await seal(a1);
+  // The bootstrap start counts as acked: arc 2 is the one unacked start, within K = 1.
+  assert.deepEqual(await next(), { allowed: true, reason: 'within-k', k: 1, unacked: 1 });
+  betweenArc(a1.repo, h1);
+  const a2 = await nextArc(a1, h1, 'arc-2');
+  await seal(a2);
+  assert.deepEqual(await next(), { allowed: false, reason: 'limit', k: 1, unacked: 2 });
+  // The live file is not what the chain reads: a raised K that is not committed changes nothing, and garbage crashes nothing.
+  for (const bytes of ['{"chain":{"k":5}}\n', 'Scrambled: not JSON.\n']) {
+    writeFileSync(join(a1.repo, '.roadmap', 'config.json'), bytes);
+    assert.deepEqual(await next(), { allowed: false, reason: 'limit', k: 1, unacked: 2 }, bytes);
+  }
+  const b = await payloadOf(a2);
+  assert.deepEqual(b.payload.chain.nextStart, { allowed: false, reason: 'limit', k: 1, unacked: 2 });
+  assert.ok(b.markdown.includes('next start: refused: limit (2 unacked starts with it, K 1)'), b.markdown);
+  assert.equal((await briefOf(a2, b.id)).kind, 'acked');
+  assert.deepEqual(await next(), { allowed: true, reason: 'within-k', k: 1, unacked: 1 }, 'an ack of the head releases');
 });

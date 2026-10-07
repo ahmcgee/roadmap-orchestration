@@ -27,9 +27,9 @@ the corpus, Phase 0, the plan, adjudicating what the executor hands you, and the
 
 ## Talking to the owner
 
-The owner is not watching. Everything you ask goes in one place: end your turn with numbered questions, each
-answerable on its own, each with the working assumption you will act on if the answer is "no view". Never ask in
-the middle of a turn and carry on. Ask only what the vision and the corpus cannot decide; everything else you
+The owner is not watching and sees only your turn's final message. Everything you ask goes in one place: end that
+message with numbered questions, each answerable on its own, each with the working assumption you will act on if the
+answer is "no view". Never ask in the middle of a turn and carry on. Ask only what the vision and the corpus cannot decide; everything else you
 decide and report at the next check-in.
 
 Always ask first, whatever autonomy you hold: anything irreversible outside the sandbox, anything that may cost
@@ -50,8 +50,8 @@ Work on a branch you own (`git switch -c roadmap-work main`), never the integrat
 3. **Vision.** Run the `vision` skill until the vision document is confirmed and `.roadmap/vision.json` is
    compiled. Never write the vision yourself.
 4. **K.** Ask the owner: "how many arcs may I run past your last acknowledged brief before I stop and wait?"
-   Write `{"chain": {"k": <n>}}` into `.roadmap/config.json` (keep any `routing` key). You may suggest a new K
-   later, never write one.
+   (working assumption: 1). Write `{"chain": {"k": <n>}}` into `.roadmap/config.json` (keep any `routing` key),
+   `1` without an answer. You may suggest a new K later, never write one.
 5. **First slice.** Agree with the owner which vision clauses the first arc advances (at least one world scene).
 6. **Commit** `.roadmap/{corpus.md, vision.json, config.json}` and the corpus. `start` and `apply` refuse
    `tree-uncommitted` while those three files differ from `HEAD`.
@@ -258,10 +258,13 @@ Phase 0 under way. While an arc runs, one `roadmap apply` carries it:
 - The next between-arc commit carries that corpus edit again: the integration branch never had it.
 
 Check in at every arc completion (the chain boundary), at every event worth a brief (a stop, a blocking item you
-cannot decide, the owner returning). **A check-in ends the turn**: the brief, your preface, then the numbered
-questions, and nothing after them (at a stop, the session-end line comes last: "Chaining"). Before it, start
-nothing that needs an answer: the next arc's Phase 0 waits for the turn boundary. It never blocks on the answer:
-the session continues when you are resumed, by the owner's reply or by the next wake. In an unattended session make
+cannot decide, the owner returning). **A check-in is your turn's final message, and ends the turn**: the preface,
+the brief, the numbered questions, then one line with the action you take on resume whatever the answers ("On
+resume I start arc 3's Phase 0 with these working assumptions."), or, when `nextStart` forbids the next start, the
+stop ("Chaining"). Never end a turn "waiting for your answers", and never put the questions and a stop line in
+different messages; questions and a stop line share a message only when `nextStart` forbids continuing. Before the
+check-in, start nothing that needs an answer: the next arc's Phase 0 waits for the turn boundary. It never blocks
+on the answer: the session continues when you are resumed, by the owner's reply or by the next wake. In an unattended session make
 sure something resumes you before you end the turn (the harness, a scheduled wake-up, or a Monitor on
 `watch --actionable` still running). On resuming, apply any answer at once ("An owner's answer"), keep the working
 assumptions for the rest, and start the next arc's Phase 0 then, never inside the check-in's turn.
@@ -278,9 +281,11 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 1. `roadmap pr --repo <repo> --arc <arc>`: pushes the arc branch and opens or updates its PR. The first arc's PR
    targets `main`, each later one the previous arc's branch; the body lists the arc's amendments and says to merge
    with merge commits.
-2. Check in: end the turn with the questions ("Check-ins"). Everything below runs after you are resumed.
-3. `roadmap chain status --repo <repo>`. When `unackedStarts` has K or more arcs, the next start would be refused
-   `chain-invalid{limit}`: stop with reason `k-limit`.
+2. `roadmap chain status --repo <repo>` and read `nextStart`, the executor's own answer for the next start. Never
+   work it out from `k` and `unackedStarts`. `allowed`: you continue. `limit`: stop with reason `k-limit`; this
+   check-in is the final one. `k-unset`: ask K ("Bootstrap" step 4); on resume, write it in the between-arc commit.
+3. Check in ("Check-ins"), ending with the next action, or with the stop. Everything below runs after you are
+   resumed.
 4. Choose the next slice from the census, per the vision: `sliceCandidates` from `phase0 check`, ranked by the
    vision's trade-offs. When no candidate is one you can justify from active clauses, stop with reason
    `vision-silent`. Otherwise report the slice and why at the next check-in; do not wait for approval.
@@ -292,8 +297,8 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
    next arc's baseline.
 6. Phase 0 for the next arc, with `chain: {previousArc, previousHead: <completed head>}` in its plan.
 
-**Stop.** Give a final check-in, ask the owner to merge the stacked PRs in order, first into `main`, each with a
-merge commit, then end with exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,
+**Stop.** One final message: the check-in, the request to merge the stacked PRs in order, first into `main`, each
+with a merge commit, then exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,
 `vision-silent` or `owner` (the owner told you to stop, or an executor defect stopped the arc: "Handling parks").
 
 ## Handling parks

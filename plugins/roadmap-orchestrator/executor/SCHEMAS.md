@@ -1950,7 +1950,12 @@ src/pipeline/dispatch.ts `callArcRole`):
 9. **Due and re-queue.** A trigger (`audit{job}` for a completed audit; `park{unit, seq}` for an operator-design park,
    `seq` the park's) is due while it has no job, or its latest job was rejected (stale or evidence: always; invalid:
    the next is the last, since a trigger's second invalid decision, a failed call included, is a non-blocking
-   `bundle-request` with no options; its prompt carries the rejected job's reasons verbatim, `<prior_attempt>`), or its latest job's `bundle-request` was acknowledged `apply`. That next job
+   `bundle-request` with no options; its prompt carries the rejected job's reasons verbatim, `<prior_attempt>`), or its latest job's `bundle-request` was acknowledged `apply`. Paid run 12: every
+   checkpoint's inputs also carry `refused[{job, outcome: rejected-invalid | owner-request, reasons}]`, the decisions
+   captured before it under its plan rev, any trigger, that were rejected `invalid` (the detail) or sent to the owner
+   as not applicable (`INVALID_REQUEST_OPTIONS`; the request's summary), the most recent `REFUSED_MAX` (3), oldest
+   first, the `<prior_attempt>` job excluded; rendered `<refused_proposals>`. Derived from the log before the capture,
+   so a resumed job renders the same prompt. That next job
    enacts the requested bundle: it captures as ever, makes no call, activates the requester's output against the
    requester's captured inputs with draining and the brakes skipped. Parks are served before audits. A park
    checkpoint's generation is the latest recorded (1 before any). Its prompt reads the park's cause from the unit's
@@ -2295,7 +2300,7 @@ corpus, A3 issues and pr, C1 phase0, C4 brief and chain); C4 deleted `src/core/n
 **Brief ack log** (K9, K10, H6; `src/phase0/types.ts`): `$(git-common-dir)/roadmap/acks/<briefId>.pending.json`, committed
 by rename to `<briefId>.json`: `{briefId, at, chainHead, coverage: [{arc, snapshotCommit, highWater}] (ascending by
 arc), items: [{arc, id: NeedsUserId}] (ascending, unique)}`. **Brief payload** (`roadmap/brief-m4`, H16): `{schema,
-coverage, items, chain: {position, k|null, unackedStarts}, arcs: [{arc, slice: {advances: V-n[], why}|null, divergences [{id, type, what}], digests
+coverage, items, chain: {position, k|null, unackedStarts, nextStart}, arcs: [{arc, slice: {advances: V-n[], why}|null, divergences [{id, type, what}], digests
 [{needsUser, ids}], decisions, curation, corpusDivergences, debt: {banked [{id, what}], dispositioned [{id,
 disposition}]}, intake [{issue, job: null (Phase 0) | ckpt-n, outcome}], questions [{id, rank, text, assumption,
 state}], amendments [{id: <arc>/M-n, rules, proposal}], packReviewNotes [{job: review-n, index, claim}] (C4), census: {held, obligationRules, outOfSlice, untestable,
@@ -2363,7 +2368,11 @@ unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 h
    `arc-completed` after its latest plan revision that is active or sealed in the ref), `baseline` (H12's order),
    `k-unset`, `limit`; `limit.unacked` counts the unacked starts with this one. The ack that counts is the committed
    ack (`<briefId>.json`, never a pending marker) whose `chainHead` is furthest along the chain; with none, the
-   bootstrap arc is acked. `roadmap pr` reads arcs through it.
+   bootstrap arc is acked. `roadmap pr` reads arcs through it. Paid run 12: the rows that need no plan of the start
+   (`previousIncomplete`, `quotaOf`) are the one predicate `chainRow` applies and `nextStartOf` answers for the start
+   after a chain's head: `NextStart = {allowed: true, reason: within-k, k, unacked} | {allowed: false, reason: limit, k,
+   unacked} | {allowed: false, reason: k-unset} | {allowed: false, reason: previous-incomplete, arc}` (`unacked` counts
+   that start; `allowed` is the reason's, a mismatched pair is refused).
 10. **Vision**: a corpus arc's `confirmation.ref` must be the `corpus:` form and hash to the pinned file at its path
     (`vision-unconfirmed{ref, expected, actual}`; the M3 form in a corpus arc is `actual: null`). The load label of a
     corpus arc's vision record is `.roadmap/vision.json` (an `architecture-doc` arc's stays `plan.holistic.vision`).
@@ -2476,8 +2485,11 @@ src/commands/{brief,chain,queue}.ts):
    source{kind, commit, root}, files, rules{active, retired, highWater}, phase0Sha256}`, `census{rules[{rule, state,
    held|null}], counts, heldPct}` (held: the obligation is in `nowTrue`), `debt{banked, ledger}` (`arcDebtLedger`),
    `issues{lastCapture, intake}` and `chain` (`chain status`'s view of the chain ending at this arc, ref or not, plus
-   `position`) are null outside a corpus arc; `amendments` and `timings` are always present. `chain status` and the brief
-   read K from the working tree's `.roadmap/config.json`.
+   `position`) are null outside a corpus arc; `amendments` and `timings` are always present. Paid run 12: `chain status`,
+   `status.chain` and the brief carry `nextStart` (src/commands/chain.ts `chainQuota`) and read K as `chain.k` of the
+   config committed at the chain head's plan `baseline` (`committedRepoConfig`; `status`: its own arc's), never the
+   working tree's `.roadmap/config.json`; `status` resolves its read-only contexts' routing base from the revision in
+   force's `routingProvenance` (`routingBaseOf`). Only `start`, `apply` and `phase0 check` read the live file.
 
 ## M4a rev 3: the run-10 batch (frozen in step N0)
 

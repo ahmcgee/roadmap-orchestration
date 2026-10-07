@@ -225,6 +225,24 @@ export const chainProblem: Read<ChainProblem> = tagged('type', {
   'k-unset': object((f): ChainProblem => ({ type: f.get('type', literal('k-unset')) })),
 });
 
+/**
+ * Whether a start chained on the chain's head would pass the chain rows that need no plan of it (paid M4a run 12): the
+ * head complete, K set, and the unacked starts with it within K (src/chain.ts `nextStartOf`, the one predicate
+ * `chainRow` applies too). `unacked` counts the next start itself. The baseline rows need the next plan: only `start`
+ * and `phase0 check` decide them.
+ */
+export type NextStart =
+  | Readonly<{ allowed: true; reason: 'within-k'; k: number; unacked: number }>
+  | Readonly<{ allowed: false; reason: 'limit'; k: number; unacked: number }>
+  | Readonly<{ allowed: false; reason: 'k-unset' }>
+  | Readonly<{ allowed: false; reason: 'previous-incomplete'; arc: ArcId }>;
+export const nextStart: Read<NextStart> = tagged('reason', {
+  'within-k': object((f): NextStart => ({ allowed: f.get('allowed', literal(true)), reason: f.get('reason', literal('within-k')), k: f.get('k', positive), unacked: f.get('unacked', positive) })),
+  limit: object((f): NextStart => ({ allowed: f.get('allowed', literal(false)), reason: f.get('reason', literal('limit')), k: f.get('k', positive), unacked: f.get('unacked', positive) })),
+  'k-unset': object((f): NextStart => ({ allowed: f.get('allowed', literal(false)), reason: f.get('reason', literal('k-unset')) })),
+  'previous-incomplete': object((f): NextStart => ({ allowed: f.get('allowed', literal(false)), reason: f.get('reason', literal('previous-incomplete')), arc: f.get('arc', (v, p) => arcId(v, p)) })),
+});
+
 /** `issue-policy-untrusted{visibility, policy}` (OR-L6): the policy the forge answered. */
 export type UntrustedPolicy = Readonly<{ visibility: RepoVisibility; policy: IssueCreationPolicy }>;
 export const untrustedPolicyFields = { visibility: oneOf(REPO_VISIBILITIES), policy: oneOf(ISSUE_CREATION_POLICIES) } as const;
@@ -332,7 +350,7 @@ export type BriefPayload = Readonly<{
   schema: typeof BRIEF_SCHEMA;
   coverage: readonly CoverageEntry[];
   items: readonly AckItem[];
-  chain: Readonly<{ position: number; k: number | null; unackedStarts: readonly ArcId[] }>;
+  chain: Readonly<{ position: number; k: number | null; unackedStarts: readonly ArcId[]; nextStart: NextStart }>;
   /** Ascending by arc. */
   arcs: readonly BriefArc[];
 }>;
@@ -408,6 +426,7 @@ export const briefPayload: Read<BriefPayload> = object((f) => {
     items: f.get('items', ackItems),
     chain: f.get('chain', object((g) => ({
       position: g.get('position', positive), k: g.get('k', nullable(positive)), unackedStarts: g.get('unackedStarts', arrayOf((v, p) => arcId(v, p))),
+      nextStart: g.get('nextStart', nextStart),
     }))),
     arcs: f.get('arcs', sortedBy(briefArc, (a) => a.arc)),
   };

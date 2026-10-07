@@ -297,6 +297,15 @@ export const planRouting = (base: RoutingBase, plan: PlanM1): ResolvedRouting =>
 export const unitRouting = (base: RoutingBase, plan: PlanM1, unit: PlanUnit): ResolvedRouting =>
   resolveRouting({ ...planStack(base.profile, base.config, plan), unit: unit.routing ?? null });
 
+/**
+ * The routing base a revision's provenance records (H7): its profile and the repo config's seats and class rebinds in
+ * force then. A reader after the start (`status`) uses it, never the live repo config (paid M4a run 12).
+ */
+export function routingBaseOf(p: RoutingProvenance): RoutingBase {
+  const routing = { ...(p.repoConfig.seats === null ? {} : { seats: p.repoConfig.seats }), ...(p.repoConfig.classes === null ? {} : { classes: p.repoConfig.classes }) };
+  return { profile: p.profile, config: { routing } };
+}
+
 /** Everything `plan`'s routing revisions resolve from, as its `plan-applied` records it (H7). */
 export function routingProvenanceOf(base: RoutingBase, plan: PlanM1): RoutingProvenance {
   const unitLayers: Record<UnitId, RoutingLayer> = {};

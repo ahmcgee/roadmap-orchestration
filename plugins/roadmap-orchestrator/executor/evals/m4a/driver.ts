@@ -171,19 +171,22 @@ const ownerAnswers = (): readonly OwnerAnswer[] => (JSON.parse(readFileSync(ANSW
 
 /**
  * The numbered questions a final text ends with: its last numbered block (a `1.` or `1)` line starts a block), each
- * `N.` or `N)` line and the lines after it, until the next; a heading or a code fence ends an item.
+ * `N.` or `N)` line and the lines after it, until the next; a heading, a code fence, or an unindented line after a
+ * blank one (the check-in's next action, a merge request: paid run 12) ends an item.
  */
 export function numberedQuestions(text: string): readonly string[] {
   let out: string[] = [];
   let open = false;
+  let blank = false;
   for (const line of text.split('\n')) {
     const item = /^\s*(\d+)[.)]\s+\S/.exec(line);
     if (item !== null) {
       if (item[1] === '1') out = [];
       out.push(line.trim());
       open = true;
-    } else if (/^\s*(#|```)/.test(line)) open = false;
+    } else if (/^\s*(#|```)/.test(line) || (blank && /^\S/.test(line))) open = false;
     else if (open && line.trim() !== '' && !SESSION_END.test(line)) out[out.length - 1] = `${out.at(-1)!} ${line.trim()}`;
+    blank = line.trim() === '';
   }
   return out;
 }
@@ -204,10 +207,13 @@ const TRUSTED = { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPol
 
 /** The answers code gives (plan "Driver"), or null for the simulator. */
 export function codeAnswer(c: OwnerCtx, q: string): string | null {
+  // The K question first (paid run 12: its working assumption "I stop until you acknowledge its brief" read as a brief
+  // ack, so K was never answered).
+  if (/how many arcs/i.test(q)) return 'K = 1.';
   // A request to ack a brief ("acknowledge brief <id>", "ack the brief"), never the K question's "acknowledged brief".
   if (/\b(acknowledge|ack)\b[^.?]*\bbrief\b/i.test(q)) return 'I have not read the brief yet; do not acknowledge it.';
   // Case-sensitive K (paid run 2: `k-limit` in a brief-ack question matched /\bK\b/i).
-  if (/\bK\b(?!-)/.test(q) || /how many arcs/i.test(q)) return 'K = 1.';
+  if (/\bK\b(?!-)/.test(q)) return 'K = 1.';
   if (/issue (creation|policy)|PUBLIC \+ ALL|anyone (can )?open issues/i.test(q)) {
     const store = readStore(c.l.store);
     if (store.policy.issueCreationPolicy !== TRUSTED.issueCreationPolicy || store.policy.visibility !== TRUSTED.visibility) {

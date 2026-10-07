@@ -3,6 +3,9 @@
 // arc's pull request looked up on the forge by head (non-fatal: `unavailable{reason}`). `status` (its own arc's chain)
 // and the brief read the chain through this module too.
 //
+// - **K and the next start** (`chainQuota`, paid M4a run 12): K is `chain.k` of the config committed at the chain head's
+//   baseline (`committedRepoConfig`), never the live file; `nextStart` is src/chain.ts `nextStartOf` for a start chained
+//   on the head, the predicate `start` applies. The root agent reads it and never computes K itself.
 // - **The head.** The chain ends at the newest tip: of the arcs with a ref that no other arc's plan names as its
 //   previous arc, the one whose log began last (its first event's `at`; ties by id). A running arc is in the chain once
 //   its first snapshot is published (its first ff or docs publication); until then the chain ends before it.
@@ -10,7 +13,7 @@
 //   else the merged one, else a closed one, else `none`; `main` as the integration branch has none. An open PR's
 //   `needsRebase` is `roadmap pr`'s base walk (src/commands/pr.ts `baseOf`): a previous arc whose PR was merged by
 //   squash or rebase (OR-L5). A forge or git failure is the arc's `unavailable{reason}`, never an error.
-import { type ArcRef, arcsWithRefs, chainBack, committedAcks, readArcRef, unackedStarts } from '../chain.ts';
+import { type ArcRef, arcsWithRefs, chainBack, committedAcks, nextStartOf, readArcRef, unackedStarts } from '../chain.ts';
 import type { ArcId } from '../core/ids.ts';
 import type { AbsPath, BranchName } from '../core/values.ts';
 import { GhError, resolveRepo } from '../forge/gh.ts';
@@ -19,17 +22,26 @@ import { MAIN_BRANCH, PushError } from '../forge/push.ts';
 import type { RepoIdentity } from '../forge/types.ts';
 import { GitError } from '../git/git.ts';
 import { CliError } from '../input/cli.ts';
-import type { BriefPr } from '../phase0/types.ts';
-import { readRepoConfig } from '../preflight/checks.ts';
+import type { PlanM1 } from '../input/plan.ts';
+import type { AckMarker, BriefPr, NextStart } from '../phase0/types.ts';
+import { committedRepoConfig } from '../preflight/checks.ts';
 import { baseOf } from './pr.ts';
 
 export type ChainStatusArgs = Readonly<{ repo: AbsPath }>;
-/** The chain oldest first: each arc's previous arc, whether its start is acked, and its PR; K and the unacked starts. */
-export type ChainStatus = Readonly<{
-  arcs: readonly Readonly<{ arc: ArcId; previousArc: ArcId | null; acked: boolean; pr: BriefPr }>[];
-  k: number | null;
-  unackedStarts: readonly ArcId[];
-}>;
+/** K in force, the unacked starts and the next start of a chain (see the header). */
+export type ChainQuota = Readonly<{ k: number | null; unackedStarts: readonly ArcId[]; nextStart: NextStart }>;
+/** The chain oldest first: each arc's previous arc, whether its start is acked, and its PR; K, the unacked starts and the next start. */
+export type ChainStatus = Readonly<{ arcs: readonly Readonly<{ arc: ArcId; previousArc: ArcId | null; acked: boolean; pr: BriefPr }>[] }> & ChainQuota;
+
+/** The chain's head as the quota reads it: its plan (K at its baseline) and its verified ref (null: none published yet). */
+export type ChainEnd = Readonly<{ plan: PlanM1; ref: ArcRef | null }>;
+
+/** The quota of the chain `ids` (oldest first) ending at `head` (see the header). */
+export function chainQuota(repo: AbsPath, ids: readonly ArcId[], head: ChainEnd, acks: readonly AckMarker[]): ChainQuota {
+  if (ids.at(-1) !== head.plan.arc) throw new Error(`the chain ${ids.join(', ')} does not end at ${head.plan.arc}`);
+  const k = committedRepoConfig(repo, head.plan.baseline)?.chain?.k ?? null;
+  return { k, unackedStarts: unackedStarts(ids, acks), nextStart: nextStartOf(ids, head.ref, k, acks) };
+}
 
 /** An arc of the chain as the PR lookup needs it. */
 export type ChainLink = Readonly<{ arc: ArcId; branch: BranchName; previousArc: ArcId | null }>;
@@ -96,20 +108,18 @@ export function prsOf(repo: AbsPath, links: readonly ChainLink[]): ReadonlyMap<A
   return out;
 }
 
-/** The chain of `links` (oldest first) with K, the acks and the PRs. */
-export function chainStatusOf(repo: AbsPath, links: readonly ChainLink[]): ChainStatus {
-  const ids = links.map((l) => l.arc);
-  const unacked = unackedStarts(ids, committedAcks(repo));
+/** The chain of `links` (oldest first, ending at `head`) with its quota, the acks and the PRs. */
+export function chainStatusOf(repo: AbsPath, links: readonly ChainLink[], head: ChainEnd): ChainStatus {
+  const quota = chainQuota(repo, links.map((l) => l.arc), head, committedAcks(repo));
   const prs = prsOf(repo, links);
   return {
-    arcs: links.map((l) => ({ arc: l.arc, previousArc: l.previousArc, acked: !unacked.includes(l.arc), pr: prs.get(l.arc)! })),
-    k: readRepoConfig(repo)?.chain?.k ?? null,
-    unackedStarts: unacked,
+    arcs: links.map((l) => ({ arc: l.arc, previousArc: l.previousArc, acked: !quota.unackedStarts.includes(l.arc), pr: prs.get(l.arc)! })),
+    ...quota,
   };
 }
 
 export async function chainStatus(args: ChainStatusArgs): Promise<ChainStatus> {
   const head = chainHead(args.repo);
   if (head === null) throw new CliError(`chain status: no arc of ${args.repo} has published a snapshot (refs/roadmap/*)`);
-  return chainStatusOf(args.repo, chainTo(args.repo, head).map(linkOf));
+  return chainStatusOf(args.repo, chainTo(args.repo, head).map(linkOf), { plan: head.plan, ref: head });
 }

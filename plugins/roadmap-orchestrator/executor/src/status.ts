@@ -120,7 +120,7 @@ import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
 import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
 import { DEV6_CLASS_CATALOGUE } from './core/upgrade.ts';
 import type { KnownDefectMatch } from './core/records.ts';
-import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce } from './input/inforce.ts';
+import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce, routingBaseOf } from './input/inforce.ts';
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
@@ -135,7 +135,6 @@ import { bundleClassesOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
 import { type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
-import { readRepoConfig } from './preflight/checks.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat } from './pipeline/transitions.ts';
 import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
@@ -147,7 +146,7 @@ import {
   type ArcHold, type CompletionBlocker, type HolisticContexts, type QueueEntry, SCHED_FILE, type SchedFile, arcHolds, arcSettled, completionBlockers, dischargingObservation,
   readOnlyContexts, recordedLaneEnv, schedFile, unitSettled,
 } from './schedule/scheduler.ts';
-import { chainBack } from './chain.ts';
+import { chainBack, readArcRef } from './chain.ts';
 import { type ChainStatus, chainStatusOf, linkOf } from './commands/chain.ts';
 import type { CorpusPin } from './corpus/types.ts';
 import type { BankReason, DebtItem, DebtLedger } from './debt/types.ts';
@@ -1335,7 +1334,7 @@ function unmetOf(runDir: AbsPath, x: CompletionInputs): readonly CompletionBlock
   if (start === null || inForce === null) return ['units-open'];
   const h = readOnlyContexts({
     view, runDir, repo: start.record.repo, hostDir: x.hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
-    routingBase: { profile: start.record.profile, config: readRepoConfig(start.record.repo) },
+    routingBase: routingBaseOf(inForce.fact.routingProvenance),
   });
   return completionBlockers(h, { blocking: blocking.length, pending: x.pending });
 }
@@ -1484,7 +1483,7 @@ function issuesOf(view: JournalView): IssuesView {
 function chainOf(repo: AbsPath, plan: PlanM1): ChainView {
   const back = plan.chain === undefined ? [] : chainBack(repo, plan.chain.previousArc).arcs.map(linkOf);
   const links = [...back, { arc: plan.arc, branch: plan.integrationBranch, previousArc: plan.chain?.previousArc ?? null }];
-  return { ...chainStatusOf(repo, links), position: links.length };
+  return { ...chainStatusOf(repo, links, { plan, ref: readArcRef(repo, plan.arc) }), position: links.length };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1659,7 +1658,7 @@ function holisticReader(runDir: AbsPath, hostDir: AbsPath, d: Derived, inForce: 
   const start = d.start!;
   const h = readOnlyContexts({
     view: d.view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
-    routingBase: { profile: start.record.profile, config: readRepoConfig(start.record.repo) },
+    routingBase: routingBaseOf(inForce.fact.routingProvenance),
   });
   const routing = routingInForce(inForce).of;
   return { ...h, audit: { ...h.audit, routing }, checkpoint: { ...h.checkpoint, routing } };
