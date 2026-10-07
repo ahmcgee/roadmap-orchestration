@@ -32,8 +32,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
 - `roadmap status`: the run as one JSON object ("status" below).
-- `roadmap watch [--actionable]`: one JSON line per event until killed; `--actionable` prints only what you act on.
-  Wait on `roadmap watch --actionable` under Monitor with a timeout ("watch" below).
+- `roadmap watch [--actionable [--heartbeat-min <n>]]`: one JSON line per event until killed; `--actionable` prints
+  only the wakes. Wait on one `roadmap watch --actionable` per arc, started once in the background into a file that a
+  Monitor tails (SKILL.md "Running an arc"; "watch" below).
 - `roadmap stop`: park everything, tear down, release the host lock.
 - `roadmap pause (<unit> | --all)`: kill and tear down; commits and worktree stay as left; the unit holds at its stage.
 - `roadmap resume [<unit> | --backend claude|codex]`: no argument clears pauses and holds (a held build continues
@@ -251,12 +252,14 @@ or docs publication), and anything not yet published to the ref is not in it.
 `{"event":"owner", state, generation, pid}`; `{"event":"units", run,
 units: {<unit>: <state>}}` with compact states (`running:build#3`, `waiting:deps=u1`, `parked:retryable`,
 `awaiting-admission:known-defect`, `merged`). Plain `watch` streams every change. `watch --actionable` prints only
-the wakes: a `needs-user` line for an item not seen before and not already acknowledged or superseded, the `units` line of `run`
-reaching `complete`, `refused` or `no-owner` (once each) or newly `held`, `blocked` or `draining`, and
-`{"event":"stall","quietMin":30}` after 30 minutes with no change. Owner, ack, superseded and routine `units` lines are
-dropped. `status.needsUser` lists open items only: a superseded one shows under `packReview` alone. A
-fresh `--actionable` process starts with nothing seen: it prints the open items and a terminal or constrained run
-again.
+the wakes, the key transitions: a `needs-user` line for an item not seen before and not already acknowledged or
+superseded; the `units` line in which a unit is newly `merged` or newly parked (`parked:*`), in which `run` is newly
+`held`, `blocked` or `draining`, or in which `run` reaches `complete`, `refused` or `no-owner` (once each). Plus a fixed
+heartbeat, `{"event":"heartbeat","everyMin":<n>}`, every n minutes from the watch's start whatever happened
+(`--heartbeat-min <n>`, a positive integer, default 30; only with `--actionable`). Owner, ack, superseded and every
+other `units` line are dropped. `status.needsUser` lists open items only: a superseded one shows under `packReview`
+alone. A fresh `--actionable` process starts with nothing seen: it prints the open items and a terminal or constrained
+run again, and takes its first view of the units as the baseline (no unit wake for what already merged or parked).
 
 ## Refusals
 

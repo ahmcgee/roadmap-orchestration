@@ -18,12 +18,15 @@
 // watch.m3-kinds), and M4a's blocking `pack-review` and `issue-policy-untrusted`. `run` may be `draining` (admissions
 // closed). A headless driver resumes its session on these lines and on `run` reaching `complete` (M4a R12).
 //
-// `roadmap watch --actionable` (run 10, B) prints only what the architect acts on (`ActionableFilter`, the one rule; the
-// M4a driver resumes its headless session through it too): a needs-user item not seen before and not already
-// acknowledged or superseded, the run reaching a terminal state (`complete`, `refused`, `no-owner`; once per state), a changed
-// constraint (the run newly `held`, `blocked` or `draining`), and `{"event":"stall","quietMin":30}` after STALL_MIN
-// minutes with no change of the parallel view (once per quiet stretch). Owner lines, acks and routine unit moves are
-// absorbed. A fresh process starts with nothing seen: it re-emits the open items and a terminal or constrained run.
+// `roadmap watch --actionable [--heartbeat-min <n>]` prints only what the architect acts on (`ActionableFilter`, the one
+// rule; the M4a driver resumes its headless session through it too): the key transitions plus a fixed slow heartbeat
+// (owner ruling 2026-10-07: paid run 12 woke ~11 times in 65 minutes at ~$0.30 a wake, most with nothing changed). The
+// key transitions: a needs-user item not seen before and not already acknowledged or superseded; a unit newly `merged`
+// or newly parked (its `units` line); the run newly `held`, `blocked` or `draining`; the run reaching a terminal state
+// (`complete`, `refused`, `no-owner`; once per state). The heartbeat is `{"event":"heartbeat","everyMin":<n>}` every n
+// minutes (default HEARTBEAT_MIN, 30) whatever happened: the architect's organic check, no other polling. Owner lines,
+// acks, superseded lines and every other unit move are absorbed. A fresh process starts with nothing seen: it re-emits
+// the open items and a terminal or constrained run; the first view of an arc's units is its baseline (no unit wake).
 //
 // A unit's state is `status`'s, compact (`compactState`): `running:build#3`, `waiting:deps=u1`,
 // `waiting:resources`, `awaiting-admission:paused`, `awaiting-admission:known-defect` (M4a rev 3: held at prepare by a
@@ -42,8 +45,8 @@ import { SCHED_FILE } from './schedule/scheduler.ts';
 import { ownerState, unitStates } from './status.ts';
 
 export const WATCH_POLL_MS = 500;
-/** Minutes without a change of the parallel view after which `--actionable` reports a stall. */
-export const STALL_MIN = 30;
+/** The default `--heartbeat-min`: the fixed slow cadence of `--actionable`'s heartbeat line. */
+export const HEARTBEAT_MIN = 30;
 
 const ITEM = /^((?:nu|sup|host)-[a-z0-9-]+)\.json$/;
 const ACK = /^((?:nu|sup|host)-[a-z0-9-]+)\.ack\.json$/;
@@ -67,24 +70,31 @@ const CONSTRAINT_RUN: readonly string[] = ['held', 'blocked', 'draining'];
 /** A needs-user item's key across arcs: ids are arc-scoped. */
 export const itemKey = (arc: string, id: string): string => `${arc}:${id}`;
 
+/** A unit state that is a key transition on entry: merged, or parked (any class). */
+const keyState = (state: string): 'merged' | 'parked' | null => (state === 'merged' ? 'merged' : state.startsWith('parked:') ? 'parked' : null);
+
 /**
  * The one rule of what is actionable in a watch stream (see the header). It lives across watch processes when its owner
- * keeps it (the M4a driver feeds one instance every raw stream of a run), so a restarted watch wakes nothing twice.
+ * keeps it (the M4a driver feeds one instance every raw stream of a run), so a restarted watch wakes nothing twice. The
+ * heartbeat clock runs from construction at a fixed cadence: wakes do not move it.
  */
 export class ActionableFilter {
   private readonly items = new Set<string>();
   private readonly acked = new Set<string>();
   private readonly terminal = new Set<string>();
-  private run: string | null = null;
-  private units: string | null = null;
-  private changedAt: number;
-  constructor(now: number) {
-    this.changedAt = now;
+  private readonly runs = new Map<string, string>();
+  private readonly units = new Map<string, Readonly<Record<string, string>>>();
+  private readonly everyMin: number;
+  private nextHeartbeat: number;
+  constructor(now: number, heartbeatMin: number) {
+    if (!Number.isSafeInteger(heartbeatMin) || heartbeatMin < 1) throw new Error(`heartbeat minutes must be a positive integer, got ${heartbeatMin}`);
+    this.everyMin = heartbeatMin;
+    this.nextHeartbeat = now + heartbeatMin * 60_000;
   }
 
   /** The line itself when it is actionable, else null. */
-  feed(arc: string, line: string, now: number): string | null {
-    const e = JSON.parse(line) as { event: string; id?: string; run?: string };
+  feed(arc: string, line: string): string | null {
+    const e = JSON.parse(line) as { event: string; id?: string; run?: string; units?: Record<string, string> };
     if ((e.event === 'ack' || e.event === 'superseded') && e.id !== undefined) {
       this.acked.add(itemKey(arc, e.id));
       return null;
@@ -95,27 +105,31 @@ export class ActionableFilter {
       this.items.add(key);
       return line;
     }
-    if (e.event !== 'units' || e.run === undefined) return null;
-    if (line !== this.units) this.changedAt = now;
-    this.units = line;
-    const previous = this.run;
-    this.run = e.run;
+    if (e.event !== 'units' || e.run === undefined || e.units === undefined) return null;
+    const previousRun = this.runs.get(arc);
+    const previousUnits = this.units.get(arc);
+    this.runs.set(arc, e.run);
+    this.units.set(arc, e.units);
     if (TERMINAL_RUN.includes(e.run)) {
       if (this.terminal.has(`${arc}:${e.run}`)) return null;
       this.terminal.add(`${arc}:${e.run}`);
       return line;
     }
-    return CONSTRAINT_RUN.includes(e.run) && e.run !== previous ? line : null;
+    if (CONSTRAINT_RUN.includes(e.run) && e.run !== previousRun) return line;
+    if (previousUnits === undefined) return null;
+    const landed = Object.entries(e.units).some(([unit, state]) => {
+      const key = keyState(state);
+      const before = previousUnits[unit];
+      return key !== null && (before === undefined || keyState(before) !== key);
+    });
+    return landed ? line : null;
   }
 
-  /** Whether the parallel view has not changed for STALL_MIN minutes (since the last change or wake). */
-  stalled(now: number): boolean {
-    return now - this.changedAt >= STALL_MIN * 60_000;
-  }
-
-  /** A wake went out: the stall clock restarts. */
-  woke(now: number): void {
-    this.changedAt = now;
+  /** The heartbeat line when one is due (then the next is due a full period from now), else null. */
+  heartbeat(now: number): string | null {
+    if (now < this.nextHeartbeat) return null;
+    this.nextHeartbeat = now + this.everyMin * 60_000;
+    return canonicalJson({ event: 'heartbeat', everyMin: this.everyMin });
   }
 
   /** Whether `arc` already reached a terminal state this filter passed on. */
@@ -124,28 +138,24 @@ export class ActionableFilter {
   }
 }
 
-/** The stall line `--actionable` prints. */
-export const stallLine = (): string => canonicalJson({ event: 'stall', quietMin: STALL_MIN });
-
-/** `roadmap watch --actionable`: `watch` through an `ActionableFilter`, plus a stall line per quiet stretch. */
-export async function watchActionable(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, emit: (line: string) => void, signal: AbortSignal): Promise<void> {
-  const filter = new ActionableFilter(Date.now());
+/** `roadmap watch --actionable`: `watch` through an `ActionableFilter`, plus its heartbeat every `heartbeatMin` minutes. */
+export async function watchActionable(
+  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, heartbeatMin: number, emit: (line: string) => void, signal: AbortSignal,
+): Promise<void> {
+  const filter = new ActionableFilter(Date.now(), heartbeatMin);
   const pass = (line: string): void => {
-    const out = filter.feed(arc, line, Date.now());
-    if (out === null) return;
-    filter.woke(Date.now());
-    emit(out);
+    const out = filter.feed(arc, line);
+    if (out !== null) emit(out);
   };
   await watch(runDir, arc, hostDir, pass, signal, () => {
-    if (!filter.stalled(Date.now())) return;
-    filter.woke(Date.now());
-    emit(stallLine());
+    const beat = filter.heartbeat(Date.now());
+    if (beat !== null) emit(beat);
   });
 }
 
 /**
  * Polls until `signal` aborts; `emit` receives each event line (without its newline). `afterPoll` (`--actionable`'s
- * stall check) runs once after every poll.
+ * heartbeat check) runs once after every poll.
  */
 export async function watch(
   runDir: AbsPath, arc: ArcId, hostDir: AbsPath, emit: (line: string) => void, signal: AbortSignal, afterPoll: () => void = () => {},

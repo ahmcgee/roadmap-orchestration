@@ -2869,9 +2869,12 @@ The record rows are in "Record evolution" (M4a rev 3 table, "run 10"). Behaviour
   boundary, applying any answer received.
 - **B. `roadmap watch --actionable`** (src/watch.ts `ActionableFilter`, `watchActionable`): prints only a `needs-user` line
   of an item not seen and not already acknowledged or superseded (round 2, R-17), a `units` line of the run reaching `complete`, `refused` or `no-owner`
-  (once per state) or newly `held`, `blocked` or `draining`, and `{"event":"stall","quietMin":30}` after `STALL_MIN` (30)
-  minutes with no change of the parallel view (once per quiet stretch). The M4a driver keeps one `ActionableFilter` across a
-  run's watch processes; nothing is persisted. CLI: `Command.watch + actionable: boolean`.
+  (once per state) or newly `held`, `blocked` or `draining`, or (owner ruling 2026-10-07, after run 12's ~11 wakes in 65
+  minutes) one in which a unit is newly `merged` or newly `parked:*` (an arc's first view is its baseline), and a fixed
+  heartbeat `{"event":"heartbeat","everyMin":<n>}` every `--heartbeat-min` minutes (default `HEARTBEAT_MIN`, 30) from the
+  filter's construction, wakes not moving it; it replaced the 30-minute stall line. The M4a driver keeps one
+  `ActionableFilter` across a run's watch processes (heartbeat 30; a fake run is shorter than one, and a heartbeat in it
+  fails loud); nothing is persisted. CLI: `Command.watch + actionable: {heartbeatMin: number | null} | null`.
 - **C. Specs against the census on every revision**: `classify` runs `specCensusMismatches` over every spec of a corpus
   arc's revision, whoever proposes it. The reason is the row as `start` prints it (`canonicalJson({kind:
   'phase0-invalid', problems})`); a bundle's adds per problem how to fix it (target the rule through an opportunity whose

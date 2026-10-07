@@ -27,7 +27,7 @@ import { parseDebtBlock } from '../src/docs/debt.ts';
 import { readStore, writeStore } from './fakes/gh-store.ts';
 import { verdictProblems, stageTree } from '../evals/m4a/adjudicate.ts';
 import { type CheckResult, CRITERIA, LEVERS, arcView, chainOf, parseOperatorLog } from '../evals/m4a/check.ts';
-import { type OwnerCtx, type Report, codeAnswer, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin } from '../evals/m4a/driver.ts';
+import { type OwnerCtx, type Report, type Turn, codeAnswer, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin } from '../evals/m4a/driver.ts';
 import { itemKey } from '../src/watch.ts';
 import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
 import { FILES, LANES, SLOW_LANE, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
@@ -227,13 +227,24 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const { driver, report, checked } = story;
     assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
     assert.deepEqual([report.endedBy, report.stopReason, report.failure], ['stopped', 'k-limit', null]);
-    assert.deepEqual(report.turns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake']);
+    // A unit merging wakes the root agent too (owner ruling 2026-10-07), on a `units` line of a running run; when it lands
+    // apart from the story's events is timing, so those wakes and lines are set aside: each such wake shows a merged
+    // unit and the scripted root agent does nothing on it.
+    type WakeLine = { event: string; reason?: string; run?: string; units?: Record<string, string> };
+    const linesOf = (t: Turn): WakeLine[] => t.prompt.split('\n').slice(1).map((x) => JSON.parse(x) as WakeLine);
+    const merging = (e: WakeLine): boolean => e.event === 'units' && e.run === 'running';
+    const mergeOnly = (t: Turn): boolean => t.kind === 'wake' && linesOf(t).every(merging);
+    for (const t of report.turns.filter(mergeOnly)) {
+      assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
+      assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
+    }
+    const storyTurns = report.turns.filter((t) => !mergeOnly(t));
+    assert.deepEqual(storyTurns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake']);
     // Each wake carries exactly the events the story synchronises on (paid run 10 batch: two events 3.7 s apart against
     // the 3 s debounce once made an extra wake); the same lines every run, whatever the timing.
-    const wakes = report.turns.filter((t) => t.kind === 'wake').map((t) => t.prompt.split('\n').slice(1).map((x) => {
-      const e = JSON.parse(x) as { event: string; reason?: string; run?: string };
-      return e.event === 'needs-user' ? `needs-user:${e.reason}` : `${e.event}:${e.run}`;
-    }).sort());
+    const wakes = storyTurns.filter((t) => t.kind === 'wake').map((t) => linesOf(t).filter((e) => !merging(e)).map((e) => (
+      e.event === 'needs-user' ? `needs-user:${e.reason}` : `${e.event}:${e.run}`
+    )).sort());
     assert.deepEqual(wakes, [
       ['needs-user:pack-review'], ['units:complete'],
       ['units:blocked'], ['needs-user:issue-policy-untrusted'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],

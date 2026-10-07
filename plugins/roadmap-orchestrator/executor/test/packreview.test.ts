@@ -21,7 +21,7 @@ import { PACK_REVIEW_INPUTS_SCHEMA, parsePackReviewInputs } from '../src/holisti
 import { packReviewKey, packReviewPending, packReviewStatus, requiredInputs, runPackReview } from '../src/holistic/packreview.ts';
 import { blockingItems, openBlocking, openNeedsUser, readNeedsUser, supersededPackItems } from '../src/needsuser.ts';
 import { status } from '../src/status.ts';
-import { ActionableFilter, watch } from '../src/watch.ts';
+import { ActionableFilter, HEARTBEAT_MIN, watch } from '../src/watch.ts';
 import { recover } from '../src/recover/recover.ts';
 import { arcHolds, holisticContexts } from '../src/schedule/scheduler.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -179,9 +179,9 @@ describe('the hold before the first admission (K14, H9)', () => {
       const events = lines.map((l) => JSON.parse(l) as { event: string; id?: string });
       const at = (event: string): number => events.findIndex((e) => e.event === event && e.id === first.needsUser);
       assert.ok(at('superseded') >= 0 && at('superseded') < at('needs-user'), `the superseded line precedes the item's: ${lines.join(' | ')}`);
-      const filter = new ActionableFilter(0);
+      const filter = new ActionableFilter(0, HEARTBEAT_MIN);
       const woke = lines.flatMap((l) => {
-        const out = filter.feed(arc, l, 0);
+        const out = filter.feed(arc, l);
         return out === null ? [] : [JSON.parse(out) as { event: string }];
       });
       assert.deepEqual(woke.filter((e) => e.event === 'needs-user'), [], '--actionable does not wake on the superseded item');

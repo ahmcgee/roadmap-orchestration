@@ -1092,9 +1092,11 @@ the kept pin, census and Phase-0 record, never by file name. A canary snapshots 
 PRs, comments, labels and releases before and after, and a transcript scan over tool arguments and results
 fails the run on any answer-key or real-repository access.
 
-**Supervision and run 10 (A-M4-26; OR-A3, OR-A2).** The root agent observes cheaply (status on every wake, at most one
-read per 15 quiet minutes between wakes) and wakes only on actionable events (a needs-user item, a terminal state,
-changed constraints, a measured stall); since A-M4-29 the executor applies that one rule (`roadmap watch
+**Supervision and run 10 (A-M4-26; OR-A3, OR-A2).** The root agent observes cheaply and wakes only on key transitions
+(a new needs-user item, a unit merged or parked, changed constraints, a terminal state) plus a fixed 30-minute
+heartbeat (owner ruling 2026-10-07, replacing the measured stall and the quiet-time status reads: run 12 woke ~11 times
+in 65 minutes at ~$0.30 a wake); on each wake it posts a progress note of at most 3 lines, reads status once and acts
+only on something off or a decision; since A-M4-29 the executor applies that one rule (`roadmap watch
 --actionable`), the root waits only on it or ends its turn, and the fixture's harness wakes through the same filter.
 It operates only through the sanctioned levers and never patches the plugin or a run dir. A check-in (every arc
 completion and every brief-worthy event) ends the turn with its numbered questions; the next arc's Phase 0 starts after

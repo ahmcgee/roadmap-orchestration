@@ -14,7 +14,7 @@ import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { HOST_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
 import { publishOwner } from '../src/host/owner.ts';
 import { needsUserAckPath, raiseNeedsUser } from '../src/needsuser.ts';
-import { WATCH_POLL_MS, watch, watchActionable } from '../src/watch.ts';
+import { HEARTBEAT_MIN, WATCH_POLL_MS, watch, watchActionable } from '../src/watch.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { claimRecord } from './fixtures/host-records.ts';
 
@@ -114,7 +114,7 @@ test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-
   }
 });
 
-test('watch.actionable: `--actionable` prints only the open items not seen, each once, and the run reaching a terminal state; owner lines, acks and routine views are absorbed', { timeout: 30_000 }, async () => {
+test('watch.actionable: `--actionable` prints only the open items not seen, each once, and the run reaching a terminal state; owner lines, acks and routine views are absorbed, and no heartbeat falls inside the default period', { timeout: 30_000 }, async () => {
   const runDir = absPath(tmpDir('watch-act-run'));
   const hostDir = openHostDir(absPath(join(tmpDir('watch-act-host'), 'roadmap')));
   const arc = arcId(`w-${randomBytes(5).toString('hex')}`);
@@ -136,7 +136,7 @@ test('watch.actionable: `--actionable` prints only the open items not seen, each
 
   const lines: Line[] = [];
   const stop = new AbortController();
-  const watching = watchActionable(runDir, arc, hostDir, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
+  const watching = watchActionable(runDir, arc, hostDir, HEARTBEAT_MIN, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
   try {
     await until(lines, (l) => l['id'] === open, 2_000, 'the open item');
     const later = raise('raised while watching');

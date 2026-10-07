@@ -21,6 +21,7 @@
 //                    still composes arc 3 (applying arc 2's converted admit as T-17) and shows `phase0 check` and
 //                    `start` refuse it `chain-invalid{limit}`, then stops `k-limit`
 //     vision-silent  after arc 1, a draft of arc 2 whose `phase0 check` reports no slice candidate: stops `vision-silent`
+//   any other wake (a unit merged while the run runs: its timing is the backends') needs nothing: "Nothing for me"
 //
 // Every command's failure is loud (the process exits non-zero; the driver records the session failed).
 import { spawnSync } from 'node:child_process';

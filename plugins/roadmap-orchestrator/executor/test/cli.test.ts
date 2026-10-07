@@ -36,7 +36,7 @@ describe('cli', () => {
 
   for (const command of ['status', 'watch', 'stop'] as const) {
     it(`${command} locates the run by host claim or by --repo/--arc`, () => {
-      const extra = command === 'watch' ? { actionable: false } : {};
+      const extra = command === 'watch' ? { actionable: null } : {};
       assert.deepEqual(parseCommand([command]), { command, ...extra, run: HOST });
       assert.deepEqual(parseCommand([command, ...EXPLICIT]), { command, ...extra, run: EXPLICIT_RUN });
       assert.throws(() => parseCommand([command, '--repo', '/r']), /--repo and --arc go together/);
@@ -45,8 +45,11 @@ describe('cli', () => {
   }
 
   it('watch --actionable', () => {
-    assert.deepEqual(parseCommand(['watch', '--actionable']), { command: 'watch', actionable: true, run: HOST });
-    assert.deepEqual(parseCommand(['watch', '--actionable', ...EXPLICIT]), { command: 'watch', actionable: true, run: EXPLICIT_RUN });
+    assert.deepEqual(parseCommand(['watch', '--actionable']), { command: 'watch', actionable: { heartbeatMin: null }, run: HOST });
+    assert.deepEqual(parseCommand(['watch', '--actionable', ...EXPLICIT]), { command: 'watch', actionable: { heartbeatMin: null }, run: EXPLICIT_RUN });
+    assert.deepEqual(parseCommand(['watch', '--actionable', '--heartbeat-min', '45']), { command: 'watch', actionable: { heartbeatMin: 45 }, run: HOST });
+    assert.throws(() => parseCommand(['watch', '--heartbeat-min', '45']), /--heartbeat-min goes with --actionable/);
+    assert.throws(() => parseCommand(['watch', '--actionable', '--heartbeat-min', '0']), /positive integer of minutes/);
     assert.throws(() => parseCommand(['status', '--actionable']), /unknown option --actionable/);
   });
 

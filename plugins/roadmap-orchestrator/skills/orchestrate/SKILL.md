@@ -164,11 +164,13 @@ corpus arc (`holistic-needs-corpus`). An arc started on an older release keeps i
 
 ## Running an arc
 
-Wait only on `roadmap watch --actionable` under Monitor, with a timeout, or end your turn: it prints only what is
-actionable ("Supervising the executor"), so every line it prints is a wake. Without a Monitor tool, end your turn
-while the arc runs; the harness resumes you on the next actionable event. Never wait on plain `roadmap watch` and
-never poll `status` in a loop: a turn kept open on routine events is the session's largest cost. Read `status` on
-each wake.
+Wait only on `roadmap watch --actionable`, one long-lived watch per arc, or end your turn. It prints only the wakes
+("Supervising the executor"). With a Monitor tool, start the watch once in the background, appending to
+`<repo>/../roadmap-inputs/<arc>/watch.jsonl`, and Monitor `tail -n 0 -F` of that file at the Monitor's maximum
+timeout; on its expiry re-arm only the tail (the watch keeps running, so nothing is printed twice). Never restart or
+re-arm on a short timer, never wait on plain `roadmap watch`, never poll `status` in a loop. Without a Monitor tool,
+end your turn while the arc runs; the harness resumes you on the next wake. Every wake costs a model turn (about
+$0.30), so the wakes are few by design.
 
 - **Needs-user items** are yours to adjudicate, except owner-only acts. Read the item file and its evidence in
   full before you act or ack. The recommendation says which procedure applies; "Handling parks" below has them.
@@ -198,14 +200,15 @@ each wake.
 
 ## Supervising the executor
 
-**Observe**, cheaply. Read `status` on every wake; between wakes, at most one `status` read per 15 quiet minutes.
-Read only `status`, `brief --json`, needs-user item files and the evidence an item names; never poll in a tight
-loop, never read lane output an item does not point at.
+**Wake rule** (`watch --actionable` applies it): key transitions only: a new open needs-user item, a unit merged, a
+unit parked, the run newly `held`, `blocked` or `draining`, or the run reaching a terminal state (`complete`,
+`refused`, `no-owner`); plus a fixed heartbeat every 30 minutes whatever happened (`--heartbeat-min <n>`).
+Acknowledged and superseded items never wake. There is no other polling: the heartbeat is your organic check.
 
-**Wake rule** (`watch --actionable` applies it): wake on a needs-user item, the run reaching a terminal state
-(`complete`, `refused`, `no-owner`), a changed constraint (the run newly `held`, `blocked` or `draining`) or a
-measured stall (no state change for 30 minutes). Unit moves between stages, gates, lanes and publications are
-routine: say nothing about them.
+**On every wake:** post a progress note of at most 3 lines in the chat (what moved, what is next, anything odd), read
+`status` once, act only if something is off or a decision is needed, then go back to waiting on the same watch.
+Read only `status`, `brief --json`, needs-user item files and the evidence an item names; never read lane output an
+item does not point at. Check-ins keep their own rule ("Check-ins").
 
 **Operate** only through the sanctioned levers: `pause`, `resume`, `resume --backend`, `ack`, `apply` (re-entry,
 priority, known defects and `--ruling` included), `rule`, `steer`, `reverse`, `merge-in`, `audit`,

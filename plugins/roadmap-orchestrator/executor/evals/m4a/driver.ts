@@ -22,9 +22,10 @@
 //   - any other final text is the skill's headless wait (no Monitor): the driver tails `roadmap watch` on the arc it
 //     last saw holding the host and resumes the session only on an actionable event (F26; the executor's one rule,
 //     src/watch.ts `ActionableFilter`, which `roadmap watch --actionable` applies too, one instance kept across the
-//     run's watch processes): a new needs-user item, the run reaching complete, refused or no-owner, a constraint change
-//     (the run newly held, blocked or draining) or no state change for STALL_MIN minutes; routine transitions are
-//     absorbed. Debounced 3 s.
+//     run's watch processes): a new needs-user item, a unit merged or parked, the run newly held, blocked or draining,
+//     the run reaching complete, refused or no-owner, or the filter's fixed heartbeat (HEARTBEAT_MIN, every 30 minutes
+//     from the driver's start); every other move is absorbed. Debounced 3 s. A fake run is shorter than one heartbeat
+//     (LIMITS.fake), so the scripted story never sees one; a heartbeat in a fake run fails loud.
 //     With nothing to wait on (no arc seen, or the last one ended and was reported) and nothing asked, it nudges the
 //     session, at most 3 times in a row (`stalled`).
 //   - at the end, whatever the end (a `finally`), an arc of this product still holding the host is stopped with the
@@ -60,7 +61,7 @@ import { readClaim } from '../../src/host/lock.ts';
 import { type Event } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
-import { ActionableFilter, stallLine } from '../../src/watch.ts';
+import { ActionableFilter, HEARTBEAT_MIN } from '../../src/watch.ts';
 import { absPath, type AbsPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
 import { runDir } from '../../src/input/cli.ts';
@@ -318,7 +319,7 @@ export const initialPrompt = (profile: ProfileName): string => [
   'bootstrap, then Phase 0, arcs and chaining toward the target state the corpus in docs/corpus describes.',
   'The owner answers only the numbered questions you end a turn with. While an arc runs, you may wait on `roadmap watch --actionable`',
   'under Monitor or end your turn; both are supported. If you end your turn, the harness resumes you on actionable',
-  '`roadmap watch` events only (a needs-user item, a terminal state, a changed constraint, a stall).',
+  '`roadmap watch` events only (a needs-user item, a unit merged or parked, a changed constraint, a terminal state, a 30-minute heartbeat).',
   'End the session with the skill\'s session-end line.',
   `Start every arc with \`--profile ${profile}\`; never change it.`,
 ].join('\n');
@@ -415,7 +416,7 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
       const line = buffered.slice(0, i);
       buffered = buffered.slice(i + 1);
       // Item ids are arc-scoped (paid run 2: arc 2's nu-31 was taken for arc 1's and never woke the session).
-      const woken = w.filter.feed(arc, line, Date.now());
+      const woken = w.filter.feed(arc, line);
       if (woken !== null) {
         lines.push(woken);
         firstAt ??= Date.now();
@@ -428,15 +429,16 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
   let exited = false;
   child.on('close', () => void (exited = true));
   while (!exited && Date.now() < deadline && (firstAt === null || Date.now() - firstAt < WAKE_DEBOUNCE_MS)) {
-    if (firstAt === null && w.filter.stalled(Date.now())) {
-      lines.push(stallLine());
+    const beat = firstAt === null ? w.filter.heartbeat(Date.now()) : null;
+    if (beat !== null) {
+      if (mode.kind === 'fake') throw new Error('a heartbeat fell inside a fake run: the scripted story must stay shorter than HEARTBEAT_MIN');
+      lines.push(beat);
       firstAt = Date.now();
     }
     await sleep(250);
   }
   child.kill('SIGTERM');
   if (exited && lines.length === 0) throw new Error(`roadmap watch exited: ${stderr}`);
-  if (lines.length > 0) w.filter.woke(Date.now());
   return lines.length === 0 ? '' : `roadmap watch (arc ${w.arc}):\n${lines.join('\n')}`;
 }
 
@@ -561,7 +563,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
   const devices: Devices = { policyFlip: null, policyFix: null };
   const owner: OwnerExchange[] = [];
   const turns: Turn[] = [];
-  const watched: Watched = { arc: null, arcsSeen: [], filter: new ActionableFilter(Date.now()) };
+  const watched: Watched = { arc: null, arcsSeen: [], filter: new ActionableFilter(Date.now(), HEARTBEAT_MIN) };
   const ownerCtx: OwnerCtx = { l, env, fake: mode.kind === 'fake', devices };
   const onArc = (arc: string): void => {
     if (mode.kind !== 'fake' || mode.script !== 'story' || devices.policyFlip !== null || watched.arcsSeen.indexOf(arc) !== 1) return;

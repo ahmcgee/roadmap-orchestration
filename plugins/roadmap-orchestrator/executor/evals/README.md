@@ -320,8 +320,9 @@ node evals/m4a/adjudicate.ts /var/tmp/m4a
   skill's `ROADMAP-SESSION: stopped <reason>` ends the session; the last numbered block goes to the owner simulator (code answers K = 1, the first slice, the issue policy and
   brief acks, which the owner never gives; anything else goes to a frontier-medium `claude -p` given only the key's
   owner answers released so far: the cancellation cutoff only once arc 1 completed); any other turn end is the skill's
-  headless wait, resumed on actionable `roadmap watch` events only (a new needs-user item, a terminal run state, the
-  run newly held, blocked or draining, a 30-minute stall; routine transitions are absorbed). Allowlisted env,
+  headless wait, resumed on actionable `roadmap watch` events only (a new needs-user item, a unit merged or parked, the
+  run newly held, blocked or draining, a terminal run state, the 30-minute heartbeat; routine transitions are absorbed;
+  `src/watch.ts` `ActionableFilter`, the same filter as `watch --actionable`). Allowlisted env,
   the fake gh first on PATH, cwd the product. Before and after, from its own env, a canary of this repository's real
   forge (refs, issues, PRs, comments, labels, releases; `canary.json`) needs an authenticated real `gh`. It scrambles
   the live corpus and `.roadmap/` files at the end, writes `transcript.jsonl` and `report.json`; hard timeout 360 min.

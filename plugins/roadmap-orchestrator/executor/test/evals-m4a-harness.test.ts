@@ -15,7 +15,7 @@ import { absPath } from '../src/core/values.ts';
 import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
 import { type ArcForensics, LIMITS, arcForensics, drive, initialPrompt, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
-import { ActionableFilter, STALL_MIN } from '../src/watch.ts';
+import { ActionableFilter, HEARTBEAT_MIN } from '../src/watch.ts';
 import { CRITERIA, LEVERS, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, profileVerdict } from '../evals/m4a/check.ts';
 import { layout } from '../evals/m4a/layout.ts';
 import { costTotals, exportCosts, invocationCosts, rootCosts } from '../evals/m4a/transcript.ts';
@@ -176,72 +176,89 @@ const needsUser = (id: string): string => JSON.stringify({ event: 'needs-user', 
 const units = (run: string, u1: string): string => JSON.stringify({ event: 'units', run, units: { u1 } });
 const MIN = 60_000;
 
-test('evals-m4a.watch-absorbs-routine: the root wakes only on a new needs-user item, a terminal state, a changed constraint or a stall', () => {
-  const t0 = 1_000_000;
-  const f = new ActionableFilter(t0);
+test('evals-m4a.watch-absorbs-routine: the root wakes only on a new needs-user item, a unit merged or parked, a changed constraint or a terminal state', () => {
+  const f = new ActionableFilter(0, HEARTBEAT_MIN);
   const wakes: string[] = [];
-  const feed = (line: string, at: number, arc = 'a1'): void => {
-    const w = f.feed(arc, line, at);
+  const feed = (line: string, arc = 'a1'): void => {
+    const w = f.feed(arc, line);
     if (w !== null) wakes.push(w);
   };
 
-  // Routine: owner and ack lines, units moving between stages, gates, lanes, publication.
-  feed(JSON.stringify({ event: 'owner', state: 'alive', generation: 1, pid: 7 }), t0);
-  feed(units('running', 'running:build#1'), t0 + MIN);
-  feed(units('running', 'running:gate#1'), t0 + 2 * MIN);
-  feed(units('running', 'running:lanes#1'), t0 + 3 * MIN);
-  feed(JSON.stringify({ event: 'ack', id: 'nu-0', command: 'c', choice: null }), t0 + 4 * MIN);
-  feed(units('draining-not-a-state-but-routine', 'merged'), t0 + 5 * MIN);
+  // Routine: owner and ack lines, units moving between stages, gates, lanes and waits.
+  feed(JSON.stringify({ event: 'owner', state: 'alive', generation: 1, pid: 7 }));
+  feed(units('running', 'running:build#1'));
+  feed(units('running', 'running:gate#1'));
+  feed(units('running', 'running:lanes#1'));
+  feed(JSON.stringify({ event: 'ack', id: 'nu-0', command: 'c', choice: null }));
+  feed(units('running', 'waiting:deps=u0'));
   assert.deepEqual(wakes, [], 'routine transitions are absorbed');
   // An item already acknowledged when it is seen (a restarted watch lists the ack before the item) is not actionable.
-  feed(needsUser('nu-0'), t0 + 5 * MIN);
+  feed(needsUser('nu-0'));
   assert.deepEqual(wakes, [], 'an acknowledged item wakes nothing');
 
   // A needs-user item wakes once; a restarted watch re-emitting it does not wake again; the next arc's same id does.
-  feed(needsUser('nu-1'), t0 + 6 * MIN);
-  feed(needsUser('nu-1'), t0 + 7 * MIN);
-  feed(needsUser('nu-1'), t0 + 8 * MIN, 'a2');
+  feed(needsUser('nu-1'));
+  feed(needsUser('nu-1'));
+  feed(needsUser('nu-1'), 'a2');
   assert.equal(wakes.length, 2);
+
+  // A unit wakes on entering merged or parked, once; a park changing class is no new park; un-parked and parked again is.
+  wakes.length = 0;
+  feed(units('running', 'parked:retryable'));
+  feed(units('running', 'parked:retryable'));
+  feed(units('running', 'parked:terminal'));
+  assert.equal(wakes.length, 1, 'a unit parking wakes once');
+  feed(units('running', 'running:build#2'));
+  feed(units('running', 'parked:retryable'));
+  feed(units('running', 'merged'));
+  feed(units('running', 'merged'));
+  assert.equal(wakes.length, 3, 'parked again and merged each wake on entry');
+  // The first view of an arc is its baseline: a fresh watch does not wake on units already merged or parked.
+  feed(units('running', 'merged'), 'a4');
+  assert.equal(wakes.length, 3, 'a first view wakes no unit');
 
   // A changed constraint wakes on entry only: held, held again (a restart), running, held again.
   wakes.length = 0;
-  feed(units('held', 'held:paused'), t0 + 9 * MIN);
-  feed(units('held', 'held:paused'), t0 + 10 * MIN);
+  feed(units('held', 'held:paused'));
+  feed(units('held', 'held:paused'));
   assert.equal(wakes.length, 1, 'a held run wakes once');
-  feed(units('running', 'running:build#2'), t0 + 11 * MIN);
-  feed(units('held', 'held:paused'), t0 + 12 * MIN);
-  feed(units('blocked', 'blocked:deps'), t0 + 13 * MIN);
-  feed(units('draining', 'running:build#2'), t0 + 14 * MIN);
+  feed(units('running', 'running:build#3'));
+  feed(units('held', 'held:paused'));
+  feed(units('blocked', 'blocked:deps'));
+  feed(units('draining', 'running:build#3'));
   assert.equal(wakes.length, 4, 'held again, blocked and draining each wake on entry');
 
-  // A terminal state wakes once per arc.
+  // A terminal state wakes once per arc and state.
   wakes.length = 0;
-  feed(units('complete', 'merged'), t0 + 15 * MIN);
-  feed(units('complete', 'merged'), t0 + 16 * MIN);
+  feed(units('complete', 'merged'));
+  feed(units('complete', 'merged'));
   assert.equal(wakes.length, 1);
   assert.equal(f.ended('a1'), true);
   assert.equal(f.ended('a3'), false);
-  feed(units('no-owner', 'ready'), t0 + 17 * MIN);
-  feed(units('refused', 'ready'), t0 + 18 * MIN);
+  feed(units('no-owner', 'ready'));
+  feed(units('refused', 'ready'));
   assert.equal(wakes.length, 3, 'no-owner and refused are terminal too');
 });
 
-test('evals-m4a.watch-absorbs-routine: a stall is no state change for STALL_MIN minutes, measured from the last change or wake', () => {
-  assert.equal(STALL_MIN, 30);
+test('evals-m4a.watch-absorbs-routine: the heartbeat is a fixed cadence of HEARTBEAT_MIN minutes from the start, whatever happened', () => {
+  assert.equal(HEARTBEAT_MIN, 30);
   const t0 = 5_000_000;
-  const f = new ActionableFilter(t0);
-  assert.equal(f.stalled(t0 + 29 * MIN), false);
-  assert.equal(f.stalled(t0 + 30 * MIN), true);
-  // A state change restarts the clock; the same line again does not.
-  f.feed('a1', units('running', 'running:build#1'), t0 + 20 * MIN);
-  assert.equal(f.stalled(t0 + 49 * MIN), false);
-  assert.equal(f.stalled(t0 + 50 * MIN), true);
-  f.feed('a1', units('running', 'running:build#1'), t0 + 55 * MIN);
-  assert.equal(f.stalled(t0 + 50 * MIN + 1), true, 'a repeated line is no change');
-  // A wake restarts it too.
-  f.woke(t0 + 60 * MIN);
-  assert.equal(f.stalled(t0 + 89 * MIN), false);
-  assert.equal(f.stalled(t0 + 90 * MIN), true);
+  const f = new ActionableFilter(t0, HEARTBEAT_MIN);
+  const beat = JSON.stringify({ event: 'heartbeat', everyMin: 30 });
+  assert.equal(f.heartbeat(t0 + 29 * MIN), null);
+  assert.equal(f.heartbeat(t0 + 30 * MIN), beat);
+  assert.equal(f.heartbeat(t0 + 31 * MIN), null, 'one line per period');
+  // Activity and wakes do not move the clock.
+  assert.notEqual(f.feed('a1', needsUser('nu-9')), null);
+  f.feed('a1', units('running', 'running:build#1'));
+  assert.equal(f.heartbeat(t0 + 60 * MIN), beat);
+  // A late check emits one line, never a burst; the next is due a full period after it.
+  assert.equal(f.heartbeat(t0 + 100 * MIN), beat);
+  assert.equal(f.heartbeat(t0 + 100 * MIN + 1), null);
+  assert.equal(f.heartbeat(t0 + 129 * MIN), null);
+  assert.equal(f.heartbeat(t0 + 130 * MIN), beat);
+  assert.equal(new ActionableFilter(t0, 7).heartbeat(t0 + 7 * MIN), JSON.stringify({ event: 'heartbeat', everyMin: 7 }));
+  assert.throws(() => new ActionableFilter(t0, 0), /positive integer/);
 });
 
 // ---------------------------------------------------------------------------------------------------

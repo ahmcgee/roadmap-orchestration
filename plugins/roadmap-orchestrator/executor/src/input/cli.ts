@@ -34,8 +34,11 @@ export type Command =
   | Readonly<{ command: 'version' }>
   | Readonly<{ command: 'start'; args: StartArgs }>
   | Readonly<{ command: 'status'; run: RunLocator }>
-  /** `actionable` (`--actionable`): only what the architect acts on (src/watch.ts `ActionableFilter`). */
-  | Readonly<{ command: 'watch'; actionable: boolean; run: RunLocator }>
+  /**
+   * `actionable` (`--actionable`): only what the architect acts on (src/watch.ts `ActionableFilter`), null for every
+   * event; its `heartbeatMin` (`--heartbeat-min <n>`, only with `--actionable`) is null for the default (HEARTBEAT_MIN).
+   */
+  | Readonly<{ command: 'watch'; actionable: Readonly<{ heartbeatMin: number | null }> | null; run: RunLocator }>
   | Readonly<{ command: 'stop'; run: RunLocator }>
   | Readonly<{ command: 'pause'; target: PauseTarget; run: RunLocator }>
   | Readonly<{ command: 'ack'; id: NeedsUserId; choice: string | null; run: RunLocator }>
@@ -197,9 +200,12 @@ export function parseCommand(argv: readonly string[]): Command {
     case 'start':
       return { command: 'start', args: parseStartArgs(rest) };
     case 'watch': {
-      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch' }, command);
+      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch', 'heartbeat-min': 'value' }, command);
       positionals(p, command, 0);
-      return { command, actionable: p.flags.has('actionable'), run: locator(p, command) };
+      const heartbeat = value(p, 'heartbeat-min');
+      if (heartbeat !== undefined && !p.flags.has('actionable')) throw new CliError('watch: --heartbeat-min goes with --actionable');
+      const actionable = p.flags.has('actionable') ? { heartbeatMin: heartbeat === undefined ? null : positiveInt(command, '--heartbeat-min', heartbeat, 'minutes') } : null;
+      return { command, actionable, run: locator(p, command) };
     }
     case 'status':
     case 'stop': {
