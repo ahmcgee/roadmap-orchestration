@@ -46,7 +46,7 @@
 // sources, `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n,
 // the vision-silent stop. A mid-arc re-pin stays listed: the owner's P-1 answer is released at arc 1's completion and
 // lands mid-arc only when the root agent started arc 2 before the answer came (paid run 5), else in arc 2's Phase 0.
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { computeBrief } from '../../src/brief.ts';
 import { type ArcRef, amendmentsOf, arcsWithRefs, committedAcks, completedHeadOf, readArcRef, unackedStarts } from '../../src/chain.ts';
@@ -479,7 +479,14 @@ export async function check(dir: string): Promise<CheckResult> {
   let restored = false;
   const restore = (): void => {
     if (restored) return;
-    if (report.scrambled.length > 0) git(product, ['checkout', '--', ...report.scrambled]);
+    // From the driver's backup (driver.ts `scramble`), not git: a scrambled path need not be tracked at HEAD.
+    const backup = join(l.dir, 'diagnostics', 'scramble-backup');
+    for (const rel of report.scrambled) {
+      const live = join(product, rel);
+      const kept = join(backup, rel);
+      if (existsSync(`${kept}.absent`)) rmSync(live, { force: true });
+      else writeFileSync(live, readFileSync(kept));
+    }
     restored = true;
   };
   try {

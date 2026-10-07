@@ -441,7 +441,15 @@ function scramble(l: Layout): readonly string[] {
     ...(existsSync(corpus) ? readdirSync(corpus, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name)) : []),
     ...['corpus.md', 'vision.json', 'config.json'].map((f) => join(l.product, '.roadmap', f)),
   ];
+  // Back up the live bytes first: a scrambled path need not be tracked at HEAD (run 12: `.roadmap/config.json` lived only on
+  // the arc branch), so `git checkout` cannot restore it. An absent path is recorded and removed again on restore.
+  const backup = join(l.dir, 'diagnostics', 'scramble-backup');
   for (const p of paths) {
+    const rel = relative(l.product, p);
+    const kept = join(backup, rel);
+    mkdirSync(dirname(kept), { recursive: true });
+    if (existsSync(p)) writeFileSync(kept, readFileSync(p));
+    else writeFileSync(`${kept}.absent`, '');
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, 'Scrambled by the M4a driver after the session: phase0 check --from-ref must not read this.\n');
   }
