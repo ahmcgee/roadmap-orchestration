@@ -16,7 +16,7 @@ A change is not done until the ladder passes, in order, from `executor/`:
 ## The targeted probe
 
 ```sh
-node evals/probe.ts
+node evals/probe.ts [--profile default|claude-only]
 ```
 
 Runs the production argv builder, runner and adapter against the real `claude` and `codex` (both must be on
@@ -28,7 +28,11 @@ call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a
 read-only, the worktree unchanged), the acceptance-shape plan-check (witness items through the patch channel), a checkpoint admit
 carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
 medium build under the per-call build schema (`experiments`). Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
-its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies.
+its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies. `--profile claude-only` (default `default`, unchanged)
+is for hosts without Codex: every Codex check (`smoke.codex`, `codex.fresh`, `codex.resume`, `codex.killed-resume`,
+`effort.codex.*`) prints `NOT RUN (claude-only profile) <check>`, which is neither a pass nor a fail; the exit status ignores
+them and the closing summary lists them. The remaining checks resolve routing under the chosen profile. Under `default`
+Codex checks always run and fail loudly if Codex is unavailable.
 
 ## The M1 fixture
 
@@ -376,18 +380,23 @@ vision-silent stop.
 ## The run observer
 
 ```sh
-node evals/observer.ts /var/tmp/m4a [--interval-min 10] [--model gpt-5.6-luna] [--max-hours 7] [--host-dir /var/tmp/roadmap] [--once]
+node evals/observer.ts /var/tmp/m4a [--backend codex|claude] [--interval-min 10] [--model gpt-5.6-luna] [--max-hours 7] [--host-dir /var/tmp/roadmap] [--once]
 ```
 
 A background watcher for a paid fixture run (start it beside the driver, e.g. under a Monitor). Each tick it gathers
 the delta since `<dir>/observer/cursor.json` (new events by seq for every arc under
 `stage/product/.git/roadmap-runtime/`, new needs-user files, new root-session `transcript.jsonl` lines summarised
 to tool calls and results, new bytes of the newest host `executor.*.err` / `supervisor.*.err`, and a `status`
-snapshot), capped at 200 KB with the newest kept, and asks a read-only `codex exec` (20 minute timeout) for NEW
+snapshot), capped at 200 KB with the newest kept, and asks a read-only session (20 minute timeout) for NEW
 issues only: defects, and efficiency opportunities (kind `efficiency`: the constraint, redundant calls, avoidable waits,
 with an estimate of recoverable minutes or spend). Replies are JSON lines `{severity: abort|high|note, kind, summary, evidence, suggestion}`; valid ones
 are appended to `<dir>/observer/observations.jsonl` with `{tick, at}`, invalid lines are recorded as `{invalid}`.
 stdout carries `OBSERVER abort: ...` / `OBSERVER high: ...` lines and one `OBSERVER tick <n> ok <count>` per tick
-(`OBSERVER tick <n> error codex-failed` retries the same delta next tick). It stops when `<dir>/report.json` exists
+(`OBSERVER tick <n> error <backend>-failed` retries the same delta next tick). It stops when `<dir>/report.json` exists
 or after `--max-hours`; at `report.json` it runs one deep retro pass over the whole run into `<dir>/observer/retro.md`
-(90 minute timeout; `--no-retro` skips it). It never touches the run. Free test: `test/observer.test.ts` (fake `codex` on PATH).
+(90 minute timeout; `--no-retro` skips it). It never touches the run. Two failed ticks in a row emit an `OBSERVER abort: [harness]` line.
+`--backend codex` (default) runs `codex exec -s read-only` (default model `gpt-5.6-luna`). `--backend claude` runs a headless
+`claude -p --model <model> --effort high --output-format text` (default model `claude-sonnet-5-5`) in the fixture dir with
+`--allowedTools Read,Glob,Grep`, every other built-in tool disallowed, `--strict-mcp-config` and settings
+`{"autoMemoryEnabled": false}`; same prompt, same JSON-line contract, same retro path. Free test: `test/observer.test.ts` (fake
+`codex` and fake `claude` on PATH).

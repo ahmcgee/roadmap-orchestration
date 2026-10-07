@@ -52,6 +52,9 @@
 //                       (low then medium); reports whether each CLI accepts the change
 //
 // Each check prints `PASS|FAIL <name> <detail>`; then one `USAGE <backend> <role> ...` line per pair.
+// `--profile default|claude-only` (default `default`): under `claude-only` every Codex check (smoke.codex, codex.*,
+// effort.codex.*) prints `NOT RUN (claude-only profile) <name>`: neither a pass nor a fail, ignored by the exit status and
+// listed in the summary. Under `default` nothing changes: Codex checks run and fail loudly if Codex is unavailable.
 // Exits non-zero on any FAIL. The run dir (journal, invocation dirs) is kept and printed for inspection.
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -106,6 +109,11 @@ function dir(path: string): AbsPath {
 }
 
 let failed = 0;
+const notRun: string[] = [];
+function skipCodex(name: string): void {
+  notRun.push(name);
+  process.stdout.write(`NOT RUN (claude-only profile) ${name}\n`);
+}
 function report(pass: boolean, name: string, detail: string): void {
   if (!pass) failed += 1;
   process.stdout.write(`${pass ? 'PASS' : 'FAIL'} ${name} ${detail}\n`);
@@ -251,23 +259,34 @@ function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview'>(
   };
 }
 
+function profileArg(argv: readonly string[]): 'default' | 'claude-only' {
+  const i = argv.indexOf('--profile');
+  const v = i >= 0 ? argv[i + 1] : 'default';
+  if (v !== 'default' && v !== 'claude-only') throw new Error(`usage: node evals/probe.ts [--profile default|claude-only] (got ${String(v)})`);
+  return v;
+}
+
 async function main(): Promise<void> {
+  const profile = profileArg(process.argv.slice(2));
+  const claudeOnly = profile === 'claude-only';
   const root = mkdtempSync(join(tmpdir(), 'roadmap-probe-'));
   const runDir = dir(join(root, 'run'));
   const journal = openJournal(runDir, arcId('probe'));
   const ctx: InvocationContext = { journal, runDir, hostEnv: backendEnv(process.env) };
-  const resolved = resolveRouting(arcStack('default', null, null));
+  const resolved = resolveRouting(arcStack(profile, null, null));
   const rev = resolved.rev;
   process.stdout.write(`probe run dir ${root}\n`);
 
   // smoke(), exactly as `roadmap start` calls it.
-  const smoked = await smoke({ profile: 'default', resolved }, ctx);
+  const smoked = await smoke({ profile, resolved }, ctx);
   const rejections = smokeRejections(smoked);
   for (const b of smoked.backends) {
     if (b.ran) {
       meter(b.backend, b.seat.role, b.usage);
       const bad = rejections.find((r) => r.backend === b.backend);
       report(bad === undefined, `smoke.${b.backend}`, `${b.inv} seat=${b.seat.role}.${b.seat.tier} ${b.outcome.kind}${bad === undefined ? '' : ` ${bad.detail}`}`);
+    } else if (claudeOnly && b.backend === 'codex' && b.reason === 'profile-excludes') {
+      skipCodex('smoke.codex');
     } else {
       report(false, `smoke.${b.backend}`, `did not run: ${b.reason}`);
     }
@@ -279,19 +298,24 @@ async function main(): Promise<void> {
   const codexDir = dir(join(root, 'codex'));
   const okSchema = SMOKE_SCHEMA;
   const isOk = (v: JsonValue): boolean => JSON.stringify(v) === '{"ok":true}';
-  const fresh = await backend(ctx, 'codex.fresh', {
-    check: 'codex-fresh', routingRev: rev, tier: 'med', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: codexDir,
-    request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'fresh' } },
-  }, isOk);
-  const thread = fresh.result.role === 'build' ? fresh.result.session : null;
-  if (thread === null) {
-    report(false, 'codex.resume', 'no thread id from the fresh call');
+  if (claudeOnly) {
+    skipCodex('codex.fresh');
+    skipCodex('codex.resume');
   } else {
-    const resumed = await backend(ctx, 'codex.resume', {
-      check: 'codex-resume', routingRev: rev, tier: 'med', system: SYSTEM, rendered: 'Reply with the same JSON object again.', schema: okSchema, cwd: codexDir,
-      request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'resume', id: thread } },
+    const fresh = await backend(ctx, 'codex.fresh', {
+      check: 'codex-fresh', routingRev: rev, tier: 'med', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: codexDir,
+      request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'fresh' } },
     }, isOk);
-    if (resumed.result.role === 'build' && resumed.result.session !== thread) report(false, 'codex.resume-session', `resumed ${thread}, got ${resumed.result.session}`);
+    const thread = fresh.result.role === 'build' ? fresh.result.session : null;
+    if (thread === null) {
+      report(false, 'codex.resume', 'no thread id from the fresh call');
+    } else {
+      const resumed = await backend(ctx, 'codex.resume', {
+        check: 'codex-resume', routingRev: rev, tier: 'med', system: SYSTEM, rendered: 'Reply with the same JSON object again.', schema: okSchema, cwd: codexDir,
+        request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'resume', id: thread } },
+      }, isOk);
+      if (resumed.result.role === 'build' && resumed.result.session !== thread) report(false, 'codex.resume-session', `resumed ${thread}, got ${resumed.result.session}`);
+    }
   }
 
   // A real shell command through the runner: exit code and output are both graded.
@@ -377,19 +401,23 @@ async function main(): Promise<void> {
   }, () => existsSync(claudeKillFile), (id) => ({ kind: 'claude-build', triple: OPUS, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [] }), () => rmSync(claudeKillFile),
   { ...claudeBase, check: 'claude-build-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: claudeToken }));
 
-  const codexKillDir = dir(join(root, 'codex-killed'));
-  const codexToken = randomBytes(8).toString('hex');
-  const codexKillFile = join(codexKillDir, 'killed.txt');
-  const codexBase = { routingRev: rev, tier: 'med', system: SYSTEM, schema: tokenSchema, cwd: codexKillDir } as const;
-  await killedResume(ctx, 'codex.killed-resume', {
-    ...codexBase, check: 'codex-killed', rendered: killTask(codexToken),
-    request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'fresh' } },
-  }, (invDir) => existsSync(codexKillFile) && existsSync(join(invDir, STDOUT_FILE)) && readFileSync(join(invDir, STDOUT_FILE), 'utf8').includes('"thread.started"'),
-  (id) => ({ kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'resume', id } }), () => rmSync(codexKillFile),
-  { ...codexBase, check: 'codex-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: codexToken }));
+  if (claudeOnly) {
+    skipCodex('codex.killed-resume');
+  } else {
+    const codexKillDir = dir(join(root, 'codex-killed'));
+    const codexToken = randomBytes(8).toString('hex');
+    const codexKillFile = join(codexKillDir, 'killed.txt');
+    const codexBase = { routingRev: rev, tier: 'med', system: SYSTEM, schema: tokenSchema, cwd: codexKillDir } as const;
+    await killedResume(ctx, 'codex.killed-resume', {
+      ...codexBase, check: 'codex-killed', rendered: killTask(codexToken),
+      request: { kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'fresh' } },
+    }, (invDir) => existsSync(codexKillFile) && existsSync(join(invDir, STDOUT_FILE)) && readFileSync(join(invDir, STDOUT_FILE), 'utf8').includes('"thread.started"'),
+    (id) => ({ kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'resume', id } }), () => rmSync(codexKillFile),
+    { ...codexBase, check: 'codex-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: codexToken }));
+  }
 
   // M3 judgment roles: the real prompt modules and strict schemas, on their own seats, holistic routing in force.
-  const holistic = resolveRouting({ ...arcStack('default', null, null), arcScope: 'architecture-doc' });
+  const holistic = resolveRouting({ ...arcStack(profile, null, null), arcScope: 'architecture-doc' });
   const m3Dir = dir(join(root, 'm3'));
   writeFileSync(join(m3Dir, 'convert.ts'), MINI_DIFF.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n'));
 
@@ -457,7 +485,7 @@ async function main(): Promise<void> {
   }
 
   // M4a routing: the rebound classes, as the default table resolves them.
-  const corpusArc = resolveRouting({ ...arcStack('default', null, null), arcScope: 'corpus' });
+  const corpusArc = resolveRouting({ ...arcStack(profile, null, null), arcScope: 'corpus' });
   const frontierT = atSeat(corpusArc.table, { role: 'packReview', tier: 'arc' });
   const summitT = atSeat(corpusArc.table, { role: 'checkpoint', tier: 'arc' });
   report(frontierT.backend === 'claude' && frontierT.model === 'claude-opus-5-5' && frontierT.effort === 'medium'
@@ -648,25 +676,31 @@ async function main(): Promise<void> {
       request: { kind: 'claude-build', triple: { ...OPUS, effort: 'medium' }, session: { ...effortSession, mode: 'resume' }, evidenceDirs: [] },
     }, isKestrel);
   }
-  const effortCodexDir = dir(join(root, 'effort-codex'));
-  const codexFresh = await backend(ctx, 'effort.codex.fresh', {
-    check: 'effort-codex-fresh', routingRev: rev, tier: 'med', system: SYSTEM, schema: wordSchema, cwd: effortCodexDir,
-    rendered: 'Remember the word "kestrel". Reply with {"word": "kestrel"}.',
-    request: { kind: 'codex-build', triple: { ...LUNA, effort: 'low' }, session: { backend: 'codex', mode: 'fresh' } },
-  }, isKestrel);
-  const effortThread = codexFresh.result.role === 'build' ? codexFresh.result.session : null;
-  if (effortThread !== null) {
-    await backend(ctx, 'effort.codex.resume-medium', {
-      check: 'effort-codex-resume', routingRev: rev, tier: 'med', system: SYSTEM, schema: wordSchema, cwd: effortCodexDir,
-      rendered: 'Which word did I ask you to remember? Reply with {"word": "<it>"}.',
-      request: { kind: 'codex-build', triple: { ...LUNA, effort: 'medium' }, session: { backend: 'codex', mode: 'resume', id: effortThread } },
+  if (claudeOnly) {
+    skipCodex('effort.codex.fresh');
+    skipCodex('effort.codex.resume-medium');
+  } else {
+    const effortCodexDir = dir(join(root, 'effort-codex'));
+    const codexFresh = await backend(ctx, 'effort.codex.fresh', {
+      check: 'effort-codex-fresh', routingRev: rev, tier: 'med', system: SYSTEM, schema: wordSchema, cwd: effortCodexDir,
+      rendered: 'Remember the word "kestrel". Reply with {"word": "kestrel"}.',
+      request: { kind: 'codex-build', triple: { ...LUNA, effort: 'low' }, session: { backend: 'codex', mode: 'fresh' } },
     }, isKestrel);
+    const effortThread = codexFresh.result.role === 'build' ? codexFresh.result.session : null;
+    if (effortThread !== null) {
+      await backend(ctx, 'effort.codex.resume-medium', {
+        check: 'effort-codex-resume', routingRev: rev, tier: 'med', system: SYSTEM, schema: wordSchema, cwd: effortCodexDir,
+        rendered: 'Which word did I ask you to remember? Reply with {"word": "<it>"}.',
+        request: { kind: 'codex-build', triple: { ...LUNA, effort: 'medium' }, session: { backend: 'codex', mode: 'resume', id: effortThread } },
+      }, isKestrel);
+    }
   }
 
   journal.close();
   for (const [key, t] of [...usage].sort(([a], [b]) => a.localeCompare(b))) {
     process.stdout.write(`USAGE ${key} calls=${t.calls} input=${t.input} output=${t.output} cacheRead=${t.cacheRead} cacheWrite=${t.cacheWrite}\n`);
   }
+  if (notRun.length > 0) process.stdout.write(`NOT RUN (claude-only profile, neither pass nor fail): ${notRun.join(', ')}\n`);
   process.stdout.write(`${failed === 0 ? 'probe passed' : `probe FAILED: ${failed} check(s)`}\n`);
   process.exit(failed === 0 ? 0 : 1);
 }

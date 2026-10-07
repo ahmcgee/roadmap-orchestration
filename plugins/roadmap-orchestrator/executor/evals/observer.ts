@@ -1,7 +1,8 @@
 // Background run observer for paid fixture runs. Agent-facing: output is `OBSERVER ...` lines for a Monitor.
-//   node evals/observer.ts <fixtureDir> [--interval-min 10] [--model gpt-5.6-luna] [--max-hours 7] [--host-dir D] [--once]
+//   node evals/observer.ts <fixtureDir> [--backend codex|claude] [--interval-min 10] [--model M] [--max-hours 7] [--host-dir D] [--once]
 // Every tick it collects what is new since its cursor (<fixtureDir>/observer/cursor.json), asks a read-only
-// Codex session what looks wrong, appends the parsed observations to <fixtureDir>/observer/observations.jsonl and
+// session what looks wrong (--backend codex, the default: `codex exec -s read-only`, model gpt-5.6-luna; --backend claude:
+// headless `claude -p` limited to Read/Glob/Grep, no MCP, no memory, model claude-sonnet-5-5), appends the parsed observations to <fixtureDir>/observer/observations.jsonl and
 // prints abort/high ones (defects and efficiency opportunities: the constraint, redundant calls, avoidable waits). It never
 // acts on the run. It loops until <fixtureDir>/report.json exists or max-hours; at report.json it runs one deep retro pass
 // over the whole run into observer/retro.md (--no-retro skips it).
@@ -21,7 +22,7 @@ export type Cursor = Readonly<{ tick: number; seq: Readonly<Record<string, numbe
 const EMPTY_CURSOR: Cursor = { tick: 0, seq: {}, transcriptLines: 0, needsUser: [], hostBytes: {} };
 const DELTA_CAP = 200_000;
 const SECTION_CAP = 50_000;
-const CODEX_TIMEOUT_MS = 20 * 60_000;
+const ASK_TIMEOUT_MS = 20 * 60_000;
 const REPO_EXECUTOR = fileURLToPath(new URL('..', import.meta.url));
 
 const tail = (text: string, cap: number): string => (text.length <= cap ? text : `[...older truncated]\n${text.slice(text.length - cap)}`);
@@ -186,7 +187,30 @@ export function parseObservations(reply: string): { ok: Observation[]; invalid: 
   return { ok, invalid };
 }
 
-export type Options = Readonly<{ fixtureDir: string; model: string; hostDir: string }>;
+export type ObserverBackend = 'codex' | 'claude';
+export type Options = Readonly<{ fixtureDir: string; model: string; hostDir: string; backend: ObserverBackend }>;
+
+/** The read-only Claude session's settings: no auto-memory (a stray memory file must not colour the observer). */
+const CLAUDE_SETTINGS = JSON.stringify({ autoMemoryEnabled: false });
+
+/**
+ * One read-only observer call: the prompt goes in on stdin and the reply text comes back. Codex writes its reply to a file
+ * (`-o`); Claude prints it on stdout (`--output-format text`) and is limited to Read/Glob/Grep with MCP and memory off.
+ */
+function ask(opts: Options, prompt: string, outPath: string, timeout: number): { ok: boolean; stderr: string; status: number | null; signal: string | null } {
+  const common = { input: prompt, encoding: 'utf8', timeout, maxBuffer: 256 * 1024 * 1024 } as const;
+  if (opts.backend === 'codex') {
+    const r = spawnSync('codex', ['exec', '-s', 'read-only', '--skip-git-repo-check', '-m', opts.model, '-C', opts.fixtureDir, '-o', outPath, '-'], common);
+    return { ok: r.status === 0 && existsSync(outPath), stderr: r.stderr ?? '', status: r.status, signal: r.signal };
+  }
+  const r = spawnSync('claude', [
+    '-p', '--model', opts.model, '--effort', 'high', '--output-format', 'text',
+    '--allowedTools', 'Read,Glob,Grep', '--disallowedTools', 'Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent',
+    '--strict-mcp-config', '--settings', CLAUDE_SETTINGS,
+  ], { ...common, cwd: opts.fixtureDir });
+  if (r.status === 0) writeFileSync(outPath, r.stdout);
+  return { ok: r.status === 0, stderr: r.stderr ?? '', status: r.status, signal: r.signal };
+}
 
 /** One tick. Returns the stdout lines it emitted. */
 export function tick(opts: Options): string[] {
@@ -204,19 +228,17 @@ export function tick(opts: Options): string[] {
   writeFileSync(promptPath, prompt);
   const at = new Date().toISOString();
   const out: string[] = [];
-  const r = spawnSync('codex', ['exec', '-s', 'read-only', '--skip-git-repo-check', '-m', opts.model, '-C', opts.fixtureDir, '-o', outPath, '-'], {
-    input: prompt, encoding: 'utf8', timeout: CODEX_TIMEOUT_MS, maxBuffer: 256 * 1024 * 1024,
-  });
-  if (r.status !== 0 || !existsSync(outPath)) {
+  const r = ask(opts, prompt, outPath, ASK_TIMEOUT_MS);
+  if (!r.ok) {
     // Do not advance the cursor: the next tick retries the same delta.
     // The cause is at the END of codex's stderr (the banner and prompt echo come first).
-    const cause = tail(r.stderr ?? '', 600);
-    appendFileSync(obsPath, `${JSON.stringify({ tick: n, at, error: `codex exec failed: status=${String(r.status)} signal=${String(r.signal)} ${cause}` })}\n`);
+    const cause = tail(r.stderr, 600);
+    appendFileSync(obsPath, `${JSON.stringify({ tick: n, at, error: `${opts.backend} failed: status=${String(r.status)} signal=${String(r.signal)} ${cause}` })}\n`);
     // An observer that cannot observe must not look like a quiet run: two failed ticks in a row are an abort-level
     // harness finding, so the lead's Monitor wakes (2026-10-06: a model became unavailable and every tick failed silently).
     const recent = readFileSync(obsPath, 'utf8').trim().split('\n').slice(-2);
     const failing = recent.length === 2 && recent.every((l) => (JSON.parse(l) as { error?: unknown }).error !== undefined);
-    return [`OBSERVER tick ${n} error codex-failed`, ...(failing ? [`OBSERVER abort: [harness] the observer's codex calls keep failing (model ${opts.model}): ${cause.replace(/\s+/g, ' ').slice(-300)}`] : [])];
+    return [`OBSERVER tick ${n} error ${opts.backend}-failed`, ...(failing ? [`OBSERVER abort: [harness] the observer's ${opts.backend} calls keep failing (model ${opts.model}): ${cause.replace(/\s+/g, ' ').slice(-300)}`] : [])];
   }
   const { ok, invalid } = parseObservations(readFileSync(outPath, 'utf8'));
   for (const o of ok) appendFileSync(obsPath, `${JSON.stringify({ tick: n, at, ...o })}\n`);
@@ -241,10 +263,8 @@ export function retro(opts: Options): string {
   const dir = join(opts.fixtureDir, 'observer');
   mkdirSync(dir, { recursive: true });
   const outPath = join(dir, 'retro.md');
-  const r = spawnSync('codex', ['exec', '-s', 'read-only', '--skip-git-repo-check', '-m', opts.model, '-C', opts.fixtureDir, '-o', outPath, '-'], {
-    input: RETRO, encoding: 'utf8', timeout: 90 * 60_000, maxBuffer: 256 * 1024 * 1024,
-  });
-  return r.status === 0 && existsSync(outPath) ? `OBSERVER retro ${outPath}` : `OBSERVER retro error status=${String(r.status)} ${clip(r.stderr ?? '', 300)}`;
+  const r = ask(opts, RETRO, outPath, 90 * 60_000);
+  return r.ok ? `OBSERVER retro ${outPath}` : `OBSERVER retro error status=${String(r.status)} ${clip(r.stderr, 300)}`;
 }
 
 function main(argv: readonly string[]): void {
@@ -254,8 +274,10 @@ function main(argv: readonly string[]): void {
     return i >= 0 && args[i + 1] !== undefined ? (args[i + 1] as string) : dflt;
   };
   const fixtureDir = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1]?.startsWith('--') && args[i - 1] !== '--once'));
-  if (fixtureDir === undefined) throw new Error('usage: node evals/observer.ts <fixtureDir> [--interval-min 10] [--model gpt-5.6-luna] [--max-hours 7] [--host-dir D] [--once]');
-  const opts: Options = { fixtureDir, model: flag('--model', 'gpt-5.6-luna'), hostDir: flag('--host-dir', '/var/tmp/roadmap') };
+  if (fixtureDir === undefined) throw new Error('usage: node evals/observer.ts <fixtureDir> [--backend codex|claude] [--interval-min 10] [--model M] [--max-hours 7] [--host-dir D] [--once]');
+  const backend = flag('--backend', 'codex');
+  if (backend !== 'codex' && backend !== 'claude') throw new Error(`--backend must be codex or claude, got ${backend}`);
+  const opts: Options = { fixtureDir, backend, model: flag('--model', backend === 'codex' ? 'gpt-5.6-luna' : 'claude-sonnet-5-5'), hostDir: flag('--host-dir', '/var/tmp/roadmap') };
   const intervalMs = Number(flag('--interval-min', '10')) * 60_000;
   const deadline = Date.now() + Number(flag('--max-hours', '7')) * 3_600_000;
   const once = args.includes('--once');

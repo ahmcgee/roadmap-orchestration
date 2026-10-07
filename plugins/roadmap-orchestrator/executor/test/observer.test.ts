@@ -20,6 +20,18 @@ printf '%s\\n' '${reply.replaceAll("'", `'\\''`)}' > "$out"
   writeFileSync(join(bin, 'codex'), script, { mode: 0o755 });
 }
 
+/** A fake `claude` that records argv (one per line) and stdin, and prints a canned reply on stdout. */
+function fakeClaude(bin: string, reply: string): void {
+  mkdirSync(bin, { recursive: true });
+  const script = `#!/bin/sh
+for a in "$@"; do echo "$a" >> "${bin}/argv"; done
+pwd > "${bin}/cwd"
+cat > "${bin}/stdin.0"
+printf '%s\\n' '${reply.replaceAll("'", `'\\''`)}'
+`;
+  writeFileSync(join(bin, 'claude'), script, { mode: 0o755 });
+}
+
 const A = '{"severity":"abort","kind":"crash-loop","summary":"loops","evidence":["events.jsonl:3"],"suggestion":"fix"}';
 const H = '{"severity":"high","kind":"waste","summary":"wasteful","evidence":["seq 2"],"suggestion":"trim"}';
 const N = '{"severity":"note","kind":"other","summary":"minor","evidence":[],"suggestion":"-"}';
@@ -82,5 +94,35 @@ describe('observer', () => {
     assert.ok(delta2.includes('EV3') && delta2.includes('HOSTERR2'));
     for (const m of ['EV1', 'EV2', 'NUMARK', 'TRMARK', 'HOSTERR1']) assert.ok(!delta2.slice(0, delta2.indexOf('# Your previous')).includes(m), `${m} repeated`);
     assert.ok(prompt2.includes('wasteful'), 'previous observations are fed back');
+  });
+
+  it('observer.claude: one tick through a read-only headless claude (Read/Glob/Grep, strict MCP, no memory)', async () => {
+    const dir = tmpDir('observer-claude');
+    const bin = join(dir, 'bin');
+    const fx = join(dir, 'fx');
+    mkdirSync(fx, { recursive: true });
+    writeFileSync(join(fx, 'seed.json'), '{}');
+    writeFileSync(join(fx, 'transcript.jsonl'), `${JSON.stringify({ turn: 1, event: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'TRMARK' } }] } } })}\n`);
+    fakeClaude(bin, `${H}\n${N}`);
+    const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: dir };
+    const r = await runUntilExit(process.execPath, [OBSERVER, fx, '--once', '--backend', 'claude', '--host-dir', join(dir, 'host')], { env, timeoutMs: 60_000 });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^OBSERVER high: \[waste\] wasteful/m);
+    assert.match(r.stdout, /^OBSERVER tick 1 ok 2$/m);
+    const argv = readFileSync(join(bin, 'argv'), 'utf8').split('\n');
+    const after = (flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
+    assert.ok(argv.includes('-p'));
+    assert.equal(after('--model'), 'claude-sonnet-5-5');
+    assert.equal(after('--effort'), 'high');
+    assert.equal(after('--output-format'), 'text');
+    assert.equal(after('--allowedTools'), 'Read,Glob,Grep');
+    const denied = (after('--disallowedTools') ?? '').split(',');
+    for (const t of ['Bash', 'Edit', 'Write', 'WebFetch']) assert.ok(denied.includes(t), t);
+    assert.ok(argv.includes('--strict-mcp-config'));
+    assert.deepEqual(JSON.parse(after('--settings') ?? ''), { autoMemoryEnabled: false });
+    assert.equal(readFileSync(join(bin, 'cwd'), 'utf8').trim(), fx);
+    assert.ok(readFileSync(join(bin, 'stdin.0'), 'utf8').includes('TRMARK'));
+    const obs = readFileSync(join(fx, 'observer/observations.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(obs.length, 2);
   });
 });
