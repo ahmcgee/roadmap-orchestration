@@ -10,7 +10,7 @@
 // evals-m4a.amendments-debt, evals-m4a.policy-flip, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
 // evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.witness-missing,
 // evals-m4a.in-session-smoke, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause, evals-m4a.untrusted-start,
-// evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.wake-key, skill.operator-log-format.
+// evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.owner-reads-brief, evals-m4a.wake-key, skill.operator-log-format.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -27,7 +27,8 @@ import { parseDebtBlock } from '../src/docs/debt.ts';
 import { readStore, writeStore } from './fakes/gh-store.ts';
 import { verdictProblems, stageTree } from '../evals/m4a/adjudicate.ts';
 import { type CheckResult, CRITERIA, LEVERS, arcView, chainOf, parseOperatorLog } from '../evals/m4a/check.ts';
-import { type OwnerCtx, type Report, type Turn, codeAnswer, ghOnPath, launchEnv, numberedQuestions, prepareFake, stagePlugin } from '../evals/m4a/driver.ts';
+import { type OwnerCtx, type Report, SPEND_APPROVED, type Turn, codeAnswer, ghOnPath, launchEnv, numberedQuestions, openBriefQuestions, prepareFake, spendHold, stagePlugin } from '../evals/m4a/driver.ts';
+import type { BriefPayload } from '../src/phase0/types.ts';
 import { itemKey } from '../src/watch.ts';
 import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
 import { FILES, LANES, SLOW_LANE, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
@@ -249,20 +250,27 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       ['needs-user:pack-review'], ['units:complete'],
       ['units:blocked'], ['needs-user:issue-policy-untrusted'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],
     ]);
-    // The chain boundaries (paid run 12): arc 1's check-in is one final message, the numbered questions then the action
-    // taken on resume (arc 2 starts under K = 1: the bootstrap start counts as acked); arc 2's carries the stop.
-    const boundaries = report.turns.filter((t) => t.kind === 'wake' && t.prompt.split('\n').slice(1).some((x) => (JSON.parse(x) as { run?: string }).run === 'complete')).map((t) => t.result);
+    // The chain boundaries (paid runs 12, 13): arc 1's check-in is one final message, no numbered question (P-1 stays in
+    // the brief), a hold for the spend approval, then the action taken on resume (arc 2 starts under K = 1: the bootstrap
+    // start counts as acked); arc 2's carries the stop.
+    const boundaryAt = report.turns.flatMap((t, i) => (t.kind === 'wake' && t.prompt.split('\n').slice(1).some((x) => (JSON.parse(x) as { run?: string }).run === 'complete') ? [i] : []));
+    const boundaries = boundaryAt.map((i) => report.turns[i]!.result);
     assert.equal(boundaries.length, 2);
-    assert.equal(numberedQuestions(boundaries[0]!).length, 1, boundaries[0] ?? undefined);
-    assert.match(boundaries[0]!, /\n\nOn resume I start arc 2's Phase 0 with these working assumptions\.$/);
+    assert.deepEqual(numberedQuestions(boundaries[0]!), [], boundaries[0] ?? undefined);
+    assert.match(boundaries[0]!, /\n\nOn resume I start arc 2's Phase 0 with your answers, or the working assumptions where you have none\.$/);
     assert.doesNotMatch(boundaries[0]!, /waiting for your answers|ROADMAP-SESSION/);
+    // The owner read P-1 in the brief and approved the spend: the next turn's prompt carries both.
+    const reply = report.turns[boundaryAt[0]! + 1]!;
+    assert.equal(reply.kind, 'owner');
+    assert.equal(reply.prompt, `P-1: ${(JSON.parse(readFileSync(ANSWER_KEY, 'utf8')) as { ownerAnswers: { answer: string }[] }).ownerAnswers[0]!.answer}\n${SPEND_APPROVED}`);
     assert.match(boundaries[1]!, /refuses the next start \(limit: 2 unacked starts with it, K 1\)[\s\S]*\nROADMAP-SESSION: stopped k-limit$/);
     assert.ok(chainOf(absPath(layout(story.dir).product)).two !== null, 'arc 2 started, chained on arc 1');
     assert.deepEqual(checked.result.interventions, { n: 1, byLever: { pause: 1 }, malformed: [] }, 'the one intervention, logged once');
-    assert.deepEqual(report.owner.map((o) => [o.by, o.answer]), [
-      ['code', 'K = 1.'], ['code', 'Yes, I accept that slice.'],
-      ['simulator', (JSON.parse(readFileSync(ANSWER_KEY, 'utf8')) as { ownerAnswers: { answer: string }[] }).ownerAnswers[0]!.answer],
-      ['code', 'Done: issue creation is restricted to collaborators again.'],
+    assert.deepEqual(report.owner.map((o) => [o.via, o.by, o.answer]), [
+      ['numbered', 'code', 'K = 1.'], ['numbered', 'code', 'Yes, I accept that slice.'],
+      ['brief', 'simulator', (JSON.parse(readFileSync(ANSWER_KEY, 'utf8')) as { ownerAnswers: { answer: string }[] }).ownerAnswers[0]!.answer],
+      ['spend-hold', 'code', SPEND_APPROVED],
+      ['numbered', 'code', 'Done: issue creation is restricted to collaborators again.'],
     ]);
     assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
     assert.equal(checked.result.criteria.length, CRITERIA.length);
@@ -389,6 +397,16 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const rule = (id: string, text: string) => ({ ...a1.pin.rules[0]!, id: id as never, text });
     const siblings = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, rule('T-97', 'A booking confirmation text reads as the Booking confirmed template, filled in.'), rule('T-96', 'Every cancellation that goes through is confirmed by a text to the vessel\'s phone.')] } }, 2: a2 };
     assert.deepEqual(defectVerdicts(key, siblings).filter((v) => !v.pass).map((v) => v.id), []);
+    // D1 names the restated claim only: a distinct tide-table rule about windows (paid run 13's T-41) is no duplicate.
+    const perHighWater = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, rule('T-93', 'A date has one tide window for each high water the tide table lists for it.')] } }, 2: a2 };
+    assert.deepEqual(defectVerdicts(key, perHighWater).filter((v) => !v.pass).map((v) => v.id), []);
+    // D3: a rule forbidding the override is a correct resolution, and a V-2 divergence may cite it alone (paid run 13's T-70);
+    // a rule permitting the override still fails D3.
+    const nobody = rule('T-92', 'Nobody, the harbour master included, can override a clash to book a berth to a second vessel.');
+    const forbidden = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, nobody] }, phase0: { ...a1.phase0, corpusDivergences: a1.phase0.corpusDivergences.map((d) => (d.cites.includes('V-2' as never) ? { ...d, rules: [nobody.id] } : d)) } }, 2: a2 };
+    assert.deepEqual(defectVerdicts(key, forbidden).filter((v) => !v.pass).map((v) => v.id), []);
+    const permitted = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, rule('T-91', 'In a busy week the harbour master may override a clash.')] } }, 2: a2 };
+    assert.deepEqual(defectVerdicts(key, permitted).filter((v) => !v.pass).map((v) => v.id), ['D3']);
     // D2 and D7 do not own deduplication (D1 does): a claim split into two rules passes when each holds; D2 fails if any split half is must-hold.
     const split = (v: ArcView, id: string, copy: string, text: string): ArcView => ({
       ...v, pin: { ...v.pin, rules: [...v.pin.rules, { ...v.pin.rules[0]!, id: copy as never, text }] },
@@ -597,6 +615,16 @@ test('evals-m4a.owner-code-answers (paid run 2): a brief-ack question naming `k-
   assert.equal(codeAnswer(c, 'Should the cut-off be checked against k-limit style rules?'), null);
   // Paid run 12: the K question whose working assumption names the brief's ack is still the K question.
   assert.equal(codeAnswer(c, '1. **K.** How many arcs may I run past your last acknowledged brief before I stop and wait? *If you have no view, I\'ll write `{"chain": {"k": 1}}`: one arc, then I stop until you acknowledge its brief.*'), 'K = 1.');
+});
+
+test('evals-m4a.owner-reads-brief (paid run 13): open questions are those no arc answered; a hold naming a cost is a spend hold, a running wait is not', () => {
+  const q = (id: string, state: Readonly<Record<string, string>>) => ({ id, rank: 1, text: `${id}?`, assumption: 'a', state });
+  const payload = { arcs: [{ questions: [q('P-1', { type: 'open' }), q('P-2', { type: 'open' })] }, { questions: [q('P-1', { type: 'answered', answer: '48', at: 'x' }), q('P-3', { type: 'open' })] }] };
+  assert.deepEqual(openBriefQuestions(payload as unknown as BriefPayload).map((x) => x.id), ['P-2', 'P-3']);
+  const r13 = 'Arc 1 is complete, so the watch monitor isn\'t needed.\n\nI\'m holding before arc 2\'s Phase 0 until you answer the check-in questions, mainly question 8: arc 2 will likely cost about another $31. When you reply, I\'ll apply your answers.';
+  assert.match(spendHold(r13) ?? '', /^I'm holding before arc 2's Phase 0 .* \$31\.$/);
+  assert.equal(spendHold('Arc x is running. No Monitor here: ending the turn; resume me on the next roadmap watch event.'), null);
+  assert.equal(spendHold('Arc 1 cost $12 so far. Arc 2 started.'), null);
 });
 
 test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id reused by the next arc still wakes the session', () => {

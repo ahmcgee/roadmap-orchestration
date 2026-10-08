@@ -9,8 +9,9 @@
 //   wake-ups   `pack-review` (blocking): fix guard's spec, `apply` (a new key: the superseding review);
 //              `run: complete`: `roadmap pr`, the brief (never acked: the owner has acknowledged none), `chain status`
 //              (its `nextStart` decides; nothing here computes K), then per script:
-//     story          after arc 1 (`nextStart` within K), the check-in: the cutoff question (P-1) and, last, the action
-//                    taken on resume (arc 2's Phase 0); on the answer, the between-arc commit
+//     story          after arc 1 (`nextStart` within K), the check-in as paid runs 10-13 wrote it: no numbered question,
+//                    P-1 left in the brief, a hold for the spend approval and, last, the action taken on resume (arc 2's
+//                    Phase 0); the owner answers P-1 from the brief (driver.ts); on the answer, the between-arc commit
 //                    and arc 2 (run-only cutoff before its start, so notice's admission is the item's to hold). Arc 2's
 //                    wakes, each synchronised on an event rather than a time: `run: blocked` (cutoff merged, notice
 //                    behind run-only): read status, release the audit waiting for this wake (scenario.ts);
@@ -438,13 +439,14 @@ function arcComplete(c: Ctx, a: ArcState): string {
     // K = 1 and the bootstrap start counts as acked: arc 2 is allowed (paid run 12's root agent stopped here instead).
     if (chain.nextStart.reason !== 'within-k') throw new Error(`story: after arc 1 the next start should be allowed: ${JSON.stringify(chain)}`);
     c.state.phase = 'cutoff-asked';
-    // The check-in is the turn's final message: preface, questions, then the action taken on resume whatever the answers.
+    // The check-in is the turn's final message: preface, the hold, then the action taken on resume. P-1 is not repeated
+    // as a numbered question (paid runs 10, 12, 13): the owner finds it in the brief.
     return [
       `Arc ${a.arc} completed and its PR is open against main. The next start is allowed (K ${chain.k}). I chain the next arc (V-5, when plans change) unless you say otherwise.`,
+      `${ARC1_QUESTION.id} (the cancellation cutoff) is open in the brief with its working assumption.`,
+      'Arc 2 will likely cost about another $30, so I am holding before its Phase 0 until you approve the spend.',
       '',
-      `1. ${ARC1_QUESTION.text} Working assumption: ${ARC1_QUESTION.assumption}`,
-      '',
-      'On resume I start arc 2\'s Phase 0 with these working assumptions.',
+      'On resume I start arc 2\'s Phase 0 with your answers, or the working assumptions where you have none.',
     ].join('\n');
   }
   if (chain.nextStart.reason !== 'limit') throw new Error(`story: after arc 2 the next start should be refused at K: ${JSON.stringify(chain)}`);
@@ -458,13 +460,15 @@ function arcComplete(c: Ctx, a: ArcState): string {
   return `Arc ${a.arc} completed; its PR is stacked on arc ${c.state.arcs[0]!.arc}'s. chain status refuses the next start (limit: ${chain.unackedStarts.length + 1} unacked starts with it, K ${chain.k}): I stop here.\nPlease merge the stacked PRs in order, the first into main, each with a merge commit.\nROADMAP-SESSION: stopped k-limit`;
 }
 
-function arc2(c: Ctx, answer: string): string {
-  if (!/48/.test(answer)) throw new Error(`story: the owner's answer to P-1 should be 48 hours: ${answer}`);
+function arc2(c: Ctx, reply: string): string {
+  const answer = new RegExp(`^${ARC1_QUESTION.id}: (.+)$`, 'm').exec(reply)?.[1];
+  if (answer === undefined || !/48/.test(answer)) throw new Error(`story: the owner's reply should answer P-1 with 48 hours: ${reply}`);
+  if (!/spend is approved/i.test(reply)) throw new Error(`story: the owner's reply should approve the spend: ${reply}`);
   const one = c.state.arcs[0]!;
   const head = completedHead(c, one);
   const l = layout(c.dir);
   const baseline = betweenArc(c, 2, head);
-  const a = composeArc(c, 2, baseline, { answer: answer.replace(/^\s*1\.\s*/, '').trim(), previous: { ...one, head } });
+  const a = composeArc(c, 2, baseline, { answer: answer.trim(), previous: { ...one, head } });
   c.state.arcs.push(a);
   phase0Check(c, a);
   // notice waits behind cutoff (run-only), so its admission comes after the first checkpoint's capture.

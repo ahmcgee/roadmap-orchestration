@@ -1,6 +1,6 @@
 {
   "schema": "roadmap/m4a-answer-key",
-  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A `rule` postcondition needs exactly one matching rule unless it says `any` (at least one; D1 alone owns deduplication). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group, and a rule containing any of `exclude` does not match. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text.",
+  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A `rule` postcondition needs exactly one matching rule unless it says `any` (at least one; D1 alone owns deduplication). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group, and a rule containing any of `exclude` does not match (`no-rule` too: there it lists negations, so a rule forbidding the thing is not flagged). A `divergence` accepts a rule matching any of its `rules`. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text.",
   "defects": [
     {
       "id": "D1",
@@ -15,6 +15,14 @@
             ],
             [
               "window"
+            ],
+            [
+              "derived",
+              "only",
+              "nothing else",
+              "come from",
+              "comes from",
+              "alone"
             ]
           ],
           "exclude": [
@@ -104,6 +112,15 @@
             [
               "override"
             ]
+          ],
+          "exclude": [
+            "nobody",
+            "no one",
+            "never",
+            "cannot",
+            "can't",
+            "may not",
+            " not "
           ]
         },
         {
@@ -119,15 +136,31 @@
           "type": "divergence",
           "arc": 1,
           "cites": "V-2",
-          "rule": [
+          "rules": [
             [
-              "never"
+              [
+                "never"
+              ],
+              [
+                "two vessels",
+                "double-book",
+                "double book",
+                "twice"
+              ]
             ],
             [
-              "two vessels",
-              "double-book",
-              "double book",
-              "twice"
+              [
+                "override"
+              ],
+              [
+                "nobody",
+                "no one",
+                "never",
+                "cannot",
+                "can't",
+                "may not",
+                " not "
+              ]
             ]
           ]
         }

@@ -4,11 +4,14 @@
 //                      state, and for `obligation` the named obligation's activation). With `any: true` at least one
 //                      rule matches instead (for a defect that does not own deduplication; D1 does): at least one
 //                      matching rule has the census state, and every matching rule with that state has the activation
-//   no-rule            no active pin rule matches `match`
+//   no-rule            no active pin rule matches `match` and contains none of `exclude` (a negation list, so a rule
+//                      that forbids what `match` names does not count: D3's "nobody can override a clash")
 //   absent             no pinned file's normalised text contains the planted span (sha256 and length of its
 //                      normalised text: every window of that length is hashed)
 //   spans-at-most      at most `max` of the planted spans remain in the pinned files
-//   divergence         a `corpusDivergences` entry cites the clause and its rules include the rule matching `rule`
+//   divergence         a `corpusDivergences` entry cites the clause and its rules include a rule matching any of `rules`
+//                      (the resolution may be pinned as more than one phrasing: D3's "never two vessels" or "nobody can
+//                      override")
 //   question           a Phase-0 question bears the rule matching `bears` (in that arc's pin) in state `state`
 //   question-answered  the question of arc `askedIn` bearing `bears` is answered, by the same id, in this arc's record
 //   curation           a `curation` entry of one of `tiers` names `file` (curation paths are repo-relative, the key's are
@@ -30,10 +33,10 @@ export type ArcNo = 1 | 2;
 
 export type Postcondition =
   | Readonly<{ type: 'rule'; arc: ArcNo; match: Match; exclude?: readonly string[]; any?: true; census?: Readonly<{ state: 'obligation' | 'out-of-slice' | 'untestable' | 'prod-only'; activation?: 'future' | 'must-hold' }> }>
-  | Readonly<{ type: 'no-rule'; arc: ArcNo; match: Match }>
+  | Readonly<{ type: 'no-rule'; arc: ArcNo; match: Match; exclude?: readonly string[] }>
   | Readonly<{ type: 'absent'; arc: ArcNo; span: Span }>
   | Readonly<{ type: 'spans-at-most'; arc: ArcNo; max: number; spans: readonly Span[] }>
-  | Readonly<{ type: 'divergence'; arc: ArcNo; cites: string; rule: Match }>
+  | Readonly<{ type: 'divergence'; arc: ArcNo; cites: string; rules: readonly Match[] }>
   | Readonly<{ type: 'question'; arc: ArcNo; bears: Match; state: 'open' | 'answered' }>
   | Readonly<{ type: 'question-answered'; arc: ArcNo; askedIn: ArcNo; bears: Match }>
   | Readonly<{ type: 'curation'; arc: ArcNo; tiers: readonly string[]; file: string }>;
@@ -101,7 +104,7 @@ function evaluate(p: Postcondition, arcs: Readonly<Record<ArcNo, ArcView>>): Ver
       return p.census === undefined ? { pass: true, detail: `${r.id}` } : censusOf(r.id);
     }
     case 'no-rule': {
-      const hits = rulesMatching(view, p.match);
+      const hits = rulesMatching(view, p.match, p.exclude);
       return { pass: hits.length === 0, detail: hits.length === 0 ? 'none' : `matched by ${hits.map((r) => r.id).join(', ')}` };
     }
     case 'absent':
@@ -111,10 +114,10 @@ function evaluate(p: Postcondition, arcs: Readonly<Record<ArcNo, ArcView>>): Ver
       return { pass: left.length <= p.max, detail: `${left.length} remain${left.length === 0 ? '' : ` (${left.join(', ')})`}` };
     }
     case 'divergence': {
-      const r = one(view, p.rule);
-      if ('problem' in r) return { pass: false, detail: r.problem };
-      const hit = view.phase0.corpusDivergences.find((d) => d.cites.includes(p.cites as never) && d.rules.includes(r.id as never));
-      return { pass: hit !== undefined, detail: hit === undefined ? `no corpus divergence cites ${p.cites} with ${r.id}` : hit.what };
+      const ids = new Set<string>(p.rules.flatMap((m) => rulesMatching(view, m).map((r) => r.id)));
+      if (ids.size === 0) return { pass: false, detail: `no rule matches any of ${JSON.stringify(p.rules)}` };
+      const hit = view.phase0.corpusDivergences.find((d) => d.cites.includes(p.cites as never) && d.rules.some((r) => ids.has(r)));
+      return { pass: hit !== undefined, detail: hit === undefined ? `no corpus divergence cites ${p.cites} with any of ${[...ids].join(', ')}` : hit.what };
     }
     case 'question': {
       const r = one(view, p.bears);

@@ -19,6 +19,13 @@
 //     owner has read none: never acknowledged); every other question goes to a frontier-medium `claude -p` (fake: a
 //     keyword stub) given only the answer key's owner answers released so far (`from: arc-1-complete` once the first
 //     arc's completion is in its ref), told to answer from them alone, else "no view: keep your working assumption";
+//   - at every turn end (a chain boundary is one: the arc's completion wakes the session), the owner also reads the
+//     brief (`roadmap brief --json`, the staged plugin) as a real owner would: each open P-n question not yet answered
+//     goes to the same simulator, and a released answer is added to the reply as "P-n: <answer>" (paid runs 10, 12 and
+//     13: the check-in's final message never carried P-1 as a numbered question, so the 48-hour answer never reached
+//     the session). A NO_VIEW is asked again only once more answers are released. A final text holding for a spend or
+//     cost approval gets "spend approved, proceed" (the owner persona: no spend cap), once per arc started. Any of
+//     these makes an owner turn; each exchange records its channel (`via`: numbered, brief or spend-hold);
 //   - any other final text is the skill's headless wait (no Monitor): the driver tails `roadmap watch` on the arc it
 //     last saw holding the host and resumes the session only on an actionable event (F26; the executor's one rule,
 //     src/watch.ts `ActionableFilter`, which `roadmap watch --actionable` applies too, one instance kept across the
@@ -58,6 +65,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { arcsWithRefs, completedHeadOf, readArcRef } from '../../src/chain.ts';
 import { HOST_DIR } from '../../src/host/hostdir.ts';
 import { readClaim } from '../../src/host/lock.ts';
+import { parseBriefPayload, type BriefPayload } from '../../src/phase0/types.ts';
 import { type Event } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
@@ -192,7 +200,8 @@ export function numberedQuestions(text: string): readonly string[] {
   return out;
 }
 
-export type OwnerExchange = Readonly<{ question: string; answer: string; by: 'code' | 'simulator' }>;
+/** `via`: the channel the owner answered through (a numbered question, the brief's open questions, a spend hold). */
+export type OwnerExchange = Readonly<{ question: string; answer: string; by: 'code' | 'simulator'; via: 'numbered' | 'brief' | 'spend-hold' }>;
 
 /** Whether the first arc of the product's chain has its completion in its ref (the owner's later answers are released). */
 function firstArcComplete(product: AbsPath): boolean {
@@ -202,7 +211,7 @@ function firstArcComplete(product: AbsPath): boolean {
   });
 }
 
-export type OwnerCtx = Readonly<{ l: Layout; env: Readonly<Record<string, string>>; fake: boolean; devices: Devices }>;
+export type OwnerCtx = Readonly<{ l: Layout; env: Readonly<Record<string, string>>; mode: Mode; devices: Devices }>;
 
 const TRUSTED = { visibility: 'PUBLIC', hasIssuesEnabled: true, issueCreationPolicy: 'COLLABORATORS_ONLY' } as const;
 
@@ -228,13 +237,17 @@ export function codeAnswer(c: OwnerCtx, q: string): string | null {
 }
 
 const NO_VIEW = 'No view: keep your working assumption.';
+/** The simulator's NO_VIEW, give or take its punctuation. */
+const noView = (answer: string): boolean => /^no view\b/i.test(answer.trim());
 
 /** Every real `claude -p` the driver launches: no MCP server (not the owner's claude.ai connectors), no auto-memory. */
 const CLAUDE_ISOLATION = ['--strict-mcp-config', '--settings', JSON.stringify({ autoMemoryEnabled: false })] as const;
 
+const releasedAnswers = (c: OwnerCtx): readonly OwnerAnswer[] => ownerAnswers().filter((a) => a.from === 'bootstrap' || firstArcComplete(absPath(c.l.product)));
+
 async function simulatorAnswer(c: OwnerCtx, q: string): Promise<string> {
-  const released = ownerAnswers().filter((a) => a.from === 'bootstrap' || firstArcComplete(absPath(c.l.product)));
-  if (c.fake) return released.find((a) => a.match.some((m) => q.toLowerCase().includes(m)))?.answer ?? NO_VIEW;
+  const released = releasedAnswers(c);
+  if (c.mode.kind === 'fake') return released.find((a) => a.match.some((m) => q.toLowerCase().includes(m)))?.answer ?? NO_VIEW;
   const prompt = [
     'You are the owner of a small harbour\'s berth booking product. A root agent working on it asked you the question below.',
     'Answer ONLY from your recorded answers. If none of them answers the question, reply exactly:',
@@ -255,15 +268,71 @@ async function simulatorAnswer(c: OwnerCtx, q: string): Promise<string> {
   return out.result.trim();
 }
 
-async function ownerTurn(c: OwnerCtx, questions: readonly string[], log: OwnerExchange[]): Promise<string> {
+/** The brief's open questions: a question answered in any arc of the chain (carried forward with its id) is closed. */
+export function openBriefQuestions(payload: BriefPayload): readonly Readonly<{ id: string; text: string; assumption: string }>[] {
+  const all = payload.arcs.flatMap((a) => a.questions);
+  const answered = new Set<string>(all.filter((q) => q.state.type === 'answered').map((q) => q.id));
+  const open = new Map<string, Readonly<{ id: string; text: string; assumption: string }>>();
+  for (const q of all) if (!answered.has(q.id)) open.set(q.id, { id: q.id, text: q.text, assumption: q.assumption });
+  return [...open.values()];
+}
+
+/**
+ * The sentence of a final text that holds for a spend or cost approval (paid run 13: "I'm holding before arc 2's Phase 0
+ * until you answer ...: arc 2 will likely cost about another $31."), or null.
+ */
+export function spendHold(text: string): string | null {
+  return text.split(/(?<=[.!?])\s+|\n+/).find((x) => /\b(hold|holding|wait|waiting|approve|approval|go-ahead)\b/i.test(x) && /\b(spend|spending|cost|costs|budget)\b|\$\s?\d/i.test(x))?.trim() ?? null;
+}
+
+export const SPEND_APPROVED = 'Spend is approved: there is no spend cap. Proceed.';
+
+/**
+ * What the owner has settled across turns: P-n ids answered, how many answers were released when each was last asked,
+ * and the number of arcs with refs when the spend was last approved (one approval per arc: a text that keeps naming a
+ * cost while it waits never loops owner turns).
+ */
+export type OwnerMemory = { answered: Set<string>; askedAt: Map<string, number>; spendApprovedAt: number };
+
+/** The brief's open questions, as `roadmap brief --json` gives them (none before an arc has published a snapshot). */
+function briefQuestions(c: OwnerCtx): ReturnType<typeof openBriefQuestions> {
+  if (arcsWithRefs(absPath(c.l.product)).length === 0) return [];
+  const [cmd, args] = roadmapArgv(c.l, c.mode, ['brief', '--repo', c.l.product, '--json']);
+  const r = spawnSync(cmd, [...args], { cwd: c.l.product, env: c.env, encoding: 'utf8', timeout: 120_000 });
+  if (r.status !== 0) throw new Error(`the owner's roadmap brief exited ${r.status}: ${r.stdout}${r.stderr}`);
+  return openBriefQuestions(parseBriefPayload((JSON.parse(r.stdout) as { payload: unknown }).payload));
+}
+
+/** The owner's reply to a turn's final text (see the header), or null when the owner has nothing to say. */
+async function ownerReply(c: OwnerCtx, text: string, memory: OwnerMemory, log: OwnerExchange[]): Promise<string | null> {
   const lines: string[] = [];
-  for (const [i, q] of questions.entries()) {
+  for (const [i, q] of numberedQuestions(text).entries()) {
     const code = codeAnswer(c, q);
     const answer = code ?? (await simulatorAnswer(c, q));
-    log.push({ question: q, answer, by: code === null ? 'simulator' : 'code' });
+    log.push({ question: q, answer, by: code === null ? 'simulator' : 'code', via: 'numbered' });
     lines.push(`${/^\s*(\d+)/.exec(q)?.[1] ?? i + 1}. ${answer}`);
+    const id = /\bP-\d+\b/.exec(q)?.[0];
+    if (id !== undefined && !noView(answer)) memory.answered.add(id);
   }
-  return lines.join('\n');
+  const released = releasedAnswers(c).length;
+  for (const q of briefQuestions(c)) {
+    if (memory.answered.has(q.id) || (memory.askedAt.get(q.id) ?? -1) >= released) continue;
+    memory.askedAt.set(q.id, released);
+    const question = `${q.id}: ${q.text} Working assumption: ${q.assumption}`;
+    const answer = await simulatorAnswer(c, question);
+    if (noView(answer)) continue;
+    memory.answered.add(q.id);
+    log.push({ question, answer, by: 'simulator', via: 'brief' });
+    lines.push(`${q.id}: ${answer}`);
+  }
+  const hold = spendHold(text);
+  const arcs = arcsWithRefs(absPath(c.l.product)).length;
+  if (hold !== null && memory.spendApprovedAt < arcs) {
+    memory.spendApprovedAt = arcs;
+    log.push({ question: hold, answer: SPEND_APPROVED, by: 'code', via: 'spend-hold' });
+    lines.push(SPEND_APPROVED);
+  }
+  return lines.length === 0 ? null : lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -311,13 +380,14 @@ export type Report = Readonly<{
   postRun: readonly PostRun[];
 }>;
 
-type Mode = Readonly<{ kind: 'real' }> | Readonly<{ kind: 'fake'; script: FakeScript }>;
+export type Mode = Readonly<{ kind: 'real' }> | Readonly<{ kind: 'fake'; script: FakeScript }>;
 
 export const initialPrompt = (profile: ProfileName): string => [
   'You are the root agent of a roadmap-orchestrator session over this product repository (`tidewater`), run headless:',
   'nobody watches this session. Use the orchestrate skill of the roadmap-orchestrator plugin from start to finish:',
   'bootstrap, then Phase 0, arcs and chaining toward the target state the corpus in docs/corpus describes.',
-  'The owner answers only the numbered questions you end a turn with. While an arc runs, you may wait on `roadmap watch --actionable`',
+  'The owner answers the numbered questions you end a turn with, and reads the brief\'s open questions whenever your turn ends.',
+  'While an arc runs, you may wait on `roadmap watch --actionable`',
   'under Monitor or end your turn; both are supported. If you end your turn, the harness resumes you on actionable',
   '`roadmap watch` events only (a needs-user item, a unit merged or parked, a changed constraint, a terminal state, a 30-minute heartbeat).',
   'End the session with the skill\'s session-end line.',
@@ -564,7 +634,8 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
   const owner: OwnerExchange[] = [];
   const turns: Turn[] = [];
   const watched: Watched = { arc: null, arcsSeen: [], filter: new ActionableFilter(Date.now(), HEARTBEAT_MIN) };
-  const ownerCtx: OwnerCtx = { l, env, fake: mode.kind === 'fake', devices };
+  const ownerCtx: OwnerCtx = { l, env, mode, devices };
+  const memory: OwnerMemory = { answered: new Set(), askedAt: new Map(), spendApprovedAt: -1 };
   const onArc = (arc: string): void => {
     if (mode.kind !== 'fake' || mode.script !== 'story' || devices.policyFlip !== null || watched.arcsSeen.indexOf(arc) !== 1) return;
     const store = readStore(l.store);
@@ -616,9 +687,9 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
         }
         break;
       }
-      const questions = numberedQuestions(r.result);
-      if (questions.length > 0) {
-        prompt = await ownerTurn(ownerCtx, questions, owner);
+      const reply = await ownerReply(ownerCtx, r.result, memory, owner);
+      if (reply !== null) {
+        prompt = reply;
         kind = 'owner';
         nudges = 0;
         continue;
