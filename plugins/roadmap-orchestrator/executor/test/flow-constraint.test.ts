@@ -1,0 +1,62 @@
+// M4b A1: code's constraint (src/flow/constraint.ts): the largest wait in front of a station when it is at least 10 % of
+// mean lead, else the largest service (the slot as its components' sum), never `held`; the slot's largest component; the
+// last ten points only; and the target rule.
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { stationId, unitId } from '../src/core/ids.ts';
+import { isoTime } from '../src/core/values.ts';
+import { codeConstraintOf, targetAdmissible } from '../src/flow/constraint.ts';
+import type { FlowPoint } from '../src/flow/types.ts';
+
+const AT = isoTime('2026-10-08T09:00:00.000Z');
+const point = (minutes: Readonly<Record<string, number>>): FlowPoint => ({
+  unit: unitId('u1'), admittedAt: AT, mergedAt: AT, leadMin: Object.values(minutes).reduce((a, b) => a + b, 0), minutes: minutes as FlowPoint['minutes'],
+  costUsd: null, rework: 0, firstRunReds: 0,
+});
+
+describe('flow constraint: code\'s reading', () => {
+  it('none before the first point', () => {
+    assert.equal(codeConstraintOf([]), null);
+  });
+
+  it('the largest wait at 10 % of mean lead or more names the station it waits for', () => {
+    const p = point({ 'wait:build': 2, 'stage:build': 10, 'wait:gate': 1, 'stage:gate': 6, 'suite:unit': 1 });
+    assert.deepEqual(codeConstraintOf([p]), { station: 'stage:build', internal: true, component: null });
+  });
+
+  it('a wait in front of the slot names the slot and its largest component', () => {
+    const p = point({ 'wait:slot:integration': 5, 'stage:build': 20, 'suite:unit': 4, 'suite:e2e': 6, 'arc-lanes': 2, ff: 0.1, snapshot: 0.1 });
+    assert.deepEqual(codeConstraintOf([p]), { station: 'slot:integration', internal: true, component: 'suite:e2e' });
+  });
+
+  it('below 10 %, the largest service: the slot competes as its components\' sum; held never counts', () => {
+    const slot = point({ 'wait:build': 0.5, 'stage:build': 8, 'suite:unit': 5, 'candidate-rest': 4, held: 30 });
+    assert.deepEqual(codeConstraintOf([slot]), { station: 'slot:integration', internal: false, component: 'suite:unit' });
+    const stage = point({ 'wait:build': 0.5, 'stage:build': 10, 'suite:unit': 5, 'candidate-rest': 4, held: 30 });
+    assert.deepEqual(codeConstraintOf([stage]), { station: 'stage:build', internal: false, component: null });
+  });
+
+  it('reads the last ten points only', () => {
+    const old = Array.from({ length: 5 }, () => point({ 'wait:gate': 50, 'stage:gate': 1 }));
+    const recent = Array.from({ length: 10 }, () => point({ 'stage:build': 9, 'stage:gate': 1 }));
+    assert.deepEqual(codeConstraintOf([...old, ...recent]), { station: 'stage:build', internal: false, component: null });
+    assert.deepEqual(codeConstraintOf([...old, ...recent.slice(1)])?.station, 'stage:gate');
+  });
+});
+
+describe('flow constraint: the target rule', () => {
+  const slot = { station: stationId('slot:integration'), internal: true, component: stationId('suite:unit') };
+  const agree = { station: stationId('slot:integration'), agree: true, reason: 'the slot queues' };
+  const dispute = { station: stationId('stage:build'), agree: false, reason: 'the build is slow' };
+
+  it('the constraint or any of its components; the disputed station only when the role disputes', () => {
+    for (const t of ['slot:integration', 'suite:unit', 'suite:e2e', 'candidate-rest', 'ff']) assert.ok(targetAdmissible(slot, agree, stationId(t)), t);
+    assert.equal(targetAdmissible(slot, agree, stationId('stage:build')), false);
+    assert.equal(targetAdmissible(slot, agree, stationId('wait:slot:integration')), false);
+    assert.equal(targetAdmissible(slot, dispute, stationId('stage:build')), true);
+    assert.equal(targetAdmissible(slot, { ...dispute, agree: true }, stationId('stage:build')), false);
+    const build = { station: stationId('stage:build'), internal: false, component: null };
+    assert.equal(targetAdmissible(build, agree, stationId('suite:unit')), false);
+    assert.equal(targetAdmissible(null, dispute, stationId('stage:build')), true);
+  });
+});

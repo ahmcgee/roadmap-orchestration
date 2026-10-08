@@ -48,6 +48,9 @@ export function newCommandId(): CommandId {
   return commandId(`cmd-${Date.now().toString(16).padStart(12, '0')}${randomBytes(2).toString('hex')}`);
 }
 
+/** When a command was submitted (ms since the epoch): the clock both id forms carry in their first 12 hex. */
+export const submittedAtMs = (id: CommandId): number => Number.parseInt(id.slice('cmd-'.length, 'cmd-'.length + 12), 16);
+
 /** The ordinals an ack command id can carry (4 hex). */
 export const MAX_ACK_ITEMS = 0x1_0000;
 

@@ -70,7 +70,7 @@ import { candidateLaneDir, jobEvidenceRoot, jobLaneDir, witnessDir } from '../gi
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
 import {
-  type CommandVerdict, type IgnoredCensus, type LaneDef, type RedRev, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
+  type CommandVerdict, type IgnoredCensus, isRed, type LaneDef, type RedRev, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
 } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPattern } from '../core/values.ts';
 import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, pathPattern, patternPath, readManifest } from '../git/evidence.ts';
@@ -297,8 +297,6 @@ function readLaneHost(dir: AbsPath): LaneHost | null {
   if (Object.keys(rest).length > 0) throw new Error(`${path}: unknown keys ${Object.keys(rest).join(', ')}`);
   return { start: hostSample(start, `${path}.start`), end: hostSample(end, `${path}.end`) };
 }
-
-const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall';
 
 /**
  * A lane run's record, read from its spawn and invocation files: what ran (the definition), how it ended

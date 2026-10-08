@@ -339,6 +339,8 @@ export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
  */
 export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'process-fault', 'cancelled'] as const;
 export type CommandVerdict = (typeof COMMAND_VERDICTS)[number];
+/** A red run: it failed or stalled. */
+export const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall';
 /** How a command ended: its exit code (null when the child never exited with one) and verdict. */
 export type CommandEnd = Readonly<{ exitCode: number | null }> & (
   | Readonly<{ verdict: Exclude<CommandVerdict, 'cancelled'> }>

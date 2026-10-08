@@ -59,8 +59,9 @@ export const sameHost = (a: HostFingerprint, b: HostFingerprint): boolean => a.p
 export const FLOW_SERIES_V = 1;
 
 /**
- * One merged unit (batch-merged units are counted in T and excluded): admitted at its first `dispatch`, merged at its ff
- * outcome. `minutes` partitions `leadMin` over disjoint stations (`slot:integration` itself is never a key: its
+ * One merged unit (batch-merged units are counted in T and excluded): admitted at its first `dispatch`, merged when its
+ * publication ends (its `snapshot` outcome right after the ff, so the slot's `ff` and `snapshot` components lie inside the
+ * lead time; src/flow/series.ts). `minutes` partitions `leadMin` over disjoint stations (`slot:integration` itself is never a key: its
  * components are); `rework` counts T-alone reruns and other rework, `firstRunReds` the suite reds of first runs.
  */
 export type FlowPoint = Readonly<{
