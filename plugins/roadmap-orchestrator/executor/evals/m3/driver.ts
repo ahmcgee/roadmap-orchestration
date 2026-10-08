@@ -43,6 +43,10 @@
 //                drift audit's capture
 //   unlimited    once every added unit is merged: `run-only --clear`
 //
+// Under --fake only (not a device of the story, so not reported): once the log has a `flow-ended`, release
+// `fake/flow.hold`, where branches R's and L's fake repair build waits (evals/m3/scenario.ts), so the flow loop's one
+// run is called whatever the host's timing.
+//
 // The run is stopped as `device-failed` (the reason in `devices.failed`, naming the observed job, trigger, outcome or
 // item) only when it is off the story in any branch: the first checkpoint decides anything but `rejected{stale}`
 // or applies its bundle; a checkpoint disposes of nothing before any bundle applied (a no-op, or a request with
@@ -78,7 +82,7 @@ import { verdictOf } from '../../src/holistic/observe.ts';
 import { type ObservationVerdict, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
 import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
-import { FAKE_CKPT_HOLD, FIRST, type Layout, MONEY_LANE, type StoryBranch, UNITS, barrierFile, layout } from './layout.ts';
+import { FAKE_CKPT_HOLD, FAKE_FLOW_HOLD, FIRST, type Layout, MONEY_LANE, type StoryBranch, UNITS, barrierFile, layout } from './layout.ts';
 import { type StoryName, storyName, storySteps } from './scenario.ts';
 import { DIRECTION_EDITED, json } from './setup.ts';
 
@@ -398,6 +402,9 @@ function fire(p: Poll): string | null {
       d.staleApplied = { at: now() };
     }
   }
+
+  const flowRelease = join(l.fake, `${FAKE_FLOW_HOLD}.release`);
+  if (p.fake && !existsSync(flowRelease) && factsOf(events, 'flow-ended').length > 0) writeFileSync(flowRelease, '', { flag: 'wx' });
 
   // G18: every unit a bundle revision adds, read from its `plan-applied{source: bundle}` change.
   const bundles = factsOf(events, 'plan-applied').filter((f) => f.source?.type === 'bundle');

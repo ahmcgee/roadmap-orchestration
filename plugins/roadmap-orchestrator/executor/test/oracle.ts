@@ -20,6 +20,7 @@ import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
+import { arcRolesOf } from '../src/input/inforce.ts';
 
 export type Verdict = Readonly<{ pass: boolean; detail: string }>;
 export type Criterion = Readonly<{ name: string }> & Verdict;
@@ -280,6 +281,26 @@ export function noModelIds(run: OracleRun): Verdict {
   return { pass: hits.length === 0, detail: hits.length > 0 ? hits.join('; ') : `${checked} files scanned` };
 }
 
+/**
+ * M4b (src/flow/track.ts `beforeCompletion`): with the flow loop on, each `arc-completed` is preceded by exactly one
+ * `flow-series` since the completion before it (a crash between the two keeps no second series); with it off, none.
+ */
+export function flowSeriesPerCompletion(run: OracleRun): Verdict {
+  const on = arcRolesOf(run.view.planApplied()) === 'm4b';
+  const problems: string[] = [];
+  let series = 0;
+  let completions = 0;
+  for (const f of facts(run)) {
+    if (f.kind === 'flow-series') series += 1;
+    if (f.kind !== 'arc-completed') continue;
+    completions += 1;
+    if (series !== (on ? 1 : 0)) problems.push(`arc-completed #${completions} follows ${series} flow-series, expected ${on ? 1 : 0}`);
+    series = 0;
+  }
+  if (series > 0) problems.push(`${series} flow-series after the last arc-completed`);
+  return verdict(problems, `${completions} completions, one flow-series each${on ? '' : ' (none: the loop is off)'}`);
+}
+
 // ---------------------------------------------------------------------------------------------------
 // The recovery trace
 
@@ -341,6 +362,7 @@ export function oracle(run: OracleRun, expected: Expected): readonly Criterion[]
     ['needs-user', () => needsUserExactly(run, expected.needsUser)],
     ['usage-per-invocation', () => usagePerInvocation(run)],
     ['no-model-ids', () => noModelIds(run)],
+    ['flow-series-per-completion', () => flowSeriesPerCompletion(run)],
     ['recovery-trace', () => recoveryTrace(run, expected.trace)],
   ];
   return criteria.map(([name, grade]) => ({ name, ...grade() }));

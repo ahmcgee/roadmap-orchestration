@@ -142,7 +142,8 @@ price, subscription-billed. Lanes run in seconds; expect 30 to 60 minutes, domin
 
 `--fake <story dir>` runs the same driver against the fake backends (`evals/m2/scenarios/story/`, one M1-style
 scenario file per unit, keyed by unit since units run in parallel) with a host dir inside the fixture, for
-free (10 minute timeout). `test/evals-m2.test.ts` runs it and requires every criterion to pass.
+free (10 minute timeout). `test/evals-m2.test.ts` runs it and requires every criterion to pass. M4b: the third merge,
+with `top` still to flow, fires the flow loop's first run; its fake call (`flow-1`) answers noAction.
 
 `NOT EXERCISED: …` names what the journal shows no trace of, from: flake, host signature, D4 escalation,
 backend capacity park, backend outage park, aging promotion. The straight path takes none of them (`aging` is
@@ -278,6 +279,9 @@ checkpoint waits at `fake/ckpt-1.hold` until the driver's apply is applied; a re
 the apply (if not, the run stops naming it). `latent` plays branch L as paid run 9 did: tidy's build rounds through
 `formatAmount` first, so I-2's witness holds on S; A1's invariants lens opens a P1 over I-2; the held first checkpoint
 is rejected stale and its re-evaluation admits the repair, leaving the P1 undispositioned for the repair to resolve.
+M4b: in `story` and `latent` the flow loop's first run fires once three units merged with the repair still to flow; its
+fake call (`flow-1`) answers noAction, and the fake repair build waits at `fake/flow.hold` until the driver saw the run
+end, so the call is made whatever the host's timing (`prevented` never has three merges with a unit left).
 `test/evals-m3.test.ts` runs all three and requires every criterion.
 
 `NOT EXERCISED: …` names what the journal shows no trace of, from: rule, reverse, steer, merge-in, reproduction,

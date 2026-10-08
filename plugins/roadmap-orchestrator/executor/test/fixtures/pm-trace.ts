@@ -71,6 +71,8 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'recover.after-op': NONE,
   // M3 B7: arc-completed written, its terminal snapshot not: nothing open; the restart publishes the snapshot.
   'complete.after-fact': NONE,
+  // M4b: flow-series written, arc-completed not: nothing open; the restart keeps no second series and completes.
+  'flow.series-before-completed': NONE,
   // M3 (the holistic row): a digest item's raise, as the needs-user row's.
   'needsuser.raise.before-publish': R('redone'),
   'needsuser.raise.after-publish': R('reconciled'),
