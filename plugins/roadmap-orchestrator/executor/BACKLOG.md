@@ -91,6 +91,12 @@ at triage stay in git history.
   concurrent crash matrix takes ~21 min alone and was cancelled by its 45-min parent timeout when worktree agents and
   the probe shared the host (load ~46); per-cell 30 s and 180 s timeouts in `resource-recover` and `res.lock-order`
   tripped the same way. Candidate levers: serialize heavy files against agent work, or shard the matrix.
+- Second observation (paid `evals/m4a` run 15, 2026-10-08, 15/15 pass): executor spend $131 against $50 for run 14.
+  Arc 2 alone ran 14 checkpoint calls ($23.5) and 31 lens calls ($18.3); a further $23.5 sits in 4 cost rows with
+  no arc or role (unexplained: find what writes them). Lens cadence is ruler, so the flow role may only raise it.
+- Answer delivery latency: Claude Code sessions can message each other locally. Once the `roadmap answer` channel
+  is proven, measure whether messaging the live root session beats the `watch --actionable` answer wake. A delivery
+  layer only; the answer log stays canonical.
 
 ### Deferred from M4a
 
