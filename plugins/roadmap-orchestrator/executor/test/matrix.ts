@@ -119,6 +119,8 @@ export const FF_ELIGIBILITY = 'ff eligibility (M3 B2/B3: a unit ff redone only w
 export const JOB_RESIDUE = 'job-owned residue (M3 G4, H4: a job lane\'s failed cleanup, reclaimed under the job)';
 export const DEBT_BANK = 'debt bank (M4a DEBT_BANK: a corpus arc\'s approval, then its gate notes banked as debt-banked facts)';
 export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReviewInputs kept, pack-review-started, the call, pack-review-ended, the blocking item)';
+export const FLOW_JOB = 'flow job (M4b: FlowInputs kept, flow-started, the call, flow-ended, the flow-proposal item)';
+export const FLOW_SERIES = 'flow series at completion (M4b: the compact series kept, flow-series, then arc-completed)';
 export const ISSUE_CAPTURE = 'checkpoint issue capture (M4a ISSUE_CAPTURE: identity, policy, fetch, the capture kept, issues-captured, checkpoint-inputs)';
 export const CORPUS_AMENDMENT = 'corpus amendments and issue intake (M4a CORPUS_AMENDMENT / ISSUE_INTAKE: after the decision, corpus-amendment and issue-intake facts keyed by source)';
 export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
@@ -1665,6 +1667,43 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the call recorded, nothing ended: the restart consumes it (never asked again) and ends the job once; ended, its blocking item not raised: the restart raises it once (settlePackReviews); one review, one item',
       },
       B5: { status: 'excluded', why: 'the item is the job\'s last record; the hold is a pure function of the facts, the items and the current key' },
+    },
+  },
+  {
+    // The flow job (src/flow/job.ts `runFlowJob`) driven in a child (test/fixtures/flow-job-child.ts) a restart in process
+    // recovers and resumes.
+    row: FLOW_JOB,
+    test: 'test/flow-job.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['flow.after-started'],
+        recovery: 'the inputs kept and flow-started written, nothing asked: the job resumes from its kept inputs alone and asks once',
+      },
+      B3: { status: 'excluded', why: 'the call is a proc.spawn: its runner-exit cells (spawn.*) cover a crash inside it; the job consumes the recorded call on resume' },
+      B4: {
+        status: 'crash',
+        labels: ['flow.after-call', 'flow.after-ended'],
+        recovery: 'the call recorded, nothing ended: the restart consumes it (never asked again) and ends the job once; ended, its item not raised: the restart raises it once (settleFlowItems); one run, one item',
+      },
+      B5: { status: 'excluded', why: 'the item is the job\'s last record; the triggers and the window are pure functions of the facts' },
+    },
+  },
+  {
+    // The series at completion (src/flow/track.ts `beforeCompletion`), driven in the same child.
+    row: FLOW_SERIES,
+    test: 'test/flow-job.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the series is kept content-addressed before its fact: a crash before the fact keeps it again with the same bytes' },
+      B3: { status: 'excluded', why: 'keeping the series is one atomic write' },
+      B4: {
+        status: 'crash',
+        labels: ['flow.series-before-completed'],
+        recovery: 'flow-series written, arc-completed missing: the restart keeps no second series (the latest is the last work) and completes',
+      },
+      B5: { status: 'excluded', why: 'arc-completed is the completion\'s own record (complete.after-fact)' },
     },
   },
   {

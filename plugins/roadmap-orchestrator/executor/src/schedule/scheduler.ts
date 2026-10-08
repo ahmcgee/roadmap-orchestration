@@ -59,6 +59,12 @@
 // repair batch (`publishBatch`, B2) and the close-out publication each run as a job of their own. Jobs and units
 // share the arbiter and `@cpu` (the jobs' waits are served first, `acquireFirst`).
 //
+// The flow track (M4b, src/flow/track.ts; every arc whose revisions carry the `m4b` role set, holistic or not): each
+// run raises the ruler changes, applies an accepted proposal pending its apply and proves one pending its proof, writes
+// the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a
+// holistic job runs, and no holistic job starts while it runs. While a proposal is pending its apply, new candidates
+// wait (`flowApply`). Right before `arc-completed`, the verdicts the completion closes and the compact flow series.
+//
 // The scheduler's holds (on top of admission's, src/schedule/ready.ts):
 //   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
 //       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;

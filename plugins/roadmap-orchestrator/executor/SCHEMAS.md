@@ -3000,6 +3000,7 @@ proposal of flow run `flow-<n>` (a run makes at most one, so k is 0; code assign
 | `suite:<lane>`, `arc-lanes`, `candidate-rest`, `ff`, `snapshot` | the slot's service components (`SLOT_COMPONENTS`); a T-alone rerun is rework, not service |
 | `slot:integration` | the slot's service as a whole: the sum of its components, a constraint and a target, never a key of a point's `minutes` |
 | `held` | hold and park outcomes, paused→resumed, ARC-scope drains, blocking needs-user; never a constraint |
+| `wait:finding` | (B1 amendment) the part of the wait in front of a candidate, held time aside, that an active P1 over an obligation the unit's latest approval selects covers (admission's `finding-blocked`, from the log: `finding-opened` to the first `finding-transition` to resolved or ruled; a unit a transition names as owner is exempt); diagnostic: code may name it as the constraint (`internal`, no component), no lever targets it |
 
 **Kept inputs** (`src/input/inforce.ts`; each named in the snapshot closure, `closureOf` arms in `src/git/snapshot.ts`):
 `inputs/<sha>.flow-inputs.json` (a run's `FlowInputs`, named by `flow-started`), `inputs/<sha>.flow-series.json` (the
@@ -3034,7 +3035,7 @@ GivenInForce[], window: FlowWindow | null, verdicts: ClosedVerdict[], rejections
 `FlowChart = {centre, ucl, mrBar (log scale), seed: previous{arcs (ascending, non-empty), points} | self{points}, recent:
 [{unit, leadMin, zone}], inFlight: [{unit, ageMin, zone}]}`, `ucl` ≥ `centre`, zones `green | yellow | red`.
 `StationRow = {station, meanMin, share ∈ [0, 1]}`. `CodeConstraint = {station, internal, component | null}`: a service
-station (never `held` or a wait), `component` (a slot component) exactly when the station is `slot:integration`.
+station (never `held` or a wait; B1: or `wait:finding`, internal), `component` (a slot component) exactly when the station is `slot:integration`.
 `LeverState`: `concurrency{cpu, set, hostCpus}`, `resource-pool{resource, size}`, `suite-lane{lane, argv, cpu | null}`,
 `sequence{unit, priority}`, `build-class{tier, class, builtin}`. `GivenInForce`: `host{id, lever, note, state: enforced |
 stale}` or `repo{lever, note}`. `FlowWindow = {proposal, lever, target, metric, openedAt, samples}`. `FlowMetric`:
@@ -3052,7 +3053,8 @@ schema drop the proposal with a reason (`FLOW_DROP_REASONS`): `target`, `given`,
 
 **Proofs and verdicts.** `PROOF_OUTCOMES = preserved | changed | unprovable | red`. `FLOW_GUARDS = lead | rework |
 first-run-reds | obligation | cost`; a verdict's `guards` are breaches `{guard, detail}`, each guard once, in that order.
-`VerdictBefore = {samples (raw minutes, non-empty), centre, mrBar}`, `VerdictAfter = {samples}`; `MIN_VERDICT_SAMPLES` 3.
+`VerdictBefore = {samples (raw minutes, possibly none: centre and mrBar 0), centre, mrBar}`, `VerdictAfter = {samples}`; `MIN_VERDICT_SAMPLES` 3,
+on either side (B1 amendment: a before-window of fewer than 3 samples is `inconclusive`, its mR̄ undefined or one range).
 `FLOW_VERDICTS = improved | worse | no-effect | inconclusive`.
 
 **Givens.** Host scope: `$(git rev-parse --git-common-dir)/roadmap/givens.json` (`roadmap/flow-givens-m4b`): `{schema,
@@ -3070,7 +3072,7 @@ Repo scope: `.roadmap/config.json` `flow: {givens: [{lever, note}]}` (owner-comm
 | `flow-decided` | `proposal, command, decision: accepted \| rejected, reason` |
 | `flow-proof` | `proposal, job: proof-n, treeSha, oldSha256 \| null, newSha256 \| null, outcome, minutes: {old, new} \| null, breaksStandIn`; `preserved` and `changed` need both shas and the minutes |
 | `flow-applied` | `proposal, revision: PlanRev, preimage` |
-| `flow-verdict` | `proposal, metric, before, after, guards, verdict, preimage`; a breach ⇒ `worse`; `inconclusive` exactly below 3 samples with no breach |
+| `flow-verdict` | `proposal, metric, before, after, guards, verdict, preimage`; a breach ⇒ `worse`; `inconclusive` exactly when either side has fewer than 3 samples and no guard is breached |
 
 **Other arms and fields.** `executor-started + host?` (every dev.8 start). `RevisionSource + flow{proposal}` (`staleBase`
 forces `--expect-rev` after it, as after a bundle; status rules it `flow{proposal}`). `HoldCause + flow-apply{proposal}`
@@ -3128,5 +3130,17 @@ touches one raises a non-blocking `ruler-changed` item (bundles and the owner's 
 | `pending-apply`, revision committed, `flow-applied` missing | postcondition: a revision with source `flow{proposal}` exists ⇒ `flow-applied` |
 | `flow.series-before-completed` (series kept, `arc-completed` missing) | re-keeping skipped (highWater covered), completed |
 | a verdict due, its fact missing | computed from the log each tick, written once per proposal |
+
+**B1 readings** (src/flow/{trigger,job,track,live,log}.ts). The flow items (`flow-proposal`, `flow-host`, `flow-invalid`,
+`flow-worse`) are parented by the run's job (`job{flow-n}`, one per reason); option ids are slugs, so a proposal item's
+options are `accept` and `reject`, their labels naming the `roadmap flow` command with the proposal id. `ruler-changed` is
+parented by the revision's command; a command revision that changed the vision record is the owner's vision apply and is not
+flagged. The series at completion is skipped when the latest `flow-series` is the log's last work record. An accepted
+proposal not yet applied counts as the open window from its decision, with 0 samples. The verdict's obligation guard reads an
+obligation as no longer held when a P1 over it opened inside the window; idle time is the ARC-scope drains. Surfaces:
+`status.flow` (`off-dev7`, or on: constraint, chart, accounting, window, verdicts, pending proposals with their phase,
+givens, ruler changes with their item, next: running, due, cooldownUntil, bypass); the brief payload's `BriefArc.flow`
+(null with the loop off): constraint and accounting at the ref, verdicts, ruler changes and host advice in the delta, and the
+previous chained arc's applied levers this plan dropped, as rendered lines.
 
 **Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8.

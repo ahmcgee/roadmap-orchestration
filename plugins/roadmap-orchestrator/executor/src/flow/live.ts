@@ -12,7 +12,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import { type AbsPath, type IsoTime } from '../core/values.ts';
 import { gitCommonDir } from '../git/git.ts';
 import { eventsPrefix } from '../git/snapshot.ts';
-import { inputPath, keptInput } from '../input/inforce.ts';
+import { FLOW_SERIES_INPUT, inputPath, keptInput } from '../input/inforce.ts';
 import { type PlanM1, priorityOf } from '../input/plan.ts';
 import { readHostFingerprint } from '../host/sample.ts';
 import { committedRepoConfig } from '../preflight/checks.ts';
@@ -23,7 +23,7 @@ import { builtinBuildClass } from './levers.ts';
 import { type FlowLog, flowLog, openWindow } from './log.ts';
 import { type SeriesInputs, flowSeries, inFlightAges, seriesInputs } from './series.ts';
 import { type SeededLimits, seedLimits } from './spc.ts';
-import type { FlowSeries, FlowWindow, GivenInForce, HostFingerprint, LeverState } from './types.ts';
+import { type FlowSeries, type FlowWindow, type GivenInForce, type HostFingerprint, type LeverState, parseFlowSeries } from './types.ts';
 import { WINDOW_SAMPLES, windowSamples } from './verdict.ts';
 import type { Sha } from '../core/ids.ts';
 
@@ -60,7 +60,15 @@ function parse(r: FlowReader): Parsed {
   if (known !== undefined && known.highWater === highWater) return known;
   const { events } = eventsPrefix(r.runDir, highWater);
   const inputs = seriesInputs(keptReader(r.runDir));
-  const out: Parsed = { highWater, events, log: flowLog(r.journal.view, events), series: flowSeries(r.journal.view.arc, events, inputs), inputs };
+  const log = flowLog(r.journal.view, events);
+  // A series kept at completion that is still the log's last work record is the series: what came after it (the terminal
+  // snapshot's own op lines, the next start) is no flow, and the ref carries the kept record, so a run dir restored from
+  // the ref reads the same accounting.
+  const kept = log.series.at(-1);
+  const series = kept !== undefined && kept.seq === r.journal.view.lastWorkSeq()
+    ? parseFlowSeries(JSON.parse(keptReader(r.runDir)(kept.sha256, FLOW_SERIES_INPUT).toString('utf8')))
+    : flowSeries(r.journal.view.arc, events, inputs);
+  const out: Parsed = { highWater, events, log, series, inputs };
   parsed.set(r.runDir, out);
   return out;
 }

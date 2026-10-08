@@ -102,7 +102,7 @@ function laneJson(l: LaneJson): Record<string, unknown> {
  * Writes start.json as the executor does before any stage runs (src/executor.ts `runExecutor`): generation 1, the
  * repo, the plan file and the profile.
  */
-function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, profile: ProfileName): void {
+export function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, profile: ProfileName): void {
   const start: RunStart = { v: SCHEMA_VERSION, generation: 1, at: isoTimeOf(new Date()), repo, planFile: planPath, profile };
   atomicJson(join(runDir, START_FILE), start);
 }

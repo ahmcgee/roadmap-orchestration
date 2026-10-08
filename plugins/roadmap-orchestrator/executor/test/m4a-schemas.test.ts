@@ -474,6 +474,10 @@ describe('startup rows, brief and ack', () => {
         admits: [{ job: 'ckpt-2', index: 1, unit: 'u2', class: 'opportunity', clauses: ['V-2'], followUp: 'O-1' }],
         opportunities: [{ id: 'O-1', clauses: ['V-2'], units: ['u2'], followUps: 1, spentUsd: 1.5, overrun: [] }],
         drift: [{ unit: 'u3', job: 'ckpt-2', findings: [{ id: 'F-2', clauses: ['V-1'] }] }],
+        flow: {
+          constraint: 'slot:integration (suite:unit)', accounting: 'T 1 units/h; I 2; OE $3/h', verdicts: ['flow-1.0: improved'], rulerChanges: [], hostAdvice: [],
+          dropped: ['flow-2.0 (arc-1): capacity.cpu to 6'],
+        },
       }],
     };
     same(parseBriefPayload, { ...payload, answers: [] });

@@ -169,6 +169,7 @@ import { readClaim } from './host/lock.ts';
 import { isAlive } from './host/liveness.ts';
 import { readOwner } from './host/owner.ts';
 import { revParse } from './git/git.ts';
+import { type FlowStatus, flowStatus } from './flow/track.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { coverageBase, coverageOf } from './holistic/coverage.ts';
 import { type AppliedBundle, brakesOf } from './holistic/convergence.ts';
@@ -514,6 +515,12 @@ export type Status = Readonly<{
   opportunities: readonly OpportunityLine[];
   /** The drift indicator (see the header): one line per merged checkpoint unit not classed opportunity. */
   drift: readonly DriftLine[];
+  /**
+   * M4b (plan "Surfaces"): the flow loop (src/flow/track.ts `flowStatus`): `off-dev7` for an arc 1.0.0-dev.7 started; else
+   * the constraint, the chart, the accounting (diagnostic only), the open window, the verdicts, the proposals pending,
+   * the givens, the ruler changes and the next trigger and cooldown. Null before a start.
+   */
+  flow: FlowStatus | null;
 }>;
 
 export type KnownDefectView = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId; fixMerged: boolean; holds: readonly UnitId[] }>;
@@ -1646,6 +1653,8 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     checkpointWaits: checkpointWaitsOf(view),
     ...admitted,
+    flow: start === null || plan === null ? null
+      : flowStatus({ runDir, repo: start.record.repo, journal: { view } }, revParse(start.record.repo, branchRef(plan.integrationBranch)), isoTimeOf(new Date(now))),
   };
 }
 

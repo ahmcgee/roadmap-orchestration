@@ -27,6 +27,9 @@
 // - **Answers** (src/answers.ts): the owner's recorded answers (`roadmap answer`) no Phase-0 record applies yet, read
 //   from the answer log and the newest arcs' records in force (a live arc's run dir before its ref): rendered first, as
 //   the act the root agent owes now.
+// - **Flow** (M4b, `briefFlow`; arcs with the loop on): code's constraint and the T/I/OE accounting (diagnostic only) at
+//   the ref; the verdicts, the ruler changes (command revisions after the first admission) and the host advice in the
+//   delta; and each lever the previous arc of the chain applied (no verdict worse) that this arc's plan dropped.
 // The payload holds no clock; forge state, census figures and timings are in it, so a change of any changes the id.
 import { existsSync } from 'node:fs';
 import { answerLine, unappliedAnswers } from './answers.ts';
@@ -43,9 +46,18 @@ import { parseObligations } from './holistic/types.ts';
 import { OBLIGATIONS_INPUT, PHASE0_INPUT, REVISION_INPUT, RULING_INPUT } from './input/inforce.ts';
 import { CliError, runDir } from './input/cli.ts';
 import { NEEDS_USER_DIR, openNeedsUser } from './needsuser.ts';
-import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
+import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefFlow, type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
 import { meterOf } from './meter.ts';
 import { type Decision, admitViews, censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
+import { codeConstraintOf } from './flow/constraint.ts';
+import { seriesOfRef } from './flow/history.ts';
+import { proposalLine } from './flow/job.ts';
+import { flowLog, proposalOf } from './flow/log.ts';
+import { seriesInputs } from './flow/series.ts';
+import { rulerChangesOf } from './flow/track.ts';
+import type { FlowAction } from './flow/types.ts';
+import { arcRolesOf } from './input/inforce.ts';
+import type { PlanM1 } from './input/plan.ts';
 
 /** The brief's reasons an ack acknowledges (R10): non-blocking, rendered for a live arc. */
 export const ACKED_REASONS = ['divergence-digest', 'convergence-bound'] as const;
@@ -102,7 +114,44 @@ function censusAt(repo: AbsPath, ref: ArcRef): BriefArc['census'] {
   });
 }
 
-function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr): BriefArc {
+/** Whether `plan` still carries what `action` applied (a sequence is the previous arc's own unit: never carried over). */
+function carries(plan: PlanM1, action: FlowAction): boolean {
+  switch (action.lever) {
+    case 'concurrency': return plan.capacity?.cpu === action.cpu;
+    case 'resource-pool': return plan.resources.find((r) => r.name === action.resource)?.pool?.size === action.size;
+    case 'suite-lane': {
+      const lane = plan.suite.lanes.find((l) => l.id === action.lane);
+      return lane !== undefined && (action.argv === undefined || canonicalJson(lane.argv) === canonicalJson(action.argv)) && (action.cpu === undefined || lane.cpu === action.cpu);
+    }
+    case 'sequence': return true;
+    case 'build-class': return plan.routing?.build?.[action.tier] === action.class;
+    case 'host': return true;
+  }
+}
+
+/** M4b: an arc's flow (see `BriefFlow`); `previous`: the arc before it in the chain, or null. Null with the loop off. */
+function briefFlow(ref: ArcRef, from: number, previous: ArcRef | null): BriefFlow | null {
+  if (arcRolesOf(ref.view.planApplied()) !== 'm4b') return null;
+  const series = seriesOfRef(ref);
+  const c = codeConstraintOf(series.points);
+  const a = series.accounting;
+  const log = flowLog(ref.view, ref.events);
+  const prevLog = previous === null || arcRolesOf(previous.view.planApplied()) !== 'm4b' ? null : flowLog(previous.view, previous.events);
+  return {
+    constraint: c === null ? null : `${c.station}${c.component === null ? '' : ` (${c.component})`}${c.internal ? ', the largest wait in front of it' : ', the largest service'}`,
+    accounting: `diagnostic only: ${a.tAdvances === null ? '' : `obligations first held ${a.tAdvances.toFixed(2)}/h advancing, ${(a.tOther ?? 0).toFixed(2)}/h other; `}units merged ${a.tUnits.toFixed(2)}/h; inventory ${a.wip}; spend $${a.oeUsdPerHour.toFixed(2)}/h`,
+    verdicts: [...log.verdicts.values()].filter((v) => v.seq > from).map((v) => `${proposalLine(proposalOf(log, v.proposal))}: ${v.verdict}${v.guards.length === 0 ? '' : ` (${v.guards.map((g) => `${g.guard}: ${g.detail}`).join('; ')})`}`),
+    rulerChanges: rulerChangesOf(ref.events, seriesInputs(ref.input)).filter((r) => r.seq > from).map((r) => `rev ${r.rev} (${r.command}): ${r.paths.join(', ')}`),
+    hostAdvice: log.runs.flatMap((r) => (r.ended !== null && r.ended.seq > from && r.ended.proposal?.action.lever === 'host'
+      ? [`${r.ended.proposal.id}: ${r.ended.proposal.action.note}`] : [])),
+    dropped: prevLog === null ? [] : [...prevLog.applied.keys()].flatMap((id) => {
+      const p = proposalOf(prevLog, id);
+      return prevLog.verdicts.get(id)?.verdict === 'worse' || carries(ref.plan, p.action) ? [] : [`${proposalLine(p)} in ${previous!.arc}`];
+    }),
+  };
+}
+
+function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previous: ArcRef | null): BriefArc {
   const facts = factsAfter(ref, from);
   const now = ref.manifest.phase0;
   const record = now !== undefined && now !== phase0At(ref, from) ? parsePhase0Record(JSON.parse(ref.input(now, PHASE0_INPUT).toString('utf8'))) : null;
@@ -143,6 +192,7 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr): BriefA
     admits: admitted.admits.filter((x) => x.seq > from).map((x) => ({ job: x.job, index: x.index, unit: x.unit, class: x.class, clauses: x.clauses, followUp: x.followUp })),
     opportunities: admitted.opportunities,
     drift: admitted.drift.filter((x) => x.findings.length > 0).map((x) => ({ unit: x.unit, job: x.job, findings: x.findings.map((f) => ({ id: f.id, clauses: f.clauses })) })),
+    flow: briefFlow(ref, from, previous),
   };
 }
 
@@ -181,7 +231,7 @@ export function computeBrief(repo: AbsPath): Brief {
     items: arcs.filter((r) => live(repo, r)).flatMap((r) => itemsOf(repo, r)).filter((i) => !enqueued.has(itemKey(i))).sort(byKey(itemKey)),
     chain: { position: chain.length, ...chainQuota(repo, chain.map((r) => r.arc), { plan: head.plan, ref: head }, acks) },
     answers: unappliedAnswers(gitCommonDir(repo)),
-    arcs: arcs.map((r) => briefArc(repo, r, from.get(r.arc) ?? 0, prs.get(r.arc)!)),
+    arcs: arcs.map((r) => briefArc(repo, r, from.get(r.arc) ?? 0, prs.get(r.arc)!, chain[chain.indexOf(r) - 1] ?? null)),
   };
   // The payload is what its reader accepts (the frozen schema): a bug here fails loud, never a malformed brief.
   parseBriefPayload(JSON.parse(canonicalJson(payload)));
@@ -228,6 +278,14 @@ function arcMarkdown(a: BriefArc): string {
     section('Opportunities', a.opportunities.map((o) => `${o.id} advances ${o.clauses.join(', ')}: units ${o.units.join(', ')}; ${o.followUps} follow-up${o.followUps === 1 ? '' : 's'}; $${o.spentUsd}${o.overrun.length === 0 ? '' : `; overrun by ${o.overrun.map((x) => `${x.job}#${x.index}`).join(', ')}`}`)),
     section('Drift (findings outside the slice on checkpoint units\' merges)', a.drift.map((d) => `${d.unit} (${d.job}): ${d.findings.length} — ${d.findings.map((f) => `${f.id} ${f.clauses.join(', ')}`).join('; ')}`)),
     section('Pack review notes', a.packReviewNotes.map((n) => `${n.job}#${n.index}: ${n.claim}`)),
+    ...(a.flow === null ? [] : [section('Flow', [
+      `constraint: ${a.flow.constraint ?? 'none yet (no merged unit)'}`,
+      `T/I/OE: ${a.flow.accounting}`,
+      ...a.flow.verdicts.map((v) => `verdict ${v}`),
+      ...a.flow.rulerChanges.map((r) => `RULER CHANGED by a command revision: ${r}`),
+      ...a.flow.hostAdvice.map((h) => `host advice ${h}`),
+      ...a.flow.dropped.map((d) => `dropped: the previous arc applied ${d}; this plan no longer carries it`),
+    ])]),
     section('Timings', a.timings.map((t) => `${t.stage}: ${t.count} completed, p50 ${Math.round(t.p50Ms / 1000)} s, max ${Math.round(t.maxMs / 1000)} s`)),
   ].join('')}`;
 }
