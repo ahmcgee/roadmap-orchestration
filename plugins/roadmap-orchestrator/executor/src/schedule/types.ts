@@ -3,10 +3,10 @@
 // implemented by later steps against these signatures. The records they read and write (facts, holders,
 // `ProbeTarget`) live in src/core/events.ts.
 import type { BackendParkClass, Holder, OutcomeStage, ProbeTarget } from '../core/events.ts';
-import type { CommandId, FindingId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
+import type { CommandId, FindingId, KnownDefectId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, LaneTier, NeedsUserReason } from '../core/records.ts';
-import type { PlanM1, PlanUnit, UnitOrigin } from '../input/plan.ts';
+import type { PlanM1, PlanUnit, UnitOrigin, UnitPriority } from '../input/plan.ts';
 import type { Backend } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -36,7 +36,7 @@ export const CPU_COST = { judgment: 1, build: 4, lane: { fast: 2, estate: 4 } } 
 
 /**
  * What one reservation asks for, all-or-none: named resources, one instance per pool request, `@cpu` tokens
- * (0 for a legacy arc), and `integration-slot` for a publication. Its units are taken in lock order.
+ * and `integration-slot` for a publication. Its units are taken in lock order.
  */
 export type ResourceRequest = Readonly<{
   named: readonly ResourceName[];
@@ -51,7 +51,7 @@ export type ResourceRequest = Readonly<{
  * `@cpu`×1; build the unit's resources and `@cpu`×(`unit.cpu ?? 4`); lanes the first lane's set; candidate the
  * publication (`integration-slot`); prepare none. A wait cancelled by pause or stop journals nothing.
  */
-export type EntryReservation = (plan: PlanM1, unit: PlanUnit, stage: AdmissionStage, legacy: boolean) => ResourceRequest | null;
+export type EntryReservation = (plan: PlanM1, unit: PlanUnit, stage: AdmissionStage) => ResourceRequest | null;
 
 /** The arbiter's answer to one waiter (src/schedule/arbiter.ts, step 1). */
 export type Grant =
@@ -85,6 +85,8 @@ export const PROMOTION_BYPASS = 3;
  */
 export type Rank = Readonly<{
   unit: UnitId;
+  /** M4a rev 3 (F1b, R42): the unit's plan priority (`priorityOf`: absent is `normal`). */
+  priority: UnitPriority;
   origin: UnitOrigin;
   waitStartSeq: number;
   bypassMerges: number;
@@ -93,10 +95,11 @@ export type Rank = Readonly<{
 }>;
 
 /**
- * Promoted units first, by age alone (`waitStartSeq`); then the rest by origin (`checkpoint` before
- * `planned`), then age. Plan index breaks ties, so the order is total. Negative: `a` is served first.
+ * M4a rev 3 (R42): `high` priority first; then promoted units, by age alone (`waitStartSeq`); then the rest by origin
+ * (`checkpoint` before `planned`), then age. Plan index breaks ties, so the order is total. Negative: `a` is served first.
  */
 export function compareRank(a: Rank, b: Rank): number {
+  if (a.priority !== b.priority) return a.priority === 'high' ? -1 : 1;
   if (a.promoted !== b.promoted) return a.promoted ? -1 : 1;
   if (!a.promoted && a.origin !== b.origin) return ORIGIN_RANK[a.origin] - ORIGIN_RANK[b.origin];
   if (a.waitStartSeq !== b.waitStartSeq) return a.waitStartSeq - b.waitStartSeq;
@@ -125,7 +128,12 @@ export type AdmissionConstraint =
    * M3 (§2.8, G10): an active P1 over an obligation the candidate selects holds its candidate admission (a repair
    * declaring that obligation excepted); `finding-blocked` is also the pre-ff re-check's candidate outcome.
    */
-  | Readonly<{ type: 'finding-blocked'; finding: FindingId; obligation: ObligationId }>;
+  | Readonly<{ type: 'finding-blocked'; finding: FindingId; obligation: ObligationId }>
+  /**
+   * M4a rev 3 (F4, R49): a plan known defect holds the unit's `prepare` while `knownDefectActive` holds (until its
+   * fixer's lineage merges); the fixer's own lineage is never held.
+   */
+  | Readonly<{ type: 'known-defect'; id: KnownDefectId; fixUnit: UnitId }>;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
 

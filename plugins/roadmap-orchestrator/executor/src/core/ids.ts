@@ -1,7 +1,7 @@
 // Branded identifiers. Each id has one constructor that checks its textual form and throws
 // InvalidIdError otherwise, so an unchecked string can never reach a place that wants an id. The forms
 // are recorded in SCHEMAS.md ("Ids").
-import { type Brand, SchemaError } from './validate.ts';
+import { type Brand, type Read, SchemaError, answerSet, sortedBy } from './validate.ts';
 
 export class InvalidIdError extends SchemaError {
   readonly idKind: string;
@@ -251,10 +251,10 @@ export const divergenceIdOf = D.of;
 export const divergenceSeq = D.n;
 
 /**
- * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch or the
- * baseline witness. `<kind>-<n>`, numbered per kind.
+ * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch, the
+ * baseline witness or (M4a) a pack review. `<kind>-<n>`, numbered per kind.
  */
-export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline'] as const;
+export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobId = Brand<string, 'JobId'>;
 const JOB = new RegExp(`^(${JOB_KINDS.join('|')})-(${POS})$`);
@@ -278,6 +278,155 @@ export function jobIdOfKind(kind: JobKind): IdReader<JobId> {
     return job;
   };
 }
+
+// ---------------------------------------------------------------------------------------------------
+// M4a ids (SCHEMAS.md "M4a"). Unlike the M3 ids these are global across the chain of arcs, except `M-<n>`.
+
+/** A corpus rule: `T-<n>`, global across arcs; a retired id is never reused (the pin and the registry hold it). */
+export type RuleId = Brand<string, 'RuleId'>;
+const T = numbered('RuleId', 'T');
+export const ruleId: IdReader<RuleId> = T.read;
+export const ruleIdOf = T.of;
+export const ruleSeq = T.n;
+
+/** A debt item: `B-<n>`, global and stable across arcs (`debt.md`'s block holds the high-water). */
+export type DebtId = Brand<string, 'DebtId'>;
+const B = numbered('DebtId', 'B');
+export const debtId: IdReader<DebtId> = B.read;
+export const debtIdOf = B.of;
+export const debtSeq = B.n;
+
+/** A corpus amendment: `M-<n>`, numbered within its arc; cited across arcs as `<arc>/M-<n>` (`AmendmentRef`). */
+export type AmendmentId = Brand<string, 'AmendmentId'>;
+const M = numbered('AmendmentId', 'M');
+export const amendmentId: IdReader<AmendmentId> = M.read;
+export const amendmentIdOf = M.of;
+export const amendmentSeq = M.n;
+
+/** An amendment cited outside its arc: `<arc>/M-<n>`. */
+export type AmendmentRef = Brand<string, 'AmendmentRef'>;
+const AMENDMENT_REF = new RegExp(`^(${SLUG})/(M-${POS})$`);
+export const amendmentRef: IdReader<AmendmentRef> = textual('AmendmentRef', AMENDMENT_REF, '<arc>/M-<n>');
+export function amendmentRefOf(arc: ArcId, id: AmendmentId): AmendmentRef {
+  return amendmentRef(`${arc}/${id}`);
+}
+export function parseAmendmentRef(ref: AmendmentRef): Readonly<{ arc: ArcId; id: AmendmentId }> {
+  const m = AMENDMENT_REF.exec(ref);
+  if (m === null) throw new InvalidIdError('AmendmentRef', 'AmendmentRef', '<arc>/M-<n>', ref);
+  return { arc: m[1] as ArcId, id: m[2] as AmendmentId };
+}
+/** An amendment ref's sort key: by arc, then canonically by id (`a/M-9` before `a/M-10`). */
+export function amendmentRefKey(ref: AmendmentRef): string {
+  const { arc, id } = parseAmendmentRef(ref);
+  return `${arc}\u0000${idKey(id)}`;
+}
+
+/**
+ * A ranked Phase-0 question: `P-<n>`, global, never reused. No registry: the next id is 1 + the max across every
+ * Phase-0 record in the verified chain closure (H23); a carried-forward question keeps its id and text.
+ */
+export type PhaseQuestionId = Brand<string, 'PhaseQuestionId'>;
+const P = numbered('PhaseQuestionId', 'P');
+export const phaseQuestionId: IdReader<PhaseQuestionId> = P.read;
+export const phaseQuestionIdOf = P.of;
+export const phaseQuestionSeq = P.n;
+
+// ---------------------------------------------------------------------------------------------------
+// M4a rev 3 ids (SCHEMAS.md "M4a rev 3").
+
+/** A plan's known defect: `K-<n>`, plan-scoped and never reused (`plan.knownDefects`, F4). */
+export type KnownDefectId = Brand<string, 'KnownDefectId'>;
+const K = numbered('KnownDefectId', 'K');
+export const knownDefectId: IdReader<KnownDefectId> = K.read;
+export const knownDefectIdOf = K.of;
+
+/** A checkpoint opportunity: `O-<n>`, arc-scoped, numbered in the order the arc's admits record them (OR-A1). */
+export type OpportunityId = Brand<string, 'OpportunityId'>;
+const O = numbered('OpportunityId', 'O');
+export const opportunityId: IdReader<OpportunityId> = O.read;
+export const opportunityIdOf = O.of;
+export const opportunitySeq = O.n;
+
+/**
+ * A spec's witness item: `W-<n>`, a spec item id like an acceptance clause's (unique among the spec's items, never
+ * reused); the next one is the next free `W-n` of the spec (R59).
+ */
+export type WitnessItemId = Brand<string, 'WitnessItemId'>;
+const W = numbered('WitnessItemId', 'W');
+export const witnessItemId: IdReader<WitnessItemId> = W.read;
+export const witnessItemIdOf = W.of;
+export const witnessItemSeq = W.n;
+
+// ---------------------------------------------------------------------------------------------------
+// The canonical order of numbered ids (`<letter>-<n>`: V, Q, I, F, D, T, B, M, P, K, O, W and the ruling ids C). Every list of
+// them, in a record or in code, is in this one order: by letter, then by `<n>` as a number (T-9 < T-10 < T-100).
+// Validators read such lists with `idsAscending`; code writes them with `canonicalIds` (or sorts with `compareIds`).
+// Plain string order stays for keys that are not numbered ids (paths, slugs, job and needs-user ids).
+
+export type NumberedId =
+  | VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | AmendmentId | PhaseQuestionId | RulingId | KnownDefectId
+  | OpportunityId | WitnessItemId;
+
+const NUMBERED_ID = /^([A-Z])-([0-9]+)$/;
+
+/** A numbered id's sort key: string order of keys is the canonical order, and equal keys mean equal ids. */
+export function idKey(id: NumberedId): string {
+  const m = NUMBERED_ID.exec(id);
+  if (m === null) throw new InvalidIdError('NumberedId', 'NumberedId', '<letter>-<n>', id);
+  const digits = m[2] as string;
+  return `${m[1]}-${String(digits.length).padStart(3, '0')}-${digits}`;
+}
+
+/** The canonical order of numbered ids, for `Array.prototype.sort`. */
+export function compareIds(a: NumberedId, b: NumberedId): number {
+  const x = idKey(a);
+  const y = idKey(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/** `ids` once each, in canonical order: how code writes an id list, and how a judgment's id lists are normalised. */
+export function canonicalIds<T extends NumberedId>(ids: Iterable<T>): T[] {
+  return [...new Set(ids)].sort(compareIds);
+}
+
+/** A judgment answer's numbered ids: unique, any order, returned in canonical order (`answerSet`). */
+export function answerIds<T extends NumberedId>(item: Read<T>, opts: { readonly nonEmpty?: boolean } = {}): Read<readonly T[]> {
+  return answerSet(item, (t) => t, compareIds, opts);
+}
+
+const ID_ORDER = 'in id order (T-9 before T-10)';
+
+/**
+ * A list strictly ascending in canonical id order by `id` (sorted, unique). `legacyStringOrder` (TEMPORARY SCAFFOLDING,
+ * SCHEMAS.md "Record evolution"): the list was read in plain string order before 1.0.0-dev.7, so a list strictly
+ * ascending in that order (`["T-10","T-9"]`) still reads, as written, with a warning (`legacyIdOrder`).
+ */
+export function idsAscending<T>(item: Read<T>, id: (t: T) => NumberedId, opts: Readonly<{ nonEmpty?: boolean; legacyStringOrder?: true }> = {}): Read<readonly T[]> {
+  return sortedBy(item, (t) => idKey(id(t)), { nonEmpty: opts.nonEmpty === true, order: ID_ORDER, ...(opts.legacyStringOrder === true ? { legacyKey: id } : {}) });
+}
+
+/** A list of numbered ids strictly ascending in canonical order (see `idsAscending`). */
+export function idList<T extends NumberedId>(item: Read<T>, opts: Readonly<{ nonEmpty?: boolean; legacyStringOrder?: true }> = {}): Read<readonly T[]> {
+  return idsAscending(item, (t) => t, opts);
+}
+
+/** A forge issue: `issue-<number>`, the only issue identity in outcomes, amendments and coverage checks (H18). */
+export type IssueId = Brand<string, 'IssueId'>;
+const ISSUE = new RegExp(`^issue-(${POS})$`);
+export const issueId: IdReader<IssueId> = textual('IssueId', ISSUE, 'issue-<number>');
+export const issueIdOf = (n: number): IssueId => issueId(`issue-${n}`);
+export const issueNumber = (id: IssueId): number => Number(ISSUE.exec(id)?.[1]);
+
+/** Pasted issue content and evidence only (H18): an issue's body `issue-<n>`, or one of its comments `issue-<n>/c-<id>`. */
+export type IssueContentRef = Brand<string, 'IssueContentRef'>;
+const ISSUE_CONTENT = new RegExp(`^issue-(${POS})(?:/c-(${POS}))?$`);
+export const issueContentRef: IdReader<IssueContentRef> = textual('IssueContentRef', ISSUE_CONTENT, 'issue-<number> | issue-<number>/c-<id>');
+/** The issue a content ref belongs to. */
+export const issueOfContent = (ref: IssueContentRef): IssueId => issueIdOf(Number(ISSUE_CONTENT.exec(ref)?.[1]));
+
+/** A brief: the first 16 hex of sha256 over its canonical payload (H16). */
+export type BriefId = Brand<string, 'BriefId'>;
+export const briefId: IdReader<BriefId> = textual('BriefId', /^[0-9a-f]{16}$/, '16 lowercase hex');
 
 /** An arc lane's revision: first 16 hex of sha256 over its canonical definition (`laneRevOf`). */
 export type LaneRev = Brand<string, 'LaneRev'>;

@@ -11,20 +11,22 @@
 // terminal predicate's input) is a pure function of the log. Items outside the journal (the supervisor's and a
 // refused claim's) are files only (`fileNeedsUser`); `blockingItems` reads both for admission.
 //
-// M3 (B7; the OR rulings): whether an M3 item blocks is fixed by its reason (`m3Blocking`), and a raise that disagrees
-// fails loud. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`, `new-finding-draining`, `steered`,
-// `not-reproduced`, `owner-request` (A16: only the owner may act) and `respec-second` (OR-Q1). Non-blocking
-// (`NON_BLOCKING_M3_REASONS`): `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never
-// halt units), `audit-owed` and `divergence-digest`. Blocking means the arc is not `complete` while the item is open
-// (§2.10); what an open item holds back from admission is admission's (src/schedule/ready.ts) and, for
-// `obligation-baseline` (every admission under holistic until it is answered), the scheduler's.
+// M3 (B7; the OR rulings) and M4a: whether an item of a reason from M3 on blocks is fixed by its reason (`m3Blocking`),
+// and a raise that disagrees fails loud. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`,
+// `new-finding-draining`, `steered`, `not-reproduced`, `owner-request` (A16: only the owner may act), `respec-second`
+// (OR-Q1), and M4a's `pack-review` (K14) and `issue-policy-untrusted` (OR-L6). Non-blocking (`NON_BLOCKING_M3_REASONS`):
+// `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never halt units), `audit-owed` and
+// `divergence-digest`. Blocking means the arc is not `complete` while the item is open (§2.10); what an open item holds
+// back from admission is admission's (src/schedule/ready.ts) and, for `obligation-baseline`, `pack-review` and
+// `issue-policy-untrusted` (every admission until it is answered), the scheduler's. A `pack-review` item a later pack
+// review's end superseded (K14, `supersededPackItems`) is open no more: it holds and blocks nothing.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
 import { type IntentOf, type Parent, parentUnit } from './core/events.ts';
 import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
 import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
-import type { Journal, JournalView, Reconciler } from './core/interfaces.ts';
+import type { Journal, JournalView, NeedsUserState, Reconciler } from './core/interfaces.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import {
   NEEDS_USER_REASONS, NON_BLOCKING_M3_REASONS, type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord,
@@ -46,7 +48,7 @@ export const needsUserBytes = (record: NeedsUserRecord): string => canonicalJson
 
 const fileSha = (path: AbsPath): Sha256Hex => sha256(sha256Hex(readFileSync(path)));
 
-/** The M3 reasons (every reason from `obligation-baseline` on); an earlier reason's raiser decides whether it blocks. */
+/** The reasons from M3 on (every reason from `obligation-baseline` on, M4a's included); an earlier reason's raiser decides whether it blocks. */
 const M3_REASONS: readonly NeedsUserReason[] = NEEDS_USER_REASONS.slice(NEEDS_USER_REASONS.indexOf('obligation-baseline'));
 
 /** Whether an item with `reason` is raised blocking: fixed for an M3 reason (the OR rulings), null for an earlier one. */
@@ -125,9 +127,31 @@ export function raisedFor(view: JournalView, parent: Parent): NeedsUserId | null
   return raise === undefined ? null : raise.expect.id;
 }
 
-/** Raised, blocking and not acknowledged: what keeps a parked unit's arc from being terminal-complete. */
+/**
+ * K14: the `pack-review` items a later pack review's end superseded: the item each review raised (parent `job`), for
+ * every review ended before the latest ended one.
+ */
+export function supersededPackItems(view: JournalView): ReadonlySet<NeedsUserId> {
+  const ended = view.holistic().packReviews.filter((r) => r.ended !== null).slice(0, -1);
+  return new Set(ended.flatMap((r) => {
+    const id = raisedFor(view, { type: 'job', job: r.started.job });
+    return id === null ? [] : [id];
+  }));
+}
+
+/**
+ * The one predicate of an open journal item (paid M4a run 10, R-17): raised, not acknowledged and not superseded (K14).
+ * Everything that lists open items reads it: `status.needsUser`, the brief's items, the scheduler's holds and the terminal
+ * predicate. `watch` streams files, so it reads the superseded set alone (`supersededPackItems`, a `superseded` line).
+ */
+export function openNeedsUser(view: JournalView): readonly NeedsUserState[] {
+  const superseded = supersededPackItems(view);
+  return view.needsUser().filter((n) => n.ack === null && !superseded.has(n.id));
+}
+
+/** Open (`openNeedsUser`) and blocking: what keeps a parked unit's arc from being terminal-complete. */
 export function openBlocking(view: JournalView): readonly NeedsUserId[] {
-  return view.needsUser().filter((n) => n.blocking && n.ack === null).map((n) => n.id);
+  return openNeedsUser(view).filter((n) => n.blocking).map((n) => n.id);
 }
 
 /** A needs-user record from its file, or null when absent. Invalid content throws. */
@@ -155,25 +179,26 @@ export function reopenRecommendation(unit: UnitId, specPath: AbsPath, rev: SpecR
 }
 
 /**
- * A unit parked `routing-changed`: `resume <unit>` re-enters it at the stage it parked at once the routing
- * in force resolves its implementer seat as it was pinned (commands/apply.ts), so that is what the item
- * recommends.
+ * A unit parked `routing-changed` (its implementer's backend or model changed; an effort-only change re-pins and resumes,
+ * OR-L3): `resume <unit>` re-enters it at the stage it parked at once the routing in force resolves its implementer seat
+ * to the same backend and model it was pinned on (commands/apply.ts), so that is what the item recommends.
  */
 export function routingChangedRecommendation(unit: UnitId, floor: RiskTier): string {
-  return `Restore the routing of build.${floor} or re-enter the unit under a new id. Once build.${floor} resolves to the binding `
-    + `the unit was dispatched on, \`roadmap resume ${unit}\` re-pins it under the routing in force and re-enters it at the stage `
-    + 'it parked at, no spec edit needed. Or acknowledge this item to leave the unit parked.';
+  return `Restore the routing of build.${floor} or re-enter the unit under a new id. Once build.${floor} resolves to the same backend `
+    + `and model the unit was dispatched on (its effort may differ), \`roadmap resume ${unit}\` re-pins it under the routing in force and `
+    + 're-enters it at the stage it parked at, no spec edit needed. Or acknowledge this item to leave the unit parked.';
 }
 
 /**
- * A unit parked anywhere else: M1 does not re-open it (`resume <unit>` is rejected), so the item names the
- * re-entry: a new unit id whose branch starts at the parked unit's tip.
+ * A unit parked anywhere else: `resume <unit>` does not re-open it, so the item names the re-entry: a new unit that
+ * re-enters it (`reenters`), whose `prepare` creates its branch at the parked unit's tip (M2; dx2 8a: never by hand, a
+ * hand-made branch makes that `prepare` fail).
  */
 export function reentryRecommendation(unit: UnitId, stage: Stage, branch: string): string {
-  return `Read the evidence. A park at ${stage} is final in M1: \`roadmap resume ${unit}\` does not re-open it. To re-run the work, `
-    + `add a unit with a new id to the plan (its fixed spec, the same scope), create that unit's branch roadmap/<arc>/<new id> at the tip of `
-    + `${branch}, acknowledge this item, then \`roadmap apply\` the revised plan. Or acknowledge this item to `
-    + 'leave the unit parked.';
+  return `Read the evidence. A park at ${stage} is final: \`roadmap resume ${unit}\` does not re-open it. To re-run the work, `
+    + `add a unit with a new id to the plan that re-enters ${unit} (\`"reenters": {"unit": "${unit}"}\`, its fixed spec, the same scope), `
+    + `acknowledge this item, then \`roadmap apply\` the revised plan: the new unit's prepare creates its branch roadmap/<arc>/<new id> at the `
+    + `tip of ${branch}. Never create that branch by hand. Or acknowledge this item to leave the unit parked.`;
 }
 
 // ---------------------------------------------------------------------------------------------------

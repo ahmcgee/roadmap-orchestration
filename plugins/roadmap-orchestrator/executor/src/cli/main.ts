@@ -15,6 +15,17 @@
 // run goes on), the refused exit line (exit 78/75), or `failed` / `timeout` (exit 70). The run's own end is
 // in exit.reason.json and `status`. `status` prints the status object.
 //
+// M4a host acts (no host lock, not queued; each module's own header has its contract): `phase0 check` prints its rows
+// and slice candidates (exit 0 when no row, else 78); `corpus pin` writes the pin and prints it with its sha256, or the
+// refused row (78); `brief` prints the payload (`--json`) or its Markdown, and `--ack` prints the commands it enqueued, or
+// the stale ids (78); `pr` prints the pull request; `issues` prints the capture (or writes `--out`), or the refused row
+// (78); `chain status` prints the chain. `answer` records the owner's answer (src/answers.ts) and prints
+// `{recorded}` or `{unchanged}` (a rerun with the text in force), or `{refused}` (78: no Phase-0 record, the question
+// unknown or not open in it). Step 0a placed every module at its final path; the landing steps replace them.
+// M4a rev 3 host acts: `witness-check` prints `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78);
+// `resume-arc` prints `{resumed: false, reason}` or the relaunched supervisor's line; `inputs export` prints the export's
+// `export.json`. `apply --ruling` lands ruling sidecars with the edits (I2). Step N0 placed each module at its final path.
+//
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -22,12 +33,22 @@ import { createRequire } from 'node:module';
 import { submitCommand } from '../commands/queue.ts';
 import { evaluateApply } from '../commands/apply.ts';
 import { DEFAULT_KEEP, gc } from '../commands/gc.ts';
+import { recordAnswer } from '../answers.ts';
+import { brief } from '../commands/brief.ts';
+import { chainStatus } from '../commands/chain.ts';
+import { corpusPin } from '../commands/corpus.ts';
+import { captureIssues } from '../commands/issues.ts';
+import { phase0Check } from '../commands/phase0.ts';
+import { openPr } from '../commands/pr.ts';
+import { exportInputs } from '../commands/inputs.ts';
+import { resumeArc } from '../commands/resumearc.ts';
+import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
 import type { ArcId, PlanRev } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { sha256 } from '../core/ids.ts';
-import { type CommandBody, type RunStart, runStart } from '../core/records.ts';
+import { type CommandBody, type HashedFile, type RunStart, runStart } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { START_FILE } from '../executor.ts';
 import { readInputFiles, revisionManifestOf } from '../input/inforce.ts';
@@ -36,10 +57,10 @@ import { HOST_DIR } from '../host/hostdir.ts';
 import { readClaim } from '../host/lock.ts';
 import { CliError, type Command, type RunLocator, parseCommand, runDir } from '../input/cli.ts';
 import { gitCommonDir, readRepoConfig } from '../preflight/checks.ts';
-import { EXIT_HOST_BUSY, EXIT_REFUSED } from '../preflight/startup.ts';
+import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
 import { status } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
-import { watch } from '../watch.ts';
+import { HEARTBEAT_MIN, watch, watchActionable } from '../watch.ts';
 
 const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
 
@@ -86,25 +107,29 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'apply': {
       const run = locate(command.run, hostDir);
       const start = startOf(run);
+      // M4a rev 3 (I2): each `--ruling` sidecar hashed like a `rule` record, in the order given.
+      const rulings = command.rulings.map((f) => hashedFile('apply --ruling', f));
       if (command.dryRun) {
-        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, command.expectRev))}\n`);
+        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, command.expectRev, rulings))}\n`);
         return;
       }
       let manifest: ReturnType<typeof revisionManifestOf>;
       try {
-        manifest = revisionManifestOf(readInputFiles(start.planFile));
+        manifest = revisionManifestOf(readInputFiles(start.planFile, start.repo));
       } catch (error) {
         if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
         throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
       }
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
-      return submit(command.run, hostDir, { type: 'apply', expectRev: command.expectRev, manifest });
+      return submit(command.run, hostDir, { type: 'apply', expectRev: command.expectRev, manifest, ...(rulings.length === 0 ? {} : { rulings }) });
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
       const stop = new AbortController();
       for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => stop.abort());
-      await watch(run.runDir, run.arc, hostDir, (line) => process.stdout.write(`${line}\n`), stop.signal);
+      const emit = (line: string): void => void process.stdout.write(`${line}\n`);
+      if (command.actionable === null) await watch(run.runDir, run.arc, hostDir, emit, stop.signal);
+      else await watchActionable(run.runDir, run.arc, hostDir, command.actionable.heartbeatMin ?? HEARTBEAT_MIN, emit, stop.signal);
       return;
     }
     case 'start': {
@@ -144,7 +169,84 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       process.exitCode = outcome.rejection.kind === 'host-busy' ? EXIT_HOST_BUSY : EXIT_REFUSED;
       return;
     }
+    case 'phase0-check': {
+      const report = await phase0Check({ repo: repoOf(command.repo), source: command.source.type === 'plan' ? { type: 'plan', plan: resolve(command.source.plan) } : command.source });
+      process.stdout.write(`${canonicalJson(report)}\n`);
+      if (report.rows.length > 0) process.exitCode = EXIT_REFUSED;
+      return;
+    }
+    case 'corpus-pin': {
+      const outcome = await corpusPin({ repo: repoOf(command.repo), commit: command.commit, baseline: command.baseline, out: absPath(resolve(command.out)) });
+      if (outcome.kind === 'refused') return refused(outcome.rejection);
+      process.stdout.write(`${canonicalJson({ pin: outcome.pin, sha256: outcome.sha256 })}\n`);
+      return;
+    }
+    case 'brief': {
+      const outcome = await brief({ repo: repoOf(command.repo), ack: command.ack });
+      switch (outcome.kind) {
+        case 'brief':
+          process.stdout.write(command.json ? `${canonicalJson({ briefId: outcome.briefId, payload: outcome.payload })}\n` : outcome.markdown);
+          return;
+        case 'acked':
+          process.stdout.write(`${canonicalJson({ acked: outcome.briefId, commands: outcome.commands })}\n`);
+          return;
+        case 'stale':
+          process.stdout.write(`${canonicalJson({ stale: { expected: outcome.expected, actual: outcome.actual } })}\n`);
+          process.exitCode = EXIT_REFUSED;
+          return;
+      }
+      return;
+    }
+    case 'pr':
+      process.stdout.write(`${canonicalJson(await openPr({ repo: repoOf(command.repo), arc: command.arc }))}\n`);
+      return;
+    case 'issues': {
+      const outcome = await captureIssues({ repo: repoOf(command.repo), out: command.out === null ? null : absPath(resolve(command.out)) });
+      if (outcome.kind === 'refused') return refused(outcome.rejection);
+      process.stdout.write(command.out === null ? `${canonicalJson(outcome.capture)}\n` : `${canonicalJson({ out: absPath(resolve(command.out)), sha256: outcome.sha256 })}\n`);
+      return;
+    }
+    case 'chain-status':
+      process.stdout.write(`${canonicalJson(await chainStatus({ repo: repoOf(command.repo) }))}\n`);
+      return;
+    case 'answer': {
+      const outcome = recordAnswer(repoOf(command.repo), command.question, command.text, command.arc);
+      process.stdout.write(`${canonicalJson(outcome.kind === 'refused' ? { refused: outcome.refusal } : { [outcome.kind]: outcome.answer })}\n`);
+      if (outcome.kind === 'refused') process.exitCode = EXIT_REFUSED;
+      return;
+    }
+    case 'witness-check': {
+      const outcome = await witnessCheck({ laneFile: absPath(resolve(command.laneFile)), cwd: absPath(process.cwd()) });
+      if (outcome.kind === 'passed') {
+        process.stdout.write(`${canonicalJson({ passed: true })}\n`);
+        return;
+      }
+      process.stdout.write(`${canonicalJson({ missing: outcome.missing, failed: outcome.failed, malformed: outcome.malformed })}\n`);
+      process.exitCode = EXIT_REFUSED;
+      return;
+    }
+    case 'resume-arc': {
+      const outcome = await resumeArc({ hostDir, repo: repoOf(command.repo) });
+      if (!outcome.resumed) {
+        process.stdout.write(`${canonicalJson({ resumed: false, reason: outcome.reason })}\n`);
+        return;
+      }
+      process.stdout.write(`${outcome.line}\n`);
+      process.exitCode = outcome.code;
+      return;
+    }
+    case 'inputs-export':
+      process.stdout.write(`${canonicalJson(await exportInputs({ repo: repoOf(command.repo), arc: command.arc, out: absPath(resolve(command.out)) }))}\n`);
+      return;
   }
+}
+
+const repoOf = (repo: string): AbsPath => absPath(resolve(repo));
+
+/** A host act's refusal: the row as JSON, exit 78. */
+function refused(rejection: StartupRejection): void {
+  process.stdout.write(`${canonicalJson({ refused: rejection })}\n`);
+  process.exitCode = EXIT_REFUSED;
 }
 
 /** A file a command names, by its absolute path and the sha256 of its bytes as the CLI read them. */
@@ -162,11 +264,11 @@ function startOf(run: Run): RunStart {
 }
 
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
-async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null): Promise<unknown> {
+async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null, rulings: readonly HashedFile[]): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
     runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo) },
-    laneEnv: process.env, manifest: null, expectRev,
+    laneEnv: process.env, manifest: null, expectRev, rulings,
   });
   switch (verdict.kind) {
     case 'rejected':

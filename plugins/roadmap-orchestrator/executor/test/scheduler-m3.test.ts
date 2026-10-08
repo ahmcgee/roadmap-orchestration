@@ -3,7 +3,8 @@
 // sched.close-out-then-complete, sched.arc-completed-fact, complete.terminal-snapshot, complete.reopen-invalidates,
 // quiescence.vision-change-reopens (H3), sched.arc-state-predicates (the clauses of `complete`),
 // sched.baseline-before-admission (A6), sched.audit-job-one-at-a-time, sched.design-park-checkpoint and
-// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.declined-request-quiescent, complete.m2-arc, complete.strict-env, sched.no-verdict-backoff and
+// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.declined-request-quiescent,
+// sched.close-out-declines-request (run 10), complete.m2-arc, complete.strict-env, sched.no-verdict-backoff and
 // sched.no-verdict-escalation, sched.stop-kills-lens, draining, and the M3 command
 // and item rules (commands.audit, needsuser.m3-blocking).
 import assert from 'node:assert/strict';
@@ -95,7 +96,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       const [covered] = factsOf(r, 'docs-covered');
       assert.deepEqual([covered!.pub, covered!.from, covered!.to], ['docs-1', started!.integrationSha, head(d)], 'docs-only: it covers its own edge (A17)');
       // A8: the close-out renderings are in the tree (arc-lifetime and withdrawn rulings retired), with the obligations' block.
-      const revision = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view), absPath(d.planPath));
+      const revision = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
       const expected = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'ledger'), [...revision.sidecars.values()].map((s) => s.sidecar), 'close-out');
       assert.equal(`${git(d.repo, 'show', 'main:.roadmap/constraints.md')}\n`, expected);
       assert.match(git(d.repo, 'show', 'main:.roadmap/invariants.md'), /json roadmap-obligations/);
@@ -117,31 +118,61 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     }
   });
 
-  test('sched.declined-request-quiescent (paid M3 run 5): an invalid-twice bundle request acknowledged without `apply` ends its trigger\'s decision; the generation is quiescent and close-out and completion follow', T, async () => {
+  /** checkpointArc's u1, its final audit, and two invalid bundles: ckpt-2 raises a non-blocking bundle request. Run in process up to it. */
+  async function requestedArc(): Promise<Readonly<{ r: ArcRun; id: NeedsUserId }>> {
     const d = checkpointArc([
       ...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'vision'),
       checkpointStep('ckpt-1', twoOpBundleSecondInvalid()), checkpointStep('ckpt-2', twoOpBundleSecondInvalid()),
     ]);
     const r = contextFor(d);
-    const s = startHolistic(r);
-    let ended = false;
+    const w = wired(r);
+    const h = contextsOf(r);
+    const tick = setInterval(() => w.arbiter.wake(), 50);
     try {
-      let id: NeedsUserId | null = null;
-      await until(() => (id = itemOf(r, 'bundle-request')) !== null, WAIT_MS, 'the bundle request of the second invalid bundle');
-      assert.deepEqual(factsOf(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind]), [['ckpt-1', 'rejected'], ['ckpt-2', 'requested']]);
-      assert.ok(completionBlockers(s.h, { blocking: 0, pending: 0 }).includes('generation-not-quiescent'), 'the unanswered request holds the generation open');
-      submit(r, { type: 'ack', needsUser: id!, choice: null });
-      const end = await s.end;
-      ended = true;
-      assert.deepEqual(end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+      assert.deepEqual(await runBaseline(h.audit), { kind: 'held' });
+      assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
+      const audited = await runAudit(h.audit);
+      assert.ok(audited.kind === 'ended' && audited.outcome === 'completed', JSON.stringify(audited));
+      for (const _ of [1, 2]) assert.equal((await runCheckpoint(h.checkpoint)).kind, 'decided');
+    } finally {
+      clearInterval(tick);
+    }
+    assert.deepEqual(factsOf(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind]), [['ckpt-1', 'rejected'], ['ckpt-2', 'requested']]);
+    assert.deepEqual(completionBlockers(contextsOf(r), { blocking: 0, pending: 0 }), ['generation-not-quiescent', 'close-out'], 'the unanswered request holds the generation open');
+    return { r, id: itemOf(r, 'bundle-request')! };
+  }
+
+  test('sched.declined-request-quiescent (paid M3 run 5): an invalid-twice bundle request acknowledged without `apply` ends its trigger\'s decision; the generation is quiescent and close-out and completion follow', T, async () => {
+    const { r, id } = await requestedArc();
+    try {
+      const acked = await applyCommand(wired(r).commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: id, choice: 'acknowledge' }));
+      assert.equal(acked.kind, 'applied', JSON.stringify(acked));
+      await runToComplete(r);
       const g = factsOf(r, 'checkpoint-inputs').at(-1)!.generation;
       assert.ok(quiescentGenerations(r.journal.view, r.journal.view.planApplied()!.visionSha256!).has(g));
       assert.equal(factsOf(r, 'checkpoint-inputs').length, 2, 'no further checkpoint: the declined request settled its trigger');
+      assert.deepEqual(factsOf(r, 'needs-user-declined'), [], 'the owner answered: the close-out declined nothing');
+      assert.equal(r.journal.view.ackOf(id)?.choice, 'acknowledge');
       assert.equal(factsOf(r, 'docs-published').at(-1)?.source, 'close-out');
       assert.equal(factsOf(r, 'arc-completed').length, 1);
     } finally {
-      if (ended) r.journal.close();
-      else await stopAndClose(r, s);
+      r.journal.close();
+    }
+  });
+
+  test('sched.close-out-declines-request (run 10, E): an unanswered non-blocking bundle request never holds completion: the close-out declines it (no amendment outside a corpus arc), then publishes and completes', T, async () => {
+    const { r, id } = await requestedArc();
+    try {
+      await runToComplete(r);
+      const declined = factsOf(r, 'needs-user-declined');
+      assert.deepEqual(declined.map((f) => [f.id, f.choice]), [[id, 'decline']]);
+      const published = factsOf(r, 'docs-published').at(-1)!;
+      assert.ok(declined[0]!.seq < published.seq && published.source === 'close-out', 'declined before the close-out publication');
+      assert.deepEqual(factsOf(r, 'corpus-amendment'), [], 'an architecture-doc arc carries no amendment');
+      assert.equal(factsOf(r, 'checkpoint-inputs').length, 2);
+      assert.equal(factsOf(r, 'arc-completed').length, 1);
+    } finally {
+      r.journal.close();
     }
   });
 

@@ -13,6 +13,7 @@ import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf } from '../src/core/events.ts';
 import { findingId, jobId, sha, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
+import { mutantSubjectDefault } from '../src/core/upgrade.ts';
 import { absPath } from '../src/core/values.ts';
 import { verifySnapshot } from '../src/git/snapshot.ts';
 import { batchable, findingMetrics, openFinding, ruleFinding } from '../src/holistic/findings.ts';
@@ -65,10 +66,10 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.ok(w !== undefined);
       assert.deepEqual([w.treeSha, w.for, w.lane], [patchedTip, { type: 'mutant', finding: 'F-1', of: tip }, 'journey']);
       const [spawn] = mutantRuns(r);
-      assert.deepEqual(spawn!.expect.subject, { purpose: 'mutant', finding: 'F-1', lane: 'journey', laneRev: w.laneRev, tree: patchedTip });
+      assert.deepEqual(spawn!.expect.subject, { purpose: 'mutant', of: { type: 'finding', finding: 'F-1' }, lane: 'journey', laneRev: w.laneRev, tree: patchedTip });
       assert.deepEqual(spawn!.parent, { type: 'stage', unit: 'v1', stage: 'reproduce', attempt: 1 });
       const apply = r.journal.view.opsOf('mutant.apply')[0]!;
-      assert.deepEqual([apply.expect.at, apply.expect.finding, r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, 'F-1', { kind: 'applied', tree: patchedTip }]);
+      assert.deepEqual([apply.expect.at, mutantSubjectDefault(apply.expect), r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, { type: 'finding', finding: 'F-1' }, { kind: 'applied', tree: patchedTip }]);
       assert.deepEqual(worktrees(r), [], 'the mutant worktree is removed');
       assert.equal([...observations(r.ctx).values()].some((o) => o.key.treeSha === patchedTip), false, 'a mutant run never certifies (G13)');
       assert.equal(specFacts(r.ctx)(r.unit('v1')).reproduces, true);
@@ -390,7 +391,7 @@ describe('plan-check and the findings store', () => {
 
   test('plancheck.reads-captured-spec: an evidence-only edit landing between the capture and the @cpu grant keeps the captured rev; the redirect is read against it and patches the spec in force at that rev', T, async () => {
     const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'mul multiplies.' } }];
-    const d = setupArc({ dag: true, steps: [planCheckStep({ decision: 'redirect', patch })] });
+    const d = setupArc({ steps: [planCheckStep({ decision: 'redirect', patch })] });
     const r = contextFor(d);
     try {
       let open = (): void => {};

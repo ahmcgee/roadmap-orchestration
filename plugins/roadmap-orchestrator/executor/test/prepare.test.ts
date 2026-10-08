@@ -1,6 +1,7 @@
 // The re-entry stage `prepare` (src/pipeline/prepare.ts), integrated over real git: prepare.clean-plan-check,
-// prepare.clean-build, prepare.clean-verify, prepare.conflicted, prepare.evidence, and a crash at every op
-// boundary of the stage (the crash-matrix boundaries B2-B5; B1 is the journal.append row's), each restarted
+// prepare.clean-build, prepare.clean-verify, prepare.conflicted, prepare.evidence, M4a rev 3:
+// prepare.reentry-widened-envelope (F5), prepare.known-defect-clean, prepare.known-defect-conflicted,
+// prepare.known-defect-attempt-scoped (F4), and a crash at every op boundary of the stage (the crash-matrix boundaries B2-B5; B1 is the journal.append row's), each restarted
 // through `recover()` and the stage again, as the executor does.
 //
 // The arc: unit u1 is dispatched (its plan-check raised the floor to high), branched with a change to
@@ -15,8 +16,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, test } from 'node:test';
-import { type UnitId, unitId } from '../src/core/ids.ts';
-import { absPath } from '../src/core/values.ts';
+import { type UnitId, knownDefectIdOf, laneId, rulingId, unitId } from '../src/core/ids.ts';
+import { absPath, repoPattern } from '../src/core/values.ts';
 import { capturedEvidence } from '../src/git/evidence.ts';
 import { mergeHead } from '../src/git/mergein.ts';
 import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
@@ -40,7 +41,8 @@ const ADD_U1 = 'export function add(a, b) {\n  return a + b; // unit u1\n}\n';
 const ADD_MAIN = 'export function add(a, b) {\n  return b + a; // integration\n}\n';
 
 type Tip = 'conflict' | 'clean' | 'up-to-date';
-type Setup = Readonly<{ tip: Tip; enterAt?: 'plan-check' | 'build' | 'verify'; scope?: readonly string[] }>;
+/** `widened`: the patterns the `unit-reentered` change records as widened on a ruling (F5). */
+type Setup = Readonly<{ tip: Tip; enterAt?: 'plan-check' | 'build' | 'verify'; scope?: readonly string[]; widened?: readonly string[] }>;
 type Arc = Readonly<{ d: ArcDescriptor; oldTip: string; tip: string }>;
 
 /** u1 dispatched (floor raised to high), branched and held; u2 re-enters it in plan rev 2; the tip advanced per `tip`. */
@@ -75,8 +77,9 @@ function reenteredArc(s: Setup): Arc {
     reenters: { unit: 'u1', ...(s.enterAt === undefined ? {} : { enterAt: s.enterAt }) },
   });
   writeFileSync(d.planPath, JSON.stringify(plan));
-  recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath)), [
-    { type: 'unit-added', unit: U2 }, { type: 'unit-reentered', unit: U2, reenters: U1, reset: false },
+  recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [
+    { type: 'unit-added', unit: U2 },
+    { type: 'unit-reentered', unit: U2, reenters: U1, reset: false, ...(s.widened === undefined ? {} : { widened: { patterns: s.widened.map((x) => repoPattern(x)), ruling: rulingId('C-1') } }) },
   ], { profile: 'default', config: null });
   assert.equal(r.journal.view.unit(U1).status, 'superseded');
   r.journal.close();
@@ -202,11 +205,115 @@ const outcomeTests = (): unknown => describe('prepare: outcomes', { concurrency:
     }
   });
 
+  test('prepare.reentry-widened-envelope: a scope beyond the envelope is pinned when its re-entry widened it by exactly those patterns', T, async () => {
+    const { r, done } = await prepared({ tip: 'clean', scope: ['src/**', 'lib/**'], widened: ['lib/**'] });
+    try {
+      assert.equal(done.outcome.kind, 'clean-plan-check');
+      assert.deepEqual(dispatchOf(r.journal.view, U2).scope, ['lib/**', 'src/**']);
+    } finally {
+      r.journal.close();
+    }
+    const arc = reenteredArc({ tip: 'clean', scope: ['src/**', 'lib/**', 'docs/**'], widened: ['lib/**'] });
+    const r2 = contextFor(arc.d);
+    try {
+      await assert.rejects(prepare(r2.ctx, r2.unit('u2')), /scope docs\/\*\* lies outside its lineage's envelope/, 'only the widened patterns');
+      assert.equal(r2.journal.view.dispatchOf(U2), null);
+    } finally {
+      r2.journal.close();
+    }
+  });
+
   test('prepare.envelope-narrower: a scope narrower than the envelope is pinned', T, async () => {
     const { r, done } = await prepared({ tip: 'clean', scope: ['src/lib/**', 'test/*.js'] });
     try {
       assert.equal(done.outcome.kind, 'clean-plan-check');
       assert.deepEqual(dispatchOf(r.journal.view, U2).scope, ['src/lib/**', 'test/*.js']);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Known defects (F4): u1 built on its branch, then its lanes hit K-1; the integration tip moved on
+
+const K1 = knownDefectIdOf(1);
+
+/** u1 dispatched and built (its worktree on its branch, one commit), its lanes attempt recorded `known-defect{K-1}`. */
+function knownDefectArc(tip: 'conflict' | 'clean'): Readonly<{ d: ArcDescriptor; r: ArcRun; oldTip: string; tip: string }> {
+  const d = setupArc({ steps: [] });
+  const r = contextFor(d);
+  const u1 = r.unit('u1');
+  const { spec, sha256 } = loadUnitSpec(r.ctx, u1);
+  assert.equal(pinDispatch(r.ctx, u1, { rev: spec.rev, sha256 }).kind, 'pinned');
+  const worktree = unitWorktreePath(r, U1);
+  git(d.repo, 'worktree', 'add', '--quiet', '-b', unitBranch(r.ctx.plan().arc, U1).replace(/^refs\/heads\//, ''), worktree, 'main');
+  writeFiles(worktree, { 'src/add.js': ADD_U1 });
+  const oldTip = commitAll(worktree, 'u1 work');
+  hitKnownDefect(r);
+  advanceTip(d, tip, 1);
+  return { d, r, oldTip, tip: revParse(d.repo, 'main') };
+}
+
+/** u1's next lanes attempt records `known-defect{K-1}`, as the lanes stage does. */
+function hitKnownDefect(r: ArcRun): void {
+  const attempt = r.journal.view.unit(U1).counters.attempts + 1;
+  r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt, outcome: 'known-defect', class: 'advance', chargeable: false, detail: { kind: 'known-defect', id: K1, match: { type: 'lane', lane: laneId('mul') } } });
+}
+
+/** The integration tip moves on: a conflicting change to src/add.js, or an unrelated file. */
+function advanceTip(d: ArcDescriptor, tip: 'conflict' | 'clean', n: number): void {
+  if (tip === 'conflict') writeFiles(d.repo, { 'src/add.js': ADD_MAIN });
+  else writeFiles(d.repo, { [`NOTES-${n}.md`]: 'integration moved on\n' });
+  commitAll(d.repo, `integration moves on ${n}`);
+}
+
+const knownDefectTests = (): unknown => describe('prepare: after a known defect (F4)', { concurrency: true }, () => {
+  test('prepare.known-defect-clean: the tip merged into the unit branch, then lanes (clean-verify); no pin, no new worktree', T, async () => {
+    const { d, r, oldTip, tip } = knownDefectArc('clean');
+    try {
+      const done = await prepare(r.ctx, r.unit('u1'));
+      assert.equal(done.outcome.kind, 'clean-verify');
+      assert.equal(done.next.kind === 'stage' ? done.next.stage : done.next.kind, 'lanes');
+      assert.deepEqual(parentsOf(d.repo, done.head), [oldTip, tip]);
+      assert.equal(r.journal.view.dispatchesOf(U1).length, 1, 'no second pin');
+      assert.equal(r.journal.view.opsOf('worktree.create').length, 0, 'the unit\'s own worktree');
+      assert.equal(capturedEvidence(r.journal.view, done.evidence).manifest.files.length, 0);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('prepare.known-defect-conflicted: a conflicting merge-in keeps MERGE_HEAD and goes to a resolve round', T, async () => {
+    const { r, oldTip, tip } = knownDefectArc('conflict');
+    try {
+      const done = await prepare(r.ctx, r.unit('u1'));
+      assert.equal(done.outcome.kind, 'conflicted');
+      assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.round === 'resolve', JSON.stringify(done.next));
+      assert.equal(mergeHead(done.worktree), tip);
+      assert.equal(done.head, oldTip);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('prepare.known-defect-attempt-scoped: a second known defect merges the newer tip; the earlier preparation\'s merge is not read', T, async () => {
+    const { d, r } = knownDefectArc('clean');
+    try {
+      const first = await prepare(r.ctx, r.unit('u1'));
+      assert.equal(first.outcome.kind, 'clean-verify');
+      hitKnownDefect(r);
+      advanceTip(d, 'clean', 2);
+      const tip2 = revParse(d.repo, 'main');
+      const second = await prepare(r.ctx, r.unit('u1'));
+      assert.equal(second.outcome.kind, 'clean-verify');
+      assert.deepEqual(parentsOf(d.repo, second.head), [first.head, tip2]);
+      assert.equal(r.journal.view.opsOf('mergein.prepare').length, 2);
+      assert.notEqual(second.evidence, first.evidence, 'its own snapshot');
+      hitKnownDefect(r);
+      const third = await prepare(r.ctx, r.unit('u1'));
+      assert.equal(third.head, second.head, 'the branch holds the tip already: no merge');
+      assert.equal(r.journal.view.opsOf('mergein.prepare').length, 2);
     } finally {
       r.journal.close();
     }
@@ -293,6 +400,7 @@ if (process.env['PREPARE_CHILD'] !== undefined) {
   r.journal.close();
 } else {
   outcomeTests();
+  knownDefectTests();
   describe('prepare: crash at every op boundary, then recovery and the stage again', { concurrency: 4 }, () => {
     for (const tip of ['conflict', 'clean'] as const) {
       for (const c of CRASHES[tip]) {

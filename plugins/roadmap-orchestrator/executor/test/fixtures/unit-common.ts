@@ -26,7 +26,7 @@ import type { RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor } from './invoke-specs.ts';
-import { BUILD_REPORT, type LaneJson, recordDagPlan, recordLegacyPlan, serialRuntime, testProbes } from './stage-common.ts';
+import { BUILD_REPORT, type LaneJson, recordFirstPlan, serialRuntime, testProbes } from './stage-common.ts';
 
 const REPO_FILES = fileURLToPath(new URL('./unit-repo/', import.meta.url));
 const RULINGS = fileURLToPath(new URL('./unit-rulings.md', import.meta.url));
@@ -51,8 +51,6 @@ export type ArcOptions = Readonly<{
   suite?: readonly LaneJson[];
   /** The integration tip's `add`: fixed (green suite at T, the default) or broken (red at T). */
   base?: 'green' | 'red';
-  /** An arc started on M2 (`scheduling: 'dag'`: `@cpu` entry reservations); default a legacy arc's first revision. */
-  dag?: true;
 }>;
 
 /** Everything needed to rebuild the arc's StageContext, as JSON (for a child executor). */
@@ -65,14 +63,12 @@ export type ArcDescriptor = Readonly<{
   binDir: string;
   scenarioPath: string;
   scenarioDir: string;
-  /** Revision 1 schedules a DAG (`ArcOptions.dag`), as contextFor records it. */
-  dag?: true;
 }>;
 
 function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
-    tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [], ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
   };
 }
 
@@ -110,7 +106,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   const scenario = writeScenario(scenarioDir, opts.steps);
   return {
     arc, repo, planPath, runDir: tmpDir('unit-run'), hostDir: join(tmpDir('unit-host'), 'roadmap'),
-    binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir, ...(opts.dag === true ? { dag: true } : {}),
+    binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir,
   };
 }
 
@@ -122,8 +118,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
   if (journal.view.planApplied() === null) {
-    if (d.dag === true) recordDagPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo));
-    else recordLegacyPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo));
+    recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo));
   }
   const routing = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null });
   const resources = {
@@ -159,7 +154,7 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
 
 /** An `apply` of the plan and specs as the files hold them now (what `roadmap apply` submits). */
 export function applyBody(d: ArcDescriptor, expectRev: PlanRev | null = null): CommandBody {
-  const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath)));
+  const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath), absPath(d.repo)));
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
   return { type: 'apply', expectRev, manifest };
 }

@@ -13,15 +13,14 @@ import {
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
-  type ArcId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
+  type AmendmentId, type ArcId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
   type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
-  JOB_KINDS, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId,
+  JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId,
 } from './ids.ts';
 import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
 import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
-import { legacyParkRecord, repinNamesSpec, rerouteAsUnpark } from './upgrade.ts';
 import type { IsoTime } from './values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
 import { type Backend, RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
@@ -53,6 +52,8 @@ export type UnitCounters = Readonly<{
   reviseRounds: number;
   /** Red candidates sent back to a fix round. */
   candidateReds: number;
+  /** M4a rev 3 (D2): mutation-smoke fix rounds taken (0 for a unit folded from a 1.0.0-dev.6 log: none spent). */
+  smokeRounds: number;
   /** Uncharged retries taken, per stage. */
   retries: Readonly<Record<RetryStage, number>>;
 }>;
@@ -66,7 +67,7 @@ export type UnitStatus = 'active' | 'held' | 'park-pending' | 'stop-pending' | '
 
 /**
  * A parked unit's park (M2): the seq and time of the `stage-outcome` fact that parked it (probes cover the
- * seq), its class as recorded (or the pre-M2 default), and the retryable targets a covering probe has passed.
+ * seq), its class as recorded (or the interim M2 shim's operator reading), and the retryable targets a covering probe has passed.
  * The park recovers, and the unit re-runs the parked stage, once every target has passed.
  */
 export type ParkState = Readonly<{ seq: number; at: IsoTime; park: ParkRecord; passed: readonly ProbeTarget[] }>;
@@ -120,9 +121,10 @@ export type UnitState = Readonly<{
   /**
    * The latest stage start (highest attempt) while no stage-outcome fact records it: an attempt a crash cut
    * short, whose invocations recovery has since closed (the driver consumes a completed backend call instead
-   * of dispatching again, unit.ts), or a retire, which records no outcome. Null once it has its outcome.
+   * of dispatching again, unit.ts), or a retire, which records no outcome. Null once it has its outcome. `seq`: the
+   * seq of the record that first started it (M4a rev 3: `openAttempt` tells a running attempt from an abandoned one).
    */
-  open: Readonly<{ stage: Stage; attempt: number }> | null;
+  open: Readonly<{ stage: Stage; attempt: number; seq: number }> | null;
   /**
    * The unit's spec in force as the log last recorded it: its first `dispatch` fact's, a done `spec.patch`'s,
    * a `reopened` fact's or an evidence-only `plan-applied` edit's revision and hash; null before the first
@@ -171,7 +173,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, approval: null, open: null,
-    counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, retries },
+    counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null,
   };
@@ -212,6 +214,7 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
       redirects: c.redirects + add('redirect'),
       reviseRounds: c.reviseRounds + add('revise'),
       candidateReds: c.candidateReds + add('candidate-red'),
+      smokeRounds: c.smokeRounds + add('smoke'),
       // The fact validator admits `retry` only at a retry stage.
       retries: f.class === 'retry' ? { ...c.retries, [f.stage]: c.retries[f.stage as RetryStage] + 1 } : c.retries,
     },
@@ -223,6 +226,18 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
     // A trigger holds until a judgment stage decides; a retry or a hold re-dispatches the same judgment, so it keeps it.
     promotion: f.class === 'trigger' ? true : judgment && f.class !== 'retry' && f.class !== 'hold' ? false : u.promotion,
   };
+}
+
+/**
+ * A unit's open stage attempt (M4a rev 3, C5, R50): its latest stage start without an outcome, `live` when that start is
+ * after the latest `executor-started` (it is running under this executor), else crash-abandoned (it waits for the
+ * driver's re-run). Null when none is open, and for a retired, cut or superseded unit.
+ */
+export type OpenAttempt = Readonly<{ stage: Stage; attempt: number; live: boolean }>;
+export function openAttempt(view: JournalView, unit: UnitId): OpenAttempt | null {
+  const u = view.unit(unit);
+  if (u.open === null || u.status === 'retired' || u.status === 'cut' || u.status === 'superseded') return null;
+  return { stage: u.open.stage, attempt: u.open.attempt, live: u.open.seq > view.lastExecutorStarted() };
 }
 
 /** Whom a meter total charges: a role's unit calls, or a backend's start-up smokes. */
@@ -304,8 +319,19 @@ export type ProbeState = Extract<Fact, { kind: 'probe' }> & Readonly<{ seq: numb
 
 export type EdgeResolvedState = Readonly<{ command: CommandId; evidence: string; seq: number }>;
 
-/** How the arc schedules (M2): fixed by its first `plan-applied` fact; null before one. */
-export type Scheduling = 'dag' | 'legacy';
+/** The outcomes whose park needs a spec revision or a re-entry (A7's operator-design rows). */
+const DESIGN_PARK_OUTCOMES: ReadonlySet<string> = new Set([
+  'refusal', 'escalate', 'infeasible', 'risk-lowered', 'scope-widened', 'redirect', 'revise', 'malformed', 'empty-diff', 'red',
+]);
+
+/**
+ * The park of a parking `stage-outcome` fact without `park`, which only the interim M2 shim writes (a retryable row whose
+ * stage names no targets, src/pipeline/transitions.ts `outcomeFact`; BACKLOG "Scaffolding to delete"): an operator
+ * park, `design` for the chargeable bound and the design rows, `env` for every other.
+ */
+function unclassedParkRecord(f: StageOutcomeFact): ParkRecord {
+  return { class: 'operator', kind: f.chargeable || DESIGN_PARK_OUTCOMES.has(f.outcome) ? 'design' : 'env' };
+}
 
 // ---------------------------------------------------------------------------------------------------
 // M3: the holistic layer's fold (SCHEMAS.md "M3: the holistic layer"). Raw facts, indexed and checked; the
@@ -314,6 +340,17 @@ export type Scheduling = 'dag' | 'legacy';
 
 type Seq = Readonly<{ seq: number }>;
 type FactOf<K extends HolisticFact['kind']> = Extract<HolisticFact, { kind: K }>;
+/** M4a: a banked debt item as the fold keeps it: its fact (what `mintDebt` and `ledgerAfterArc` read) and seq. */
+export type BankedDebt = Extract<Fact, { kind: 'debt-banked' }> & Seq;
+type M4aFactOf<K extends Fact['kind']> = Omit<Extract<Fact, { kind: K }>, 'kind'> & Seq;
+/** M4a: a corpus amendment (`M-n`, in id order), its source unique. */
+export type AmendmentState = M4aFactOf<'corpus-amendment'>;
+/** M4a: a checkpoint's outcome for one captured issue, one per `(job, issue)`. */
+export type IntakeState = M4aFactOf<'issue-intake'>;
+/** M4a: a pack review job: its kept inputs' fact, and its end (null while running). */
+export type PackReviewState = Readonly<{ started: M4aFactOf<'pack-review-started'>; ended: M4aFactOf<'pack-review-ended'> | null }>;
+/** M4a: a checkpoint's issue capture, written for the next checkpoint job before its `checkpoint-inputs`. */
+export type IssueCaptureState = M4aFactOf<'issues-captured'>;
 
 /** A finding as the log last moved it. `owner`: the unit of its latest `owned` or `fixed-on-branch` move. */
 export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
@@ -348,10 +385,37 @@ export type HolisticFold = Readonly<{
   digests: readonly (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[];
   steered: readonly (Omit<FactOf<'steered'>, 'kind'> & Seq)[];
   mergedIn: readonly (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[];
+  /** M4a (R7): the debt this arc banked, in log order; one per source, id and key (src/debt/mint.ts `mintDebt`). */
+  debt: readonly BankedDebt[];
+  /** M4a: the corpus amendments, in id order (src/holistic/amendments.ts). */
+  amendments: readonly AmendmentState[];
+  /** M4a: the checkpoints' issue outcomes, in log order (src/holistic/intake.ts). */
+  intake: readonly IntakeState[];
+  /** M4a: the pack reviews, in job order; at most one running (src/holistic/packreview.ts). */
+  packReviews: readonly PackReviewState[];
+  /** M4a: the checkpoints' issue captures, in log order. */
+  captures: readonly IssueCaptureState[];
   /** `close-admissions` latched and no architect admit since (§2.10). */
   draining: Readonly<{ command: CommandId; seq: number }> | null;
   completion: CompletionState | null;
+  /** M4a rev 3 (F1a): lane reuses, in log order. */
+  laneReuses: readonly LaneReuseState[];
+  /** M4a rev 3 (Q12): series certificates, in log order. */
+  certificates: readonly CertificateState[];
+  /** M4a rev 3 (D2): mutation smoke runs, in log order. */
+  smokeRuns: readonly SmokeRunState[];
+  /** M4a rev 3 (H7): cross-lens corroborations, in log order. */
+  corroborations: readonly CorroborationState[];
 }>;
+
+/** M4a rev 3: a lane a series reused (F1a), keyed `(parent, lane)`. */
+export type LaneReuseState = M4aFactOf<'lane-reused'>;
+/** M4a rev 3: a series' clean certificate (Q12); absence is unknown, never clean. */
+export type CertificateState = M4aFactOf<'series-certified'>;
+/** M4a rev 3: a unit attempt's mutation smoke (D2), one per attempt. */
+export type SmokeRunState = M4aFactOf<'smoke-ran'>;
+/** M4a rev 3: a second lens's rationale merged into a finding (H7). */
+export type CorroborationState = M4aFactOf<'finding-corroborated'>;
 
 /** Records after which the arc is not sealed (A20, H5): every record but these quiet ones is work. */
 function isWork(record: Event): boolean {
@@ -393,8 +457,6 @@ export type DerivedState = Readonly<{
   parkedBackends: readonly Backend[];
   /** M2: each parked backend's current park epoch and class, ascending by backend. */
   backendParks: readonly BackendParkState[];
-  /** M2: `dag`, or `legacy` for an arc started on 1.0.0-dev.4 or earlier; null before the first plan revision. */
-  scheduling: Scheduling | null;
   /** M2: every resource unit a transition named, ascending in lock order, with its state and open transition. */
   resources: readonly Readonly<{ unit: ResourceUnit; status: ResourceStatus; pending: OpId | null }>[];
   /** M2: the `run-only` allowlist in force, or null. */
@@ -411,7 +473,8 @@ type OpEntry = { latest: IntentRecord; closure: Closure | null };
 /** `beforeDecided`: the unit's decision and interruption before its latest decided outcome (a reroute restores them). */
 /** `attemptBase`: the attempts a re-entered unit inherits from its lineage (0 otherwise). */
 type UnitEntry = {
-  starts: Set<string>; outcomes: Set<string>; state: UnitState; attemptBase: number;
+  /** Each start `<stage>#<attempt>`, with the seq of the record that first started it. */
+  starts: Map<string, number>; outcomes: Set<string>; state: UnitState; attemptBase: number;
   beforeDecided: Readonly<{ decided: StageOutcomeFact | null; interrupted: StageOutcomeFact | null }>;
 };
 type MeterEntry = { -readonly [F in keyof MeterTotal]: MeterTotal[F] };
@@ -461,7 +524,6 @@ export class Fold implements JournalView {
   readonly #judgmentInputs = new Map<string, JudgmentInputs>();
   readonly #resolvedEdges = new Map<EdgeId, EdgeResolvedState>();
   #runOnly: readonly UnitId[] | null = null;
-  #scheduling: Scheduling | null = null;
   /** Rank's seqs (F17): each stage-outcome fact's by `<unit>/<stage>#<attempt>`, each published ff's done, each unit's first naming. */
   readonly #outcomeSeqs = new Map<string, number>();
   readonly #publications: Readonly<{ unit: UnitId; seq: number }>[] = [];
@@ -486,8 +548,19 @@ export class Fold implements JournalView {
   readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
+  readonly #debt: BankedDebt[] = [];
+  readonly #amendments: AmendmentState[] = [];
+  readonly #intake: IntakeState[] = [];
+  readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
+  readonly #captures: IssueCaptureState[] = [];
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
   #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
+  // M4a rev 3
+  #executorStarted = 0;
+  readonly #laneReuses: LaneReuseState[] = [];
+  readonly #certificates: CertificateState[] = [];
+  readonly #smokeRuns: SmokeRunState[] = [];
+  readonly #corroborations: CorroborationState[] = [];
 
   constructor(arc: ArcId) {
     this.arc = arc;
@@ -582,7 +655,7 @@ export class Fold implements JournalView {
     const existing = this.#units.get(unit);
     if (existing !== undefined) return existing;
     const u: UnitEntry = {
-      starts: new Set<string>(), outcomes: new Set<string>(), state: this.#fresh(unit, stage), attemptBase: 0,
+      starts: new Map<string, number>(), outcomes: new Set<string>(), state: this.#fresh(unit, stage), attemptBase: 0,
       beforeDecided: { decided: null, interrupted: null },
     };
     this.#units.set(unit, u);
@@ -596,7 +669,7 @@ export class Fold implements JournalView {
   }
 
   #start(u: UnitEntry, start: string): void {
-    u.starts.add(start);
+    if (!u.starts.has(start)) u.starts.set(start, this.#lastSeq + 1);
     u.state = { ...u.state, counters: { ...u.state.counters, attempts: u.attemptBase + u.starts.size }, open: openStart(u) };
   }
 
@@ -733,9 +806,8 @@ export class Fold implements JournalView {
         const all = this.#dispatches.get(unit) ?? [];
         all.push(f.record);
         this.#dispatches.set(unit, all);
-        // Only the first pin names the spec in force: a re-pin carries the spec its record was first made at
-        // (an arc 1.0.0-dev.3 started took each re-pin's, until its first plan revision: src/core/upgrade.ts).
-        const spec = prev === undefined || repinNamesSpec(this.#planApplied !== null) ? specOf(f.record) : null;
+        // Only the first pin names the spec in force: a re-pin carries the spec its record was first made at.
+        const spec = prev === undefined ? specOf(f.record) : null;
         if (spec !== null) this.#pinnedSpec.set(unit, spec);
         if (u !== undefined) u.state = { ...u.state, risk: riskFloor, buildTier: maxTier(riskFloor, u.state.buildTier), spec: spec ?? u.state.spec, bounds: boundsOfRecord(f.record) };
         return;
@@ -751,7 +823,9 @@ export class Fold implements JournalView {
         }
         const status = existing?.state.status;
         if (status === 'cut' || status === 'superseded') fail(`stage-outcome for ${f.unit} ${key}, which is ${status}`);
-        if (f.stage === 'prepare' && (existing?.state.lineage ?? null) === null) fail(`prepare outcome for ${f.unit}, which re-enters no unit`);
+        // M4a rev 3 (F4): a unit that hit a known defect prepares again (its decided outcome is lanes `known-defect`).
+        const knownDefect = existing?.state.decided?.stage === 'lanes' && existing.state.decided.outcome === 'known-defect';
+        if (f.stage === 'prepare' && (existing?.state.lineage ?? null) === null && !knownDefect) fail(`prepare outcome for ${f.unit}, which re-enters no unit and hit no known defect`);
         if (f.cause !== undefined && this.#backendParkSeqs.get(f.cause.parkSeq) !== f.cause.backend) {
           fail(`hold of ${f.unit} ${key} caused by backend ${f.cause.backend}'s park at seq ${f.cause.parkSeq}, which is no park of that backend`);
         }
@@ -773,7 +847,7 @@ export class Fold implements JournalView {
           u.state = { ...u.state, decided: f, interrupted: null };
         }
         if (f.class === 'park') {
-          u.state = { ...u.state, park: { seq: at.seq, at: at.at, park: f.park ?? legacyParkRecord(f), passed: [] } };
+          u.state = { ...u.state, park: { seq: at.seq, at: at.at, park: f.park ?? unclassedParkRecord(f), passed: [] } };
           this.#unitParkSeqs.set(at.seq, f.unit);
         }
         const lineage = u.state.lineage;
@@ -843,6 +917,7 @@ export class Fold implements JournalView {
       case 'executor-started':
         // A stop ends the run it was given to; the next start begins without it. Pauses and holds persist.
         this.#stop = null;
+        this.#executorStarted = at.seq;
         return;
       case 'resumed':
         this.#resumed(f.target, fail);
@@ -851,13 +926,97 @@ export class Fold implements JournalView {
         this.#reopened(f, fail);
         this.#lastReopenSeq = at.seq;
         return;
-      case 'rerouted':
-        this.#rerouted(f, fail);
-        return;
       case 'plan-applied':
         this.#planAppliedFact(f, at.seq, fail);
         for (const c of f.changes) if (c.type === 'unit-changed') this.#unitChangedSeq.set(c.unit, at.seq);
         return;
+      // M4a: debt (C2); amendments, intake, pack reviews and checkpoint captures (C3).
+      case 'debt-banked': {
+        const same = this.#debt.find((d) => d.id === f.id || d.key === f.key || canonicalJson(d.source) === canonicalJson(f.source));
+        if (same !== undefined) fail(`debt ${f.id} banked again: ${same.id} (seq ${same.seq}) has its id, key or source (banking is idempotent per source)`);
+        this.#debt.push({ ...f, seq: at.seq });
+        return;
+      }
+      case 'corpus-amendment': {
+        const next = this.nextAmendmentId();
+        if (f.id !== next) fail(`corpus amendment ${f.id}; the next amendment is ${next}`);
+        const same = this.#amendments.find((x) => canonicalJson(x.source) === canonicalJson(f.source));
+        if (same !== undefined) fail(`corpus amendment ${f.id} has the source of ${same.id} (one amendment per source)`);
+        if (f.source.type !== 'divergence') this.#seeJob(f.source.job);
+        const { kind: _k, ...rest } = f;
+        this.#amendments.push({ ...rest, seq: at.seq });
+        return;
+      }
+      case 'issue-intake': {
+        if (this.#intake.some((x) => x.job === f.job && x.issue === f.issue)) fail(`a second issue-intake of ${f.issue} by ${f.job}`);
+        if (f.outcome.type === 'finding' && !this.#findings.has(f.outcome.finding)) fail(`issue-intake of ${f.issue} names finding ${f.outcome.finding}, which was never opened`);
+        if (f.outcome.type === 'amendment' && !this.#amendments.some((x) => x.id === (f.outcome as { amendment: string }).amendment)) {
+          fail(`issue-intake of ${f.issue} names amendment ${f.outcome.amendment}, which was never recorded`);
+        }
+        this.#seeJob(f.job);
+        const { kind: _k, ...rest } = f;
+        this.#intake.push({ ...rest, seq: at.seq });
+        return;
+      }
+      case 'pack-review-started': {
+        const running = this.#packReviews.find((r) => r.ended === null);
+        if (running !== undefined) fail(`pack review ${f.job} started while ${running.started.job} is running (one at a time)`);
+        this.#openJob(f.job, fail);
+        const { kind: _k, ...rest } = f;
+        this.#packReviews.push({ started: { ...rest, seq: at.seq }, ended: null });
+        return;
+      }
+      case 'pack-review-ended': {
+        const r = this.#packReviews.find((x) => x.started.job === f.job);
+        if (r === undefined || r.ended !== null) return fail(`pack-review-ended of ${f.job}, which is not running`);
+        const { kind: _k, ...rest } = f;
+        r.ended = { ...rest, seq: at.seq };
+        return;
+      }
+      // M4a rev 3: lane reuse and series certificates (N1), smoke runs (N3), cross-lens corroboration (N5).
+      case 'lane-reused': {
+        const key = canonicalJson({ parent: f.parent, lane: f.lane });
+        if (this.#laneReuses.some((r) => canonicalJson({ parent: r.parent, lane: r.lane }) === key)) fail(`a second lane-reused of ${f.lane} under ${canonicalJson(f.parent)}`);
+        const { op, ordinal } = parseInvocationId(f.from.inv);
+        const entry = this.#ops.get(op);
+        if (entry === undefined || ordinal > entry.latest.ordinal) fail(`lane-reused from ${f.from.inv}, which no intent opened`);
+        const { kind: _k, ...rest } = f;
+        this.#laneReuses.push({ ...rest, seq: at.seq });
+        return;
+      }
+      case 'series-certified': {
+        const key = canonicalJson({ parent: f.parent, checkout: f.checkout });
+        if (this.#certificates.some((c) => canonicalJson({ parent: c.parent, checkout: c.checkout }) === key)) fail(`a second series-certified of ${f.checkout} under ${canonicalJson(f.parent)}`);
+        const { kind: _k, ...rest } = f;
+        this.#certificates.push({ ...rest, seq: at.seq });
+        return;
+      }
+      case 'smoke-ran': {
+        if (this.#smokeRuns.some((r) => r.unit === f.unit && r.attempt === f.attempt)) fail(`a second smoke-ran of ${f.unit} attempt ${f.attempt}`);
+        const { kind: _k, ...rest } = f;
+        this.#smokeRuns.push({ ...rest, seq: at.seq });
+        return;
+      }
+      case 'needs-user-declined':
+        if (!this.#needsUser.has(f.id)) fail(`needs-user-declined of ${f.id}, which was never raised`);
+        if (this.#acks.has(f.id)) fail(`needs-user ${f.id} declined after it was closed`);
+        this.#acks.set(f.id, { command: null, choice: f.choice });
+        return;
+      case 'finding-corroborated': {
+        if (!this.#findings.has(f.id)) fail(`finding-corroborated of ${f.id}, which was never opened`);
+        const { kind: _k, ...rest } = f;
+        this.#corroborations.push({ ...rest, seq: at.seq });
+        return;
+      }
+      case 'issues-captured': {
+        // Written for the checkpoint job its `checkpoint-inputs` opens next (H13): it names that job without opening it.
+        const next = this.nextJobId('ckpt');
+        if (f.job !== next) fail(`issues-captured for ${f.job}; the next checkpoint job is ${next}`);
+        if (this.#captures.some((c) => c.job === f.job)) fail(`a second issues-captured for ${f.job}`);
+        const { kind: _k, ...rest } = f;
+        this.#captures.push({ ...rest, seq: at.seq });
+        return;
+      }
       default:
         this.#holisticFact(f, fail, at);
     }
@@ -938,6 +1097,10 @@ export class Fold implements JournalView {
         return;
       }
       case 'checkpoint-inputs': {
+        if (f.issues?.type === 'captured') {
+          const capture = this.#captures.find((c) => c.job === f.job);
+          if (capture?.sha256 !== f.issues.sha256) fail(`checkpoint-inputs of ${f.job} names issues ${f.issues.sha256}, which no issues-captured for it records`);
+        }
         this.#openJob(f.job, fail);
         const { kind: _k, ...rest } = f;
         this.#checkpoints.set(f.job, { inputs: { ...rest, seq }, decided: null });
@@ -1016,12 +1179,12 @@ export class Fold implements JournalView {
     const expected = (this.#planApplied?.rev ?? 0) + 1;
     if (f.rev !== expected) fail(`plan-applied rev ${f.rev}; the next plan revision is ${expected}`);
     if (f.command !== null && this.#appliedBy.has(f.command)) fail(`a second plan-applied fact of command ${f.command}`);
-    // M2 schedules a DAG only from a log no earlier release dispatched in (the reader admits `scheduling` on rev 1 only).
-    if (f.scheduling === 'dag' && this.#dispatches.size > 0) fail('plan-applied rev 1 schedules a DAG in a log that already dispatched a unit');
+    // Revision 1 comes before anything runs (the reader requires `scheduling: 'dag'` on it, and only there).
+    if (f.rev === 1 && this.#dispatches.size > 0) fail('plan-applied rev 1 in a log that already dispatched a unit');
     // M3 (A5): the vision, once in force, stays; a bundle's revision is its checkpoint's decision.
     if (this.#holisticOn && f.visionSha256 === undefined) fail(`plan-applied rev ${f.rev} drops the vision (holistic may be added, never removed)`);
-    const bundle = f.source?.type === 'bundle' ? this.#checkpoints.get(f.source.job) : undefined;
-    if (f.source?.type === 'bundle' && (bundle === undefined || bundle.decided !== null)) fail(`plan-applied from bundle ${f.source.job}, which has no undecided checkpoint inputs`);
+    const bundle = f.source.type === 'bundle' ? this.#checkpoints.get(f.source.job) : undefined;
+    if (f.source.type === 'bundle' && (bundle === undefined || bundle.decided !== null)) fail(`plan-applied from bundle ${f.source.job}, which has no undecided checkpoint inputs`);
     const edits: { unit: UnitId; update: (u: UnitState) => UnitState }[] = [];
     const lineages: (() => void)[] = [];
     for (const c of f.changes) {
@@ -1068,11 +1231,10 @@ export class Fold implements JournalView {
       entry.state = e.update(entry.state);
     }
     for (const apply of lineages) apply();
-    if (f.rev === 1) this.#scheduling = f.scheduling === 'dag' ? 'dag' : 'legacy';
     this.#holisticOn = f.visionSha256 !== undefined;
     if (bundle !== undefined) bundle.decided = { kind: 'applied', planRev: f.rev };
     // §2.10: an architect admit (an apply that adds units) reopens a draining arc.
-    const architect = f.source === undefined ? f.command !== null : f.source.type === 'command';
+    const architect = f.source.type === 'command';
     if (architect && f.changes.some((c) => c.type === 'unit-added')) this.#draining = null;
     this.#planApplied = f;
     if (f.command !== null) this.#appliedBy.set(f.command, f);
@@ -1099,23 +1261,11 @@ export class Fold implements JournalView {
       const fresh = newUnitState(c.unit, 'prepare', o.risk);
       const counters = c.reset ? { ...o.counters, chargeableFailures: 0 } : o.counters;
       this.#units.set(c.unit, {
-        starts: new Set<string>(), outcomes: new Set<string>(), attemptBase: o.counters.attempts, beforeDecided: { decided: null, interrupted: null },
+        starts: new Map<string, number>(), outcomes: new Set<string>(), attemptBase: o.counters.attempts, beforeDecided: { decided: null, interrupted: null },
         state: { ...fresh, counters, lineage: { reenters: c.reenters, root: o.lineage?.root ?? c.reenters, prepared: false } },
       });
       old.state = { ...o, status: 'superseded', supersededBy: c.unit, park: null };
     };
-  }
-
-  /**
-   * A reroute: only of a unit parked `routing-changed` (the command re-pinned it under the routing in force
-   * first, when that routing's rev differs from the pinned one). Read as an `unparked` fact (M2), which
-   * re-runs the parked stage the same way.
-   */
-  #rerouted(f: Extract<Fact, { kind: 'rerouted' }>, fail: (detail: string) => never): void {
-    const decided = this.#units.get(f.unit)?.state.decided ?? null;
-    if (decided === null || decided.outcome !== 'routing-changed') return fail(`reroute of unit ${f.unit}, which is not parked routing-changed`);
-    rerouteAsUnpark(f.unit);
-    this.#unpark(f.unit, fail);
   }
 
   /**
@@ -1221,21 +1371,20 @@ export class Fold implements JournalView {
     for (const backend of clear) {
       const seq = (this.#backendParks.get(backend) as BackendParkState).seq;
       this.#backendParks.delete(backend);
-      this.#releaseBackendHolds(backend, seq, false);
+      this.#releaseBackendHolds(backend, seq);
     }
   }
 
   /**
    * Releases the holds `backend`'s parks caused (G5): a hold whose cause is that backend at a park seq up to
-   * `seq`. Operator pauses are kept. `legacy`: also every cause-less hold of a unit no pause covers, as
-   * `resume --backend` released usage-limit holds before M2 recorded a cause.
+   * `seq`. Operator pauses are kept.
    */
-  #releaseBackendHolds(backend: Backend, seq: number, legacy: boolean): void {
+  #releaseBackendHolds(backend: Backend, seq: number): void {
     if (this.#pausedAll) return;
     for (const [id, u] of this.#units) {
       if (u.state.status !== 'held' || this.#pausedUnits.has(id)) continue;
       const cause = u.state.interrupted?.cause;
-      if (cause === undefined ? legacy : cause.backend === backend && cause.parkSeq <= seq) u.state = { ...u.state, status: 'active' };
+      if (cause !== undefined && cause.backend === backend && cause.parkSeq <= seq) u.state = { ...u.state, status: 'active' };
     }
   }
 
@@ -1270,8 +1419,7 @@ export class Fold implements JournalView {
   /**
    * A resume clears holds without touching counters, so the next stage start is a new, uncharged attempt.
    * `unit`: that unit's pause and hold (refused while the whole arc is paused). `all`: every pause and every
-   * hold. `backend`: that backend's current park, whatever its class, and the holds it caused (G5) plus the
-   * cause-less holds of units no pause covers (a usage-limit hold recorded before M2).
+   * hold. `backend`: that backend's current park, whatever its class, and the holds it caused (G5).
    */
   #resumed(target: Extract<Fact, { kind: 'resumed' }>['target'], fail: (detail: string) => never): void {
     const release = (u: UnitEntry): void => {
@@ -1294,7 +1442,7 @@ export class Fold implements JournalView {
         const park = this.#backendParks.get(target.backend);
         if (park === undefined) return fail(`resume of backend ${target.backend}, which is not parked`);
         this.#backendParks.delete(target.backend);
-        this.#releaseBackendHolds(target.backend, park.seq, true);
+        this.#releaseBackendHolds(target.backend, park.seq);
         return;
       }
     }
@@ -1309,6 +1457,7 @@ export class Fold implements JournalView {
       out[`unit ${unit} redirects`] = c.redirects;
       out[`unit ${unit} reviseRounds`] = c.reviseRounds;
       out[`unit ${unit} candidateReds`] = c.candidateReds;
+      out[`unit ${unit} smokeRounds`] = c.smokeRounds;
       for (const s of RETRY_STAGES) out[`unit ${unit} retries ${s}`] = c.retries[s];
       out[`unit ${unit} routedUp`] = routedUp.length;
     }
@@ -1361,10 +1510,6 @@ export class Fold implements JournalView {
     return this.#units.get(unit)?.state ?? this.#fresh(unit, 'plan-check');
   }
 
-  unitsWithState(): readonly UnitId[] {
-    return [...new Set([...this.#units.keys(), ...this.#dispatches.keys()])].sort(compare);
-  }
-
   dispatchOf(unit: UnitId): DispatchRecord | null {
     return this.#dispatches.get(unit)?.at(-1) ?? null;
   }
@@ -1405,9 +1550,6 @@ export class Fold implements JournalView {
     return this.#runOnly;
   }
 
-  scheduling(): Scheduling | null {
-    return this.#scheduling;
-  }
 
   needsUser(): readonly NeedsUserState[] {
     return [...this.#needsUser].sort(([a], [b]) => compare(a, b)).map(([id, { blocking }]) => ({ id, blocking, ack: this.#acks.get(id) ?? null }));
@@ -1463,6 +1605,11 @@ export class Fold implements JournalView {
     return divergenceIdOf(this.#divergences.length + 1);
   }
 
+  /** M4a: the id the next `corpus-amendment` must carry (`M-<amendments + 1>`, arc-scoped). */
+  nextAmendmentId(): AmendmentId {
+    return amendmentIdOf(this.#amendments.length + 1);
+  }
+
   nextJobId(kind: JobKind): JobId {
     return jobId(kind, (this.#jobs.get(kind) ?? 0) + 1);
   }
@@ -1473,6 +1620,10 @@ export class Fold implements JournalView {
 
   lastWorkSeq(): number {
     return this.#lastWorkSeq;
+  }
+
+  lastExecutorStarted(): number {
+    return this.#executorStarted;
   }
 
   holistic(): HolisticFold {
@@ -1492,8 +1643,17 @@ export class Fold implements JournalView {
       digests: this.#digests,
       steered: this.#steered,
       mergedIn: this.#mergedIn,
+      debt: this.#debt,
+      amendments: this.#amendments,
+      intake: this.#intake,
+      packReviews: this.#packReviews.map((r) => ({ started: r.started, ended: r.ended })),
+      captures: this.#captures,
       draining: this.#draining,
       completion: c === null ? null : { ...c, active },
+      laneReuses: this.#laneReuses,
+      certificates: this.#certificates,
+      smokeRuns: this.#smokeRuns,
+      corroborations: this.#corroborations,
     };
   }
 
@@ -1515,7 +1675,6 @@ export class Fold implements JournalView {
       tailDiscarded: [...this.#tail],
       parkedBackends: this.parkedBackends(),
       backendParks: this.backendParks(),
-      scheduling: this.#scheduling,
       resources: [...this.#resources].sort(([a], [b]) => compareResourceUnits(a, b)).map(([unit, e]) => ({ unit, status: e.status, pending: e.pending?.op ?? null })),
       runOnly: this.#runOnly,
       resolvedEdges: [...this.#resolvedEdges.keys()].sort(compare),
@@ -1526,11 +1685,11 @@ export class Fold implements JournalView {
 
 /** The highest-attempt start of a unit when it has no outcome yet (`UnitState.open`). */
 function openStart(u: UnitEntry): UnitState['open'] {
-  let latest: { stage: Stage; attempt: number } | null = null;
-  for (const key of u.starts) {
+  let latest: { stage: Stage; attempt: number; seq: number } | null = null;
+  for (const [key, seq] of u.starts) {
     const at = key.lastIndexOf('#');
     const attempt = Number(key.slice(at + 1));
-    if (latest === null || attempt > latest.attempt) latest = { stage: key.slice(0, at) as Stage, attempt };
+    if (latest === null || attempt > latest.attempt) latest = { stage: key.slice(0, at) as Stage, attempt, seq };
   }
   return latest === null || u.outcomes.has(`${latest.stage}#${latest.attempt}`) ? null : latest;
 }

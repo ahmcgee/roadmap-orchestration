@@ -16,7 +16,7 @@ import { type RoutingBase, readInputFiles, recordPlan, requirePlanInForce } from
 import type { PlanUnit } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
-import { provenanceStack, resolveRouting } from '../../src/routing/layers.ts';
+import { arcScopeOf, provenanceStack, resolveRouting } from '../../src/routing/layers.ts';
 import { serialRuntime } from './stage-common.ts';
 import { type ArcDescriptor, type ArcRun, applyBody, commandContextFor } from './unit-common.ts';
 
@@ -41,7 +41,7 @@ export const editUnit = (d: ArcDescriptor, id: string, edit: (u: Json) => void):
 /** Records the files as revision 1, as an M3 first start does (payload, `revision.commit`, `plan-applied` with provenance). */
 export function recordFirst(d: ArcDescriptor, base: RoutingBase = BASE): void {
   const j = openJournal(absPath(d.runDir), d.arc as never);
-  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath)), [], base);
+  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], base);
   j.close();
 }
 
@@ -52,7 +52,7 @@ export function followContext(r: ArcRun): StageContext {
   const routing: StageContext['routing'] = (unit) => {
     const { fact, plan: p } = inForce();
     if (fact.routingProvenance === undefined) throw new Error(`plan rev ${fact.rev} records no routing provenance`);
-    return resolveRouting(provenanceStack(fact.routingProvenance, p.holistic !== undefined, unit));
+    return resolveRouting(provenanceStack(fact.routingProvenance, arcScopeOf(p), unit));
   };
   const resources = { ...r.ctx, plan };
   return { ...resources, routing, ...serialRuntime(resources) };

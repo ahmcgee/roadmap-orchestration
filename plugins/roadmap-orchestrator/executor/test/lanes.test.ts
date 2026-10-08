@@ -5,17 +5,18 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { invocationId, laneId, opIdOf, resourceName, sha, sha256, specRev } from '../src/core/ids.ts';
+import { invocationId, laneId, opIdOf, resourceName, sha, specRev } from '../src/core/ids.ts';
+import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
+import { fileSha256 } from '../src/spec/spec.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
 import { fingerprintAt } from '../src/pipeline/gate.ts';
 import { laneLedgerText } from '../src/prompts/inputs.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
-import { LANE_DEADLINE_MS, LANE_STALL_MS, type LaneRecord, seriesDirty, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { LANE_STALL_MS, type LaneRecord, seriesDirty, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
 import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
-import { DEV1_LANE_DEADLINE_MS } from '../src/core/upgrade.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { runnerFiles } from '../src/runner/files.ts';
@@ -23,13 +24,13 @@ import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { waitFor } from './helpers/invocation.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, headOf, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
+import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, headOf, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
 function laneRun(lanesJson: readonly LaneJson[], resources: readonly string[] = []): StageRun {
   const run = setupUnit({ steps: [], lanes: lanesJson, resources });
-  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   return run;
 }
 
@@ -150,7 +151,7 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
   const lane = (id: string, verdict: LaneRecord['verdict']): LaneRecord => ({
     lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: verdict === 'fail' ? 1 : null, verdict, evidenceDir: absPath(`/ev/${id}`), ignored: null,
     inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(`/ev/${id}/output/files`)],
-    host: null, signatures: [], voided: null, diagnostic: null, flaky: false,
+    host: null, signatures: [], voided: null, diagnostic: null, flaky: false, reused: null, redRev: 2, repeat: null, hostSuspected: null,
   });
   const salvage = sha('a'.repeat(40));
   const stalled = laneFixRound([lane('fast', 'pass'), lane('suite', 'stall')], [], salvage);
@@ -161,23 +162,6 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
   assert.match(stalled.fix.directives[0]!, /^Lane suite hung: .* for 10 minutes/);
   const red = laneFixRound([lane('suite', 'fail')], [], salvage);
   assert.ok(red.kind === 'fix' && red.fix.directives.length === 0);
-});
-
-test('lanes.dev1-launch: a lane 1.0.0-dev.1 launched (no stallMs, 30-min deadline) reads back with its true start', T, async () => {
-  const run = laneRun([{ id: 'fast1', tier: 'fast', resources: [], argv: ['true'], env: { set: {}, pass: ['PATH'] } }]);
-  const done = started(await lanes(run.ctx, run.unit, run.base));
-  assert.equal(done.outcome.kind, 'green');
-  const [spawn] = laneSpawns(run);
-  assert.ok(spawn !== undefined && spawn.parent.type === 'stage');
-  const parent = spawn.parent;
-  const launch = launchOf(run, spawn);
-  const start = new Date(launch.deadlineAt).getTime() - LANE_DEADLINE_MS;
-  // Rewrite the launch as 1.0.0-dev.1 wrote it: no stallMs, its deadline 30 min after the start.
-  const { stallMs: _, ...rest } = launch;
-  const path = join(invocationDir(run.runDir, invocationId(spawn.op, spawn.ordinal)), 'launch.json');
-  writeFileSync(path, JSON.stringify({ ...rest, deadlineAt: isoTimeOf(new Date(start + DEV1_LANE_DEADLINE_MS)) }));
-  const [record] = seriesLedger(run.ctx, parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(run.runDir, parent));
-  assert.equal(record?.at, isoTimeOf(new Date(start)));
 });
 
 const IGNORES = 'out/\n.local/\nnode_modules/\n';
@@ -195,7 +179,7 @@ test('lanes.ignored-capture: a failing lane\'s undeclared ignored output is capt
     'echo key > .local/demo/tls.key', 'echo dep > node_modules/dep/i.js', 'echo "step 3: deploy failed" >&2', 'exit 1',
   ].join(' && ');
   const run = setupUnit({ steps: [], lanes: [{ id: 'deploy', argv: ['sh', '-c', script], evidenceGlobs: ['out/**'] }], gitignore: IGNORES });
-  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'red');
   const [record] = done.ledger;
@@ -228,7 +212,7 @@ test('lanes.ignored-census-pass: a passing lane\'s ignored writes are counted, n
       { id: 'quiet', argv: ['true'] },
     ],
   });
-  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'green');
   assert.deepEqual(done.ledger.map((l) => [l.lane, l.ignored?.written.files, l.ignored?.captured.files]), [['first', 1, 0], ['second', 2, 0], ['quiet', 0, 0]]);
@@ -256,7 +240,7 @@ test('lanes.ignored-killed: a lane killed mid-run gets its ignored output captur
     steps: [], gitignore: IGNORES,
     lanes: [{ id: 'sleeper', argv: ['sh', '-c', `mkdir -p .local && echo partial > .local/k.log && touch "${mark}" && sleep 60`] }],
   });
-  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   const going = lanes(run.ctx, run.unit, run.base);
   await waitFor('the lane to start', 60_000, () => (existsSync(mark) ? true : null));
   const spawn = run.journal.view.openIntents().find((i) => i.kind === 'proc.spawn');
@@ -276,7 +260,7 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
     steps: [], gitignore: IGNORES,
     lanes: [{ id: 'writer', argv: ['sh', '-c', 'mkdir -p out && echo a > out/a.log && echo b > out/b.log'], evidenceGlobs: ['out/a.log'] }],
   });
-  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   git(run.repo, 'update-ref', unitBranch(run.ctx.plan().arc, U1), run.base);
   const before = fingerprintAt(run.ctx, run.unit, run.base);
   const first = started(await lanes(run.ctx, run.unit, run.base));
@@ -285,6 +269,10 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
   const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; lanes: Record<string, unknown>[] };
   writeFileSync(run.specPath, JSON.stringify({ ...spec, lanes: spec.lanes.map((l) => ({ ...l, evidenceGlobs: ['out/b.log'], evidenceExcludes: ['out/secret/**'] })) }));
   assert.equal(spec.rev, 1);
+  // The architect's evidence-only edit, applied: the unit's spec in force at once.
+  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), absPath(run.repo)), [
+    { type: 'spec', unit: U1, edit: 'evidence', specRev: specRev(1), specSha256: fileSha256(run.specPath) },
+  ], { profile: 'default', config: null });
   assert.deepEqual(fingerprintAt(run.ctx, run.unit, run.base), before, 'evidence plumbing is outside the approval fingerprint');
 
   const second = started(await lanes(run.ctx, run.unit, run.base));

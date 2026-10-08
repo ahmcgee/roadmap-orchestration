@@ -1,3 +1,4 @@
+// adopted-arc coverage (LR-D0b): migrate to corpus arcs when holistic architecture-doc scaffolding is deleted (BACKLOG)
 // Shared by the held-claims tests (test/brake.test.ts, test/baseline.test.ts, test/batch.test.ts) and their crash
 // children: a unit-common arc made holistic (a vision, an obligations file whose arc lanes are the fake witness lanes of
 // test/helpers/witness.ts, scripted per tree through one control file), recorded as revision 1 as an M3 start does.

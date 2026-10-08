@@ -7,8 +7,9 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import type { Holder } from '../src/core/events.ts';
-import { arcId, planRev, resourceName, sha256, specRev, unitId } from '../src/core/ids.ts';
+import type { Fact, Holder, IntentOf } from '../src/core/events.ts';
+import { appliedFields } from './fixtures/log-records.ts';
+import { arcId, planRev, resourceName, sha256, unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import type { HostSample } from '../src/host/sample.ts';
@@ -21,7 +22,7 @@ import { resourceTable } from '../src/resources/reserve.ts';
 import type { Acquire, ResourceRequest } from '../src/schedule/types.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { intents } from './fixtures/invoke-specs.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
+import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const RED_GREEN = fileURLToPath(new URL('./fakes/red-green.ts', import.meta.url));
@@ -33,7 +34,7 @@ const BUSY = sample(20);
 
 function laneRun(lanesJson: readonly LaneJson[], resources: readonly string[] = []): StageRun {
   const run = setupUnit({ steps: [], lanes: lanesJson, resources });
-  pinDispatch(run.ctx, run.unit, { rev: specRev(1), sha256: sha256('1'.repeat(64)) });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
   return run;
 }
 
@@ -167,7 +168,7 @@ test('lanes.instance-env: a DAG arc\'s lanes reserve @cpu tokens and a pool inst
   const plan = parsePlan({ ...raw, capacity: { cpu: 8 }, resources: [...raw.resources, { name: 'estate', pool: { size: 2 }, probe: estate('probe'), teardown: estate('teardown') }] });
   const runDir = absPath(tmpDir('lanes-m2-run'));
   const journal = openJournal(runDir, arcId(plan.arc));
-  journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, planSha256: sha256('2'.repeat(64)), specs: { [U1]: sha256('3'.repeat(64)) }, changes: [], scheduling: 'dag' });
+  journal.fact({ kind: 'plan-applied', rev: planRev(1), command: null, planSha256: sha256('2'.repeat(64)), specs: { [U1]: sha256('3'.repeat(64)) }, changes: [], ...appliedFields(1, null) } as Fact);
   const ctx: StageContext = { ...run.ctx, journal, runDir, plan: () => plan };
   // The estate lane's argv names the state dir the pool's probe and teardown use.
   const spec = loadUnitSpec(run.ctx, run.unit).spec;
@@ -214,7 +215,8 @@ test('lanes.pause-mid-series: a pause while a later lane waits for its reservati
   assert.deepEqual(paused.end, { kind: 'interrupted', reason: 'pause' });
   assert.deepEqual(paused.ledger.map((l) => [l.lane, l.verdict]), [['first', 'pass']]);
   assert.equal(waits.length, 1);
-  assert.deepEqual(intents(run.runDir, 'resource.transition'), [], 'the legacy arc\'s first lane reserves nothing, the second\'s wait journaled nothing');
+  const reserved = intents(run.runDir, 'resource.transition').map((i) => (i as IntentOf<'resource.transition'>).expect.resources);
+  assert.ok(reserved.every((units) => units.every((u) => u.startsWith('@cpu#'))), `the first lane reserves its @cpu alone, the second's wait journaled nothing: ${JSON.stringify(reserved)}`);
   assert.equal(laneSpawns(run).length, 1);
 
   // A red lane's wait for a clear host: cancelled by a stop, no rerun, nothing held.

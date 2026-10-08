@@ -4,9 +4,10 @@
 import {
   type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
   type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ResourceInstance,
-  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, arcId, clauseId,
+  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, type WitnessItemId, arcId, clauseId,
   commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
-  obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId,
+  obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
+  witnessItemId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -17,8 +18,9 @@ import {
   type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
-import { launchStallMs } from './upgrade.ts';
 import type { SchemaVersion } from './version.ts';
+import { dev6SmokeBounds } from './upgrade.ts';
+import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
   type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, modelClass,
   profileName, riskTier,
@@ -77,6 +79,9 @@ const unit: Read<UnitId> = (v, p) => unitId(v, p);
 const commitSha: Read<Sha> = (v, p) => sha(v, p);
 const rev: Read<RoutingRev> = (v, p) => routingRev(v, p);
 const abs: Read<AbsPath> = (v, p) => absPath(v, p);
+/** A file a command names by path, hashed by the CLI (sha256 over its bytes) when it queued the command. */
+export type HashedFile = Readonly<{ path: AbsPath; sha256: Sha256Hex }>;
+const hashedFile: Read<HashedFile> = object((f) => ({ path: f.get('path', abs), sha256: f.get('sha256', (v, p) => sha256(v, p)) }));
 const time: Read<IsoTime> = (v, p) => isoTime(v, p);
 const resource: Read<ResourceName> = (v, p) => resourceName(v, p);
 /** argv[0] names the program; a later argument may be empty (`claude --setting-sources ''`). */
@@ -209,7 +214,7 @@ export const launchFile: Read<LaunchFile> = object((f) => ({
   env: f.get('env', declaredEnv),
   stdinPath: f.get('stdinPath', nullable(abs)),
   deadlineAt: f.get('deadlineAt', time),
-  stallMs: launchStallMs(f.optional('stallMs', nullable(positive)), f.path),
+  stallMs: f.get('stallMs', nullable(positive)),
   graceMs: f.get('graceMs', graceMs),
   containment: f.get('containment', containmentMode),
   test: f.get('test', nullable(object((g) => ({ crash: g.get('crash', abs) })))),
@@ -528,6 +533,42 @@ export const ignoredCensus: Read<IgnoredCensus> = object((f) => ({
 }));
 
 // ---------------------------------------------------------------------------------------------------
+// A red lane's class (`<laneDir>/red.json`, M4a rev 3 F2, Q20; written by src/pipeline/redlane.ts)
+
+/** `HOST_SIGNATURES_REV` (src/host/signatures.ts) a lane or journey spawn was stamped with (`redRev`): the red protocol it runs under. */
+export type RedRev = number;
+/**
+ * Why a red run was rerun or not, persisted write-once before the rerun decision, so a read-back never re-derives it from
+ * a grown signature table: `repeat` names the unit's earlier red execution whose specific signature this run repeats.
+ * `failure`: the run's `failureSignature`. Required for a `redRev`-stamped run; an unstamped (1.0.0-dev.6) run has none
+ * and classifies with the frozen `HOST_SIGNATURES_DEV6` (src/core/upgrade.ts).
+ */
+export type RedClassRecord =
+  | Readonly<{ kind: 'host-signature' | 'signature-without-evidence'; signatures: readonly HostSignatureId[] }>
+  | Readonly<{ kind: 'diagnostic' }>
+  | Readonly<{ kind: 'repeat'; attempt: number; inv: InvocationId }>;
+export type RedFile = Readonly<{ v: SchemaVersion; class: RedClassRecord; failure: Sha256Hex; redRev: RedRev }>;
+export const RED_FILE = 'red.json';
+
+const signatureIds: Read<readonly HostSignatureId[]> = (value, path) => {
+  const ids = HOST_SIGNATURES.map((x) => x.id);
+  const out = arrayOf(oneOf(ids), { nonEmpty: true })(value, path);
+  out.forEach((id, i) => {
+    if (i > 0 && ids.indexOf(id) <= ids.indexOf(out[i - 1] as HostSignatureId)) throw new SchemaError(`${path}[${i}]`, 'signatures in table order, each once', value);
+  });
+  return out;
+};
+const redClass: Read<RedClassRecord> = tagged('kind', {
+  'host-signature': object((f): RedClassRecord => ({ kind: f.get('kind', literal('host-signature')), signatures: f.get('signatures', signatureIds) })),
+  'signature-without-evidence': object((f): RedClassRecord => ({ kind: f.get('kind', literal('signature-without-evidence')), signatures: f.get('signatures', signatureIds) })),
+  diagnostic: object((f): RedClassRecord => ({ kind: f.get('kind', literal('diagnostic')) })),
+  repeat: object((f): RedClassRecord => ({ kind: f.get('kind', literal('repeat')), attempt: f.get('attempt', positive), inv: f.get('inv', inv) })),
+});
+export const redFile: Read<RedFile> = object((f) => ({
+  v: f.get('v', version), class: f.get('class', redClass), failure: f.get('failure', (v, p) => sha256(v, p)), redRev: f.get('redRev', positive),
+}));
+
+// ---------------------------------------------------------------------------------------------------
 // Approval fingerprint and dispatch record
 
 /** Approval binds to this; any field differing at the gated tip invalidates the gate. Lists are sorted. */
@@ -540,23 +581,27 @@ export type ApprovalFingerprint = Readonly<{
   rulingRevs: readonly Readonly<{ id: RulingId; rev: number }>[];
   /**
    * M3: the normative revisions of the selected, non-exempt obligations at the gated tip, ascending by id.
-   * Absent exactly when there are none (non-empty when present), so a fingerprint with no obligations is
-   * byte-identical to a 1.0.0-dev.5 one and compares equal to it (`obligationRevsOf`).
+   * Absent exactly when there are none (non-empty when present), so a fingerprint with no obligations has the
+   * M2 shape (`obligationRevsOf`).
    */
   obligationRevs?: readonly ObligationRev[];
+  /** M4a (R6): the corpus pin in force at the gated tip, in a corpus arc; absent: none (lasting, byte-identical to dev.6). */
+  corpus?: Sha256Hex;
 }>;
 export type ObligationRev = Readonly<{ id: ObligationId; rev: number }>;
 
 const obligationRev: Read<ObligationRev> = object((g) => ({ id: g.get('id', (v, p) => obligationId(v, p)), rev: g.get('rev', positive) }));
 
 export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => {
-  const obligationRevs = f.optional('obligationRevs', sortedBy(obligationRev, (e) => e.id, { nonEmpty: true }));
+  const obligationRevs = f.optional('obligationRevs', idsAscending(obligationRev, (e) => e.id, { nonEmpty: true, legacyStringOrder: true }));
+  const corpus = f.optional('corpus', (v, p) => sha256(v, p));
   return {
     unitCommit: f.get('unitCommit', commitSha),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
     contractRevs: f.get('contractRevs', sortedBy(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), blob: g.get('blob', commitSha) })), (e) => e.path)),
-    rulingRevs: f.get('rulingRevs', sortedBy(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
+    rulingRevs: f.get('rulingRevs', idsAscending(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id, { legacyStringOrder: true })),
     ...(obligationRevs === undefined ? {} : { obligationRevs }),
+    ...(corpus === undefined ? {} : { corpus }),
   };
 });
 
@@ -581,15 +626,35 @@ export type Bounds = Readonly<{
   freshBuildMin: number;
   /** What a fix, resume or resolve round may spend editing on top of the lane series. */
   editAllowanceMin: number;
+  /** M4a rev 3 (D2): mutation-smoke fix rounds before the gate decides with the survivors (default 1, unmeasured). */
+  smokeRounds: number;
+  /** M4a rev 3 (D2, Q17): mutation-smoke executions per unit, blocked runs and crash retries counted (default 2, unmeasured). */
+  smokeRuns: number;
 }>;
-export const BOUND_FIELDS = ['chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin'] as const satisfies readonly (keyof Bounds)[];
-/** The built-in bounds: M2's constants (unmeasured defaults). */
+export const BOUND_FIELDS = [
+  'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns',
+] as const satisfies readonly (keyof Bounds)[];
+/** The bound fields a 1.0.0-dev.6 dispatch record carries; the rest (`smokeRounds`, `smokeRuns`) read as the defaults. */
+export const DEV6_BOUND_FIELDS = BOUND_FIELDS.slice(0, 8) as readonly (keyof Bounds)[];
+/** The built-in bounds: M2's constants and M4a rev 3's smoke bounds (unmeasured defaults). */
 export const DEFAULT_BOUNDS: Bounds = {
   chargeable: 3, redirects: 2, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
+  smokeRounds: 1, smokeRuns: 2,
 };
-export const bounds: Read<Bounds> = object((f) => Object.fromEntries(BOUND_FIELDS.map((k) => [k, f.get(k, positive)])) as Bounds);
+/**
+ * Bounds as a dispatch record holds them: every field since M4a rev 3; a 1.0.0-dev.6 record's lack the smoke bounds,
+ * read byte-preserving (G14) and completed by `boundsOfRecord` (`dev6SmokeBounds`, src/core/upgrade.ts).
+ */
+export type BoundsRecord = Omit<Bounds, 'smokeRounds' | 'smokeRuns'> & Partial<Pick<Bounds, 'smokeRounds' | 'smokeRuns'>>;
+export const bounds: Read<BoundsRecord> = object((f) => {
+  const out: Record<string, number> = Object.fromEntries(DEV6_BOUND_FIELDS.map((k) => [k, f.get(k, positive)]));
+  const rounds = f.optional('smokeRounds', positive);
+  const runs = f.optional('smokeRuns', positive);
+  if ((rounds === undefined) !== (runs === undefined)) throw new SchemaError(`${f.path}.smokeRounds`, 'both smoke bounds or neither (a 1.0.0-dev.6 record)', { rounds, runs });
+  return (rounds === undefined ? out : { ...out, smokeRounds: rounds, smokeRuns: runs }) as BoundsRecord;
+});
 
-/** H15: the transient-check rules a unit's lineage attempt runs under; absent on a 1.0.0-dev.5 dispatch (`transientRulesOf`). */
+/** H15: the transient-check rules a unit's lineage attempt runs under. */
 export const TRANSIENT_RULES = ['m3'] as const;
 export type TransientRules = (typeof TRANSIENT_RULES)[number];
 
@@ -609,17 +674,15 @@ export type DispatchRecord = Readonly<{
   implementerSeatRev: SeatRev;
   at: IsoTime;
   /**
-   * M3 (H15): `m3` on every dispatch since 1.0.0-dev.6: the unit's candidate may touch only its pinned scope and
-   * ruling-added paths, and no in-tree `.roadmap/` path. Absent (a 1.0.0-dev.5 dispatch): dev.5's rules for the
-   * lineage attempt (`transientRulesOf`, src/core/upgrade.ts). A re-pin copies it.
+   * M3 (H15): `m3` on every dispatch: the unit's candidate may touch only its pinned scope and ruling-added paths,
+   * and no in-tree `.roadmap/` path. A re-pin copies it.
    */
-  transientRules?: TransientRules;
+  transientRules: TransientRules;
   /** M3 (`limits`): the unit's bounds in force since this pin; absent: `DEFAULT_BOUNDS` (`boundsOfRecord`). */
-  bounds?: Bounds;
+  bounds?: BoundsRecord;
 }>;
 
 export const dispatchRecord: Read<DispatchRecord> = object((f) => {
-  const transientRules = f.optional('transientRules', oneOf(TRANSIENT_RULES));
   const b = f.optional('bounds', bounds);
   return {
     unit: f.get('unit', unit),
@@ -630,13 +693,17 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
     routingRev: f.get('routingRev', rev),
     implementerSeatRev: f.get('implementerSeatRev', (v, p) => seatRev(v, p)),
     at: f.get('at', time),
-    ...(transientRules === undefined ? {} : { transientRules }),
+    transientRules: f.get('transientRules', oneOf(TRANSIENT_RULES)),
     ...(b === undefined ? {} : { bounds: b }),
   };
 });
 
-/** The bounds a dispatch record pins: its own, or the built-in ones when it names none. */
-export const boundsOfRecord = (record: DispatchRecord | null): Bounds => record?.bounds ?? DEFAULT_BOUNDS;
+/** The bounds a dispatch record pins: its own (a dev.6 record's smoke bounds defaulted), or the built-in ones when it names none. */
+export function boundsOfRecord(record: DispatchRecord | null): Bounds {
+  const b = record?.bounds;
+  if (b === undefined) return DEFAULT_BOUNDS;
+  return b.smokeRounds === undefined || b.smokeRuns === undefined ? { ...b, ...dev6SmokeBounds() } : (b as Bounds);
+}
 
 // ---------------------------------------------------------------------------------------------------
 // spec.json (M1 subset) and SpecPatch
@@ -663,6 +730,12 @@ export type LaneDef = Readonly<{
   evidenceExcludes: readonly RepoPattern[];
   /** `@cpu` tokens the lane takes (M2); absent: its tier's default (fast 2, estate 4). Absent stays absent. */
   cpu?: number;
+  /**
+   * M4a rev 3 (F1a, R52): the repo paths a passing run of this lane depends on, non-empty when present. A fast spec
+   * lane that declares them may reuse a pass on another SHA whose diff touches none of them; absent: no cross-SHA reuse.
+   * Spec lanes only: a suite or arc lane declaring them is refused (`refuseLaneInputs`).
+   */
+  inputs?: readonly RepoPattern[];
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -687,16 +760,23 @@ function laneFields(f: Fields): LaneDef {
     evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
   const cpu = f.optional('cpu', positive);
+  const inputs = f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true }));
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
-  return cpu === undefined ? out : { ...out, cpu };
+  if (inputs !== undefined) assertUnique(inputs, (i) => i, `${f.path}.inputs`);
+  return { ...out, ...(cpu === undefined ? {} : { cpu }), ...(inputs === undefined ? {} : { inputs }) };
 }
 export const laneDef: Read<LaneDef> = object(laneFields);
+
+/** M4a rev 3 (F1a): `inputs` belongs to a spec lane; a suite lane (plan.json) or an arc lane (obligations) declaring it is refused. */
+export function refuseLaneInputs(lane: LaneDef, path: string, what: 'suite' | 'arc'): void {
+  if (lane.inputs !== undefined) throw new SchemaError(`${path}.inputs`, `absent on ${what === 'suite' ? 'a suite' : 'an arc'} lane (inputs are a spec lane's)`, lane.inputs);
+}
 
 /** Items keep their id forever; strike and defer change state, never delete, so ids are never reused. */
 export type ItemState = 'active' | 'struck' | 'deferred';
 export type AcceptanceDef = Readonly<{ id: ClauseId; clause: string; failLoudIfUndelivered: boolean }>;
 export type NoteDef = Readonly<{ id: ClauseId; text: string }>;
-type Stated<T> = T & Readonly<{ state: ItemState }>;
+export type Stated<T> = T & Readonly<{ state: ItemState }>;
 
 /**
  * What a unit's judgment and build prompts embed in full: plan contracts and C-nn rulings (arc-1 feedback
@@ -732,7 +812,18 @@ export type SpecM1 = Readonly<{
   obligations?: readonly ObligationId[];
   /** M3 (A13): what a repair unit repairs, findings or obligations (non-empty when present; required with `origin: repair`). */
   repairs?: readonly RepairRef[];
+  /**
+   * M4a rev 3 (E, R59): the witness items the unit must make pass, entered only through the spec patch channel
+   * (`SpecPatchOp` section `witnesses`; non-empty when present; absent: none, lasting, so a dev.6 spec reads unchanged).
+   */
+  witnesses?: readonly Stated<WitnessItemDef>[];
 }>;
+
+/**
+ * A witness item (M4a rev 3): test `testId` of arc lane `lane` witnesses acceptance clause `clause`; `skeleton` is the
+ * test's shape as the spec states it. D1 requires its active items (`requiredWitnesses`, src/holistic/required.ts).
+ */
+export type WitnessItemDef = Readonly<{ id: WitnessItemId; lane: LaneId; testId: string; clause: ClauseId; skeleton: string }>;
 
 /** What a repair names: a finding (`F-<n>`) or an obligation (`I-<n>`). */
 export type RepairRef = FindingId | ObligationId;
@@ -741,14 +832,33 @@ export const repairRef: Read<RepairRef> = (v, p) => (typeof v === 'string' && v.
 /** A spec's declared obligations and repairs; none when absent. */
 export const specObligations = (spec: SpecM1): readonly ObligationId[] => spec.obligations ?? [];
 export const specRepairs = (spec: SpecM1): readonly RepairRef[] => spec.repairs ?? [];
+/** A spec's witness items (M4a rev 3); none when absent. */
+export const specWitnesses = (spec: SpecM1): readonly Stated<WitnessItemDef>[] => spec.witnesses ?? [];
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
 const cid: Read<ClauseId> = (v, p) => clauseId(v, p);
+/**
+ * M4a rev 3 (F4): what a plan known defect matches (src/input/plan.ts `KnownDefect`): a unit declaring lane `lane`, or a red
+ * lane whose output tail contains `contains` (a substring, never a regex). Here, not in plan.ts, because a lanes
+ * `known-defect` outcome records the match it hit (src/core/events.ts).
+ */
+export type KnownDefectMatch = Readonly<{ type: 'lane'; lane: LaneId }> | Readonly<{ type: 'output'; lane: LaneId; contains: string }>;
+export const knownDefectMatch: Read<KnownDefectMatch> = tagged<'lane' | 'output', KnownDefectMatch>('type', {
+  lane: object((g) => ({ type: g.get('type', literal('lane')), lane: g.get('lane', (v, p) => laneId(v, p)) })),
+  output: object((g) => ({ type: g.get('type', literal('output')), lane: g.get('lane', (v, p) => laneId(v, p)), contains: g.get('contains', str) })),
+});
+
 function acceptanceFields(f: Fields): AcceptanceDef {
   return { id: f.get('id', cid), clause: f.get('clause', str), failLoudIfUndelivered: f.get('failLoudIfUndelivered', bool) };
 }
 function noteFields(f: Fields): NoteDef {
   return { id: f.get('id', cid), text: f.get('text', str) };
+}
+function witnessItemFields(f: Fields): WitnessItemDef {
+  return {
+    id: f.get('id', (v, p) => witnessItemId(v, p)), lane: f.get('lane', (v, p) => laneId(v, p)), testId: f.get('testId', str), clause: f.get('clause', cid),
+    skeleton: f.get('skeleton', str),
+  };
 }
 function stated<T>(fields: (f: Fields) => T): Read<Stated<T>> {
   return object((f) => ({ ...fields(f), state: f.get('state', itemState) }));
@@ -757,6 +867,7 @@ function stated<T>(fields: (f: Fields) => T): Read<Stated<T>> {
 export const specM1: Read<SpecM1> = object((f) => {
   const obligations = f.optional('obligations', arrayOf((v, p) => obligationId(v, p), { nonEmpty: true }));
   const repairs = f.optional('repairs', arrayOf(repairRef, { nonEmpty: true }));
+  const witnesses = f.optional('witnesses', arrayOf(stated(witnessItemFields), { nonEmpty: true }));
   const out: SpecM1 = {
     schema: f.get('schema', literal(SPEC_SCHEMA)),
     unit: f.get('unit', unit),
@@ -770,8 +881,9 @@ export const specM1: Read<SpecM1> = object((f) => {
     cites: f.get('cites', specCites),
     ...(obligations === undefined ? {} : { obligations }),
     ...(repairs === undefined ? {} : { repairs }),
+    ...(witnesses === undefined ? {} : { witnesses }),
   };
-  assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts], (i) => i.id, `${f.path}.<item ids>`);
+  assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts, ...specWitnesses(out)], (i) => i.id, `${f.path}.<item ids>`);
   assertUnique(specObligations(out), (o) => o, `${f.path}.obligations`);
   assertUnique(specRepairs(out), (r) => r, `${f.path}.repairs`);
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
@@ -779,9 +891,10 @@ export const specM1: Read<SpecM1> = object((f) => {
   return out;
 });
 
-export const SPEC_SECTIONS = ['lanes', 'acceptance', 'decisions', 'facts'] as const;
+/** M4a rev 3 (R59): `witnesses` (a patch is the one channel a witness item enters a spec by). */
+export const SPEC_SECTIONS = ['lanes', 'acceptance', 'decisions', 'facts', 'witnesses'] as const;
 export type SpecSection = (typeof SPEC_SECTIONS)[number];
-type SectionItem = { lanes: LaneDef; acceptance: AcceptanceDef; decisions: NoteDef; facts: NoteDef };
+type SectionItem = { lanes: LaneDef; acceptance: AcceptanceDef; decisions: NoteDef; facts: NoteDef; witnesses: WitnessItemDef };
 
 /**
  * Scope and resources are pinned at dispatch and are not patchable in M1. `cite` adds contracts and rulings
@@ -812,6 +925,7 @@ const sectionItem: { readonly [S in SpecSection]: Read<SectionItem[S]> } = {
   acceptance: object(acceptanceFields),
   decisions: object(noteFields),
   facts: object(noteFields),
+  witnesses: object(witnessItemFields),
 };
 
 function itemOp(op: 'add' | 'replace'): Read<SpecPatchOp> {
@@ -1039,20 +1153,22 @@ export const planManifest: Read<PlanManifest> = object((f) => ({
  * sidecar's (kept as `inputs/<sha256>.rulings.md` and `inputs/<sha256>.ruling.json`); `obligations` and `vision`:
  * the obligations and vision files' (`inputs/<sha256>.obligations.json`, `.vision.json`), null when the plan
  * names none.
+ *
+ * M4a (a corpus arc's; absent: none, lasting): `corpus` the pin (`inputs/<sha>.corpus.json`), `corpusGuide` the guide's
+ * bytes (`inputs/<sha>.corpus-guide.md`, H5), `phase0` the Phase-0 record (`inputs/<sha>.phase0.json`) and `phase0Issues`
+ * its issue capture (`inputs/<sha>.issues.json`, H8). The four are present together or not at all.
  */
 export type RevisionInputs = Readonly<{
   rulings: Readonly<{ ledgerSha256: Sha256Hex; sidecars: Readonly<Record<RulingId, Sha256Hex>> }>;
   obligations: Sha256Hex | null;
   vision: Sha256Hex | null;
+  corpus?: Sha256Hex;
+  corpusGuide?: Sha256Hex;
+  phase0?: Sha256Hex;
+  phase0Issues?: Sha256Hex;
 }>;
-/** What an M3 `apply` hashes (A2): the plan manifest and the revision inputs. */
+/** What an `apply` hashes (A2), its body's manifest: the plan manifest and the revision inputs. */
 export type RevisionManifest = PlanManifest & RevisionInputs;
-/**
- * An `apply` body's manifest: a `RevisionManifest` since 1.0.0-dev.6, or a 1.0.0-dev.5 command's `PlanManifest`
- * (G15), which is read as the ledger live and no obligations or vision (`applyInputsOf`, src/core/upgrade.ts). The
- * command's bytes and `commandSha256` are never rewritten.
- */
-export type ApplyManifest = PlanManifest | RevisionManifest;
 
 const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) => {
   const f = new Fields(value, path);
@@ -1061,20 +1177,27 @@ const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) =
   f.end();
   return out;
 };
-export const revisionInputs = (f: Fields): RevisionInputs => ({
-  rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
-  obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
-  vision: f.get('vision', nullable((v, p) => sha256(v, p))),
-});
-export const applyManifest: Read<ApplyManifest> = (value, path) => {
-  const m3 = typeof value === 'object' && value !== null && Object.hasOwn(value, 'rulings');
-  return object((f): ApplyManifest => ({
-    planSha256: f.get('planSha256', (v, p) => sha256(v, p)),
-    specs: f.get('specs', manifestSpecs),
-    ...(m3 ? revisionInputs(f) : {}),
-  }))(value, path);
+const CORPUS_INPUTS = ['corpus', 'corpusGuide', 'phase0', 'phase0Issues'] as const;
+export const revisionInputs = (f: Fields): RevisionInputs => {
+  const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number], Sha256Hex>> = {};
+  for (const k of CORPUS_INPUTS) {
+    const v = f.optional(k, (x, p) => sha256(x, p));
+    if (v !== undefined) corpus[k] = v;
+  }
+  const n = Object.keys(corpus).length;
+  if (n !== 0 && n !== CORPUS_INPUTS.length) throw new SchemaError(`${f.path}.corpus`, `all of ${CORPUS_INPUTS.join(', ')} or none (a corpus arc's inputs)`, corpus);
+  return {
+    rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
+    obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
+    vision: f.get('vision', nullable((v, p) => sha256(v, p))),
+    ...corpus,
+  };
 };
-export const isRevisionManifest = (m: ApplyManifest): m is RevisionManifest => 'rulings' in m;
+export const applyManifest: Read<RevisionManifest> = object((f): RevisionManifest => ({
+  planSha256: f.get('planSha256', (v, p) => sha256(v, p)),
+  specs: f.get('specs', manifestSpecs),
+  ...revisionInputs(f),
+}));
 
 export type CommandBody =
   | Readonly<{ type: 'pause'; target: PauseTarget }>
@@ -1085,9 +1208,11 @@ export type CommandBody =
   /**
    * `roadmap apply`: make the plan and specs the manifest hashes the plan in force (the executor re-reads the
    * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
-   * or null to apply over whatever is in force. A mutation.
+   * or null to apply over whatever is in force. A mutation. M4a rev 3 (I2): `rulings`, the ruling sidecar files of
+   * `--ruling` (each hashed like a `rule` record, in the order given; absent: none, lasting), landed with the edits as one
+   * revision.
    */
-  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: ApplyManifest }>
+  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: RevisionManifest; rulings?: readonly HashedFile[] }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
@@ -1144,11 +1269,15 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   resume: object((f): CommandBody => ({ type: f.get('type', literal('resume')), target: f.get('target', resumeTarget) })),
   sweep: object((f): CommandBody => ({ type: f.get('type', literal('sweep')), resource: f.get('resource', nullable(resource)) })),
-  apply: object((f): CommandBody => ({
-    type: f.get('type', literal('apply')),
-    expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
-    manifest: f.get('manifest', applyManifest),
-  })),
+  apply: object((f): CommandBody => {
+    const out = {
+      type: f.get('type', literal('apply')),
+      expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
+      manifest: f.get('manifest', applyManifest),
+    };
+    const rulings = f.optional('rulings', arrayOf(hashedFile, { nonEmpty: true }));
+    return rulings === undefined ? out : { ...out, rulings };
+  }),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
   })),
@@ -1215,6 +1344,10 @@ export const NEEDS_USER_REASONS = [
   // M3, non-blocking: a bundle held for the architect (A9: `apply | reject`); the convergence brakes; an owed audit;
   // the divergence digest (H11).
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest',
+  // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
+  // the first (K14, H9); a checkpoint capture that found the issue policy untrusted, holding admission arc-wide and the
+  // capture until acked (OR-L6).
+  'pack-review', 'issue-policy-untrusted',
 ] as const;
 /** The M3 reasons raised non-blocking; every other M3 reason is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = ['bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest'] as const satisfies readonly NeedsUserReason[];

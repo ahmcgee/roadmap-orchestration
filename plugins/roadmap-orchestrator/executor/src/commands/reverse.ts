@@ -25,7 +25,7 @@ import type { Event, PlanAppliedFact } from '../core/events.ts';
 import { type CommandId, type DivergenceId, type Sha256Hex, type UnitId, specRev } from '../core/ids.ts';
 import type { PlanManifest } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
-import { type ObligationDef, parseObligations } from '../holistic/types.ts';
+import { type ObligationDef, obligationSource, parseObligations } from '../holistic/types.ts';
 import {
   type InputFile, type InputFiles, OBLIGATIONS_INPUT, PLAN_INPUT, SPEC_INPUT, inForceFiles, keptInput, keptPayload, requirePlanInForce, revisionInForce,
   specBytesOf, specFilePath,
@@ -36,9 +36,8 @@ import { type CommandContext, type Effect, commitUnderFence, evaluateRevision, p
 
 type Manifest = PlanManifest & Readonly<{ obligations: Sha256Hex | null }>;
 
-/** The plan, specs and obligations a `plan-applied` put in force (a dev.5 revision names no obligations). */
+/** The plan, specs and obligations a `plan-applied` put in force. */
 function manifestOf(runDir: AbsPath, fact: PlanAppliedFact): Manifest {
-  if (fact.payloadSha256 === undefined) return { planSha256: fact.planSha256, specs: fact.specs, obligations: null };
   const m = keptPayload(runDir, fact.payloadSha256).manifest;
   return { planSha256: m.planSha256, specs: m.specs, obligations: m.obligations };
 }
@@ -97,7 +96,7 @@ function specAtRev(ctx: CommandContext, events: readonly Event[], unit: UnitId, 
 
 /** Whether two versions of an obligation differ in what its rev counts: statement, docRef or activation. */
 const normative = (a: ObligationDef, b: ObligationDef): boolean =>
-  a.statement !== b.statement || canonicalJson(a.docRef) !== canonicalJson(b.docRef) || a.activation !== b.activation;
+  a.statement !== b.statement || canonicalJson(obligationSource(a)) !== canonicalJson(obligationSource(b)) || a.activation !== b.activation;
 
 /**
  * The obligations file restoring `pre` (the preimage's bytes) as a fresh revision of `now` (the one in force): each
@@ -146,8 +145,8 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
   const preM = manifestOf(ctx.runDir, pre);
   const postM = manifestOf(ctx.runDir, post);
   const inForce = requirePlanInForce(ctx.runDir, view);
-  const revision = revisionInForce(ctx.runDir, inForce, ctx.planFile);
-  const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile);
+  const revision = revisionInForce(ctx.runDir, inForce);
+  const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile, ctx.repo);
 
   // The touched artifacts as the preimage recorded them, and a later revision that changed any of them again.
   const preSpecs = new Map((Object.entries(d.preimage.specs) as [UnitId, number][]).map(([u, rev]) => [u, specAtRev(ctx, events, u, rev, decided.planRev)] as const));
@@ -176,7 +175,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
     if (!restore) return [u.id, now] as const;
     const sha = preSpecs.get(u.id) ?? preM.specs[u.id];
     if (sha === undefined) throw new Error(`${divergence}: the preimage plan lists ${u.id} without a spec`);
-    const bytes = specBytesOf(ctx.runDir, sha, path).bytes;
+    const bytes = specBytesOf(ctx.runDir, sha);
     const recorded = view.unit(u.id).spec;
     // A dispatched unit takes the preimage's content as the next rev of its recorded spec (its pending revision).
     return [u.id, { path, bytes: recorded === null ? bytes : specBytes({ ...parseSpec(bytes, path), rev: specRev(recorded.rev + 1) }) }] as const;

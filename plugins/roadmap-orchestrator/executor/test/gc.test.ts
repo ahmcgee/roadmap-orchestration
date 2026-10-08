@@ -90,7 +90,7 @@ async function seal(a: Arc, opts: SealOptions = {}): Promise<Sha> {
   mkdirSync(a.runDir, { recursive: true });
   const j = openJournal(a.runDir, a.arc);
   try {
-    const applied = recordPlan(j, a.runDir, readInputFiles(a.planPath), [], BASE);
+    const applied = recordPlan(j, a.runDir, readInputFiles(a.planPath, a.repo), [], BASE);
     const lane = tmpDir('gc-lane');
     writeFileSync(join(lane, 'lane.log'), 'raw lane output\n');
     await runOp(j, evidenceSnapshotOp, `evidence:${a.arc}`, {
@@ -335,7 +335,7 @@ test('gc.refuses-later-work: later work in an arc\'s own log or queue (a mutatio
   j1.fact({ kind: 'admissions-closed', command: commandId('cmd-0123456789abcdef') });
   j1.close();
   const j2 = openJournal(reopened!.runDir, reopened!.arc);
-  recordPlan(j2, reopened!.runDir, readInputFiles(reopened!.planPath), [], BASE);
+  recordPlan(j2, reopened!.runDir, readInputFiles(reopened!.planPath, reopened!.repo), [], BASE);
   j2.close();
   submitCommand(pending!.runDir, pending!.arc, { type: 'stop' });
 

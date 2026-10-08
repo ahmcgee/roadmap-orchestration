@@ -68,7 +68,7 @@ export type AppliedRevision = Readonly<{ seq: number; commit: IntentOf<'revision
 // Payloads are content-addressed and immutable: read each once per process.
 const payloads = new Map<string, RevisionPayload>();
 
-/** Every applied revision (1.0.0-dev.6 and later: a 1.0.0-dev.5 revision has no `revision.commit`), in log order. */
+/** Every applied revision, in log order. */
 export function appliedRevisions(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): readonly AppliedRevision[] {
   const view = ctx.journal.view;
   return view.opsOf('revision.commit').flatMap((commit) => {

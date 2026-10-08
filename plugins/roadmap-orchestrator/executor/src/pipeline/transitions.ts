@@ -87,8 +87,11 @@ export const MAX_REVISE_ROUNDS = DEFAULT_BOUNDS.reviseRounds;
 export const MAX_CANDIDATE_REDS = DEFAULT_BOUNDS.candidateReds;
 export const MAX_RETRIES = DEFAULT_BOUNDS.retries;
 
-/** Where a decision sends the unit: a build round, or another stage. Never `prepare`: only a re-entry starts there. */
-export type Target = Readonly<{ stage: 'build'; round: BuildRound }> | Readonly<{ stage: Exclude<OutcomeStage, 'build' | 'prepare'> }>;
+/**
+ * Where a decision sends the unit: a build round, or another stage. `prepare` only after a lanes `known-defect` (M4a rev
+ * 3, F4: the unit waits there for the defect's fixer, then merges the tip in); otherwise only a re-entry starts there.
+ */
+export type Target = Readonly<{ stage: 'build'; round: BuildRound }> | Readonly<{ stage: Exclude<OutcomeStage, 'build'> }>;
 
 /** A park's class as the table fixes it: probed and re-run, or the architect's (`env` or `design`). */
 export type ParkClass = 'retryable' | OperatorParkKind;
@@ -103,15 +106,18 @@ type Hold = Readonly<{ do: 'hold' }>;
 type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
 /** The stage's one uncharged retry, then park with `reason` and class `park`. */
 type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason; park: ParkClass }>;
-type BoundedRound = 'redirect' | 'revise' | 'candidate-red';
-/** A round the unit may take `bounds[bound]` times; the next one takes `then`, uncharged. */
+type BoundedRound = 'redirect' | 'revise' | 'candidate-red' | 'smoke';
+/**
+ * A round the unit may take `bounds[bound]` times; the next one takes `then`, uncharged. M4a rev 3 (D2, R38): the smoke
+ * round's `then` goes on to the gate, which decides with the survivors (`Go`, never a halt).
+ */
 type Bounded<S extends OutcomeStage> = Readonly<{
   do: 'bounded';
   round: BoundedRound;
-  bound: keyof Pick<Bounds, 'redirects' | 'reviseRounds' | 'candidateReds'>;
+  bound: keyof Pick<Bounds, 'redirects' | 'reviseRounds' | 'candidateReds' | 'smokeRounds'>;
   to: Target;
   chargeable: boolean;
-  then: S extends JudgmentStage ? RouteUp : Park;
+  then: S extends JudgmentStage ? RouteUp : Park | Go;
 }>;
 
 /** Route-ups exist only at judgment stages and retries only at retry stages, as the fact validator requires. */
@@ -120,7 +126,7 @@ type Rule<S extends OutcomeStage> =
 
 type Table = { readonly [S in OutcomeStage]: { readonly [K in StageOutcomeKind<S>]: Rule<S> } };
 
-const at = (stage: Exclude<OutcomeStage, 'build' | 'prepare'>): Target => ({ stage });
+const at = (stage: Exclude<OutcomeStage, 'build'>): Target => ({ stage });
 const build = (round: BuildRound): Target => ({ stage: 'build', round });
 const go = (to: Target): Go => ({ do: 'go', to, chargeable: false, trigger: false });
 const charge = (to: Target): Go => ({ do: 'go', to, chargeable: true, trigger: false });
@@ -163,6 +169,9 @@ export const TABLE: Table = {
     'process-fault': park('process-fault', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
+    // M4a rev 3 (E, R55): a frontier or summit builder under `by-builder` makes no plan-check call; its fresh build
+    // assesses in session first.
+    'in-session': go(build('fresh')),
   },
   build: {
     success: go(at('quiesce')),
@@ -180,6 +189,11 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
+    // M4a rev 3 (E, R55): the in-session assessment found the spec infeasible. A build has no escalation seat to route up
+    // to (route-up is a judgment stage's), so the unit parks for a spec revision with the escalation's reason.
+    infeasible: park('escalation', 'design'),
+    // The assessment raised the risk floor onto another implementer seat: a fresh build there, uncharged.
+    'risk-raised': go(build('fresh')),
   },
   quiesce: { empty: go(at('evidence')) },
   evidence: { captured: go(at('salvage')) },
@@ -201,6 +215,13 @@ export const TABLE: Table = {
     occupied: park('occupancy-unlabelled', 'env'),
     // A lane's resources could not be cleaned: a residue, never released.
     'cleanup-failed': park('residue', 'retryable'),
+    // M4a rev 3 (D1): a green certified series lacks a required witness, or it fails: a C fix round listing them.
+    'witnesses-missing': charge(build('fix')),
+    // M4a rev 3 (D2, R38): a smoke target survived the reverted production diff: `smokeRounds` C fix rounds, then the
+    // gate decides with the survivors.
+    'smoke-survived': { do: 'bounded', round: 'smoke', bound: 'smokeRounds', to: build('fix'), chargeable: true, then: go(at('gate')) },
+    // M4a rev 3 (F4): the unit hit a plan known defect; uncharged, it waits at prepare for the fixer, then merges the tip in.
+    'known-defect': go(at('prepare')),
   },
   gate: {
     approve: go(at('candidate')),
@@ -212,6 +233,8 @@ export const TABLE: Table = {
     'process-fault': park('process-fault', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
+    // M4a rev 3 (paid run 11): the latest spec series' checkout is gone or of another commit; the lanes run again, uncharged.
+    unverified: go(at('lanes')),
   },
   candidate: {
     green: go(at('ff')),
@@ -255,7 +278,7 @@ type Step =
   | Readonly<{ to: 'hold' | 'retire' }>;
 type Decision = Readonly<{ class: OutcomeClass; chargeable: boolean; step: Step }>;
 
-const ROUND_COUNTERS = { redirect: 'redirects', revise: 'reviseRounds', 'candidate-red': 'candidateReds' } as const satisfies {
+const ROUND_COUNTERS = { redirect: 'redirects', revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds' } as const satisfies {
   readonly [R in BoundedRound]: keyof UnitCounters;
 };
 
@@ -392,8 +415,8 @@ export function parkClassOf(u: UnitState, outcome: StageOutcome): ParkClass | nu
 
 /**
  * What only the stage knows about its outcome. `targets`: a retryable park's probe targets (non-empty; a
- * stage that states none leaves the fact without `park`, read as the pre-M2 operator default until the
- * stages name their targets, M2 step 7a). `cause`: why a hold is not an operator pause or stop (G5).
+ * stage that states none leaves the fact without `park`, which the fold reads as an operator park until the
+ * stages name their targets: the interim M2 shim, step 7a, src/core/state.ts `unclassedParkRecord`). `cause`: why a hold is not an operator pause or stop (G5).
  */
 export type OutcomeContext = Readonly<{ targets?: readonly ProbeTarget[]; cause?: HoldCause }>;
 
@@ -459,17 +482,20 @@ export function decidedBy(fact: StageOutcomeFact): Decided {
   switch (fact.class) {
     case 'advance':
     case 'trigger':
+      // A bounded round past its bound that goes on (the smoke round's `then`) advances to its `then`'s target.
+      if (rule.do === 'bounded' && rule.then.do === 'go') return { kind: 'stage', target: rule.then.to };
       if (rule.do !== 'go') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule is ${rule.do}`);
       return { kind: 'stage', target: rule.to };
     case 'redirect':
     case 'revise':
     case 'candidate-red':
+    case 'smoke':
       if (rule.do !== 'bounded') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule is ${rule.do}`);
       return { kind: 'stage', target: rule.to };
     case 'retry':
-      return { kind: 'stage', target: fact.stage === 'build' ? build('resume') : at(fact.stage as Exclude<OutcomeStage, 'build' | 'prepare'>) };
+      return { kind: 'stage', target: fact.stage === 'build' ? build('resume') : at(fact.stage as Exclude<OutcomeStage, 'build'>) };
     case 'route-up':
-      return { kind: 'stage', target: at(fact.stage as Exclude<OutcomeStage, 'build' | 'prepare'>) };
+      return { kind: 'stage', target: at(fact.stage as Exclude<OutcomeStage, 'build'>) };
     case 'park':
     case 'stop':
       // A chargeable park is only ever the bound (decide); a steer exit is a park where the table's rule goes on (an

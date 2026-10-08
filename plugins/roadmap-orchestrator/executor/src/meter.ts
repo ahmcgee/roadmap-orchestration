@@ -5,8 +5,9 @@
 // every result.
 //
 // Smokes are charged to their backend, not to a seat (`bySmoke`), so seat spend is the units' and jobs' own. A job's
-// lens or checkpoint call (M3, `MeterSubject.job`) is charged to its arc seat (`lens.arc`, `checkpoint.arc`): it
-// counts in `byRole` and `bySeat` like a unit's call, and per job in `byJob` (never in `byUnit`).
+// lens or checkpoint call (M3, `MeterSubject.job`), and a pack review's (M4a, job `review-<n>`), is charged to its arc
+// seat (`lens.arc`, `checkpoint.arc`, `packReview.arc`): it counts in `byRole` and `bySeat` like a unit's call, and per
+// job in `byJob` (never in `byUnit`).
 //
 // Totals are keyed by role (and seat tier) and routing revision, never by model: records carry `{role,
 // tier, routingRev}` only. `byModel` derives a model view at render time from the revisions' routing tables
@@ -43,7 +44,7 @@ export type Meter = Readonly<{
   bySeat: readonly SeatTotal[];
   /** Ascending by unit, role, routingRev. */
   byUnit: readonly UnitTotal[];
-  /** M3: the jobs' lens and checkpoint calls, ascending by job, role, routingRev. */
+  /** M3: the jobs' lens and checkpoint calls (M4a: and pack review calls), ascending by job, role, routingRev. */
   byJob: readonly JobTotal[];
   /** Start-up smokes, ascending by backend, routingRev: in no role, seat or unit total. */
   bySmoke: readonly SmokeTotal[];

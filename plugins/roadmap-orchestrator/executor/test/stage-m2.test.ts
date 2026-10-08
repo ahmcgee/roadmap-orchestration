@@ -21,7 +21,7 @@ import { type StageContext, type StageParent, isCancelled, unitBranch } from '..
 import { consumeJudgment, fingerprintAt, gate } from '../src/pipeline/gate.ts';
 import { candidate, ff, snapshot } from '../src/pipeline/integrate.ts';
 import { reserveNow } from '../src/pipeline/lanes.ts';
-import { NO_SESSION_NOTE } from '../src/pipeline/rounds.ts';
+import { NO_SESSION_NOTE } from '../src/prompts/directives.ts';
 import {
   type BuildRun, type LanesDone, at, build, evidence, lanes, planCheck, quiesce, record, recordedCall, salvage, start, teardown,
 } from '../src/pipeline/stages.ts';
@@ -48,8 +48,6 @@ import { CLEAR } from './fixtures/probe-common.ts';
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const live = (): AbortSignal => new AbortController().signal;
 const STRAIGHT: readonly Step[] = [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
-/** Every arc here but the stranded gate's is started on M2 (`scheduling: 'dag'`): its stages take `@cpu`. */
-const DAG = true as const;
 const ADMISSION = ['plan-check', 'build', 'lanes', 'gate', 'candidate'] as const;
 
 const eventsOf = (d: ArcDescriptor): readonly Event[] => readJournal(absPath(d.runDir), arcId(d.arc)).events;
@@ -80,7 +78,7 @@ async function buildToLanes(run: StageRun, input: Parameters<typeof build>[2]): 
 // Entry reservations and judgment inputs
 
 test('stage.entry-before-first-op: every admitted stage\'s first journaled op is its entry reservation, released by its stage (a build\'s by teardown)', T, async () => {
-  const d = setupArc({ steps: STRAIGHT, dag: DAG });
+  const d = setupArc({ steps: STRAIGHT });
   const r = contextFor(d);
   try {
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
@@ -119,7 +117,7 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
 });
 
 test('gate.judgment-inputs: plan-check and gate write their inputs before the entry reservation and the spawn; the gate\'s carry its fingerprint', T, async () => {
-  const d = setupArc({ steps: STRAIGHT, dag: DAG });
+  const d = setupArc({ steps: STRAIGHT });
   const base = git(d.repo, 'rev-parse', 'main');
   const r = contextFor(d);
   try {
@@ -230,7 +228,7 @@ async function cancelWhileWaiting(run: StageRun, going: (ctx: StageContext) => P
 }
 
 test('stage.cancel-wait-journals-nothing: a first build paused while waiting for its reservation never started; resumed, it runs fresh', T, async () => {
-  const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] })], dag: DAG });
+  const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] })] });
   started(await planCheck(run.ctx, run.unit));
   const attempts = run.journal.view.unit(U1).counters.attempts;
   await cancelWhileWaiting(run, (ctx) => build(ctx, run.unit, { kind: 'fresh' }));
@@ -249,7 +247,6 @@ test('stage.cancel-wait-journals-nothing: a fix round paused while waiting for i
       codexBuild([], { argv: ['exec', '-C'] }),
       codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', 'resume'] }),
     ],
-    dag: DAG,
   });
   started(await planCheck(run.ctx, run.unit));
   const red = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
@@ -271,7 +268,6 @@ test('stage.cancel-wait-journals-nothing: a fix round paused while waiting for i
 test('gate.cancel-wait-recaptures: a gate paused while waiting for its @cpu leaves only its capture; resumed, the same attempt captures again and approves', T, async () => {
   const run = setupUnit({
     steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] }), gateStep({ decision: 'approve' })],
-    dag: DAG,
   });
   started(await planCheck(run.ctx, run.unit));
   const green = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
@@ -303,7 +299,7 @@ test('gate.cancel-wait-recaptures: a gate paused while waiting for its @cpu leav
 // The publication holder
 
 async function readyForCandidate(): Promise<ArcDescriptor> {
-  const d = setupArc({ steps: STRAIGHT, dag: DAG });
+  const d = setupArc({ steps: STRAIGHT });
   const r = contextFor(d);
   try {
     await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
@@ -470,7 +466,6 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
   const run = setupUnit({
     steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] })],
     resources: [DB],
-    dag: DAG,
   });
   started(await planCheck(run.ctx, run.unit));
   const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
@@ -529,7 +524,7 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
 });
 
 test('stage.repeat-park: a retryable park on a target the unit recovered on within 6 h is written operator, and its item is env-blocked', () => {
-  const run = setupUnit({ steps: [], dag: DAG });
+  const run = setupUnit({ steps: [] });
   const parent = at(start(run.ctx, U1, 'plan-check'), 'plan-check');
   const first = record(run.ctx, parent, 'process-fault', null, { backend: 'claude', failed: [] });
   assert.equal(first.next.kind, 'park');
@@ -559,7 +554,6 @@ test('rounds.d4-through-driver: red, a stalled fix round, then the next build la
         acts: [{ type: 'commit', message: 'fix add', files: ADD_FIX }, { type: 'emit', value: BUILD_REPORT }],
       },
     ],
-    dag: DAG,
   });
   started(await planCheck(run.ctx, run.unit));
   const red1 = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));

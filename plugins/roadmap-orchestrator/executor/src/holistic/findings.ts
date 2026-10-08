@@ -2,11 +2,14 @@
 // store: `finding-opened` and `finding-transition` facts, folded into `HolisticFold.findings` (src/core/state.ts). This
 // module decides what is written and derives everything else from the fold.
 //
-// - **Opening and dedupe.** `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
+// - **Opening and dedupe.** Openers: an audit's lenses, code's witness P1s, plan-check (R17) and a checkpoint's issue
+//   intake (M4a, lens `issue`). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
 //   fixed-on-branch) merges into it: nothing is written. A key matching a finding ruled `dismissed` is suppressed unless
 //   a cited evidence blob changed (a path both cite, with a different blob): a dismissal lasts the arc's lifetime (the
 //   growth control is its scope: the arc's own log, never carried into the next arc). A vacuity finding's mutant patch
-//   is kept content-addressed first (`keepMutantPatch`, `inputs/<sha256>.patch`), so its fact names kept bytes.
+//   is checked at admission and kept content-addressed first (`admitMutant`: `checkPatch`, then `keepMutantPatch`,
+//   `inputs/<sha256>.patch`), so its fact names kept bytes; a patch git cannot parse refuses the draft (H6). Within one
+//   audit, a second lens's draft with an equal `crossKey` corroborates the first (`corroborateFinding`, H7).
 // - **States (R5).** `open → owned → fixed-on-branch → resolved`, or `ruled`. Ownership follows the units that repair a
 //   finding (`ownershipMoves`, driven by src/pipeline/reproduce.ts `syncRepairs`): the first live unit whose spec
 //   repairs it owns it; its gate's approval standing makes it `fixed-on-branch`; its publication resolves it. A
@@ -22,20 +25,24 @@
 //   and its item loses nothing.
 // - **Instrumentation.** `findingMetrics`: per finding `{lens, severity, gateHadPassed, disposition, merged,
 //   timeToResolveMs}`, over the log's events (their times).
-import { canonicalJson } from '../core/json.ts';
+import { isAbsolute } from 'node:path';
+import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Event, HolisticFact, Parent } from '../core/events.ts';
-import type { FindingId, JobId, NeedsUserId, ObligationId, Sha256Hex, UnitId, VisionClauseId } from '../core/ids.ts';
+import {
+  type FindingId, type IssueId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, sha256,
+} from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
 import type { AbsPath } from '../core/values.ts';
 import { MUTANT_PATCH_INPUT } from '../git/mutant.ts';
+import { checkPatch } from '../git/patchcheck.ts';
 import { keepInput } from '../input/inforce.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { PARK_ESCALATE_MS } from '../schedule/types.ts';
 import {
   type FindingDisposition, type FindingEvidence, type FindingLens, type FindingRuledBy, type FindingSeverity, type FindingSource, type FindingStateName,
-  type FindingTo, FINDING_MOVES, findingKey,
+  type FindingTo, type LensKind, FINDING_MOVES, findingKey,
 } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -49,6 +56,21 @@ export type FindingDraft = Omit<Extract<HolisticFact, { kind: 'finding-opened' }
 
 /** Keeps a mutant's patch (a unified diff against the repo root) as `inputs/<sha256>.patch`; its sha names it. */
 export const keepMutantPatch = (runDir: AbsPath, patch: string): Sha256Hex => keepInput(runDir, Buffer.from(patch, 'utf8'), MUTANT_PATCH_INPUT);
+
+/** A vacuity draft's mutant at admission: kept, or refused because git cannot parse its patch (git's stderr). */
+export type MutantAdmission =
+  | Readonly<{ kind: 'kept'; mutant: Readonly<{ patchSha256: Sha256Hex; lane: LaneId }> }>
+  | Readonly<{ kind: 'corrupt'; stderr: string }>;
+
+/**
+ * H6 (F14): a vacuity finding's mutant patch checked before anything rests on it (`checkPatch`, read-only in `repo`),
+ * then kept. A corrupt patch is never kept: its draft is refused (nothing opened) with git's stderr.
+ */
+export function admitMutant(repo: AbsPath, runDir: AbsPath, patch: string, lane: LaneId): MutantAdmission {
+  const check = checkPatch(repo, patch);
+  if (check.kind === 'corrupt') return check;
+  return { kind: 'kept', mutant: { patchSha256: keepMutantPatch(runDir, patch), lane } };
+}
 
 const ACTIVE: ReadonlySet<FindingStateName> = new Set(['open', 'owned', 'fixed-on-branch']);
 /** Open, owned or fixed-on-branch: not yet resolved or ruled. */
@@ -90,8 +112,27 @@ export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen 
   if (admission.kind !== 'open') return admission;
   const id = journal.view.nextFindingId();
   const { cause: _cause, ...fields } = draft;
-  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: [...new Set(draft.visionClauses)].sort() });
+  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: canonicalIds(draft.visionClauses) });
   return { kind: 'opened', id };
+}
+
+/**
+ * The cross-lens key of a draft (H7, R62): its repo evidence paths (relative ones; absolute and evidence-dir paths are
+ * not the product's), sorted and once each, its obligation and its cause; the lens is left out. Within one audit, a
+ * second lens's draft with an equal key is the same defect (src/holistic/audit.ts); across audits `findingKey` dedupes.
+ */
+export function crossKey(draft: FindingDraft): Sha256Hex {
+  const paths = [...new Set(draft.evidence.map((e) => e.path).filter((p) => !isAbsolute(p)))].sort();
+  return sha256(sha256Hex(canonicalJson({ paths, obligation: draft.obligation, cause: draft.cause })));
+}
+
+/**
+ * Records that `lens` saw finding `id` too (`finding-corroborated`, keeping its claim as the rationale), once: a resumed
+ * audit asking the same lens again writes nothing new.
+ */
+export function corroborateFinding(journal: Journal, id: FindingId, lens: LensKind, claim: string): void {
+  if (journal.view.holistic().corroborations.some((c) => c.id === id && c.lens === lens && c.claim === claim)) return;
+  journal.fact({ kind: 'finding-corroborated', id, lens, claim });
 }
 
 /**
@@ -102,7 +143,7 @@ export function witnessFindingDraft(input: Readonly<{
   obligation: ObligationId; serves: readonly VisionClauseId[]; job: JobId; claim: string; evidence: readonly FindingEvidence[]; gateHadPassed: boolean;
 }>): FindingDraft {
   return {
-    lens: 'witness', severity: 'P1', obligation: input.obligation, visionClauses: [...input.serves].sort(), claim: input.claim,
+    lens: 'witness', severity: 'P1', obligation: input.obligation, visionClauses: canonicalIds(input.serves), claim: input.claim,
     cause: 'witness not held', evidence: input.evidence, mutant: null, source: { type: 'job', job: input.job }, gateHadPassed: input.gateHadPassed,
   };
 }
@@ -114,6 +155,17 @@ export function visionConflictDraft(input: Readonly<{
   return {
     lens: 'plan-check', severity: 'P3', obligation: null, visionClauses: input.clauses, claim: input.note, cause: `${input.unit}: ${input.note}`,
     evidence: [], mutant: null, source: { type: 'stage', unit: input.unit, stage: 'plan-check', attempt: input.attempt }, gateHadPassed: false,
+  };
+}
+
+/**
+ * A captured issue's finding (M4a: a checkpoint's intake outcome `finding`, lens `issue`, P2 or P3): one stable cause per
+ * issue and cause, opened by the checkpoint whose capture held the issue.
+ */
+export function issueFindingDraft(input: Readonly<{ issue: IssueId; job: JobId; severity: 'P2' | 'P3'; claim: string; cause: string }>): FindingDraft {
+  return {
+    lens: 'issue', severity: input.severity, obligation: null, visionClauses: [], claim: input.claim, cause: `${input.issue}: ${input.cause}`,
+    evidence: [], mutant: null, source: { type: 'job', job: input.job }, gateHadPassed: false,
   };
 }
 

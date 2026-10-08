@@ -29,7 +29,9 @@ import { BRANCHES, CANNOT_SHOW, type CheckResult } from '../evals/m3/check.ts';
 import type { Report } from '../evals/m3/driver.ts';
 import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, MAIN, MONEY_LANE, UNITS, barrierFile, layout } from '../evals/m3/layout.ts';
 import { type StoryName, UNIT_STORY, storySteps } from '../evals/m3/scenario.ts';
-import { REPAIR_UNIT, repairSpecText } from '../evals/m3/setup.ts';
+import { REPAIR_UNIT, forgePath, repairSpecText } from '../evals/m3/setup.ts';
+import { phase0Check } from '../src/commands/phase0.ts';
+import { parseCorpusPin } from '../src/corpus/types.ts';
 import { type Exit, fixture, runUntilExit } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type ScenarioFile, readCalls } from './helpers/scenario.ts';
@@ -70,6 +72,17 @@ const criterion = (c: Checked, name: string) => {
 };
 
 type ObligationsFile = ReturnType<typeof parseObligations>;
+
+/** Runs `fn` with `path` as PATH (the fixture's fake gh first). */
+async function withPath<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  const before = process.env['PATH'];
+  process.env['PATH'] = path;
+  try {
+    return await fn();
+  } finally {
+    process.env['PATH'] = before;
+  }
+}
 
 /** Runs arc lane `lane` in `cwd` as a witness run would (the witness env over a fresh file); its exit and records. */
 function runArcLane(o: ObligationsFile, lane: string, cwd: string) {
@@ -112,7 +125,7 @@ function playBuild(unit: string, cwd: string): void {
   }
 }
 
-test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness lanes report what the story needs, the barrier holds only audit-1\'s run, and the story\'s builds regress and restore I-2', T, async () => {
+test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose witness lanes report what the story needs, the barrier holds only audit-1\'s run, and the story\'s builds regress and restore I-2', T, async () => {
   const dir = join(tmpDir('m3-setup'), 'fx');
   const out = await script('setup.ts', [dir]);
   assert.equal(out.code, 0, out.stderr);
@@ -120,7 +133,13 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
   const plan = parsePlan(JSON.parse(readFileSync(l.plan, 'utf8')));
   assert.equal(plan.arc, l.arc);
   assert.deepEqual(plan.units.map((u) => u.id), [...UNITS]);
-  assert.deepEqual(plan.holistic, { vision: 'vision.json', advances: ['V-1', 'V-2', 'V-3', 'V-4'], obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } });
+  assert.equal(plan.target, 'corpus', 'a fresh holistic arc targets a corpus (M4a R17)');
+  assert.deepEqual(plan.holistic, { advances: ['V-1', 'V-2', 'V-3', 'V-4'], obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } });
+  const p0 = await withPath(forgePath(l), () => phase0Check({ repo: absPath(l.repo), source: { type: 'plan', plan: l.plan } }));
+  assert.deepEqual(p0.rows, [], 'phase0 check is green over the fixture (the one-file corpus, its pin, the capture, the record)');
+  const pin = parseCorpusPin(JSON.parse(readFileSync(l.pin, 'utf8')));
+  assert.deepEqual(pin.files.map((f) => f.path), ['ledger.md', 'vision.md'], 'one rules file and the vision document');
+  assert.deepEqual(pin.rules.map((r) => [r.id, r.file]), [['T-1', 'ledger.md'], ['T-2', 'ledger.md'], ['T-3', 'ledger.md']]);
   assert.deepEqual(plan.limits, { convergenceK: CONVERGENCE_K });
   const vision = parseVision(JSON.parse(readFileSync(l.vision, 'utf8')));
   assert.deepEqual(vision.clauses.map((c) => [c.id, c.kind, c.rank, c.state]), [['V-1', 'purpose', null, 'active'], ['V-2', 'non-negotiable', null, 'active'], ['V-3', 'tradeoff', 1, 'active'], ['V-4', 'world', null, 'active']]);
@@ -128,6 +147,8 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
   assert.deepEqual(advancesReasons(vision, plan.holistic!.advances), []);
   const o = parseObligations(JSON.parse(readFileSync(l.obligations, 'utf8')));
   assert.deepEqual(o.obligations.map((x) => [x.id, x.activation, x.serves, x.deliveredBy]), [['I-1', 'future', ['V-1', 'V-4'], ['parse', 'report']], ['I-2', 'must-hold', ['V-2'], []], ['I-3', 'must-hold', ['V-3'], []]]);
+  assert.deepEqual(o.obligations.map((x) => [x.id, x.rule?.id, x.rule?.textSha256]), pin.rules.map((r, i) => [`I-${i + 1}`, r.id, r.textSha256]), 'I-n is anchored at T-n');
+  assert.deepEqual(o.census, pin.rules.map((r, i) => ({ rule: r.id, state: { type: 'obligation', id: `I-${i + 1}` } })));
   assert.deepEqual(o.lanes.map((x) => x.reporter), ['node-test', 'node-test', 'node-test']);
   const mapped = new Map(o.mapping.paths.map((m) => [m.pattern as string, m.obligations]));
   for (const u of plan.units) {
@@ -137,8 +158,10 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
   }
   assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.scope, ['src/cli.js']);
   assert.deepEqual(mapped.get('src/cli.js'), ['I-3'], 'tidy\'s one path maps to I-3 only');
-  // What tidy's judges read says nothing about rounding (its spec, the contract it cites, the architecture doc), and its
-  // story diff holds no rounding code: the regression is formatDisplay's existing toFixed, reached by a routing change.
+  // tidy's spec, the contract it cites and ARCHITECTURE.md say nothing about rounding, and its story diff holds no
+  // rounding code: the regression is formatDisplay's existing toFixed, reached by a routing change. (In the corpus arc
+  // every judge also reads the rules index, whose T-2 states the rounding rule, as the M3 architecture-doc arc's judges
+  // did not: the story is branch-tolerant, R, P or L.)
   const tidySpec = readFileSync(join(l.input, 'tidy.json'), 'utf8');
   for (const text of [tidySpec, readFileSync(join(l.repo, '.roadmap/contracts/ledger.md'), 'utf8'), readFileSync(join(l.repo, 'ARCHITECTURE.md'), 'utf8')]) {
     assert.doesNotMatch(text, /round|even|half|toFixed|Intl/i);
@@ -212,7 +235,8 @@ test('evals-m3.setup-valid: setup lays out a valid holistic plan whose witness l
 
   const steps = storySteps('story', 'default');
   assert.equal(steps.filter((s) => s.unit === undefined).length, 2, 'the one start smokes Claude and Codex');
-  assert.equal(steps.filter((s) => s.unit !== undefined && !/^(audit|ckpt)-/.test(s.unit)).length, 12, 'three calls for each of four units');
+  assert.equal(steps.filter((s) => s.unit !== undefined && !/^(audit|ckpt|review)-/.test(s.unit)).length, 12, 'three calls for each of four units');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('review-') === true).length, 1, 'one pack review call (the corpus arc\'s, before the first admission)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 5, 'five lens calls');
   assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 5, 'five checkpoint calls (the paid run\'s four and the partial bundle)');
 });

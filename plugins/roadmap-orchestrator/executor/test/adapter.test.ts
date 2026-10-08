@@ -5,10 +5,6 @@ import { describe, it } from 'node:test';
 import { adapt, schemaViolation, writeResult } from '../src/backends/adapter.ts';
 import { ResultConflictError, UnsupportedSchemaError } from '../src/backends/errors.ts';
 import type { BackendOutcomeKind, ExitFile, ResultFile } from '../src/core/records.ts';
-import { arcId, invocationId, opId } from '../src/core/ids.ts';
-import { canonicalJson } from '../src/core/json.ts';
-import { absPath } from '../src/core/values.ts';
-import { runnerFiles } from '../src/runner/files.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { CAPACITY_TEXT, editClaudeResult, fixtureInvocation, writeExit, writeLaunch } from './helpers/scenario.ts';
 
@@ -183,20 +179,6 @@ describe('adapter', () => {
       assert.deepEqual(r.type === 'command' ? [r.exitCode, r.verdict, r.verdict === 'cancelled' ? r.reason : null] : r, [null, 'cancelled', 'stop']);
     });
 
-    it('upgrade.lane-cancelled-dev3: a cancelled lane 1.0.0-dev.3 recorded as process-fault reads as cancelled{reason}, and a re-run adapter keeps its bytes', () => {
-      const invDir = cancelledLane();
-      const dev3 = `${canonicalJson({ ...BIND, type: 'command', purpose: 'lane', exitCode: null, expectedExit: 0, verdict: 'process-fault' })}\n`;
-      writeFileSync(join(invDir, 'result.json'), dev3);
-      const read = runnerFiles(absPath(invDir), invocationId(opId(arcId(BIND.arc), 7), 1)).read('result.json');
-      assert.ok(read?.type === 'command' && read.verdict === 'cancelled');
-      assert.equal(read.reason, 'stop');
-      const rederived = writeResult(invDir);
-      assert.ok(rederived.type === 'command' && rederived.verdict === 'cancelled' && rederived.reason === 'stop');
-      assert.equal(readFileSync(join(invDir, 'result.json'), 'utf8'), dev3, 'never rewritten');
-      // Any other difference is still a conflict.
-      writeFileSync(join(invDir, 'result.json'), dev3.replace('"expectedExit":0', '"expectedExit":3'));
-      assert.throws(() => writeResult(invDir), ResultConflictError);
-    });
   });
 
   describe('schemaViolation', () => {

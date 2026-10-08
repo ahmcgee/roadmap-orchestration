@@ -3,19 +3,18 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { type Event, type Fact, type LogRecord, type ProbeTarget, prevHash, serializeEvent } from '../src/core/events.ts';
 import {
-  type CommandId, type NeedsUserId, type UnitId, commandId, edgeId, invocationId, needsUserId, opId, opKey, planRev, seatRev, sha, sha256,
-  specRev, unitId,
+  type CommandId, type NeedsUserId, type UnitId, commandId, edgeId, invocationId, knownDefectIdOf, laneId, needsUserId, opId, opKey, planRev, seatRev, sha,
+  sha256, specRev, unitId,
 } from '../src/core/ids.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
 import { Fold } from '../src/core/state.ts';
-import { legacyNext } from '../src/core/upgrade.ts';
 import { absPath, branchName, isoTime, planPath, refName, repoPath, repoPattern } from '../src/core/values.ts';
-import { PLAN_SCHEMA, type PlanM1, type PlanUnit } from '../src/input/plan.ts';
+import { type KnownDefect, PLAN_SCHEMA, type PlanM1, type PlanUnit } from '../src/input/plan.ts';
 import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import type { RiskTier } from '../src/routing/types.ts';
-import { type ReadyInput, type SpecFactsOf, admitter, rankOf, ready } from '../src/schedule/ready.ts';
+import { type ReadyInput, type SpecFactsOf, activeKnownDefects, admitter, knownDefectActive, rankOf, ready } from '../src/schedule/ready.ts';
 import { type AdmissionStage, type AdmitInput, type CommandScope, type Rank, PROMOTION_BYPASS, compareRank } from '../src/schedule/types.ts';
-import { ARC, H, REV, chain } from './fixtures/log-records.ts';
+import { ARC, H, REV, appliedFields, chain } from './fixtures/log-records.ts';
 
 const ROUTING = resolveRouting(arcStack('default', null, null)).table;
 const CMD = commandId('cmd-0123456789abcdef');
@@ -31,30 +30,28 @@ const unit = (id: UnitId, extra: Partial<PlanUnit> = {}): PlanUnit => ({
 });
 const planOf = (units: readonly PlanUnit[]): PlanM1 => ({
   schema: PLAN_SCHEMA, arc: ARC, integrationBranch: branchName('main'), baseline: sha('a'.repeat(40)), worktreeRoot: absPath('/wt'), contracts: [],
-  rulings: planPath('rulings.md'), architectureDoc: repoPath('ARCH.md'), direction: 'd', suite: { lanes: [] }, resources: [], units,
+  rulings: planPath('rulings.md'), target: 'architecture-doc', architectureDoc: repoPath('ARCH.md'), direction: 'd', suite: { lanes: [] }, resources: [], units,
 });
 
 const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const outcome = (u: UnitId, stage: string, attempt: number, out: string, cls: string, extra: object = {}): LogRecord =>
   fact({ kind: 'stage-outcome', unit: u, stage, attempt, outcome: out, class: cls, chargeable: false, ...extra });
 const dispatch = (u: UnitId, riskFloor: RiskTier = 'med'): LogRecord => fact({
-  kind: 'dispatch', record: { unit: u, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER },
+  kind: 'dispatch', record: { unit: u, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor, routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER, transientRules: 'm3' },
 });
-const planApplied = (rev: number, units: readonly UnitId[], changes: readonly object[], scheduling: 'dag' | 'legacy'): LogRecord => fact({
-  kind: 'plan-applied', rev: planRev(rev), command: rev === 1 ? null : commandId(`cmd-${String(rev).padStart(16, '0')}`), planSha256: H,
-  specs: Object.fromEntries(units.map((u) => [u, H])), changes, ...(scheduling === 'dag' && rev === 1 ? { scheduling } : {}),
-});
+const planApplied = (rev: number, units: readonly UnitId[], changes: readonly object[]): LogRecord => {
+  const command = rev === 1 ? null : commandId(`cmd-${String(rev).padStart(16, '0')}`);
+  return fact({ kind: 'plan-applied', rev: planRev(rev), command, planSha256: H, specs: Object.fromEntries(units.map((u) => [u, H])), changes, ...appliedFields(rev, command) });
+};
 
 /** A log under construction: records appended in order, folded and indexed on demand. */
 class Log {
   readonly records: LogRecord[] = [];
-  readonly scheduling: 'dag' | 'legacy';
   #rev = 0;
 
-  /** `units`: the baseline revision's units; null starts the log without one (a dev.4 log dispatched before it). */
-  constructor(scheduling: 'dag' | 'legacy', units: readonly UnitId[] | null) {
-    this.scheduling = scheduling;
-    if (units !== null) this.plan(units, []);
+  /** `units`: the baseline revision's units. */
+  constructor(units: readonly UnitId[]) {
+    this.plan(units, []);
   }
 
   add(...records: LogRecord[]): number {
@@ -65,7 +62,7 @@ class Log {
   /** The next plan revision, naming `units`. */
   plan(units: readonly UnitId[], changes: readonly object[]): number {
     this.#rev += 1;
-    return this.add(planApplied(this.#rev, units, changes, this.scheduling));
+    return this.add(planApplied(this.#rev, units, changes));
   }
 
   /** A published `integration.ff` of `u` and its retiring snapshot outcome: the unit merged. Returns the ff done's seq. */
@@ -122,7 +119,7 @@ const readyOf = (log: Log, plan: PlanM1, extras: Extras = {}): readonly (readonl
 
 describe('fold: rank lookups (JournalView.decidedSeq, publications, addedSeq)', () => {
   it('tracks the decided outcome\'s seq through holds, park and recovery; publications in log order; each unit\'s first naming', () => {
-    const log = new Log('dag', [A, B]);
+    const log = new Log([A, B]);
     assert.deepEqual([log.view().decidedSeq(A), log.view().addedSeq(A), log.view().addedSeq(C)], [null, 1, null]);
     log.add(dispatch(A));
     const advanced = log.add(outcome(A, 'teardown', 1, 'released', 'advance'));
@@ -148,7 +145,7 @@ describe('fold: rank lookups (JournalView.decidedSeq, publications, addedSeq)', 
 describe('ready: DAG arcs', () => {
   it('ready.merged-only: a dependent waits until its dependency merged, not when it parks (acknowledged or not); through a lineage once the head prepared', () => {
     const plan = planOf([unit(A), unit(B, { after: [A] }), unit(C, { after: [A] }), unit(D)]);
-    const log = new Log('dag', [A, B, C, D]);
+    const log = new Log([A, B, C, D]);
     assert.deepEqual(readyOf(log, plan), [[A, 'plan-check'], [D, 'plan-check']], 'undispatched units without dependencies run in parallel');
 
     log.add(dispatch(A), outcome(A, 'lanes', 1, 'blocked', 'park', { park: { class: 'operator', kind: 'env' } }));
@@ -156,7 +153,7 @@ describe('ready: DAG arcs', () => {
     log.add(fact({ kind: 'needs-user-acked', id: nu, command: CMD, choice: null }));
     assert.deepEqual(readyOf(log, plan), [[D, 'plan-check']], 'D1: a parked dependency holds its dependents even acknowledged');
 
-    const merged = new Log('dag', [A, B, C, D]);
+    const merged = new Log([A, B, C, D]);
     merged.add(dispatch(A));
     merged.merge(A, 1);
     assert.deepEqual(readyOf(merged, plan), [[D, 'plan-check'], [B, 'plan-check'], [C, 'plan-check']], 'B and C wait from A\'s publication, D from its addition');
@@ -175,7 +172,7 @@ describe('ready: DAG arcs', () => {
   it('ready.contingent: a unit waits for each contingent edge\'s edge-resolved fact, which also starts its wait', () => {
     const e = edgeId('e-top');
     const plan = planOf([unit(A), unit(C, { contingent: [{ id: e, condition: 'the upstream API landed' }] })]);
-    const log = new Log('dag', [A, C]);
+    const log = new Log([A, C]);
     assert.deepEqual(readyOf(log, plan), [[A, 'plan-check']]);
     const seq = log.add(fact({ kind: 'edge-resolved', edge: e, command: CMD, evidence: 'landed upstream' }));
     const r = ready(inputOf(log, plan));
@@ -186,7 +183,7 @@ describe('ready: DAG arcs', () => {
 
   it('ready.run-only: only allowlisted units are offered while an allowlist is in force; clearing it offers every unit again', () => {
     const plan = planOf([unit(A), unit(B), unit(C, { after: [A] })]);
-    const log = new Log('dag', [A, B, C]);
+    const log = new Log([A, B, C]);
     log.add(fact({ kind: 'run-only', command: CMD, units: [B, C] }));
     assert.deepEqual(readyOf(log, plan), [[B, 'plan-check']], 'C is allowed but still waits on A');
     const view = log.view();
@@ -197,63 +194,11 @@ describe('ready: DAG arcs', () => {
 
   it('offers no held, parked or paused unit, and none whose next stage is a chain stage', () => {
     const plan = planOf([unit(A), unit(B), unit(C), unit(D)]);
-    const log = new Log('dag', [A, B, C, D]);
+    const log = new Log([A, B, C, D]);
     log.add(dispatch(A), outcome(A, 'build', 1, 'interrupted', 'hold'));
     log.add(dispatch(B), outcome(B, 'build', 1, 'success', 'advance'));
     log.add(fact({ kind: 'paused', command: CMD, target: { type: 'unit', unit: C } }));
     assert.deepEqual(readyOf(log, plan), [[D, 'plan-check']]);
-  });
-});
-
-describe('ready: legacy arcs (G4)', () => {
-  const plan = planOf([unit(A), unit(B), unit(C, { after: [A] })]);
-
-  /** ready() offers exactly legacyNext's frontier when it is unblocked (no admission constraint holds here). */
-  function frontier(log: Log, expected: readonly UnitId[]): void {
-    const view = log.view();
-    const f = legacyNext(view, plan.units);
-    const unblocked = f !== null && f.block === null ? [f.unit] : [];
-    const got = ready(inputOf(log, plan)).map((r) => r.unit.id);
-    assert.deepEqual(got, unblocked, 'equivalent to legacyNext');
-    assert.deepEqual(got, expected);
-  }
-
-  const parkAt = (log: Log, u: UnitId, attempt = 1): NeedsUserId => {
-    log.add(dispatch(u), outcome(u, 'gate', attempt, 'empty-diff', 'park'));
-    return log.raise(u, 'gate', attempt);
-  };
-
-  it('ready.legacy-chain: one unit at a time in plan order; past a park; explicit after released by the acknowledgement', () => {
-    const log = new Log('legacy', [A, B, C]);
-    frontier(log, [A]);
-    const nuA = parkAt(log, A);
-    frontier(log, [B]);
-    parkAt(log, B);
-    frontier(log, []);
-    assert.match(legacyNext(log.view(), plan.units)?.block ?? '', /held after a/);
-    log.add(fact({ kind: 'needs-user-acked', id: nuA, command: CMD, choice: null }));
-    frontier(log, [C]);
-    log.add(fact({ kind: 'paused', command: CMD, target: { type: 'all' } }));
-    frontier(log, []);
-  });
-
-  it('ready.legacy-chain: A and B parked, then A reopened, makes A the frontier again', () => {
-    const log = new Log('legacy', [A, B, C]);
-    parkAt(log, A);
-    parkAt(log, B);
-    frontier(log, []);
-    log.add(fact({ kind: 'reopened', unit: A, command: CMD, specRev: specRev(2), specSha256: H2 }));
-    frontier(log, [A]);
-    assert.deepEqual(readyOf(log, plan), [[A, 'plan-check']]);
-  });
-
-  it('ready.legacy-chain: a dev.4 log (dispatched before its baseline revision) stays serial; the frontier waits on admission too', () => {
-    const log = new Log('legacy', null);
-    log.add(dispatch(A));
-    log.plan([A, B, C], []);
-    frontier(log, [A]);
-    const blocked = ready({ ...inputOf(log, plan), tripped: [], blocking: [{ id: needsUserId('nu-9'), reason: 'recovery-required', subject: 'arc', unit: null }] });
-    assert.deepEqual(blocked, []);
   });
 });
 
@@ -276,7 +221,7 @@ describe('admit (A12, A17)', () => {
   }
 
   const fresh = (): Log => {
-    const log = new Log('dag', [M, HI]);
+    const log = new Log([M, HI]);
     log.add(dispatch(M, 'med'), dispatch(HI, 'high'));
     return log;
   };
@@ -360,7 +305,7 @@ describe('priority and aging (F17)', () => {
   it('prio.age-before-origin: a checkpoint outranks an older planned waiter until both are promoted; then age alone decides', () => {
     const [X1, X2, X3] = ['x1', 'x2', 'x3'].map((s) => unitId(s)) as [UnitId, UnitId, UnitId];
     const plan = planOf([unit(P), unit(X1), unit(X2), unit(X3), unit(K, { origin: 'checkpoint' })]);
-    const log = new Log('dag', [P, X1, X2, X3]);
+    const log = new Log([P, X1, X2, X3]);
     const added = log.plan([P, X1, X2, X3, K], [{ type: 'unit-added', unit: K }]);
     assert.deepEqual(ready(inputOf(log, plan)).map((r) => r.unit.id), [K, P, X1, X2, X3], 'unpromoted: origin, then age, then plan index');
 
@@ -375,8 +320,8 @@ describe('priority and aging (F17)', () => {
     log.merge(X3, 1);
     const three = ready(inputOf(log, plan));
     assert.deepEqual(three.map((r) => r.rank), [
-      { unit: P, origin: 'planned', waitStartSeq: 1, bypassMerges: 3, promoted: true, planIndex: 0 },
-      { unit: K, origin: 'checkpoint', waitStartSeq: added, bypassMerges: 3, promoted: true, planIndex: 4 },
+      { unit: P, priority: 'normal', origin: 'planned', waitStartSeq: 1, bypassMerges: 3, promoted: true, planIndex: 0 },
+      { unit: K, priority: 'normal', origin: 'checkpoint', waitStartSeq: added, bypassMerges: 3, promoted: true, planIndex: 4 },
     ], 'both promoted: the older planned unit first');
     const view = log.view();
     assert.ok(compareRank(rankOf(view, plan, P), rankOf(view, plan, K)) < 0);
@@ -385,7 +330,7 @@ describe('priority and aging (F17)', () => {
   it('prio.repair-first: a repair unit outranks checkpoint and planned waiters, older ones included (R6), until they are promoted', () => {
     const R = unitId('r');
     const plan = planOf([unit(P), unit(K, { origin: 'checkpoint' }), unit(R, { origin: 'repair' })]);
-    const log = new Log('dag', [P]);
+    const log = new Log([P]);
     log.plan([P, K], [{ type: 'unit-added', unit: K }]);
     log.plan([P, K, R], [{ type: 'unit-added', unit: R }]);
     const order = ready(inputOf(log, plan));
@@ -411,7 +356,7 @@ describe('priority and aging (F17)', () => {
     // One overlapping resource: each grant goes to the head of the ready order, and the granted unit publishes.
     // Q (planned, undispatched) waits from seq 1; P (planned) from its plan-check approval, so Q is older.
     const units: PlanUnit[] = [unit(Q), unit(P)];
-    const log = new Log('dag', [Q, P]);
+    const log = new Log([Q, P]);
     log.add(dispatch(P), outcome(P, 'plan-check', 1, 'approve', 'advance'));
     const grants: { unit: UnitId; rank: Rank; p: Rank }[] = [];
     let pGranted = false;
@@ -438,5 +383,103 @@ describe('priority and aging (F17)', () => {
     for (const g of grants.slice(promotedAt)) {
       assert.ok(g.unit === P || (g.rank.promoted && compareRank(g.rank, g.p) < 0), `grant to ${g.unit} after P's promotion`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Known defects (M4a rev 3, F4, R49): the one predicate, and admission of a held unit's `prepare`
+
+describe('known defects (F4)', () => {
+  const [F, G, F2] = ['f', 'g', 'f2'].map((x) => unitId(x)) as [UnitId, UnitId, UnitId];
+  const kd = (n: number, fixUnit: UnitId): KnownDefect => ({ id: knownDefectIdOf(n), match: { type: 'lane', lane: laneId('mul') }, fixUnit });
+  const withDefects = (units: readonly PlanUnit[], defects: readonly KnownDefect[]): PlanM1 => ({ ...planOf(units), knownDefects: defects });
+  /** `u`'s lanes attempt recorded `known-defect{id, match}` (uncharged; it goes to prepare). */
+  const hit = (u: UnitId, attempt: number, k: KnownDefect): LogRecord =>
+    outcome(u, 'lanes', attempt, 'known-defect', 'advance', { detail: { kind: 'known-defect', id: k.id, match: k.match } });
+  const prepareAdmission = (log: Log, plan: PlanM1, u: UnitId) =>
+    admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: plan.units.find((x) => x.id === u)!, stage: 'prepare', blocking: [], drains: [], tripped: [] });
+
+  it('knowndefect.fixer-not-self-held: the fixer\'s own lineage is never held; another unit declaring the lane is, until the fixer merges', () => {
+    const k1 = kd(1, F);
+    const plan = withDefects([unit(A), unit(F)], [k1]);
+    const log = new Log([A, F]);
+    log.add(dispatch(A), hit(A, 1, k1), dispatch(F), hit(F, 1, k1));
+    const view = log.view();
+    assert.equal(knownDefectActive(view, plan, k1, A), true);
+    assert.equal(knownDefectActive(view, plan, k1, F), false, 'the fixer is not held by its own defect');
+    assert.deepEqual(prepareAdmission(log, plan, A), { kind: 'wait', constraints: [{ type: 'known-defect', id: k1.id, fixUnit: F }] });
+    assert.deepEqual(prepareAdmission(log, plan, F), { kind: 'admit' });
+    assert.deepEqual(readyOf(log, plan), [[F, 'prepare']]);
+    log.merge(F, 2);
+    assert.equal(knownDefectActive(log.view(), plan, k1, A), false, 'consumed once the fixer merged');
+    assert.deepEqual(readyOf(log, plan), [[A, 'prepare']]);
+  });
+
+  it('knowndefect.removed-entry-releases: an entry the plan no longer holds releases the unit at once', () => {
+    const k1 = kd(1, F);
+    const log = new Log([A, F]);
+    log.add(dispatch(A), hit(A, 1, k1));
+    assert.deepEqual(readyOf(log, withDefects([unit(A), unit(F)], [k1])), [[F, 'plan-check']]);
+    const removed = planOf([unit(A), unit(F)]);
+    assert.equal(knownDefectActive(log.view(), removed, k1, A), false);
+    assert.deepEqual(readyOf(log, removed), [[F, 'plan-check'], [A, 'prepare']], 'rank order: F waits since its addition');
+  });
+
+  it('knowndefect.retargeted-entry: the predicate is false for the entry as it was; admission follows the entry of that id now in force', () => {
+    const k1 = kd(1, F);
+    const retargeted = kd(1, G);
+    const plan = withDefects([unit(A), unit(F), unit(G)], [retargeted]);
+    const log = new Log([A, F, G]);
+    log.add(dispatch(A), hit(A, 1, k1));
+    assert.equal(knownDefectActive(log.view(), plan, k1, A), false, 'the old content is not in force');
+    assert.equal(knownDefectActive(log.view(), plan, retargeted, A), true);
+    assert.deepEqual(prepareAdmission(log, plan, A), { kind: 'wait', constraints: [{ type: 'known-defect', id: k1.id, fixUnit: G }] });
+    log.add(dispatch(G));
+    log.merge(G, 1);
+    assert.deepEqual(prepareAdmission(log, plan, A), { kind: 'admit' }, 'the new fixer merged: released');
+  });
+
+  it('knowndefect.match-edited-releases: an entry whose match is edited releases the unit that hit the old match (its lanes decide again); the same match keeps it held', () => {
+    const k1 = kd(1, F);
+    const log = new Log([A, F]);
+    log.add(dispatch(A), hit(A, 1, k1));
+    assert.deepEqual(prepareAdmission(log, withDefects([unit(A), unit(F)], [k1]), A), { kind: 'wait', constraints: [{ type: 'known-defect', id: k1.id, fixUnit: F }] });
+    const otherLane: KnownDefect = { ...k1, match: { type: 'lane', lane: laneId('other') } };
+    assert.equal(knownDefectActive(log.view(), withDefects([unit(A), unit(F)], [otherLane]), otherLane, A), true, 'the edited entry is itself active');
+    assert.deepEqual(prepareAdmission(log, withDefects([unit(A), unit(F)], [otherLane]), A), { kind: 'admit' }, 'another lane: released');
+    const output: KnownDefect = { ...k1, match: { type: 'output', lane: laneId('mul'), contains: 'boom' } };
+    assert.deepEqual(prepareAdmission(log, withDefects([unit(A), unit(F)], [output]), A), { kind: 'admit' }, 'another match type: released');
+  });
+
+  it('knowndefect.multiple-defects: a unit is held by the defect it hit; each entry\'s activity is its own', () => {
+    const k1 = kd(1, F);
+    const k2 = kd(2, G);
+    const plan = withDefects([unit(A), unit(F), unit(G)], [k1, k2]);
+    const log = new Log([A, F, G]);
+    log.add(dispatch(A), hit(A, 1, k1));
+    assert.deepEqual(activeKnownDefects(log.view(), plan, A).map((k) => k.id), [k1.id, k2.id]);
+    assert.deepEqual(activeKnownDefects(log.view(), plan, F).map((k) => k.id), [k2.id], 'F fixes K-1, not K-2');
+    assert.deepEqual(prepareAdmission(log, plan, A), { kind: 'wait', constraints: [{ type: 'known-defect', id: k1.id, fixUnit: F }] });
+    log.add(dispatch(F));
+    log.merge(F, 1);
+    assert.deepEqual(activeKnownDefects(log.view(), plan, A).map((k) => k.id), [k2.id]);
+    assert.deepEqual(prepareAdmission(log, plan, A), { kind: 'admit' }, 'released from K-1; its lanes may meet K-2 next');
+  });
+
+  it('knowndefect.fixer-reentry-lineage: a fixer re-entered: its lineage (fixer and successors) is exempt; its head merging releases', () => {
+    const k1 = kd(1, F);
+    const units = [unit(A), unit(F), unit(F2, { reenters: { unit: F } })];
+    const plan = withDefects(units, [k1]);
+    const log = new Log([A, F]);
+    log.add(dispatch(A), hit(A, 1, k1), dispatch(F), outcome(F, 'build', 1, 'interrupted', 'hold'));
+    log.plan([A, F, F2], [{ type: 'unit-added', unit: F2 }, { type: 'unit-reentered', unit: F2, reenters: F, reset: false }]);
+    const view = log.view();
+    assert.equal(knownDefectActive(view, plan, k1, A), true);
+    assert.equal(knownDefectActive(view, plan, k1, F2), false, 'the successor is in the fixer\'s lineage');
+    assert.deepEqual(readyOf(log, plan), [[F2, 'prepare']]);
+    log.add(dispatch(F2), outcome(F2, 'prepare', 2, 'clean-verify', 'advance'));
+    log.merge(F2, 3);
+    assert.equal(knownDefectActive(log.view(), plan, k1, A), false, 'the lineage head merged');
+    assert.deepEqual(readyOf(log, plan), [[A, 'prepare']]);
   });
 });

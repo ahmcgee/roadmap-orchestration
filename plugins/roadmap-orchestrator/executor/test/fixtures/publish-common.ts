@@ -33,7 +33,7 @@ export function publishArc(opts: ArcOptions, edit: (d: ArcDescriptor) => void = 
   const d = setupArc(opts);
   edit(d);
   const j = openJournal(absPath(d.runDir), arcId(d.arc));
-  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath)), [], { profile: 'default', config: null });
+  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], { profile: 'default', config: null });
   j.close();
   const start: RunStart = { v: SCHEMA_VERSION, generation: 1, at: isoTimeOf(new Date()), repo: absPath(d.repo), planFile: absPath(d.planPath), profile: profileName('default', 'profile') };
   atomicJson(join(d.runDir, 'start.json'), start);

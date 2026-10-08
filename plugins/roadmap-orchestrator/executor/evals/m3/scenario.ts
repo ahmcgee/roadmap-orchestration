@@ -2,8 +2,9 @@
 // Unit calls are M1 scenario steps by role (evals/m1/scenario.ts), translated for the profile and keyed by unit
 // (test/helpers/scenario.ts `Step.unit`); lens and checkpoint calls are 0b's scripted judgments
 // (test/helpers/holistic.ts), keyed by job and lens (`lens: <kind>` in the lens prompt). The backend smoke of the
-// one start is prepended, unkeyed. Stories are code, not JSON files: the checkpoint's admit op carries the repair
-// spec's text (evals/m3/setup.ts `repairSpecText`) and every judgment is validated by the frozen readers here.
+// one start is prepended, unkeyed. Each story opens with the corpus arc's pack review (`review-1`, M4a: before the
+// first admission), answered with no finding. Stories are code, not JSON files: the checkpoint's admit op carries the repair
+// spec's text (evals/m3/setup.ts `repairSpecText`, in the admit wire form) and every judgment is validated by the frozen readers here.
 //
 //   story      branch R (regressed), the plan's story, plus the literal partial bundle (A18, G19): after the stale
 //              rejection (ckpt-1, held at the fake barrier `ckpt-1.hold` until the driver's `apply` is applied), ckpt-2
@@ -23,7 +24,7 @@
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
-import { INVALID_OP, checkpointAnswer, checkpointStep, lensStep, twoOpBundleSecondInvalid } from '../../test/helpers/holistic.ts';
+import { INVALID_OP, admitSpecWire, checkpointAnswer, checkpointStep, lensStep, packReviewStep, twoOpBundleSecondInvalid } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
 import { FAKE_CKPT_HOLD } from './layout.ts';
@@ -68,13 +69,17 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
 
 /** The checkpoint's repair admit: origin repair, citing V-2, evidence naming the witness P1 (F-1, the first finding). */
 const ADMIT_REPAIR: JsonValue = {
-  op: 'admit', unit: { ...REPAIR_UNIT, scope: [...REPAIR_UNIT.scope], after: [...REPAIR_UNIT.after] }, spec: repairSpecText(),
+  op: 'admit', unit: { ...REPAIR_UNIT, scope: [...REPAIR_UNIT.scope], after: [...REPAIR_UNIT.after] }, spec: admitSpecWire(JSON.parse(repairSpecText()) as Record<string, unknown>), targets: [],
   cites: ['V-2'], evidence: ['F-1: I-2 not held on the integration head since tidy routed `format` through formatDisplay, whose toFixed prints 0.125 as 0.13'],
 };
 const REPAIR_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR] });
 const NO_OP = checkpointAnswer({ decision: 'no-op' });
 
+/** The corpus arc's pack review (M4a), before the first admission: no finding, so nothing holds admission. */
+const PACK_REVIEW = packReviewStep('review-1');
+
 const JOB_STEPS_R: readonly Step[] = [
+  PACK_REVIEW,
   lensStep('audit-1', 'vision'),
   lensStep('audit-1', 'invariants'),
   checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
@@ -110,6 +115,7 @@ const CUT_TIDY: JsonValue = { op: 'cut', unit: 'tidy', reason: 'Its goal cannot 
 const PREVENT_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR, CUT_TIDY] });
 
 const JOB_STEPS_P: readonly Step[] = [
+  PACK_REVIEW,
   checkpointStep('ckpt-1', PREVENT_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
   checkpointStep('ckpt-2', PREVENT_BUNDLE),
   lensStep('audit-1', 'vision'),
@@ -134,6 +140,7 @@ const LATENT_P1 = {
 } as const;
 
 const JOB_STEPS_L: readonly Step[] = [
+  PACK_REVIEW,
   lensStep('audit-1', 'vision'),
   lensStep('audit-1', 'invariants', [LATENT_P1]),
   checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),

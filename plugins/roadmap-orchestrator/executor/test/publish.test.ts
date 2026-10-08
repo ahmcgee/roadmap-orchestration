@@ -3,7 +3,7 @@
 // publish.green-not-preempted, docs.transient, publish.obligation-must-hold (G12), publish.finding-blocked (G10), and the
 // crash cells of the matrix rows DOCS_PUBLICATION and PREEMPT (test/matrix.ts), recovered by the recovery engine.
 // Checkpoint A fixes: publish.lane-evidence-immutable, publish.checkout-integrity, rule.dispositions-applied (with
-// startup.pending-write-back), rule.dev5-write-back.
+// startup.pending-write-back).
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { changedPaths } from '../src/git/docs.ts';
 import { git as rawGit } from '../src/git/git.ts';
-import { adoptLegacyProvenance, jobLaneDir, verifySnapshot } from '../src/git/snapshot.ts';
+import { jobLaneDir, verifySnapshot } from '../src/git/snapshot.ts';
 import { isExempt } from '../src/holistic/types.ts';
 import { readInputFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
 import { settlePlan } from '../src/preflight/checks.ts';
@@ -36,7 +36,7 @@ import { DOCS_PUBLICATION, PREEMPT, crashCells } from './matrix.ts';
 import { API_OP, barrierSuite, closedAs, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
-  type ArcDescriptor, type ArcOptions, type ArcRun, U1, appendSteps, applyBody, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc, stepUntil,
+  type ArcDescriptor, type ArcOptions, type ArcRun, U1, appendSteps, applyBody, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, stepUntil,
 } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -441,7 +441,7 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
       repo: start.ctx.repo, planFile: absPath(r.d.planPath), plan: start.ctx.plan(), specOf: () => null, profile: 'default' as never, runDir: start.ctx.runDir, hostDir: start.ctx.hostDir,
     };
     const revs = applied(start).length;
-    assert.deepEqual(settlePlan(start.journal, context, readInputFiles(absPath(r.d.planPath))), [], 'no false ledger-edit refusal');
+    assert.deepEqual(settlePlan(start.journal, context, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo))), [], 'no false ledger-edit refusal');
     assert.equal(applied(start).length, revs, 'the files wait for the next start');
   } finally {
     start.journal.close();
@@ -453,7 +453,7 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
     assert.deepEqual(changedPaths(absPath(back.d.repo), sha(tip), sha(fact.publication!.head)), ['.roadmap/constraints.md', '.roadmap/invariants.md']);
     assert.match(show(back.d, 'main', '.roadmap/invariants.md'), /I-1/);
     assert.ok(fact.changes.some((c) => c.type === 'obligation' && c.id === 'I-1'), JSON.stringify(fact.changes));
-    const inForce = revisionInForce(back.ctx.runDir, requirePlanInForce(back.ctx.runDir, back.journal.view), absPath(back.d.planPath));
+    const inForce = revisionInForce(back.ctx.runDir, requirePlanInForce(back.ctx.runDir, back.journal.view));
     const i1 = inForce.obligations!.value.obligations.find((o) => o.id === obligationId('I-1'))!;
     assert.deepEqual(i1.state, { type: 'waived', ruling: 'C-2' });
     assert.ok(isExempt(i1), 'a waived obligation is exempt');
@@ -465,31 +465,8 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
       repo: back.ctx.repo, planFile: absPath(back.d.planPath), plan: back.ctx.plan(), specOf: () => null, profile: 'default' as never, runDir: back.ctx.runDir, hostDir: back.ctx.hostDir,
     };
     const revs = applied(back).length;
-    assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath))), []);
+    assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath), absPath(back.d.repo))), []);
     assert.equal(applied(back).length, revs, 'unchanged');
-  } finally {
-    back.journal.close();
-  }
-});
-
-test('rule.dev5-write-back: the first rule on an arc 1.0.0-dev.5 started keeps the ledger it replaced, so a crash before its write-back is finished by recovery', T, async () => {
-  const d = setupArc({ steps: [] });
-  const r = contextFor(d);
-  const tip = head(d);
-  const dev5 = applied(r)[0]!;
-  assert.equal(dev5.payloadSha256, undefined, 'a dev.5-shaped revision 1');
-  assert.deepEqual(adoptLegacyProvenance(r.ctx.runDir, readJournal(r.ctx.runDir, r.journal.view.arc).events, null), [], 'the start that adopted it');
-  const file = submitRule(r, ruleRecord(r, 'C-2', API_OP));
-  r.journal.close();
-  await crashChild('docs.after-snapshot', d, file.id, null);
-  assert.doesNotMatch(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /^C-2 — /m, 'the crash left the live ledger behind');
-  const back = await recoverArc(d);
-  try {
-    assertPublished(back, file.id, 'docs-1', tip);
-    assert.match(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /^C-2 — Helpers take finite numbers only\.$/m, 'the ledger is written back');
-    assert.ok(existsSync(join(d.planPath, '..', 'rulings.md.d', 'C-2.json')), 'the sidecar is written back');
-    const receipt = readReceipt(back.ctx.runDir, file.id, 'applied');
-    assert.ok(receipt !== null && JSON.stringify(receipt).includes('written back'), JSON.stringify(receipt));
   } finally {
     back.journal.close();
   }

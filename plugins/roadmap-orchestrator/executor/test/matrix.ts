@@ -111,15 +111,43 @@ export const CONCURRENT_AUDIT = 'concurrent job: an audit job stepping (audit-1:
 export const CONCURRENT_BUNDLE = 'concurrent job: a checkpoint job activating a bundle (ckpt-1: its call, its revision, divergence), units u1 and u2 in live build runners';
 export const CONCURRENT_BATCH = 'concurrent job: a repair batch publishing (batch-1: its slot, chained candidate, lanes, batch ff, snapshot), unit u3 in a live build runner';
 export const CONCURRENT_PREEMPT = 'concurrent job: a rule\'s docs publication preempting u1\'s candidate before green (the preempt kill, docs commit, lanes, docs ff, revision, snapshot)';
+export const CONCURRENT_DEBT = 'concurrent job: a corpus arc\'s gate approval banking its note (u1\'s, u2\'s) while the audit and checkpoint jobs step';
 export const INPUT_CAPTURE_FENCE = 'input capture under the fence (M3 H2: judgment-inputs, audit-started, checkpoint-inputs never inside an open revision.commit)';
 export const NOOP_DIVERGENCE = 'no-op divergences (M3 H12: bundle-decided{no-op}, then its interpretation divergences keyed (job, i))';
 export const REVERSE = 'reverse <D-n> (M3 H13: a compensating revision, committed as revision.commit)';
 export const FF_ELIGIBILITY = 'ff eligibility (M3 B2/B3: a unit ff redone only while its fingerprint and finding eligibility hold)';
 export const JOB_RESIDUE = 'job-owned residue (M3 G4, H4: a job lane\'s failed cleanup, reclaimed under the job)';
+export const DEBT_BANK = 'debt bank (M4a DEBT_BANK: a corpus arc\'s approval, then its gate notes banked as debt-banked facts)';
+export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReviewInputs kept, pack-review-started, the call, pack-review-ended, the blocking item)';
+export const ISSUE_CAPTURE = 'checkpoint issue capture (M4a ISSUE_CAPTURE: identity, policy, fetch, the capture kept, issues-captured, checkpoint-inputs)';
+export const CORPUS_AMENDMENT = 'corpus amendments and issue intake (M4a CORPUS_AMENDMENT / ISSUE_INTAKE: after the decision, corpus-amendment and issue-intake facts keyed by source)';
+export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
+export const ANSWER_RECORD = 'owner answer (M4a CLI roadmap answer: the answer published write-once by link, latest k in force)';
+export const LANE_REUSE = 'lane reuse (M4a rev 3 N1 LANE_REUSE: a spec lane reused from a certified series, lane-reused keyed (parent, lane), then the remaining lanes)';
+export const SERIES_CERTIFIED = 'series certificate (M4a rev 3 N1 SERIES_CERTIFIED: lanes, a clean census, the checkout\'s removal, then series-certified)';
+export const RED_CLASS = 'red class (M4a rev 3 N1 RED_CLASS: a red run\'s evidence and host.json, red.json write-once, then the rerun decision)';
+export const WITNESS_FILES = 'witness lane files (M4a rev 3 N3 WITNESS_FILES: <evidenceDir>/witness/<lane>.json per fast required lane, write-once, then the build call)';
+export const WITNESS_CHECK = 'witness presence (M4a rev 3 N3 WITNESS_CHECK: a green certified spec series, then the required arc lanes at the salvage SHA in the unit\'s own checkout, census, series-certified, then the stage outcome)';
+export const MUTATION_SMOKE = 'mutation smoke (M4a rev 3 N3 MUTATION_SMOKE: allowance, the reverse patch kept, mutant.apply{of: smoke}, the target lanes on the mutant, witnessed, worktree removed, smoke-ran, then the outcome)';
+export const PLANCHECK_ACCEPTANCE = 'plan-check acceptance patch (M4a rev 3 N3: an efficient builder\'s acceptance answer, its witness items through spec.patch, then the outcome)';
+export const PLANCHECK_IN_SESSION = 'plan-check in-session (M4a rev 3 N3: a frontier builder\'s dispatch pinned, no call, then the outcome in-session)';
+export const BUILD_ASSESS = 'build assess (M4a rev 3 N3: the fresh build\'s assessment call, its result read, findings and risk, then the implementing call resuming its session)';
+export const PREPARE_KNOWN_DEFECT = 'prepare known-defect (M4a rev 3 N3: a unit released from its known-defect hold merges the tip in, attempt-scoped, snapshots, then the outcome)';
+export const CLOSE_OUT_SETTLEMENT = 'close-out settlement (run 10 E, F: an unanswered bundle request\'s corpus amendment, then its decline; an open P2/P3 finding with no obligation banked, then deferred)';
+export const ADMIT_CONVERSIONS = 'admit conversions (M4a rev 3 N2: a decision record holding conversions, then settlement: each conversion\'s corpus amendment, a follow-up overrun\'s debt item naming the opportunity)';
 export const FIXTURE_REDIRECT = 'fixture: redirect then approve';
 export const FIXTURE_RED_LANE = 'fixture: red lane → fix round reading the evidence dir';
 export const FIXTURE_CONFLICT = 'fixture: conflict → merge-in → resolve';
 export const FIXTURE_RED_CANDIDATE = 'fixture: red candidate → fix → fresh gate → green';
+/** M4a rev 3: the new stage outcomes and the known-defect admission constraint, each the hard evidence of a deterministic fixture. */
+export const FIXTURE_WITNESSES_MISSING = 'fixture: lanes witnesses-missing → fix round naming the missing ids, no gate call';
+export const FIXTURE_SMOKE_SURVIVED = 'fixture: lanes smoke-survived → one charged fix round → the gate with the survivor (allowance reused by key)';
+export const FIXTURE_KNOWN_DEFECT = 'fixture: lanes known-defect (uncharged) → prepare held under known-defect{id, fixUnit} → released by the fixer\'s merge → merges';
+export const FIXTURE_IN_SESSION = 'fixture: plan-check in-session (no call) → the build assesses, then implements in the same session';
+export const FIXTURE_ASSESS_INFEASIBLE = 'fixture: build infeasible (the assessment says not feasible) → escalation park, nothing implemented';
+export const FIXTURE_ASSESS_RISK_RAISED = 'fixture: build risk-raised (the assessed floor binds another seat) → a fresh build there';
+export const FIXTURE_CHECKPOINT_BUSY = 'fixture: checkpoint rejected busy → waits for the unit\'s stage boundary, then captures again';
+export const FIXTURE_CONVERTED_NO_OP = 'fixture: a bundle whose only admit converts → no-op carrying its conversion → its amendment';
 
 /**
  * The executor's crash points a supervised one-unit run passes through, by boundary (the whole-pipeline
@@ -144,43 +172,52 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'salvage.act-end', 'candidate.act-end', 'ff.act-end',
     'snapshot.act-end', 'spec.patch.after-write', 'revision.commit.after-fact',
   ],
-  B5: ['spawn.after-done', 'resource.after-done', 'unit.after-stage', 'recover.after-op'],
+  B5: ['spawn.after-done', 'resource.after-done', 'unit.after-stage', 'recover.after-op', 'lanes.after-census-before-certified'],
 };
 /** A supervised run to its end adds its completion (M3 B7: every arc writes `arc-completed`, then its terminal snapshot). */
 const COMPLETE_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B5: ['complete.after-fact'] };
-/** The bumpy run adds the merge-in's conflicted path. */
-const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = { B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], ...COMPLETE_LABELS };
+/** The bumpy run adds the merge-in's conflicted path and the red lane's persisted class (M4a rev 3 N1: red.json written, the rerun not begun). */
+const MERGEIN_LABELS: Readonly<Partial<Record<Boundary, readonly string[]>>> = {
+  B2: ['mergein.act-start'], B3: ['mergein.after-merge'], B4: ['mergein.act-end'], B5: ['complete.after-fact', 'redlane.after-class'],
+};
 
 /**
  * The labels the holistic whole-pipeline row crashes (test/fixtures/pm-holistic.ts `sampleHolistic` selects the
- * occurrences from a recording run and requires exactly these): the M3-only labels, and the M1 labels the holistic
- * layer's jobs, a candidate's arc lane and the arc's own records reach.
+ * occurrences from a recording run and requires exactly these): the M3-only labels, the M4a rev 3 corpus-arc stage labels
+ * u1 reaches (in-session plan-check, the assessment, the witness lane files and presence check, the mutation smoke and its
+ * mutant.apply, a converted admit's amendment), and the M1 labels the holistic layer's jobs, a unit's arc lane (its witness
+ * check's or its candidate's) and the arc's own records reach.
  */
 const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B1: ['log.append.before-write', 'log.append.after-partial-write'],
   B2: [
     'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
     'ff.act-start', 'snapshot.act-start', 'revision.commit.after-intent', 'needsuser.raise.before-publish', 'audit.after-started', 'checkpoint.after-inputs',
-    'docs.act-start',
+    'docs.act-start', 'packreview.after-started', 'witnesscheck.after-lane-files', 'smoke.after-patch-kept', 'mutant.act-start',
   ],
   B3: [
     'launch.after-launch-json', 'launch.after-spawn', 'worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy', 'snapshot.after-commit-tree',
-    'plan.apply.after-inputs', 'audit.after-lens', 'docs.after-commit-tree', 'closeout.after-ff',
+    'plan.apply.after-inputs', 'audit.after-lens', 'docs.after-commit-tree', 'closeout.after-ff', 'mutant.after-worktree',
   ],
   B4: [
     'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'evidence.act-end', 'ff.act-end', 'snapshot.act-end', 'revision.commit.after-fact',
     'needsuser.raise.after-publish', 'audit.before-ended', 'checkpoint.after-call', 'bundle.after-applied', 'bundle.after-decided', 'docs.act-end',
-    'closeout.before-published',
+    'closeout.before-published', 'packreview.after-call', 'packreview.after-ended', 'issues.after-keep', 'amendment.after-decided', 'debt.after-approval',
+    'plancheck.after-pin-in-session', 'build.after-assess', 'smoke.after-witnessed', 'mutant.act-end', 'bundle.after-conversion-amendment',
   ],
-  B5: ['spawn.after-done', 'resource.after-done', 'latch.after-fact', 'audit.after-ended', 'docs.after-snapshot', 'complete.after-fact'],
+  B5: [
+    'spawn.after-done', 'resource.after-done', 'latch.after-fact', 'audit.after-ended', 'docs.after-snapshot', 'complete.after-fact',
+    'lanes.after-census-before-certified', 'redlane.after-class', 'witnesscheck.after-witnessed', 'mutant.after-done', 'smoke.after-apply',
+    'smoke.after-ran-before-outcome',
+  ],
 };
 
 const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
-  B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) is absent after the restart, a torn line discarded once: the job resumes and writes it once (a capture from the same inputs), the arc ends as uncrashed',
-  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens or checkpoint call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the arc ends as uncrashed',
-  B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); the arc ends as uncrashed',
-  B4: 'the op\'s postcondition holds (reconciled); a read call or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
-  B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); the arc ends as uncrashed',
+  B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, a checkpoint\'s inputs, the bundle\'s plan-applied or divergence, the digest, a no-op decision, docs-covered, docs-published, arc-completed) or the rev 3 one (smoke-ran, a corpus amendment) is absent after the restart, a torn line discarded once: the job or the unit\'s stage resumes and writes it once (a capture from the same inputs, a smoke run again within its allowance), the arc ends as uncrashed',
+  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, lens, checkpoint or pack-review call, evidence, docs commit, docs ff, snapshot, the bundle\'s revision, the digest item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the build\'s witness lane files published with no call made: the restarted build publishes the same bytes and calls once; the smoke\'s patch kept or its mutant.apply open: redone, the lanes attempt run again (one more smoke execution, within the allowance); the arc ends as uncrashed',
+  B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); a mutant checkout made, its patch not applied: removed and redone; the arc ends as uncrashed',
+  B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s, the in-session assessment\'s included) or a decided bundle is consumed from the record (never asked again), its aftermath written only where missing (the review ended once; a checkpoint\'s issue capture kept, recorded once with the same bytes; its amendments, a converted admit\'s included, and issue outcomes once each; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied, one divergence per (job, index), one digest; the arc ends as uncrashed',
+  B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); a witness check\'s certified observation reused, never run twice; a smoke-ran read back by its key (no second execution), or a mutant applied with its lanes not run: run again within the allowance; the arc ends as uncrashed',
 };
 
 /** A whole-pipeline row's cells: every label at occurrence 1, and 2 where the label repeats. */
@@ -261,7 +298,7 @@ function concurrentCells(peer: string): Readonly<Record<Boundary, Cell>> {
   return { B1: cell('B1'), B2: cell('B2'), B3: cell('B3'), B4: cell('B4'), B5: cell('B5') };
 }
 
-/** A deterministic fixture's cells: the uncrashed test, crashed by `crashedIn` (the four M1 fixtures: the bumpy whole-pipeline row). */
+/** A deterministic fixture's cells: the uncrashed test, crashed by `crashedIn` (the four M1 fixtures: the bumpy whole-pipeline row; the rev 3 ones: their operation rows). */
 const fixtureCells = (test: string, crashedIn: string = PIPELINE_BUMPY): Readonly<Record<Boundary, Cell>> => {
   const cell: Cell = { status: 'fixture', test, crashedIn };
   return { B1: cell, B2: cell, B3: cell, B4: cell, B5: cell };
@@ -987,7 +1024,8 @@ export const MATRIX: readonly Row[] = [
     cells: pipelineCells(MERGEIN_LABELS, PIPELINE_RECOVERY),
   },
   {
-    // The holistic scenario (test/fixtures/pm-holistic.ts HOLISTIC): baseline-1, u1 with a journey lane and I-2 latched,
+    // The holistic scenario (test/fixtures/pm-holistic.ts HOLISTIC), a corpus arc (M4a D0): review-1 (the pack review),
+    // each checkpoint's issue capture and amendment settlement, baseline-1, u1 with a journey lane and I-2 latched,
     // audit-1, ckpt-1 applying a bundle (revision, divergence, digest), audit-2, ckpt-2 an interpretation-only no-op,
     // the close-out docs-1, arc-completed and the terminal snapshot, through `roadmap start`. Its occurrences are
     // sampled by context (`sampleHolistic`): each M3-only label at 1 and 2, each log append at each M3 fact kind's
@@ -1045,11 +1083,11 @@ export const MATRIX: readonly Row[] = [
   {
     row: CONCURRENT_AUDIT,
     test: 'test/concurrent-matrix.test.ts',
-    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', ...JOB_OPS], {
+    cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', 'issues.after-keep', ...JOB_OPS], {
       B1: 'audit-started or audit-ended lost (a torn line discarded once): the audit captures again from the same state, or ends again, once',
       B2: 'the audit\'s open op closed by its reconciler (a spawn lost, the rest redone or reconciled), or audit-started durable with nothing run: the job resumes as audit-1 from its recorded inputs, its lens asked once',
       B3: 'inside the audit\'s op or after its lens was read: finished or redone; the job resumes, consuming the call it made',
-      B4: 'the op\'s postcondition holds (reconciled), or every lens read and the end not written: the job resumes and ends once',
+      B4: 'the op\'s postcondition holds (reconciled), or every lens read and the end not written: the job resumes and ends once; or the audit ended and its checkpoint\'s issue capture kept (the corpus arc\'s, its last record still the audit\'s): the restart captures again (the same bytes) and records it once',
       B5: 'nothing open: the job runs on from its facts; one audit-ended, the lens called once',
     }, PEERS_IN_BUILDS, 'no audit label falls on this boundary'),
   },
@@ -1070,14 +1108,31 @@ export const MATRIX: readonly Row[] = [
     cells: jobCells([
       'resource.after-intent', 'resource.after-done', 'candidate.act-start', 'candidate.after-commit-tree', 'candidate.act-end', 'batch.after-candidate',
       ...JOB_OPS.filter((l) => !l.startsWith('resource.')), 'evidence.after-partial-copy', ...LOG_APPENDS, 'ff.act-start', 'ff.act-end', 'snapshot.act-start',
-      'snapshot.after-commit-tree', 'snapshot.act-end',
+      'snapshot.after-commit-tree', 'snapshot.act-end', 'lanes.after-census-before-certified',
     ], {
       B1: 'a batch lane\'s witness lost: the lane runs again and witnesses once more',
       B2: 'the batch\'s slot reserve, chained candidate.merge, checkout, lane or batch ff durable, not acted: closed (the ff unpublished at T: a batch CAS is never redone), the batch holder abandoned and batch-1 run again as its next attempt, published once',
       B3: 'inside the chain\'s act, a checkout or a lane: redone to the same commits, or adopted; the batch published once',
       B4: 'the candidate made (abandoned, run again), or the batch ff moved integration with no done (reconciled published, finishBatch writes the snapshot and releases); both members retired by the one ff',
-      B5: 'nothing open: the batch goes on from its records',
+      B5: 'nothing open (a clean lane census with no series-certified: the series uncertified, its lanes run again): the batch goes on from its records',
     }, 'peer u3: its build open at the crash, adopted (or re-adapted once it exited) and consumed once; it merges after the batch; F-1 resolved once', 'no batch label falls on this boundary'),
+  },
+  {
+    // The jobs scenario's units approve with a note each (the corpus arc banks it as `debt-banked`, src/pipeline/gate.ts
+    // `bankGateNotes`); a crash at each unit's `debt.after-approval` while the other unit and the stepping jobs go on.
+    row: CONCURRENT_DEBT,
+    test: 'test/concurrent-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
+      B2: { status: 'excluded', why: 'no intent: the banked facts are written from the gate call\'s recorded result' },
+      B3: { status: 'excluded', why: 'there is no act between the approval and the banking beyond the fact appends B4 crashes between' },
+      B4: {
+        status: 'crash',
+        labels: ['debt.after-approval'],
+        recovery: 'the approval written, no debt-banked: the restart consumes the recorded gate call (never asked again), keeps the approval and banks the note once, whatever the peer unit and the jobs were doing; one approval and one debt-banked per unit, the holistic records as uncrashed',
+      },
+      B5: { status: 'excluded', why: 'a banked fact is durable and keyed by its source: a re-read of the answer mints nothing again (mintDebt)' },
+    },
   },
   {
     row: CONCURRENT_PREEMPT,
@@ -1088,7 +1143,7 @@ export const MATRIX: readonly Row[] = [
       'launch.after-spawn', 'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'spawn.after-done', 'evidence.act-start',
       'evidence.after-partial-copy', 'evidence.act-end', 'worktree.remove.act-start', 'worktree.remove.inside', 'docs.after-lanes', 'ff.act-start', 'ff.act-end',
       'revision.commit.after-docs', ...LOG_APPENDS, 'revision.commit.after-fact', 'snapshot.act-start', 'snapshot.after-commit-tree', 'snapshot.act-end',
-      'docs.after-snapshot', 'command.apply.after-effect', 'command.apply.after-receipt',
+      'docs.after-snapshot', 'command.apply.after-effect', 'command.apply.after-receipt', 'lanes.after-census-before-certified',
     ], {
       B1: 'the rule\'s plan-applied lost inside its revision.commit: finished from its payload (reconciled) with the docs ff it published',
       B2: 'the preempt kill or the publication\'s op open: the kill finished, the candidate\'s slot released, the lane closed; an unpublished docs holder abandoned and the rule re-evaluated and published once',
@@ -1574,10 +1629,350 @@ export const MATRIX: readonly Row[] = [
       },
     },
   },
+  {
+    // A corpus arc's gate approves with a note: `approval`, then `debt-banked` keyed by its source (src/pipeline/gate.ts
+    // `bankGateNotes`), driven in a child (test/fixtures/corpus-gate-child.ts) that a restart recovers and steps on.
+    row: DEBT_BANK,
+    test: 'test/corpus-judgment.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
+      B2: { status: 'excluded', why: 'no intent: the approval and the banked items are facts written from the gate call\'s recorded result, which recovery closed before (proc.spawn rows)' },
+      B3: { status: 'excluded', why: 'there is no act between the approval and the banking beyond the fact appends B4 crashes between' },
+      B4: {
+        status: 'crash',
+        labels: ['debt.after-approval'],
+        recovery: 'the approval written, no debt-banked: the restart consumes the recorded gate call (never asked again), keeps the approval and banks each note once; one approval, one debt-banked per source, gate:approve once',
+      },
+      B5: { status: 'excluded', why: 'a banked fact is durable and keyed by its source: a re-read of the answer mints nothing again (mintDebt); the stage-outcome after it is the gate\'s own row' },
+    },
+  },
+  {
+    // A corpus arc's pack review before its first admission (src/holistic/packreview.ts `runPackReview`), driven in a child
+    // (test/fixtures/corpus-job-child.ts) that a restart in process recovers and runs again.
+    row: PACK_REVIEW_JOB,
+    test: 'test/packreview.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['packreview.after-inputs', 'packreview.after-started'],
+        recovery: 'the inputs kept (content-addressed), no fact: the restart keeps the same bytes as review-1 and starts it once; started, nothing asked: the job resumes from its kept inputs alone and asks once',
+      },
+      B3: { status: 'excluded', why: 'the call is a proc.spawn: its runner-exit cells (spawn.*) cover a crash inside it; the job consumes the recorded call on resume' },
+      B4: {
+        status: 'crash',
+        labels: ['packreview.after-call', 'packreview.after-ended'],
+        recovery: 'the call recorded, nothing ended: the restart consumes it (never asked again) and ends the job once; ended, its blocking item not raised: the restart raises it once (settlePackReviews); one review, one item',
+      },
+      B5: { status: 'excluded', why: 'the item is the job\'s last record; the hold is a pure function of the facts, the items and the current key' },
+    },
+  },
+  {
+    // A corpus arc's checkpoint capture (src/holistic/intake.ts `captureCheckpointIssues`) against the fake gh, driven in a
+    // child (test/fixtures/corpus-job-child.ts) that a restart in process recovers and runs again.
+    row: ISSUE_CAPTURE,
+    test: 'test/intake.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
+      B2: { status: 'excluded', why: 'the identity, policy and fetch are forge reads that write nothing: a crash before the capture is kept re-queries and re-fetches' },
+      B3: { status: 'excluded', why: 'the capture\'s bytes are kept content-addressed (keepInput) in one write the B4 cell follows' },
+      B4: {
+        status: 'crash',
+        labels: ['issues.after-keep'],
+        recovery: 'the capture kept, no issues-captured: the restart re-queries and re-fetches (the same bytes), records one issues-captured, then the checkpoint-inputs naming its sha, and asks once',
+      },
+      B5: { status: 'fixture', test: 'intake.capture-reused', crashedIn: ISSUE_CAPTURE },
+    },
+  },
+  {
+    // A corpus arc's checkpoint decision and what follows it (src/holistic/bundle.ts `settleDecided`): the amendments and
+    // issue outcomes, each crash point after one of their facts, at the first, third and sixth.
+    row: CORPUS_AMENDMENT,
+    test: 'test/intake.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
+      B2: { status: 'excluded', why: 'no intent: the facts are written from the decided output, which the decision\'s own rows (BUNDLE_ACTIVATE, REVISION_COMMIT) settle' },
+      B3: { status: 'excluded', why: 'nothing is acted between the facts beyond their appends' },
+      B4: {
+        status: 'crash',
+        labels: ['amendment.after-decided'],
+        recovery: 'the decision durable and some of its amendments and outcomes written: the next run settles it from the consumed output (never asked again), writing each missing corpus-amendment (by source) and issue-intake (by job and issue) once, the issue finding once',
+      },
+      B5: { status: 'excluded', why: 'the settlement is idempotent per source and (job, issue): settling again writes nothing' },
+    },
+  },
+  {
+    // `roadmap brief --ack` (src/commands/brief.ts), a CLI process crashed at each label and run again (or a plain `brief`
+    // after it), over two chained corpus arcs' refs.
+    row: BRIEF_ACK,
+    test: 'test/brief.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'the pending marker is published write-once by link (exclusivePublish): it is there whole or not at all, and before it nothing is written' },
+      B2: {
+        status: 'crash',
+        labels: ['brief.ack.after-pending'],
+        recovery: 'the pending marker durable, nothing enqueued: the next brief, brief --ack or start finishes it from its bytes alone, enqueueing each item\'s ack under its deterministic id and committing the marker; the rerun reports the same commands',
+      },
+      B3: { status: 'excluded', why: 'each ack command is one write-once publish; a crash between two is the B4 rerun\'s case (a command file with its own bytes counts as enqueued)' },
+      B4: {
+        status: 'crash',
+        labels: ['brief.ack.after-enqueue'],
+        recovery: 'every ack enqueued, the marker still pending: the rerun finds each command file with its own bytes (enqueues nothing again) and commits the marker; each command once',
+      },
+      B5: { status: 'excluded', why: 'the committed marker is the ack\'s last write; a rerun of a committed id reports its commands and writes nothing' },
+    },
+  },
+  {
+    // `roadmap answer` (src/answers.ts `recordAnswer`), a CLI process crashed after its one write and run again.
+    row: ANSWER_RECORD,
+    test: 'test/answers.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'the answer is published write-once by link (exclusivePublish): it is there whole or not at all, and before it nothing is written' },
+      B2: { status: 'excluded', why: 'no intent: the answer file is the act and the record at once' },
+      B3: { status: 'excluded', why: 'the act is one link; B1 covers its before and after' },
+      B4: {
+        status: 'crash',
+        labels: ['answer.after-publish'],
+        recovery: 'the answer durable, its output never printed: the rerun with the same text finds it in force and reports it unchanged, writing nothing; a rerun with another text would supersede it as k 2',
+      },
+      B5: { status: 'excluded', why: 'the publish is the answer\'s last write; nothing follows it' },
+    },
+  },
+  {
+    // A spec lane reused across a fix commit (test/lanes-rev3.test.ts, driven in a child that a restart resumes): the
+    // lane-reused fact is the row's only durable effect; the lanes stage a crash cuts short is abandoned and recomputed.
+    row: LANE_REUSE,
+    test: 'test/lanes-rev3.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'no intent: lane-reused is a fact written from a certified series read from the log; there is no op to be open before it' },
+      B3: { status: 'excluded', why: 'no act: a reuse runs nothing (no spawn, no checkout), only the fact append B1 covers' },
+      B4: { status: 'excluded', why: 'no act to complete before a done: the fact is the whole of the reuse' },
+      B5: {
+        status: 'crash',
+        labels: ['lanes.after-reused'],
+        recovery: 'the lane-reused fact durable, the lane\'s record not yet in the stage\'s ledger: nothing is open; the crashed attempt is abandoned and the restart reuses again from the same certified series (a second lane-reused, both from the one execution); the lane runs once overall, no backend call twice, the outcomes of an uncrashed run',
+      },
+    },
+  },
+  {
+    // A spec series' certificate (the lanes stage; test/lanes-rev3.test.ts) and a journey series' (the arc lane): lost, the
+    // series is merely uncertified. The whole-pipeline rows (straight, bumpy, holistic) crash it as well, inside real arcs.
+    row: SERIES_CERTIFIED,
+    test: 'test/lanes-rev3.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'no intent: series-certified is a fact; the evidence snapshot and worktree.remove before it are the evidence.* and worktree.* rows\' ops' },
+      B3: { status: 'excluded', why: 'no act between the census and the fact beyond the fact\'s append B1 covers' },
+      B4: { status: 'excluded', why: 'every op before the census is done; no act is complete without its done here' },
+      B5: {
+        status: 'crash',
+        labels: ['lanes.after-census-before-certified'],
+        recovery: 'the census clean, every op done, series-certified unwritten: nothing is open; the series is uncertified, so it is never reused and its lanes run again as a new attempt (each lane twice overall, no lane-reused); the outcomes of an uncrashed run',
+      },
+    },
+  },
+  {
+    // A red run's class (test/lanes-rev3.test.ts, driven in a child that a restart resumes): `red.json` is written once,
+    // beside the run's evidence, before the rerun decision. The whole-pipeline rows (bumpy, holistic) crash it inside real arcs.
+    row: RED_CLASS,
+    test: 'test/lanes-rev3.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'red.json is one write-once file publish, not a journal append: a torn file cannot exist (exclusive publish), and a missing one is B5\'s state' },
+      B2: { status: 'excluded', why: 'no intent: the class is derived from the run\'s recorded evidence and host.json, never an op of its own' },
+      B3: { status: 'excluded', why: 'the exclusive publish is one atomic act: there is no state inside it' },
+      B4: { status: 'excluded', why: 'no done: red.json has no op; the file existing is its completion, which B5 crashes' },
+      B5: {
+        status: 'crash',
+        labels: ['redlane.after-class'],
+        recovery: 'the class persisted, the rerun not begun: the crashed lanes attempt is abandoned; the restart runs the series again (its first run, then the diagnostic rerun) and the crashed attempt\'s class stays on disk; the outcomes of an uncrashed run',
+      },
+    },
+  },
+  {
+    // Before a corpus arc's build call (src/pipeline/witnesscheck.ts `witnessLaneFiles`): each required fast lane's file,
+    // published write-once; the unit driver crashed in a child that a restart resumes (test/checks.test.ts), and the
+    // holistic whole-pipeline row's u1 (test/pipeline-matrix.test.ts).
+    row: WITNESS_FILES,
+    test: 'test/checks.test.ts, test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each lane file is one exclusive publish (by link): whole or absent, never torn' },
+      B2: {
+        status: 'crash',
+        labels: ['witnesscheck.after-lane-files'],
+        recovery: 'the lane files published, the build not called: the build attempt is abandoned; the restart\'s build publishes the same bytes (a file with other bytes fails loud) and calls once; the outcomes of an uncrashed run',
+      },
+      B3: { status: 'excluded', why: 'each file\'s publish is one atomic link; between two files is the B2 state for the files already there' },
+      B4: { status: 'excluded', why: 'the files have no done of their own: their existence completes them (B2); the build call after them is the proc.spawn rows\' op' },
+      B5: { status: 'excluded', why: 'once the build call is made, the files are only read: the proc.spawn and whole-pipeline rows cover the build' },
+    },
+  },
+  {
+    // D1 (src/pipeline/witnesscheck.ts `witnessPresence`): the unit's required arc lanes run once at the salvage SHA as a
+    // journey series in its own checkout (test/checks.test.ts; the holistic row's u1 in test/pipeline-matrix.test.ts).
+    row: WITNESS_CHECK,
+    test: 'test/checks.test.ts, test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the series\' ops (checkout, reservation, lane spawn, evidence) are the worktree, resource and proc.spawn rows\'; the holistic row crashes them in a unit\'s arc lane' },
+      B3: { status: 'excluded', why: 'inside the series\' ops: their rows\' B3 cells' },
+      B4: { status: 'excluded', why: 'every op of the series closes with its own done (their rows\' B4 cells); the check itself has no act' },
+      B5: {
+        status: 'crash',
+        labels: ['lanes.after-census-before-certified', 'witnesscheck.after-witnessed'],
+        recovery: 'the census clean, series-certified unwritten (the second occurrence, D1\'s): uncertified, so the restart runs the witness lane again; the series certified, the verdict unrecorded: the restart reuses the certified observation, never running it twice; the outcomes of an uncrashed run, no backend call twice',
+      },
+    },
+  },
+  {
+    // D2 (src/pipeline/smoke.ts `mutationSmoke`): the production diff reverted on a mutant checkout, the target lanes run on
+    // it, the verdict recorded as `smoke-ran` keyed by (diff, witness defs, env); crashed through the unit driver
+    // (test/checks.test.ts: killed, green) and in the holistic row's u1 with its mutant.apply (test/pipeline-matrix.test.ts).
+    row: MUTATION_SMOKE,
+    test: 'test/checks.test.ts, test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'smoke-ran is one journal append; journal.append B1 and the holistic row\'s log-append cells cover a torn one' },
+      B2: {
+        status: 'crash',
+        labels: ['smoke.after-patch-kept', 'mutant.act-start'],
+        recovery: 'the reverse patch kept (content-addressed), nothing made: the crashed execution counts against smokeRuns and the restart\'s lanes attempt runs the smoke again once; the mutant.apply intent durable, nothing made: redone, then the attempt runs again (removing that worktree first); the same verdict, the outcomes of an uncrashed run',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['mutant.after-worktree'],
+        recovery: 'the mutant checkout made, its patch not applied: the worktree removed and the act redone; the attempt runs again, removing the leftover; the same verdict',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['mutant.act-end', 'smoke.after-witnessed'],
+        recovery: 'the patched checkout is the recorded outcome: done reconciled; or the target lanes witnessed on the mutant, its worktree and smoke-ran not yet: nothing open, the execution counts and the attempt runs the smoke again within the allowance; the same verdict, the outcomes of an uncrashed run',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['mutant.after-done', 'smoke.after-apply', 'smoke.after-ran-before-outcome'],
+        recovery: 'the mutant applied (its done durable), its lanes not run: the attempt runs again (the leftover removed, one more execution); smoke-ran durable, the outcome not: the restart reads the verdict back by its key and runs nothing; the outcomes of an uncrashed run',
+      },
+    },
+  },
+  {
+    // E (src/pipeline/stages.ts `planCheck`, by-builder, efficient): the acceptance answer's witness items applied by the
+    // executor's spec.patch, crashed through the unit driver in a child a restart resumes (test/plancheck-shape.test.ts).
+    row: PLANCHECK_ACCEPTANCE,
+    test: 'test/plancheck-shape.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the patch is one spec.patch op: the spec.patch row crashes its intent, write and done' },
+      B3: { status: 'excluded', why: 'inside the spec.patch: its row' },
+      B4: { status: 'excluded', why: 'the spec.patch done is its row\'s B4' },
+      B5: {
+        status: 'crash',
+        labels: ['plancheck.after-witness-patch'],
+        recovery: 'the witness patch done, the outcome unwritten: the restart\'s plan-check consumes the recorded answer and finds the attempt\'s done patch (never patching twice), recording redirect then approve; the outcomes of an uncrashed run',
+      },
+    },
+  },
+  {
+    // E, by-builder, a frontier builder: no plan-check call (test/plancheck-shape.test.ts; the holistic row's u1).
+    row: PLANCHECK_IN_SESSION,
+    test: 'test/plancheck-shape.test.ts, test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'the pin is one dispatch fact: journal.append B1 covers a torn one' },
+      B2: { status: 'excluded', why: 'no intent: the decision is the routing\'s and the plan\'s, and nothing is called' },
+      B3: { status: 'excluded', why: 'no act between the pin and the outcome but their appends' },
+      B4: {
+        status: 'crash',
+        labels: ['plancheck.after-pin-in-session'],
+        recovery: 'the dispatch pinned, the in-session outcome unwritten: the next attempt finds the pin (dispatchOf) and records in-session once, with no plan-check call; the outcomes of an uncrashed run',
+      },
+      B5: { status: 'excluded', why: 'after the outcome the stage is done: unit.after-stage (the whole-pipeline rows)' },
+    },
+  },
+  {
+    // E (Q18): the fresh build of an in-session unit makes the assessment call, then resumes that session to implement
+    // (test/plancheck-shape.test.ts; the holistic row's u1).
+    row: BUILD_ASSESS,
+    test: 'test/plancheck-shape.test.ts, test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the assessment and the implementing call are proc.spawn ops: the proc.spawn rows and the whole-pipeline rows crash them' },
+      B3: { status: 'excluded', why: 'inside either call: the proc.spawn and runner-death rows' },
+      B4: {
+        status: 'crash',
+        labels: ['build.after-assess'],
+        recovery: 'the assessment completed and read, the implementing call not begun: the restart\'s build consumes the recorded assessment against its inputs (never asking again) and resumes its session to implement; one assessment, the outcomes of an uncrashed run',
+      },
+      B5: { status: 'excluded', why: 'after the implementing call the build stage ends as any build: the whole-pipeline rows' },
+    },
+  },
+  {
+    // F4 (src/pipeline/prepare.ts, cause known-defect): a held unit released once its fixer merged, crashed through the
+    // unit driver in a child a restart resumes (test/knowndefect-stage.test.ts).
+    row: PREPARE_KNOWN_DEFECT,
+    test: 'test/knowndefect-stage.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the merge-in is one mergein.prepare op: the merge-in row crashes its intent, act and done' },
+      B3: { status: 'excluded', why: 'inside the merge-in: the merge-in row' },
+      B4: { status: 'excluded', why: 'the merge-in done is the merge-in row\'s B4' },
+      B5: {
+        status: 'crash',
+        labels: ['prepare.known-defect-after-mergein'],
+        recovery: 'the attempt-scoped merge-in done, the snapshot and outcome not: the restart reads the merge-in back (never repeated), records clean-verify, runs the lanes and merges; the unit commit has parents [before, tip]; no backend call twice',
+      },
+    },
+  },
+  {
+    // B (src/holistic/bundle.ts `settleConversions`): after a decision record holding conversions, each conversion's amendment
+    // and a follow-up overrun's debt item, idempotent by source. Crashed in the holistic row (ckpt-2's unrelated admit) and in
+    // test/pipeline-matrix.test.ts's overrun story (test/fixtures/pm-overrun.ts: ckpt-3's follow-up overrun of O-1).
+    row: ADMIT_CONVERSIONS,
+    test: 'test/pipeline-matrix.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 and the holistic row\'s log-append cells cover a torn one' },
+      B2: { status: 'excluded', why: 'no intent: the settlement is written from the decision record, which the bundle and revision rows crash' },
+      B3: { status: 'excluded', why: 'nothing is acted between the facts but their appends' },
+      B4: {
+        status: 'crash',
+        labels: ['bundle.after-conversion-amendment', 'bundle.after-overrun-debt'],
+        recovery: 'the decision durable with its conversions, the amendment (and for an overrun the debt item) written or not: the restart settles from the record (never classifying again, never asking again), writing each missing amendment and debt item once by source; one amendment per conversion, one opportunity-overrun debt item naming O-1',
+      },
+      B5: { status: 'excluded', why: 'the settlement is idempotent by source: settling again writes nothing' },
+    },
+  },
+  {
+    // Run 10 (src/holistic/closeout.ts `settleCloseOut`): the facts the close-out settlement writes, idempotent by source.
+    // Crashed in test/closeout.test.ts (a corpus arc with ckpt-2's unanswered request, F-1 a P2 with no obligation).
+    row: CLOSE_OUT_SETTLEMENT,
+    test: 'test/closeout.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn one' },
+      B2: { status: 'excluded', why: 'no intent: the settlement is written from the log, the request and the findings it reads' },
+      B3: { status: 'excluded', why: 'nothing is acted between the facts but their appends' },
+      B4: {
+        status: 'crash',
+        labels: ['closeout.after-request-amendment', 'closeout.after-deferred-debt'],
+        recovery: 'the request\'s amendment written and its decline not, or F-1\'s debt item written and its ruling not: the next settlement finds the amendment and the debt item by source, writes the decline or the ruling once; one amendment, one decline, one debt item, F-1 ruled deferred by code, F-2 untouched',
+      },
+      B5: { status: 'excluded', why: 'the settlement is idempotent: settling again writes nothing' },
+    },
+  },
   { row: FIXTURE_REDIRECT, test: 'test/stages.test.ts', cells: fixtureCells('stages.redirect-then-approve') },
   { row: FIXTURE_RED_LANE, test: 'test/stages.test.ts', cells: fixtureCells('stages.red-lane-fix-round') },
   { row: FIXTURE_CONFLICT, test: 'test/unit.test.ts', cells: fixtureCells('fixture conflict → merge-in → resolve') },
   { row: FIXTURE_RED_CANDIDATE, test: 'test/unit.test.ts', cells: fixtureCells('fixture red candidate → fix → fresh gate → green') },
+  // M4a rev 3: the new outcomes and the known-defect constraint, each indexed to its deterministic fixture and the row that crashes the path.
+  { row: FIXTURE_WITNESSES_MISSING, test: 'test/checks.test.ts', cells: fixtureCells('witnesscheck.missing-fails-fast', WITNESS_CHECK) },
+  { row: FIXTURE_SMOKE_SURVIVED, test: 'test/checks.test.ts', cells: fixtureCells('smoke.survivor-one-round-then-gate / smoke.allowance-reused-same-key', MUTATION_SMOKE) },
+  {
+    row: FIXTURE_KNOWN_DEFECT,
+    test: 'test/knowndefect-stage.test.ts',
+    cells: fixtureCells('knowndefect.lane-hold-uncharged / knowndefect.release-prepare-merges', PREPARE_KNOWN_DEFECT),
+  },
+  { row: FIXTURE_IN_SESSION, test: 'test/plancheck-shape.test.ts', cells: fixtureCells('plancheck.in-session-frontier-no-call', PLANCHECK_IN_SESSION) },
+  { row: FIXTURE_ASSESS_INFEASIBLE, test: 'test/plancheck-shape.test.ts', cells: fixtureCells('build.assess-infeasible-escalates', BUILD_ASSESS) },
+  { row: FIXTURE_ASSESS_RISK_RAISED, test: 'test/plancheck-shape.test.ts', cells: fixtureCells('build.assess-risk-raised-reseats', BUILD_ASSESS) },
+  { row: FIXTURE_CHECKPOINT_BUSY, test: 'test/status-rev3.test.ts', cells: fixtureCells('status.checkpoint-busy-wait', BUNDLE_ACTIVATE) },
+  { row: FIXTURE_CONVERTED_NO_OP, test: 'test/checkpoint-rev3.test.ts', cells: fixtureCells('bundle.all-converted-no-op', ADMIT_CONVERSIONS) },
 ];
 
 /** Justified exclusions, listed beside the table (plan "Tests"). */

@@ -4,12 +4,21 @@
 // (capacity, pools, unit origin, cpu, contingent edges, re-entry and cut), so the schema literal stays
 // `roadmap/plan-m1` and a 1.0.0-dev.4 plan reads unchanged (LR-1). M3 does the same: `holistic`, `limits`, a
 // unit's `routing` layer and `limits`, and the `repair` origin.
+//
+// M4a (K7, step 0a): the plan's target is a closed union, told on disk by the field present and flattened onto the
+// parsed plan with the discriminant `target`: `architecture-doc` (`architectureDoc`, `architectureDigest?`,
+// `holistic?` with its `vision`) or `corpus` (`corpus`, the pin; `phase0`, the Phase-0 record; `holistic` without a
+// vision, whose record is `<repo>/.roadmap/vision.json`). `holistic`'s slice, obligations and audit read the same in
+// both arms; the variant fields are read only through `targetDocuments` and `visionFile` (test target.no-direct-access).
+// `chain` (H7) names the previous arc of a chained start, fixed at revision 1.
 import {
-  type ArcId, type EdgeId, type ResourceName, type RulingId, type Sha, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, resourceName,
-  rulingId, sha, unitId, visionClauseId,
+  type ArcId, type EdgeId, type KnownDefectId, type LaneId, type ResourceName, type RulingId, type Sha, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId,
+  edgeId, knownDefectId, laneId, resourceName, rulingId, sha, unitId, visionClauseId, idList,
 } from '../core/ids.ts';
-import { BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type LaneDef, type LaneEnv, laneDef, laneEnv } from '../core/records.ts';
-import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str } from '../core/validate.ts';
+import {
+  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
+} from '../core/records.ts';
+import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
 import {
   type AbsPath, type BranchName, type PlanPath, type RepoPath, type RepoPattern, absPath, branchName, planPath, repoPath,
@@ -61,10 +70,11 @@ export type UnitLimits = Readonly<{ [K in keyof Bounds]?: number }>;
 export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number }>;
 export const DEFAULT_CONVERGENCE_K = 3;
 
-/** M3 (A5): the holistic layer is on exactly when the plan names a vision; obligations may be absent (none). */
+/**
+ * M3 (A5): the holistic layer is on exactly when the plan has `holistic`; obligations may be absent (none). The parts both
+ * plan targets share; an `architecture-doc` plan's adds its `vision` (`HolisticDoc`).
+ */
 export type Holistic = Readonly<{
-  /** The vision file (`roadmap/vision-m3`), relative to the plan's directory. */
-  vision: PlanPath;
   /**
    * The slice of the vision this arc moves toward, ascending: active clauses of the vision in force, at least one a
    * `world` clause (checked where plan and vision meet: `advancesReasons`). The other active clauses are the horizon.
@@ -81,6 +91,8 @@ export type Holistic = Readonly<{
     wallClockMin?: number;
   }>;
 }>;
+/** An `architecture-doc` plan's holistic block: the vision file (`roadmap/vision-m3`), relative to the plan's directory. */
+export type HolisticDoc = Holistic & Readonly<{ vision: PlanPath }>;
 export const DEFAULT_AUDIT = { every: 5, wallClockMin: 360 } as const;
 
 export type PlanUnit = Readonly<{
@@ -106,9 +118,54 @@ export type PlanUnit = Readonly<{
   routing?: RoutingLayer;
   /** M3 (`limits`): this unit's bound overrides. */
   limits?: UnitLimits;
+  /** M4a rev 3 (F1b, R42): `high` ranks before every `normal` waiter, ahead of promotion; absent: `normal` (`priorityOf`). */
+  priority?: UnitPriority;
 }>;
 
-export type PlanM1 = Readonly<{
+export const UNIT_PRIORITIES = ['normal', 'high'] as const;
+export type UnitPriority = (typeof UNIT_PRIORITIES)[number];
+/** A unit's priority: its own, or `normal` (absent, lasting). */
+export const priorityOf = (unit: PlanUnit): UnitPriority => unit.priority ?? 'normal';
+
+/**
+ * M4a rev 3 (F4, R49): a defect the plan knows of. A unit that declares lane `lane` (`match: lane`), or whose red lane's
+ * output tail contains `contains` (`match: output`, a substring, never a regex), waits uncharged at `prepare` while
+ * `knownDefectActive` (src/schedule/ready.ts) holds: until `fixUnit`'s lineage merges. Ids are plan-scoped and never reused.
+ */
+export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId }>;
+
+/** M4a rev 3 (E, R40): how plan-check runs, per builder class (`by-builder`) or for every unit alike (`uniform`, the default). */
+export const PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
+export type PlanCheckShape = (typeof PLAN_CHECK_SHAPES)[number];
+
+/** The plan's known defects; none when absent. */
+export const knownDefectsOf = (plan: PlanM1): readonly KnownDefect[] => plan.knownDefects ?? [];
+/** The plan's plan-check shape (R40: a non-holistic arc always runs `uniform`, the caller's rule); `uniform` when absent. */
+export const planCheckShapeOf = (plan: PlanM1): PlanCheckShape => plan.planCheck?.shape ?? 'uniform';
+
+/** A chained start's previous arc and its completed head (H12), fixed at revision 1 (`chain-immutable`). */
+export type PlanChain = Readonly<{ previousArc: ArcId; previousHead: Sha }>;
+
+export const PLAN_TARGETS = ['architecture-doc', 'corpus'] as const;
+export type PlanTargetKind = (typeof PLAN_TARGETS)[number];
+
+/** The `architecture-doc` target: the M3 form, lasting for non-holistic arcs (scaffolding for holistic ones, R17). */
+export type ArchitectureDocTarget = Readonly<{
+  target: 'architecture-doc';
+  architectureDoc: RepoPath;
+  /**
+   * The owner-approved digest of the architecture doc (section index and normative sentences with line
+   * anchors). When present, judgments embed it and read the full doc from their checkout on demand.
+   */
+  architectureDigest?: RepoPath;
+  /** M3 (A5): present exactly when the arc runs the holistic layer. An apply may add it, never remove it. */
+  holistic?: HolisticDoc;
+}>;
+/** The `corpus` target (M4a): the corpus pin and the Phase-0 record beside the plan; always holistic (R23). */
+export type CorpusTarget = Readonly<{ target: 'corpus'; corpus: PlanPath; phase0: PlanPath; holistic: Holistic }>;
+export type PlanTarget = ArchitectureDocTarget | CorpusTarget;
+
+type PlanBase = Readonly<{
   schema: typeof PLAN_SCHEMA;
   arc: ArcId;
   integrationBranch: BranchName;
@@ -119,12 +176,6 @@ export type PlanM1 = Readonly<{
   contracts: readonly RepoPath[];
   /** The C-nn ledger, relative to the plan's directory. */
   rulings: PlanPath;
-  architectureDoc: RepoPath;
-  /**
-   * The owner-approved digest of the architecture doc (section index and normative sentences with line
-   * anchors). When present, judgments embed it and read the full doc from their checkout on demand.
-   */
-  architectureDigest?: RepoPath;
   direction: string;
   routing?: RoutingLayer;
   /** M2: the size of the built-in `@cpu` pool; absent: `availableParallelism()`. */
@@ -132,11 +183,66 @@ export type PlanM1 = Readonly<{
   suite: Readonly<{ lanes: readonly LaneDef[] }>;
   resources: readonly ResourceDecl[];
   units: readonly PlanUnit[];
-  /** M3 (A5): present exactly when the arc runs the holistic layer. An apply may add it, never remove it. */
-  holistic?: Holistic;
   /** M3: the bounds every unit takes unless its own `limits` overrides them, and the convergence K. */
   limits?: ArcLimits;
+  /** M4a: a chained start's previous arc (absent: not chained). */
+  chain?: PlanChain;
+  /** M4a rev 3 (F4): known defects, ids unique (absent: none, lasting; `knownDefectsOf`). */
+  knownDefects?: readonly KnownDefect[];
+  /** M4a rev 3 (E): the plan-check shape (absent: `uniform`, lasting; `planCheckShapeOf`). */
+  planCheck?: Readonly<{ shape: PlanCheckShape }>;
 }>;
+export type PlanM1 = PlanBase & PlanTarget;
+
+/**
+ * The repo documents a judgment and a fingerprint bind (H10): the architecture doc and its digest (null when none),
+ * or null for a corpus arc, which binds the pin instead (C2).
+ */
+export type TargetDocuments = Readonly<{ doc: RepoPath; digest: RepoPath | null }>;
+export function targetDocuments(plan: PlanM1): TargetDocuments | null {
+  return plan.target === 'corpus' ? null : { doc: plan.architectureDoc, digest: plan.architectureDigest ?? null };
+}
+/** `targetDocuments` as a path list (the doc, then the digest when present); empty for a corpus arc. */
+export function targetDocumentPaths(plan: PlanM1): readonly RepoPath[] {
+  const t = targetDocuments(plan);
+  return t === null ? [] : t.digest === null ? [t.doc] : [t.doc, t.digest];
+}
+
+/**
+ * The documents a ruling's contract ops may edit and a checkpoint's revision vector binds: the plan's contracts and the
+ * architecture doc, ascending (never its digest; never a corpus file, R32).
+ */
+export function contractOpDocuments(plan: PlanM1): readonly RepoPath[] {
+  const t = targetDocuments(plan);
+  return [...new Set([...plan.contracts, ...(t === null ? [] : [t.doc])])].sort();
+}
+
+/** The plan fields an apply's `plan-field` change compares (PLAN_FIELDS, src/core/events.ts); the target's read through its arm. */
+export type PlanFieldName = 'contracts' | 'rulings' | 'architectureDoc' | 'architectureDigest' | 'direction' | 'capacity';
+export function planFieldValue(plan: PlanM1, field: PlanFieldName): unknown {
+  switch (field) {
+    case 'architectureDoc':
+      return targetDocuments(plan)?.doc;
+    case 'architectureDigest':
+      return targetDocuments(plan)?.digest ?? undefined;
+    default:
+      return plan[field];
+  }
+}
+
+/** A corpus arc's vision record, relative to the product repo (R1). */
+export const CORPUS_VISION_FILE = '.roadmap/vision.json';
+
+/**
+ * Where the arc's vision record lives (OR-V+, R1): an `architecture-doc` plan's `holistic.vision`, relative to the
+ * plan's directory (`base: plan`), or `.roadmap/vision.json` relative to the product repo for a corpus arc (`base:
+ * repo`); null when the arc is not holistic. The caller joins `path` to its base.
+ */
+export type VisionLocation = Readonly<{ base: 'plan'; path: PlanPath }> | Readonly<{ base: 'repo'; path: RepoPath }>;
+export function visionFile(plan: PlanM1): VisionLocation | null {
+  if (plan.target === 'corpus') return { base: 'repo', path: repoPath(CORPUS_VISION_FILE) };
+  return plan.holistic === undefined ? null : { base: 'plan', path: plan.holistic.vision };
+}
 
 function limitsFields(f: Fields): Record<string, number> {
   const out: Record<string, number> = {};
@@ -152,7 +258,12 @@ const arcLimits: Read<ArcLimits> = object((f) => {
   return { ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }) } as ArcLimits;
 });
 
-const holistic: Read<Holistic> = object((f) => {
+/** `holistic`, with its `vision` exactly when `withVision` (an `architecture-doc` plan's; a corpus plan's has none). */
+const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object((f) => {
+  const vision = f.optional('vision', (v, p) => planPath(v, p));
+  if ((vision !== undefined) !== withVision) {
+    throw new SchemaError(`${f.path}.vision`, withVision ? 'the vision file (an architecture-doc plan)' : 'absent (a corpus plan\'s vision is <repo>/.roadmap/vision.json)', vision);
+  }
   const obligations = f.optional('obligations', (v, p) => planPath(v, p));
   const audit = f.optional('audit', object((g) => {
     const every = g.optional('every', positive);
@@ -161,8 +272,8 @@ const holistic: Read<Holistic> = object((f) => {
     return { ...(every === undefined ? {} : { every }), ...(lenses === undefined ? {} : { lenses }), ...(wallClockMin === undefined ? {} : { wallClockMin }) };
   }));
   return {
-    vision: f.get('vision', (v, p) => planPath(v, p)),
-    advances: f.get('advances', sortedBy((v, p) => visionClauseId(v, p), (c) => c, { nonEmpty: true })),
+    ...(vision === undefined ? {} : { vision }),
+    advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true, legacyStringOrder: true })),
     ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }) };
 });
 
@@ -223,6 +334,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
   const cutField = f.optional('cut', cut);
   const routing = f.optional('routing', routingLayer);
   const limits = f.optional('limits', unitLimits);
+  const priority = f.optional('priority', oneOf(UNIT_PRIORITIES));
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
@@ -230,8 +342,15 @@ const planUnit: Read<PlanUnit> = object((f) => {
   return {
     ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
+    ...(priority === undefined ? {} : { priority }),
   };
 });
+
+const knownDefect: Read<KnownDefect> = object((f) => ({
+  id: f.get('id', (v, p) => knownDefectId(v, p)),
+  match: f.get('match', knownDefectMatch),
+  fixUnit: f.get('fixUnit', (v, p) => unitId(v, p)),
+}));
 
 /**
  * Why a unit entering the plan (a fresh arc's rev 1, or a unit a revision adds) may not take `id`, or null. A repair
@@ -245,17 +364,46 @@ export function reservedUnitIdReason(id: UnitId): string | null {
     : null;
 }
 
+/**
+ * The target arm, by the fields present (K7): `architectureDoc` or `corpus`, never both or neither; a corpus plan names
+ * `phase0` and `holistic` and no digest; `phase0` never without `corpus`. Each illegal combination is a SchemaError.
+ */
+function planTarget(f: Fields): PlanTarget {
+  const architectureDoc = f.optional('architectureDoc', (v, p) => repoPath(v, p));
+  const architectureDigest = f.optional('architectureDigest', (v, p) => repoPath(v, p));
+  const corpus = f.optional('corpus', (v, p) => planPath(v, p));
+  const phase0 = f.optional('phase0', (v, p) => planPath(v, p));
+  if ((architectureDoc === undefined) === (corpus === undefined)) {
+    throw new SchemaError(`${f.path}.architectureDoc`, 'exactly one of architectureDoc and corpus (the plan target)', { architectureDoc, corpus });
+  }
+  if (corpus === undefined) {
+    if (phase0 !== undefined) throw new SchemaError(`${f.path}.phase0`, 'absent without corpus (a Phase-0 record belongs to a corpus plan)', phase0);
+    const holistic = f.optional('holistic', holisticOf(true)) as HolisticDoc | undefined;
+    return {
+      target: 'architecture-doc', architectureDoc: architectureDoc as RepoPath,
+      ...(architectureDigest === undefined ? {} : { architectureDigest }), ...(holistic === undefined ? {} : { holistic }),
+    };
+  }
+  if (architectureDigest !== undefined) throw new SchemaError(`${f.path}.architectureDigest`, 'absent beside corpus (the pin replaces the digest)', architectureDigest);
+  if (phase0 === undefined) throw new SchemaError(`${f.path}.phase0`, 'the Phase-0 record of a corpus plan', phase0);
+  const holistic = f.optional('holistic', holisticOf(false));
+  if (holistic === undefined) throw new SchemaError(`${f.path}.holistic`, 'present on a corpus plan (a corpus arc is holistic)', holistic);
+  return { target: 'corpus', corpus, phase0, holistic };
+}
+
 /** Field paths in errors start at `plan`, e.g. `plan.units[0].risk`. */
 export function parsePlan(value: unknown): PlanM1 {
   return object((f): PlanM1 => {
     const routing = f.optional('routing', routingLayer);
-    const architectureDigest = f.optional('architectureDigest', (v, p) => repoPath(v, p));
     const capacity = f.optional('capacity', object((g) => {
       const cpu = g.optional('cpu', positive);
       return cpu === undefined ? {} : { cpu };
     }));
-    const holisticField = f.optional('holistic', holistic);
+    const target = planTarget(f);
     const limits = f.optional('limits', arcLimits);
+    const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
+    const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
+    const planCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(PLAN_CHECK_SHAPES)) })));
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', (v, p) => arcId(v, p)),
@@ -264,17 +412,20 @@ export function parsePlan(value: unknown): PlanM1 {
       worktreeRoot: f.get('worktreeRoot', (v, p) => absPath(v, p)),
       contracts: f.get('contracts', arrayOf((v, p) => repoPath(v, p))),
       rulings: f.get('rulings', (v, p) => planPath(v, p)),
-      architectureDoc: f.get('architectureDoc', (v, p) => repoPath(v, p)),
-      ...(architectureDigest === undefined ? {} : { architectureDigest }),
       direction: f.get('direction', str),
       ...(routing === undefined ? {} : { routing }),
       ...(capacity === undefined ? {} : { capacity }),
       suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDef)) }))),
       resources: f.get('resources', arrayOf(resourceDecl)),
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),
-      ...(holisticField === undefined ? {} : { holistic: holisticField }),
       ...(limits === undefined ? {} : { limits }),
+      ...(chain === undefined ? {} : { chain }),
+      ...(knownDefects === undefined ? {} : { knownDefects }),
+      ...(planCheck === undefined ? {} : { planCheck }),
+      ...target,
     };
+    out.suite.lanes.forEach((l, i) => refuseLaneInputs(l, `plan.suite.lanes[${i}]`, 'suite'));
+    assertUnique(knownDefectsOf(out), (k) => k.id, 'plan.knownDefects');
     assertUnique(out.contracts, (c) => c, 'plan.contracts');
     assertUnique(out.suite.lanes, (l) => l.id, 'plan.suite.lanes');
     assertUnique(out.resources, (r) => r.name, 'plan.resources');

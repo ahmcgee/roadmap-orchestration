@@ -13,10 +13,10 @@
 // rev exactly as a seat edit does.
 //
 // Seats: build has `low | med | high`; planCheck and gate also have `escalation`, where route-ups and risk
-// triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles (M3) `lens` and `checkpoint`
-// have the one seat `arc`; they are in force only in a holistic arc (its plan names a vision, A5), and only
-// then are they checked, smoked and hashed (G20: a non-holistic arc resolves exactly as in M2, so its
-// `routingRev` is the one 1.0.0-dev.5 recorded).
+// triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles `lens`, `checkpoint` (M3) and
+// `packReview` (M4a) have the one seat `arc`. An arc role is in force (checked, smoked and hashed) only where it can run,
+// the arc's `ArcScope`: none in a non-holistic arc (G20: it resolves exactly as in M2); `lens` and `checkpoint` in a holistic `architecture-doc` arc (so its seats in force are the
+// ones 1.0.0-dev.6 hashed); all three in a corpus arc (lead ruling LR-0a-1: the pack review runs only there).
 //
 // `.roadmap/config.json` (committed, set once per repo):
 //
@@ -25,7 +25,11 @@
 //       "seats": { "<planCheck|gate>": { "<low|med|high|escalation>": "<class>" },
 //                  "build": { "<low|med|high>": "<class>" } },        optional; any subset of seats
 //       "classes": { "<efficient|frontier|summit>":                    optional; rebinds for this repo
-//                      { "backend", "model", "effort" } } } }
+//                      { "backend", "model", "effort" } } },
+//     "chain": { "k": <positive> } }                                  optional (M4a): unacked chained starts allowed
+//
+//   `chain.k` (M4a, OR-Q19, K10) is asked once at bootstrap and committed by the owner; the root agent never writes it.
+//   Absent: K unset (a chained start is refused `chain-invalid{k-unset}`). Nothing about issues lives here (OR-L6).
 //
 //   Classes: `efficient | frontier | summit`. A seat value that is a triple is refused: triples are bound
 //   only under `classes`, which is repo-level (a plan cannot rebind a class). A binding's effort is one its
@@ -36,21 +40,25 @@
 import type { UnitId } from '../core/ids.ts';
 import { type RoutingRev, routingRev } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { object } from '../core/validate.ts';
-import type { PlanM1 } from '../input/plan.ts';
+import { object, positive } from '../core/validate.ts';
+import type { PlanM1, PlanTargetKind } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
-import { CLASS_CATALOGUE } from './classes.ts';
+import { CLASS_CATALOGUE, type ClassCatalogue } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
 import {
-  ARC_ROLES, type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
+  type ArcRole, type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
   type RoutingLayer, type RoutingLayerName, type RoutingProvenance, type RoutingTable, SEAT_REFS, type SeatRef, type SeatTable, type Triple, UNIT_ROLES, atSeat,
   classBindings, profileName, routingLayer, seatTable,
 } from './types.ts';
 
-export type RepoConfig = Readonly<{ routing?: Readonly<{ profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings }> }>;
+export type RepoConfig = Readonly<{
+  routing?: Readonly<{ profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings }>;
+  chain?: Readonly<{ k: number }>;
+}>;
 
 export const repoConfig = object((f): RepoConfig => {
+  const chain = f.optional('chain', object((g) => ({ k: g.get('k', positive) })));
   const routing = f.optional('routing', object((g) => {
     const out: { profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings } = {};
     const profile = g.optional('profile', profileName);
@@ -61,7 +69,7 @@ export const repoConfig = object((f): RepoConfig => {
     if (classes !== undefined) out.classes = classes;
     return out;
   }));
-  return routing === undefined ? {} : { routing };
+  return { ...(routing === undefined ? {} : { routing }), ...(chain === undefined ? {} : { chain }) };
 });
 
 /** Reads `.roadmap/config.json`'s parsed JSON. */
@@ -81,19 +89,37 @@ export type RoutingStack = Readonly<{
   repoConfig: RoutingLayer | null;
   plan: RoutingLayer | null;
   unit: RoutingLayer | null;
-  /** M3 (A5, G20): present exactly when the plan names a vision, so the arc seats are in force. */
-  holistic?: true;
+  /** A holistic arc's scope: which arc roles are in force (`ARC_ROLES_IN_FORCE`); absent outside a holistic arc (`none`). */
+  arcScope?: PlanTargetKind;
 }>;
+
+/**
+ * Where the arc roles can run (G20, LR-0a-1): `none` outside a holistic arc, else the plan's target kind. A holistic
+ * `architecture-doc` arc runs the M3 roles; a corpus arc (always holistic) runs every arc role.
+ */
+export type ArcScope = 'none' | PlanTargetKind;
+export const ARC_ROLES_IN_FORCE: { readonly [S in ArcScope]: readonly ArcRole[] } = {
+  none: [], 'architecture-doc': ['lens', 'checkpoint'], corpus: ['lens', 'checkpoint', 'packReview'],
+};
+
+/** A plan's arc scope: `none` without `holistic`, else its target kind. */
+export function arcScopeOf(plan: Pick<PlanM1, 'target' | 'holistic'>): ArcScope {
+  return plan.holistic === undefined ? 'none' : plan.target;
+}
 
 /** The stack of a repo config and a plan layer, without a unit layer and without the arc seats. */
 export function arcStack(profile: ProfileName, config: RepoConfig | null, plan: RoutingLayer | null): RoutingStack {
   return { profile, classes: config?.routing?.classes ?? null, repoConfig: config?.routing?.seats ?? null, plan, unit: null };
 }
 
-/** The arc's stack for a plan: its routing layer, and the arc seats in force when it names a vision (G20). */
-export function planStack(profile: ProfileName, config: RepoConfig | null, plan: Pick<PlanM1, 'routing' | 'holistic'>): RoutingStack {
-  const stack = arcStack(profile, config, plan.routing ?? null);
-  return plan.holistic === undefined ? stack : { ...stack, holistic: true };
+/** `stack` with the arc seats of `arcScope` in force. */
+function scoped(stack: RoutingStack, arcScope: ArcScope): RoutingStack {
+  return arcScope === 'none' ? stack : { ...stack, arcScope };
+}
+
+/** The arc's stack for a plan: its routing layer, and the arc seats its scope puts in force (G20). */
+export function planStack(profile: ProfileName, config: RepoConfig | null, plan: Pick<PlanM1, 'routing' | 'target' | 'holistic'>): RoutingStack {
+  return scoped(arcStack(profile, config, plan.routing ?? null), arcScopeOf(plan));
 }
 
 /**
@@ -102,11 +128,10 @@ export function planStack(profile: ProfileName, config: RepoConfig | null, plan:
  * resolved from this, so a live repo config is never re-read once a revision recorded what it resolved from; a unit
  * without a layer resolves exactly as the arc, so its routingRev is the arc's.
  */
-export function provenanceStack(p: RoutingProvenance, holistic: boolean, unit: UnitId | null): RoutingStack {
-  const stack: RoutingStack = {
+export function provenanceStack(p: RoutingProvenance, arcScope: ArcScope, unit: UnitId | null): RoutingStack {
+  return scoped({
     profile: p.profile, classes: p.repoConfig.classes, repoConfig: p.repoConfig.seats, plan: p.planLayer, unit: unit === null ? null : p.unitLayers[unit] ?? null,
-  };
-  return holistic ? { ...stack, holistic: true } : stack;
+  }, arcScope);
 }
 
 export type SeatSources = SeatTable<RoutingLayerName>;
@@ -119,15 +144,23 @@ export type ResolvedRouting = Readonly<{
   /** Where each class's binding came from. */
   bindings: { readonly [C in ModelClass]: ClassSource };
   rev: RoutingRev;
-  /** The stack's `holistic`: whether the arc seats are in force (`seatsInForce`). */
-  holistic: boolean;
+  /** The stack's `arcScope`: which arc seats are in force (`seatsInForce`). */
+  arcScope: ArcScope;
 }>;
 
 const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig']] as const;
 
-/** Resolves every seat through the stack to a class, and every class to its binding. */
+/** Resolves every seat through the stack to a class, and every class to its binding in the class catalogue. */
 export function resolveRouting(stack: RoutingStack): ResolvedRouting {
-  const bound = (c: ModelClass): Triple => stack.classes?.[c] ?? CLASS_CATALOGUE[stack.profile][c];
+  return resolveRoutingUnder(CLASS_CATALOGUE, stack);
+}
+
+/**
+ * `resolveRouting` under a given catalogue. Only the dev.6 rev alias (src/core/upgrade.ts `dev6RevAlias`, scaffolding)
+ * passes another one; every routing in force binds through `CLASS_CATALOGUE` (OR-L3: no routing generations).
+ */
+export function resolveRoutingUnder(catalogue: ClassCatalogue, stack: RoutingStack): ResolvedRouting {
+  const bound = (c: ModelClass): Triple => stack.classes?.[c] ?? catalogue[stack.profile][c];
   const named = (seat: SeatRef): readonly [ModelClass, RoutingLayerName] => {
     for (const [name, key] of LAYERS) {
       const c = (stack[key]?.[seat.role] as Readonly<Partial<Record<string, ModelClass>>> | undefined)?.[seat.tier];
@@ -138,25 +171,27 @@ export function resolveRouting(stack: RoutingStack): ResolvedRouting {
   const classes = seatTable((s) => named(s)[0]);
   const table = seatTable((s) => bound(atSeat(classes, s)));
   const bindings = Object.fromEntries(MODEL_CLASSES.map((c) => [c, stack.classes?.[c] === undefined ? 'builtin' : 'repo-config'])) as ResolvedRouting['bindings'];
-  return { table, classes, sources: seatTable((s) => named(s)[1]), bindings, rev: routingRevOf(table, stack.holistic === true), holistic: stack.holistic === true };
+  return { table, classes, sources: seatTable((s) => named(s)[1]), bindings, rev: routingRevOf(table, stack.arcScope ?? 'none'), arcScope: stack.arcScope ?? 'none' };
 }
 
 /**
- * First 16 hex of sha256 over the canonical JSON of the resolved table's seats in force: every role's in a
- * holistic arc, the unit roles' otherwise (the M2 table, so a non-holistic arc keeps its 1.0.0-dev.5 revs).
+ * First 16 hex of sha256 over the canonical JSON of the resolved table's roles in force: the unit roles and the arc
+ * roles of `arcScope`. A non-holistic arc hashes the M2 table; a holistic `architecture-doc`
+ * arc the 1.0.0-dev.6 role set (no `packReview`), so only the class catalogue (OR-L3) moved its revs.
  */
-export function routingRevOf(table: RoutingTable, holistic: boolean): RoutingRev {
-  const inForce = holistic ? table : Object.fromEntries(UNIT_ROLES.map((r) => [r, table[r]]));
-  return routingRev(sha256Hex(canonicalJson(inForce)).slice(0, 16));
+export function routingRevOf(table: RoutingTable, arcScope: ArcScope): RoutingRev {
+  const roles: readonly Role[] = [...UNIT_ROLES, ...ARC_ROLES_IN_FORCE[arcScope]];
+  return routingRev(sha256Hex(canonicalJson(Object.fromEntries(roles.map((r) => [r, table[r]])))).slice(0, 16));
 }
 
-/** The seats in force (G20): every seat in a holistic arc; the arc roles' seats only then. */
+/** The seats in force (G20, LR-0a-1): the unit roles' and the arc roles' of the resolved scope. */
 export function seatsInForce(resolved: ResolvedRouting): readonly SeatRef[] {
-  return resolved.holistic ? SEAT_REFS : SEAT_REFS.filter((s) => !(ARC_ROLES as readonly Role[]).includes(s.role));
+  const arc: readonly Role[] = ARC_ROLES_IN_FORCE[resolved.arcScope];
+  return SEAT_REFS.filter((s) => (UNIT_ROLES as readonly Role[]).includes(s.role) || arc.includes(s.role));
 }
 
 /**
- * The startup row for routing: every seat in force (`seatsInForce`: the arc seats only in a holistic arc, G20)
+ * The startup row for routing: every seat in force (`seatsInForce`: the arc seats of its scope only, G20)
  * whose bound model has no usable prompt. A Codex model at a judgment seat is `codex-judgment`; any other
  * unsupported pair is `no-prompt`. Names the seat, the layer that chose its class and the class, never the model.
  */

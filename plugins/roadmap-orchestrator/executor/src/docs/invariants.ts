@@ -6,10 +6,15 @@
 // `json roadmap-obligations`, holding the published obligations file as canonical JSON on one line: what the next
 // arc's Phase 0 reads from its baseline tree and diffs by I-nn (src/holistic/rederive.ts). Published means
 // effective: a latched future obligation is published `must-hold`.
+//
+// A corpus arc's rendering adds a second block (M4a R3), info string `json roadmap-rules`: the rules registry of the
+// pin in force (`registryOf`, src/corpus/registry.ts) as canonical JSON on one line, what the next arc's pin and
+// `phase0 check` diff against.
 import type { ObligationId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { repoPath } from '../core/values.ts';
-import { type ObligationDef, type Obligations, parseObligations } from '../holistic/types.ts';
+import { RULES_REGISTRY_FENCE, type RulesRegistry, parseRulesRegistry } from '../corpus/types.ts';
+import { type ObligationDef, type Obligations, obligationSource, parseObligations } from '../holistic/types.ts';
 
 export const OBLIGATIONS_BLOCK_INFO = 'json roadmap-obligations';
 
@@ -39,12 +44,20 @@ function stateText(o: ObligationDef): string {
   }
 }
 
+/** A doc-anchored obligation's doc ref; a rule-anchored one's rule (M4a). */
+function anchorLine(o: ObligationDef): string {
+  const src = obligationSource(o);
+  return src.kind === 'doc'
+    ? `doc ref: ${code(src.path)} ${code(src.anchor)}: ${JSON.stringify(src.quotedText)}`
+    : `rule: ${code(src.rule.id)}`;
+}
+
 function entry(o: ObligationDef): string {
   const lines = [
     `state: ${stateText(o)}`,
     `activation: ${o.activation}`,
     `rev: ${o.rev}`,
-    `doc ref: ${code(o.docRef.path)} ${code(o.docRef.anchor)}: ${JSON.stringify(o.docRef.quotedText)}`,
+    anchorLine(o),
     `serves: ${list(o.serves)}`,
     `witness: ${o.witness === null ? '(none: a split parent is witnessed through its children)' : `lane ${code(o.witness.lane)}, tests ${o.witness.testIds.map((t) => JSON.stringify(t)).join(', ')}`}`,
     ...(o.deliveredBy.length === 0 ? [] : [`delivered by: ${o.deliveredBy.join(', ')}`]),
@@ -54,8 +67,11 @@ function entry(o: ObligationDef): string {
   return `## ${o.id} — ${o.statement.split('\n').join(' ')}\n\n${lines.map((l) => `- ${l}`).join('\n')}`;
 }
 
-/** `invariants.md` for the obligations in force and the latched ones (published must-hold). */
-export function renderInvariants(o: Obligations, latched: readonly ObligationId[]): string {
+/**
+ * `invariants.md` for the obligations in force and the latched ones (published must-hold), with the rules registry of
+ * a corpus arc's pin in force (absent for an `architecture-doc` arc).
+ */
+export function renderInvariants(o: Obligations, latched: readonly ObligationId[], registry?: RulesRegistry): string {
   const published = publishedObligations(o, latched);
   return [
     '# Invariants',
@@ -63,6 +79,7 @@ export function renderInvariants(o: Obligations, latched: readonly ObligationId[
     `Cut line: ${published.cutLine}`,
     ...(published.obligations.length === 0 ? ['(no obligations)'] : published.obligations.map(entry)),
     `## Published obligations\n\n\`\`\`${OBLIGATIONS_BLOCK_INFO}\n${canonicalJson(published)}\n\`\`\``,
+    ...(registry === undefined ? [] : [`## Rules registry\n\n\`\`\`${RULES_REGISTRY_FENCE}\n${canonicalJson(registry)}\n\`\`\``]),
   ].join('\n\n') + '\n';
 }
 
@@ -71,8 +88,18 @@ export function renderInvariants(o: Obligations, latched: readonly ObligationId[
  * before M3). More than one block, or a block that does not parse, is refused.
  */
 export function parseInvariantsBlock(text: string): Obligations | null {
-  const blocks = [...text.matchAll(new RegExp(`^\`\`\`${OBLIGATIONS_BLOCK_INFO}\\n(.*)\\n\`\`\`$`, 'gm'))];
-  if (blocks.length > 1) throw new Error(`invariants.md: ${blocks.length} ${OBLIGATIONS_BLOCK_INFO} blocks (exactly one is published)`);
-  if (blocks.length === 0) return null;
-  return parseObligations(JSON.parse(blocks[0]![1]!));
+  const json = oneBlock(text, OBLIGATIONS_BLOCK_INFO);
+  return json === null ? null : parseObligations(JSON.parse(json));
+}
+
+/** The published rules registry of an `invariants.md` (R3), or null when it has none (no corpus arc published it). */
+export function parseRulesRegistryBlock(text: string): RulesRegistry | null {
+  const json = oneBlock(text, RULES_REGISTRY_FENCE);
+  return json === null ? null : parseRulesRegistry(JSON.parse(json));
+}
+
+function oneBlock(text: string, info: string): string | null {
+  const blocks = [...text.matchAll(new RegExp(`^\`\`\`${info}\\n(.*)\\n\`\`\`$`, 'gm'))];
+  if (blocks.length > 1) throw new Error(`invariants.md: ${blocks.length} ${info} blocks (exactly one is published)`);
+  return blocks.length === 0 ? null : blocks[0]![1]!;
 }

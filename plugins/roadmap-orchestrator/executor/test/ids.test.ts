@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  type ImplementerSessionId, type JudgmentSessionId, InvalidIdError, arcId, clauseId, commandId, hostNeedsUserId,
+  type ImplementerSessionId, type JudgmentSessionId, type NumberedId, type RuleId, InvalidIdError, amendmentRef, amendmentRefKey, answerIds, canonicalIds,
+  compareIds, idKey, idList, obligationId, ruleId, visionClauseId, arcId, clauseId, commandId, hostNeedsUserId,
   implementerSessionId, invocationDirName, invocationId, invocationIdOf, judgmentSessionId, laneId, needsUserId,
   needsUserIdForOp, opId, opIdOf, opKey, parseInvocationId, parseOpId, resourceName, routingRev, rulingId, sha, sha256,
   specRev, supervisorNeedsUserId, unitId,
 } from '../src/core/ids.ts';
+import { SchemaError } from '../src/core/validate.ts';
 
 const UUID = '0190f6c2-8f3a-7d21-9a4e-3b5c6d7e8f90';
 
@@ -85,5 +87,66 @@ describe('ids', () => {
     assert.equal(typeof refused, 'function');
     assert.equal(typeof alsoRefused, 'function');
     assert.equal(resume(implementerSessionId(UUID)), UUID);
+  });
+});
+
+// The canonical order of numbered ids (paid M4a run 7: `["T-42","T-120"]` was refused by a string-order reader).
+describe('ids.numbered-order', () => {
+  const T = (n: number): RuleId => ruleId(`T-${n}`);
+
+  it('compareIds orders by letter, then by number: T-9 < T-10 < T-100', () => {
+    assert.deepEqual([T(100), T(10), T(9)].sort(compareIds), ['T-9', 'T-10', 'T-100']);
+    assert.ok(compareIds(T(9), T(10)) < 0 && compareIds(T(10), T(100)) < 0 && compareIds(T(100), T(9)) > 0);
+    assert.equal(compareIds(T(42), T(42)), 0);
+    const mixed: NumberedId[] = [visionClauseId('V-2'), T(10), rulingId('C-12'), rulingId('C-3'), obligationId('I-1')];
+    assert.deepEqual(mixed.sort(compareIds), ['C-3', 'C-12', 'I-1', 'T-10', 'V-2']);
+  });
+
+  it('idKey: string order of keys is the canonical order; distinct ids keep distinct keys', () => {
+    assert.ok(idKey(T(9)) < idKey(T(10)) && idKey(T(10)) < idKey(T(100)));
+    assert.notEqual(idKey(rulingId('C-01')), idKey(rulingId('C-1')));
+    assert.throws(() => idKey('issue-3' as NumberedId), InvalidIdError);
+  });
+
+  it('canonicalIds dedupes and sorts', () => {
+    assert.deepEqual(canonicalIds([T(120), T(42), T(120), T(3)]), ['T-3', 'T-42', 'T-120']);
+    assert.deepEqual(canonicalIds([]), []);
+  });
+
+  it('idList requires canonical order: the run-7 list reads, string order and duplicates are refused', () => {
+    const read = idList((v, p) => ruleId(v, p));
+    assert.deepEqual(read(['T-42', 'T-120'], 'rules'), ['T-42', 'T-120']);
+    assert.throws(() => read(['T-120', 'T-42'], 'rules'), (err: unknown) => err instanceof SchemaError && err.field === 'rules[1]' && /in id order/.test(err.message));
+    assert.throws(() => read(['T-9', 'T-9'], 'rules'), /rules\[1\]/);
+    assert.throws(() => idList((v, p) => ruleId(v, p), { nonEmpty: true })([], 'rules'), /non-empty/);
+  });
+
+  it('idList with legacyStringOrder reads a string-ordered list as written, warning once; a list in neither order is refused', () => {
+    const read = idList((v, p) => ruleId(v, p), { legacyStringOrder: true });
+    const writes: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write;
+    try {
+      assert.deepEqual(read(['T-10', 'T-9'], 'fact.rules'), ['T-10', 'T-9']);
+      assert.deepEqual(read(['T-100', 'T-20', 'T-3'], 'fact.rules'), ['T-100', 'T-20', 'T-3']);
+    } finally {
+      process.stderr.write = write;
+    }
+    assert.equal(writes.length, 1, 'once per process');
+    assert.match(writes[0]!, /upgrade default \(ids\.string-order\): fact\.rules: a numbered-id list in string order/);
+    assert.deepEqual(read(['T-9', 'T-10'], 'fact.rules'), ['T-9', 'T-10'], 'canonical reads too');
+    assert.throws(() => read(['T-9', 'T-10', 'T-2'], 'fact.rules'), /fact\.rules\[2\]/);
+    assert.throws(() => read(['T-10', 'T-10'], 'fact.rules'), /fact\.rules\[1\]/);
+  });
+
+  it('answerIds normalises a judgment answer: any order in, canonical out; a duplicate is still invalid', () => {
+    const read = answerIds((v, p) => ruleId(v, p));
+    assert.deepEqual(read(['T-120', 'T-42', 'T-9'], 'answer.rules'), ['T-9', 'T-42', 'T-120']);
+    assert.throws(() => read(['T-42', 'T-42'], 'answer.rules'), (err: unknown) => err instanceof SchemaError);
+  });
+
+  it('amendmentRefKey orders by arc, then by number', () => {
+    const refs = ['b/M-1', 'a/M-10', 'a/M-9'].map((r) => amendmentRef(r));
+    assert.deepEqual(refs.sort((x, y) => (amendmentRefKey(x) < amendmentRefKey(y) ? -1 : 1)), ['a/M-9', 'a/M-10', 'b/M-1']);
   });
 });

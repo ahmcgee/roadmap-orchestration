@@ -14,19 +14,22 @@
 //              must-hold text would go ungraded (paid m3 run 7).
 //   witness    a changed witness takes a fresh proof judgment that `proves`; a test id it no longer names is
 //              weakening (amended)
-//   disposed   weakening: removed (retired), statement or docRef changed or must-hold → future (amended),
+//   disposed   weakening: removed (retired), statement, docRef or rule id changed or must-hold → future (amended),
 //              waived / deferred / retired. Each needs a ruling in force naming the id with that disposition in
 //              its `obligationDispositions` (a state's own ruling for a state change). Removing a retired
 //              obligation is its retirement already.
 //   restored   an exempt obligation active again (strengthening)
-//   edited     serves, contracts, deliveredBy, or future → must-hold changed (no ruling needed)
-// Everywhere: `rev` rises by one exactly when the statement, docRef or activation changes; a parent is never
+//   edited     serves, contracts, deliveredBy, or future → must-hold changed, or (M4a, R5) a rule anchor's textSha256
+//              refreshed after a rewording with the statement unchanged (no ruling needed)
+// Everywhere: `rev` rises by one exactly when the statement, docRef, rule id or activation changes (a rule's hash
+// refresh alone is not normative); a parent is never
 // changed; a proof judgment bound to another obligation revision, lane revision or witness definition is stale; in an arc with a vision every
 // non-exempt obligation serves a clause, and newly cited clauses are active.
 import type { LaneId, ObligationId, RulingId, UnitId, VisionClauseId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
+import { type CorpusPin, activeRules } from '../corpus/types.ts';
 import {
-  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevOf,
+  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevMatches, laneRevOf, obligationSource,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
@@ -62,7 +65,7 @@ export function weakeningsOf(prev: ObligationDef, next: ObligationDef | undefine
     out.push({ disposition: s.type, what: `${s.type} by ${s.ruling}`, ruling: s.ruling });
   }
   if (next.statement !== prev.statement) out.push({ disposition: 'amended', what: 'statement changed', ruling: null });
-  if (canonicalJson(next.docRef) !== canonicalJson(prev.docRef)) out.push({ disposition: 'amended', what: 'docRef changed', ruling: null });
+  if (reAnchored(prev, next)) out.push({ disposition: 'amended', what: obligationSource(next).kind === 'rule' ? 'rule changed' : 'docRef changed', ruling: null });
   if (prev.activation === 'must-hold' && next.activation === 'future') out.push({ disposition: 'amended', what: 'must-hold → future', ruling: null });
   if (prev.witness !== null && next.witness !== null) {
     const kept = new Set(next.witness.testIds.map((t) => `${next.witness!.lane}\u0000${t}`));
@@ -70,6 +73,38 @@ export function weakeningsOf(prev: ObligationDef, next: ObligationDef | undefine
     if (lost.length > 0) out.push({ disposition: 'amended', what: `witness no longer names ${lost.map((t) => JSON.stringify(t)).join(', ')}`, ruling: null });
   }
   return out;
+}
+
+/**
+ * Whether an obligation's anchor moved: another doc ref, another rule, or a switch of kind. A rule anchor whose
+ * `textSha256` alone changed (a rewording re-pinned, R5) is not a move: with the statement unchanged it is an edit
+ * (`edited{rule}`), never a weakening; a changed statement is its own weakening.
+ */
+export function reAnchored(prev: ObligationDef, next: ObligationDef): boolean {
+  const a = obligationSource(prev);
+  const b = obligationSource(next);
+  if (a.kind === 'rule' && b.kind === 'rule') return a.rule.id !== b.rule.id;
+  return canonicalJson(a) !== canonicalJson(b);
+}
+
+/** A rule anchor's hash refreshed after a rewording (same `T-n`, another `textSha256`). */
+function ruleRefreshed(prev: ObligationDef, next: ObligationDef): boolean {
+  const a = obligationSource(prev);
+  const b = obligationSource(next);
+  return a.kind === 'rule' && b.kind === 'rule' && a.rule.id === b.rule.id && a.rule.textSha256 !== b.rule.textSha256;
+}
+
+/**
+ * Whether a rule-anchored obligation's `{T-n, textSha256}` resolves in `pin` (M4a; LR-C1-2): a binding obligation's to an
+ * active rule with that text hash; an exempt one's (waived, deferred, retired: it binds nothing) also to a rule the pin
+ * retired with that hash, so retiring a rule does not force an edit of an obligation already exempted from it. A
+ * docRef obligation is not asked (it has no rule).
+ */
+export function ruleAnchorResolves(o: ObligationDef, pin: CorpusPin): boolean {
+  const src = obligationSource(o);
+  if (src.kind !== 'rule') throw new Error(`${o.id} is docRef-anchored: only a rule anchor resolves in a pin`);
+  if (activeRules(pin).get(src.rule.id)?.textSha256 === src.rule.textSha256) return true;
+  return isExempt(o) && pin.retired.some((r) => r.id === src.rule.id && r.textSha256 === src.rule.textSha256);
 }
 
 /** The active ruling in force that names `id` with `disposition` (the given one when `ruling` is set), or null. */
@@ -103,9 +138,11 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
 
   const stale = (o: ObligationDef): void => {
     if (o.witness === null || o.proofJudgment === null) return;
-    const rev = laneRevOf(lanes.get(o.witness.lane)!);
+    const lane = lanes.get(o.witness.lane)!;
+    const rev = laneRevOf(lane);
     const p = o.proofJudgment;
-    if (p.obligationRev !== o.rev || p.laneRev !== rev) {
+    // F7 (R64): a judgment bound to the lane's minimal form (a generator hashing raw input) still names this lane.
+    if (p.obligationRev !== o.rev || !laneRevMatches(p.laneRev, lane)) {
       reasons.push(`${o.id}'s proof judgment is stale (judged obligation rev ${p.obligationRev}, lane ${p.laneRev}; now rev ${o.rev}, lane ${rev})`);
     }
     if (canonicalJson(p.witness) !== canonicalJson(o.witness)) {
@@ -147,8 +184,8 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
     if (o.parent !== p.parent) reasons.push(`${o.id}'s parent changed (a split family is fixed)`);
     newCites(o, p);
 
-    const normative = o.statement !== p.statement || canonicalJson(o.docRef) !== canonicalJson(p.docRef) || o.activation !== p.activation;
-    if (o.rev !== p.rev + (normative ? 1 : 0)) reasons.push(`${o.id} takes rev ${p.rev + (normative ? 1 : 0)}, not ${o.rev} (the rev rises exactly when its statement, docRef or activation changes)`);
+    const normative = o.statement !== p.statement || reAnchored(p, o) || o.activation !== p.activation;
+    if (o.rev !== p.rev + (normative ? 1 : 0)) reasons.push(`${o.id} takes rev ${p.rev + (normative ? 1 : 0)}, not ${o.rev} (the rev rises exactly when its statement, docRef, rule or activation changes)`);
 
     for (const w of weakeningsOf(p, o)) disposed(o.id, w);
 
@@ -167,6 +204,7 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
       ...(canonicalJson(o.contracts) !== canonicalJson(p.contracts) ? ['contracts'] : []),
       ...(canonicalJson(o.deliveredBy) !== canonicalJson(p.deliveredBy) ? ['deliveredBy'] : []),
       ...(p.activation === 'future' && o.activation === 'must-hold' ? ['activation'] : []),
+      ...(ruleRefreshed(p, o) && o.statement === p.statement ? ['rule'] : []),
     ];
     if (edited.length > 0) changes.push({ type: 'edited', id: o.id, fields: edited });
   }

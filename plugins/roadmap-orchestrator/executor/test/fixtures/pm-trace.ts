@@ -61,6 +61,12 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'revision.commit.after-intent': R('reconciled'),
   'revision.commit.after-fact': R('reconciled'),
   'unit.after-stage': NONE,
+  // M4a rev 3 N1: a lane-reused fact written, the next lane not begun; a clean census, the series-certified fact unwritten
+  // (the series is then uncertified: never reused, its lanes run again); a red class's red.json written, its rerun not begun
+  // (the stage runs again as a new attempt, reading the class back). Every op is closed: nothing for recovery to reconcile.
+  'lanes.after-reused': NONE,
+  'lanes.after-census-before-certified': NONE,
+  'redlane.after-class': NONE,
   'recover.before-op': NONE,
   'recover.after-op': NONE,
   // M3 B7: arc-completed written, its terminal snapshot not: nothing open; the restart publishes the snapshot.
@@ -78,6 +84,34 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'checkpoint.after-call': NONE,
   'bundle.after-applied': NONE,
   'bundle.after-decided': NONE,
+  // M4a (a corpus arc): the pack review's facts, a checkpoint's kept issue capture, its amendment settlement.
+  'packreview.after-started': NONE,
+  'packreview.after-call': NONE,
+  'packreview.after-ended': NONE,
+  'issues.after-keep': NONE,
+  'amendment.after-decided': NONE,
+  'debt.after-approval': NONE,
+  // M4a rev 3 N3 (a corpus arc's unit stages): the frontier dispatch pinned (in-session unwritten); the assessment read (the
+  // implementing call not begun); the witness lane files published (no build call); the witness check's series certified
+  // (its verdict unwritten); the smoke's patch kept, its mutant applied, its mutant lanes witnessed, its smoke-ran written.
+  // Each op is closed: the stage runs again as a new attempt, consuming what is recorded.
+  'plancheck.after-pin-in-session': NONE,
+  'build.after-assess': NONE,
+  'witnesscheck.after-lane-files': NONE,
+  'witnesscheck.after-witnessed': NONE,
+  'smoke.after-patch-kept': NONE,
+  'smoke.after-apply': NONE,
+  'smoke.after-witnessed': NONE,
+  'smoke.after-ran-before-outcome': NONE,
+  // The smoke's mutant.apply, as the mutant.apply row's: intent durable or its checkout made (redone), the patched tree made
+  // (reconciled), the apply done with its lanes not run (nothing open).
+  'mutant.act-start': R('redone'),
+  'mutant.after-worktree': R('redone'),
+  'mutant.act-end': R('reconciled'),
+  'mutant.after-done': NONE,
+  // M4a rev 3 N2: a decision record's conversion amendment (or an overrun's debt item) written: settled again from the record.
+  'bundle.after-conversion-amendment': NONE,
+  'bundle.after-overrun-debt': NONE,
   // The close-out's docs.commit: open (redone, then the unpublished holder abandoned) or done.
   'docs.act-start': R('redone'),
   'docs.after-commit-tree': R('redone'),

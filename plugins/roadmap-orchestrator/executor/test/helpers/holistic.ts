@@ -4,7 +4,7 @@
 // job and lens by the scenario keys (`unit` = the job id, `lens`; see StepBase in scenario.ts).
 import type { JsonValue } from '../../src/core/json.ts';
 import type { LensKindName } from '../../src/core/records.ts';
-import { validateCheckpointOutput, validateLensOutput } from '../../src/prompts/schemas.ts';
+import { validateCheckpointOutput, validateLensOutput, validatePackReviewOutput } from '../../src/prompts/schemas.ts';
 import type { ClaudeAct, Step } from './scenario.ts';
 
 type Obj = { readonly [key: string]: JsonValue };
@@ -40,6 +40,21 @@ export function lensAnswer(findings: readonly LensFindingSpec[] = []): JsonValue
 
 const cites = { cites: ['V-1'], evidence: ['scripted evidence'] } as const;
 
+/**
+ * A spec.json object in the checkpoint's admit wire form (run 10, D; src/prompts/schemas.ts `S_ADMIT_SPEC`): each lane's
+ * env.set as [{name, value}] and its evidenceExcludes present, `obligations` and `repairs` [] when absent. A lane's `cpu`
+ * or `inputs` and witness items have no wire form: they throw.
+ */
+export function admitSpecWire(spec: Readonly<Record<string, unknown>>): JsonValue {
+  if (spec['witnesses'] !== undefined) throw new Error('an admitted spec holds no witness items');
+  const lanes = ((spec['lanes'] ?? []) as Readonly<Record<string, unknown>>[]).map((l) => {
+    if (l['cpu'] !== undefined || l['inputs'] !== undefined) throw new Error(`lane ${String(l['id'])}: cpu and inputs have no admit wire form`);
+    const env = l['env'] as Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }>;
+    return { ...l, evidenceExcludes: l['evidenceExcludes'] ?? [], env: { ...env, set: Object.entries(env.set).map(([name, value]) => ({ name, value })) } };
+  });
+  return { ...spec, lanes, obligations: spec['obligations'] ?? [], repairs: spec['repairs'] ?? [] } as unknown as JsonValue;
+}
+
 /** An op the reader accepts and activation accepts on a plan with a unit `unit`: an arc-wide limits change. */
 export const VALID_OP: JsonValue = { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 3 }], ...cites };
 /** An op the reader accepts but activation refuses: it cuts a unit the plan does not have and cites a clause the vision lacks. */
@@ -51,7 +66,19 @@ export type CheckpointSpec = Readonly<{
   rulings?: readonly string[];
   findingDispositions?: readonly Readonly<{ finding: string; disposition: 'dismissed' | 'deferred' | 'accepted'; reason: string }>[];
   interpretations?: readonly Readonly<{ clauses: readonly string[]; situation: string; reading: string }>[];
+  /** M4a: amendments the checkpoint proposes (`rules` are `T-n` ids). */
+  corpusAmendments?: readonly Readonly<{ rules: readonly string[]; proposal: string; why: string }>[];
+  /** M4a: one outcome per captured issue (`issue` is an `issue-<number>` id); the outcome objects are the wire form. */
+  issueIntake?: readonly Readonly<{ issue: string; outcome: JsonValue }>[];
 }>;
+
+/** Issue-intake outcomes in the checkpoint's wire form (H17: `acted` names ops of the same output). */
+export const intakeOutcome = {
+  finding: (claim: string, severity: 'P2' | 'P3' = 'P2', cause = 'scripted cause'): JsonValue => ({ type: 'finding', severity, claim, cause }),
+  amendment: (rules: readonly string[], proposal: string): JsonValue => ({ type: 'amendment', rules: [...rules], proposal }),
+  actedOps: (indexes: readonly number[]): JsonValue => ({ type: 'acted', on: { type: 'ops', indexes: [...indexes] } }),
+  none: (reason: string): JsonValue => ({ type: 'none', reason }),
+} as const;
 
 /** A checkpoint's answer, validated by the frozen reader (so a no-op with ops, or a bundle without, throws here). */
 export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
@@ -64,6 +91,8 @@ export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
     interpretations: (spec.interpretations ?? []).map((i) => ({ clauses: [...i.clauses], situation: i.situation, reading: i.reading })),
     cites: { vision: ['V-1'], observations: [], findings: [] },
     premises: [],
+    corpusAmendments: (spec.corpusAmendments ?? []).map((a) => ({ rules: [...a.rules], proposal: a.proposal, why: a.why })),
+    issueIntake: (spec.issueIntake ?? []).map((e) => ({ issue: e.issue, outcome: e.outcome })),
   };
   validateCheckpointOutput(value);
   return value;
@@ -89,4 +118,51 @@ export function lensStep(job: string | undefined, lens: LensKindName, findings: 
 /** A checkpoint call of job `job` (a `ckpt-n`) answers `answer`. */
 export function checkpointStep(job: string | undefined, answer: JsonValue, extra: readonly ClaudeAct[] = []): Step {
   return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: answer }]);
+}
+
+export type PackFindingSpec = Readonly<{
+  severity?: 'blocking' | 'note';
+  /** The finding's target in wire form; default the plan. */
+  target?: JsonValue;
+  claim?: string;
+  evidence?: readonly Readonly<{ path: string; line: number }>[];
+}>;
+
+/** Pack-review targets in wire form. */
+export const packTargetOf = {
+  unit: (id: string): JsonValue => ({ type: 'unit', id }),
+  obligation: (id: string): JsonValue => ({ type: 'obligation', id }),
+  census: (rule: string): JsonValue => ({ type: 'census', rule }),
+  rule: (id: string): JsonValue => ({ type: 'rule', id }),
+  plan: (): JsonValue => ({ type: 'plan' }),
+} as const;
+
+/** A delta re-review's disposition of an earlier finding `job#index` (M4a rev 3, H3). */
+export type PackDispositionSpec = Readonly<{ job: string; index: number; disposition: 'resolved' | 'still-open' | 'withdrawn' }>;
+
+/** A pack review's answer (OR-Q16), validated by the frozen reader: defaults a note on the plan; `dispositions` a delta re-review's. */
+export function packReviewAnswer(findings: readonly PackFindingSpec[] = [], dispositions: readonly PackDispositionSpec[] = []): JsonValue {
+  const value: Obj = {
+    findings: findings.map((f, i) => ({
+      severity: f.severity ?? 'note',
+      target: f.target ?? packTargetOf.plan(),
+      claim: f.claim ?? `pack claim ${i + 1}`,
+      evidence: (f.evidence ?? [{ path: 'docs/corpus/0010_Overview.md', line: 1 }]).map((e) => ({ ...e })),
+    })),
+    dispositions: dispositions.map((d) => ({ ...d })),
+    reasons: ['scripted pack review'],
+    premises: [],
+  };
+  validatePackReviewOutput(value);
+  return value;
+}
+
+/**
+ * A pack-review call of job `review-<n>` answers `findings` (and, a delta re-review, `dispositions` of the earlier
+ * unresolved findings); `extra` acts (commit, hang, barrier...) run first.
+ */
+export function packReviewStep(
+  job: string | undefined, findings: readonly PackFindingSpec[] = [], extra: readonly ClaudeAct[] = [], dispositions: readonly PackDispositionSpec[] = [],
+): Step {
+  return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: packReviewAnswer(findings, dispositions) }]);
 }

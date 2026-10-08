@@ -15,6 +15,17 @@ export const H = sha256('d'.repeat(64));
 export const REV = routingRev('0123456789abcdef');
 export const U1 = unitId('u1');
 
+/** A routing provenance with nothing but the default profile: what a test plan revision records (H7). */
+export const PROVENANCE = { profile: 'default', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} } as const;
+/**
+ * The fields every `plan-applied` carries beside its manifest and changes (M3): its source (the start for revision 1
+ * or a null command, else the command), payload, ledger and routing provenance, and `scheduling: 'dag'` on rev 1.
+ */
+export const appliedFields = (rev: number, command: string | null) => ({
+  source: command === null ? { type: 'start' } : { type: 'command', command }, payloadSha256: H, rulingsSha256: H, routingProvenance: PROVENANCE,
+  ...(rev === 1 ? { scheduling: 'dag' } : {}),
+}) as const;
+
 export const stageParent = (stage: Stage, attempt: number, unit = U1) => ({ type: 'stage', unit, stage, attempt }) as const;
 
 /** A backend proc.spawn intent (ordinal given) for op `<arc>/<seq>`. */

@@ -6,7 +6,9 @@
 // always shown with their state: ids are never reused, and a reader must see what was withdrawn.
 // `fastLanesOnly` is the implementer's view: estate lanes are left out entirely, without even a mention.
 // M3 (A13): the obligations a unit declares and what a repair unit repairs follow, each only when the spec has it.
-import type { ItemState, LaneDef, NoteDef, SpecM1 } from '../core/records.ts';
+// M4a rev 3: a spec's witness items follow its facts, and a spec lane's `inputs` its evidence, each only when present, so
+// a spec without them renders as before.
+import type { ItemState, LaneDef, NoteDef, SpecM1, WitnessItemDef } from '../core/records.ts';
 import { fastLanes } from '../resources/reserve.ts';
 
 export type RenderOptions = Readonly<{ fastLanesOnly?: boolean }>;
@@ -33,6 +35,14 @@ function lane(l: LaneDef & Readonly<{ state: ItemState }>): string {
     `  - resources: ${l.resources.length === 0 ? '(none)' : sorted(l.resources).map(code).join(', ')}`,
     `  - evidence: ${l.evidenceGlobs.length === 0 ? '(none)' : sorted(l.evidenceGlobs).map(code).join(', ')}`,
     ...(l.evidenceExcludes.length === 0 ? [] : [`  - evidence excludes: ${sorted(l.evidenceExcludes).map(code).join(', ')}`]),
+    ...(l.inputs === undefined ? [] : [`  - inputs: ${sorted(l.inputs).map(code).join(', ')}`]),
+  ].join('\n');
+}
+
+function witness(w: WitnessItemDef & Readonly<{ state: ItemState }>): string {
+  return [
+    `- ${code(w.id)} [${w.state}] lane ${code(w.lane)} test ${code(w.testId)} witnesses ${code(w.clause)}`,
+    `  - skeleton: ${w.skeleton.split('\n').join('\n    ')}`,
   ].join('\n');
 }
 
@@ -54,6 +64,7 @@ export function renderSpec(spec: SpecM1, options: RenderOptions = {}): string {
     `## Resources\n\n${spec.resources.length === 0 ? '(none)' : sorted(spec.resources).map((r) => `- ${code(r)}`).join('\n')}`,
     notes('Decisions', spec.decisions),
     notes('Facts', spec.facts),
+    ...(spec.witnesses === undefined ? [] : [`## Witnesses\n\n${spec.witnesses.map(witness).join('\n')}`]),
     `## Cites\n\n${cites.length === 0 ? '(none)' : cites.join('\n')}`,
     // M3 (A13): shown only when declared, so a spec without them renders as before.
     ...(spec.obligations === undefined ? [] : [`## Obligations\n\n${sorted(spec.obligations).map((o) => `- ${o}`).join('\n')}`]),

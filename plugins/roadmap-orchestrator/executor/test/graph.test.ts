@@ -33,7 +33,7 @@ describe('graph', () => {
 });
 
 describe('rank', () => {
-  const r = (unit: string, extra: Partial<Rank>): Rank => ({ unit: unitId(unit), origin: 'planned', waitStartSeq: 10, bypassMerges: 0, promoted: false, planIndex: 0, ...extra });
+  const r = (unit: string, extra: Partial<Rank>): Rank => ({ unit: unitId(unit), priority: 'normal', origin: 'planned', waitStartSeq: 10, bypassMerges: 0, promoted: false, planIndex: 0, ...extra });
 
   it('promoted units first, by age alone; then checkpoint before planned, then age, then plan index', () => {
     const ranks = [

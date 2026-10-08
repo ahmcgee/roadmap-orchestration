@@ -6,12 +6,12 @@ import type {
   AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
   PlanAppliedFact, RecoveredBy,
 } from './events.ts';
-import type { ArcId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId } from './ids.ts';
+import type { AmendmentId, ArcId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId } from './ids.ts';
 import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, Scheduling, UnitState } from './state.ts';
+import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, UnitState } from './state.ts';
 import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -54,8 +54,6 @@ export interface JournalView {
    * facts; a unit the log has not named yet is fresh at plan-check. The only source of a unit's counters.
    */
   unit(unit: UnitId): UnitState;
-  /** Every unit the log has state for (a stage start or outcome, a dispatch, a spec edit), ascending. */
-  unitsWithState(): readonly UnitId[];
   /** The unit's latest `dispatch` fact (its pinned scope envelope and risk floor), or null before one. */
   dispatchOf(unit: UnitId): DispatchRecord | null;
   /** Every `dispatch` fact of the unit, in log order (the first pin, then each re-pin); empty before one. */
@@ -82,8 +80,6 @@ export interface JournalView {
   edgeResolved(edge: EdgeId): EdgeResolvedState | null;
   /** M2: the `run-only` allowlist in force (sorted), or null when admission is unlimited. */
   runOnly(): readonly UnitId[] | null;
-  /** M2: `dag`, or `legacy` for an arc started before M2 (its rev-1 `plan-applied` has no `scheduling`); null before rev 1. */
-  scheduling(): Scheduling | null;
   /** Every needs-user item a done `needsuser.raise` recorded, ascending id, with its acknowledgement. */
   needsUser(): readonly NeedsUserState[];
   /** The `needs-user-acked` fact of any id (journal-raised or not), or null while unacknowledged. */
@@ -108,17 +104,22 @@ export interface JournalView {
   nextFindingId(): FindingId;
   /** M3: the id the next `divergence` must carry. */
   nextDivergenceId(): DivergenceId;
+  /** M4a: the id the next `corpus-amendment` must carry (arc-scoped `M-n`). */
+  nextAmendmentId(): AmendmentId;
   /** M3: the next job id of `kind`: one more than the highest the log named (audits and checkpoints must open in order). */
   nextJobId(kind: JobKind): JobId;
   /** M3: the latest published `integration.ff`'s new head (any subject), or null before one. */
   integrationHead(): Sha | null;
   /** M3 (A20, H5): the seq of the latest record that is work (`isWork`); `gc` seals an arc whose completion is after it. */
   lastWorkSeq(): number;
+  /** M4a rev 3 (R50): the seq of the latest `executor-started` fact, 0 before one (`openAttempt`). */
+  lastExecutorStarted(): number;
   /** M3: the holistic layer's fold (findings, audits, checkpoints, divergences, completion, …). */
   holistic(): HolisticFold;
 }
 
-export type NeedsUserAckState = Readonly<{ command: CommandId; choice: string | null }>;
+/** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
+export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;
 export type NeedsUserState = Readonly<{ id: NeedsUserId; blocking: boolean; ack: NeedsUserAckState | null }>;
 /** `stop`: the stop command recorded, if any. A pause of every unit and pauses of single units are kept apart. */
 export type ControlState = Readonly<{ stop: CommandId | null; pausedAll: boolean; pausedUnits: readonly UnitId[] }>;

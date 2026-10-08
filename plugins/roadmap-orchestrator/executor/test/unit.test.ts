@@ -1,22 +1,21 @@
-// The unit driver (src/pipeline/unit.ts), and a legacy arc under the scheduler, integrated and fake-backed:
+// The unit driver (src/pipeline/unit.ts), integrated and fake-backed:
 // real processes through the runner, real git, the fake codex and claude behind PATH shims. Includes the
 // deterministic fixtures of this step (conflict → merge-in → resolve; red candidate → fix → fresh gate →
 // green) and the named tests ff.exact-head, snapshot.after-publish, unit.decisions-appended,
-// unit.reentrant, arc.serial-terminal, codex.resume-collision-retry, continue.claude-session,
+// unit.reentrant, codex.resume-collision-retry, continue.claude-session,
 // continue.codex-thread-chain, continue.no-session-fresh.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
-import { invocationId, unitId } from '../src/core/ids.ts';
+import { invocationId } from '../src/core/ids.ts';
 import { EVENTS_FILE, STATE_FILE } from '../src/core/log.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
-import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/pipeline/rounds.ts';
+import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
-import { recordOf } from '../src/needsuser.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { writeTrigger } from './helpers/crash.ts';
@@ -29,7 +28,6 @@ import {
   ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, U1, appendSteps, codexStep, isGateCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
   unitWorktreePath, workDirPattern,
 } from './fixtures/unit-common.ts';
-import { haltItem, receiptOf, startScheduler, submit } from './fixtures/sched-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
@@ -320,37 +318,6 @@ test('unit.reentrant-after-mergein: a driver killed after the merge-in, before t
   assert.equal(outcomes(d)[8], 'candidate:conflict');
   assert.equal(intents(d.runDir, 'mergein.prepare').length, 1, 'the prepared merge-in was read back, not repeated');
   assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
-});
-
-test('arc.serial-terminal: a legacy arc under the scheduler runs its units in plan order; one merges, one parks with a blocking needs-user raised as it parks, and once it is acknowledged the arc is complete', T, async () => {
-  const d = setupArc({
-    units: [{ id: 'u1' }, { id: 'u2' }],
-    steps: [
-      planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
-      planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
-    ],
-  });
-  const r = contextFor(d);
-  try {
-    const s = startScheduler(r);
-    // The park's item is raised as it happens, while the run goes on (it waits on that item).
-    const item = await haltItem(r, unitId('u2'));
-    assert.deepEqual(outcomes(d), STRAIGHT, 'u1 ran first, to its merge');
-    const content = recordOf(r.ctx.runDir, item);
-    assert.equal(content.blocking, true);
-    assert.equal(content.reason, 'escalation');
-    assert.deepEqual(content.subject, { type: 'unit', unit: 'u2' });
-    assert.deepEqual(outcomes(d, 'u2'), ['plan-check:escalate', 'plan-check:escalate']);
-    assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }))).state, 'applied');
-    const result = await s.end;
-    assert.deepEqual(result, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'parked', needsUser: item }] });
-    // A second run finds the arc where the log left it: nothing runs again.
-    const calls = readCalls(d.scenarioPath).length;
-    assert.deepEqual(await startScheduler(r).end, result);
-    assert.equal(readCalls(d.scenarioPath).length, calls);
-  } finally {
-    r.journal.close();
-  }
 });
 
 // ---------------------------------------------------------------------------------------------------

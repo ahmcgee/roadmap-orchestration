@@ -100,7 +100,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
     assert.ok(planCall!.argv.includes('claude-opus-5-5'), 'plan-check sat on the unit\'s med seat');
-    assert.ok(gateCall!.argv.includes('claude-fable-5-1'), 'the gate sat on the escalation seat');
+    assert.ok(gateCall!.argv.includes('xhigh'), 'the gate sat on the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
@@ -193,7 +193,7 @@ test('gate.inputs-not-in-ff-window: while a revision holds the fence the gate ne
     writeFileSync(join(planDirOf(d), 'u2.json'), JSON.stringify({ ...u1Spec, unit: 'u2' }));
     editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json' }));
     const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: BASE };
-    const v = evaluateRevision(rctx, readInputFiles(absPath(d.planPath)), { type: 'apply' });
+    const v = evaluateRevision(rctx, readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'apply' });
     assert.ok(v.kind === 'accepted', JSON.stringify(v));
     keepRevision(r.ctx.runDir, v);
     commitRevisionNow(r.journal, r.ctx.runDir, payloadOf(v.draft, { type: 'start' }), { type: 'arc' });

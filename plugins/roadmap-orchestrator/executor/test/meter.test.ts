@@ -74,7 +74,7 @@ describe('meter', () => {
 
   it('meter.job-usage: a job\'s lens and checkpoint calls count at their arc seat, by role and per job, never per unit; byModel renders them', () => {
     const job = (j: string, role: 'lens' | 'checkpoint', attempt: number) => ({ type: 'job', job: jobIdOf(j), attempt, role, tier: 'arc' }) as const;
-    const holistic = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, holistic: true });
+    const holistic = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'architecture-doc' });
     const rev = holistic.rev;
     const log = [
       factEvent({ kind: 'meter', inv: inv(1), routingRev: rev, subject: job('audit-1', 'lens', 1), usage: tokens(100, 10) }),
@@ -100,6 +100,28 @@ describe('meter', () => {
     assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
   });
 
+  it('meter.packreview-seat: a pack review\'s calls count at the packReview arc seat of a corpus arc\'s revision, by role and per review job, never per unit; byModel resolves its seat (frontier)', () => {
+    const corpus = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'corpus' });
+    const rev = corpus.rev;
+    const review = (j: string, attempt: number) => ({ type: 'job', job: jobIdOf(j), attempt, role: 'packReview', tier: 'arc' }) as const;
+    const log = [
+      factEvent({ kind: 'meter', inv: inv(1), routingRev: rev, subject: review('review-1', 1), usage: tokens(400, 40, 10) }),
+      factEvent({ kind: 'usage-unavailable', inv: inv(2), routingRev: rev, subject: review('review-2', 1), reason: 'no-result' }),
+      factEvent({ kind: 'meter', inv: inv(3), routingRev: rev, subject: review('review-2', 2), usage: tokens(300, 30) }),
+    ];
+    const m = meterOf(log);
+    assert.deepEqual(m.byRole.map((t) => [t.role, t.routingRev, t.calls, t.input, t.unavailable]), [['packReview', rev, 3, 700, 1]]);
+    assert.deepEqual(m.bySeat.map((t) => [t.role, t.tier, t.calls]), [['packReview', 'arc', 3]]);
+    assert.deepEqual(m.byJob.map((t) => [t.job, t.role, t.calls, t.input]), [['review-1', 'packReview', 1, 400], ['review-2', 'packReview', 2, 300]]);
+    assert.deepEqual(m.byUnit, [], 'a review\'s call is in no unit total');
+    assert.deepEqual(byModel(m.bySeat, new Map([[rev, corpus.table]])).map((x) => [x.model, x.calls]), [[corpus.table.packReview.arc.model, 3]]);
+    assert.equal(corpus.table.packReview.arc.model, 'claude-opus-5-5', 'frontier binds Opus 5.5 (OR-Q17)');
+    // The architecture-doc scope has the seat in its table too (every SeatTable maps every role), so its revs resolve it.
+    const doc = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'architecture-doc' });
+    assert.notEqual(doc.rev, rev, 'packReview is in force only in a corpus arc (LR-0a-1), so the revs differ');
+    assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
+  });
+
   it('byModel derives each seat\'s model at render from its revision\'s table, exactly (facts name the tier)', () => {
     const table = (profile: 'default' | 'claude-only') => resolveRouting({ profile, classes: null, repoConfig: null, plan: null, unit: null });
     const def = table('default');
@@ -109,8 +131,8 @@ describe('meter', () => {
       ({ ...unitSeatRef(role, tier), routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 });
     const seats = [t('build', 'med', claudeOnly.rev, 10), t('build', 'med', def.rev, 5), t('build', 'high', def.rev, 7), t('gate', 'high', def.rev, 2), t('gate', 'escalation', def.rev, 3)];
     assert.deepEqual(byModel(seats, tables), [
-      { model: 'claude-fable-5-1', calls: 1, input: 3, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
-      { model: 'claude-opus-5-5', calls: 2, input: 9, output: 2, cacheRead: 0, cacheWrite: 0, turns: 2, costUsd: 1, unavailable: 0 },
+      // build.high (frontier), gate.high (frontier) and gate.escalation (summit): Opus 5.5 at medium and xhigh (OR-Q17).
+      { model: 'claude-opus-5-5', calls: 3, input: 12, output: 3, cacheRead: 0, cacheWrite: 0, turns: 3, costUsd: 1.5, unavailable: 0 },
       { model: 'claude-sonnet-5-5', calls: 1, input: 10, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
       { model: 'gpt-5.6-luna', calls: 1, input: 5, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
     ]);

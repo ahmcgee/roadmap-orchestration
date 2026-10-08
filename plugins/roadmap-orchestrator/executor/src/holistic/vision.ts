@@ -12,9 +12,11 @@
 // - Coverage runs both directions and is reported, never refused: advanced clauses no non-exempt obligation serves
 //   (a gap), the horizon (active clauses the arc does not advance; expected), and non-exempt obligations serving no
 //   active clause.
-import type { ObligationId, VisionClauseId } from '../core/ids.ts';
+import { type NumberedId, type ObligationId, type Sha256Hex, type VisionClauseId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type Obligations, type Vision, type VisionCoverage, isExempt } from './types.ts';
+import type { CorpusPin } from '../corpus/types.ts';
+import type { StartupRejection } from '../preflight/startup.ts';
+import { type Obligations, type Vision, type VisionCoverage, isExempt, parseConfirmationRef } from './types.ts';
 
 /** Why citing `cites` is refused under `vision` (`what` names the citer in the reasons); empty when every clause is active. */
 export function citeReasons(vision: Vision | null, cites: readonly VisionClauseId[], what: string): readonly string[] {
@@ -66,20 +68,45 @@ export function advancesReasons(vision: Vision, advances: readonly VisionClauseI
  */
 export function visionCoverage(
   vision: Vision, advances: readonly VisionClauseId[], obligations: Obligations | null,
-  citers: readonly Readonly<{ id: string; cites: readonly VisionClauseId[] }>[],
+  citers: readonly Readonly<{ id: NumberedId; cites: readonly VisionClauseId[] }>[],
 ): VisionCoverage {
   const active = new Set(vision.clauses.filter((c) => c.state === 'active').map((c) => c.id));
   const all = obligations?.obligations ?? [];
   const live = all.filter((o) => !isExempt(o));
   const served = new Set(live.flatMap((o) => o.serves));
   const withdrawnCited = vision.clauses.filter((c) => c.state === 'withdrawn').flatMap((c) => {
-    const citedBy = [...all.map((o) => ({ id: o.id as string, cites: o.serves })), ...citers].filter((x) => x.cites.includes(c.id)).map((x) => x.id);
-    return citedBy.length === 0 ? [] : [{ clause: c.id, citedBy: [...new Set(citedBy)].sort() }];
+    const citedBy = [...all.map((o): Readonly<{ id: NumberedId; cites: readonly VisionClauseId[] }> => ({ id: o.id, cites: o.serves })), ...citers].filter((x) => x.cites.includes(c.id)).map((x) => x.id);
+    return citedBy.length === 0 ? [] : [{ clause: c.id, citedBy: canonicalIds(citedBy) }];
   });
   return {
-    unservedAdvanced: [...active].filter((c) => advances.includes(c) && !served.has(c)).sort(),
-    horizon: [...active].filter((c) => !advances.includes(c)).sort(),
-    obligationsServingNone: live.filter((o) => !o.serves.some((c) => active.has(c))).map((o): ObligationId => o.id).sort(),
-    withdrawnCited: withdrawnCited.sort((a, b) => (a.clause < b.clause ? -1 : 1)),
+    unservedAdvanced: [...active].filter((c) => advances.includes(c) && !served.has(c)).sort(compareIds),
+    horizon: [...active].filter((c) => !advances.includes(c)).sort(compareIds),
+    obligationsServingNone: live.filter((o) => !o.serves.some((c) => active.has(c))).map((o): ObligationId => o.id).sort(compareIds),
+    withdrawnCited: withdrawnCited.sort((a, b) => compareIds(a.clause, b.clause)),
   };
+}
+
+/**
+ * Why a corpus arc's vision is not confirmed against its pin (OR-V+), or null when it is: no confirmation (`ref` null),
+ * or a ref whose sha256 is not the pinned file's at its path (`actual` null: the pin holds no such file; the M3 form
+ * `<file>#sha256:<hex>` names no corpus file). A malformed ref is a SchemaError (the caller's `plan-invalid`).
+ */
+export function visionUnconfirmed(vision: Vision, pin: CorpusPin): Extract<StartupRejection, { kind: 'vision-unconfirmed' }> | null {
+  if (vision.confirmation === null) return { kind: 'vision-unconfirmed', ref: null, expected: null, actual: null };
+  const ref = parseConfirmationRef(vision.confirmation.ref);
+  const actual: Sha256Hex | null = ref.form === 'corpus' ? pin.files.find((f) => f.path === ref.path)?.sha256 ?? null : null;
+  return actual === ref.sha256 ? null : { kind: 'vision-unconfirmed', ref: vision.confirmation.ref, expected: ref.sha256, actual };
+}
+
+/**
+ * The active world clauses whose census rules are not all held on the baseline (R15): a clause some non-exempt `future`
+ * obligation serves (not yet held), or that no non-exempt obligation serves at all (nothing shows it held). Ascending.
+ * What the root agent may pick the next slice from; none justifiable is the vision-silent stop.
+ */
+export function sliceCandidates(vision: Vision, obligations: Obligations | null): readonly VisionClauseId[] {
+  const live = (obligations?.obligations ?? []).filter((o) => !isExempt(o));
+  return vision.clauses.filter((c) => c.kind === 'world' && c.state === 'active').map((c) => c.id).filter((id) => {
+    const serving = live.filter((o) => o.serves.includes(id));
+    return serving.length === 0 || serving.some((o) => o.activation === 'future');
+  }).sort(compareIds);
 }

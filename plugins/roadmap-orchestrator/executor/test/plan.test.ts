@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parsePlan } from '../src/input/plan.ts';
+import { parsePlan, targetDocuments } from '../src/input/plan.ts';
 import { SchemaError } from '../src/core/validate.ts';
 
 const tool = { argv: ['make', 'probe-db'], cwd: '.', env: { set: {}, pass: [] } };
@@ -55,7 +55,8 @@ describe('plan.json (M1)', () => {
     const plan = validPlan();
     const suite = plan['suite'] as { lanes: object[] };
     assert.deepEqual(parsePlan(plan), {
-      ...plan, suite: { lanes: suite.lanes.map((l) => ({ ...l, evidenceExcludes: [] })) }, units: (plan['units'] as object[]).map((u) => ({ ...u, after: [], contingent: [] })),
+      ...plan, target: 'architecture-doc', suite: { lanes: suite.lanes.map((l) => ({ ...l, evidenceExcludes: [] })) },
+      units: (plan['units'] as object[]).map((u) => ({ ...u, after: [], contingent: [] })),
     });
   });
 
@@ -76,7 +77,7 @@ describe('plan.json (M1)', () => {
   });
 
   it('architectureDigest is optional and, when present, a repo path', () => {
-    assert.equal(parsePlan({ ...validPlan(), architectureDigest: 'docs/digest.md' }).architectureDigest, 'docs/digest.md');
+    assert.equal(targetDocuments(parsePlan({ ...validPlan(), architectureDigest: 'docs/digest.md' }))?.digest, 'docs/digest.md');
     assert.equal('architectureDigest' in parsePlan(validPlan()), false);
   });
 

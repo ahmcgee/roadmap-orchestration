@@ -1,21 +1,13 @@
-// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"): read-time defaults for records written by earlier
-// releases, so HEAD adopts an arc they started. Each default names the release it serves; delete it (and its
+// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"): read-time defaults for records written by the previous
+// release (1.0.0-dev.6, the only one adopted: OR-L4), so HEAD adopts an arc it started. Delete each default (and its
 // BACKLOG entry) once no arc started on that release is in flight. Nothing here rewrites a file.
 //
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { type ApplyManifest, type CancelFile, type DispatchRecord, type ExitFile, type ResultFile, type RevisionInputs, isRevisionManifest } from './records.ts';
-import type { RoutingProvenance } from '../routing/types.ts';
-import type { InputFiles } from '../input/inforce.ts';
-import type { PlanUnit } from '../input/plan.ts';
-import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
-import type { ParkRecord, PlanAppliedFact, PlanChange, RevisionSource, StageOutcomeFact } from './events.ts';
-import type { SpecRev, UnitId } from './ids.ts';
-import type { JournalView } from './interfaces.ts';
-import { canonicalJson } from './json.ts';
-import { SchemaError } from './validate.ts';
+import type { ClassCatalogue } from '../routing/classes.ts';
+import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
+import type { MutantOf, RevisionSource } from './events.ts';
+import type { FindingId, LaneId } from './ids.ts';
 
 const warned = new Set<string>();
 
@@ -25,268 +17,135 @@ function warnDefaulted(kind: string, detail: string): void {
   process.stderr.write(`roadmap: upgrade default (${kind}): ${detail}\n`);
 }
 
-/** launch.json `stallMs`, absent before the stall watchdog: read as null, no watchdog. */
-export function launchStallMs(read: number | null | undefined, path: string): number | null {
-  if (read !== undefined) return read;
-  warnDefaulted('launch.stallMs', `${path} has no stallMs (written by 1.0.0-dev.1); read as null, no stall watchdog`);
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.6 → M4a (1.0.0-dev.7). Byte-preserving (G14): the readers validate a record's canonical raw bytes with
+// its new fields absent and return it as written; these helpers normalise it for the code that reads it, so a default
+// never enters a hash, a chain or a comparison.
+// Delete with the holistic `architecture-doc` variant once no dev.6 arc is in flight (BACKLOG "Scaffolding to delete").
+
+/**
+ * An obligations file's census (M4a): a dev.6 file (docRef obligations) has none, which reads as M3 semantics: the
+ * census checks are vacuous for it. A corpus arc's file always carries one (the reader requires it beside rule anchors).
+ */
+export function censusOf(o: Obligations): readonly CensusEntry[] | null {
+  if (o.census !== undefined) return o.census;
+  warnDefaulted('obligations.census', 'an obligations file without a census (docRef obligations, a 1.0.0-dev.6 arc): census checks are vacuous');
   return null;
 }
 
-/** 1.0.0-dev.1's fixed lane deadline: a lane launched by it started this long before its `deadlineAt`. */
-export const DEV1_LANE_DEADLINE_MS = 30 * 60_000;
-
 /**
- * 1.0.0-dev.3 and earlier kept no plan revisions: an arc they started has no `plan-applied` fact until its
- * first start on this release records the baseline (rev 1). Until then `status` reads its plan from the file;
- * this only warns that it does (and the baseline, that it records the files).
+ * A checkpoint answer's `corpusAmendments` and `issueIntake` (M4a): a recorded dev.6 answer (`upgrade.dev6-checkpoint-open`)
+ * has neither, read as none. Step B1 makes both required of the model's schema.
  */
-export function warnPlanFromFile(arc: string, planFile: string): void {
-  warnDefaulted('plan.inForce', `arc ${arc} has no plan-applied fact (started before 1.0.0-dev.4); reading ${planFile} as its plan`);
-}
-
-/**
- * Whether a re-pin (a later `dispatch` fact of a unit) names the unit's spec. It does not: the first pin
- * does. But 1.0.0-dev.3's fold took each re-pin's spec, and its routing re-pin copied the first pin's spec
- * rev and hash, so after a reopen a re-pin set the unit back to the first spec, and its later reopen was at
- * that rev + 1. Its log folds only that way, so a re-pin names the spec until the arc's first plan revision
- * (a start on this release records one before anything runs).
- */
-export function repinNamesSpec(planApplied: boolean): boolean {
-  if (planApplied) return false;
-  warnDefaulted('dispatch.repin', 'a re-pin before the arc\'s first plan revision (written by 1.0.0-dev.3 or earlier) names the unit\'s spec, as that release folded it');
-  return true;
-}
-
-/**
- * The changes the first start on this release records in revision 1 of an arc 1.0.0-dev.3 or earlier
- * started, or why that start is refused. That release ran the live files, so:
- * - a unit the log has state for must still be in plan.json (recovery rebuilds its ops from it, and it
- *   becomes a planned id, never reused);
- * - a dispatched unit whose spec file no longer hashes to its recorded spec takes the file as that release
- *   would have: at the recorded rev, as its spec at once (`evidence`); at rev + 1, as a pending `revision`
- *   (it re-opens on it like any applied revision, so a `resume <unit>` queued before the update re-opens a
- *   parked unit); at any other rev the start is refused.
- * A fresh arc (no unit state) records no change and warns nothing.
- */
-export function earlierReleaseBaseline(view: JournalView, files: InputFiles, planFile: string): Readonly<{ changes: readonly PlanChange[] }> | Readonly<{ reasons: readonly string[] }> {
-  const known = view.unitsWithState();
-  if (known.length === 0) return { changes: [] };
-  warnPlanFromFile(view.arc, planFile);
-  const reasons: string[] = [];
-  const changes: PlanChange[] = [];
-  const ids = new Set(files.plan.units.map((u) => u.id));
-  for (const unit of known) {
-    if (!ids.has(unit)) {
-      reasons.push(`unit ${unit} has run in this arc but ${planFile} no longer lists it; restore its entry (an arc started before 1.0.0-dev.4 records its plan revision 1 from the files)`);
-      continue;
-    }
-    const recorded = view.unit(unit).spec;
-    const file = files.specs.get(unit);
-    if (recorded === null || file === undefined || file.bytes === null) continue;
-    const sha = bytesSha256(file.bytes);
-    if (sha === recorded.sha256) continue;
-    let rev: SpecRev;
-    try {
-      rev = parseSpec(file.bytes, file.path).rev;
-    } catch (error) {
-      if (!(error instanceof SchemaError || error instanceof SpecFileError)) throw error;
-      reasons.push(`unit ${unit}: its spec does not load: ${error.message}`);
-      continue;
-    }
-    const edit = rev === recorded.rev ? 'evidence' : rev === recorded.rev + 1 ? 'revision' : null;
-    if (edit === null) {
-      reasons.push(`unit ${unit}: its spec ${file.path} is at rev ${rev}, but the unit's recorded rev is ${recorded.rev}; set rev ${recorded.rev} or ${recorded.rev + 1}`);
-      continue;
-    }
-    warnDefaulted(`spec.baseline.${edit}`, `unit ${unit}'s spec changed after its dispatch (before 1.0.0-dev.4); revision 1 records it as ${edit === 'evidence' ? 'its spec at the recorded rev' : 'a pending revision'}`);
-    changes.push({ type: 'spec', unit, edit, specRev: rev, specSha256: sha });
-  }
-  return reasons.length > 0 ? { reasons } : { changes };
-}
-
-/**
- * Why a spec edit of a dispatched unit is refused when the spec it was dispatched at was never kept (an arc
- * started before 1.0.0-dev.4) and its file no longer hashes to it: there is nothing to compare the edit to.
- */
-export function unkeptSpecReason(unit: string, path: string): string {
-  return `unit ${unit}: the spec it was dispatched at was not kept (dispatched before 1.0.0-dev.4) and ${path} has changed since, `
-    + 'so the edit cannot be classified; the file may only be its pending revision, or the dispatched spec to withdraw it';
-}
-
-/**
- * The bytes of a spec an arc started before 1.0.0-dev.4 dispatched, which that release never kept: the live
- * file, when it still hashes to `sha`; otherwise the live file as that release would have read it, warned.
- */
-export function specBytesFromLiveFile(path: string, sha: string): Buffer {
-  const bytes = readFileSync(path);
-  const actual = createHash('sha256').update(bytes).digest('hex');
-  warnDefaulted(
-    actual === sha ? 'spec.kept' : 'spec.live',
-    actual === sha
-      ? `spec ${sha} was not kept in the run dir (dispatched before 1.0.0-dev.4); keeping ${path}, which hashes to it`
-      : `spec ${sha} was not kept in the run dir (dispatched before 1.0.0-dev.4) and ${path} has changed since; reading the live file`,
-  );
-  return bytes;
-}
-
-/**
- * 1.0.0-dev.3 and earlier recorded a command (a lane) its runner ended for a pause or stop (exit cause
- * `cancel`) as verdict `process-fault`, the reason only in cancel.json: read as `cancelled{reason}`, the
- * shape written since. `ended` reads the invocation's exit.json and cancel.json, only for such a result.
- */
-export function commandCancelled(result: ResultFile, ended: () => Readonly<{ exit: ExitFile | null; cancel: CancelFile | null }>, path: string): ResultFile {
-  if (result.type !== 'command' || result.verdict !== 'process-fault') return result;
-  const { exit, cancel } = ended();
-  if (exit === null || exit.cause !== 'cancel') return result;
-  if (cancel === null || cancel.reason === 'recovery') throw new Error(`${path}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop`);
-  warnDefaulted('result.cancelled', `${path} records a cancelled command as process-fault (written by 1.0.0-dev.3 or earlier); read as cancelled{${cancel.reason}}`);
-  return { ...result, verdict: 'cancelled', reason: cancel.reason };
-}
-
-// ---------------------------------------------------------------------------------------------------
-// 1.0.0-dev.4 → M2 (1.0.0-dev.5)
-
-/** The outcomes whose park needs a spec revision or a re-entry (A7's operator-design rows). */
-const DESIGN_PARK_OUTCOMES: ReadonlySet<string> = new Set([
-  'refusal', 'escalate', 'infeasible', 'risk-lowered', 'scope-widened', 'redirect', 'revise', 'malformed', 'empty-diff', 'red',
-]);
-
-/**
- * A parking `stage-outcome` fact without `park` (written by 1.0.0-dev.4 or earlier, which had no retryable
- * parks): an operator park, `design` for the chargeable bound and the design rows (a refusal or escalation at
- * the top seat, a bounded round or retry run out, an empty diff, a red candidate), `env` for every other.
- */
-export function legacyParkRecord(f: StageOutcomeFact): ParkRecord {
-  warnDefaulted('stage-outcome.park', `a park without its class (written by 1.0.0-dev.4 or earlier) is read as an operator park; ${f.unit} ${f.stage}#${f.attempt} and any other`);
-  return { class: 'operator', kind: f.chargeable || DESIGN_PARK_OUTCOMES.has(f.outcome) ? 'design' : 'env' };
-}
-
-/**
- * A judgment attempt spawned by 1.0.0-dev.4 or earlier has no `judgment-inputs` fact: its recovered call is read
- * at the current integration tip and unit commit, as that release read it.
- */
-export function judgmentInputsDefault(unit: UnitId, stage: 'plan-check' | 'gate', attempt: number): void {
-  warnDefaulted('judgment-inputs', `a recovered judgment call without judgment-inputs (spawned by 1.0.0-dev.4 or earlier) is read at the current tip; ${unit} ${stage}#${attempt} and any other`);
-}
-
-/**
- * A gate's `judgment-inputs` without its captured approval fingerprint (written by 1.0.0-dev.5, before M3 captured
- * it): the approval of its recovered call is fingerprinted at the recorded tip when the call is read, as dev.5 did.
- */
-export function judgmentFingerprintDefault(unit: UnitId, attempt: number): void {
-  warnDefaulted('judgment-inputs.fingerprint', `a gate's judgment-inputs without a fingerprint (written by 1.0.0-dev.5) is fingerprinted at its recorded tip when read; ${unit} gate#${attempt} and any other`);
-}
-
-/** A `rerouted` fact (written through 1.0.0-dev.4) is read as `unparked`: the same re-entry at the parked stage. */
-export function rerouteAsUnpark(unit: UnitId): void {
-  warnDefaulted('rerouted', `rerouted facts (written through 1.0.0-dev.4) are read as unparked; unit ${unit} and any other`);
-}
-
-/**
- * Whether the arc is legacy: its first plan revision carries no `scheduling: 'dag'` (started on 1.0.0-dev.4 or
- * earlier, or a 1.0.0-dev.3 arc M2 baselined after it had dispatched). A legacy arc keeps that release's serial
- * frontier (`legacyNext`) and resource meaning: no `@cpu` requests, a declared resource named `cpu` is a named
- * resource, and the over-capacity row never runs for its existing requests (a pool an apply adds is checked).
- * Throws before the first plan revision: nothing schedules before it.
- */
-export function isLegacy(view: JournalView): boolean {
-  const scheduling = view.scheduling();
-  if (scheduling === null) throw new Error(`arc ${view.arc}: no plan revision yet, so no scheduling`);
-  if (scheduling === 'dag') return false;
-  warnDefaulted('scheduling.legacy', `arc ${view.arc} started before M2 (its plan revision 1 has no scheduling: dag); it keeps the serial frontier`);
-  return true;
-}
-
-/** The legacy frontier: the unit the serial arc works on next, and why it may not start now (null: it may). */
-export type LegacyFrontier = Readonly<{ unit: UnitId; block: string | null }>;
-
-/**
- * 1.0.0-dev.4's serial frontier, ported exactly (G4) from `nextUnit` (src/executor.ts) and `dispatchBlock` with
- * `settledForAfter` (src/pipeline/unit.ts): the earliest unit in plan order that is neither merged nor parked,
- * so at most one is in flight; it waits while the arc or it is paused, or while a unit it runs `after` is
- * neither merged nor parked with its needs-user acknowledged. A reopen or resume makes a parked unit active
- * again, and so the frontier again if it comes first. Cut and superseded units (possible only after an M2
- * apply) are passed over; an `after` on a superseded unit follows its lineage to the head. null: every unit
- * is settled.
- */
-export function legacyNext(view: JournalView, units: readonly PlanUnit[]): LegacyFrontier | null {
-  const next = units.find((u) => !['retired', 'park-pending', 'cut', 'superseded'].includes(view.unit(u.id).status));
-  if (next === undefined) return null;
-  const c = view.control();
-  if (c.pausedAll) return { unit: next.id, block: 'the arc is paused' };
-  if (c.pausedUnits.includes(next.id)) return { unit: next.id, block: `unit ${next.id} is paused` };
-  const after = next.after.filter((id) => !legacySettled(view, id));
-  return { unit: next.id, block: after.length > 0 ? `unit ${next.id} is held after ${after.join(', ')}` : null };
-}
-
-/** dev.4's `settledForAfter`: merged, or parked with the blocking needs-user of its park acknowledged. `status` lists the unsettled. */
-export function legacySettled(view: JournalView, id: UnitId): boolean {
-  const u = view.unit(id);
-  if (u.status === 'superseded' && u.supersededBy !== null) return legacySettled(view, u.supersededBy);
-  if (u.status === 'retired' || u.status === 'cut') return true;
-  if (u.status !== 'park-pending' || u.decided === null) return false;
-  const parent = canonicalJson({ type: 'stage', unit: id, stage: u.decided.stage, attempt: u.decided.attempt });
-  const raise = view.opsOf('needsuser.raise').find((i) => canonicalJson(i.parent) === parent && view.doneOf(i.op) !== null);
-  return raise !== undefined && view.ackOf(raise.expect.id) !== null;
-}
-
-// ---------------------------------------------------------------------------------------------------
-// 1.0.0-dev.5 → M3 (1.0.0-dev.6). Byte-preserving (G14): the readers validate a record's canonical raw bytes
-// with its M3 fields absent and return it as written; these helpers normalise it for the code that reads it,
-// so a default never enters a hash, a chain or a comparison.
-
-/** A `plan-applied` fact's source; a dev.5 fact has none: `start` for a null command, else that `command`. */
-export function revisionSourceOf(f: PlanAppliedFact): RevisionSource {
-  if (f.source !== undefined) return f.source;
-  warnDefaulted('plan-applied.source', `plan-applied rev ${f.rev} has no source (written by 1.0.0-dev.5); read from its command`);
-  return f.command === null ? { type: 'start' } : { type: 'command', command: f.command };
-}
-
-/**
- * The transient-check rules of a dispatch's lineage attempt (H15): `m3` since 1.0.0-dev.6; a dev.5 dispatch keeps
- * dev.5's rules (the five `.roadmap/` entries allowed, no pinned-scope check) for its whole lineage attempt.
- */
-export function transientRulesOf(record: DispatchRecord): 'm3' | 'dev5' {
-  if (record.transientRules !== undefined) return record.transientRules;
-  warnDefaulted('dispatch.transientRules', `unit ${record.unit} was dispatched by 1.0.0-dev.5; its candidate keeps dev.5's transient rules`);
-  return 'dev5';
-}
-
-/**
- * What an `apply` command's manifest puts in force beyond plan and specs (G15). A dev.5 command's `PlanManifest`:
- * the ledger read live (`rulingsFromLiveFile`), no obligations and no vision. Its bytes and `commandSha256` stay.
- */
-export function applyInputsOf(manifest: ApplyManifest): RevisionInputs | Readonly<{ rulings: 'live'; obligations: null; vision: null }> {
-  if (isRevisionManifest(manifest)) return { rulings: manifest.rulings, obligations: manifest.obligations, vision: manifest.vision };
-  warnDefaulted('apply.manifest', 'an apply command without rulings, obligations or vision (queued by 1.0.0-dev.5): the ledger is read live, no obligations or vision');
-  return { rulings: 'live', obligations: null, vision: null };
-}
-
-/**
- * The ledger bytes of a plan revision that recorded no `rulingsSha256` (1.0.0-dev.5 and earlier): its live file,
- * as that release read it, until the arc's first M3 revision keeps it.
- */
-export function rulingsFromLiveFile(path: string): Buffer {
-  warnDefaulted('rulings.live', `the rulings ledger ${path} is read live (no plan revision recorded its bytes yet, 1.0.0-dev.5)`);
-  return readFileSync(path);
-}
-
-/**
- * The routing provenance of a plan revision (H7): its own, or for a dev.5 revision the one `rebuild` makes from its
- * `plan-applied` routing, start.json's profile and the repo config in force at that revision (A3 and B9 supply it).
- */
-export function routingProvenanceOf(f: PlanAppliedFact, rebuild: () => RoutingProvenance): RoutingProvenance {
-  if (f.routingProvenance !== undefined) return f.routingProvenance;
-  warnDefaulted('plan-applied.routingProvenance', `plan-applied rev ${f.rev} records no routing provenance (1.0.0-dev.5); rebuilt from the plan, start.json and the repo config`);
-  return rebuild();
-}
-
-/**
- * A plan-check answer's `visionConflict` (R17, B4): a backend result written by 1.0.0-dev.5 or earlier, whose
- * schema had no such key, reads as none. The live schema requires the key, so a fresh answer always carries it.
- */
-export function planCheckVisionConflict<T>(read: readonly T[] | undefined, path: string): readonly T[] {
-  if (read !== undefined) return read;
-  warnDefaulted('planCheck.visionConflict', `${path} has no visionConflict (a plan-check answer written by 1.0.0-dev.5 or earlier); read as none`);
+export function checkpointOutputM4Default(key: 'corpusAmendments' | 'issueIntake'): readonly never[] {
+  warnDefaulted(`checkpoint.${key}`, `a checkpoint answer without ${key} (written before 1.0.0-dev.7); read as none`);
   return [];
+}
+
+/**
+ * A checkpoint `admit` op's `targets` (M4a rev 3, LR-m): absent on an answer recorded before it; read as none, so the
+ * admit classifies on its structural targets alone (the rules of the obligations it declares, delivers or repairs).
+ */
+export function admitTargetsDefault(): readonly never[] {
+  warnDefaulted('checkpoint.admit.targets', 'an admit op without targets (a checkpoint answer written before LR-m); read as none');
+  return [];
+}
+
+/**
+ * A checkpoint `admit` op's `spec` (run 10, D): the model now writes it as an object the schema constrains; an answer
+ * recorded before wrote its JSON text, read as written (the bundle's spec reader validates it, as it did then).
+ */
+export function admitSpecTextDefault(text: string): string {
+  warnDefaulted('checkpoint.admit.spec', 'an admit op whose spec is JSON text (a checkpoint answer written before run 10); read as written');
+  return text;
+}
+
+/** A split child's `rule` (M4a): absent on a recorded dev.6 answer, whose children are docRef-anchored; read as null. */
+export function splitChildRuleDefault(): null {
+  warnDefaulted('checkpoint.splitChild.rule', 'a split child without rule (a checkpoint answer written before 1.0.0-dev.7); read as null');
+  return null;
+}
+
+/**
+ * A numbered-id list in plain string order (`["T-10","T-9"]`): how every release before 1.0.0-dev.7 validated and wrote
+ * them, so a dev.6 record, an arc started before the fix, or a vision, obligations, ruling or Phase-0 file written for
+ * them may hold one. It reads as written (byte-preserving); everything written now is in canonical order (`idsAscending`).
+ */
+export function legacyIdOrder(path: string): void {
+  warnDefaulted('ids.string-order', `${path}: a numbered-id list in string order (written before 1.0.0-dev.7); read as written`);
+}
+
+/**
+ * The class catalogue 1.0.0-dev.6 bound (frontier Opus 5.5 `high`, summit Fable 5.1 `high`), kept only so `status`
+ * can join a dev.6 meter row's recorded `routingRev` (K12, src/status.ts `dev6RevAlias`). OR-L3: nothing routes under
+ * it; HEAD binds every revision through `CLASS_CATALOGUE` (src/routing/classes.ts). A dev.6 dispatch record needs no
+ * decoder: its `implementerSeatRev` reads back through `seatTripleOf` (src/pipeline/dispatch.ts) like any other.
+ */
+export const DEV6_CLASS_CATALOGUE: ClassCatalogue = {
+  default: {
+    efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
+    frontier: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' },
+    summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
+  },
+  'claude-only': {
+    efficient: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
+    frontier: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' },
+    summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
+  },
+};
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.6 → M4a rev 3 (still 1.0.0-dev.7, LR-g: no version bump). Byte-preserving as above; SCHEMAS.md "M4a rev 3:
+// upgrade additions". Delete with the dev.6 layer (BACKLOG "Scaffolding to delete").
+
+/** A 1.0.0-dev.6 dispatch record's bounds lack the smoke bounds (D2): read as the built-in ones. */
+export function dev6SmokeBounds(): Readonly<{ smokeRounds: number; smokeRuns: number }> {
+  warnDefaulted('dispatch.bounds.smoke', 'a dispatch record without smokeRounds and smokeRuns (written before M4a rev 3); read as 1 and 2');
+  return { smokeRounds: 1, smokeRuns: 2 };
+}
+
+/**
+ * A recorded lane rev equal to the lane's minimal form (`evidenceExcludes: []` omitted), as a generator hashing raw input
+ * wrote it before 1.0.0-dev.7 (F15, run 5), compares equal to the normalised rev (`laneRevMatches`); warned once per lane.
+ */
+export function minimalLaneRev(lane: LaneId): true {
+  warnDefaulted(`lane-rev.minimal.${lane}`, `lane ${lane}: a recorded rev of its minimal form (default fields omitted, before 1.0.0-dev.7) compares equal to its normalised rev`);
+  return true;
+}
+
+/**
+ * What a mutant spawn subject or `mutant.apply` intent was made for: its `of`, or a 1.0.0-dev.6 record's `finding`
+ * (a finding's mutant, B3), read as `of: finding`.
+ */
+export function mutantSubjectDefault(x: Readonly<{ of: MutantOf }> | Readonly<{ finding: FindingId }>): MutantOf {
+  if ('of' in x) return x.of;
+  warnDefaulted('mutant.finding', 'a mutant record naming finding (written before M4a rev 3); read as of: finding');
+  return { type: 'finding', finding: x.finding };
+}
+
+/**
+ * The host signature table at 1.0.0-dev.6 (0a58349), frozen: a lane or journey spawn without `redRev` (an unstamped
+ * dev.6 execution) is classified by it, never by the grown table, so its read-back never changes (Q20).
+ */
+export const HOST_SIGNATURES_DEV6 = [
+  { id: 'golangci-lint-lock', pattern: /parallel golangci-lint is running/i },
+  { id: 'kind-boot-timeout', pattern: /failed to create cluster:.*(timed out waiting for the condition|failed to init node with kubeadm)/i },
+  { id: 'eagain', pattern: /\bEAGAIN\b|Resource temporarily unavailable/ },
+  { id: 'enospc', pattern: /\bENOSPC\b|No space left on device/ },
+] as const satisfies readonly Readonly<{ id: string; pattern: RegExp }>[];
+
+/** A build answer's `experiments` (I3): a completed but unrecorded 1.0.0-dev.6 answer that recovery consumes has none. */
+export function buildExperimentsDefault(): readonly never[] {
+  warnDefaulted('build.experiments', 'a build answer without experiments (written before M4a rev 3); read as none');
+  return [];
+}
+
+/**
+ * A bundle revision's admit classification (OR-A1, Q4): its recorded `admits` and `conversions`, or `unclassified` for a
+ * bundle that records none (a 1.0.0-dev.6 arc's, or an `architecture-doc` arc's, LR-h), which never counts against an
+ * opportunity budget or a follow-up.
+ */
+export function bundleClassesOf(source: Extract<RevisionSource, { type: 'bundle' }>): Readonly<{ admits: readonly ClassifiedAdmit[]; conversions: readonly Conversion[] }> | 'unclassified' {
+  if (source.admits !== undefined && source.conversions !== undefined) return { admits: source.admits, conversions: source.conversions };
+  return 'unclassified';
 }

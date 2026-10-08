@@ -20,7 +20,8 @@
 //      metered to the job by role and routingRev) holding `@cpu`×1 under `job{audit-n}`, reading a detached checkout
 //      of the audited SHA: the vision first, then the obligations with their observations there, the lens's range
 //      (its watermark to the audited SHA) with its diff, the branch diffs of parked or in-flight owners of findings,
-//      the prior findings with their states, the contracts and rulings in force. A resumed job consumes a call it
+//      the prior findings with their states, the contracts and rulings in force, the target (a corpus arc's materialised
+//      pin readable beside the checkout, `targetDirs`). A resumed job consumes a call it
 //      already made (`recordedArcCall`) and asks again only for one lost. Each report's findings are opened at once.
 //   5. The lens checkout removed, citing an evidence snapshot of it; then `audit-ended{covered, findings, suppressed,
 //      outcome}`: `completed` when every lens reported, else `abandoned` (a lens failed, or its backend parked:
@@ -31,15 +32,19 @@
 //      checkpoint reads their observation there. The checkpoint (B6) calls it again before its own capture.
 //
 // Findings go through the one store (src/holistic/findings.ts `openFinding`: merge into an active key, suppress a
-// dismissed one unless a cited blob changed); code's P1s are `witnessFindingDraft`s, a vacuity mutant's patch is kept by
-// `keepMutantPatch`. The ids opened or merged and the suppressed count become `audit-ended{findings, suppressed}`.
+// dismissed one unless a cited blob changed); code's P1s are `witnessFindingDraft`s. A vacuity mutant's patch is checked
+// at admission and kept by `admitMutant` (H6): a corrupt one refuses its draft, nothing opened, git's stderr reported.
+// Within one audit, a lens draft whose cross-lens key (`crossKey`: repo evidence paths, obligation, cause) names a finding
+// another lens opened or merged in this audit corroborates it (`finding-corroborated`, H7, R62) instead of opening a
+// second. The ids opened, merged or corroborated and the suppressed count become `audit-ended{findings, suppressed}`.
+// A specs-only drift audit (every trigger `drift{specsOnly}`, H2) runs the vision lens alone with `LensInputs.specsOnly`.
 // `gateHadPassed`: a unit had published before the audit started (the defect passed some gate).
 import { basename, isAbsolute, join, relative } from 'node:path';
 import type { AuditInputs, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { crashPoint } from '../core/crash.ts';
-import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, parseJobId } from '../core/ids.ts';
+import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, parseJobId, canonicalIds } from '../core/ids.ts';
 import type { AuditState, FindingState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
@@ -47,7 +52,7 @@ import { capturedEvidence, pathPattern } from '../git/evidence.ts';
 import { catFileType, git, refTarget, revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
-import { PLAN_INPUT, RULINGS_INPUT, OBLIGATIONS_INPUT, VISION_INPUT, keptInput, keptPayload, payloadAtRev } from '../input/inforce.ts';
+import { PLAN_INPUT, RULINGS_INPUT, OBLIGATIONS_INPUT, SPEC_INPUT, VISION_INPUT, keptInput, keptPayload, payloadAtRev } from '../input/inforce.ts';
 import { advancesOf, parsePlan } from '../input/plan.ts';
 import { DEFAULT_BOUNDS } from '../core/records.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
@@ -55,21 +60,23 @@ import {
   type BackendCallOutcome, type JobParent, type StageContext, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, unitBranch, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { type JourneyEnd, arcJourneyLane, dirtyPaths, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
-import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath } from '../pipeline/stages.ts';
+import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
-import { type FindingView, type LensInputs, visionInputOf } from '../prompts/inputs.ts';
+import { type FindingView, type LensInputs, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
+import { renderSpec } from '../spec/render.ts';
+import { parseSpec } from '../spec/spec.ts';
 import { type LensFinding, type LensOutput, validateLensOutput } from '../prompts/schemas.ts';
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 import { probe } from '../resources/probe.ts';
 import { type JobHolder, type Reservation, cleanup, heldReservation, run } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { parseRulings } from '../spec/rulings.ts';
-import { type Cadence, type Clock, cadence, integrationHeadNow, runOrder } from './cadence.ts';
+import { type Cadence, type Clock, cadence, integrationHeadNow, runOrder, specsOnlyOf } from './cadence.ts';
 import { coverageBase, lensCoverage } from './coverage.ts';
-import { type FindingDraft, type FindingOpen, keepMutantPatch, openFinding, witnessFindingDraft } from './findings.ts';
+import { type FindingDraft, admitMutant, corroborateFinding, crossKey, openFinding, witnessFindingDraft } from './findings.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import {
-  FINDING_MOVES, type FindingEvidence, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, isExempt, parseObligations, parseVision,
+  FINDING_MOVES, LENS_KINDS, type FindingEvidence, type FindingLens, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, isExempt, parseObligations, parseVision,
 } from './types.ts';
 
 /** What an audit needs: a stage context (processes, resources, routing), the arbiter's first-served waits, a clock. */
@@ -87,6 +94,8 @@ export type AuditOutcome =
   | Readonly<{ kind: 'incomplete'; job: JobId; end: JourneyEnd }>
   | Readonly<{
     kind: 'ended'; job: JobId; outcome: 'completed' | 'abandoned'; covered: readonly LensKind[]; findings: readonly FindingId[]; suppressed: number;
+    /** H6: the drafts refused at admission (a corrupt mutant patch), with git's stderr; also written to the executor's stderr. */
+    refused: readonly RefusedDraft[];
     rewitnessed: readonly Rewitnessed[];
   }>;
 
@@ -103,12 +112,35 @@ const checkoutOf = (ctx: StageContext, job: JobId, what: 'lanes' | 'lenses' | 'r
 // ---------------------------------------------------------------------------------------------------
 // Findings
 
-/** The findings an audit opened or merged, and how many it suppressed (src/holistic/findings.ts `openFinding`). */
-type Tally = { ids: Set<FindingId>; suppressed: number };
-const tally = (t: Tally, o: FindingOpen): void => {
-  if (o.kind === 'suppressed') t.suppressed += 1;
-  else t.ids.add(o.id);
-};
+/**
+ * The findings an audit opened or merged, how many it suppressed (src/holistic/findings.ts `openFinding`), the drafts it
+ * refused, and (H7, R62) the finding each cross-lens key names in this audit.
+ */
+type Tally = { ids: Set<FindingId>; suppressed: number; refused: RefusedDraft[]; cross: Map<Sha256Hex, Readonly<{ id: FindingId; lens: FindingLens }>> };
+
+const isLensKind = (l: FindingLens): l is LensKind => (LENS_KINDS as readonly FindingLens[]).includes(l);
+
+/**
+ * Admits one draft (the audit's one way in): a lens draft whose cross-lens key names a finding another lens opened or
+ * merged in this audit corroborates it (`finding-corroborated`, keeping this lens's claim) and opens nothing; every other
+ * draft goes through `openFinding`.
+ */
+function admit(ctx: StageContext, t: Tally, draft: FindingDraft): void {
+  const key = crossKey(draft);
+  const prior = t.cross.get(key);
+  if (prior !== undefined && prior.lens !== draft.lens && isLensKind(draft.lens)) {
+    corroborateFinding(ctx.journal, prior.id, draft.lens, draft.claim);
+    t.ids.add(prior.id);
+    return;
+  }
+  const o = openFinding(ctx.journal, draft);
+  if (o.kind === 'suppressed') {
+    t.suppressed += 1;
+    return;
+  }
+  t.ids.add(o.id);
+  if (!t.cross.has(key)) t.cross.set(key, { id: o.id, lens: draft.lens });
+}
 
 // ---------------------------------------------------------------------------------------------------
 // The inputs, as recorded
@@ -165,7 +197,7 @@ function capture(ctx: AuditContext): Started | null {
     obligationsSha256: applied.obligationsSha256 ?? null,
     visionSha256: applied.visionSha256,
     owners: ownersOf(ctx),
-    priorFindings: view.holistic().findings.map((f) => f.id).sort(),
+    priorFindings: canonicalIds(view.holistic().findings.map((f) => f.id)),
     highWater: view.highWater(),
   };
   const seq = ctx.journal.fact({ kind: 'audit-started', ...inputs });
@@ -231,9 +263,24 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
     contracts: ctx.plan().contracts.map((c) => docAt(ctx, sha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
     index: { contracts: [], rulings: rulings.flatMap((x) => (x.status === 'withdrawn' ? [{ id: x.id, line: `withdrawn by ${x.by}` }] : [])), ledger: ledgerPath(ctx) },
-    architecture: architecture(ctx, sha),
+    target: architecture(ctx, sha),
     checkout,
+    // M4a rev 3 (H2, R61): an audit every trigger of which is a specs-only drift reads those units' specs.
+    specsOnly: changedSpecs(ctx, s),
   };
+}
+
+/** A specs-only audit's changed specs (H2), rendered from the kept spec bytes at the audited plan rev; null for a full audit. */
+function changedSpecs(ctx: StageContext, s: Started): readonly RenderedSpec[] | null {
+  const units = specsOnlyOf(s.triggers);
+  if (units === null) return null;
+  const manifest = payloadAtRev(ctx.journal.view, ctx.runDir, s.planRev).manifest;
+  return units.map((unit) => {
+    const sha = manifest.specs[unit];
+    if (sha === undefined) throw new Error(`${s.job}: plan rev ${s.planRev} keeps no spec of ${unit}, which its drift names`);
+    const spec = parseSpec(Buffer.from(kept(ctx, sha, SPEC_INPUT), 'utf8'), absPath(join(ctx.runDir, 'inputs', `${sha}.${SPEC_INPUT}`)));
+    return { unit, rev: spec.rev, markdown: renderSpec(spec) };
+  });
 }
 
 /** The blob `path` names at `sha` (a path under the checkout made relative), or null when it names no file there. */
@@ -243,8 +290,14 @@ function blobAt(ctx: StageContext, sha: Sha, checkout: AbsPath, path: string): F
   return { path: blob === null ? path : rel, blob };
 }
 
-/** A lens's finding as a draft: its obligation and clauses kept only when they exist; a vision finding at most P2. */
-function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f: LensFinding, checkout: AbsPath, gateHadPassed: boolean): FindingDraft {
+/** A lens draft refused at admission (H6): its vacuity mutant's patch is corrupt; nothing is opened. */
+export type RefusedDraft = Readonly<{ lens: LensKind; claim: string; stderr: string }>;
+
+/**
+ * A lens's finding as a draft: its obligation and clauses kept only when they exist; a vision finding at most P2; a
+ * vacuity mutant on an arc lane kept once its patch parses (H6), else the draft is refused with git's stderr.
+ */
+function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f: LensFinding, checkout: AbsPath, gateHadPassed: boolean): FindingDraft | RefusedDraft {
   const obligationIds = new Set(r.obligations?.obligations.map((o) => o.id) ?? []);
   const clauseIds = new Set(r.vision.clauses.map((c) => c.id));
   const laneIds = new Set<LaneId>(r.obligations?.lanes.map((l) => l.id) ?? []);
@@ -252,14 +305,14 @@ function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f
     const b = blobAt(ctx, s.integrationSha, checkout, e.path);
     return [b.path, b] as const;
   })).values()];
-  const mutant = lens === 'vacuity' && f.mutant !== null && laneIds.has(f.mutant.lane)
-    ? { patchSha256: keepMutantPatch(ctx.runDir, f.mutant.patch), lane: f.mutant.lane }
-    : null;
+  const admitted = lens === 'vacuity' && f.mutant !== null && laneIds.has(f.mutant.lane) ? admitMutant(ctx.repo, ctx.runDir, f.mutant.patch, f.mutant.lane) : null;
+  if (admitted?.kind === 'corrupt') return { lens, claim: f.claim, stderr: admitted.stderr };
+  const mutant = admitted === null ? null : admitted.mutant;
   return {
     lens,
     severity: lens === 'vision' && f.severity === 'P1' ? 'P2' : f.severity,
     obligation: f.obligation !== null && obligationIds.has(f.obligation) ? f.obligation : null,
-    visionClauses: [...new Set(f.visionClauses.filter((c): c is VisionClauseId => clauseIds.has(c)))].sort(),
+    visionClauses: canonicalIds(f.visionClauses.filter((c): c is VisionClauseId => clauseIds.has(c))),
     claim: f.claim,
     cause: f.cause,
     evidence,
@@ -298,10 +351,9 @@ function readLens(ctx: StageContext, job: JobId, called: BackendCallOutcome): Le
   }
 }
 
-/** Holds `@cpu`×1 under the job's holder around `body` (none on a legacy arc). */
+/** Holds `@cpu`×1 under the job's holder around `body`. */
 export async function withCpu<T>(ctx: AuditContext, job: JobId, body: () => Promise<T>): Promise<T> {
-  const request = judgmentEntry(ctx);
-  if (request === null) return body();
+  const request = judgmentEntry();
   const holder: JobHolder = { type: 'job', job };
   const parent = jobParent(job);
   const grant = await ctx.acquireFirst(request, holder, NEVER);
@@ -372,7 +424,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   await removeJobCheckouts(ctx, job);
   const r = recorded(ctx, s);
   const gateHadPassed = ctx.journal.view.publications().some((p) => p.seq < s.seq);
-  const t: Tally = { ids: new Set(), suppressed: 0 };
+  const t: Tally = { ids: new Set(), suppressed: 0, refused: [], cross: new Map() };
 
   // 2–3: the arc lanes on the audited SHA, then code's P1s.
   if (r.obligations !== null && r.obligations.lanes.length > 0) {
@@ -381,7 +433,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     }, { reuse: true, stop: () => false });
     if (series.end.kind !== 'ran') return { kind: 'incomplete', job, end: series.end };
     const records = new Map(series.runs.flatMap((x) => (x.record === null ? [] : [[x.lane, x.record] as const])));
-    for (const d of witnessDrafts(ctx, s, r, records, gateHadPassed)) tally(t, openFinding(ctx.journal, d));
+    for (const d of witnessDrafts(ctx, s, r, records, gateHadPassed)) admit(ctx, t, d);
   }
 
   // 4: the lenses, serially, the vision first.
@@ -403,9 +455,10 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
         await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, { path: checkout, checkout: { type: 'detached', at: s.integrationSha } });
         made = true;
       }
-      const rendered = prompt.render(lensInputs(ctx, s, r, lens, from, checkout));
+      const inputs = lensInputs(ctx, s, r, lens, from, checkout);
+      const rendered = prompt.render(inputs);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
-        job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx)],
+        job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
       }));
     }
@@ -415,7 +468,15 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
       if (read.kind === 'parked') break;
       continue;
     }
-    for (const f of read.output.findings) tally(t, openFinding(ctx.journal, lensDraft(ctx, s, r, lens, f, checkout, gateHadPassed)));
+    for (const f of read.output.findings) {
+      const d = lensDraft(ctx, s, r, lens, f, checkout, gateHadPassed);
+      if ('stderr' in d) {
+        t.refused.push(d);
+        process.stderr.write(`roadmap: ${job}: a ${lens} finding was refused, its mutant patch is corrupt: ${d.stderr}\n`);
+      } else {
+        admit(ctx, t, d);
+      }
+    }
     covered.push(lens);
     crashPoint('audit.after-lens');
   }
@@ -427,7 +488,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     const from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
     return from === s.integrationSha ? [] : [{ lens, from, to: s.integrationSha }];
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
-  const findings = [...t.ids].sort();
+  const findings = canonicalIds(t.ids);
   ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome });
   crashPoint('audit.after-ended');
   if (outcome === 'abandoned') {
@@ -437,7 +498,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
 
   // 6: the race: the cited P1s re-witnessed on the head that moved meanwhile.
   const rewitnessed = await rewitnessP1s(ctx, job);
-  return { kind: 'ended', job, outcome, covered: covered.sort(), findings, suppressed: t.suppressed, rewitnessed };
+  return { kind: 'ended', job, outcome, covered: covered.sort(), findings, suppressed: t.suppressed, refused: t.refused, rewitnessed };
 }
 
 /**

@@ -89,7 +89,7 @@ test('merge.transient-refusal: a path the transient check refuses sends the unit
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 1, `a transient violation charges: ${outcomes(d).join(' ')}`);
     const gates = readCalls(d.scenarioPath).filter(isGate);
     assert.equal(gates.length, 2);
-    assert.ok(gates[1]!.argv.includes('claude-fable-5-1'), 'scope growth promoted the next judgment');
+    assert.ok(gates[1]!.argv.includes('xhigh'), 'scope growth promoted the next judgment');
     assert.ok(!git(d.repo, 'ls-tree', '-r', '--name-only', 'main').includes('evidence/'), 'nothing transient reached integration');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {

@@ -2,7 +2,7 @@
 // arcs: real git, real processes, the fake claude answering lens and checkpoint calls keyed by job, fake witness lanes.
 // Named tests: bundle.stale, bundle.partial (with the retry's prior_attempt), bundle.vision-always-read (H3), bundle.partial (A18's literal partial bundle), bundle.no-op,
 // noop.interpretation-divergence (H12), bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
-// bundle.withdrawn-cite-invalid (H16), bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
+// bundle.withdrawn-cite-invalid (H16), bundle.rule-race-stale, bundle.ruling-id-collision-invalid, bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
 // convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13),
 // ckpt.design-park-respec-first (OR-Q1), ckpt.park-cause, bundle.p1-left-to-repair, and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
 import assert from 'node:assert/strict';
@@ -74,7 +74,8 @@ describe('the checkpoint and its bundle', () => {
       const call = readCalls(d.scenarioPath).find((c) => c.unit === 'ckpt-1')!;
       assert.ok(call.stdin.startsWith('<vision>'), 'the vision first');
       assert.match(call.stdin, /Arithmetic helpers anyone can trust/, 'in full');
-      assert.match(call.stdin, /The spec in force of u1, the shape an admit's spec text takes/, 'the admit template');
+      assert.match(call.stdin, /<unit_specs>[\s\S]*spec of unit u1, revision 1; item ids it holds: [^\n]*/, 'every spec embedded with its item ids (H4)');
+      assert.match(call.stdin, /<input_manifest>\n- plan plan: /, 'the input manifest (H4)');
       assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' }, 'the trigger is settled');
       assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {
@@ -120,7 +121,7 @@ describe('the checkpoint and its bundle', () => {
       const second = await runCheckpoint(ctx);
       assert.ok(second.kind === 'decided' && second.decision.kind === 'requested' && second.decision.reason === 'bundle-request', JSON.stringify(second));
       const n = item(r, second.decision.needsUser);
-      assert.deepEqual([n.blocking, n.options], [false, []], 'non-blocking, and nothing to apply as proposed');
+      assert.deepEqual([n.blocking, n.options.map((o) => o.id)], [false, ['acknowledge', 'decline']], 'non-blocking, nothing to apply as proposed: acknowledge or decline (run 10, E)');
       // The retry read the first attempt's invalid reasons verbatim (paid m3 run 9: ckpt-3 repeated ckpt-2's mistakes).
       const stdin = (job: string) => readCalls(d.scenarioPath).find((c) => c.unit === job)!.stdin;
       assert.doesNotMatch(stdin('ckpt-1'), /<prior_attempt>/);
@@ -201,6 +202,14 @@ function bundle(ops: readonly JsonValue[], extra: Readonly<{ observations?: read
   }) as Record<string, JsonValue>;
   return { ...a, cites: { vision: ['V-1'], observations: [...(extra.observations ?? [])], findings: [...(extra.dispose ?? [])] } };
 }
+/** A checkpoint ruling's JSON text `id` (the executor stamps `ruledBy` and `consistency`), and its `rule` op. */
+const checkpointRuling = (id: string): string => JSON.stringify({
+  schema: 'roadmap/ruling-m3', id, statement: `Helpers reject non-finite input (${id}).`, kind: 'decision', trigger: 'checkpoint',
+  supersedes: [], condition: null, docRefs: [{ path: 'contracts/api.md', anchor: '#api-contract', quotedText: 'returns the sum', relation: 'consistent' }],
+  contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: ['V-1'],
+  evidence: ['the vision asks for helpers anyone can trust'], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
+});
+const ruleOp = (id: string): JsonValue => ({ op: 'rule', ruling: id, cites: ['V-1'], evidence: ['the vision asks for helpers anyone can trust'] });
 const requirePlan = (r: ArcRun) => JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${r.journal.view.planApplied()!.planSha256}.plan.json`), 'utf8')) as { units: { id: string; origin?: string }[] };
 
 describe('the activation checks', () => {
@@ -229,6 +238,53 @@ describe('the activation checks', () => {
       const rewitnessed = factsOfKind(r, 'witnessed').find((f) => f.for.type === 'job' && f.for.job === 'ckpt-1');
       assert.equal(rewitnessed?.treeSha, git(d.repo, 'rev-parse', `${head}^{tree}`), 'the cited lane re-witnessed on the head under the rejected job');
       assert.deepEqual(factsOfKind(r, 'checkpoint-inputs')[1]!.observations.map((k) => k.treeSha), [rewitnessed!.treeSha], 'the re-evaluation read it');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.rule-race-stale (paid M4a run 1): a `rule` landing C-2 during the checkpoint call, whose bundle lands C-2 and C-3, rejects the bundle stale, never crashing; the re-evaluation lands C-3', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx, w } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      appendSteps(d, [
+        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-3')], rulings: [checkpointRuling('C-2'), checkpointRuling('C-3')] }), [barrier]),
+        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-3')], rulings: [checkpointRuling('C-3')] })),
+      ]);
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      const ruled = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
+      assert.equal(ruled.kind, 'applied', JSON.stringify(ruled));
+      release(d.scenarioDir, 'ckpt');
+      const first = await running;
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'stale', JSON.stringify(first));
+      assert.match(first.decision.detail, /the rulings ledger changed since the checkpoint read it/);
+      const second = await runCheckpoint(ctx);
+      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
+      assert.deepEqual(decisions(r), [['ckpt-1', 'rejected:stale']]);
+      assert.deepEqual(bundleRevs(r), [[r.journal.view.planApplied()!.rev, 'ckpt-2']]);
+      assert.deepEqual(Object.keys(keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!).manifest.rulings.sidecars).sort(), ['C-2', 'C-3'], 'the owner\'s C-2 and the re-evaluation\'s C-3 (C-1 is a ledger line without a sidecar)');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.ruling-id-collision-invalid (paid M4a run 1): a bundle landing C-2, which the ledger already holds, and C-3 is rejected invalid with the collision as its reason, never crashing', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx, w } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const ruled = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
+      assert.equal(ruled.kind, 'applied', JSON.stringify(ruled));
+      appendSteps(d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-3')], rulings: [checkpointRuling('C-2'), checkpointRuling('C-3')] }))]);
+      const rev = r.journal.view.planApplied()!.rev;
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
+      assert.equal(out.decision.detail, 'C-2 is already in the ledger (a ruling is never edited: supersede it)', 'C-3, checked against the ledger without the invalid C-2, is valid');
+      assert.equal(r.journal.view.planApplied()!.rev, rev, 'nothing applied');
     } finally {
       r.journal.close();
     }
@@ -309,8 +365,8 @@ describe('the activation checks', () => {
     const { ctx } = checkpointContext(r);
     try {
       const op = admitOp(d, 'u2') as Record<string, JsonValue>;
-      const { obligations: _declared, ...spec } = JSON.parse(op['spec'] as string) as Record<string, JsonValue>;
-      appendSteps(d, [checkpointStep('ckpt-1', bundle([{ ...op, spec: JSON.stringify(spec) }]))]);
+      const spec = op['spec'] as Record<string, JsonValue>;
+      appendSteps(d, [checkpointStep('ckpt-1', bundle([{ ...op, spec: { ...spec, obligations: [] } }]))]);
       await completedAudit(r, ctx);
       const out = await runCheckpoint(ctx);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
@@ -524,8 +580,8 @@ describe('P1s and their repair (paid m3 run 9)', () => {
     const { ctx } = checkpointContext(r);
     try {
       const op = admitOp(d, 'r1') as Record<string, JsonValue>;
-      const spec = { ...(JSON.parse(op['spec'] as string) as Record<string, JsonValue>), repairs: ['F-1'] };
-      const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec: JSON.stringify(spec) };
+      const spec = { ...(op['spec'] as Record<string, JsonValue>), repairs: ['F-1'] };
+      const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec };
       const accepting = checkpointAnswer({ decision: 'bundle', ops: [repair], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'handled by r1' }] });
       appendSteps(d, [
         checkpointStep('ckpt-1', accepting), checkpointStep('ckpt-2', bundle([repair])),

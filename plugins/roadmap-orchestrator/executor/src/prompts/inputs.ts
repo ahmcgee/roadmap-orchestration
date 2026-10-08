@@ -6,17 +6,22 @@
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
-import type { OutcomeStage } from '../core/events.ts';
-import type { DivergenceId, FindingId, JobId, LaneId, RulingId, Sha, SpecRev, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { OutcomeStage, TestRef } from '../core/events.ts';
+import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
+import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
 import type {
-  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, ObservationKey, ObservationVerdict,
+  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding,
   Vision, VisionClause, VisionCoverage, VisionQuestion,
 } from '../holistic/types.ts';
+import { obligationSource } from '../holistic/types.ts';
+import type { PinnedRule } from '../corpus/types.ts';
+import type { CapturedIssue } from '../forge/types.ts';
+import type { Phase0Record } from '../phase0/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
@@ -47,6 +52,18 @@ export type ArchitectureInput =
   | Readonly<{ kind: 'full'; doc: DocText }>
   | Readonly<{ kind: 'digest'; digest: DocText; doc: RepoPath }>;
 
+/**
+ * M4a: a corpus arc's target as a judgment gets it, in place of the architecture doc: every active pinned rule (the
+ * rules index, by file and section; the vision doc carries none) embedded in full, and the pinned files materialised
+ * read-only under `dir` to read on demand. `visionDoc`: the vision document's path under `dir`, null for the gate,
+ * whose view omits it (M3 R17).
+ */
+export type CorpusInput = Readonly<{ kind: 'corpus'; rulesIndex: readonly PinnedRule[]; dir: AbsPath; visionDoc: RepoPath | null }>;
+/** What a judgment's `target` input holds: an `architecture-doc` arc's doc or digest, or a corpus arc's corpus. */
+export type TargetInput = ArchitectureInput | CorpusInput;
+/** The gate's target: never the vision doc (M3 R17), so a corpus target carries none. */
+export type GateTargetInput = ArchitectureInput | (CorpusInput & Readonly<{ visionDoc: null }>);
+
 /** A fix round resumes the build session with what failed. `directives` are the gate's (or, for a
  * conflict or scope-growth round, the executor's) instructions; either list may be empty, not both. */
 export type FixRound = Readonly<{ failingEvidenceDirs: readonly AbsPath[]; directives: readonly string[] }>;
@@ -61,6 +78,8 @@ export type LaneLedgerEntry = Readonly<{
   evidenceDir: AbsPath;
   /** The gitignored files the lane wrote, and what evidence captured; null when not recorded. */
   ignored: IgnoredCensus | null;
+  /** M4a rev 3 (F1a): the earlier execution this lane's pass was reused from (its SHA and invocation); null when it ran. */
+  reused: Readonly<{ at: Sha; inv: InvocationId }> | null;
 }>;
 
 /** A checkout a plan-check reads: a detached tree at `at`. */
@@ -105,7 +124,7 @@ export type PlanCheckInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: ArchitectureInput;
+  target: TargetInput;
   direction: string;
   /** The scope envelope pinned for the unit. */
   scope: readonly RepoPattern[];
@@ -118,7 +137,23 @@ export type PlanCheckInputs = Readonly<{
   priorRound: PlanCheckPriorRound | null;
   /** R17: the vision as read-only context, marked non-directive; null outside a holistic arc. */
   vision: VisionInput | null;
+  /**
+   * M4a rev 3 (E, R59): the acceptance shape of an efficient builder's plan-check under `planCheck.shape: by-builder`
+   * (its answer is `PLAN_CHECK_ACCEPTANCE_SCHEMA`); null: the uniform check.
+   */
+  acceptance: PlanCheckAcceptance | null;
+  /**
+   * Run 10 (C): why the executor refused the unit's previous answer's redirect patch (it cited an out-of-slice rule), for
+   * this retry to correct; null otherwise.
+   */
+  priorInvalid: string | null;
 }>;
+
+/**
+ * What the acceptance shape needs beyond the uniform check: the spec's next free witness item id (R59: ids are
+ * consecutive from it) and the arc lanes a witness item may name (the obligations file's lanes).
+ */
+export type PlanCheckAcceptance = Readonly<{ nextWitnessId: WitnessItemId; arcLanes: readonly LaneId[] }>;
 
 export type BuildInputs = Readonly<{
   spec: RenderedSpec;
@@ -133,6 +168,37 @@ export type BuildInputs = Readonly<{
   worktree: AbsPath;
   scope: readonly RepoPattern[];
   fixRound: FixRound | null;
+  /**
+   * M4a rev 3 (D1, R56): per fast required witness lane, the exact `roadmap witness-check --lane-file <file>` command the
+   * implementer runs after its last change; empty outside a corpus arc or without required witnesses.
+   */
+  witnessChecks: readonly WitnessCheckCommand[];
+  /**
+   * M4a rev 3 (E, R55): this call is the in-session assessment (read-only, `PLAN_ASSESSMENT_SCHEMA`), not the build: the
+   * pinned risk floor its `riskFloor` may not go below, and the vision its `visionConflict` cites (null outside a holistic
+   * arc). Null: the build itself.
+   */
+  assess: BuildAssess | null;
+}>;
+
+/** The plan-check slice an in-session assessment rules on (R55). */
+export type BuildAssess = Readonly<{ risk: RiskTier; vision: VisionInput | null }>;
+
+/** One fast lane's witness check, as the build prompt names it. */
+export type WitnessCheckCommand = Readonly<{ lane: LaneId; command: string }>;
+
+/** Why mutation smoke did not run (D2): low risk, no targets, a target lane without `testPaths`, a tests-only diff, the allowance spent. */
+export const SMOKE_NOT_RUN = ['low-risk', 'no-targets', 'no-test-paths', 'tests-only-diff', 'allowance'] as const;
+export type SmokeNotRun = (typeof SMOKE_NOT_RUN)[number];
+
+/**
+ * M4a rev 3 (D1, D2): what the executable checks before the gate found. `witnesses`: the required ids and the ones still
+ * missing or failing (null: the check did not apply, an `architecture-doc` arc); `smoke`: each target's verdict, or why it
+ * did not run (null: did not apply). Survivors after the smoke bound reach the gate here (R38).
+ */
+export type GateChecks = Readonly<{
+  witnesses: Readonly<{ required: readonly RequiredWitness[]; missing: readonly TestRef[]; failed: readonly TestRef[] }> | null;
+  smoke: Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[]; notRun: SmokeNotRun | null }> | null;
 }>;
 
 export type GateInputs = Readonly<{
@@ -140,7 +206,7 @@ export type GateInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: ArchitectureInput;
+  target: GateTargetInput;
   direction: string;
   planCheckNotes: string;
   /** The obligations the candidate selects, with their observations (never their vision clauses: R17). */
@@ -154,6 +220,8 @@ export type GateInputs = Readonly<{
   scope: Readonly<{ patterns: readonly RepoPattern[]; growth: readonly RepoPath[] }>;
   /** Later gate rounds rule on their own prior round (§3, sf16); null on the first round. */
   priorRound: GatePriorRound | null;
+  /** M4a rev 3: the executable checks' results (`GateChecks`). */
+  checks: GateChecks;
 }>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -200,9 +268,14 @@ export type LensInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: ArchitectureInput;
+  target: TargetInput;
   /** The audit's detached worktree at the audited SHA, the lens's cwd. */
   checkout: AbsPath;
+  /**
+   * M4a rev 3 (H2, R61): a specs-only drift's changed specs, each rendered in full at the audited plan rev (the lens
+   * judges these against the vision; the code range is not its subject); null: a full audit.
+   */
+  specsOnly: readonly RenderedSpec[] | null;
 }>;
 
 /**
@@ -218,11 +291,20 @@ export type TriggerView =
   | Readonly<{ type: 'audit'; job: JobId }>
   | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>;
 
+/** A checkpoint decision the executor refused: rejected invalid, or sent to the owner as not applicable as proposed. */
+export type RefusedProposal = Readonly<{ job: JobId; outcome: 'rejected-invalid' | 'owner-request'; reasons: string }>;
+
 export type CheckpointInputs = Readonly<{
   vision: VisionInput;
   trigger: TriggerView;
   /** The previous job of this trigger, when the executor rejected its decision as invalid: its job and reasons verbatim. */
   priorInvalid: Readonly<{ job: JobId; reasons: string }> | null;
+  /**
+   * Paid M4a run 12: the proposals refused earlier under the plan revision of this capture, any trigger (the most recent
+   * few, oldest first; `priorInvalid`'s job excluded), each with the executor's reasons verbatim: what no checkpoint
+   * proposes again unchanged.
+   */
+  refused: readonly RefusedProposal[];
   head: Sha;
   /** The plan in force, rendered: units with their state, edges, limits and routing classes. */
   plan: string;
@@ -234,9 +316,63 @@ export type CheckpointInputs = Readonly<{
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
   index: ReferenceIndex;
-  architecture: ArchitectureInput;
+  target: TargetInput;
   direction: string;
+  /** M4a: the issues captured for this checkpoint (trusted, LR-d), or why none were captured (R21). */
+  issues: CheckpointIssuesInput;
+  /** M4a rev 3 (H4, F08): every captured input, content-addressed in the run dir; read only through these paths. */
+  manifest: readonly ManifestEntry[];
+  /** M4a rev 3 (H4, F21): every non-retired unit's spec in full, with the item ids it holds (`add` needs a new one). */
+  specs: readonly CheckpointSpec[];
+  /** M4a rev 3 (C3, H4): the ledger's next ruling id (numeric, no padding); several rulings take consecutive ids from it. */
+  nextRulingId: RulingId;
+  /** M4a rev 3 (H5, R65): a delta-only closeout since the no-op checkpoint `since`; null: a full checkpoint. */
+  closeout: Readonly<{ since: JobId }> | null;
+  /** M4a rev 3 (H5, F27): the issues and their grounds are unchanged since that checkpoint's dispositions; null: listed. */
+  issuesUnchangedSince: JobId | null;
 }>;
+
+/** What a checkpoint manifest entry names (H4). */
+export const MANIFEST_KINDS = ['plan', 'spec', 'ledger', 'sidecar', 'obligations', 'vision', 'phase0', 'issues'] as const;
+export type ManifestKind = (typeof MANIFEST_KINDS)[number];
+/** One captured input: its kind, its id within the kind (a unit, a ruling, or the kind's name), its kept path and hash. */
+export type ManifestEntry = Readonly<{ kind: ManifestKind; id: string; path: AbsPath; sha256: Sha256Hex }>;
+/** A unit's spec as a checkpoint reads it: rendered in full, with every item id it holds. */
+export type CheckpointSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: string; occupied: readonly string[] }>;
+
+/**
+ * A checkpoint's issues as its prompt gets them: the kept capture's issues, each body and comment already wrapped by
+ * `pastedAs` at capture (`roadmap/issues-capture-m4`), or the reason the capture failed (non-fatal, R21).
+ */
+export type CheckpointIssuesInput =
+  | Readonly<{ type: 'captured'; issues: readonly CapturedIssue[] }>
+  | Readonly<{ type: 'unavailable'; reason: string }>;
+
+/**
+ * M4a (OR-Q16): what a pack review reads, all read-only, rendered from its kept `PackReviewInputs` (K8): the vision,
+ * the plan rendered, every unit's spec, the obligations file with its census, the pinned rules index and the Phase-0
+ * record.
+ */
+export type PackReviewPromptInputs = Readonly<{
+  vision: VisionInput;
+  plan: string;
+  /** Every unit's spec; on a delta re-review only the specs changed since the review it follows. */
+  specs: readonly RenderedSpec[];
+  obligations: Obligations;
+  rulesIndex: readonly PinnedRule[];
+  phase0: Phase0Record;
+  /** M4a rev 3 (H3, F07): null on a full review (the first, or after an abandoned one). */
+  delta: PackReviewDelta | null;
+}>;
+
+/** M4a rev 3 (H3): an unresolved finding of an earlier pack review, named by its origin `(job, index)`. */
+export type PreviousPackFinding = Readonly<{ job: JobId; finding: PackFinding }>;
+/**
+ * A delta re-review: the completed review it follows (`since`), what changed in the pack since (`plan`, `spec <unit>`,
+ * `spec <unit> removed`, `obligations`, `corpus pin`, `phase0`, `vision`, `head`, `routing`), and every earlier finding
+ * still unresolved, each of which its answer must disposition.
+ */
+export type PackReviewDelta = Readonly<{ since: JobId; changed: readonly string[]; previous: readonly PreviousPackFinding[] }>;
 
 export type RoleInputs = {
   readonly planCheck: PlanCheckInputs;
@@ -244,20 +380,22 @@ export type RoleInputs = {
   readonly gate: GateInputs;
   readonly lens: LensInputs;
   readonly checkpoint: CheckpointInputs;
+  readonly packReview: PackReviewPromptInputs;
 };
 
 export const ROLE_INPUTS = {
-  planCheck: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
-  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound'],
+  planCheck: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid'],
+  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
-    'spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope',
-    'priorRound',
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
+    'checks',
   ],
-  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'architecture', 'checkout'],
+  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
-    'vision', 'trigger', 'priorInvalid', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'architecture', 'direction',
+    'vision', 'trigger', 'priorInvalid', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
+  packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -268,6 +406,7 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   gate: true,
   lens: true,
   checkpoint: true,
+  packReview: true,
 };
 void ROLE_INPUTS_COMPLETE;
 
@@ -317,7 +456,14 @@ export function laneCommand(worktree: AbsPath, lane: LaneDef): string {
  * the text cannot end its own block.
  */
 export function pasted(label: string, body: string): string {
-  const id = createHash('sha256').update(`${label}\0${body}`).digest('hex').slice(0, 8);
+  return pastedAs(createHash('sha256').update(`${label}\0${body}`).digest('hex').slice(0, 8), body);
+}
+
+/**
+ * The sanitiser itself, under a caller's stable id: an issue capture wraps each issue body as `issue-<n>` and each
+ * comment as `issue-<n>/c-<id>` (M4a), so evidence can name the block.
+ */
+export function pastedAs(id: string, body: string): string {
   const safe = body.replace(/<(\/?)pasted_content/gi, '‹$1pasted_content');
   return `<pasted_content id="${id}">\n${safe}\n</pasted_content id="${id}">`;
 }
@@ -350,8 +496,147 @@ export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {
   if (ledger.length === 0) return '(no lanes ran)';
   return ledger.map((l) => {
     const ignored = l.ignored === null ? null : ignoredText(l.ignored);
-    return `- ${l.lane}: ${l.verdict}, exit ${l.exitCode ?? 'none'} (expected ${l.expectedExit}); argv ${JSON.stringify(l.argv)}; evidence ${l.evidenceDir}${ignored === null ? '' : `; ${ignored}`}`;
+    const reused = l.reused === null ? '' : `; reused from ${l.reused.at} (${l.reused.inv}), inputs unchanged`;
+    return `- ${l.lane}: ${l.verdict}, exit ${l.exitCode ?? 'none'} (expected ${l.expectedExit}); argv ${JSON.stringify(l.argv)}; evidence ${l.evidenceDir}${ignored === null ? '' : `; ${ignored}`}${reused}`;
   }).join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// M4a rev 3: the executable checks, witness commands, in-session assessment, specs-only drift and the checkpoint's
+// manifest, embedded specs, closeout and issue reuse, as the prompts read them.
+
+const refsText = (refs: readonly TestRef[]): string => (refs.length === 0 ? 'none' : refs.map((r) => `${r.lane} ${r.testId}`).join('; '));
+
+/** Why mutation smoke did not run, as a clause. */
+const SMOKE_NOT_RUN_TEXT: { readonly [K in SmokeNotRun]: string } = {
+  'low-risk': "the unit's risk floor is low",
+  'no-targets': 'the unit has no target witness tests',
+  'no-test-paths': 'a target lane declares no testPaths, so its test files cannot be told from production code',
+  'tests-only-diff': 'the change touches test files only',
+  allowance: "the unit's smoke allowance is spent",
+};
+
+/** A required test with what requires it: `lane testId (I-3, target)`, each source once. */
+function requiredRefText(ref: TestRef, required: readonly RequiredWitness[]): string {
+  const sources = required.filter((r) => r.lane === ref.lane && r.testId === ref.testId).map((r) => `${r.source.id}, ${r.role}`);
+  return `${ref.lane} ${ref.testId}${sources.length === 0 ? '' : ` (${sources.join('; ')})`}`;
+}
+
+/** The gate's executable checks (D1, D2), or nothing when neither applied (an `architecture-doc` arc). */
+export function gateChecksText(c: GateChecks): string {
+  if (c.witnesses === null && c.smoke === null) return '';
+  const w = c.witnesses;
+  const witnesses = w === null ? [] : [
+    `Witness presence: ${w.required.length} required witness ${w.required.length === 1 ? 'test' : 'tests'} on the arc lanes at this head.`,
+    `- missing (absent, skipped, selected zero times, or a malformed record): ${w.missing.length === 0 ? 'none' : w.missing.map((r) => requiredRefText(r, w.required)).join('; ')}`,
+    `- failing: ${w.failed.length === 0 ? 'none' : w.failed.map((r) => requiredRefText(r, w.required)).join('; ')}`,
+  ];
+  const s = c.smoke;
+  const smoke = s === null ? [] : s.notRun !== null ? [`Mutation smoke did not run: ${SMOKE_NOT_RUN_TEXT[s.notRun]}.`] : [
+    "Mutation smoke (the unit's production change reverted, its test files kept, the target witness tests run again):",
+    `- killed: ${refsText(s.killed)}`,
+    `- survived: ${refsText(s.survived)}`,
+    `- inconclusive: ${refsText(s.inconclusive)}`,
+  ];
+  return `\n\n<executable_checks>\n${[...witnesses, ...smoke].join('\n')}\n</executable_checks>`;
+}
+
+/** The implementer's witness checks: one exact command per fast required witness lane (R56), or nothing. */
+export function witnessChecksText(checks: readonly WitnessCheckCommand[]): string {
+  return checks.length === 0 ? '' : `\n\n<witness_checks>\n${checks.map((w) => `- ${w.lane}:\n  ${w.command}`).join('\n')}\n</witness_checks>`;
+}
+
+/**
+ * The in-session assessment's ask (E, R55): the first invocation of a frontier builder's fresh build, read-only, answered
+ * as `planAssessment`. The implementing invocation resumes the same session with the build's own ask.
+ */
+export function assessText(a: BuildAssess): string {
+  const vision = a.vision === null
+    ? 'This arc has no vision, so visionConflict is empty.'
+    : `The arc's vision follows, as read-only context: it informs visionConflict and never decides feasibility.\n${visionText(a.vision)}`;
+  return `This invocation is the assessment, not the build. No plan-check reviewed this spec: you assess it yourself before you write any code, and the build resumes this session afterwards with its own instructions. Change nothing now: no edits, no new files, no commits, no lanes, no command that writes. Any change to the worktree makes the assessment malformed.
+
+Read the spec, the documents above and the code the spec depends on, then return planAssessment:
+- feasible: false only when the spec cannot be satisfied inside its scope and the contracts and rulings as written; notes then says why in plain sentences, and the unit stops for the spec to be revised.
+- riskFloor: the risk the unit really carries. The pinned floor is ${a.risk}; never answer below it. Raise it when the unit touches a contract surface, a security or data boundary, or more of the system than its tier suggests: a higher floor may move the build to another seat.
+- visionConflict: each spec clause that works against an active vision clause, with the clause ids and a one-sentence note; empty when none.
+- premises: the claims about the repository your assessment relies on, each with the file and line where you read it.
+- notes: what the build should know: facts about the existing code, and the order you will work in.
+
+${vision}`;
+}
+
+/**
+ * The acceptance shape of a plan-check (E, R59), or nothing for the uniform check: the redirect may only add or replace
+ * witness items and facts, and cite; witness items take ids from the spec's next free `W-n`.
+ */
+/** Run 10 (C): the previous plan-check answer's refused patch, as the retry reads it (empty when there was none). */
+export function planCheckPriorInvalidText(reason: string | null): string {
+  if (reason === null) return '';
+  return `
+
+<prior_attempt>
+Your previous answer on this unit redirected with a patch the executor refused, so the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
+</prior_attempt>`;
+}
+
+export function acceptanceShapeText(a: PlanCheckAcceptance | null): string {
+  if (a === null) return '';
+  const lanes = a.arcLanes.length === 0 ? '(none: this arc declares no arc lanes, so no witness item can be written; say so in notes)' : a.arcLanes.join(', ');
+  return `
+
+<acceptance_shape>
+This check runs in the acceptance shape: an efficient model builds this unit, and your job includes making the spec's proof concrete before it builds. Check everything above as usual. Then map every acceptance clause that admits a test to a witness item: a named test in an arc lane that fails when the clause does not hold. The executor runs every active witness item's test by its exact id before the gate and sends the unit back while one is missing or failing, so each item is a test the build must write.
+
+In this shape a redirect may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted. A defect you would fix in another section goes in notes for the build and the gate, or, when it leaves the spec unbuildable, is an escalation.
+
+A witness item is {id, lane, testId, clause, skeleton}:
+- id: a new item takes the next free id, ${a.nextWitnessId}, and further new items the ids after it in order, written without leading zeros; replace names a witness id the spec already holds.
+- lane: one of the arc lanes: ${lanes}.
+- testId: the test's exact id as that lane's reporter gives it (for node --test, the suite and test names joined by " > ").
+- clause: the id of the acceptance clause it witnesses.
+- skeleton: the test's shape in one or two plain sentences: the entry point it drives, the fixture it injects, what it asserts. A negative witness drives the real entry point with an injected fixture, never a helper.
+
+Approve when every acceptance clause that admits a test already has an active witness item that would fail without the behaviour.
+</acceptance_shape>`;
+}
+
+/** A pack review's delta (the review it follows, what changed, the unresolved earlier findings), or nothing for a full review. */
+export function packReviewDeltaText(delta: PackReviewDelta | null): string {
+  if (delta === null) return '';
+  const target = (t: PackFinding['target']): string => (t.type === 'plan' ? 'plan' : t.type === 'census' ? `census ${t.rule}` : `${t.type} ${t.id}`);
+  const previous = delta.previous.map((p) => `- ${p.job}#${p.finding.index} [${p.finding.severity}] ${target(p.finding.target)}: ${p.finding.claim}`);
+  return `\n\n<delta since="${delta.since}">\n<changed>\n${delta.changed.join('\n')}\n</changed>\n<previous_findings>\n${previous.join('\n')}\n</previous_findings>\n</delta>`;
+}
+
+/** A specs-only drift (H2, R61): the changed specs, embedded, with what to judge; nothing for a full audit. */
+export function specsOnlyText(specsOnly: readonly RenderedSpec[] | null): string {
+  if (specsOnly === null) return '';
+  return `\n\n<specs_only>\nThis audit runs because a plan revision changed only these units' specs; the product code is unchanged since the code lenses last read it, and only the vision lens runs. Judge what these specs now ask for against the vision. Do not audit the code again.\n${documentsXml(specsOnly.map((s) => ({ source: `spec of unit ${s.unit}, revision ${s.rev} (changed by the revision this audit follows)`, content: s.markdown })))}\n</specs_only>`;
+}
+
+/** The checkpoint's input manifest (H4): every captured input by kind, id, kept path and hash. */
+export function manifestText(manifest: CheckpointInputs['manifest']): string {
+  return manifest.length === 0 ? '(none)' : manifest.map((m) => `- ${m.kind} ${m.id}: ${m.path} sha256:${m.sha256}`).join('\n');
+}
+
+/** Every non-retired unit's spec in full, each with the item ids it holds (H4, F21), as a documents block. */
+export function checkpointSpecsText(specs: CheckpointInputs['specs']): string {
+  if (specs.length === 0) return '(no unit specs)';
+  return documentsXml(specs.map((s) => ({
+    source: `spec of unit ${s.unit}, revision ${s.rev}; item ids it holds: ${s.occupied.length === 0 ? 'none' : s.occupied.join(', ')}`, content: s.markdown,
+  })));
+}
+
+/** A closeout's notice (H5, R65), or nothing for a full checkpoint. */
+export function closeoutText(c: CheckpointInputs['closeout']): string {
+  if (c === null) return '';
+  return `\n\n<closeout since="${c.since}">\nThe previous checkpoint, ${c.since}, decided no-op, and nothing it weighed has changed since its capture: the findings and their states, the obligations, the ledger, the specs, the issues and the observations' verdicts are as it saw them, except what this message shows. Weigh only what changed. Decide no-op unless it needs an op; the output schema is the same.\n</closeout>`;
+}
+
+/** Issue reuse (H5, F27): the issues not listed are unchanged, on unchanged grounds, since that checkpoint's dispositions. */
+export function issuesUnchangedText(since: JobId | null): string {
+  return since === null ? '' : `\nEvery open issue not listed above is unchanged since checkpoint ${since}, on unchanged grounds: its disposition there stands, and issueIntake records none for it.`;
 }
 
 /** Bytes as a reader scans them: B, KiB or MiB. */
@@ -369,11 +654,41 @@ export function ignoredText(c: IgnoredCensus): string | null {
   return `ignored writes: ${files} (${sizeText(c.written.bytes)}), ${c.captured.files} captured${gaps.length === 0 ? '' : `; uncaptured: ${gaps.join(', ')}`}`;
 }
 
-/** The architecture doc's entry in a documents block: the whole doc, or the digest naming the doc's path. */
-export function architectureDocument(a: ArchitectureInput): Readonly<{ source: string; content: string }> {
-  return a.kind === 'full'
-    ? { source: `architecture doc ${a.doc.path}`, content: a.doc.text }
-    : { source: `architecture digest ${a.digest.path} (the full architecture doc is ${a.doc} in the repository)`, content: a.digest.text };
+/**
+ * The target's entry in a documents block: the whole architecture doc, or the digest naming the doc's path; or, in a
+ * corpus arc, the rules index (every active T-n by file and section) naming the read-only directory of the pinned
+ * corpus files, and the vision document there when the role reads it. `hashes` adds each rule's text hash, which a
+ * ruling's rule reference must quote (the checkpoint).
+ */
+export function targetDocument(t: TargetInput, opts: Readonly<{ hashes: boolean }> = { hashes: false }): Readonly<{ source: string; content: string }> {
+  switch (t.kind) {
+    case 'full':
+      return { source: `architecture doc ${t.doc.path}`, content: t.doc.text };
+    case 'digest':
+      return { source: `architecture digest ${t.digest.path} (the full architecture doc is ${t.doc} in the repository)`, content: t.digest.text };
+    case 'corpus': {
+      const vision = t.visionDoc === null ? '' : `; the vision document is ${t.dir}/${t.visionDoc} (it holds no rules)`;
+      return { source: `corpus rules index (the pinned corpus files are read-only under ${t.dir}${vision})`, content: rulesIndexText(t.rulesIndex, opts) };
+    }
+  }
+}
+
+/** Every active rule, grouped by file (ascending), then by section (the nearest heading above its rules block), rules ascending. */
+export function rulesIndexText(rules: readonly PinnedRule[], opts: Readonly<{ hashes: boolean }> = { hashes: false }): string {
+  if (rules.length === 0) return '(no active rules)';
+  const files = new Map<string, Map<string, PinnedRule[]>>();
+  for (const r of rules) {
+    const sections = files.get(r.file) ?? new Map<string, PinnedRule[]>();
+    files.set(r.file, sections);
+    const heading = r.section ?? '(before any heading)';
+    sections.set(heading, [...(sections.get(heading) ?? []), r]);
+  }
+  return [...files.keys()].sort().flatMap((file) => [
+    `${file}:`,
+    ...[...files.get(file)!].flatMap(([heading, rs]) => [
+      `  ${heading}`, ...rs.map((r) => `    ${r.id}${opts.hashes ? ` [textSha256 ${r.textSha256}]` : ''}: ${r.text}`),
+    ]),
+  ]).join('\n');
 }
 
 /** The reference index as data: one line per uncited contract and per ruling not embedded. */
@@ -466,7 +781,9 @@ export function obligationsText(views: readonly ObligationView[], opts: Readonly
     const witness = o.witness === null ? 'none' : `lane ${o.witness.lane}, tests ${o.witness.testIds.join(', ')}`;
     const delivered = o.deliveredBy.length === 0 ? '' : `\n  Delivered by: ${o.deliveredBy.join(', ')}`;
     const obs = v.observation === null ? 'none (not covered, which never counts as passed)' : `${v.observation.verdict} at ${JSON.stringify(v.observation.key)}`;
-    return `- ${o.id} (${head.join('; ')}): ${o.statement}\n  Anchored at ${o.docRef.path}${o.docRef.anchor}: "${o.docRef.quotedText}"\n  Witness: ${witness}${delivered}\n  Observation: ${obs}`;
+    const src = obligationSource(o);
+    const anchored = src.kind === 'doc' ? `${src.path}${src.anchor}: "${src.quotedText}"` : `corpus rule ${src.rule.id}`;
+    return `- ${o.id} (${head.join('; ')}): ${o.statement}\n  Anchored at ${anchored}\n  Witness: ${witness}${delivered}\n  Observation: ${obs}`;
   }).join('\n');
 }
 
@@ -498,6 +815,13 @@ export function priorInvalidText(p: CheckpointInputs['priorInvalid']): string {
   return `\n\n<prior_attempt>\nThe previous checkpoint on this trigger, ${p.job}, decided a bundle the executor rejected as invalid, for these reasons: ${p.reasons}\nThis is the last attempt: a second invalid decision goes to the owner as a request. Correct each reason above; do not repeat it.\n</prior_attempt>`;
 }
 
+/** The proposals already refused and why, as every checkpoint reads them (empty when there are none). */
+export function refusedText(refused: CheckpointInputs['refused']): string {
+  if (refused.length === 0) return '';
+  const line = (r: RefusedProposal): string => `- ${r.job} (${r.outcome === 'rejected-invalid' ? 'rejected as invalid' : 'sent to the owner: not applicable as proposed'}): ${r.reasons}`;
+  return `\n\n<refused_proposals>\nProposals already refused on this plan revision, and why. Do not propose any of them again unchanged: correct what each reason names, propose something else, or decide no-op.\n${refused.map(line).join('\n')}\n</refused_proposals>`;
+}
+
 /** Why the checkpoint runs, in sentences. */
 export function triggerText(t: TriggerView): string {
   if (t.type === 'audit') return `the audit ${t.job} completed.`;
@@ -506,4 +830,18 @@ export function triggerText(t: TriggerView): string {
   const ended = `its ${c.stage} attempt ${c.attempt} ended ${c.outcome}`;
   if (c.design) return `unit ${t.unit} parked on a design question (log seq ${t.seq}): ${ended}.`;
   return [`unit ${t.unit} parked (log seq ${t.seq}) on an executor-side cause, not a design question: ${ended} and the executor parked it (${c.reason}).`, ...c.detail].join(' ');
+}
+
+/**
+ * The checkpoint's issues (M4a): each issue's id, labels and title, then its body and kept comments as the capture
+ * wrapped them (`<pasted_content id="issue-<n>">`, `issue-<n>/c-<id>`). An unavailable capture says why.
+ */
+export function issuesText(i: CheckpointIssuesInput): string {
+  if (i.type === 'unavailable') return `The issue capture failed (${i.reason}). There are no issues this checkpoint; issueIntake is empty.`;
+  if (i.issues.length === 0) return '(no open roadmap:bug or roadmap:feedback issues)';
+  return i.issues.map((issue) => [
+    `${issue.id} [${issue.labels.join(', ')}], title ${JSON.stringify(issue.title)}:`,
+    issue.body,
+    ...issue.comments.map((c) => `Comment ${c.id} (${c.association}):\n${c.body}`),
+  ].join('\n')).join('\n\n');
 }

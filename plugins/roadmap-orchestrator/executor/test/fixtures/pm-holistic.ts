@@ -1,32 +1,42 @@
-// The holistic whole-pipeline scenario (M3 B8; test/pipeline-matrix.test.ts): an exec-common arc made holistic (a
-// vision, obligations witnessed on a fake `journey` arc lane, the required lens set L = {vision}) and run by the real
-// supervised `roadmap start` through the whole-pipeline harness (pm-common.ts), keyed per unit and per job.
+// The holistic whole-pipeline scenario (M3 B8; test/pipeline-matrix.test.ts): an exec-common arc made holistic on a
+// corpus target (M4a D0, corpus-target.ts: a fresh holistic start targets a corpus; obligations witnessed on a fake
+// `journey` arc lane, the required lens set L = {vision}) and run by the real supervised `roadmap start` through the
+// whole-pipeline harness (pm-common.ts), keyed per unit and per job.
 //
-// The story: the start's revision 1; the baseline witness job (A6) runs the journey lane on the baseline before any
+// The story: the start's revision 1; the pack review `review-1` (no finding) before the first admission; the baseline witness job (A6) runs the journey lane on the baseline before any
 // admission; u1 (declaring I-1 must-hold and delivering I-2 future) walks its pipeline, its candidate running the
 // journey lane, and its ff latches I-2 (obligation-latched); the final audit `audit-1` (the journey lane, its vision
 // lens); the checkpoint `ckpt-1` applies a bundle (an arc-wide limits op: a revision committed through the fence,
-// its divergence facts and digest item); the drift audit `audit-2` of generation 2; the checkpoint `ckpt-2`, an
-// interpretation-only no-op (H12: one divergence, no revision), which makes generation 2 quiescent; the close-out docs
-// publication `docs-1` (docs.commit, its lanes, the docs ff, docs-covered, docs-published, its snapshot); then
-// `arc-completed` and the terminal snapshot.
+// its divergence facts and digest item); the drift audit `audit-2` of generation 2; the checkpoint `ckpt-2`, a bundle
+// whose one op (an admit serving no world clause) code converts (M4a rev 3, B: `unrelated`), so a no-op carrying its
+// conversion and its interpretation (H12: one divergence, no revision; the conversion's corpus amendment), which makes
+// generation 2 quiescent; the close-out docs publication `docs-1` (docs.commit, its lanes, the docs ff, docs-covered,
+// docs-published, its snapshot); then `arc-completed` and the terminal snapshot.
+//
+// u1 walks the M4a rev 3 corpus-arc stages (the plan's `planCheck.shape: by-builder`, u1 at risk high, so a frontier
+// builder): plan-check `in-session` (no call), the fresh build's assessment then its implementing call resuming that
+// session (its answer reporting an experiment), the witness presence check (D1: I-2's t2 on the journey lane at the
+// salvage SHA, after the lane files for the build) and the mutation smoke (D2: the journey lane declares `testPaths`, so
+// the reverted production diff runs it on the mutant tree, scripted to fail t2: killed, green).
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Event, IntentRecord, Parent } from '../../src/core/events.ts';
 import { type InvocationId, type JobId, parseInvocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
+import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import { checkpointAnswer, checkpointStep, interpretationOnlyNoop, lensStep } from '../helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../helpers/holistic.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
+import { ADVANCES, obligationsJson } from './brake-common.ts';
+import { corpusTarget } from './corpus-target.ts';
 import { inRevisionAt } from './pm-trace.ts';
 import type { ExecRun } from './exec-common.ts';
 import type { Scenario } from './pm-common.ts';
-import { planCheckStep } from './stage-common.ts';
-import { MUL, codexStep, gateStep } from './unit-common.ts';
+import { BUILD_REPORT } from './stage-common.ts';
+import { MUL, gateStep } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -36,43 +46,90 @@ const OBLIGATIONS = [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', activation: 'f
 const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-1'], evidence: ['scripted evidence'] };
 
 /**
- * Makes the laid-out arc holistic: vision, obligations over a journey witness lane, L = {vision}. The lane passes t1 on
- * every tree and t2 on every tree but the baseline's (I-2 is future: held on the baseline it would be vacuous, A6).
+ * Makes the laid-out arc holistic on a corpus target (corpus-target.ts): obligations over a journey witness lane,
+ * L = {vision}. The lane passes t1 on every tree and t2 on every tree but the baseline's (I-2 is future: held on the
+ * baseline it would be vacuous, A6); the baseline is the corpus commit, so its tree is read after it.
  */
 function holistic(r: ExecRun): void {
   const control = join(tmpDir('pm-witness-control'), 'control.json');
+  const obligations = obligationsJson({ obligations: OBLIGATIONS, mapping: MAPPED, laneExtra: { journey: { testPaths: ['test/**'] } } }, control);
+  corpusTarget(r, { obligations, advances: ADVANCES, audit: { lenses: ['vision'] }, planExtra: { planCheck: { shape: 'by-builder' } } });
   const baseline = git(r.repo, 'rev-parse', 'main^{tree}');
-  writeWitnessControl(control, { trees: { [baseline]: { outcomes: { t1: 'pass', t2: 'fail' } }, '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
-  const planDir = join(r.planPath, '..');
-  writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
-  writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(obligationsJson({ obligations: OBLIGATIONS, mapping: MAPPED }, control)));
-  const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json;
-  writeFileSync(r.planPath, JSON.stringify({ ...plan, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'] } } }));
-  const spec = join(planDir, 'u1.json');
+  const failsT2 = { outcomes: { t1: 'pass', t2: 'fail' } } as const;
+  // The smoke's mutant: u1's salvage tree (the baseline plus MUL) with its production diff reverted, so MUL's test alone.
+  const mutant = treeWith(r.repo, 'main', { 'test/mul.test.js': MUL['test/mul.test.js'] });
+  writeWitnessControl(control, { trees: { [baseline]: failsT2, [mutant]: failsT2, '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
+  const spec = join(join(r.planPath, '..'), 'u1.json');
   writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), obligations: ['I-1', 'I-2'] }));
+  const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json & { units: Json[] };
+  writeFileSync(r.planPath, JSON.stringify({ ...plan, units: plan.units.map((u) => ({ ...u, risk: 'high' })) }));
+}
+
+/** The tree of `rev` with `files` added, made with plumbing in a temporary index (written to the repo's object store only). */
+function treeWith(repo: string, rev: string, files: Readonly<Record<string, string>>): string {
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_INDEX_FILE: join(tmpDir('pm-mutant-index'), 'index') };
+  const run = (args: readonly string[], input?: string): string => {
+    const out = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', env, input });
+    if (out.status !== 0) throw new Error(`git ${args.join(' ')} in ${repo}: ${out.stderr}`);
+    return out.stdout.trim();
+  };
+  run(['read-tree', rev]);
+  for (const [path, text] of Object.entries(files)) run(['update-index', '--add', '--cacheinfo', `100644,${run(['hash-object', '-w', '--stdin'], text)},${path}`]);
+  return run(['write-tree']);
 }
 
 const keyed = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
 
+/** The approving gate's note: a corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
+const GATE_NOTE = { severity: 'note', path: null, text: 'The mul helper has no overflow test.', contractRef: null } as const;
+
+/** u1's fresh build, first call: the in-session assessment (E), feasible at the unit's own floor. */
+const ASSESS: Step = {
+  as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'], stdinContains: ['This invocation is the assessment, not the build.'] },
+  acts: [{ type: 'emit', value: { planAssessment: { feasible: true, riskFloor: 'high', visionConflict: [], premises: [], notes: 'add mul beside add' } } }],
+};
+/** Its second call: the assessment's session resumed, mul committed; the answer reports an experiment (I3). */
+const IMPLEMENT: Step = {
+  as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--resume'], stdinContains: ['Your assessment is recorded. Now build the unit'] },
+  acts: [
+    { type: 'commit', message: 'add mul', files: MUL },
+    { type: 'emit', value: { ...BUILD_REPORT, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
+  ],
+};
+
+/**
+ * ckpt-2's one op: an admit citing only the purpose clause V-1 and delivering nothing (it declares the must-hold I-1, which
+ * never counts as touched), so it touches no world clause: converted `unrelated`.
+ */
+function asideAdmit(r: ExecRun): JsonValue {
+  const spec = JSON.parse(readFileSync(join(r.planPath, '..', 'u1.json'), 'utf8')) as Json;
+  return {
+    op: 'admit', unit: { id: 'aside', risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' },
+    spec: admitSpecWire({ ...spec, unit: 'aside', rev: 1, obligations: ['I-1'] }), targets: [], cites: ['V-1'], evidence: ['scripted evidence'],
+  };
+}
+
 export const HOLISTIC: Scenario = {
   arc: () => ({}),
   prepare: holistic,
-  steps: () => [
-    ...keyed('u1', [
-      planCheckStep({ decision: 'approve' }),
-      codexStep([{ type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'] }),
-      gateStep({ decision: 'approve' }),
-    ]),
+  steps: (r) => [
+    packReviewStep('review-1'),
+    ...keyed('u1', [ASSESS, IMPLEMENT, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
     lensStep('audit-1', 'vision'),
     checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
     lensStep('audit-2', 'vision'),
-    checkpointStep('ckpt-2', interpretationOnlyNoop()),
+    checkpointStep('ckpt-2', checkpointAnswer({
+      decision: 'bundle', ops: [asideAdmit(r)], interpretations: [{ clauses: ['V-1'], situation: 'scripted situation', reading: 'scripted reading' }],
+    })),
   ],
   hooks: () => [],
 };
 
 export const HOLISTIC_OUTCOMES = {
-  u1: ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
+  u1: [
+    'plan-check:in-session', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
+    'candidate:green', 'ff:published', 'snapshot:published',
+  ],
 } as const;
 
 // ---------------------------------------------------------------------------------------------------
@@ -105,6 +162,8 @@ export function ownerOf(view: JournalView, e: Event): string {
     case 'abort':
       return ofParent(view.latestIntent(e.op).parent);
     case 'fact': {
+      // A lane-reused or series-certified fact (M4a rev 3 N1) belongs to the stage or job whose series it records.
+      if (e.fact.kind === 'lane-reused' || e.fact.kind === 'series-certified') return ofParent(e.fact.parent);
       const f = e.fact as Readonly<{ kind: string; inv?: string; job?: unknown; pub?: unknown; for?: Readonly<{ type: string; job?: string }>; unit?: unknown; source?: Readonly<{ type: string; job?: string; command?: string }> }>;
       if (f.kind === 'meter' || f.kind === 'usage-unavailable') return ofParent(view.latestIntent(parseInvocationId(f.inv as InvocationId).op).parent);
       const job = typeof f.job === 'string' ? f.job : typeof f.pub === 'string' ? f.pub : f.for?.type === 'job' ? f.for.job : f.source?.type === 'bundle' ? f.source.job : undefined;
@@ -129,14 +188,22 @@ export function contextOf(view: JournalView, e: Event): string {
   return op?.kind === 'proc.spawn' && op.expect.subject.purpose === 'journey' ? 'unit:journey' : 'unit';
 }
 
-/** The M3 facts whose append the holistic row crashes (each kind's first, at every log.append label). */
+/**
+ * The M3 facts whose append the holistic row crashes (each kind's first, at every log.append label), and the M4a ones of
+ * the story (u1's smoke-ran, the checkpoints' corpus amendments).
+ */
 export const M3_FACTS: readonly string[] = [
   'witnessed', 'obligation-latched', 'audit-started', 'audit-ended', 'checkpoint-inputs', 'plan-applied', 'divergence', 'divergence-digest',
-  'bundle-decided', 'docs-covered', 'docs-published', 'arc-completed',
+  'bundle-decided', 'docs-covered', 'docs-published', 'arc-completed', 'debt-banked', 'smoke-ran', 'corpus-amendment',
 ];
 
 /** Labels only the holistic layer reaches (the row crashes each at occurrence 1, and 2 where it repeats). */
-export const M3_ONLY = /^(audit|checkpoint|bundle|closeout|docs|latch|complete)\./;
+export const M3_ONLY = /^(audit|checkpoint|bundle|closeout|docs|latch|complete|debt)\./;
+/**
+ * Labels only a corpus arc's M4a rev 3 unit stages reach (in-session plan-check, the assessment, the witness lane files and
+ * presence check, the mutation smoke and its mutant.apply): crashed as the M3-only ones, at 1 and 2.
+ */
+export const REV3_ONLY = /^(plancheck|build|witnesscheck|smoke|mutant)\./;
 /** A log append's record is in flight at these labels (the crash leaves it out of the log). */
 export const IN_FLIGHT: readonly string[] = ['log.append.before-write', 'log.append.after-partial-write'];
 
@@ -178,7 +245,7 @@ export function sampleBy(record: string, snap: LogSnapshot, pick: (x: Reached) =
 }
 
 /**
- * The holistic row's cells: every M3-only label at occurrence 1, and 2 where it repeats; each log append label at the
+ * The holistic row's cells: every M3-only and rev-3-only label at occurrence 1, and 2 where it repeats; each log append label at the
  * first append of each M3 fact kind (the plan-applied a bundle's, the start's being the other rows'); every other label
  * at its first occurrence in each holistic context (a job kind, a unit candidate's arc lane, and the arc once the first
  * job has begun: the digest item, the terminal snapshot). Those other labels' occurrences in a unit's own stages and at
@@ -187,7 +254,7 @@ export function sampleBy(record: string, snap: LogSnapshot, pick: (x: Reached) =
 export function sampleHolistic(record: string, snap: LogSnapshot): readonly Sampled[] {
   const firstJob = snap.events.find((e) => contextOf(snap.view, e).startsWith('job:'))?.seq ?? Infinity;
   return sampleBy(record, snap, ({ label, occurrence, e }) => {
-    if (M3_ONLY.test(label)) return occurrence <= 2 ? `#${occurrence}` : null;
+    if (M3_ONLY.test(label) || REV3_ONLY.test(label)) return occurrence <= 2 ? `#${occurrence}` : null;
     if (label.startsWith('log.append.')) {
       return e.type === 'fact' && M3_FACTS.includes(e.fact.kind) && !(e.fact.kind === 'plan-applied' && e.fact.source?.type === 'start') ? `fact ${e.fact.kind}` : null;
     }
@@ -212,14 +279,19 @@ export function holisticProduct(repo: string): unknown {
 
 /**
  * What the holistic layer wrote: each M3 fact kind's count (a witness excepted: a lane a crash cut short runs again and
- * may witness again), the audits' and checkpoints' job ids, the divergences' ids and jobs, the terminal snapshots and
- * whether the completion is active.
+ * may witness again; and smoke-ran: each lanes attempt records its own, a restarted one reading the verdict back by key),
+ * how many smoke keys and which verdicts (a key's path-dependent bytes differ between runs; its count does not), the audits' and checkpoints' job ids, the divergences' ids and
+ * jobs, the terminal snapshots and whether the completion is active.
  */
 export function holisticRecords(snap: LogSnapshot): unknown {
   const facts = snap.events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
   const count = (kind: string): number => facts.filter((f) => f.kind === kind).length;
   return {
-    counts: Object.fromEntries(M3_FACTS.filter((k) => k !== 'witnessed').map((k) => [k, count(k)])),
+    counts: Object.fromEntries(M3_FACTS.filter((k) => k !== 'witnessed' && k !== 'smoke-ran').map((k) => [k, count(k)])),
+    smoke: {
+      keys: new Set(facts.flatMap((f) => (f.kind === 'smoke-ran' ? [f.key] : []))).size,
+      verdicts: [...new Set(facts.flatMap((f) => (f.kind === 'smoke-ran' ? [canonicalJson({ unit: f.unit, verdict: f.verdict })] : [])))],
+    },
     audits: facts.flatMap((f) => (f.kind === 'audit-started' ? [f.job] : [])),
     ended: facts.flatMap((f) => (f.kind === 'audit-ended' ? [[f.job, f.outcome]] : [])),
     checkpoints: facts.flatMap((f) => (f.kind === 'checkpoint-inputs' ? [f.job] : [])),

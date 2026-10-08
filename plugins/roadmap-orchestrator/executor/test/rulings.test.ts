@@ -3,7 +3,7 @@
 // ruling in the ledger, and the byte-stable constraints.md with its close-out retirement.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type Sha, rulingId, sha, sha256, unitId } from '../src/core/ids.ts';
+import { type Sha, ruleId, rulingId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { type RepoPath, repoPath } from '../src/core/values.ts';
 import { anchorSection, applyContractOps, citeRuling, headingSlug } from '../src/docs/contracts.ts';
 import { renderConstraints } from '../src/docs/constraints.ts';
@@ -80,6 +80,7 @@ function context(over: Partial<RulingContext> = {}): RulingContext {
     obligations: OBLIGATIONS,
     vision: VISION,
     units: [unitId('tidy'), unitId('report')],
+    corpus: null,
     ...over,
   };
 }
@@ -196,6 +197,33 @@ describe('ruling sidecars', () => {
   });
 });
 
+describe('a corpus arc\'s rulings (M4a step C1)', () => {
+  const T1 = sha256('3'.repeat(64));
+  /** A corpus in force with T-1 active, whose same-repo file set holds `docs/money.md` (a state the plan rows prevent; the guard is here too). */
+  const corpus = (inFileSet: (p: RepoPath) => boolean = (p) => p === 'docs/money.md') => ({ rules: new Map([[ruleId('T-1'), T1]]), inFileSet });
+  const noDocRefs = { docRefs: [], contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [] };
+
+  it('ruling.contract-op-on-corpus-refused: a contract op on a corpus file is refused, whatever the plan documents list (R32)', () => {
+    refused(sidecar(), /contract op on docs\/money\.md, which is a corpus file/, context({ corpus: corpus() }));
+    const other = validateRuling(sidecar(), context({ corpus: corpus(() => false) }));
+    assert.ok(!other.some((r) => /corpus file/.test(r)), JSON.stringify(other));
+  });
+
+  it('ruling.rule-ref: a rule ref resolves to {T-n, textSha256} active in the pin in force; outside a corpus arc it is refused', () => {
+    const ruleRef = (textSha256: string) => sidecar({ ...noDocRefs, docRefs: [{ rule: 'T-1', textSha256, relation: 'consistent' }] });
+    const ok = validateRuling(ruleRef(T1), context({ corpus: corpus() }));
+    assert.ok(!ok.some((r) => /rule ref/.test(r)), JSON.stringify(ok));
+    refused(ruleRef('4'.repeat(64)), /rule ref T-1: not an active rule of the corpus pin in force/, context({ corpus: corpus() }));
+    refused(sidecar({ ...noDocRefs, docRefs: [{ rule: 'T-7', textSha256: T1, relation: 'refines' }] }), /rule ref T-7: not an active rule/, context({ corpus: corpus() }));
+    refused(ruleRef(T1), /rule ref T-1: the arc has no corpus pin/, context());
+  });
+
+  it('ruling.consistency-corpus: a judgment of another pin than the one in force is stale (judgedRevs.corpusSha256)', () => {
+    const inForce = { head: HEAD, ledgerSha256: LEDGER_SHA, obligationsSha256: OBL_SHA, visionSha256: VIS_SHA, corpusSha256: sha256('5'.repeat(64)) };
+    refused(sidecar(), /consistency is stale: judged corpusSha256/, context({ inForce, corpus: corpus(() => false) }));
+  });
+});
+
 describe('contract ops', () => {
   it('contracts.anchor-exact: anchors name one heading (by slug, not in fences) or one line; old text exactly once; the header cites the ruling', () => {
     assert.equal(headingSlug(' Rounding & Display! '), 'rounding--display');
@@ -239,7 +267,7 @@ describe('landing a ruling', () => {
   it('rulings.effective-revs: a cited ruling\'s effective revision rises with each partial supersession of it, and again when that one leaves force', () => {
     const plain = (id: string, supersedes: readonly Record<string, unknown>[] = []): RulingSidecar => sidecar({ id, supersedes });
     const partial = (id: string, of: string): RulingSidecar => plain(id, [{ id: of, part: 'the cent' }]);
-    // No partial supersession (a dev.5 ledger has no sidecars at all): every ruling is at its first revision.
+    // No partial supersession (no sidecars at all): every ruling is at its first revision.
     assert.deepEqual([...effectiveRulingRevs([])], []);
     assert.deepEqual([...effectiveRulingRevs([plain('C-3', [{ id: 'C-1', part: null }])])], [], 'a full supersession withdraws, it does not revise');
     // C-3 partially supersedes C-1 (a ledger ruling without a sidecar): C-1 moves to 2.

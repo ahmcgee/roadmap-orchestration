@@ -82,7 +82,7 @@ export function candidateRequest(worktree: AbsPath, unitCommit: Sha): CandidateR
     integration: INTEGRATION,
     unitCommit,
     worktree,
-    rules: { kind: 'dev5', evidenceGlobs: [repoPattern('out/lanes')] },
+    rules: { evidenceGlobs: [repoPattern('out/lanes')], scope: [repoPattern('**')] },
     identity: IDENTITY,
     message: `roadmap: candidate ${UNIT}\n`,
   };

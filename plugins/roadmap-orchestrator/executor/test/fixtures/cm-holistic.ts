@@ -1,6 +1,7 @@
 // The concurrent crash matrix's M3 scenarios (test/concurrent-matrix.test.ts; M3 B8): an arc's job steps while its units
 // are in flight, run by the real supervised `roadmap start` through the whole-pipeline harness (pm-common.ts), keyed
-// per unit and per job. A job's crash points pass no unit: a cell selects the occurrence the recording attributes to
+// per unit and per job. The jobs and batch arcs are holistic on a corpus target (corpus-target.ts, M4a D0), each with its
+// pack review (`review-1`, no finding) before the first admission. A job's crash points pass no unit: a cell selects the occurrence the recording attributes to
 // the job (by its log's records, pm-holistic.ts `ownerOf`), and asserts the op the crash hit is the job's. The
 // watcher queues the architect's commands (`audit`, `apply`, `rule`) as the CLI does, in its own process.
 //
@@ -32,13 +33,14 @@ import { rulingContextAt } from '../../src/pipeline/publish.ts';
 import { consistencyRevs } from '../../src/spec/rulings.ts';
 import { bytesSha256 } from '../../src/spec/spec.ts';
 import { release } from '../helpers/barrier.ts';
-import { checkpointAnswer, checkpointStep, lensStep } from '../helpers/holistic.ts';
+import { checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../helpers/holistic.ts';
 import { fixture } from '../helpers/proc.ts';
 import type { Owner } from '../helpers/reap.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
+import { ADVANCES, obligationsJson } from './brake-common.ts';
+import { corpusTarget } from './corpus-target.ts';
 import { restarted, submit } from './cm-common.ts';
 import { type ExecRun, SMOKE_DEFAULT, journalOf, setupExec } from './exec-common.ts';
 import type { Hook, Laid } from './pm-common.ts';
@@ -79,21 +81,18 @@ const factsNow = (r: ExecRun, kind: string): readonly Json[] =>
 const once = (name: string, when: () => boolean, act: () => Promise<unknown> | void): Hook => ({ name, when, act: async () => void (await act()) });
 
 /**
- * Makes `r` holistic: vision, obligation I-1 (must-hold, t1 passing on every tree; src/, test/ and contracts/ map to it)
- * on the journey lane, L = {vision}; each of `units` declares I-1. `i2`: also I-2 (must-hold, t2 passing; lib/ maps to it).
+ * Makes `r` holistic on a corpus target (corpus-target.ts, M4a D0): obligation I-1 (must-hold, t1 passing on every
+ * tree; src/, test/ and contracts/ map to it) on the journey lane, L = {vision}; each of `units` declares I-1. `i2`: also
+ * I-2 (must-hold, t2 passing; lib/ maps to it).
  */
 function makeHolistic(r: ExecRun, units: readonly string[], i2 = false): void {
   const control = join(tmpDir('cm-witness-control'), 'control.json');
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
-  const planDir = join(r.planPath, '..');
-  writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
   const mapping = [...['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations: ['I-1'] })), ...(i2 ? [{ pattern: 'lib/**', obligations: ['I-2'] }] : [])];
   const obligations = [{ id: 'I-1', testIds: ['t1'] }, ...(i2 ? [{ id: 'I-2', testIds: ['t2'] }] : [])];
-  writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(obligationsJson({ obligations, mapping }, control)));
-  const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json;
-  writeFileSync(r.planPath, JSON.stringify({ ...plan, capacity: { cpu: 16 }, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'] } } }));
+  corpusTarget(r, { obligations: obligationsJson({ obligations, mapping }, control), advances: ADVANCES, audit: { lenses: ['vision'] }, planExtra: { capacity: { cpu: 16 } } });
   for (const u of units) {
-    const spec = join(planDir, `${u}.json`);
+    const spec = join(r.planPath, '..', `${u}.json`);
     writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), obligations: ['I-1'] }));
   }
 }
@@ -139,6 +138,9 @@ function ruleC2(r: ExecRun): string {
   return path;
 }
 
+/** An approving gate's note: the corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
+const gateNote = (what: string) => ({ severity: 'note', path: null, text: `The ${what} helper has no overflow test.`, contractRef: null }) as const;
+
 export type HolisticConcurrent = Readonly<{ peer: HolisticPeer; laid: Laid }>;
 
 /** Lays out the `peer` scenario for test `t`: the arc, its keyed steps (after the unkeyed startup smoke) and the watcher's hooks. */
@@ -152,8 +154,9 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
     const approve = planCheckStep({ decision: 'approve' });
     appendSteps(r, [
       ...SMOKE_DEFAULT,
-      ...keyed('u1', [approve, build(MUL, 'build'), gateStep({ decision: 'approve' })]),
-      ...keyed('u2', [approve, build(TWO, 'build'), gateStep({ decision: 'approve' })]),
+      packReviewStep('review-1'),
+      ...keyed('u1', [approve, build(MUL, 'build'), gateStep({ decision: 'approve', findings: [gateNote('mul')] })]),
+      ...keyed('u2', [approve, build(TWO, 'build'), gateStep({ decision: 'approve', findings: [gateNote('two')] })]),
       lensStep('audit-1', 'vision'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
       lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP),
       lensStep('audit-3', 'vision'), checkpointStep('ckpt-3', NOOP),
@@ -178,6 +181,7 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
     const approve = planCheckStep({ decision: 'approve' });
     appendSteps(r, [
       ...SMOKE_DEFAULT,
+      packReviewStep('review-1'),
       ...keyed('u3', [approve, build(TWO, 'build'), gateStep({ decision: 'approve' })]),
       lensStep('audit-1', 'vision', [{ severity: 'P1', obligation: 'I-2', claim: 'I-2 is not held on the audited head' }]), checkpointStep('ckpt-1', NOOP),
       ...keyed('u1', [approve, build(MUL), gateStep({ decision: 'approve' })]),

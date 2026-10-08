@@ -3,7 +3,7 @@
 // record's rules (coverage both directions, withdrawn cites, edits).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type ObligationId, obligationId, unitId, visionClauseId } from '../src/core/ids.ts';
+import { type ObligationId, divergenceId, obligationId, rulingId, unitId, visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { repoPath } from '../src/core/values.ts';
 import { parseInvariantsBlock, renderInvariants } from '../src/docs/invariants.ts';
@@ -105,7 +105,7 @@ describe('obligation edits', () => {
   });
 
   it('obligations.revs-and-proofs: the rev rises exactly with a normative change; a stale proof judgment is refused; a new witness must prove; a proof binds the complete witness definition', () => {
-    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { rev: 2, proofJudgment: proof('I-2', 2) })), ARCHITECT).reasons, ['I-2 takes rev 1, not 2 (the rev rises exactly when its statement, docRef or activation changes)']);
+    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { rev: 2, proofJudgment: proof('I-2', 2) })), ARCHITECT).reasons, ['I-2 takes rev 1, not 2 (the rev rises exactly when its statement, docRef, rule or activation changes)']);
     assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { proofJudgment: { ...proof('I-2'), laneRev: '0000000000000000' } })), ARCHITECT).reasons,
       [`I-2's proof judgment is stale (judged obligation rev 1, lane 0000000000000000; now rev 1, lane ${LANE_REV})`]);
     // Checkpoint A: a witness whose test set grows (lane and obligation revs unchanged) needs a fresh proof of that witness.
@@ -273,7 +273,7 @@ describe('the vision record', () => {
   it('vision.coverage: advanced clauses unserved, the horizon, obligations serving no active clause, withdrawn clauses still cited', () => {
     const o = file([...BASE, ob('I-4', { serves: ['V-4'] }), ob('I-5', { serves: ['V-3'], state: { type: 'waived', ruling: 'C-1' } })]);
     const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
-    assert.deepEqual(visionCoverage(VISION, advances, o, [{ id: 'C-2', cites: [visionClauseId('V-4')] }, { id: 'D-1', cites: [visionClauseId('V-2')] }]), {
+    assert.deepEqual(visionCoverage(VISION, advances, o, [{ id: rulingId('C-2'), cites: [visionClauseId('V-4')] }, { id: divergenceId('D-1'), cites: [visionClauseId('V-2')] }]), {
       unservedAdvanced: ['V-3', 'V-5'],
       horizon: ['V-1'],
       obligationsServingNone: ['I-4'],

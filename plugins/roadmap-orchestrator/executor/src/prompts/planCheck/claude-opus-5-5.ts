@@ -13,9 +13,17 @@
 // M3 (reviewed 2026-09-30 against the same guides, R17): the vision as read-only context, marked non-directive,
 // and visionConflict for the checkpoint; a redirect still needs the spec's own grounds. 2026-10-01: a clause that
 // forecloses a horizon clause, or rests costly-to-undo on an open question's assumption, is a visionConflict.
+// M4a (reviewed 2026-10-03 against the same guides): the `target` input, the architecture doc or, in a corpus arc,
+// the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
+// M4a rev 3 (reviewed 2026-10-06 against the same guides): a failure matrix before approving a transaction ordering, the
+// earlier repairs of the same transaction carried in (retro F03, H1); the clock and entry-point defect classes (D3); and
+// the acceptance shape of an efficient builder's check: witness items through the patch channel only, ids from the next
+// free W-n (E, R59).
+// Run 10 (C, 2026-10-06): <prior_attempt> after the ask's inputs carries why the executor refused the previous answer's
+// patch (an acceptance clause or witness item citing an out-of-slice rule), for the retry to correct.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  architectureDocument, bullets, documentsXml, laneProgramsText, patchText, premisesText, referenceIndexText, rulingsText, visionText,
+  acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
 } from '../inputs.ts';
 import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
@@ -28,7 +36,7 @@ Your working directory is a detached checkout of the integration tip, read-only.
 
 Host facts are given in <lane_programs>: where each lane's program resolves under that lane's own environment. Do not assert a host fact (a tool missing, a path absent) that you could not verify from <lane_programs> or the checkouts.
 
-The contracts and rulings the spec cites are embedded in full, and so is the architecture doc or its digest. The rest are listed in <reference_index>, one line each: read a contract from the checkout, or a ruling from the ledger file named there, when a question touches it.
+The contracts and rulings the spec cites are embedded in full, and so is the architecture doc or its digest. In a corpus arc the corpus takes the architecture doc's place: its rules index (every active rule, T-n, by file and section) is embedded in full, the pinned corpus files are read-only in the directory it names, and wherever this prompt says the architecture doc, read the corpus rules. Cite a rule by its T-n id. The rest are listed in <reference_index>, one line each: read a contract from the checkout, or a ruling from the ledger file named there, when a question touches it.
 </workspace>
 
 <how_to_read>
@@ -43,6 +51,8 @@ You check that the spec is coherent and buildable:
 - Lanes. The executor runs each lane's argv exactly, with no shell, from a clean checkout, with only the environment the lane declares, and grades it by comparing the exit code to expectedExit. So argv[0] must be a program on the lane's PATH or a file in the repository; pipes, &&, ! and redirection exist only inside a script or shell the lane invokes explicitly; a required failure is stated by expectedExit or asserted inside a script, never left as a command someone is meant to watch fail; and a lane that needs environment a project target supplies calls that target rather than the bare tool. Fast lanes are the implementer's inner loop; estate lanes run only under the executor.
 - Acceptance clauses no lane or test could show to hold, and clauses a test could pass while the behaviour is wrong.
 - Host facts are never acceptance criteria. Sibling units' lanes, the orchestrator's own processes and host load are normal on this host, so a clause requiring a quiet host, the absence of other processes, or a wall-clock ceiling is unsatisfiable by construction: it is a spec defect to resolve here.
+- Transactions. A spec that orders or reorders the steps of a transaction (staging, a ledger or file save, a publication, a rollback) carries a failure matrix: each step against the process dying before it, after it, and the step itself failing, with what the product holds in each cell. When the spec has none, or a cell leaves a state its clauses forbid, redirect: add the matrix as a facts item, each cell checked against the code. Read the earlier repairs of the same transaction (their specs' facts, the code's history) first and keep their cells: a repair that fixes one cell by breaking another is the defect this check exists to stop.
+- Time and entry points. A clause or test that depends on the date or the time zone pins the product's own clock seam in every test, the existing tests the change affects included. These are defects to redirect on: a test reading the real clock or the host time zone; a fixed date the change invalidates, or one that will expire; a real wait in a fast lane (the timeout is injected, and the production default is checked separately); a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point, the command a user runs, with an injected fixture.
 - The shape the spec asks for: complexity that does not earn its keep, structure that makes the next change harder, missed reuse of what the repository already has, and choices that close doors the Direction needs open. A spec can be correct and still deserve a redirect on these grounds.
 
 Report only what affects correctness or the spec's stated acceptance. You review the spec, not the implementation: when the unit continues a branch that already holds code, a defect in that code is for the build and the gate to fix. Put it in notes as a fact for them and never redirect on implementation defects alone; a facts item in a redirect is right only when the spec is otherwise wrong.
@@ -105,11 +115,11 @@ ${visionText(i.vision)}
 export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'architecture', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
-    architectureDocument(i.architecture),
+    targetDocument(i.target),
   ])}
 
 <rulings>
@@ -136,7 +146,7 @@ ${checkouts(i)}
 
 <lane_programs>
 ${laneProgramsText(i.lanePrograms)}
-</lane_programs>${priorRound(i)}${visionContext(i)}
+</lane_programs>${priorRound(i)}${visionContext(i)}${acceptanceShapeText(i.acceptance)}${planCheckPriorInvalidText(i.priorInvalid)}
 
 Check the spec of unit ${i.spec.unit}, revision ${i.spec.rev}, against the documents above and the checkouts, then return your decision.`,
 };

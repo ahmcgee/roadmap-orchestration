@@ -10,7 +10,11 @@
 //                 unwitnessed on its tree (no observation there, or verdict `unwitnessed`)
 //   drift         a revision from a bundle, a rule (its ledger or sidecars changed), `reverse`, or an architect spec,
 //                 obligation, mapping or vision edit (R15: a vision revision, and the arc turning holistic): runs
-//                 L ∩ {drift, vision}, or all of L when that is empty
+//                 L ∩ {drift, vision}, or all of L when that is empty. Change-sensitive (M4a rev 3, H2, R61): a bundle
+//                 revision whose changes are only plan units and their specs (no obligation, mapping, vision, advances,
+//                 ledger or contract op) records `drift{specsOnly: units}` and runs L ∩ {vision} alone (the full drift's
+//                 lenses when L has no vision lens), its lens reading those units' specs (`specsOnlyOf`); the code
+//                 lenses keep their watermarks
 //   wall-clock    `wallClockMin` (default 360) since the latest audit started or unit published, while work remains
 //                 (a plan unit not retired, cut or superseded)
 //   requested     `audit [--lens]` (`audit-requested`): its lenses ∩ L, or L
@@ -34,8 +38,9 @@
 // delays a wall-clock trigger, never fires one early.
 import type { AuditTrigger } from './types.ts';
 import { type LensKind, isExempt, LENS_KINDS } from './types.ts';
-import type { Parent } from '../core/events.ts';
-import type { ObligationId, Sha } from '../core/ids.ts';
+import type { Parent, PlanChange } from '../core/events.ts';
+import { type ObligationId, type Sha, type UnitId, compareIds } from '../core/ids.ts';
+import { canonicalJson } from '../core/json.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { AuditState } from '../core/state.ts';
 import { branchRef } from '../core/values.ts';
@@ -105,14 +110,59 @@ function countedPublications(heads: readonly PublishedHead[], revisions: readonl
   return heads.filter((h) => h.subject !== 'docs' || withOps.has(h.op));
 }
 
-/** Whether a revision drifts (R15): a bundle's; a rule's or an architect's that changed the ledger, a spec, obligations, the mapping, the vision or the arc's slice of it. */
-function drifts(r: AppliedRevision, previous: AppliedRevision | null): boolean {
+/** How a revision drifts: not at all, fully, or (a bundle's) over these units' specs only. */
+export type Drift = Readonly<{ kind: 'none' }> | Readonly<{ kind: 'full' }> | Readonly<{ kind: 'specs-only'; units: readonly UnitId[] }>;
+
+/** The unit a plan-unit or spec change names (`order` names none and is neutral), or null for any other change. */
+function unitChanged(c: PlanChange): readonly UnitId[] | null {
+  switch (c.type) {
+    case 'unit-added': case 'unit-removed': case 'unit-changed': case 'spec': case 'unit-cut': case 'unit-priority':
+      return [c.unit];
+    case 'unit-reentered':
+      return [c.unit, c.reenters];
+    case 'routing':
+      return c.unit === undefined ? null : [c.unit];
+    case 'limits':
+      return c.unit === null ? null : [c.unit];
+    case 'order':
+      return [];
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether and how a revision drifts (R15, R61). A bundle's drifts: fully when it changes the ledger, carries contract
+ * ops or dispositions, or makes any change other than to plan units and their specs; else over those units' specs only.
+ * A rule's or an architect's drifts fully when it changed the ledger, a spec, obligations, the mapping, the vision or the
+ * arc's slice of it.
+ */
+export function driftOf(r: AppliedRevision, previous: AppliedRevision | null): Drift {
   const { source, manifest, changes } = r.payload;
-  if (r.payload.base === 0) return false;
-  if (source.type === 'bundle') return true;
-  if (source.type === 'executor') return false;
-  const ledger = previous !== null && JSON.stringify(previous.payload.manifest.rulings) !== JSON.stringify(manifest.rulings);
-  return ledger || changes.some((c) => (c.type === 'spec' && c.edit !== 'evidence') || c.type === 'obligation' || c.type === 'mapping' || c.type === 'vision' || c.type === 'holistic' || c.type === 'advances');
+  if (r.payload.base === 0 || source.type === 'executor') return { kind: 'none' };
+  const ledger = previous !== null && canonicalJson(previous.payload.manifest.rulings) !== canonicalJson(manifest.rulings);
+  if (source.type === 'bundle') {
+    const units = changes.map(unitChanged);
+    const contractOps = r.payload.publication !== null && r.payload.publication.contractOps.length > 0;
+    if (ledger || contractOps || r.payload.dispositions.length > 0 || units.some((u) => u === null)) return { kind: 'full' };
+    const named = [...new Set(units.flatMap((u) => u ?? []))].sort();
+    return named.length === 0 ? { kind: 'full' } : { kind: 'specs-only', units: named };
+  }
+  const full = ledger || changes.some((c) => (c.type === 'spec' && c.edit !== 'evidence') || c.type === 'obligation' || c.type === 'mapping' || c.type === 'vision' || c.type === 'holistic' || c.type === 'advances');
+  return full ? { kind: 'full' } : { kind: 'none' };
+}
+
+/**
+ * The units a specs-only audit reads (H2): when every trigger it records is a specs-only drift, their units (ascending);
+ * else null (a full audit).
+ */
+export function specsOnlyOf(triggers: readonly AuditTrigger[]): readonly UnitId[] | null {
+  const units: UnitId[] = [];
+  for (const t of triggers) {
+    if (t.type !== 'drift' || t.specsOnly === undefined) return null;
+    units.push(...t.specsOnly);
+  }
+  return units.length === 0 ? null : [...new Set(units)].sort();
 }
 
 // R8 is a git diff and a spec read per publication: read each once per process.
@@ -143,7 +193,7 @@ function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly Obligation
       }
     }
     out = observedViews(ctx, obligations, [...picked.values()], h.head)
-      .filter((v) => v.observation === null || v.observation.verdict === 'unwitnessed').map((v) => v.obligation.id).sort();
+      .filter((v) => v.observation === null || v.observation.verdict === 'unwitnessed').map((v) => v.obligation.id).sort(compareIds);
   }
   unwitnessedMemo.set(key, out);
   return out;
@@ -200,7 +250,10 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
     }
   }
   revisions.forEach((r, i) => {
-    if (r.seq >= since && drifts(r, i === 0 ? null : revisions[i - 1]!)) events.push({ seq: r.seq, trigger: { type: 'drift', planRev: r.payload.rev } });
+    if (r.seq < since) return;
+    const drift = driftOf(r, i === 0 ? null : revisions[i - 1]!);
+    if (drift.kind === 'full') events.push({ seq: r.seq, trigger: { type: 'drift', planRev: r.payload.rev } });
+    if (drift.kind === 'specs-only') events.push({ seq: r.seq, trigger: { type: 'drift', planRev: r.payload.rev, specsOnly: drift.units } });
   });
   const requested = fold.auditRequests.filter((q) => q.seq > since);
   for (const q of requested) events.push({ seq: q.seq, trigger: { type: 'requested', command: q.command } });
@@ -231,6 +284,11 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
   for (const t of owed) {
     switch (t.type) {
       case 'drift': {
+        const vision = L.filter((l) => l === 'vision');
+        if (t.specsOnly !== undefined && vision.length > 0) {
+          lenses.add('vision');
+          break;
+        }
         const narrowed = L.filter((l) => l === 'drift' || l === 'vision');
         for (const l of narrowed.length > 0 ? narrowed : L) lenses.add(l);
         break;

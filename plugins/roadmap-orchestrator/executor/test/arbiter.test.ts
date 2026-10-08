@@ -24,7 +24,7 @@ const T = { timeout: 60_000 };
 const req = (r: Partial<ResourceRequest>): ResourceRequest => ({ named: [], pools: [], cpu: 0, publication: false, ...r });
 const holderOf = (unit: string, attempt = 1): StageHolder => stageHolder('build', attempt, unitId(unit));
 const rank = (unit: string, waitStartSeq: number, extra: Partial<Rank> = {}): Rank => ({
-  unit: unitId(unit), origin: 'planned', waitStartSeq, bypassMerges: 0, promoted: false, planIndex: 0, ...extra,
+  unit: unitId(unit), priority: 'normal', origin: 'planned', waitStartSeq, bypassMerges: 0, promoted: false, planIndex: 0, ...extra,
 });
 
 /** Starts a wait and records its answer once it settles. */
@@ -70,6 +70,37 @@ describe('arbiter.priority', () => {
       holder = got[0]!.h;
     }
     assert.deepEqual(order, ['promoted-old', 'promoted-new', 'checkpoint-new', 'planned-old', 'planned-new']);
+    journal.close();
+  });
+});
+
+describe('arbiter.priority-first', () => {
+  it('a high-priority waiter is served before promoted, checkpoint and older planned ones (M4a rev 3, R42)', T, async () => {
+    const r = newRun();
+    const { ctx, journal } = openPoolRun(r);
+    const arb = createArbiter(ctx);
+    const x = holderOf('x');
+    assert.ok(reserve(ctx, x, req({ named: [DB] }), stageParent(x)).state === 'reserved');
+    const ws = [
+      ['promoted-old', rank('promoted-old', 10, { promoted: true, bypassMerges: 5 })],
+      ['checkpoint-old', rank('checkpoint-old', 20, { origin: 'checkpoint' })],
+      ['high-new', rank('high-new', 90, { priority: 'high' })],
+      ['high-newer', rank('high-newer', 95, { priority: 'high' })],
+    ] as const;
+    const waits = ws.map(([u, rk]) => ({ u, h: holderOf(u), ...wait(arb, req({ named: [DB] }), holderOf(u), rk) }));
+    assert.deepEqual(arb.waiting().map((w) => w.holder.unit), ['high-new', 'high-newer', 'promoted-old', 'checkpoint-old']);
+    let holder: StageHolder = x;
+    const order: string[] = [];
+    for (let i = 0; i < ws.length; i++) {
+      release(ctx, holder);
+      arb.wake();
+      await tick();
+      const got = waits.filter((w) => w.box.grant !== null && !order.includes(w.u));
+      assert.equal(got.length, 1, 'one grant per release');
+      order.push(got[0]!.u);
+      holder = got[0]!.h;
+    }
+    assert.deepEqual(order, ['high-new', 'high-newer', 'promoted-old', 'checkpoint-old']);
     journal.close();
   });
 });

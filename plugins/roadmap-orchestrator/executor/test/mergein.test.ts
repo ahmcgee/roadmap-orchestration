@@ -23,7 +23,7 @@ import { readReceipt, submitCommand } from '../src/commands/queue.ts';
 import { type CommandId, type NeedsUserId, commandId } from '../src/core/ids.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
-import { latestSeries } from '../src/pipeline/lanes.ts';
+import { latestSpecSeries } from '../src/pipeline/lanes.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -336,7 +336,7 @@ describe('merge-in command', () => {
       const seen = outcomes(r.d).length;
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       assert.deepEqual(outcomes(r.d).slice(seen), ['lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published']);
-      const series = latestSeries(r.journal.view, U1, 'spec');
+      const series = latestSpecSeries(r.ctx, U1);
       assert.ok(series !== null && series.stage === 'lanes');
       const laneRuns = r.journal.view.opsOf('proc.spawn').flatMap((i) => {
         const s = i.expect.subject;

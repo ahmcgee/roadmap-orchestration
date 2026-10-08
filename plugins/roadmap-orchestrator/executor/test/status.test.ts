@@ -1,7 +1,7 @@
 // `roadmap status` (src/status.ts) through the real CLI, and the global state.no-model-ids test over full
 // fake-backed runs under both profiles. Named tests: status.subset, state.no-model-ids,
-// status.sup-items-and-arc-wide-state; M2: status.parallel, status.resources (real runs), status.parks and
-// status.legacy-arc (in process, over a log written directly).
+// status.sup-items-and-arc-wide-state; M2: status.parallel, status.resources (real runs), status.parks (in
+// process, over a log written directly).
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -81,7 +81,6 @@ describe('status.subset', () => {
       units: [],
       edges: [],
       runOnly: null,
-      legacy: false,
       needsUser: [],
       commands: { pending: [], receipts: [] },
       spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, byJob: [], bySmoke: [] },
@@ -107,15 +106,30 @@ describe('status.subset', () => {
       audit: null,
       owed: { audits: [] },
       completion: { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] },
+      holds: [],
+      packReview: null,
+      corpus: null,
+      census: null,
+      amendments: [],
+      debt: null,
+      issues: null,
+      chain: null,
+      timings: [],
+      answers: [],
+      knownDefects: [],
+      checkpointWaits: [],
+      admits: [],
+      opportunities: [],
+      drift: [],
     });
   });
 
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'arc', 'audit', 'commands', 'completion', 'convergence', 'decisionsSince', 'deferred', 'divergences', 'edges', 'findings', 'holistic', 'host', 'legacy',
-      'needsUser', 'notYetTrue', 'nowTrue', 'owed', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'units', 'vision',
-      'waived',
+      'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred',
+      'divergences', 'drift', 'edges', 'findings', 'holds', 'holistic', 'host', 'issues', 'knownDefects', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
+      'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
     assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));
@@ -124,9 +138,8 @@ describe('status.subset', () => {
     assert.ok(s.run.heartbeatAt !== null, 'the executor wrote its heartbeat');
     assert.deepEqual(s.units, [{
       unit: 'u1', stage: 'retire', status: 'retired', attempts: 12, chargeableFailures: 0, risk: 'med', seat: null,
-      state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, buildTier: 'med', running: null,
+      state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, buildTier: 'med', running: null, failures: [],
     }]);
-    assert.equal(s.legacy, false, 'a new arc schedules a DAG');
     assert.deepEqual([s.edges, s.runOnly, s.host.resources, s.host.queue, s.host.probes, s.host.backends], [[], null, [], [], [], []]);
     assert.deepEqual(s.host.pools['@cpu']?.used, 0, 'every token released');
     assert.deepEqual(s.needsUser, []);
@@ -153,6 +166,10 @@ describe('status.subset', () => {
     assert.deepEqual([s.target, s.vision, s.audit, s.convergence, s.nowTrue, s.notYetTrue, s.divergences, s.decisionsSince], [null, null, null, null, [], [], [], []]);
     assert.deepEqual(s.completion, { planRev: 1, head: git(r.repo, 'rev-parse', 'main'), active: true, sealed: true, notSealed: null, unmet: [] });
     assert.ok(s.host.log.bytes > 0 && s.host.log.events > 0 && !s.host.log.compactionDue, JSON.stringify(s.host.log));
+    // M4a: an arc outside the corpus layer has vacuous corpus keys; its timings are its stages' (LR-c).
+    assert.deepEqual([s.holds, s.packReview, s.corpus, s.census, s.amendments, s.debt, s.issues, s.chain], [[], null, null, null, [], null, null, null]);
+    assert.ok(s.timings.some((t) => t.stage === 'build'), JSON.stringify(s.timings));
+    for (const t of s.timings) assert.ok(t.count >= 1 && t.p50Ms <= t.maxMs, JSON.stringify(t));
   });
 });
 
@@ -286,7 +303,6 @@ test('status.parallel: two independent units build at once and status shows both
     let s = await statusOf(r);
     await until(async () => (s = await statusOf(r)).units.filter((l) => l.state === 'running').length === 2, 30_000, 'both builds running in status');
     assert.equal(s.run.state, 'running');
-    assert.equal(s.legacy, false);
     for (const u of ['u1', 'u2']) {
       const l = line(s, u);
       assert.equal(l.running?.stage, 'build', u);
@@ -395,7 +411,7 @@ const designPark = (r: ArcRun, unit: string): number => r.journal.fact({
 } as Fact);
 
 test('status.parks: a retryable park shows its targets, what is outstanding, its backoff and escalation; the host probe covers both parks and has tripped; an operator park shows its kind and blocks its dependent; a parked backend is listed; with nothing able to move the run is blocked, and a passing probe makes it run', T, async () => {
-  const d = setupArc({ steps: [], dag: true, units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', after: ['u2'] }, { id: 'u4' }] });
+  const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', after: ['u2'] }, { id: 'u4' }] });
   const r = contextFor(d);
   let kill: (() => Promise<void>) | null = null;
   try {
@@ -441,36 +457,6 @@ test('status.parks: a retryable park shows its targets, what is outstanding, its
     assert.deepEqual(s.runOnly, ['u4']);
     assert.deepEqual(s.host.probes.map((p) => p.target), [{ type: 'backend', backend: 'codex' }], 'the host has no park left');
     assert.equal(s.run.state, 'running');
-  } finally {
-    await kill?.();
-    r.journal.close();
-  }
-});
-
-test('status.legacy-arc: a dev.4 arc keeps its serial frontier: a parked unit releases the next, later units wait on the frontier; a paused frontier holds the run (not parked)', T, async () => {
-  const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }] });
-  const r = contextFor(d);
-  let kill: (() => Promise<void>) | null = null;
-  try {
-    writeStart(d);
-    let s = statusNow(r);
-    assert.equal(s.legacy, true);
-    assert.deepEqual(s.units.map((l) => l.state), ['ready', 'waiting', 'waiting']);
-    assert.deepEqual(s.units.map((l) => l.waitingFor?.deps ?? null), [null, ['u1'], ['u1']], 'one unit at a time, in plan order');
-
-    designPark(r, 'u1');
-    kill = liveOwner(d, r.ctx.hostDir);
-    s = statusNow(r);
-    assert.deepEqual(s.units.map((l) => l.state), ['parked', 'ready', 'waiting'], 'a park releases the next unit, as dev.4 did');
-    assert.deepEqual(line(s, 'u3').waitingFor?.deps, ['u2']);
-    assert.equal(s.run.state, 'running');
-
-    r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000001'), target: { type: 'unit', unit: U('u2') } });
-    s = statusNow(r);
-    assert.deepEqual(s.units.map((l) => l.state), ['parked', 'held', 'waiting']);
-    assert.deepEqual(line(s, 'u2').waitingFor?.admission, [{ type: 'paused', scope: 'unit' }]);
-    assert.equal(s.run.state, 'held', 'the frontier is paused: held, whatever is parked before it');
-    assertNoModelIdsInStatus(s);
   } finally {
     await kill?.();
     r.journal.close();

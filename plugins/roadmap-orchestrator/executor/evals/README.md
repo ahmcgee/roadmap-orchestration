@@ -4,24 +4,35 @@ A change is not done until the ladder passes, in order, from `executor/`:
 
 1. `npm run typecheck`: `tsc --noEmit` over `src/`, `test/` and `evals/`.
 2. `npm test`: `node --test test/*.test.ts`, then `test/serial/*.test.ts` alone (the upgrade test's dev.5 park premise needs a calm host), pure-module and integrated tests, fake backends only. This tier
-   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts` and `test/evals-m3.test.ts`, which run the M1, M2
-   and M3 fixtures below end to end against the fakes, and `test/serial/upgrade.test.ts`, which starts the M1 fixture on
+   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts`, `test/evals-m3.test.ts` and `test/evals-m4a.test.ts`,
+   which run the M1, M2, M3 and M4a fixtures below end to end against the fakes, and `test/serial/upgrade.test.ts`, which starts the M1 fixture on
    the previous release's executor (`PREVIOUS_RELEASE`, extracted with `git archive`), stops, parks or crashes it
    mid-arc and finishes it on HEAD.
 3. `node evals/probe.ts`: the targeted probe against the real, authenticated CLIs.
-4. The paid fixtures, `evals/m1/`, `evals/m2/` and `evals/m3/`: once per merged batch, never per worktree agent.
+4. The paid fixtures, `evals/m1/`, `evals/m2/`, `evals/m3/` and (M4a's acceptance) `evals/m4a/`: once per merged batch,
+   never per worktree agent. M4a's delegated adjudication (`evals/m4a/adjudicate.ts`) is acceptance, not a rung: once,
+   after the M4a paid run.
 
 ## The targeted probe
 
 ```sh
-node evals/probe.ts
+node evals/probe.ts [--profile default|claude-only]
 ```
 
 Runs the production argv builder, runner and adapter against the real `claude` and `codex` (both must be on
 PATH and logged in): the backend smoke, Codex fresh and resume, a real shell lane, the Claude judgment and
 implementer argvs, the Fable id pin, and (M3) one real call each of the lens, checkpoint and vision-aware plan-check
-prompt modules over tiny fixtures on their own seats. Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
-its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies.
+prompt modules over tiny fixtures on their own seats; (M4a) the forge functions read-only against the real repository
+(identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
+call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) the in-session assessment (frontier Opus medium,
+read-only, the worktree unchanged), the acceptance-shape plan-check (witness items through the patch channel), a checkpoint admit
+carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
+medium build under the per-call build schema (`experiments`). Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
+its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies. `--profile claude-only` (default `default`, unchanged)
+is for hosts without Codex: every Codex check (`smoke.codex`, `codex.fresh`, `codex.resume`, `codex.killed-resume`,
+`effort.codex.*`) prints `NOT RUN (claude-only profile) <check>`, which is neither a pass nor a fail; the exit status ignores
+them and the closing summary lists them. The remaining checks resolve routing under the chosen profile. Under `default`
+Codex checks always run and fail loudly if Codex is unavailable.
 
 ## The M1 fixture
 
@@ -161,10 +172,16 @@ node evals/m3/check.ts /var/tmp/m3-default
   the cents from the amount's decimal digits, half to even, without saying so;
   `src/display.js` whose `formatDisplay` separates thousands over `toFixed(2)`; unit tests under `test/unit/` for
   the suite; journey tests `journeys/*.journey.js` for
-  the arc lanes, outside `node --test`'s default discovery; `docs/money.md`, the rounding rule, which only I-2's
-  docRef names; in-tree `.roadmap/` with the ledger contract, the C-nn ledger, a hand-written `invariants.md`
-  and an empty-routing config), `input/`
-  (plan.json, vision.json, obligations.json, rulings.md, one spec per unit) and `barriers/`. The plan is holistic:
+  the arc lanes, outside `node --test`'s default discovery; `docs/money.md`, the rounding rule's prose; the
+  one-file corpus under `docs/corpus/` (M4a: a fresh holistic arc targets a corpus): `ledger.md`, whose rules
+  block holds T-1..T-3, the obligations' anchors, and the vision document `vision.md`; in-tree `.roadmap/` with the
+  ledger contract, the C-nn ledger, a hand-written `invariants.md`, an empty-routing config, the corpus guide
+  `corpus.md` and `vision.json`, confirmed against the vision document), `input/` (plan.json, the pin
+  `corpus.pin.json`, the Phase-0 record `phase0.json`, its issue capture `issues.json`, obligations.json with rule
+  anchors and the census, rulings.md, one spec per unit), `forge/` (a fake `gh` over a trusted, empty fake forge:
+  the fixture has no real one, so the driver puts `forge/bin` first on PATH for a paid run too) and `barriers/`.
+  Every judge reads the rules index, T-2 (half to even) included, and the pack review (`review-1`) runs once
+  before the first admission. The plan is holistic:
   audits every 2 publications with the required lens set L = {invariants, vision}, `limits.convergenceK` 1. The
   vision: V-1 purpose "bookkeepers reconcile a month in one command", V-2 non-negotiable "money is never silently
   mis-rounded", V-3 tradeoff rank 1 "clear errors over permissive input", V-4 world (a bookkeeper's month-end), no
@@ -277,3 +294,109 @@ further findings that make the checkpoint act again: with K = 1 a second bundle 
 bundle request, which the driver applies, so the story still converges but takes more checkpoint calls than the
 23 counted above; a design park the checkpoint respecifies may park again (`respec-second`, blocking), which stops
 the run as parked.
+
+## The M4a fixture
+
+Acceptance A of M4a (plan "Fixture `evals/m4a/`"): a headless root-agent session runs the orchestrate skill from
+bootstrap through chained corpus arcs on a synthetic product, `tidewater` (berth booking for a tidal harbour: a small
+Node CLI with `node --test` unit tests), whose design record is a messy corpus with seven planted defects. One paid run,
+in a fresh directory outside this repository, then the delegated adjudication:
+
+```sh
+node evals/m4a/setup.ts /var/tmp/m4a
+node evals/m4a/driver.ts /var/tmp/m4a
+node evals/m4a/check.ts /var/tmp/m4a
+node evals/m4a/adjudicate.ts /var/tmp/m4a
+```
+
+- `setup.ts <dir>` lays out `stage/` (layout.ts): the product repo (`files/product/`, branch `main`, pushed to a bare
+  `origin.git`) with its corpus under `docs/corpus/` (numbered docs, two with same-named sub-folders, five ADRs and the
+  vision document; no ids, no rules blocks), the corpus guide and a confirmed `.roadmap/vision.json` (V-1..V-7; no
+  `config.json`: K is asked at bootstrap); the fake forge (PUBLIC + COLLABORATORS_ONLY: issue #1 `roadmap:bug` with a
+  NONE stranger's comment carrying the injection marker `INJ-7Q-TIDE` and three side-effect instructions, issue #2
+  `roadmap:feedback` by a NONE author with her own comment, #3 a PR entry), its gh sources copied in; empty gh and XDG
+  config dirs and an identity-only gitconfig. The planted defects and the owner's answers are `answer-key.json`
+  (postconditions, never file names; never staged).
+- `driver.ts <dir>` stages the plugin without `executor/evals`, `executor/test` and `node_modules`, then plays the
+  harness and the owner around `claude -p --model claude-opus-5-5 --effort high --plugin-dir <stage> --permission-mode
+  bypassPermissions --strict-mcp-config --settings '{"autoMemoryEnabled":false}' --output-format stream-json` (no MCP
+  server, no auto-memory: a turn whose init event shows either is killed and fails the session): a turn ending in the
+  skill's `ROADMAP-SESSION: stopped <reason>` ends the session; the last numbered block goes to the owner simulator (code answers K = 1, the first slice, the issue policy and
+  brief acks, which the owner never gives; anything else goes to a frontier-medium `claude -p` given only the key's
+  owner answers released so far: the cancellation cutoff only once arc 1 completed); any other turn end is the skill's
+  headless wait, resumed on actionable `roadmap watch` events only (a new needs-user item, a unit merged or parked, the
+  run newly held, blocked or draining, a terminal run state, the 30-minute heartbeat; routine transitions are absorbed;
+  `src/watch.ts` `ActionableFilter`, the same filter as `watch --actionable`). Allowlisted env,
+  the fake gh first on PATH, cwd the product. Before and after, from its own env, a canary of this repository's real
+  forge (refs, issues, PRs, comments, labels, releases; `canary.json`) needs an authenticated real `gh`. It scrambles
+  the live corpus and `.roadmap/` files at the end, writes `transcript.jsonl` and `report.json`; hard timeout 360 min.
+  It uses the machine's host lock, so no other arc may run on the host meanwhile.
+- `check.ts <dir>` prints one JSON line and the not-exercised line, exits non-zero on any failed criterion: isolation,
+  defects, phase0-green (`--from-ref`, after the scramble), census-complete, intake-filtered, arc1-complete,
+  arc2-chained, stopped-at-k (reason exactly `k-limit`), stacked-prs, config, brief-acked-once (no committed brief
+  ack: the bootstrap arc is the only acked start), no-model-ids, snapshot-closure, host-released, profile. It also
+  reports, never as a criterion, the interventions in the root agent's operator log (`stage/roadmap-inputs/
+  skill-feedback.md`).
+- `adjudicate.ts <dir>` (not in `npm test`): one `claude -p --model claude-opus-5-5 --effort xhigh --tools
+  Read,Glob,Grep` session in the same isolation env, role-playing the vision's owner over a read-only tree of copies
+  (vision, raw and curated corpus, the extraction, the plan and slice, the product at arc 1's head, the witness lanes'
+  records and evidence, the rubric R1–R7), never the key; its transcript is scanned like the root session's and a hit
+  voids the verdict. Writes `adjudication.json` (`verdict | void | invalid | failed`); the lead adjudicates each finding
+  and reports to the owner.
+
+Cost and time: one long root-agent session (Opus high) with about 8 Phase-0 subagents per arc; per arc a pack review
+(frontier), about 2 to 3 units at plan-check, build and gate, the vision lens of each audit and 2 to 3 checkpoints
+(summit); about 5 owner-simulator calls (frontier medium). About 35 executor upper-tier calls over the two arcs,
+subscription-billed; expect 3 to 5 hours. The adjudication is one Opus xhigh session, about 30 to 60 minutes.
+
+`--fake story` and `--fake vision-silent` (setup with `--vision-silent`) run the same driver with the scripted root
+agent (`fake-root.ts`), which follows the skill and replays the golden Phase-0 outputs (`golden.ts`: the curated
+corpus as exact edits of the raw one, the obligations, census, records and plans) through the staged plugin's real
+CLI, against the fake backends (`scenario.ts`, one scenario per arc) and a host dir in the fixture; 30 minute
+timeout. Every plan is `planCheck.shape: by-builder` and every arc lane declares `testPaths`. `story`: arc 1's pack
+review holds a blocking finding the root agent fixes by `apply` (the superseding review); guard's first build fails
+its berths witness, so witness presence sends it back before any gate; confirm (high risk, the frontier builder) makes
+no plan-check call, assesses in session and implements in the same session, and mutation smoke finds its W-1 witness
+surviving (one smoke fix round, then the gate decides); a gate note and a deferred lens finding bank debt, a checkpoint
+and an issue derive amendments; after arc 1 `chain status` answers `nextStart` within K = 1 (the bootstrap start
+counts as acked) and the check-in, one final message, asks the cutoff question and ends with the action taken on
+resume (arc 2's Phase 0); arc 2 chains on arc 1 through
+one between-arc commit, the forge flips to PUBLIC + ALL mid-arc (the checkpoint's capture raises the blocking item,
+admission is held and the checkpoint waits uncaptured until the owner restores the policy and the root agent acks);
+the next checkpoint admits `fits` as the arc's opportunity (V-7) and converts an over-budget day view into an amendment;
+the root agent pauses notice in a hung lane and resumes it (one operator-log entry), and the resumed attempt reuses the
+first lane's pass; `nextStart` refuses `limit`, and arc 3, whose Phase 0 applies the converted amendment as T-17, is refused
+`chain-invalid{limit}` at `phase0 check` and at `start`; stop `k-limit`, every criterion passing. The story waits on
+events, never on time: arc 2's first audit waits at a fake-backend barrier until the root agent has had the run's
+`blocked` wake, and the root agent's in-turn supervision waits on `status` states. `vision-silent`: after arc 1 no
+slice candidate is left; stop `vision-silent`. `test/evals-m4a.test.ts` runs both side by side and also covers setup
+validity, the check's defect oracle (each defect fails on its own mutation), the adjudicator's tree, a start refused
+`issue-policy-untrusted` under PUBLIC + ALL, and that reference.md's operator-log example parses.
+
+`NOT EXERCISED` by the paid run (each has a fake integrated test): other-repo and checkout corpus sources,
+`issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n, the
+vision-silent stop.
+
+## The run observer
+
+```sh
+node evals/observer.ts /var/tmp/m4a [--backend codex|claude] [--interval-min 10] [--model gpt-5.6-luna] [--max-hours 7] [--host-dir /var/tmp/roadmap] [--once]
+```
+
+A background watcher for a paid fixture run (start it beside the driver, e.g. under a Monitor). Each tick it gathers
+the delta since `<dir>/observer/cursor.json` (new events by seq for every arc under
+`stage/product/.git/roadmap-runtime/`, new needs-user files, new root-session `transcript.jsonl` lines summarised
+to tool calls and results, new bytes of the newest host `executor.*.err` / `supervisor.*.err`, and a `status`
+snapshot), capped at 200 KB with the newest kept, and asks a read-only session (20 minute timeout) for NEW
+issues only: defects, and efficiency opportunities (kind `efficiency`: the constraint, redundant calls, avoidable waits,
+with an estimate of recoverable minutes or spend). Replies are JSON lines `{severity: abort|high|note, kind, summary, evidence, suggestion}`; valid ones
+are appended to `<dir>/observer/observations.jsonl` with `{tick, at}`, invalid lines are recorded as `{invalid}`.
+stdout carries `OBSERVER abort: ...` / `OBSERVER high: ...` lines and one `OBSERVER tick <n> ok <count>` per tick
+(`OBSERVER tick <n> error <backend>-failed` retries the same delta next tick). It stops when `<dir>/report.json` exists
+or after `--max-hours`; at `report.json` it runs one deep retro pass over the whole run into `<dir>/observer/retro.md`
+(90 minute timeout; `--no-retro` skips it). It never touches the run. Two failed ticks in a row emit an `OBSERVER abort: [harness]` line.
+`--backend codex` (default) runs `codex exec -s read-only` (default model `gpt-5.6-luna`). `--backend claude` runs a headless
+`claude -p --model <model> --effort high --output-format text` (default model `claude-sonnet-5-5`) in the fixture dir with
+`--allowedTools Read,Glob,Grep`, every other built-in tool disallowed, `--strict-mcp-config` and settings
+`{"autoMemoryEnabled": false}`; same prompt, same JSON-line contract, same retro path. Free test: `test/observer.test.ts` (fake
+`codex` and fake `claude` on PATH).

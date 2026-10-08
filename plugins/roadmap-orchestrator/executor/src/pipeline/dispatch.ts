@@ -10,13 +10,14 @@
 //   `steer --class` layer on top, src/routing/layers.ts). Every record since 1.0.0-dev.6 pins the unit's bounds
 //   (`bounds`: `boundsOf` its plan `limits`, the transition table's counters and the backend windows) and the
 //   transient rules its candidate runs under (`transientRules: 'm3'`, H15). A `limits` or scope-growth revision
-//   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules` (a 1.0.0-dev.5
-//   lineage keeps its dev.5 rules).
+//   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules`.
 // - A routing change mid-unit (a new routingRev at a later dispatch; lead ruling, arc-1 feedback item 7):
 //   every judgment is a fresh session, so a judgment seat may change harmlessly; the implementer's session
-//   resumes, so its seat may not. The unit is re-pinned under the new rev (a new dispatch fact, scope and
-//   floor unchanged) when no build has started for it or its implementer seat hashes the same under both
-//   revs; otherwise the stage parks it (`routing-changed`) with a needs-user naming the seat, never a model.
+//   resumes, so its session key (`implementerSessionKey`: backend and model, R4) may not change. The unit is re-pinned
+//   under the new rev (a new dispatch fact, scope and floor unchanged) when no build has started for it or its
+//   implementer seat keeps its key under both revs (an effort-only change re-pins, and the session resumes with the new
+//   `--effort`; OR-L3); otherwise the stage parks it (`routing-changed`) with a needs-user naming the seat, never a
+//   model. The pinned seat's triple is read back from its `implementerSeatRev` (`seatTripleOf`).
 //   A steer round (R11) starts a fresh implementer session, so it re-pins whatever the seat (`steerDispatch`):
 //   `steer --class` moves the implementer seat on purpose.
 // - Seats: the implementer sits on the unit's risk tier for the whole unit (it keeps its model); a
@@ -60,7 +61,7 @@ import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
 import {
-  type ArcRole, type ArcSeatRef, type Backend, RISK_TIERS, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef,
+  type ArcRole, type ArcSeatRef, type Backend, CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, RISK_TIERS, type Triple, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef,
 } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
@@ -110,7 +111,35 @@ const now = (): IsoTime => isoTimeOf(new Date());
 
 /** The hash of the implementer seat's triple for risk `floor` under `routing`. */
 export function implementerSeatRev(routing: ResolvedRouting, floor: RiskTier): SeatRev {
-  return seatRev(sha256Hex(canonicalJson(routing.table.build[floor])).slice(0, 16));
+  return tripleSeatRev(routing.table.build[floor]);
+}
+
+const tripleSeatRev = (triple: Triple): SeatRev => seatRev(sha256Hex(canonicalJson(triple)).slice(0, 16));
+
+/** Every triple the closed `Triple` union admits, by its seat rev: a seat rev names exactly one (test dispatch.seat-triples). */
+export const SEAT_TRIPLES: ReadonlyMap<SeatRev, Triple> = new Map([
+  ...CLAUDE_MODELS.flatMap((model) => CLAUDE_EFFORTS.map((effort): Triple => ({ backend: 'claude', model, effort }))),
+  ...CODEX_MODELS.flatMap((model) => CODEX_EFFORTS.map((effort): Triple => ({ backend: 'codex', model, effort }))),
+].map((t) => [tripleSeatRev(t), t]));
+
+/**
+ * The triple a pinned `implementerSeatRev` hashes (R4). The seat rev is a hash over a closed, finite set of triples, so it
+ * is read back by lookup whatever routing (or release: a 1.0.0-dev.6 record included) pinned it. A rev no triple hashes
+ * to is a bug.
+ */
+export function seatTripleOf(rev: SeatRev): Triple {
+  const triple = SEAT_TRIPLES.get(rev);
+  if (triple === undefined) throw new Error(`implementer seat rev ${rev} is the hash of no triple`);
+  return triple;
+}
+
+/** What an implementer session is bound to (R4): its backend and model. Effort is a per-call flag, so it is not part of it. */
+export type ImplementerSessionKey = Readonly<{ backend: Backend; model: Triple['model'] }>;
+export const implementerSessionKey = (t: Triple): ImplementerSessionKey => ({ backend: t.backend, model: t.model });
+
+/** Whether a session that ran on `a` may resume on `b`: the same session key. */
+export function sameSession(a: Triple, b: Triple): boolean {
+  return same(implementerSessionKey(a), implementerSessionKey(b));
 }
 
 /**
@@ -128,7 +157,7 @@ function routingChanged(record: DispatchRecord): Pinned<never> {
       subject: { type: 'unit', unit: record.unit },
       reason: 'routing-changed',
       summary: `Unit ${record.unit}: the routing changed since it was dispatched (routingRev ${record.routingRev}), and its implementer seat `
-        + `${seat} now resolves to a different binding. Its build session resumes on its seat, so it cannot move mid-unit.`,
+        + `${seat} now resolves to a different backend or model. Its build session resumes on its seat, so it cannot move mid-unit.`,
       recommendation: routingChangedRecommendation(record.unit, record.riskFloor),
       options: [],
       evidence: [],
@@ -143,17 +172,18 @@ function buildStarted(view: JournalView, unit: UnitId): boolean {
 
 /**
  * `record` re-pinned under `routing` (a new dispatch fact, same scope and floor) when the unit can absorb the
- * change: no build has started for it, or the seat it builds on (`build.<buildTier>`) still binds it; null
- * when it cannot. On the floor that is the pinned `implementerSeatRev`. An escalated unit (A11) no longer
+ * change: no build has started for it, or the seat it builds on (`build.<buildTier>`) keeps its session key (R4: an
+ * effort-only change is absorbed, and the session resumes with the new effort); null when it cannot. On the floor the
+ * seat is the pinned `implementerSeatRev` (`seatTripleOf`). An escalated unit (A11) no longer
  * builds on its floor, so a change there is absorbed; its `build.high` seat is not pinned, and its session
  * resumes only under the routing it ran on (rounds.ts `spawnSeatRev`), else a fresh one is told the worktree
  * holds the work. The stages call it when the rev in force differs from the pinned one, and so does
  * `resume <unit>` of a unit parked `routing-changed` (commands/apply.ts).
  */
 export function repin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate = {}): DispatchRecord | null {
-  const seat = implementerSeatRev(routing, update.riskFloor ?? record.riskFloor);
+  const seat = routing.table.build[update.riskFloor ?? record.riskFloor];
   const onFloor = (journal.view.unit(record.unit).buildTier ?? record.riskFloor) === record.riskFloor;
-  if (onFloor && seat !== record.implementerSeatRev && buildStarted(journal.view, record.unit)) return null;
+  if (onFloor && !sameSession(seatTripleOf(record.implementerSeatRev), seat) && buildStarted(journal.view, record.unit)) return null;
   return pin(journal, routing, record, update);
 }
 
@@ -257,7 +287,7 @@ export function raiseRisk(ctx: StageContext, record: DispatchRecord, risk: RiskT
 // Seats
 
 export type JudgmentDispatch = Readonly<{ role: JudgmentRole; tier: JudgmentSeat; triple: ClaudeTriple; routingRev: RoutingRev }>;
-/** `seatRev`: the pinned `implementerSeatRev`, the hash of `triple`: a session resumes only on the seat it ran on. */
+/** `seatRev`: the pinned `implementerSeatRev`, the hash of `triple`: a session resumes only on its session key (R4). */
 export type ImplementerDispatch = Readonly<{ role: 'build'; tier: RiskTier; triple: ClaudeTriple | CodexTriple; routingRev: RoutingRev; seatRev: SeatRev }>;
 
 const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'planCheck', gate: 'gate' };
@@ -598,6 +628,15 @@ export const unitWorktree = (root: AbsPath, arc: ArcId, unit: UnitId): AbsPath =
 /** A lanes attempt's clean detached checkout of the salvage SHA. */
 export const verificationWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.verify-${attempt}`));
+/**
+ * M4a rev 3 (D1): a lanes attempt's own detached checkout of the salvage SHA for its witness presence check (the arc's
+ * required witness lanes), never the verification checkout the gate reads.
+ */
+export const witnessWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>
+  absPath(join(root, arc, `${unit}.witness-${attempt}`));
+/** M4a rev 3 (D2): a lanes attempt's detached checkout of the salvage SHA with its production diff reverted (mutation smoke). */
+export const smokeWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>
+  absPath(join(root, arc, `${unit}.smoke-${attempt}`));
 
 export type StageParent = Extract<Parent, { type: 'stage' }>;
 
@@ -613,7 +652,7 @@ export type Cancelled = Readonly<{ kind: 'cancelled'; reason: 'pause' | 'stop' }
 
 export const isCancelled = <T extends object>(done: T | Cancelled): done is Cancelled => 'kind' in done && done.kind === 'cancelled';
 
-/** A request, or null when it asks for nothing (a legacy arc's judgment, a build of a unit with no resources there). */
+/** A request, or null when it asks for nothing (a build of a unit with no resources and no `@cpu`). */
 export const nonEmpty = (r: ResourceRequest): ResourceRequest | null =>
   r.named.length === 0 && r.pools.length === 0 && r.cpu === 0 && !r.publication ? null : r;
 

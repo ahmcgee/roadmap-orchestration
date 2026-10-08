@@ -111,7 +111,7 @@ const FACTS: readonly Fact[] = [
   { kind: 'containment-mode', mode: 'session' },
   { kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', role: 'gate', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
   { kind: 'usage-unavailable', inv, routingRev: rev, subject: { type: 'smoke', backend: 'codex' }, reason: 'no-result' },
-  { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at } },
+  { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at, transientRules: 'm3' } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
   { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'retry', chargeable: false },
   { kind: 'needs-user-acked', id: needsUserId('nu-7'), command: commandId('cmd-0123456789abcdef'), choice: 'retry' },
@@ -119,7 +119,6 @@ const FACTS: readonly Fact[] = [
   { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'all' } },
   { kind: 'stop-requested', command: commandId('cmd-0123456789abcdef') },
   { kind: 'resumed', command: commandId('cmd-0123456789abcdef'), target: { type: 'backend', backend: 'codex' } },
-  { kind: 'rerouted', unit, command: commandId('cmd-0123456789abcdef') },
   { kind: 'executor-started', generation: 3 },
 ];
 

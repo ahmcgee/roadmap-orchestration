@@ -9,6 +9,7 @@ import { PROMPT as GATE_FABLE } from './gate/claude-fable-5-1.ts';
 import { PROMPT as GATE_OPUS } from './gate/claude-opus-5-5.ts';
 import type { PromptModule, PromptModules } from './inputs.ts';
 import { PROMPT as LENS_OPUS } from './lens/claude-opus-5-5.ts';
+import { PROMPT as PACK_REVIEW_OPUS } from './packReview/claude-opus-5-5.ts';
 import { PROMPT as PLAN_CHECK_FABLE } from './planCheck/claude-fable-5-1.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 
@@ -36,7 +37,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'claude-sonnet-5-5': {
       type: 'inherits',
       from: 'claude-opus-5-5',
-      reviewed: '2026-09-29: Sonnet 5.5 migration guidance (Anthropic) checked against the Opus 5.5 build brief; no Sonnet-specific change needed',
+      reviewed: '2026-10-06: Sonnet 5.5 migration guidance (Anthropic) checked against the Opus 5.5 build brief with its unattended-run instruction (M4a) and its witness checklist, witness check commands and in-session assessment (M4a rev 3); no Sonnet-specific change needed',
     },
     'gpt-5.6-luna': { type: 'prompt', prompt: BUILD_LUNA },
     // OpenAI's GPT-5.6 guidance gives Sol, Terra and Luna one prompt skeleton: the tiers differ in cost,
@@ -44,7 +45,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'gpt-5.6-sol': {
       type: 'inherits',
       from: 'gpt-5.6-luna',
-      reviewed: '2026-09-25: GPT-5.6 tiers share one prompt skeleton (OpenAI model guidance); no Sol-specific build behaviour known',
+      reviewed: '2026-10-06: GPT-5.6 tiers share one prompt skeleton (OpenAI model guidance), checked again against the Luna build prompt with its M4a rev 3 witness checks and in-session assessment; no Sol-specific build behaviour known',
     },
   },
   gate: {
@@ -64,7 +65,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'claude-fable-5-1': {
       type: 'inherits',
       from: 'claude-opus-5-5',
-      reviewed: '2026-09-30: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 lens prompt; no Fable-specific change needed',
+      reviewed: '2026-10-06: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 lens prompt with its M4a rev 3 cause shape and specs-only drift; no Fable-specific change needed',
     },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
@@ -77,9 +78,23 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'claude-opus-5-5': {
       type: 'inherits',
       from: 'claude-fable-5-1',
-      reviewed: '2026-09-30: Prompting Claude Opus 5.5 (Anthropic) checked against the Fable 5.1 checkpoint prompt; no Opus-specific change needed',
+      reviewed: '2026-10-06: Prompting Claude Opus 5.5 (Anthropic) checked against the Fable 5.1 checkpoint prompt with its M4a corpus amendments and issue intake and its rev 3 admit classes, failure matrix, input manifest, embedded specs and closeout; no Opus-specific change needed',
     },
     'claude-fable-5-1': { type: 'prompt', prompt: CHECKPOINT_FABLE },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  // M4a (OR-Q16): the pack review on frontier (Opus), ported from the former Phase-0 review brief. Fable reads it
+  // unchanged, as it reads the Opus lens prompt: its rules (read everything before judging, file:line evidence, plain
+  // one-sentence claims, the pack as the only scope, change nothing) are what the Fable guide asks of a judgment.
+  packReview: {
+    'claude-opus-5-5': { type: 'prompt', prompt: PACK_REVIEW_OPUS },
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-10-06: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 pack-review prompt with its M4a rev 3 census cross-check and time-fixture and entry-point checks; no Fable-specific change needed',
+    },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },

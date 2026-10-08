@@ -1,9 +1,11 @@
 // M3 step B3: the findings store (src/holistic/findings.ts). Dedupe and dismissals over a real journal
 // (findings.dedupe, findings.dismissal-arc-scoped); ruling (P1s never bank); ownership moves, due needs-user items and
-// the per-finding instrumentation over folded logs.
+// the per-finding instrumentation over folded logs. M4a rev 3 (N5): findings.corrupt-patch-refused (H6) and
+// findings.cross-key (H7); the audit-level flows are in test/audit.test.ts.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Event, type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
 import { arcId, commandId, findingId, jobId, laneId, obligationId, planRev, sha, sha256, unitId } from '../src/core/ids.ts';
@@ -12,13 +14,13 @@ import { Fold } from '../src/core/state.ts';
 import { absPath, isoTime } from '../src/core/values.ts';
 import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
 import {
-  type FindingDraft, type RepairUnit, batchable, keepMutantPatch, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
+  type FindingDraft, type RepairUnit, admitMutant, batchable, crossKey, keepMutantPatch, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
   visionConflictDraft, witnessFindingDraft,
 } from '../src/holistic/findings.ts';
 import { inputPath } from '../src/input/inforce.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
-import { ARC, AT, H, U1, chain } from './fixtures/log-records.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { ARC, AT, H, U1, appliedFields, chain } from './fixtures/log-records.ts';
+import { makeRepo, tmpDir } from './helpers/repo.ts';
 
 const I1 = obligationId('I-1');
 const B1 = sha('b'.repeat(40));
@@ -110,7 +112,7 @@ describe('opening and dedupe', () => {
 const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const plan = (rev: number): LogRecord => fact({
   kind: 'plan-applied', rev: planRev(rev), command: rev === 1 ? null : commandId('cmd-0123456789abcdef'), planSha256: H, specs: { u1: H, u2: H }, changes: [],
-  ...(rev === 1 ? { scheduling: 'dag' } : {}), visionSha256: V,
+  ...appliedFields(rev, rev === 1 ? null : 'cmd-0123456789abcdef'), visionSha256: V,
 });
 const opened = (n: number, over: object = {}): LogRecord => fact({
   kind: 'finding-opened', id: `F-${n}`, key: sha256(String(n).repeat(64)), lens: 'invariants', severity: 'P1', obligation: 'I-1', visionClauses: [], claim: 'c',
@@ -164,6 +166,29 @@ describe('ruling and ownership', () => {
     assert.deepEqual(batchable(owned, [unitOf('u1', ['F-1'], { kind: 'approved' }), unitOf('u2', ['F-1'], { kind: 'approved' })]), [{ finding: 'F-1', units: ['u1', 'u2'] }]);
     assert.deepEqual(batchable(owned, [unitOf('u1', ['F-1'], { kind: 'approved' }), unitOf('u2', ['F-1'], { kind: 'working' })]), []);
     assert.deepEqual([...repairedObligations(owned, ['F-1', 'F-3', 'I-2'] as never)].sort(), ['I-1', 'I-2'], 'a finding over no obligation repairs none');
+  });
+});
+
+describe('admission (M4a rev 3)', () => {
+  it('findings.corrupt-patch-refused (H6): a mutant patch git cannot parse is refused with its stderr and never kept; a well-formed one is kept', () => {
+    const repo = absPath(makeRepo(tmpDir('findings-patch-repo'), { files: { 'src/a.js': 'export const a = 1;\n' } }));
+    const runDir = absPath(tmpDir('findings-patch-run'));
+    const patch = 'diff --git a/src/a.js b/src/a.js\n--- a/src/a.js\n+++ b/src/a.js\n@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n';
+    const corrupt = admitMutant(repo, runDir, 'not a patch\n', laneId('journey'));
+    assert.ok(corrupt.kind === 'corrupt' && corrupt.stderr.length > 0, JSON.stringify(corrupt));
+    assert.equal(existsSync(join(runDir, 'inputs')), false, 'nothing kept');
+    const kept = admitMutant(repo, runDir, patch, laneId('journey'));
+    assert.ok(kept.kind === 'kept', JSON.stringify(kept));
+    assert.equal(readFileSync(inputPath(runDir, kept.mutant.patchSha256, MUTANT_PATCH_INPUT), 'utf8'), patch);
+  });
+
+  it('findings.cross-key (H7): the lens and absolute paths are left out; obligation, cause and repo paths (set, sorted) count', () => {
+    const base = crossKey(draft());
+    assert.equal(crossKey(draft({ lens: 'vision', claim: 'other words', evidence: [{ path: 'src/parse.js', blob: null }, { path: '/run/evidence/x', blob: null }] })), base);
+    assert.equal(crossKey(draft({ evidence: [{ path: 'src/b.js', blob: null }, { path: 'src/parse.js', blob: B1 }] })), crossKey(draft({ evidence: [{ path: 'src/parse.js', blob: B2 }, { path: 'src/b.js', blob: null }] })));
+    assert.notEqual(crossKey(draft({ cause: 'another cause' })), base);
+    assert.notEqual(crossKey(draft({ obligation: null })), base);
+    assert.notEqual(crossKey(draft({ evidence: [{ path: 'src/other.js', blob: B1 }] })), base);
   });
 });
 

@@ -51,11 +51,11 @@ describe('records', () => {
     }
   });
 
-  it('launch.json stallMs: a positive count or null; absent (1.0.0-dev.1) reads as null, no watchdog', () => {
+  it('launch.json stallMs: a positive count or null, required', () => {
     const read = RUNNER_FILE_READERS['launch.json'];
     assert.equal(read({ ...RUNNER_SAMPLES['launch.json'], stallMs: 600_000 }, 'launch.json').stallMs, 600_000);
-    const { stallMs: _, ...dev1 } = RUNNER_SAMPLES['launch.json'];
-    assert.equal(read(dev1, 'launch.json').stallMs, null);
+    const { stallMs: _, ...absent } = RUNNER_SAMPLES['launch.json'];
+    assert.throws(() => read(absent, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.stallMs');
     assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], stallMs: 0 }, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.stallMs');
   });
 

@@ -16,7 +16,7 @@
 // "Held" is an observation verdict of `held` on the evaluated tree, or a valid reuse (all four keys and the records'
 // hash match); `not-held`, `partial`, `unwitnessed`, skip, zero-selected, stale or missing are "otherwise". A latched
 // future obligation is must-hold from its latch on (the caller passes its effective activation).
-import type { ObligationId, UnitId } from '../core/ids.ts';
+import { type ObligationId, type UnitId, canonicalIds } from '../core/ids.ts';
 import { type ObligationDef, type ObservationVerdict, type WitnessRef, isExempt } from './types.ts';
 
 export const OBLIGATION_EFFECTS = ['measured', 'latch', 'red', 'discharged', 'exempt'] as const;
@@ -105,7 +105,7 @@ export function obligationEffects(input: EffectsInput): ReadonlyMap<ObligationId
 
 /** The obligations a publication latches: its `latch` effects, ascending (`obligation-latched` after `ff{published}`). */
 export const latches = (effects: ReadonlyMap<ObligationId, ObligationEffect>): readonly ObligationId[] =>
-  [...effects].filter(([, e]) => e === 'latch').map(([id]) => id).sort();
+  canonicalIds([...effects].filter(([, e]) => e === 'latch').map(([id]) => id));
 
 /** The brake over a selection: any selected obligation's effect `red`. */
 export function brakesOn(effects: ReadonlyMap<ObligationId, ObligationEffect>, selected: ReadonlySet<ObligationId>): boolean {

@@ -19,6 +19,7 @@ import { type StageOutcome, TABLE } from '../src/pipeline/transitions.ts';
 import { PARK_ESCALATE_MS, PARK_REPEAT_MS } from '../src/schedule/types.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { BUILD_CLEANUP_FAILED, LANES_BLOCKED, parkUnit, seedArc } from './fixtures/probe-common.ts';
+import { appliedFields } from './fixtures/log-records.ts';
 
 const U1 = unitId('u1');
 const U2 = unitId('u2');
@@ -134,7 +135,7 @@ describe('park schedule', () => {
     parkUnit(journal, U2, LANES_BLOCKED, 1, [HOST]);
     journal.fact({
       kind: 'plan-applied', rev: 2, command: commandId('cmd-0000000000000002'), planSha256: 'd'.repeat(64),
-      specs: { u2: 'd'.repeat(64), u3: 'd'.repeat(64) }, changes: [{ type: 'unit-cut', unit: U1 }],
+      specs: { u2: 'd'.repeat(64), u3: 'd'.repeat(64) }, changes: [{ type: 'unit-cut', unit: U1 }], ...appliedFields(2, 'cmd-0000000000000002'),
     } as unknown as Fact);
     assert.equal(journal.view.unit(U1).status, 'cut');
     assert.deepEqual(retryableParks(journal.view).map((p) => p.unit.unit), [U2]);
@@ -228,7 +229,7 @@ describe('park schedule', () => {
     const t0 = Date.parse('2026-09-30T08:00:00.000Z');
     const at = (ms: number): IsoTime => isoTime(new Date(t0 + ms).toISOString());
     const records: [LogRecord, IsoTime][] = [
-      [factRecord({ kind: 'plan-applied', rev: 1, command: null, planSha256: 'd'.repeat(64), specs: { u1: 'd'.repeat(64), u2: 'd'.repeat(64), u3: 'd'.repeat(64) }, changes: [], scheduling: 'dag' }), at(0)],
+      [factRecord({ kind: 'plan-applied', rev: 1, command: null, planSha256: 'd'.repeat(64), specs: { u1: 'd'.repeat(64), u2: 'd'.repeat(64), u3: 'd'.repeat(64) }, changes: [], ...appliedFields(1, null) }), at(0)],
       [parkRecord(U1), at(0)],
       [parkRecord(U2), at(61 * MINUTE)],
     ];

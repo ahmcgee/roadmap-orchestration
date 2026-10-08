@@ -14,7 +14,8 @@ import { isoTimeOf } from '../src/core/values.ts';
 import { EVENTS_FILE, STATE_FILE, openJournal } from '../src/core/log.ts';
 import { implementerDispatch, judgmentDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
-import { NO_SESSION_NOTE, RESUME_DIRECTIVE, type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
+import { type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
+import { NO_SESSION_NOTE, RESUME_DIRECTIVE } from '../src/prompts/directives.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import {
   type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, library, loadUnitSpec, planCheck, quiesce, salvage, teardown,
@@ -26,7 +27,7 @@ import { reached } from './helpers/barrier.ts';
 import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import {
-  BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts,
+  BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, applyFilesNow, type StageRun, U1, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts,
   planCheckStep, seated, setupUnit, spawnIntents, started, worktreeOf,
 } from './fixtures/stage-common.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
@@ -140,7 +141,7 @@ test('redirect.no-widen: a redirect that widens the envelope or lowers the risk 
   assert.equal(dispatches.length, 1, 'the dispatch record is never re-pinned lower');
   assert.equal(run.journal.view.dispatchOf(U1)?.riskFloor, 'med');
   const calls = readCalls(run.scenario.path);
-  assert.ok(calls[1]!.argv.includes('claude-fable-5-1'), 'the routed-up check ran on the escalation seat');
+  assert.ok(calls[1]!.argv.includes('xhigh'), 'the routed-up check ran on the escalation seat');
 });
 
 test('stages.red-lane-fix-round: the resumed implementer reads the failing evidence dir, commits the fix, the next series is green', T, async () => {
@@ -251,7 +252,7 @@ test('rounds.resume-without-session-starts-fresh: after a malformed fresh build 
   const malformed = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.equal(malformed.outcome.kind, 'malformed');
   assert.equal(show(malformed.next), 'build/resume@med');
-  const b = started(await build(run.ctx, run.unit, { kind: 'resume' }));
+  const b = started(await build(run.ctx, run.unit, { kind: 'resume', error: null }));
   assert.equal(b.outcome.kind, 'success');
   assert.ok(launchedFresh(run), 'the resume round\'s launch.json records a fresh session');
   const calls = readCalls(run.scenario.path);
@@ -556,6 +557,7 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
     '# Rulings', '', 'C-1 — Arithmetic helpers live in src/ and are tested under test/.', 'C-2 — Second rule here. More text follows.',
     'C-3 — withdrawn by C-2', '',
   ].join('\n'));
+  applyFilesNow(run);
   setSteps(run, [
     planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: ['contracts/nope.md'], rulings: [] }] }),
     planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: [], rulings: ['C-2'] }] }, {
@@ -577,6 +579,7 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
 test('library.withdrawn-not-embedded: a cited ruling that is withdrawn is never embedded in full; its fold line is indexed', () => {
   const run = setupUnit({ steps: [] });
   writeFileSync(join(run.planDir, 'rulings.md'), 'C-1 — withdrawn by C-2\nC-2 — Helpers live in lib/. Tests too.\n');
+  applyFilesNow(run);
   const lib = library(run.ctx, loadUnitSpec(run.ctx, run.unit).spec, run.base);
   assert.deepEqual(lib.rulings, [], 'the spec cites C-1, which is withdrawn');
   assert.deepEqual(lib.index.rulings, [{ id: 'C-1', line: 'withdrawn by C-2' }, { id: 'C-2', line: 'Helpers live in lib/.' }]);

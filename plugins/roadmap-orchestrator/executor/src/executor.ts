@@ -50,22 +50,20 @@ import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
 import { containmentFor, detectContainmentMode } from './contain/detect.ts';
 import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
 import { canonicalJson } from './core/json.ts';
-import { type ArcId, type NeedsUserId, type PlanRev, type UnitId, hostNeedsUserId } from './core/ids.ts';
+import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId } from './core/ids.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
   type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserRecord, type RunStart,
 } from './core/records.ts';
-import { routingProvenanceOf } from './core/upgrade.ts';
 import { type Read, arrayOf, literal, object } from './core/validate.ts';
 import { type AbsPath, absPath, isoTimeOf, nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
-import { readLegacyProvenance } from './git/snapshot.ts';
 import { hostPath, openHostDir } from './host/hostdir.ts';
 import { isAlive, selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
 import { readHostSample } from './host/sample.ts';
-import { requirePlanInForce, routingProvenanceOf as provenanceOf } from './input/inforce.ts';
+import { requirePlanInForce } from './input/inforce.ts';
 import type { PlanM1 } from './input/plan.ts';
 import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
 import { type ProberHandle, createProber } from './park/probe.ts';
@@ -79,8 +77,8 @@ import {
   EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
-import { type ResolvedRouting, provenanceStack, resolveRouting } from './routing/layers.ts';
-import { type ProfileName, type RoutingProvenance, profileName } from './routing/types.ts';
+import { type ResolvedRouting, arcScopeOf, provenanceStack, resolveRouting } from './routing/layers.ts';
+import { type ProfileName, profileName } from './routing/types.ts';
 import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
 import { type SchedulerEnd, designRoute, holisticContexts, raiseResult, schedule } from './schedule/scheduler.ts';
@@ -288,9 +286,7 @@ async function consumeRecovered(x: Exec): Promise<void> {
 function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileName, journal: OpenJournal): Exec {
   const config = readRepoConfig(context.repo);
   // H7 (M3 steps A3, B7): each revision's routing resolves from the provenance its plan-applied recorded, per unit (its
-  // layer on top). A 1.0.0-dev.5 revision has none: it resolves from the record the adoption persisted
-  // (`routing-provenance/<rev>.json`, `adoptLegacyProvenance` in `runChecks`), never from the repo config read again at a
-  // later start (lead ruling: one canonical source).
+  // layer on top), never from the repo config read again at a later start (lead ruling: one canonical source).
   type Entry = Readonly<{ plan: PlanM1; routing: (unit: UnitId | null) => ResolvedRouting }>;
   const cache = new Map<string, Entry>();
   const inForce = (): Entry => {
@@ -299,12 +295,12 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     const known = cache.get(key);
     if (known !== undefined) return known;
     const { plan, fact: applied } = requirePlanInForce(context.runDir, journal.view);
-    const provenance = routingProvenanceOf(applied, () => adoptedProvenance(context.runDir, applied.rev, () => provenanceOf({ profile, config }, plan)));
+    const provenance = applied.routingProvenance;
     const resolved = new Map<UnitId | null, ResolvedRouting>();
     const routingOf = (unit: UnitId | null): ResolvedRouting => {
       const hit = resolved.get(unit);
       if (hit !== undefined) return hit;
-      const r = resolveRouting(provenanceStack(provenance, plan.holistic !== undefined, unit));
+      const r = resolveRouting(provenanceStack(provenance, arcScopeOf(plan), unit));
       resolved.set(unit, r);
       return r;
     };
@@ -341,19 +337,6 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     probes: { prober, signal: stop.signal },
   };
   return { stage, commands, journal, arbiter, prober, stop };
-}
-
-/**
- * The routing provenance a 1.0.0-dev.5 revision's adoption persisted (scaffolding: delete with the other dev.5
- * defaults). An unreconstructable one (its routing revs are none the adopting start's config resolves) has no
- * provenance to read: the revision resolves as a dev.5 executor resolved it, from the repo config of this start
- * (`rebuild`), warned; a missing record is a bug (every start adopts before it runs).
- */
-function adoptedProvenance(runDir: AbsPath, rev: PlanRev, rebuild: () => RoutingProvenance): RoutingProvenance {
-  const adopted = readLegacyProvenance(runDir, rev);
-  if (adopted.kind === 'reconstructed') return adopted.provenance;
-  process.stderr.write(`roadmap: upgrade (routing provenance, H7): ${adopted.reason}; plan rev ${rev} resolves under the repo config of this start\n`);
-  return rebuild();
 }
 
 // ---------------------------------------------------------------------------------------------------

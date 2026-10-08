@@ -3,11 +3,12 @@
 Why 1.0 is shaped the way it is. Nothing loads this file at runtime. `SKILL.md` tells the architect agent
 what to do; this file tells a maintainer why, so a change can be made without undoing a lesson that cost a
 week to learn. The binding design is `DESIGN-1.0.md` at the repo root, and the frozen shapes are in
-`executor/SCHEMAS.md`. The 0.x reasoning and its incident record stay in `RATIONALE.md`.
+`executor/SCHEMAS.md`. The 0.x reasoning and its incident record (`RATIONALE.md`) live in git history at tag
+`v0.20.0`.
 
 Each section names the evidence it rests on and the decision it justifies, and is marked **[M1]** when the
 behaviour ships in the M1 build or **[M2]**, **[M3]** or **[M4]** when it is design intent for a later
-milestone. Evidence citations: Obs = the arc-1 observations file, §3.n = the defect write-ups in
+milestone (M4a is marked **[M4]**). Evidence citations: Obs = the arc-1 observations file, §3.n = the defect write-ups in
 `calibration-0.20.0.md`, D§ = `DESIGN-1.0.md`.
 
 ## 0. The evidence base: arc 1
@@ -206,7 +207,7 @@ ruling broke cookie isolation (Obs §4.5).
 
 **Decision.** Obligations are every checkable claim extracted from the target-state document, approved by
 the owner. Each names a witness that emits per-test records; no record means `unwitnessed`, never passed.
-A `must-hold` obligation that goes red makes a candidate red, in code. Opus lenses report; a Fable
+A `must-hold` obligation that goes red makes a candidate red, in code. Frontier-class lenses report; a summit-class
 checkpoint then rules toward the target, not the original plan. Its authority is bounded by the delegation
 envelope: it may amend implementation contracts, respec, re-route or cut. The vision is the root record
 (owner ruling OR-V): the checkpoint may also weaken an obligation when it cites active vision clauses and
@@ -245,7 +246,7 @@ chooses where to crash. The paid run shows the parts meet real models and lists 
 
 What stays is the judgment that worked: frozen contracts, C-nn rulings, plan-checks that redirect,
 gates with rejection authority over scope and debt, and Phase 0 as the architect's highest-leverage act
-[M4 for the skill text].
+(§17).
 
 ## 15. A failing lane keeps its ignored output [M1]
 
@@ -274,3 +275,74 @@ spec bytes the log names, so an unapplied edit has no effect, also after a resta
 in-flight unit waits for a boundary where the unit can re-enter plan-check with its work intact. Nothing live
 is killed for an edit. DESIGN's `admit` and `patch-spec` are edit classes of `apply`, so there is one way to
 change what the executor runs (owner ruling 2026-09-29).
+
+## 17. A pinned corpus, Phase 0 in session, and chained arcs [M4]
+
+**Evidence.** M3 steered by one architecture document named by path. Nothing pinned it, nothing gave its claims
+ids, and an obligation pointed at a quoted anchor that any edit could break. Real targets are not one document:
+the owner's are a sprawl of numbered docs and ADRs that restate, contradict and outlive each other. Phase 0 had
+been the highest-leverage act in arc 1, yet it ran as prose the architect followed by hand, and its pack review
+went out to an external reviewer through templates the architect filled in. The yardstick asks for a week unattended, which no single arc fills; and an
+unattended week is only safe if the owner can see, in one place, everything decided since they last looked.
+
+**Decision.** Owner rulings OR-Q9 to Q22, recorded 2026-10-02/03 (DESIGN-1.0.md draft 9, §2.8 to §2.11):
+
+- **The corpus is the target, and readability comes first.** The root agent curates it in session through a
+  guide (`.roadmap/corpus.md`); code never edits it. Normative claims live in `rules` blocks as `T-n` ids, global
+  and never reused, so an obligation anchors at `{T-n, text hash}` instead of a quoted span, and a census says
+  for every rule whether the arc holds it, defers it or cannot test it. Curation runs in tiers: structural and
+  fact-currency edits are the agent's to make and report; a contradiction the vision resolves is resolved and
+  recorded as a reversible divergence; one the vision is silent on becomes a ranked question with a working
+  assumption, never a guess the owner cannot see.
+- **The executor reads only a pin.** `corpus pin` writes the files, rules and vision path by hash; `start` and
+  `apply` re-derive it and refuse drift, and the snapshot keeps every byte, so a judge's view of the target is
+  reproducible from the ref alone. The vision document lives in the corpus, and its confirmation is now checked
+  against the pinned bytes instead of stored on trust.
+- **Phase 0 is the agent's, checked by code.** The agent fans the reading out to subagents; `phase0 check` runs
+  the same rows `start` runs, so a Phase 0 is green before it costs a start. The pack review became an executor
+  job on the frontier class with kept inputs, holding admission until a review matches the current pack.
+- **Issues are trusted or refused.** Owner ruling L6: a repository whose policy lets anyone open issues refuses
+  `start`; there is no confirmation path and no injection filter to maintain. Under a trusted policy, issues are
+  owner context, rendered as pasted data, and every captured issue gets exactly one recorded outcome.
+- **Chaining with a brake the owner sets.** Arcs run back to back as stacked branches and PRs. One code-rendered
+  brief, hashed whole, covers everything since the owner's last acknowledgement across the chain; K bounds how
+  many starts may pass without one, and only the owner changes K. The root agent never merges `main`; the owner
+  merges the stack with merge commits.
+- **Routing.** OR-Q17 and L3: the frontier and summit classes bind one model at different efforts, retroactively,
+  with no routing generations; an effort-only change of a build seat re-pins and resumes its session.
+- **Efficiency waits for M4b.** M4a only measures stage timings; the root agent reports slowdowns as
+  observations and changes nothing that grades the work.
+
+## 18. Checks that run, admits that are classed, supervision that is logged [M4]
+
+**Evidence.** Paid runs 4 to 9 of the M4a fixture. Witness defects dominated the gate's work: 5 spec witnesses never
+written, 15 weak witnesses at the gate, 38 post-merge vacuity findings, 4 tests that read the real clock. The build
+prompt carried no witness ids, so a builder saw the tests it had to pass only as prose. Plan-check caught nothing
+material for frontier builders (one citation redirect in 11) and five real redirects for efficient ones. Run 9's
+checkpoints admitted a chain of three units that drifted into a vision clause outside the slice, each citing in-slice
+clauses only. In run 1 the root agent, unsure what it was allowed to touch, searched the filesystem for the fixture's
+own scripts.
+
+**Decision.**
+
+- **Executable before judged** (lead ruling LR-j). In a corpus arc every witness a unit must pass runs by exact test
+  id before the gate, and the builder can run the same check (`witness-check`); a missing id is a fix round, not a
+  gate finding. For a med or high-risk unit, mutation smoke reverts its production change and runs its witnesses
+  again: a witness that still passes did not need the change. One fix round, then the gate decides with the
+  survivors in view, because some behaviour truly predates the unit.
+- **Plan-check by builder class** (E). A frontier builder assesses the spec in its own session, as the build's first
+  structured output, before any edit, so an infeasible or riskier spec is routed before code exists. An efficient
+  builder keeps a plan-check, narrowed to adding witness items through the one spec patch channel. Run 10 measures
+  it against the runs 4 to 9 baseline; the template reverts on a safety regression.
+- **Admit classes** (owner ruling OR-A1, lead ruling LR-k). Code, not the checkpoint, classes each admit from what it
+  touches: repair and oversight always pass; an opportunity outside the slice must cite its clauses, shows in the
+  brief, and is capped at one per arc with one follow-up repair; anything else becomes a corpus amendment for the
+  next Phase 0. A checkpoint can still widen an arc, but never silently.
+- **Clocks are spec guidance, not code** (R39). No product-agnostic clock seam exists, and faking time from outside
+  changes what a declared lane runs. The spec pins the product's own seam and adds a shifted-clock lane; the gate and
+  the reviews treat a real-clock test as a defect class.
+- **Supervision through levers, with a log** (owner ruling OR-A3). The root agent observes cheaply and acts through
+  the CLI's levers, never by patching the executor or its run dir. Each intervention is logged with the executor
+  change that would have made it unnecessary; the fixture counts them, so an executor that needs less supervision
+  scores better.
+

@@ -192,12 +192,12 @@ export type HostIdentity = Readonly<{ platform: string; arch: string; node: stri
 export const hostIdentity = (): HostIdentity => ({ platform: process.platform, arch: process.arch, node: process.version });
 
 /**
- * The environment identity (`envId`) an observation is keyed by: first 16 hex of sha256 over the host's platform,
- * architecture and Node version and the values of the variables the lane passes through from the host (absent
- * ones as null). What the lane sets is in its `laneRev`; a pool instance's binding is not identity (any instance
- * of a pool is equivalent).
+ * The environment identity (`envId`) an observation is keyed by, and a spec lane execution's (M4a rev 3, F1a: any
+ * `LaneDef`): first 16 hex of sha256 over the host's platform, architecture and Node version and the values of the
+ * variables the lane passes through from the host (absent ones as null). What the lane sets is in its `laneRev`; a
+ * pool instance's binding is not identity (any instance of a pool is equivalent).
  */
-export function envIdOf(lane: ArcLaneDef, host: HostIdentity, env: Readonly<Record<string, string | undefined>>): EnvId {
+export function envIdOf(lane: Pick<ArcLaneDef, 'env'>, host: HostIdentity, env: Readonly<Record<string, string | undefined>>): EnvId {
   const pass = Object.fromEntries([...lane.env.pass].sort().map((name) => [name, env[name] ?? null]));
   return envId(sha256Hex(canonicalJson({ host, pass })).slice(0, 16));
 }

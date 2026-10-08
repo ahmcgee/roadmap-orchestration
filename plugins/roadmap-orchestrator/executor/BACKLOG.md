@@ -20,7 +20,7 @@ at triage stay in git history.
 
 - `merge-in`, `route`, `limits`, and `steer` (with `--class <efficient|frontier|summit>` as a per-unit routing
   layer, A13) and the `repair` origin: taken into M3 (LR-a).
-- Preview's own estate slot: specified with preview in M4 (F23).
+- Preview's own estate slot: specified with preview, deferred to 1.1 (F23, OR-Q15).
 - A memory capacity class.
 - Handing adopted runners to unit tasks.
 - Async git (git runs through `spawnSync` and blocks the event loop).
@@ -31,7 +31,7 @@ at triage stay in git history.
 - Usage-limit hits under parallel burn: measured in arc 2 (owner ruling D4, 2026-09-30).
 - Persisted arbiter tickets, if exact post-recovery grant order is ever required (F20).
 
-### M3 (implemented, in PR: plan `/claude-state/plans/m3-holistic.md`, rev 2.1; 1.0.0-dev.6)
+### M3 (done: plan `/claude-state/plans/m3-holistic.md`, rev 2.1; 1.0.0-dev.6, merged at 0a58349)
 
 - Scope (LR-a): DESIGN-1.0.md §10 M3 and the holistic layer (the vision as the root record, OR-V; obligations,
   witness protocol, impact mapping, journey lanes, the held-claims brake, lenses, the checkpoint with bundles,
@@ -52,7 +52,7 @@ at triage stay in git history.
   judgment seat. Trigger: the weekly Claude limit binding on judgments, or a Codex model the owner wants judging.
 - `explore` (A11). Trigger: arc 2's finding metrics showing a defect class the four lenses miss.
   `--adversarial` is withdrawn (A12: a unit routing layer expresses it); `contractRequests` and `owedAfterMerge`
-  go to M4 (A13).
+  are withdrawn in M4a (OR-V+: corpus amendments, rulings or debt carry them).
 - More witness reporters, and a capture from a real `go test -json` (`go-test-json` is tested on hand-written
   streams only; no `go` on this host). Trigger: a target repo whose tests are neither `node --test` nor a jsonl
   wrapper, or a host with `go`.
@@ -60,18 +60,44 @@ at triage stay in git history.
   refused for an obligation whose pattern cannot in fact overlap the unit's scope.
 - Lens parallelism (lenses run serially, one `@cpu` each). Trigger: audit wall time delaying completion or
   raising `audit-owed`.
-- Vision playback verification and the vision's in-tree home for the next arc: M4. Part of it: `confirmation.ref`
-  (`vision.md#sha256:<hex>`, the skill's) is stored unverified; status could flag a vision.md whose hash no longer
-  matches `confirmation.ref` (the compiled record drifted from the text the owner confirmed).
 - Code-level enforcement of implementer boundaries beyond the unit policy and containment (H10's stated limit).
   Trigger: an implementer acting outside the sandbox.
 
-### M4
+### M4a (in progress: plan `/claude-state/plans/m4a-convergence.md`, rev 2.1; 1.0.0-dev.7, branch `feat/m4a-convergence`)
 
-- Debt lifecycle (stable ids, Phase-0 disposition or refuse, the two-arc question). Gate directive overflow
-  banking waits on it: today every directive goes to the fix round.
-- Issue mode inbound only; outbound projection in 1.1.
-- Phase 0 skill text; SKILL.md becomes the full skill.
+- Scope (LR-a): the pinned corpus as the target (guide, sources, `T-n` rules, pin, census), the vision's in-tree home
+  and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy, intake, push, stacked
+  PRs), `roadmap brief`, chaining with K, the routing rebinding (frontier Opus medium, summit Opus xhigh), the pack
+  review, prompt notes, the full skill, and the deletion of every pre-dev.6 scaffolding layer (OR-L4, step X0).
+- Records frozen in step 0a (SCHEMAS.md "M4a"); step 0a placed placeholder modules at every final command path, each
+  replaced by its landing step (C4 the last, deleting `src/core/notyet.ts`).
+- Directive overflow is not banked (R7): every directive still goes to the fix round.
+- Revision 3.1 (the run-10 batch, steps N0–N9, 2026-10-06): records frozen in step N0 (SCHEMAS.md "M4a rev 3"); N0
+  placed placeholders at every new module path behind `src/core/notyet.ts` again; N2, N3 and N6 replaced them, and N6
+  deleted `notyet.ts`.
+- Paid run 12 fixes (2026-10-07): `nextStart` (code owns the chain arithmetic; the skill reads it), the check-in as one
+  final message ending with the next action or the stop, `refused` proposals in every checkpoint's inputs (scoped to the
+  plan rev, not the audit generation: run 12's ckpt-4 was generation 2 and re-proposed generation 1's refusal), and
+  readers after the start never parse the live `.roadmap/config.json`.
+- Owner-answer channel (paid runs 12-14, D4 failed three times: answers only reached the session at turn ends, and a
+  root agent that never ends a turn never got one): `roadmap answer` into a write-once answer log, listed by
+  `status`, the brief and `chain status`, an `answer` watch event, and the `answer-unapplied` start row.
+
+### M4b (after M4a)
+
+- The flow loop, SPC, the flow role, givens, proposals and verdicts, the ruler fence (judgment-seat effort is part of
+  the ruler, OR-Q17), test-set-preserving lane edits, the two plants. Seeded from M4a arcs' refs (LR-c).
+- First observation for the loop (M4a development, 2026-10-03): host contention is the ladder's constraint. The
+  concurrent crash matrix takes ~21 min alone and was cancelled by its 45-min parent timeout when worktree agents and
+  the probe shared the host (load ~46); per-cell 30 s and 180 s timeouts in `resource-recover` and `res.lock-order`
+  tripped the same way. Candidate levers: serialize heavy files against agent work, or shard the matrix.
+
+### Deferred from M4a
+
+- Preview (the root agent starts the app from integration on request): 1.1 (OR-Q15).
+- Flow series: not recorded (LR-c); M4b derives any series from `events.jsonl` in M4a arcs' refs.
+- Issue mode outbound projection: 1.1.
+- The Codex judgment profile and cgroup containment stay out (LR-a).
 
 ## Convergence and integrity (unscheduled, wanted)
 
@@ -98,10 +124,25 @@ None.
 
 ## Watch (act only on the trigger)
 
-- **An unanswered non-blocking request holds its generation open.** A checkpoint bundle request nobody answers keeps
-  that generation non-quiescent, so an otherwise finished arc stays `running` on a visible open item (declined or
-  applied requests settle it). Trigger: an arc idling on an unanswered request; then surface it as `blocked` with the
-  item named, or escalate the last obstacle to blocking.
+- **`nextStart` reads K at the chain head's baseline** (paid run 12 fix): a K the owner commits after that baseline is
+  seen only by the next start itself (the live file at `start`), not by `chain status`. Trigger: a session stopping
+  `k-limit` while the owner's newer committed K would allow the start.
+- **No check criterion grades check-in shape on paid runs** (paid run 12: "waiting for your answers" with no questions).
+  The fake story asserts it; a paid run only shows it as a nudge turn. Trigger: a paid run with a nudge after a check-in.
+
+- **A lens that answers invalid abandons its audit, retried only after `wallClockMin`** (run 10 round 2, R-16 review):
+  `runAudit` asks the remaining lenses, ends `abandoned`, and the cadence's `retry` waits the period (default 360 min),
+  a final audit included, then asks every owed lens again, those that reported on the same (head, vision, obligations)
+  included. Not seen in run 10 (every audit completed). Trigger: an `abandoned` audit in a paid run; then retry the
+  invalid lens once with its reasons inside the audit, and drop from a retry the lenses whose key is unchanged.
+- **The checkpoint capture wait bound** (`CAPTURE_WAIT_MAX_MIN`, 15 min, R-15) is a guess from run 10's gate-to-ff of
+  about 1 min. Trigger: a paid run where a checkpoint waited the full bound, or captured stale with the bound spent.
+
+- **gpt-5.6-sol is not available on a ChatGPT Codex account** (400 `invalid_request_error`, 2026-10-06). No class binds
+  it; a repo rebind to sol would fail at the preflight smoke. Trigger: a routing that seats sol, or the account
+  changing; then probe sol again or drop it from `CODEX_MODELS`.
+- **`log.test` "10x the lines costs under 15x the CPU"** fails under heavy host load (seen once in a full run with
+  agents active; passes alone). Trigger: a failure on a calm host.
 
 - **Backend parks do not escalate at 6 h.** A retryable `backend-park` (`capacity`, `outage`) is probed with the
   same backoff as a unit park, but only unit parks and residues raise `park-escalated`. Trigger: an outage that
@@ -121,18 +162,19 @@ None.
   `low` is the cheaper step if verification holds. Sonnet has no judgment prompt; write one only if a route wants
   a cheap judge.
 - `apply`: `.roadmap/config.json` is read at `start` only, so a
-  class rebind needs a restart (and a dry run reads it fresh, so the two can disagree); a build's decisions are
+  class rebind or (M4a) a new chain K needs a restart, acceptable between arcs (and a dry run reads it fresh, so the two can disagree); a build's decisions are
   not appended while a revision of its spec is pending; a suite change is refused while any unit is active past a
   candidate attempt. Trigger: any of these blocking or misleading a real arc.
-- Upgrade test variants not yet covered: the previous release crashing mid-op, a backend parked on a usage
-  limit across the update, the Claude-only profile, a lane launched by the previous release. Trigger: a record
-  change that touches one of them. Also a unit parked by the previous release with a `resume <unit>` queued
-  after a rev + 1 edit: the M1 driver stops the arc on the park before the queued resume applies, so
-  `apply.upgrade-queued-resume` covers it in process. Trigger: a driver mode that waits on parks.
-- An arc 1.0.0-dev.3 started is baselined from its files without the dispatched spec bytes (never kept): a changed
-  spec at the recorded rev is taken as `evidence` and one at rev + 1 as a revision, with scope and resources
-  unchecked; a log whose last re-pin set a re-opened unit back to its first rev records a spurious pending revision,
-  so that unit re-opens once more. Trigger: either seen on a real upgraded arc.
+- Upgrade test variants not yet covered: a backend parked on a usage limit across the update, the Claude-only
+  profile, a lane launched by the previous release, a unit parked by the previous release with a `resume <unit>`
+  queued after a rev + 1 edit (the M1 driver stops the arc on the park before the queued resume applies). Trigger: a
+  record change that touches one of them, or a driver mode that waits on parks.
+- Rule ids can run out of order inside a rules block (ids are global; topical order is allowed), M4a paid run 6.
+  Cosmetic. Trigger: a real corpus session shows it hurting readability.
+- Code shipped by checkpoint-admitted repair units sits outside `deliveredBy` accounting (M4a paid run 6). Trigger:
+  a real corpus session shows a repair unit delivering a rule no obligation credits.
+- A witness can pass whichever side of the distinction its obligation draws (M4a paid run 6: one obligation's
+  witness could not fail on it); proof judgment did not catch it. Trigger: a real corpus session shows it.
 - A `sweep` whose teardown fails leaves the instance cleaning under the sweep with its residue undisposed. That
   residue is not a probe target (only cleanup-failed or retry-held ones are), so the arc stays `blocked` short of
   `complete` until another sweep cleans it, with no escalation item. Trigger: a sweep failing on a real arc; the
@@ -162,46 +204,49 @@ None.
   `go` lane and the literal partial bundle. Each has a fake integrated test in `npm test`. Trigger: the first real
   arc to take one; read its log against the fake test.
 
+- **Partial revalidation of a stale-spec bundle** (F09): revalidate only the ops a patch delta touches. Trigger: stale
+  rejections > 2 per paid run.
+- **External-state identity for estate-lane reuse across SHAs** (Q13 remainder: toolchain versions, image digests,
+  service state). Trigger: estate lane time > 20% of a real arc's wall clock.
+- **Shared execution for non-identical but equivalent suite and witness lanes** (F13 remainder). Trigger: duplicate
+  execution > 10% of candidate lane time in a paid run.
+- **Debt and finding provenance** (F23): branch, head and time; historical vs current; effective vs declared
+  activation. Trigger: a real-arc drift finding on generated records.
+- **Stable defect lineage across audits and lenses** beyond equal causes (F24 remainder; within one audit, equal causes
+  merge). Trigger: the run-10 analysis shows ≥3 same-defect findings across audits.
+- **Deterministic safety fixtures for the plan-check shape** (understated risk, infeasible specs) beyond unit tests
+  (Q27 remainder). Trigger: `by-builder` reverted after run 10, or a missed-risk term fires.
+
 ## Scaffolding to delete
 
-- `completeArc`'s branch for an arc with no `plan-applied` (started before 1.0.0-dev.3: it completes without
-  `arc-completed`, src/schedule/scheduler.ts), with the 1.0.0-dev.3 plan-revision scaffolding below.
-- The 1.0.0-dev.5 → M3 defaults in `src/core/upgrade.ts`, each with its callers' branch and the optional field it
-  reads, once no arc started on 1.0.0-dev.5 is in flight:
-  - `revisionSourceOf`: a `plan-applied` without `source`.
-  - `transientRulesOf` and the `dev5` rules it selects in src/git/transient.ts (`ROADMAP_ALLOWLIST`, no scope check).
-  - `applyInputsOf` and the `PlanManifest` arm of `ApplyManifest` (the legacy apply manifest, G15).
-  - `rulingsFromLiveFile`: a revision without `rulingsSha256` reads the live ledger (src/pipeline/stages.ts,
-    src/input/inforce.ts).
-  - `routingProvenanceOf`'s rebuild of a dev.5 revision's routing (H7).
-  - `judgmentFingerprintDefault`: a gate's `judgment-inputs` without `fingerprint` (src/pipeline/gate.ts).
-  - `planCheckVisionConflict`: a plan-check answer without `visionConflict`.
-- The 1.0.0-dev.5 → M3 reads outside `src/core/upgrade.ts`, with them: the routing-provenance adoption
-  (`adoptLegacyProvenance`, `readLegacyProvenance`, `routing-provenance/<rev>.json` in src/git/snapshot.ts; its
-  run in `runChecks`; `adoptedProvenance` in src/executor.ts; status's read of it); `sched.json`'s absent `jobQueue`
-  read as empty (`schedFile`, src/schedule/scheduler.ts); `rule`'s ledger preimage for a dev.5 previous revision
-  (`keepLegacyPreimage`, `legacyPreimage`, `commands/rule-preimages/`, src/commands/rule.ts). A dev.5 snapshot
-  manifest (no `namedBy`, verified by allowlist: `legacyAllowlisted`, `warnLegacy`) is read while a ref it
-  wrote may still be verified (`gc`, recovery): delete once no `refs/roadmap/<arc>` last written by 1.0.0-dev.5 is left.
+- Holistic `architecture-doc` arcs (adopted dev.6 arcs only; a fresh one is refused, D0). With them go the
+  `architecture-doc` arm of the holistic code paths and the M3 fixtures that put such a plan in force as revision 1
+  by `recordPlan` (adopted-arc coverage, lead ruling LR-D0b): `brake-common` (`holisticArc`), `audit-common`,
+  `checkpoint-common`, `repair-common`, `batch-common` and their tests (audit, baseline, batch, brake, checkpoint,
+  repair, scheduler-m3, publish, gate, revision, snapshot, status-m3, startup-checks). Migrate those tests to corpus
+  arcs (`test/fixtures/corpus-target.ts`) when deleting, once no dev.6 arc is in flight.
 
-- The 1.0.0-dev.4 → M2 defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.4 (or a dev.3 arc
-  baselined after dispatch) is in flight: `legacyParkRecord` (a park without `park`) and its call in the fold's
-  stage-outcome case; `rerouteAsUnpark` and the `rerouted` fact kind (reader, fold case, `Fact` member);
-  `judgmentInputsDefault` (a judgment attempt without `judgment-inputs`, src/pipeline/gate.ts);
-  `isLegacy`, `legacyNext` and `legacySettled`, with the legacy branches of readiness and resources; the
-  cause-less-hold release in the fold's `resumed{backend}` (`#releaseBackendHolds(..., legacy)`); and the
-  `scheduling` field's absent case (every arc then writes `dag`).
+- The 1.0.0-dev.6 → M4a defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.6 is in flight:
+  - `censusOf`: an obligations file without a census (docRef obligations; census checks vacuous).
+  - `checkpointOutputM4Default`: a checkpoint answer without `corpusAmendments` or `issueIntake`.
+  - `splitChildRuleDefault`: a split child without `rule`.
+  - `legacyIdOrder` and `idsAscending`'s `legacyStringOrder` option (with `sortedBy`'s `legacyKey`): a numbered-id list in
+    pre-dev.7 string order. Also needs every arc started on feat/m4a-convergence before the fix finished, and the
+    repo-authored vision, obligations, ruling and Phase-0 files re-sorted (a string-ordered one is refused once it goes).
+    With it goes the dev.7 sentence in `canonicalFingerprint`'s comment (src/pipeline/gate.ts); the set comparison stays.
+  - `DEV6_CLASS_CATALOGUE` (K2, step A2) and status's `dev6RevAlias` (K12, step A2), which joins a dev.6 meter row's
+    recorded `routingRev` through it.
+  - M4a rev 3 (step N0): `HOST_SIGNATURES_DEV6` and the classification of unstamped (no `redRev`) lane and journey runs
+    by it; `mutantSubjectDefault` and the dev.6 `finding` arms of the mutant spawn subject and `mutant.apply`
+    (`Dev6MutantSubject`, `MutantApplyExpect`); `buildExperimentsDefault` (a build answer without `experiments`);
+    `minimalLaneRev` and `laneRevMatches`'s minimal-form arm; `bundleClassesOf`'s `unclassified` reading (with the
+    `architecture-doc` variant below); `dev6SmokeBounds` and `BoundsRecord`'s optional smoke bounds;
+    `admitTargetsDefault` (a checkpoint admit op recorded without `targets`, before LR-m: read as none);
+    `admitSpecTextDefault` (run 10: a checkpoint admit op whose `spec` is JSON text, read as written).
+  - With them, the holistic `architecture-doc` variant and the `docRef` obligation arm in holistic arcs: anchor checks
+    at the tip, `contractRevs` carrying the architecture doc, an `apply` adding `holistic` to an `architecture-doc` arc.
+    Lasting, not scaffolding: the `architecture-doc` variant of a non-holistic arc, `target-kind-changed`, a fingerprint
+    without `corpus`, and a sidecar's doc-ref arm for contract docRefs.
 - Interim M2 shim: `outcomeFact` writing no `park` for a retryable row whose stage names no targets (step 7a,
-  src/pipeline/transitions.ts).
-
-- `src/core/upgrade.ts` 1.0.0-dev.1 defaults (launch.json `stallMs`, the lane deadline `laneRecord` derives a
-  start from) and the `stallMs === null` branch in `laneRecord`: once no arc started on 1.0.0-dev.1 is in flight.
-- The 1.0.0-dev.3 plan-revision scaffolding, once no arc started on 1.0.0-dev.3 is in flight: in
-  `src/core/upgrade.ts` `warnPlanFromFile`, `specBytesFromLiveFile`, `repinNamesSpec`, `earlierReleaseBaseline` and
-  `unkeptSpecReason`; their callers' branches (the fold's re-pin rule in `src/core/state.ts`, the no-plan-yet branch
-  of `settlePlan` in `src/preflight/checks.ts` back to recording the files with no changes, the unkept-spec refusal in
-  `src/input/classify.ts`, the live-file fallback of `specBytesOf` in `src/input/inforce.ts`, the file-plan branch of
-  `status`); and `JournalView.unitsWithState` if nothing else reads it by then.
-- `commandCancelled` in `src/core/upgrade.ts` (a cancelled lane's `process-fault` result.json read as
-  `cancelled{reason}`), its call in `runnerFiles().read` and the kept-bytes branch of `writeResult`
-  (`src/backends/adapter.ts`): once no arc started on 1.0.0-dev.3 is in flight.
+  src/pipeline/transitions.ts), and the fold's reading of such a fact as an operator park (`unclassedParkRecord`,
+  src/core/state.ts). A behaviour shim, not a release layer (kept by M4a step X0).
