@@ -5,10 +5,10 @@
 // The session (plan "Driver"). Real: `claude -p --model claude-opus-5-5 --effort high --plugin-dir <staged plugin>
 // --permission-mode bypassPermissions --strict-mcp-config --settings {"autoMemoryEnabled":false} --output-format
 // stream-json --verbose` (bypass kept: the skill needs Bash; LR-f), resumed by `--resume <session>` turn after turn;
-// hard timeout 360 min. Paid M4a run 1: without the last two the session saw the owner's claude.ai connectors and wrote
-// an auto-memory note into the owner's Claude project dir for the fixture cwd; a turn whose init event still names an
-// MCP server or a memory path is killed and fails the session (`isolation`). The turn cap equals the session cap (paid
-// run 9 died to a 120-minute turn cap in the middle of in-turn supervision); a turn killed at its cap ends the run
+// hard timeout 420 min (M4b: 360 plus plant S's serial suite runs, about 6 minutes each, and the proofs). Paid M4a
+// run 1: without the last two the session saw the owner's claude.ai connectors and wrote an auto-memory note into the
+// owner's Claude project dir for the fixture cwd; a turn whose init event still names an MCP server or a memory path
+// is killed and fails the session (`isolation`). The turn cap equals the session cap (paid run 9 died to a 120-minute turn cap in the middle of in-turn supervision); a turn killed at its cap ends the run
 // `turn-timeout`, never `session-failed`. Fake: the scripted root agent (fake-root.ts, one process per turn, the same
 // stream-json) against the fake backends; hard timeout 30 min. After each turn:
 //   - a final text with the skill's session-end line `ROADMAP-SESSION: stopped <reason>` ends the session (reason in
@@ -59,6 +59,12 @@
 //
 // Fake runs add two devices (story only): once the second arc holds the host, the forge flips to PUBLIC + ALL and arc
 // 2's pack review is released from its barrier (scenario.ts), so a checkpoint capture meets an untrusted policy.
+//
+// Fail-fast (M4b, plan "Fixture … the two plants"): plant S is in play only when arc 1's first plan in force has a suite
+// lane whose argv carries `--test-concurrency=1` and `test/unit/*.test.js` as elements (`plantLaneOf`; an `npm test` or a
+// `sh -c` lane cannot be edited in place, RC-4). The driver checks it from the live run dirs every owner poll and after
+// every turn; once arc 1 has a plan in force without it, it kills the turn and ends the run `fail-fast` (the run would
+// cost hours and grade nothing of M4b). The owner simulator declines dropping the soak test (plant G) from the key.
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
@@ -72,6 +78,9 @@ import { parseBriefPayload, type BriefPayload } from '../../src/phase0/types.ts'
 import { type Event } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
+import type { LaneDef } from '../../src/core/records.ts';
+import { PLAN_INPUT, keptInput } from '../../src/input/inforce.ts';
+import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
 import { ActionableFilter, HEARTBEAT_MIN } from '../../src/watch.ts';
 import { absPath, type AbsPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
@@ -81,7 +90,7 @@ import { readStore, writeStore } from '../../test/fakes/gh-store.ts';
 import { writeShims } from '../../test/fakes/shim.ts';
 import { type FakeScript, arcShims, fakeHostDir, fakeScript } from './fake-root.ts';
 import { CORPUS_ROOT } from './golden.ts';
-import { type Layout, SESSION_END, STOP_REASONS, type StopReason, layout } from './layout.ts';
+import { type Layout, PLANT, SESSION_END, STOP_REASONS, type StopReason, layout } from './layout.ts';
 import { POLICY_FLIP_BARRIER, arcSteps } from './scenario.ts';
 import { json } from './setup.ts';
 import { ANSWER_KEY, exportCosts, needles, repositoryPaths, scanTranscript } from './transcript.ts';
@@ -94,7 +103,7 @@ const STAGE_CLI = fileURLToPath(new URL('./stage-cli.ts', import.meta.url));
 /** The turn cap is the session cap: a turn may use all the session's time (A1). */
 export type Limits = Readonly<{ sessionMs: number; turnMs: number }>;
 export const LIMITS: Readonly<{ real: Limits; fake: Limits }> = {
-  real: { sessionMs: 360 * 60_000, turnMs: 360 * 60_000 },
+  real: { sessionMs: 420 * 60_000, turnMs: 420 * 60_000 },
   fake: { sessionMs: 30 * 60_000, turnMs: 30 * 60_000 },
 };
 const WAKE_DEBOUNCE_MS = 3_000;
@@ -383,8 +392,11 @@ export type Devices = {
   policyFix: { at: string } | null;
 };
 
-/** `timeout`: the session cap passed between turns; `turn-timeout`: a turn was killed at its cap (never `session-failed`). */
-export type EndedBy = 'stopped' | 'timeout' | 'turn-timeout' | 'stalled' | 'session-failed';
+/**
+ * `timeout`: the session cap passed between turns; `turn-timeout`: a turn was killed at its cap (never `session-failed`);
+ * `fail-fast`: arc 1's first plan in force has no plant lane (M4b), so the turn was killed.
+ */
+export type EndedBy = 'stopped' | 'timeout' | 'turn-timeout' | 'stalled' | 'session-failed' | 'fail-fast';
 
 /** An arc of this product that held the host when the session ended: stopped by the driver, and whether the claim cleared. */
 export type Released = Readonly<{ arc: string; stopped: boolean; detail: string }>;
@@ -434,9 +446,10 @@ export const initialPrompt = (profile: ProfileName): string => [
 
 /**
  * One turn: launch or resume, stream events into the transcript, return the final text and session id, or the
- * isolation breach its init event shows (an MCP server or a memory path), on which the turn is killed.
+ * isolation breach its init event shows (an MCP server or a memory path), on which the turn is killed. `abort` kills it
+ * too (the fail-fast).
  */
-async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number): Promise<{ session: string | null; result: string | null; exit: number | null; isolation: string | null; timedOut: boolean }> {
+async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number, abort: AbortSignal): Promise<{ session: string | null; result: string | null; exit: number | null; isolation: string | null; timedOut: boolean }> {
   const argv = mode.kind === 'real'
     ? ['claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--plugin-dir', l.plugin, '--permission-mode', 'bypassPermissions', ...CLAUDE_ISOLATION, '--output-format', 'stream-json', '--verbose', ...(session === null ? [] : ['--resume', session]), prompt]] as const
     : [process.execPath, [FAKE_ROOT, '--fixture', l.dir, '--script', mode.script, ...(session === null ? [] : ['--resume', session]), '--', prompt]] as const;
@@ -479,8 +492,11 @@ async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, strin
     timedOut = true;
     child.kill('SIGTERM');
   }, Math.max(0, deadline - Date.now()));
+  const onAbort = (): void => void child.kill('SIGTERM');
+  abort.addEventListener('abort', onAbort, { once: true });
   const exit = await new Promise<number | null>((done) => child.on('close', (code) => done(code)));
   clearTimeout(timer);
+  abort.removeEventListener('abort', onAbort);
   await Promise.all(writes);
   if (exit !== 0) writeFileSync(join(l.dir, `turn-${n}.stderr`), stderr);
   return { session: sid, result, exit, isolation, timedOut };
@@ -572,17 +588,54 @@ function scramble(l: Layout): readonly string[] {
   return paths.map((p) => relative(l.product, p)).sort();
 }
 
-/** Fake runs: the per-arc backend scenarios and shims. */
-export function prepareFake(l: Layout): void {
+/** Fake runs: the per-arc backend scenarios of `script` and their shims. */
+export function prepareFake(l: Layout, script: FakeScript): void {
   for (const n of [1, 2] as const) {
     const dir = join(l.fake, `arc-${n}`);
     mkdirSync(dir, { recursive: true });
     const scenario = join(dir, 'scenario.json');
-    writeFileSync(scenario, json({ steps: arcSteps(n, 'default') }), { flag: 'wx' });
+    writeFileSync(scenario, json({ steps: arcSteps(n, 'default', script) }), { flag: 'wx' });
     writeShims(arcShims(l.dir, n), scenario);
   }
   mkdirSync(fakeHostDir(l.dir), { recursive: true });
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The fail-fast (M4b plant S)
+
+/**
+ * Plant S's suite lane of `plan`: the first suite lane whose argv holds `--test-concurrency=1` and `test/unit/*.test.js`
+ * as elements of their own (the shape a flow lever edits in place, RC-4); null when there is none.
+ */
+export function plantLaneOf(plan: PlanM1): LaneDef | null {
+  return plan.suite.lanes.find((x) => x.argv.includes(PLANT.serial) && x.argv.includes(PLANT.selector)) ?? null;
+}
+
+/** The plant's state: arc 1 has no plan in force yet; its first plan carries the plant lane; or it does not (fail fast). */
+export type PlantCheck =
+  | Readonly<{ kind: 'pending' }>
+  | Readonly<{ kind: 'in-play'; arc: string; lane: string }>
+  | Readonly<{ kind: 'absent'; arc: string; lanes: readonly Readonly<{ id: string; argv: readonly string[] }>[] }>;
+
+/** Arc 1's first plan in force (the unchained arc's first `plan-applied`, kept in its run dir) against `plantLaneOf`. */
+export function plantCheck(product: AbsPath): PlantCheck {
+  for (const a of runDirs(product)) {
+    if (!existsSync(join(a.dir, 'events.jsonl'))) continue;
+    const first = readJournal(a.dir, arcId(a.arc)).events.find((e) => e.type === 'fact' && e.fact.kind === 'plan-applied');
+    if (first === undefined || first.type !== 'fact' || first.fact.kind !== 'plan-applied') continue;
+    const bytes = keptInput(a.dir, first.fact.planSha256, PLAN_INPUT);
+    if (bytes === null) throw new Error(`${a.arc}: its first plan-applied names ${first.fact.planSha256}.${PLAN_INPUT}, which its run dir does not keep`);
+    const plan = parsePlan(JSON.parse(bytes.toString('utf8')));
+    if (plan.chain !== undefined) continue;
+    const lane = plantLaneOf(plan);
+    return lane === null ? { kind: 'absent', arc: a.arc, lanes: plan.suite.lanes.map((x) => ({ id: x.id, argv: x.argv })) } : { kind: 'in-play', arc: a.arc, lane: lane.id };
+  }
+  return { kind: 'pending' };
+}
+
+/** The fail-fast's failure text. */
+export const plantAbsent = (c: Extract<PlantCheck, { kind: 'absent' }>): string =>
+  `fail-fast: arc ${c.arc}'s first plan in force has no suite lane whose argv carries ${PLANT.serial} over ${PLANT.selector} (suite lanes ${JSON.stringify(c.lanes)}): plant S is not in play`;
 
 // ---------------------------------------------------------------------------------------------------
 // The end of the run: release the host, then the forensics
@@ -661,7 +714,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
     if (held !== null) throw new Error(`the host is held by arc ${held.arc} of ${held.repo}: stop it (roadmap stop --repo ... --arc ...) before a run`);
   }
   stagePlugin(l);
-  if (mode.kind === 'fake') prepareFake(l);
+  if (mode.kind === 'fake') prepareFake(l, mode.script);
   const env = launchEnv(l, process.env);
   const startedAt = new Date();
   const limits = options.limits ?? (mode.kind === 'real' ? LIMITS.real : LIMITS.fake);
@@ -692,23 +745,39 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
   let released: readonly Released[] = [];
   const sessionEnd = new Map<string, number>();
   const product = absPath(l.product);
+  // The fail-fast (M4b plant S): checked until arc 1's first plan in force is known, then never again.
+  const plant: { now: PlantCheck } = { now: { kind: 'pending' } };
+  const checkPlant = (): void => {
+    if (plant.now.kind === 'pending') plant.now = plantCheck(product);
+  };
   try {
     for (let n = 1; Date.now() < deadline; n++) {
       const t0 = Date.now();
-      // The owner answers from the brief while the turn runs (one poll at a time, none queued; a failure fails the session after the turn).
+      const abort = new AbortController();
+      // The owner answers from the brief while the turn runs (one poll at a time, none queued; a failure fails the session
+      // after the turn); each poll also runs the fail-fast, which kills the turn when the plant is absent.
       let polling: Promise<void> = Promise.resolve();
       let pollFailure: unknown = null;
       let inFlight = false;
       const poller = setInterval(() => {
         if (inFlight || pollFailure !== null) return;
         inFlight = true;
-        polling = answerFromBrief(ownerCtx, memory, owner, n).catch((error: unknown) => void (pollFailure = error)).finally(() => void (inFlight = false));
+        polling = answerFromBrief(ownerCtx, memory, owner, n).then(() => {
+          checkPlant();
+          if (plant.now.kind === 'absent') abort.abort();
+        }).catch((error: unknown) => void (pollFailure = error)).finally(() => void (inFlight = false));
       }, ANSWER_POLL_MS[mode.kind]);
-      const r = await runTurn(l, mode, env, n, session, prompt, Math.min(deadline, t0 + limits.turnMs)).finally(() => clearInterval(poller));
+      const r = await runTurn(l, mode, env, n, session, prompt, Math.min(deadline, t0 + limits.turnMs), abort.signal).finally(() => clearInterval(poller));
       await polling;
       turns.push({ n, kind, prompt, session: r.session, result: r.result, exit: r.exit, ms: Date.now() - t0 });
       if (pollFailure !== null) throw pollFailure;
       session = r.session;
+      checkPlant();
+      if (plant.now.kind === 'absent') {
+        endedBy = 'fail-fast';
+        failure = plantAbsent(plant.now);
+        break;
+      }
       if (r.isolation !== null) {
         endedBy = 'session-failed';
         failure = r.isolation;

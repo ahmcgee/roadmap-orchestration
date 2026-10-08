@@ -23,6 +23,22 @@ export const FORGE_REPO = { host: 'forge.test', owner: 'harbour-office', name: '
 export const INJECTION_MARKER = 'INJ-7Q-TIDE';
 export const INJECTION_LABEL = 'injected';
 export const MAIN = 'main';
+
+/**
+ * M4b's two plants (plan "Fixture … the two plants"), named once for setup, the golden outputs, the driver and check.
+ * S: the product's suite gate is `node --test --test-concurrency=1 'test/unit/*.test.js'` over six replay files of about
+ * a minute each, serial for a reason the corpus shows is stale (every file makes its own temp dir). G: one of them is
+ * the soak run, which guards the ledger (V-2) and witnesses an obligation; trusted issue #4 asks to drop it.
+ */
+export const PLANT = {
+  selector: 'test/unit/*.test.js',
+  serial: '--test-concurrency=1',
+  soakFile: 'test/unit/soak.test.js',
+  soakTest: 'the ledger survives a season of bookings and cancellations',
+  soakIssue: 'issue-4',
+} as const;
+/** The suite lane argv the corpus's suite-gate rule states (plant S), as a golden plan writes it. */
+export const SEED_SUITE_ARGV: readonly string[] = ['node', '--test', PLANT.serial, PLANT.selector];
 export const SESSION_END = /^ROADMAP-SESSION: stopped (\S+)\s*$/m;
 /** The skill's closed set of stop reasons (skills/orchestrate/SKILL.md "Chaining"). */
 export const STOP_REASONS = ['k-limit', 'vision-silent', 'owner'] as const;

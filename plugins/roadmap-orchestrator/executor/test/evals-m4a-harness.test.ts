@@ -32,7 +32,7 @@ const T = { timeout: 10 * 60_000 };
 
 test('evals-m4a.turn-cap-equals-session: a turn may use the whole session, real and fake; the prompt allows in-turn supervision and fixes the profile', () => {
   for (const mode of ['real', 'fake'] as const) assert.equal(LIMITS[mode].turnMs, LIMITS[mode].sessionMs, `${mode}: the turn cap is the session cap`);
-  assert.equal(LIMITS.real.sessionMs, 360 * 60_000);
+  assert.equal(LIMITS.real.sessionMs, 420 * 60_000);
   const prompt = initialPrompt('claude-only');
   assert.match(prompt, /you may wait on `roadmap watch --actionable`\s+under Monitor or end your turn; both are supported/);
   assert.match(prompt, /Start every arc with `--profile claude-only`; never change it\./);

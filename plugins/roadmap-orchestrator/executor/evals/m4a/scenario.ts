@@ -22,13 +22,27 @@
 //           converted into an amendment); the bundle's drift audit-2 and ckpt-2 run while the run-only limit still holds
 //           every unit; then notice builds (the root agent pauses it in its hung `slow` lane and resumes it), audit-3
 //           and ckpt-3, fits builds after notice, audit-4 (cadence and final) and ckpt-4.
+//
+// M4b (the flow loop; `story` only, so `vision-silent` is unchanged): every checkpoint also takes in issue #4 (drop the
+// soak test: none, T-16). Arc 1 adds `quay-list`, `free-berths`, `window-note` and `berth-depth` after confirm, and two
+// flow runs the root agent requests while run-only holds every unit after quay-list (the second the cooldown's one bypass,
+// RC-5; three suite runs before the change, confirm's smoke fix round among them, outside the rework guard's window):
+// flow-1 proposes the
+// bait, the witness-lane fake `replay` at `--test-concurrency=6` (accepted; its proof is `changed`); flow-2 the plant lane
+// `suite` at six files a time (accepted; proof `preserved`, applied, then free-berths, window-note and berth-depth are
+// its verdict window's three suite runs; the publications owe audit-3, ckpt-3, audit-4 and ckpt-4). Arc 2 carries arc 1's suite lanes; the
+// root agent requests one flow run right after the start (flow-1: a build-class step it rejects on its item's wake), so
+// its cooldown covers the arc. The flow calls are judgment steps keyed by job id (`flow-<n>`), each answer checked by the frozen reader (FLOW_SCHEMA).
 import type { JsonValue } from '../../src/core/json.ts';
 import { ASSESSED_DIRECTIVE } from '../../src/prompts/directives.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
+import { validateFlowOutput } from '../../src/prompts/schemas.ts';
 import { admitSpecWire, checkpointAnswer, checkpointStep, intakeOutcome, lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
 import type { ClaudeAct, Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
-import { FILES, LANES, OPPORTUNITY, filesOf, specOf } from './golden.ts';
+import { FILES, LANES, OPPORTUNITY, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
+import type { FakeScript } from './fake-root.ts';
+import { PLANT } from './layout.ts';
 import { join } from 'node:path';
 
 /** The barrier arc 2's pack review waits at until the driver flipped the forge's policy. */
@@ -52,7 +66,7 @@ const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({
 export const GATE_NOTE = 'The confirmation text signs off as "Tidewater" where the harbour\'s own name would read better to a skipper.';
 /** The lens P3 ckpt-1 defers: banked as `finding-deferred` debt, which arc 2 promotes to `notice`. */
 export const DEFERRED_CLAIM = '`cancel` leaves the skipper nothing to keep: unlike a booking, a cancellation sends no text.';
-/** ckpt-1's proposed amendment (source checkpoint), applied in arc 2 as T-16. */
+/** ckpt-1's proposed amendment (source checkpoint), applied in arc 2 as T-18. */
 export const CHECKPOINT_AMENDMENT = { rules: ['T-11'], proposal: 'Add a rule: a cancellation is confirmed to the skipper by text message, as a booking is.', why: 'V-5 asks that a cancellation be as clear to the skipper as a booking; only bookings are confirmed today.' } as const;
 /** ckpt-1's intake amendment of issue #2 (source issue), deferred in arc 2. */
 export const ISSUE_AMENDMENT = { rules: ['T-5'], proposal: 'Windows list the high-water height from the printed table beside each time.' } as const;
@@ -73,6 +87,14 @@ const M1_UNITS_1: Readonly<Record<string, readonly M1Step[]>> = {
     },
     gate('A1 and A2 hold.'),
   ],
+};
+
+/** Story only (golden.ts `storyOnly`): arc 1's units admitted after the flow revision. */
+const M1_STORY_1: Readonly<Record<string, readonly M1Step[]>> = {
+  'quay-list': [planCheck('The spec adds the quay sheet line; one new module.'), build('quay-list: the quay sheet line of a booking', 'quay-list'), gate('A1 holds.')],
+  'free-berths': [planCheck('The spec lists the berths free for a window; one new module over the ledger.'), build('free-berths: the berths free for a window', 'free-berths'), gate('A1 holds.')],
+  'window-note': [planCheck('The spec adds the one-line note of a window; one new module.'), build('window-note: the one-line note of a tide window', 'window-note'), gate('A1 holds.')],
+  'berth-depth': [planCheck('The spec adds the depth line of a berth; one new module.'), build('berth-depth: the depth line of a berth', 'berth-depth'), gate('A1 holds.')],
 };
 
 const IMPLEMENTER = ['-p', '--permission-mode', 'bypassPermissions'];
@@ -100,14 +122,19 @@ const CONFIRM: readonly Step[] = ([
 ] satisfies Step[]).map((s): Step => ({ ...s, unit: 'confirm' }));
 
 const UNITS_2: Readonly<Record<string, readonly M1Step[]>> = {
-  cutoff: [planCheck('The spec closes cancellations 48 hours before the window opens (T-15).'), build('cutoff: cancellations close 48 hours before the window', 'cutoff'), gate('A1, A2 and A3 hold.')],
-  notice: [planCheck('The spec texts the skipper on a cancellation (T-16).'), build('notice: text the skipper when a booking is cancelled', 'notice'), gate('A1, A2 and A3 hold.')],
+  cutoff: [planCheck('The spec closes cancellations 48 hours before the window opens (T-17).'), build('cutoff: cancellations close 48 hours before the window', 'cutoff'), gate('A1, A2 and A3 hold.')],
+  notice: [planCheck('The spec texts the skipper on a cancellation (T-18).'), build('notice: text the skipper when a booking is cancelled', 'notice'), gate('A1, A2 and A3 hold.')],
   fits: [planCheck('The spec lists the berths a draught fits (V-7), within the register.'), build('fits: the berths a draught fits', 'fits'), gate('A1 holds.')],
 };
+
+/** Every checkpoint's intake of issue #4 (plant G): declined, the soak rule stands. */
+export const SOAK_DECLINED = 'The soak run stays in the suite gate (T-16): it guards the ledger, which V-2 will not give up; slow and green is it doing its job.';
+const soakIntake = { issue: PLANT.soakIssue, outcome: intakeOutcome.none(SOAK_DECLINED) };
 
 const intakeNone = (reason1: string, reason2: string) => [
   { issue: 'issue-1', outcome: intakeOutcome.none(reason1) },
   { issue: 'issue-2', outcome: intakeOutcome.none(reason2) },
+  soakIntake,
 ];
 
 const NO_OP_1 = checkpointAnswer({ decision: 'no-op', issueIntake: intakeNone('guard refuses a second booking of a berth for one window (I-1)', 'taken in at ckpt-1 as an amendment') });
@@ -129,6 +156,7 @@ const JOBS_1: readonly Step[] = [
     issueIntake: [
       { issue: 'issue-1', outcome: intakeOutcome.none('guard refuses a second booking of a berth for one window (I-1 held on the head)') },
       { issue: 'issue-2', outcome: intakeOutcome.amendment([...ISSUE_AMENDMENT.rules], ISSUE_AMENDMENT.proposal) },
+      soakIntake,
     ],
   })),
   lensStep('audit-2', 'vision'),
@@ -162,10 +190,78 @@ const JOBS_2: readonly Step[] = [
   checkpointStep('ckpt-4', NO_OP_2),
 ];
 
-/** The fake backend steps of arc `n` (1 or 2) under `profile`: the start's smoke, the units' calls, the jobs'. */
-export function arcSteps(n: 1 | 2, profile: ProfileName): readonly Step[] {
+// ---------------------------------------------------------------------------------------------------
+// The flow runs (M4b, story only)
+
+/** A flow call of job `job` (a `flow-n`) answers `answer`, checked by the frozen reader so the fake never emits what the executor could not be given. */
+function flowStep(job: string, answer: JsonValue): Step {
+  validateFlowOutput(answer);
+  return { as: 'claude', unit: job, expect: {}, acts: [{ type: 'emit', value: answer }] };
+}
+
+const SLOT = 'slot:integration';
+const suiteAction = (lane: string, argv: readonly string[], cpu: number): JsonValue => ({ lever: 'suite-lane', lane, argv: [...argv], reporter: 'node-test', cpu });
+
+/** Arc 1's flow runs in order, each a proposal the root agent decides (fake-root.ts `flowLoop`). */
+export const FLOW_1 = {
+  bait: {
+    job: 'flow-1', decision: 'accept', proof: 'changed',
+    request: 'guard, confirm and quay-list merged after most of their lead in the integration slot, the suite one file at a time; please look at the slot before the next unit is admitted.',
+    reason: 'An in-place --test-concurrency edit of the replay lane, no selector touched: accepted, the proof decides whether its tests survive it.',
+    answer: {
+      constraint: { station: SLOT, agree: false, reason: 'guard held the integration slot longest; I read the replay lane as the piece to shorten' },
+      diagnosis: 'guard\'s lead was mostly the integration slot, its suite lanes run one file at a time.',
+      proposal: {
+        target: `suite:${REPLAY_LANE.id}`, action: suiteAction(REPLAY_LANE.id, REPLAY_LANE.argv.map((a) => (a === PLANT.serial ? '--test-concurrency=6' : a)), 6),
+        rationale: 'Run the replay lane six files at a time.', risks: 'A replay check that depends on order may not survive.',
+      },
+      noAction: null,
+    },
+  },
+  shard: {
+    job: 'flow-2', decision: 'accept', proof: 'preserved',
+    request: `The replay lane change was refused by its proof (changed); the serial suite:${SUITE_LANE} is still what held guard in the slot.`,
+    reason: 'The serial flag is stale: every test file makes its own temp dir (0050_Architecture.md, Testing), so the shared-ledger reason is gone; the proof shows the same tests either way.',
+    answer: {
+      constraint: { station: SLOT, agree: true, reason: `the slot is the constraint and suite:${SUITE_LANE}, the serial suite gate, is most of it` },
+      diagnosis: `suite:${SUITE_LANE} runs six replay files of about a minute one at a time; each makes its own temp dir, so they can run side by side.`,
+      proposal: {
+        target: `suite:${SUITE_LANE}`, action: suiteAction(SUITE_LANE, SHARD.argv, SHARD.cpu),
+        rationale: 'Six files at a time in place of one: the same tests, about a sixth of the wall time.', risks: 'Tests that shared state would race; none do since the temp-dir change.',
+      },
+      noAction: null,
+    },
+  },
+} as const;
+
+/**
+ * Arc 2's one flow run, requested right after the start (its cooldown covers the arc, so no constraint-shift run is left
+ * to the merges' timing): a build-class step, which the root agent rejects on the item's wake (fake-root.ts).
+ */
+export const FLOW_2 = {
+  buildClass: {
+    job: 'flow-1', decision: 'reject', proof: null,
+    request: `Arc 1's change to suite:${SUITE_LANE} is carried into this plan; please look at the slot before the first merge.`,
+    reason: 'Arc 1\'s lead went to the serial suite in the slot, not to builds, and the suite is sharded now: a dearer builder buys nothing here.',
+    answer: {
+      constraint: { station: SLOT, agree: false, reason: 'nothing merged yet; red candidates held arc 1\'s slot, fewer of them shortens it' },
+      diagnosis: 'guard took two builds in arc 1 before its lanes went green.',
+      proposal: { target: SLOT, action: { lever: 'build-class', tier: 'low', class: 'frontier' }, rationale: 'One class up for low-risk builds.', risks: 'Cost per merge rises.' },
+      noAction: null,
+    },
+  },
+} as const;
+
+/** The fake backend steps of arc `n` (1 or 2) under `profile` for `script`: the start's smoke, the units' calls, the jobs'. */
+export function arcSteps(n: 1 | 2, profile: ProfileName, script: FakeScript): readonly Step[] {
   const smoke = fakeSteps({ steps: [] }, profile);
   const m1 = (units: Readonly<Record<string, readonly M1Step[]>>): readonly Step[] =>
     Object.entries(units).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
-  return n === 1 ? [...smoke, ...m1(M1_UNITS_1), ...CONFIRM, ...JOBS_1] : [...smoke, ...m1(UNITS_2), ...JOBS_2];
+  const story = script === 'story';
+  if (n === 2) return [...smoke, ...m1(UNITS_2), ...JOBS_2, ...(story ? [flowStep(FLOW_2.buildClass.job, FLOW_2.buildClass.answer)] : [])];
+  const flow = Object.values(FLOW_1).map((f) => flowStep(f.job, f.answer));
+  // The story's four extra publications owe two more cadence audits (audit-3 on free-berths' head, audit-4 on
+  // berth-depth's, the final one), each with its checkpoint.
+  const extraJobs = [lensStep('audit-3', 'vision'), checkpointStep('ckpt-3', NO_OP_1), lensStep('audit-4', 'vision'), checkpointStep('ckpt-4', NO_OP_1)];
+  return [...smoke, ...m1(M1_UNITS_1), ...(story ? m1(M1_STORY_1) : []), ...CONFIRM, ...JOBS_1, ...(story ? [...flow, ...extraJobs] : [])];
 }

@@ -4,17 +4,18 @@
 //
 // The curated corpus is the raw one (files/product/docs/corpus/) under a list of exact edits per arc, each `find`
 // occurring exactly once in its file (fail loud otherwise), so the golden corpus can never drift from the raw one:
-//   arc 1  rules blocks T-1..T-14; the overview's and the tide-windows page's restatements of the tide-table claim
+//   arc 1  rules blocks T-1..T-16; the overview's and the tide-windows page's restatements of the tide-table claim
 //          go (ADR 0002 keeps its own, D1); the busy-week override goes (V-2, a corpus divergence, D3); the PortLink
 //          paragraph gives way to ADR 0004's nightly export (fact-currency, D5); the 24-hour cutoff stays as the
 //          working assumption of question P-1 (D4); confirmation by text is a future obligation (D2), calm untestable
-//          (D6), the nightly backup prod-only (D7).
-//   arc 2  the owner answered P-1 (48 hours): T-9 retired, T-15 states 48 hours; amendment arc-1/M-1 applied as T-16
+//          (D6), the nightly backup prod-only (D7); and M4b's plants, T-15 (the suite gate, exactly the serial
+//          command: plant S) and T-16 (the soak run guards the ledger, I-6: plant G).
+//   arc 2  the owner answered P-1 (48 hours): T-9 retired, T-17 states 48 hours; amendment arc-1/M-1 applied as T-18
 //          (a cancellation is confirmed by text). The between-arc commit carries exactly these corpus edits.
-//   arc 3  (story only, refused at K) the harbour master's day view, T-17.
+//   arc 3  (story only, refused at K) the harbour master's day view, T-19.
 //
-// Units: arc 1 `guard` (I-1, T-7) and `confirm` (I-2, T-11); arc 2 `cutoff` (I-4, T-15) and `notice` (I-5, T-16);
-// arc 3 `dayview` (T-17, out of slice in the story: no obligation). I-3 (T-5, the tide table) is must-hold from the
+// Units: arc 1 `guard` (I-1, T-7) and `confirm` (I-2, T-11); arc 2 `cutoff` (I-4, T-17) and `notice` (I-5, T-18);
+// arc 3 `dayview` (T-19, out of slice in the story: no obligation). I-3 (T-5, the tide table) is must-hold from the
 // start. Their fake builds are files/units/<unit>/ (guard's first, witness-missing attempt files/units/guard-first/);
 // the journeys every witness lane runs are files/golden/journeys/, committed with the bootstrap. Arc 2's checkpoint
 // admits `fits` (files/units/fits/, the opportunity, V-7) and a day view the budget converts (`OPPORTUNITY`).
@@ -25,9 +26,16 @@
 // tide-table journey as witness item W-1, a test the change never needed (a smoke survivor); `notice` declares a
 // second spec lane, `slow` (`SLOW_LANE`), that hangs on its first run so the scripted root agent can pause notice there
 // and see the resumed attempt reuse the first lane's pass.
+//
+// M4b (the flow loop): every plan's suite is the plant lane `suite` (SEED_SUITE_ARGV) and the witness-lane fake
+// `replay` (`REPLAY_LANE`, files/golden/journeys/replay.js), whose witness lines change under any concurrency but 1;
+// I-6 is witnessed by the soak run, a deliberately slow arc lane. Story only, arc 1 adds `quay-list`, `free-berths`,
+// `window-note` and `berth-depth` after confirm (`storyOnly`): three suite runs before the flow revision and three after
+// it, the least a conclusive verdict reads (MIN_VERDICT_SAMPLES on both sides).
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PLANT, SEED_SUITE_ARGV } from './layout.ts';
 
 export const FILES = fileURLToPath(new URL('./files/', import.meta.url));
 export const CORPUS_ROOT = 'docs/corpus';
@@ -137,6 +145,18 @@ export const ARC1_EDITS: readonly Edit[] = [
     find: 'copies the latest backup to a memory stick that goes home with her.\n',
     replace: `copies the latest backup to a memory stick that goes home with her.\n\n${rules("T-14: The booking ledger is backed up every night to the harbour office's network drive.")}\n`,
   },
+  // Plant S: the suite gate, exactly the serial command (the fixture's driver fails fast without a suite lane of it).
+  {
+    file: '0050_Architecture.md',
+    find: 'run exactly like that. There is no other test setup.\n',
+    replace: `run exactly like that. There is no other test setup.\n\n${rules("T-15: The suite gate is exactly `node --test --test-concurrency=1 'test/unit/*.test.js'`: a change lands only once it passes.")}\n`,
+  },
+  // Plant G: the soak run guards the ledger (V-2); I-6 is witnessed by it.
+  {
+    file: '0050_Architecture.md',
+    find: 'It stays in the suite gate, slow as\nit is.\n',
+    replace: `It stays in the suite gate, slow as\nit is.\n\n${rules('T-16: The soak run, test/unit/soak.test.js, is part of every suite gate: it guards the ledger, which keeps each booking once and a berth for one boat a window.')}\n`,
+  },
 ];
 
 /** Arc 2's corpus edits, on arc 1's curated corpus: the between-arc commit. */
@@ -149,12 +169,12 @@ export const ARC2_EDITS: readonly Edit[] = [
   {
     file: '0030_Bookings.md',
     find: 'T-9: A skipper may cancel a booking until 24 hours before its tide window opens. (working assumption, P-1)',
-    replace: 'T-15: A skipper may cancel a booking until 48 hours before its tide window opens.',
+    replace: 'T-17: A skipper may cancel a booking until 48 hours before its tide window opens.',
   },
   {
     file: '0040_Notifications.md',
     find: 'in the same style as the booking text.\n',
-    replace: `in the same style as the booking text.\n\n${rules('T-16: A cancellation is confirmed to the skipper by text message, as a booking is.')}\n`,
+    replace: `in the same style as the booking text.\n\n${rules('T-18: A cancellation is confirmed to the skipper by text message, as a booking is.')}\n`,
   },
 ];
 
@@ -163,7 +183,7 @@ export const ARC3_EDITS: readonly Edit[] = [
   {
     file: '0060_Operations.md',
     find: 'phones anyone\n   whose boat looks too deep for the berth they booked.\n',
-    replace: `phones anyone\n   whose boat looks too deep for the berth they booked.\n\n${rules("T-17: The harbour master sees the day's tide windows, every berth's booking and the day's cancellations in one view.")}\n`,
+    replace: `phones anyone\n   whose boat looks too deep for the berth they booked.\n\n${rules("T-19: The harbour master sees the day's tide windows, every berth's booking and the day's cancellations in one view.")}\n`,
   },
 ];
 
@@ -189,6 +209,8 @@ export const LANES: readonly LaneSeed[] = [
   { id: 'confirm', journey: 'journeys/confirm.journey.js', test: 'every booking is confirmed by text' },
   { id: 'cutoff', journey: 'journeys/cutoff.journey.js', test: 'a booking cannot be cancelled within 48 hours of its window' },
   { id: 'notice', journey: 'journeys/notice.journey.js', test: 'a cancellation is confirmed by text' },
+  // Plant G: the soak run, a unit test file of about a minute, is I-6's witness: the deliberately slow arc lane.
+  { id: 'soak', journey: PLANT.soakFile, test: PLANT.soakTest },
 ];
 
 export type ObligationSeed = Readonly<{
@@ -201,14 +223,16 @@ export const OBLIGATIONS: readonly ObligationSeed[] = [
   { id: 'I-1', rule: 'T-7', lane: 'berths', statement: 'A second booking of a berth for a tide window it is already booked for is refused, naming the vessel that holds it.', serves: ['V-2', 'V-4'], deliveredIn: 1, deliveredBy: ['guard'] },
   { id: 'I-2', rule: 'T-11', lane: 'confirm', statement: 'Every booking writes one text to the vessel\'s phone naming the berth, date, high water and booking id.', serves: ['V-4'], deliveredIn: 1, deliveredBy: ['confirm'] },
   { id: 'I-3', rule: 'T-5', lane: 'tides', statement: '`windows <date>` prints exactly the tide table\'s high waters for the date, and a date the table lacks is refused.', serves: ['V-4'], deliveredIn: null, deliveredBy: [] },
-  { id: 'I-4', rule: 'T-15', lane: 'cutoff', statement: 'A cancellation less than 48 hours before the booking\'s window opens is refused; one earlier goes through.', serves: ['V-5'], deliveredIn: 2, deliveredBy: ['cutoff'] },
-  { id: 'I-5', rule: 'T-16', lane: 'notice', statement: 'A cancellation writes one text to the vessel\'s phone naming the booking, berth and date.', serves: ['V-5'], deliveredIn: 2, deliveredBy: ['notice'] },
+  { id: 'I-4', rule: 'T-17', lane: 'cutoff', statement: 'A cancellation less than 48 hours before the booking\'s window opens is refused; one earlier goes through.', serves: ['V-5'], deliveredIn: 2, deliveredBy: ['cutoff'] },
+  { id: 'I-5', rule: 'T-18', lane: 'notice', statement: 'A cancellation writes one text to the vessel\'s phone naming the booking, berth and date.', serves: ['V-5'], deliveredIn: 2, deliveredBy: ['notice'] },
+  { id: 'I-6', rule: 'T-16', lane: 'soak', statement: 'A season of bookings and cancellations leaves the ledger readable, each booking in it once and no berth held twice for one window.', serves: ['V-2'], deliveredIn: null, deliveredBy: [] },
 ];
 
 /** Census states of the rules no obligation anchors, per arc (absent from a pin: not in its census). */
 export const CENSUS_OTHERS: Readonly<Record<string, 'out-of-slice' | 'untestable' | 'prod-only'>> = {
   'T-1': 'out-of-slice', 'T-2': 'untestable', 'T-3': 'out-of-slice', 'T-4': 'out-of-slice', 'T-6': 'out-of-slice', 'T-8': 'out-of-slice',
-  'T-9': 'out-of-slice', 'T-10': 'out-of-slice', 'T-12': 'out-of-slice', 'T-13': 'out-of-slice', 'T-14': 'prod-only', 'T-17': 'out-of-slice',
+  'T-9': 'out-of-slice', 'T-10': 'out-of-slice', 'T-12': 'out-of-slice', 'T-13': 'out-of-slice', 'T-14': 'prod-only', 'T-15': 'out-of-slice',
+  'T-19': 'out-of-slice',
 };
 
 /** A spec witness item (M4a rev 3): test `testId` of arc lane `lane` witnesses the spec's acceptance clause `clause`. */
@@ -217,6 +241,8 @@ export type WitnessSeed = Readonly<{ id: string; lane: string; testId: string; c
 export type UnitSeed = Readonly<{
   id: string; arc: ArcNo; risk: 'low' | 'high'; scope: readonly string[]; after: readonly string[]; obligations: readonly string[];
   unitLane: Readonly<{ id: string; file: string }>; acceptance: readonly string[]; witnesses?: readonly WitnessSeed[];
+  /** Planned by the `story` script only (`STORY_UNITS`): the units admitted after arc 1's flow revision. */
+  storyOnly?: true;
 }>;
 
 /**
@@ -260,7 +286,7 @@ export const UNITS: readonly UnitSeed[] = [
     id: 'cutoff', arc: 2, risk: 'low', scope: ['src/cli.js', 'src/ledger.js', 'test/unit/ledger.test.js'], after: [], obligations: ['I-4'],
     unitLane: { id: 'ledger', file: 'test/unit/ledger.test.js' },
     acceptance: [
-      '`cancel(id, now)` in src/ledger.js refuses a cancellation later than 48 hours before the booking\'s window opens, saying so (T-15).',
+      '`cancel(id, now)` in src/ledger.js refuses a cancellation later than 48 hours before the booking\'s window opens, saying so (T-17).',
       '`cancel` in src/cli.js passes the time, TIDEWATER_NOW (an ISO time) when set, else the clock.',
       'test/unit/ledger.test.js covers both sides of the cutoff and passes under the ledger lane.',
     ],
@@ -269,7 +295,7 @@ export const UNITS: readonly UnitSeed[] = [
     id: 'notice', arc: 2, risk: 'low', scope: ['src/cli.js', 'src/confirm.js', 'test/unit/confirm.test.js'], after: ['cutoff'], obligations: ['I-5'],
     unitLane: { id: 'confirm-unit', file: 'test/unit/confirm.test.js' },
     acceptance: [
-      'src/confirm.js `sendCancellation(booking)` appends the "Booking cancelled" template to the outbox (T-16).',
+      'src/confirm.js `sendCancellation(booking)` appends the "Booking cancelled" template to the outbox (T-18).',
       '`cancel` in src/cli.js sends it once the cancellation is written.',
       'test/unit/confirm.test.js covers the message and passes under the confirm-unit lane.',
     ],
@@ -277,11 +303,36 @@ export const UNITS: readonly UnitSeed[] = [
   {
     id: 'dayview', arc: 3, risk: 'low', scope: ['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js'], after: [], obligations: [],
     unitLane: { id: 'dayview-unit', file: 'test/unit/dayview.test.js' },
-    // No rule id in the clause: the story's arc-3 census leaves T-17 out of slice (no obligation is drafted for it), and an
+    // No rule id in the clause: the story's arc-3 census leaves T-19 out of slice (no obligation is drafted for it), and an
     // acceptance clause naming an out-of-slice rule is a `spec-census-mismatch` row (M4a rev 3, H3) that arc 3 must not hit.
     acceptance: ['`tidewater day <date>` prints the day\'s windows with each berth\'s booking.'],
   },
+  // Story only: quay-list before arc 1's flow revision (the before-window's third suite run), the rest after it (the
+  // verdict window's three).
+  {
+    id: 'quay-list', arc: 1, risk: 'low', scope: ['src/quay.js', 'test/unit/quay.test.js'], after: ['confirm'], obligations: [], storyOnly: true,
+    unitLane: { id: 'quay-unit', file: 'test/unit/quay.test.js' },
+    acceptance: ['src/quay.js `quayLine(booking)` gives the quay sheet\'s line for a booking: berth, vessel, high water and the window it opens and closes.'],
+  },
+  {
+    id: 'free-berths', arc: 1, risk: 'low', scope: ['src/free.js', 'test/unit/free.test.js'], after: ['quay-list'], obligations: [], storyOnly: true,
+    unitLane: { id: 'free-unit', file: 'test/unit/free.test.js' },
+    acceptance: ['src/free.js `freeBerths(date, highWater)` lists the berths with no booking for that window, in register order.'],
+  },
+  {
+    id: 'window-note', arc: 1, risk: 'low', scope: ['src/note.js', 'test/unit/note.test.js'], after: ['free-berths'], obligations: [], storyOnly: true,
+    unitLane: { id: 'note-unit', file: 'test/unit/note.test.js' },
+    acceptance: ['src/note.js `windowNote(date, highWater)` gives the one-line note of a tide window: its high water and when it opens and closes.'],
+  },
+  {
+    id: 'berth-depth', arc: 1, risk: 'low', scope: ['src/depth.js', 'test/unit/depth.test.js'], after: ['window-note'], obligations: [], storyOnly: true,
+    unitLane: { id: 'depth-unit', file: 'test/unit/depth.test.js' },
+    acceptance: ['src/depth.js `depthLine(berth)` gives the line the office reads a skipper: the berth and the deepest draught it takes.'],
+  },
 ];
+
+/** The units of arc `n` the script plans (`storyOnly` ones under `story` alone). */
+export const unitsOf = (n: ArcNo, script: 'story' | 'vision-silent'): readonly UnitSeed[] => UNITS.filter((u) => u.arc === n && (u.storyOnly !== true || script === 'story'));
 
 /** A unit's spec as the golden Phase 0 (or arc 2's checkpoint) writes it; `extraLanes` follow the unit lane. */
 export type SpecSeed = Pick<UnitSeed, 'scope' | 'unitLane' | 'acceptance' | 'witnesses'> & Readonly<{ id: string; obligations?: readonly string[] }>;
@@ -302,6 +353,24 @@ export function specOf(u: SpecSeed, extraLanes: readonly ReturnType<typeof specL
   };
 }
 
+/** The plant lane's id in every golden plan (plant S: `SEED_SUITE_ARGV`). */
+export const SUITE_LANE = 'suite';
+/**
+ * The witness-lane fake (fake runs only, files/golden/journeys/replay.js): a suite lane that writes node-test witness
+ * lines itself, one of its two tests skipped under any concurrency but 1, so a concurrency edit is a `changed` proof.
+ */
+export const REPLAY_LANE = { id: 'replay', argv: ['node', 'journeys/replay.js', PLANT.serial, 'journeys/*.journey.js'] } as const;
+/** The plant lane after arc 1's accepted flow change: six files at once, six `@cpu`. */
+export const SHARD = { argv: SEED_SUITE_ARGV.map((a) => (a === PLANT.serial ? '--test-concurrency=6' : a)), cpu: 6 } as const;
+
+/** A golden plan's suite lanes; `sharded`: the plant lane as arc 1's accepted change left it (arc 2 carries it). */
+export function suiteLanes(sharded: boolean) {
+  const lane = (id: string, argv: readonly string[], cpu?: number) => ({
+    id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH', 'HOME'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], ...(cpu === undefined ? {} : { cpu }),
+  });
+  return [sharded ? lane(SUITE_LANE, SHARD.argv, SHARD.cpu) : lane(SUITE_LANE, SEED_SUITE_ARGV), lane(REPLAY_LANE.id, REPLAY_LANE.argv)];
+}
+
 /** The path → obligations mapping: every scoped path and journey. */
 export const MAPPING: readonly Readonly<{ pattern: string; obligations: readonly string[] }>[] = [
   { pattern: 'journeys/berths.journey.js', obligations: ['I-1'] },
@@ -311,12 +380,21 @@ export const MAPPING: readonly Readonly<{ pattern: string; obligations: readonly
   { pattern: 'journeys/tides.journey.js', obligations: ['I-3'] },
   { pattern: 'src/cli.js', obligations: ['I-2', 'I-4', 'I-5'] },
   { pattern: 'src/confirm.js', obligations: ['I-2', 'I-5'] },
+  { pattern: 'src/depth.js', obligations: [] },
   { pattern: 'src/dayview.js', obligations: [] },
+  { pattern: 'src/free.js', obligations: [] },
   { pattern: 'src/ledger.js', obligations: ['I-1', 'I-4'] },
+  { pattern: 'src/note.js', obligations: [] },
+  { pattern: 'src/quay.js', obligations: [] },
   { pattern: 'src/tides.js', obligations: ['I-3'] },
   { pattern: 'test/unit/confirm.test.js', obligations: ['I-2', 'I-5'] },
   { pattern: 'test/unit/dayview.test.js', obligations: [] },
+  { pattern: 'test/unit/depth.test.js', obligations: [] },
+  { pattern: 'test/unit/free.test.js', obligations: [] },
   { pattern: 'test/unit/ledger.test.js', obligations: ['I-1', 'I-4'] },
+  { pattern: 'test/unit/note.test.js', obligations: [] },
+  { pattern: 'test/unit/quay.test.js', obligations: [] },
+  { pattern: 'test/unit/soak.test.js', obligations: ['I-6'] },
 ];
 
 /** Each arc's slice: the clauses it advances and why. */
@@ -331,7 +409,7 @@ export const DIRECTION = 'Grow tidewater toward the harbour the vision describes
 /**
  * Arc 2's first checkpoint (scenario.ts) admits two units outside the owner's slice (V-5), each citing the one clause it
  * advances (honest citation): `fits` (V-7) is the arc's opportunity O-1, and V-7 joins `advances`; `dayview` (V-6) is
- * over the budget of one, so code converts it into a corpus amendment, which arc 3's Phase 0 applies as T-17.
+ * over the budget of one, so code converts it into a corpus amendment, which arc 3's Phase 0 applies as T-19.
  */
 export const OPPORTUNITY = {
   fits: {
@@ -352,7 +430,7 @@ export const OPPORTUNITY = {
 
 /** The curation digest and the semantic records of arc 1 (paths under the corpus root). */
 export const ARC1_CURATION = [
-  { tier: 'structural', what: 'systematised every normative claim into rules blocks T-1..T-14 under the section it belongs to', files: ['0010_Overview.md', '0020_Berths.md', '0020_Berths/tide-windows.md', '0030_Bookings.md', '0040_Notifications.md', '0050_Architecture.md', '0060_Operations.md'], rules: ['T-1', 'T-10', 'T-11', 'T-12', 'T-13', 'T-14', 'T-2', 'T-3', 'T-4', 'T-5', 'T-6', 'T-7', 'T-8', 'T-9'] },
+  { tier: 'structural', what: 'systematised every normative claim into rules blocks T-1..T-16 under the section it belongs to', files: ['0010_Overview.md', '0020_Berths.md', '0020_Berths/tide-windows.md', '0030_Bookings.md', '0040_Notifications.md', '0050_Architecture.md', '0060_Operations.md'], rules: ['T-1', 'T-10', 'T-11', 'T-12', 'T-13', 'T-14', 'T-15', 'T-16', 'T-2', 'T-3', 'T-4', 'T-5', 'T-6', 'T-7', 'T-8', 'T-9'] },
   { tier: 'structural', what: 'collapsed the tide-table claim restated in the overview and the tide-windows page into T-5; ADR 0002 keeps its history', files: ['0010_Overview.md', '0020_Berths/tide-windows.md'], rules: ['T-5'] },
   { tier: 'fact-currency', what: 'replaced the PortLink bridge paragraph, which ADR 0004 retired, with the nightly CSV export', files: ['0050_Architecture.md', '0070_ADRs/0004-retire-portlink-bridge.md'], rules: ['T-13'] },
 ] as const;

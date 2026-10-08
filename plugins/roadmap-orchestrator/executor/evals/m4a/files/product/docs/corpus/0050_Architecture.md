@@ -50,8 +50,21 @@ to crash with a stack trace, so the office notices and tells us.
 
 ## Testing
 
-Unit tests live in `test/unit/` and run with `npm test` (`node --test`). There is no other test setup. Tests
-point `TIDEWATER_DATA` at a temporary file so they never touch the real ledger.
+Unit tests live in `test/unit/` and run with `npm test`, which is `node --test --test-concurrency=1
+'test/unit/*.test.js'`. That command is the suite gate: no change goes onto the office machine until it passes,
+run exactly like that. There is no other test setup.
+
+Most of the files are replay tests. Each replays a stretch of harbour time a step at a time, paced like the kiosk
+(`test/unit/clock.js`), so each one takes about a minute and the whole suite a few minutes.
+
+The soak run, `test/unit/soak.test.js`, replays a season of bookings and cancellations against one ledger and
+checks the ledger after every write. It is how we know the ledger keeps every booking once and never holds a berth
+for two boats in one window, which is the promise the vision will not give up. It stays in the suite gate, slow as
+it is.
+
+Every test file makes its own temporary directory and points `TIDEWATER_DATA` at a ledger inside it, so a test
+never touches the real ledger or another test's. That has been so since the winter the replay tests were written;
+before then the tests shared one ledger directory.
 
 ## Things we deliberately did not build
 

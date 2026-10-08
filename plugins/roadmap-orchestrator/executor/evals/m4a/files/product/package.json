@@ -5,6 +5,6 @@
   "type": "module",
   "bin": { "tidewater": "src/cli.js" },
   "scripts": {
-    "test": "node --test 'test/unit/*.test.js'"
+    "test": "node --test --test-concurrency=1 'test/unit/*.test.js'"
   }
 }
