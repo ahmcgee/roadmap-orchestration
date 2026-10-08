@@ -1043,19 +1043,45 @@ const unitsScope = (units: Iterable<UnitId>): CommandScope => {
 };
 
 /**
+ * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, capacity and the other
+ * plan-wide fields, the suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin). The flow
+ * series (src/flow/series.ts) reads an applied command revision's drain from it.
+ */
+export function drainsArc(c: PlanChange): boolean {
+  switch (c.type) {
+    case 'routing':
+    case 'limits':
+      return c.unit === undefined || c.unit === null;
+    case 'resource':
+    case 'suite':
+    case 'plan-field':
+    case 'obligation':
+    case 'mapping':
+    case 'vision':
+    case 'holistic':
+    case 'advances':
+    case 'corpus':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
  * The scope of an accepted apply's changes: routing, resource and pool, capacity and the other plan-wide
  * fields, and suite edits → the arc; unit and spec edits, cuts and re-entries → those units (a re-entry's old
  * unit too); an order change → the units whose relative order moved.
  */
 export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: PlanM1): CommandScope {
+  if (changes.some(drainsArc)) return ARC;
   const units = new Set<UnitId>();
   for (const c of changes) {
     switch (c.type) {
       case 'routing':
       case 'limits':
-        if (c.unit === undefined || c.unit === null) return ARC;
-        units.add(c.unit);
+        if (c.unit !== undefined && c.unit !== null) units.add(c.unit);
         break;
+      // The arc-wide changes returned the arc above.
       case 'resource':
       case 'suite':
       case 'plan-field':
@@ -1065,7 +1091,7 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'holistic':
       case 'advances':
       case 'corpus':
-        return ARC;
+        break;
       // A Phase-0 record edit changes only the required-review key: nothing running is touched. M4a rev 3: a priority,
       // known-defect or plan-check-shape edit drains nothing either (admission and rank read the plan in force).
       case 'phase0':

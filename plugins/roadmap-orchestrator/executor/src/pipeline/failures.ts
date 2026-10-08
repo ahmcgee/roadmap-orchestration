@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import type { IntentOf } from '../core/events.ts';
 import { type LaneId, type UnitId, invocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { CommandVerdict } from '../core/records.ts';
+import { type CommandVerdict, isRed } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import type { StageParent } from './dispatch.ts';
 import { type HostSuspected, dev6RedClass, specSeriesRoot } from './lanes.ts';
@@ -29,8 +29,6 @@ import { type RedClass, readRedClass } from './redlane.ts';
 export const FAILURE_CLASSES = ['red', 'flaky', 'repeat'] as const;
 export type FailureClass = (typeof FAILURE_CLASSES)[number];
 export type LaneFailure = Readonly<{ stage: 'lanes'; attempt: number; lane: LaneId; class: FailureClass; hostSuspected: HostSuspected | null }>;
-
-const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall';
 
 /** A done lane spawn's verdict as its done record states it (a lost runner: `process-fault`); null while not done. */
 function verdictOf(view: JournalView, spawn: IntentOf<'proc.spawn'>): CommandVerdict | null {
