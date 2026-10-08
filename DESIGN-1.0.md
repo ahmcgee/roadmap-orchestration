@@ -1190,4 +1190,28 @@ ladder with its own runnable fixture:
   step X0 with the tests that existed only for it (owner ruling OR-L4); an older in-flight arc finishes on its own
   release.
 - **M4b Flow** (seeded from M4a arcs' refs, LR-c). The flow loop, SPC, the flow role, givens, proposals and
-  verdicts, the ruler fence, test-set-preserving lane edits, and the two plants.
+  verdicts, the ruler fence, test-set-preserving lane edits, and the two plants. Agreed in the 2026-10-03 design
+  grilling (OR-Q1–Q7, Q17, Q21):
+  - **Owner and framework.** The root agent owns process efficiency, charged with convergence, not throughput.
+    Theory of Constraints says *where* (five focusing steps, throughput accounting T/I/OE, buffer management,
+    drum-buffer-rope, policy constraints); SPC (Shewhart control limits, special versus common cause, no
+    tampering) says *when*. Limits are seeded from previous arcs' flow series, which become a compact record in
+    the snapshot closure. T = obligations newly held per hour weighted to `holistic.advances` (units merged per
+    hour for non-holistic arcs); T is a diagnostic, never a reward.
+  - **Roles.** An executor-internal judgment role `flow` (read-only, closed schema, frontier class on seat `arc`)
+    proposes; the root agent assesses each proposal skeptically for metric subversion and actions it through the
+    CLI; the executor measures each actioned proposal's effect and writes a verdict (the ops journal is records).
+  - **Triggers** are code-computed: a buffer red or a worsening yellow, a constraint shift, a verdict window
+    closed, and a floor of one run every 10 merges. Cooldown about 2 h, triggers coalesce, no auto-bypass; the
+    root agent may request a run; no re-diagnosis of a constraint whose verdict window is open. Rejections are
+    remembered arc-scoped, deduplicated by constraint plus lever.
+  - **Givens** (what cannot be tuned, e.g. a fixed-size host): a closed lever class plus a note. Host scope lives
+    in `$(git rev-parse --git-common-dir)/roadmap/givens.json` (survives codespace rebuilds, never committed),
+    each with a host fingerprint and unenforced when the measured host differs; repo scope in
+    `.roadmap/config.json` `flow.givens`. Code rejects a proposal using a given's lever class. The root agent
+    declares a given alone when self-evident and asks the owner when in doubt.
+  - **Ruler fence** (Goodhart, code-enforced): the optimizer never touches obligations, witnesses, arc lanes,
+    acceptance test sets, judgment seats and their effort, risk floors, lenses and their cadence, or the vision.
+    Paired guard metrics are never folded into T. Build-seat effort is a flow lever. A lane argv edit is allowed
+    only when code proves it test-set-preserving (witness reporter ids on the same SHA).
+  - **Acceptance:** the `evals/m4a` fixture plus two plants: a shardable inefficient lane, and Goodhart bait.
