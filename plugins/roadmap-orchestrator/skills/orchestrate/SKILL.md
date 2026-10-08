@@ -196,12 +196,43 @@ $0.30), so the wakes are few by design.
 - **Amendments** (`status.amendments`) accumulate; you disposition them at the next Phase 0. They and every other
   mid-arc learning wait for the corpus window between arcs; only an owner's answer edits the corpus mid-arc. Note
   each corpus claim a unit's code makes false; the next window fixes it.
-- **Flow.** Watch `status.timings` (per stage: completed attempts, median and maximum) and each running unit's
-  `running.elapsed` against its stage's median. Report a slowdown at the next check-in as an observation with
-  numbers. Never change lanes, judgment seats, obligations or routing to make an arc faster.
+- **Flow.** "The flow loop" below. Report a slowdown it does not explain (`status.timings`, a running unit's
+  `running.elapsed` against its stage's median) at the next check-in as an observation with numbers.
 - **Preview.** The owner may ask to see the product. Run it from a detached checkout you own:
   `git worktree add --detach <dir> <integration branch>`, outside the plan's `worktreeRoot`. A checkout that is not
   detached would put the integration branch in a worktree, which the executor forbids.
+
+## The flow loop
+
+You own the arc's efficiency, charged with convergence, not throughput: a faster arc that converges less is worse.
+The executor runs a flow role on its own triggers (a point outside the lead-time chart's limits, a constraint shift, a
+closed verdict, every 10 merges). It names the constraint and proposes at most one lever change. Code drops a proposal
+that breaks its checks, proves a suite-lane argv change before applying it, applies an accepted one under a fence that
+touches only that lever's plan fields, and judges it on the chart (`status.flow`).
+
+- **`flow-proposal`** (non-blocking, on `watch --actionable`). Read the item and its inputs file, then assess it
+  skeptically:
+  1. Does it touch a measurement: tests, lanes, witnesses, judgment? A change to what is measured is a reject.
+  2. Does its target match the code constraint (`status.flow.constraint` and its component)?
+  3. Is the effect plausible at the target's share of lead time (the station table)? A station at 10 % of lead
+     cannot halve it.
+  4. Which guard could it breach: lead, rework, first-run reds, an obligation, cost per merge?
+
+  Then `roadmap flow accept <proposal> --reason <text>` or `roadmap flow reject …`, the reason one line. The decision
+  acknowledges the item.
+- **The ruler is never a lever.** Never edit a ruler path to make a number move: obligations and their witness
+  lanes, arc lanes, `holistic.audit`, `holistic.advances`, the vision, judgment-seat routing, risk. An `apply` of
+  yours that touches one after the first admission raises `ruler-changed` (`status.flow`, the brief). Ack it only for
+  a change convergence needed, and say why at the next check-in.
+- **`flow-worse`**: a verdict found an applied change worse. Revert it by `apply` (export, restore the values in the
+  `preimage` of that proposal's `flow-verdict` fact, apply), then ack. No flow run proposes it again.
+- **`flow-host`** is advice for the owner (more cores, a faster disk), never applied: put it in your next check-in
+  preface, then accept or reject it with a reason.
+- **Givens.** When a lever cannot be tuned on this host and that is self-evident, declare it yourself:
+  `roadmap flow given`. When in doubt, ask the owner. Repo givens are the owner's (`flow.givens` in the config).
+- **`flow request`** only on a concrete observation (a unit far past its stage median, a lane at twice its usual
+  time), never to chase a number. T, I and OE (`status.flow.accounting`) are diagnostic: report them, never steer to
+  them. `flow-invalid`: ack it; report it if it repeats.
 
 ## Supervising the executor
 
@@ -218,7 +249,7 @@ answer"), whatever else the wake holds.
 
 **Operate** only through the sanctioned levers: `pause`, `resume`, `resume --backend`, `ack`, `apply` (re-entry,
 priority, known defects and `--ruling` included), `rule`, `steer`, `reverse`, `merge-in`, `audit`,
-`close-admissions`, `stop`, `start`, `resume-arc`, `gc`, `inputs export`. Use them when observation says to; that is
+`close-admissions`, `flow`, `stop`, `start`, `resume-arc`, `gc`, `inputs export`. Use them when observation says to; that is
 the job. Never patch the plugin or the run dir. To recover inputs, `roadmap inputs export` the arc, edit the export,
 then `apply --expect-rev <planRev>` (`reference.md`, "Recovery"); never copy a historical manifest back.
 
@@ -412,6 +443,7 @@ rejected. An edit you never apply has no effect, even after a restart.
   `invariants.md`, `debt.md`) by hand. Commands are the only write path.
 - Acknowledge a needs-user item you have not read in full, or a brief the owner has not acknowledged.
 - Edit the corpus outside Phase 0, the between-arc commit and an owner's answer.
+- Edit a ruler path to make an arc faster.
 - Change K, merge or push `main`, or merge a PR.
 - Retry a usage-limited backend on a timer, or reroute around it.
 - Write the vision, or adopt a direction the owner has not confirmed.
