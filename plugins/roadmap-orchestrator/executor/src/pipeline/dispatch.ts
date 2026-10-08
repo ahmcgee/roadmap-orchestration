@@ -166,7 +166,7 @@ function routingChanged(record: DispatchRecord): Pinned<never> {
 }
 
 /** Whether any implementer call was ever started for `unit`. */
-function buildStarted(view: JournalView, unit: UnitId): boolean {
+export function buildStarted(view: JournalView, unit: UnitId): boolean {
   return view.opsOf('proc.spawn').some((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build' && i.expect.subject.unit === unit);
 }
 

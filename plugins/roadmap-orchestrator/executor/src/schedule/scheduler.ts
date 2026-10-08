@@ -241,10 +241,10 @@ type Task = {
   waiting: Waiting | null;
 };
 
-/** Invocation purposes a pause kills among a paused unit's spawns. */
+/** Invocation purposes a pause kills among a paused unit's spawns (and, under `pause --all`, a flow proof's runs: M4b). */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
-/** Invocation purposes a stop kills (lens and checkpoint calls included; never a docs publication's lanes). */
-const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend'];
+/** Invocation purposes a stop kills (lens, checkpoint and flow calls and flow proofs included; never a docs publication's lanes). */
+const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof'];
 
 /** A holistic job that made no progress is asked again only this long after. */
 export const HOLISTIC_RETRY_MS = 5 * POLL_MS;
@@ -948,7 +948,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     }
     const paused = (unit: UnitId): boolean => c.pausedAll || c.pausedUnits.includes(unit);
     for (const task of tasks.values()) if (paused(task.unit) && !task.abort.signal.aborted) task.abort.abort('pause');
-    killLive('pause', (intent) => intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit));
+    killLive('pause', (intent) => (intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit))
+      || (c.pausedAll && intent.expect.subject.purpose === 'proof'));
   };
 
   /** The probe targets a mutation probes or smokes through the prober (`resume <u>` of a retryable park, `resume --backend`). */
@@ -1217,7 +1218,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       raiseHolistic();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
-      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(x.stage) };
+      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()) };
       startHolistic(holds, batch);
       startFlow();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {

@@ -60,7 +60,7 @@ function parse(r: FlowReader): Parsed {
   if (known !== undefined && known.highWater === highWater) return known;
   const { events } = eventsPrefix(r.runDir, highWater);
   const inputs = seriesInputs(keptReader(r.runDir));
-  const out: Parsed = { highWater, events, log: flowLog(events), series: flowSeries(r.journal.view.arc, events, inputs), inputs };
+  const out: Parsed = { highWater, events, log: flowLog(r.journal.view, events), series: flowSeries(r.journal.view.arc, events, inputs), inputs };
   parsed.set(r.runDir, out);
   return out;
 }
@@ -74,9 +74,6 @@ function previousOf(repo: AbsPath, arc: ArcId): readonly FlowSeries[] {
   previous.set(key, out);
   return out;
 }
-
-/** The arc's flow facts (src/flow/log.ts) as the log holds them now. */
-export const flowLogNow = (r: FlowReader): FlowLog => parse(r).log;
 
 /** The arc's flow at `now` (see the header). The host is the latest start's fingerprint, else this host's. */
 export function flowNow(r: FlowReader, now: IsoTime): FlowNow {

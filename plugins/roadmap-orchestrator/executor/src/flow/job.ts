@@ -43,7 +43,8 @@ import { worktreeCreateOp } from '../recover/ops.ts';
 import { constraintWindow, codeConstraintOf } from './constraint.ts';
 import { type FlowNow, flowNow, givensNow, leverCatalogue, windowNow } from './live.ts';
 import { LEVER_STEP, type ProposalContext, checkProposal, metricOf } from './levers.ts';
-import { type FlowLog, type FlowRun, closedVerdicts, proposalOf, rejectionsOf, runningRun } from './log.ts';
+import { rejectionMemory } from './apply.ts';
+import { type FlowLog, type FlowRun, closedVerdicts, proposalOf, runningRun } from './log.ts';
 import { stationTable } from './series.ts';
 import { chartOf } from './spc.ts';
 import {
@@ -119,7 +120,7 @@ export function flowInputsNow(ctx: FlowJobContext, job: JobId, triggers: readonl
     givens: givensNow(ctx.repo, integrationHeadNow(ctx), flow.host),
     window: windowNow(flow),
     verdicts: closedVerdicts(flow.log),
-    rejections: rejectionsOf(flow.log),
+    rejections: rejectionMemory(view),
     advances: advancesNow(ctx),
   };
 }
@@ -303,13 +304,6 @@ export function settleFlowItems(ctx: Pick<FlowJobContext, 'journal' | 'runDir'>,
     const parent = jobParent(run.started.job);
     if (raisedWithReason(ctx.journal.view, ctx.runDir, parent, content.reason) === null) raiseNeedsUser(ctx.journal, ctx.runDir, content, parent);
   }
-}
-
-/** The item a proposal's run raised for it (`flow-proposal` or `flow-host`), or null: what a decision acknowledges. */
-export function proposalItemOf(ctx: Pick<FlowJobContext, 'journal' | 'runDir'>, log: FlowLog, id: ProposalId): ReturnType<typeof raisedFor> {
-  const p = proposalOf(log, id);
-  const reason: NeedsUserReason = p.action.lever === 'host' ? 'flow-host' : 'flow-proposal';
-  return raisedWithReason(ctx.journal.view, ctx.runDir, jobParent(proposalJob(p.id)), reason);
 }
 
 // ---------------------------------------------------------------------------------------------------

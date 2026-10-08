@@ -17,7 +17,7 @@ import {
   type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId,
 } from './ids.ts';
-import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
+import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
 import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
@@ -553,6 +553,8 @@ export class Fold implements JournalView {
   readonly #intake: IntakeState[] = [];
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
   readonly #captures: IssueCaptureState[] = [];
+  // M4b
+  readonly #flowFacts: FlowFactAt[] = [];
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
   #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
   // M4a rev 3
@@ -1017,21 +1019,35 @@ export class Fold implements JournalView {
         this.#captures.push({ ...rest, seq: at.seq });
         return;
       }
-      // M4b (SCHEMAS.md "M4b"): the fold sees the jobs the flow facts name; their effects are the later steps'.
+      // M4b (SCHEMAS.md "M4b"): the fold sees the jobs the flow facts name and keeps every flow fact (`flowFacts`); a
+      // decision names a surviving proposal once, and only an accepted one is applied, once.
       case 'flow-started':
         this.#openJob(f.job, fail);
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       case 'flow-ended':
-        this.#seeJob(f.job);
-        return;
       case 'flow-proof':
         this.#seeJob(f.job);
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
+      case 'flow-decided': {
+        const proposed = this.#flowFacts.some((x) => x.fact.kind === 'flow-ended' && x.fact.proposal?.id === f.proposal);
+        if (!proposed) fail(`flow-decided of ${f.proposal}, which no flow-ended proposed`);
+        if (this.#flowFacts.some((x) => x.fact.kind === 'flow-decided' && x.fact.proposal === f.proposal)) fail(`a second flow-decided of ${f.proposal}`);
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      case 'flow-applied': {
+        const accepted = this.#flowFacts.some((x) => x.fact.kind === 'flow-decided' && x.fact.proposal === f.proposal && x.fact.decision === 'accepted');
+        if (!accepted) fail(`flow-applied of ${f.proposal}, which was never accepted`);
+        if (this.#flowFacts.some((x) => x.fact.kind === 'flow-applied' && x.fact.proposal === f.proposal)) fail(`a second flow-applied of ${f.proposal}`);
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
       case 'flow-series':
       case 'flow-requested':
-      case 'flow-decided':
-      case 'flow-applied':
       case 'flow-verdict':
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       default:
         this.#holisticFact(f, fail, at);
@@ -1643,6 +1659,10 @@ export class Fold implements JournalView {
 
   lastExecutorStarted(): number {
     return this.#executorStarted;
+  }
+
+  flowFacts(): readonly FlowFactAt[] {
+    return this.#flowFacts;
   }
 
   holistic(): HolisticFold {

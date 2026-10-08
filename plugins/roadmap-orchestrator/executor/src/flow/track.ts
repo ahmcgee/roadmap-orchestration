@@ -20,7 +20,7 @@
 // obligation guard reads an obligation as no longer held when a P1 finding over it opened inside the window.
 import type { Event, PlanAppliedFact } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
-import { type CommandId, type ObligationId, type ProposalId, proposalJob } from '../core/ids.ts';
+import { type CommandId, type JobId, type NeedsUserId, type ObligationId, type ProposalId, type Sha, proposalJob } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type IsoTime, isoTimeOf } from '../core/values.ts';
@@ -31,15 +31,17 @@ import { workRemains } from '../holistic/cadence.ts';
 import { drainsArc } from '../input/classify.ts';
 import { FLOW_SERIES_INPUT, arcRolesOf, keepInput } from '../input/inforce.ts';
 import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
-import { applyPendingFlow, flowApplyHolds } from './apply.ts';
+import { applyPendingFlow, flowApplyHolds, proofDue } from './apply.ts';
 import { flowSkipped, proposalLine, runFlowJob } from './job.ts';
-import { type FlowNow, flowLogNow, flowNow, windowNow } from './live.ts';
+import { codeConstraintOf } from './constraint.ts';
+import { type FlowNow, type FlowReader, flowNow, givensNow, windowNow } from './live.ts';
 import { metricOf, rulerChanges } from './levers.ts';
-import { type FlowLog, phaseOf, proposalOf, proposalsOf, runningRun } from './log.ts';
+import { closedVerdicts, proposalOf, proposalsOf, runningRun } from './log.ts';
 import { runProof } from './proof.ts';
 import type { SeriesInputs } from './series.ts';
-import { dueTriggers } from './trigger.ts';
-import type { FlowProposal } from './types.ts';
+import { chartOf } from './spc.ts';
+import { cooldownOf, dueTriggers } from './trigger.ts';
+import type { ClosedVerdict, CodeConstraint, FlowAccounting, FlowChart, FlowProposal, FlowTrigger, FlowWindow, GivenInForce } from './types.ts';
 import { type IdleSpan, afterOf, beforeOf, closeWindow, guardBreaches, verdictOf, windowSamples } from './verdict.ts';
 
 export type FlowTrackContext = CheckpointContext;
@@ -175,14 +177,9 @@ export function beforeCompletion(ctx: FlowTrackContext): void {
 // ---------------------------------------------------------------------------------------------------
 // The track
 
-/** The accepted proposal `pending-apply`, the one `pending-proof`: what the track hands B2's apply and proof. */
-const inPhase = (log: FlowLog, phase: 'pending-apply' | 'pending-proof'): FlowProposal | null =>
-  proposalsOf(log).find((p) => phaseOf(log, p.id).type === phase) ?? null;
-
 /** Whether new candidate starts wait for an accepted proposal's revision (`flow-apply`). Off-dev7: never. */
-export function flowApplyHeld(ctx: Pick<FlowTrackContext, 'runDir' | 'repo' | 'journal'>): boolean {
-  if (!flowOn(ctx.journal.view)) return false;
-  return inPhase(flowLogNow(ctx), 'pending-apply') !== null && flowApplyHolds(ctx.journal.view);
+export function flowApplyHeld(view: JournalView): boolean {
+  return flowOn(view) && flowApplyHolds(view);
 }
 
 export type FlowTrackInput = Readonly<{
@@ -199,9 +196,9 @@ export async function runFlowTrack(ctx: FlowTrackContext, input: FlowTrackInput)
   raiseRulerChanges(ctx, flowNow(ctx, now()));
   const control = view.control();
   if (control.stop !== null || control.pausedAll) return view.highWater() === before ? 'wait' : 'progress';
-  if (inPhase(flowLogNow(ctx), 'pending-apply') !== null) await applyPendingFlow(ctx);
-  const proving = inPhase(flowLogNow(ctx), 'pending-proof');
-  if (proving !== null) await runProof(ctx, proving, view.nextJobId('proof'));
+  if (flowApplyHolds(view)) await applyPendingFlow(ctx);
+  const proof = proofDue(view);
+  if (proof !== null) await runProof(ctx, proof.proposal, proof.job);
   writeVerdicts(ctx, flowNow(ctx, now()), now(), false);
   const flow = flowNow(ctx, now());
   const running = runningRun(flow.log) !== null;
@@ -217,4 +214,59 @@ export async function runFlowTrack(ctx: FlowTrackContext, input: FlowTrackInput)
     }
   }
   return view.highWater() === before ? 'wait' : 'progress';
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Status (plan "Surfaces")
+
+/** A proposal not settled yet: undecided, or accepted and pending its proof or apply. */
+export type FlowProposalLine = Readonly<{ proposal: ProposalId; line: string; phase: 'undecided' | 'pending-proof' | 'pending-apply' }>;
+
+/** `status.flow`: the loop's state for the root agent and the owner. */
+export type FlowStatus =
+  | Readonly<{ state: 'off-dev7' }>
+  | Readonly<{
+    state: 'on';
+    constraint: CodeConstraint | null;
+    chart: FlowChart | null;
+    accounting: FlowAccounting;
+    window: FlowWindow | null;
+    verdicts: readonly ClosedVerdict[];
+    /** Proposals undecided or pending their proof or apply, in run order. */
+    pending: readonly FlowProposalLine[];
+    givens: readonly GivenInForce[];
+    rulerChanged: readonly (RulerChange & Readonly<{ needsUser: NeedsUserId | null }>)[];
+    /** The run in progress, the triggers due now and the cooldown (its end, and whether a request may still bypass it). */
+    next: Readonly<{ running: JobId | null; due: readonly FlowTrigger[]; cooldownUntil: IsoTime | null; bypass: boolean }>;
+  }>;
+
+/** `status.flow` over a reader of the arc (its run dir, repo and log) and the integration head now. */
+export function flowStatus(r: FlowReader, head: Sha, at: IsoTime): FlowStatus {
+  const view = r.journal.view;
+  if (!flowOn(view)) return { state: 'off-dev7' };
+  const flow = flowNow(r, at);
+  const window = windowNow(flow);
+  const cooldown = cooldownOf(flow.log, at);
+  const running = runningRun(flow.log);
+  const phases = new Map(flow.log.accepted.map((a) => [a.proposal.id, a.phase.phase]));
+  return {
+    state: 'on',
+    constraint: codeConstraintOf(flow.series.points),
+    chart: flow.limits === null ? null : chartOf(flow.limits, flow.series.points, flow.inFlight),
+    accounting: flow.series.accounting,
+    window,
+    verdicts: closedVerdicts(flow.log),
+    pending: proposalsOf(flow.log).flatMap((p): FlowProposalLine[] => {
+      if (!flow.log.decisions.has(p.id)) return [{ proposal: p.id, line: proposalLine(p), phase: 'undecided' }];
+      const phase = phases.get(p.id);
+      return phase === 'pending-proof' || phase === 'pending-apply' ? [{ proposal: p.id, line: proposalLine(p), phase }] : [];
+    }),
+    givens: givensNow(r.repo, head, flow.host),
+    rulerChanged: rulerChangesOf(flow.events, flow.inputs).map((c) => ({ ...c, needsUser: raisedWithReason(view, r.runDir, { type: 'command', command: c.command }, 'ruler-changed') })),
+    next: {
+      running: running?.started.job ?? null,
+      due: running !== null ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window, now: at }),
+      cooldownUntil: cooldown.until, bypass: cooldown.bypass,
+    },
+  };
 }

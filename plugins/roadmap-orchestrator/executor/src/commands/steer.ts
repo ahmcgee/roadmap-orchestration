@@ -133,12 +133,12 @@ async function routeClass(ctx: CommandContext, id: CommandId, unit: UnitId, cls:
 }
 
 /**
- * The class revision's plan bytes written to the live plan file, only while it holds the plan in force before the
+ * A revision's plan bytes (the class revision's; M4b: an applied flow proposal's) written to the live plan file, only while it holds the plan in force before the
  * revision (the `plan-applied` fact preceding `fact` in the log): the architect's file then holds the layer the
  * command put in force. A file already holding them (a run again after a crash past the write) is left as it is; one
  * the architect changed since is left alone.
  */
-function writeBack(ctx: CommandContext, fact: PlanAppliedFact): string {
+export function writeBack(ctx: Pick<CommandContext, 'planFile' | 'runDir' | 'journal'>, fact: PlanAppliedFact): string {
   const file = ctx.planFile;
   const now = existsSync(file) ? fileSha256(file) : null;
   if (now === fact.planSha256) return `plan file ${file} holds plan rev ${fact.rev}`;
