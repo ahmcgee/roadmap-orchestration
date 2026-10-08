@@ -380,7 +380,7 @@ test('chain.status-render: the chain oldest first with previous arcs, acked star
       { arc: 'arc-1', previousArc: null, acked: true, pr: { type: 'none' } },
       { arc: 'arc-2', previousArc: 'arc-1', acked: false, pr: { type: 'none' } },
     ],
-    k: 1, unackedStarts: ['arc-2'], nextStart: { allowed: false, reason: 'previous-incomplete', arc: 'arc-2' },
+    k: 1, unackedStarts: ['arc-2'], nextStart: { allowed: false, reason: 'previous-incomplete', arc: 'arc-2' }, answers: [],
   });
   const number = a2.forge.addPull({ head: 'harbour/arc-2', base: 'main' });
   const pr = { type: 'pr', number, url: `https://forge.test/tidewater/harbour/pull/${number}`, state: 'open', base: 'main', needsRebase: false };

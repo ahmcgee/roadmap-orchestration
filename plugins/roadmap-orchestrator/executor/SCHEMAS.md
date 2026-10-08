@@ -150,7 +150,8 @@ warning per process each, BACKLOG "Scaffolding to delete", dev.6 layer), the res
 | `stage-outcome` | outcomes lanes `+ witnesses-missing, smoke-survived, known-defect`, gate `+ unverified` (Run 11 round 3), plan-check `+ in-session`, build `+ infeasible, risk-raised`; class `+ smoke`; `+ detail?` exactly on `DETAILED_OUTCOMES` (`known-defect{id, match}`: the entry's match as hit, step N6) | none |
 | Checkpoint answer (`CheckpointOutput`, the recorded call's `result.json`) | admit op `+ targets: T-n[]` (LR-m, step N2; required by `CHECKPOINT_SCHEMA`) | `[]` (`admitTargetsDefault`, scaffolding: an answer recorded before LR-m classifies on its structural targets) |
 | `pack-review-ended` | `+ dispositions?: [{job, index, disposition: resolved \| still-open \| withdrawn}]` (a delta re-review's, step N5; refused on an abandoned review) | absent: a full review (lasting) |
-| `status`, brief payload (`roadmap/brief-m4`) | additive keys ("M4a rev 3", status and brief, step N6) | none: never persisted (an ack keeps only its coverage vector and items) |
+| `status`, brief payload (`roadmap/brief-m4`) | additive keys ("M4a rev 3", status and brief, step N6); `+ answers` (the owner-answer channel) | none: never persisted (an ack keeps only its coverage vector and items); the brief reader defaults an absent `answers` to `[]` |
+| Owner answer log (new) | `$(git-common-dir)/roadmap/answers/<P-n>.<k>.json` (`roadmap/answer-m4a`) | none: absent dir = no answers |
 | `Bounds` (`DispatchRecord.bounds`, plan and unit `limits`) | `+ smokeRounds` (default 1), `+ smokeRuns` (default 2), both or neither in a record (`BoundsRecord`) | a dev.6 record's bounds without them read as written and as 1 and 2 (`dev6SmokeBounds`, through `boundsOfRecord`) |
 | `UnitCounters` (fold) | `+ smokeRounds` | 0 (none spent) |
 | `UnitState.open` (fold) | `+ seq` (the first start's) | derived |
@@ -2270,7 +2271,8 @@ guide-missing | source-unreadable{detail} | source-remote-mismatch | scope-overl
 contract-overlaps-corpus{path})[]}`; `phase0-invalid{problems: (census-incomplete{rules} | census-dangling{rules} |
 obligation-rule-unresolved{obligation} | debt-undispositioned{id} | debt-kept-twice-unasked{id} |
 amendment-undispositioned{id} | intake-missing{issue} | intake-unknown{issue} | intake-duplicate{issue} |
-capture-missing | capture-foreign{expected, actual} | question-reused{id})[]}`; `chain-invalid{problem: limit{k,
+capture-missing | capture-foreign{expected, actual} | question-reused{id} | answer-unapplied{question} (a fresh start's
+row 5a only: `start` of a new arc and `phase0 check --plan`))[]}`; `chain-invalid{problem: limit{k,
 unacked} | baseline{baseline: previous-head-mismatch | merge-commit | parent-mismatch | paths{paths}} |
 previous-incomplete{arc} | k-unset}`; `issue-policy-untrusted{visibility, policy}`; `tree-uncommitted{paths}`;
 `holistic-needs-corpus`.
@@ -2293,7 +2295,9 @@ DocRef | null`, `+ rule: T-n | null`, exactly one non-null (its schema in `CHECK
 **CLI** (`src/input/cli.ts`, host acts, not queued; dispatch final in `src/cli/main.ts`): `phase0 check --repo (--plan
 <file> | --from-ref <arc>)` → `phase0-check{repo, source: plan{plan} | ref{arc}}` (exit 0 or 78); `corpus pin --repo
 --commit <ref> --baseline <sha> --out <file>` (C1, LR-A1-1); `brief --repo [--json] [--ack <briefId>]`; `pr --repo --arc`; `issues --repo [--out
-<file>]`; `chain status --repo`. Each module (`src/commands/{phase0,corpus,brief,pr,issues,chain}.ts`) exports its final
+<file>]`; `chain status --repo` (`+ answers`: the unapplied owner answers, each with its `line`); `answer <P-n> --repo
+--text <answer> [--arc <arc>]` → `answer{repo, question, text, arc|null}`, printing `{recorded}`, `{unchanged}` or
+`{refused: no-phase0-record{arc} | question-unknown{question, arc} | question-not-open{question, arc}}` (78). Each module (`src/commands/{phase0,corpus,brief,pr,issues,chain}.ts`) exports its final
 signature and outcome type; step 0a's placeholder bodies threw `NotYetError` until the landing step replaced them (A1
 corpus, A3 issues and pr, C1 phase0, C4 brief and chain); C4 deleted `src/core/notyet.ts` with the last of them.
 
@@ -2305,7 +2309,20 @@ coverage, items, chain: {position, k|null, unackedStarts, nextStart}, arcs: [{ar
 disposition}]}, intake [{issue, job: null (Phase 0) | ckpt-n, outcome}], questions [{id, rank, text, assumption,
 state}], amendments [{id: <arc>/M-n, rules, proposal}], packReviewNotes [{job: review-n, index, claim}] (C4), census: {held, obligationRules, outOfSlice, untestable,
 prodOnly}|null, timings [{stage, count, p50Ms, maxMs}], pr: pr{number, url, state, base, needsRebase} | none |
-unavailable{reason}}] (ascending by arc)}`, no clock; `briefId` = the first 16 hex of sha256 over its canonical bytes.
+unavailable{reason}}] (ascending by arc), answers: OwnerAnswer[] (the unapplied ones, ascending by question; read
+default `[]`)}`, no clock; `briefId` = the first 16 hex of sha256 over its canonical bytes.
+
+**Owner answer log** (`src/answers.ts`, `src/phase0/types.ts` `OwnerAnswer`): write-once files
+`$(git-common-dir)/roadmap/answers/<P-n>.<k>.json` = `{schema: roadmap/answer-m4a, question: P-n, k: positive, answer:
+non-empty, at, arc}`, published by link (`exclusivePublish`); each question's k run 1, 2, … (append-only, loud
+otherwise) and the highest is in force. `arc` is the arc whose Phase-0 record in force held the question open when
+`roadmap answer` recorded it (the newest arc with a record, or `--arc`). **Applied**: the newest arc carrying the
+question (a live run dir's revision in force before its ref; arcs ordered by their log's first event) marks it
+`answered` with the answer's text; for a fresh start's row, its own record first, then its chain's earlier arcs' refs.
+`status.answers`, `chain status`'s `answers` (`{...OwnerAnswer, line}`) and the brief's `answers` list the unapplied
+ones; `watch` emits `{"event":"answer", question, k, answer, at}` for each (once per `(question, k)`; the actionable
+filter keys it across arcs). Crash row ANSWER_RECORD (`answer.after-publish`): a rerun with the same text is
+`unchanged`.
 
 **Choices made in M4a 0a** (where the plan left a shape open or could not be frozen as written):
 

@@ -32,6 +32,10 @@ message with numbered questions, each answerable on its own, each with the worki
 answer is "no view". Never ask in the middle of a turn and carry on. Ask only what the vision and the corpus cannot decide; everything else you
 decide and report at the next check-in.
 
+The owner may answer a `P-n` at any time, live arc or not: `roadmap answer <P-n> --repo <repo> --text "<answer>"`
+records it at once. An answer the owner gives you in chat you record the same way yourself, at once, so the answer
+log is the one channel. `status`, the brief and `chain status` list every recorded answer not yet applied.
+
 Always ask first, whatever autonomy you hold: anything irreversible outside the sandbox, anything that may cost
 the owner more than $10, anything with legal ramifications. A checkpoint's `owner-request` item is one of these.
 
@@ -130,7 +134,8 @@ Keep the arc's inputs in their own directory outside the product working tree, f
 7. **Questions.** Rank the semantic questions the vision does not answer. A new `P-n` is 1 + the highest `P-n` in
    any earlier Phase-0 record of the chain; a question carried forward keeps its id and text. An answered one
    moves to `answered{answer, at}` and its rules change to match (an answer that came mid-arc is already applied:
-   "Check-ins").
+   "Check-ins"). Every recorded answer must be in the record as `answered` with its exact text: `phase0 check` and
+   `start` refuse `answer-unapplied{P-n}` otherwise.
 8. **Debt.** Disposition every `open` item of the baseline's `.roadmap/debt.md`: `promote{unit}` (the unit is in
    this plan), `keep{reason}` or `resolve{ruling}`. An item kept in both previous arcs needs a question naming it.
 9. **Amendments.** Disposition every amendment of the previous arc (`status.amendments`, or the brief):
@@ -201,14 +206,15 @@ $0.30), so the wakes are few by design.
 ## Supervising the executor
 
 **Wake rule** (`watch --actionable` applies it): key transitions only: a new open needs-user item, a unit merged, a
-unit parked, the run newly `held`, `blocked` or `draining`, or the run reaching a terminal state (`complete`,
-`refused`, `no-owner`); plus a fixed heartbeat every 30 minutes whatever happened (`--heartbeat-min <n>`).
+unit parked, the run newly `held`, `blocked` or `draining`, the run reaching a terminal state (`complete`,
+`refused`, `no-owner`), or an owner answer not yet applied (`answer`); plus a fixed heartbeat every 30 minutes whatever happened (`--heartbeat-min <n>`).
 Acknowledged and superseded items never wake. There is no other polling: the heartbeat is your organic check.
 
 **On every wake:** post a progress note of at most 3 lines in the chat (what moved, what is next, anything odd), read
 `status` once, act only if something is off or a decision is needed, then go back to waiting on the same watch.
 Read only `status`, `brief --json`, needs-user item files and the evidence an item names; never read lane output an
-item does not point at. Check-ins keep their own rule ("Check-ins").
+item does not point at. Check-ins keep their own rule ("Check-ins"). An `answer` line is applied at once ("An owner's
+answer"), whatever else the wake holds.
 
 **Operate** only through the sanctioned levers: `pause`, `resume`, `resume --backend`, `ack`, `apply` (re-entry,
 priority, known defects and `--ruling` included), `rule`, `steer`, `reverse`, `merge-in`, `audit`,
@@ -246,10 +252,12 @@ show (a slowdown, a pattern across arcs, your interventions). Report as observat
 the slice and the opportunities' clauses on the merge of a unit admitted as repair or oversight, the one sign of an
 admit that touched more than it cited. Then the numbered questions: the chain's still-open `P-n` questions
 (top 5 by rank, each with its working assumption) alongside anything new. An open `P-n` is asked again at every
-check-in, not once at bootstrap.
+check-in, not once at bootstrap, and says how to answer it any time: `roadmap answer <P-n> --repo <repo> --text
+"<answer>"`.
 
-**An owner's answer to a `P-n` applies at once**, never deferred to a later Phase 0. Between arcs it goes into the
-Phase 0 under way. While an arc runs, one `roadmap apply` carries it:
+**An owner's answer to a `P-n` applies at once**, never deferred to a later Phase 0. It reaches you as an `answer`
+wake, in `status.answers`, in the brief or in chat (record a chat answer with `roadmap answer` first). Between arcs
+it goes into the Phase 0 under way. While an arc runs, one `roadmap apply` carries it:
 
 - The Phase-0 record: the question moves to `answered{answer, at}`.
 - When the answer changes what a rule says: commit the corpus edit on your work branch, descending from the arc's

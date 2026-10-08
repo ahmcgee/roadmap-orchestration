@@ -83,6 +83,8 @@
 //   issues        the latest checkpoint capture and the checkpoints' intake outcomes
 //   chain         the chain ending at this arc (src/commands/chain.ts: K, acked starts, PRs non-fatal), its position
 //   timings       per stage, the completed attempts' count, median and maximum (`stageTimings`, LR-c; every arc)
+//   answers       the owner's recorded answers (`roadmap answer`) no Phase-0 record applies yet, each with its line
+//                 (src/answers.ts `unappliedAnswers`, the repo's newest records first; every arc)
 //
 // M4a rev 3 (SCHEMAS "M4a rev 3", status rows):
 //   units[].failures   each lanes attempt's red, flaky or repeat lane, with its host-suspected signatures (F3,
@@ -146,6 +148,7 @@ import {
   type ArcHold, type CompletionBlocker, type HolisticContexts, type QueueEntry, SCHED_FILE, type SchedFile, arcHolds, arcSettled, completionBlockers, dischargingObservation,
   readOnlyContexts, recordedLaneEnv, schedFile, unitSettled,
 } from './schedule/scheduler.ts';
+import { answerLine, commonDirOfRun, unappliedAnswers } from './answers.ts';
 import { chainBack, readArcRef } from './chain.ts';
 import { type ChainStatus, chainStatusOf, linkOf } from './commands/chain.ts';
 import type { CorpusPin } from './corpus/types.ts';
@@ -153,7 +156,7 @@ import type { BankReason, DebtItem, DebtLedger } from './debt/types.ts';
 import type { IssueIntakeOutcome, RepoIdentity } from './forge/types.ts';
 import type { CheckpointContext } from './holistic/bundle.ts';
 import { type PackReviewStatus, packItemOf, packReviewStatus } from './holistic/packreview.ts';
-import type { BriefArc, StageTiming } from './phase0/types.ts';
+import type { BriefArc, OwnerAnswer, StageTiming } from './phase0/types.ts';
 import { arcDebtLedger } from './pipeline/publish.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import {
@@ -499,6 +502,8 @@ export type Status = Readonly<{
   chain: ChainView | null;
   /** M4a (LR-c): per stage, the completed attempts' count, median and maximum duration, derived at read time. */
   timings: readonly StageTiming[];
+  /** The owner's recorded answers no Phase-0 record applies yet (src/answers.ts): apply each now. */
+  answers: readonly (OwnerAnswer & Readonly<{ line: string }>)[];
   /** M4a rev 3 (F4): the plan's known defects in force and the units each holds at prepare now. */
   knownDefects: readonly KnownDefectView[];
   /** M4a rev 3 (C5): the checkpoints a `busy` rejection keeps waiting for a stage boundary. */
@@ -1647,6 +1652,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     issues: corpus === null ? null : issuesOf(view),
     chain: corpus === null || on === null ? null : chainOf(on.repo, on.plan),
     timings: stageTimings(events),
+    answers: unappliedAnswers(commonDirOfRun(runDir)).map((a) => ({ ...a, line: answerLine(a) })),
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     checkpointWaits: checkpointWaitsOf(view),
     ...admitted,

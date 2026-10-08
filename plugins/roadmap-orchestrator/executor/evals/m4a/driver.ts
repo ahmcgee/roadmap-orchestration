@@ -19,13 +19,16 @@
 //     owner has read none: never acknowledged); every other question goes to a frontier-medium `claude -p` (fake: a
 //     keyword stub) given only the answer key's owner answers released so far (`from: arc-1-complete` once the first
 //     arc's completion is in its ref), told to answer from them alone, else "no view: keep your working assumption";
-//   - at every turn end (a chain boundary is one: the arc's completion wakes the session), the owner also reads the
-//     brief (`roadmap brief --json`, the staged plugin) as a real owner would: each open P-n question not yet answered
-//     goes to the same simulator, and a released answer is added to the reply as "P-n: <answer>" (paid runs 10, 12 and
-//     13: the check-in's final message never carried P-1 as a numbered question, so the 48-hour answer never reached
-//     the session). A NO_VIEW is asked again only once more answers are released. A final text holding for a spend or
-//     cost approval gets "spend approved, proceed" (the owner persona: no spend cap), once per arc started. Any of
-//     these makes an owner turn; each exchange records its channel (`via`: numbered, brief or spend-hold);
+//   - the owner also reads the brief (`roadmap brief --json`, the staged plugin) as a real owner would, and answers
+//     each open P-n question through the durable channel, `roadmap answer <P-n> --text` (src/answers.ts): every
+//     ANSWER_POLL_MS while a turn runs, and at every turn end. Each open question not yet answered goes to the same
+//     simulator; a released answer is recorded at once, so it lands even when the root agent never ends its turn (paid
+//     runs 10, 12-14: the check-in never carried P-1 as a numbered question, and run 14's root agent ran the whole
+//     session in one turn, so the 48-hour answer never reached it). The session learns of it by an `answer` watch
+//     event or in `status`/the brief. A NO_VIEW is asked again only once more answers are released. A final text
+//     holding for a spend or cost approval gets "spend approved, proceed" (the owner persona: no spend cap), once per
+//     arc started. A numbered answer or a spend approval makes an owner turn; each exchange records its channel (`via`:
+//     numbered, answer or spend-hold) and, for an answer, the turn it landed in (`inTurn`, null between turns);
 //   - any other final text is the skill's headless wait (no Monitor): the driver tails `roadmap watch` on the arc it
 //     last saw holding the host and resumes the session only on an actionable event (F26; the executor's one rule,
 //     src/watch.ts `ActionableFilter`, which `roadmap watch --actionable` applies too, one instance kept across the
@@ -56,7 +59,7 @@
 //
 // Fake runs add two devices (story only): once the second arc holds the host, the forge flips to PUBLIC + ALL and arc
 // 2's pack review is released from its barrier (scenario.ts), so a checkpoint capture meets an untrusted policy.
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -95,6 +98,8 @@ export const LIMITS: Readonly<{ real: Limits; fake: Limits }> = {
   fake: { sessionMs: 30 * 60_000, turnMs: 30 * 60_000 },
 };
 const WAKE_DEBOUNCE_MS = 3_000;
+/** How often the owner reads the brief while a turn runs (and answers through `roadmap answer`). */
+const ANSWER_POLL_MS: Readonly<Record<Mode['kind'], number>> = { real: 60_000, fake: 1_000 };
 /** How long the end-of-run stop waits for the host claim to clear. */
 const RELEASE_WAIT_MS = 5 * 60_000;
 const MAX_NUDGES = 3;
@@ -200,8 +205,29 @@ export function numberedQuestions(text: string): readonly string[] {
   return out;
 }
 
-/** `via`: the channel the owner answered through (a numbered question, the brief's open questions, a spend hold). */
-export type OwnerExchange = Readonly<{ question: string; answer: string; by: 'code' | 'simulator'; via: 'numbered' | 'brief' | 'spend-hold' }>;
+/**
+ * `via`: the channel the owner answered through (a numbered question, `roadmap answer` from the brief's open questions,
+ * a spend hold); `inTurn`: the turn running when an answer was recorded (null between turns, and for the others).
+ */
+export type OwnerExchange = Readonly<{ question: string; answer: string; by: 'code' | 'simulator'; via: 'numbered' | 'answer' | 'spend-hold'; inTurn: number | null }>;
+
+type Ran = Readonly<{ status: number | null; stdout: string; stderr: string }>;
+/** A child to its exit, without blocking the event loop (the turn's stream keeps flowing while the owner works). */
+function run(cmd: string, args: readonly string[], opts: SpawnOptions & Readonly<{ timeoutMs: number }>): Promise<Ran> {
+  return new Promise((done, fail) => {
+    const child = spawn(cmd, [...args], { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout!.setEncoding('utf8').on('data', (c: string) => void (stdout += c));
+    child.stderr!.setEncoding('utf8').on('data', (c: string) => void (stderr += c));
+    const timer = setTimeout(() => child.kill('SIGTERM'), opts.timeoutMs);
+    child.on('error', fail);
+    child.on('close', (status) => {
+      clearTimeout(timer);
+      done({ status, stdout, stderr });
+    });
+  });
+}
 
 /** Whether the first arc of the product's chain has its completion in its ref (the owner's later answers are released). */
 function firstArcComplete(product: AbsPath): boolean {
@@ -261,7 +287,7 @@ async function simulatorAnswer(c: OwnerCtx, q: string): Promise<string> {
   ].join('\n');
   const dir = join(c.l.dir, 'owner');
   mkdirSync(dir, { recursive: true });
-  const r = spawnSync('claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'medium', '--tools', '', ...CLAUDE_ISOLATION, '--output-format', 'json', prompt], { cwd: dir, env: c.env, encoding: 'utf8', timeout: 10 * 60_000 });
+  const r = await run('claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'medium', '--tools', '', ...CLAUDE_ISOLATION, '--output-format', 'json', prompt], { cwd: dir, env: c.env, timeoutMs: 10 * 60_000 });
   if (r.status !== 0) throw new Error(`the owner simulator exited ${r.status}: ${r.stderr}`);
   const out = JSON.parse(r.stdout) as { result?: unknown; is_error?: unknown };
   if (typeof out.result !== 'string' || out.is_error === true) throw new Error(`the owner simulator answered ${r.stdout}`);
@@ -295,12 +321,34 @@ export const SPEND_APPROVED = 'Spend is approved: there is no spend cap. Proceed
 export type OwnerMemory = { answered: Set<string>; askedAt: Map<string, number>; spendApprovedAt: number };
 
 /** The brief's open questions, as `roadmap brief --json` gives them (none before an arc has published a snapshot). */
-function briefQuestions(c: OwnerCtx): ReturnType<typeof openBriefQuestions> {
+async function briefQuestions(c: OwnerCtx): Promise<ReturnType<typeof openBriefQuestions>> {
   if (arcsWithRefs(absPath(c.l.product)).length === 0) return [];
   const [cmd, args] = roadmapArgv(c.l, c.mode, ['brief', '--repo', c.l.product, '--json']);
-  const r = spawnSync(cmd, [...args], { cwd: c.l.product, env: c.env, encoding: 'utf8', timeout: 120_000 });
+  const r = await run(cmd, args, { cwd: c.l.product, env: c.env, timeoutMs: 120_000 });
   if (r.status !== 0) throw new Error(`the owner's roadmap brief exited ${r.status}: ${r.stdout}${r.stderr}`);
   return openBriefQuestions(parseBriefPayload((JSON.parse(r.stdout) as { payload: unknown }).payload));
+}
+
+/**
+ * The owner reads the brief and answers each open P-n it now has an answer for through `roadmap answer` (see the
+ * header). `inTurn`: the turn running now, null between turns. A question the root agent already closed (it recorded a
+ * chat answer itself) is `question-not-open`: settled.
+ */
+async function answerFromBrief(c: OwnerCtx, memory: OwnerMemory, log: OwnerExchange[], inTurn: number | null): Promise<void> {
+  const released = releasedAnswers(c).length;
+  for (const q of await briefQuestions(c)) {
+    if (memory.answered.has(q.id) || (memory.askedAt.get(q.id) ?? -1) >= released) continue;
+    memory.askedAt.set(q.id, released);
+    const question = `${q.id}: ${q.text} Working assumption: ${q.assumption}`;
+    const answer = await simulatorAnswer(c, question);
+    if (noView(answer)) continue;
+    const [cmd, args] = roadmapArgv(c.l, c.mode, ['answer', q.id, '--repo', c.l.product, '--text', answer]);
+    const r = await run(cmd, args, { cwd: c.l.product, env: c.env, timeoutMs: 120_000 });
+    const out = r.status === 0 || r.status === 78 ? (JSON.parse(r.stdout) as { refused?: { type: string } }) : null;
+    if (out === null || (out.refused !== undefined && out.refused.type !== 'question-not-open')) throw new Error(`the owner's roadmap answer ${q.id} exited ${r.status}: ${r.stdout}${r.stderr}`);
+    memory.answered.add(q.id);
+    if (out.refused === undefined) log.push({ question, answer, by: 'simulator', via: 'answer', inTurn });
+  }
 }
 
 /** The owner's reply to a turn's final text (see the header), or null when the owner has nothing to say. */
@@ -309,27 +357,17 @@ async function ownerReply(c: OwnerCtx, text: string, memory: OwnerMemory, log: O
   for (const [i, q] of numberedQuestions(text).entries()) {
     const code = codeAnswer(c, q);
     const answer = code ?? (await simulatorAnswer(c, q));
-    log.push({ question: q, answer, by: code === null ? 'simulator' : 'code', via: 'numbered' });
+    log.push({ question: q, answer, by: code === null ? 'simulator' : 'code', via: 'numbered', inTurn: null });
     lines.push(`${/^\s*(\d+)/.exec(q)?.[1] ?? i + 1}. ${answer}`);
     const id = /\bP-\d+\b/.exec(q)?.[0];
     if (id !== undefined && !noView(answer)) memory.answered.add(id);
   }
-  const released = releasedAnswers(c).length;
-  for (const q of briefQuestions(c)) {
-    if (memory.answered.has(q.id) || (memory.askedAt.get(q.id) ?? -1) >= released) continue;
-    memory.askedAt.set(q.id, released);
-    const question = `${q.id}: ${q.text} Working assumption: ${q.assumption}`;
-    const answer = await simulatorAnswer(c, question);
-    if (noView(answer)) continue;
-    memory.answered.add(q.id);
-    log.push({ question, answer, by: 'simulator', via: 'brief' });
-    lines.push(`${q.id}: ${answer}`);
-  }
+  await answerFromBrief(c, memory, log, null);
   const hold = spendHold(text);
   const arcs = arcsWithRefs(absPath(c.l.product)).length;
   if (hold !== null && memory.spendApprovedAt < arcs) {
     memory.spendApprovedAt = arcs;
-    log.push({ question: hold, answer: SPEND_APPROVED, by: 'code', via: 'spend-hold' });
+    log.push({ question: hold, answer: SPEND_APPROVED, by: 'code', via: 'spend-hold', inTurn: null });
     lines.push(SPEND_APPROVED);
   }
   return lines.length === 0 ? null : lines.join('\n');
@@ -386,7 +424,7 @@ export const initialPrompt = (profile: ProfileName): string => [
   'You are the root agent of a roadmap-orchestrator session over this product repository (`tidewater`), run headless:',
   'nobody watches this session. Use the orchestrate skill of the roadmap-orchestrator plugin from start to finish:',
   'bootstrap, then Phase 0, arcs and chaining toward the target state the corpus in docs/corpus describes.',
-  'The owner answers the numbered questions you end a turn with, and reads the brief\'s open questions whenever your turn ends.',
+  'The owner answers the numbered questions you end a turn with, and answers the brief\'s open questions any time with `roadmap answer`.',
   'While an arc runs, you may wait on `roadmap watch --actionable`',
   'under Monitor or end your turn; both are supported. If you end your turn, the harness resumes you on actionable',
   '`roadmap watch` events only (a needs-user item, a unit merged or parked, a changed constraint, a terminal state, a 30-minute heartbeat).',
@@ -657,8 +695,19 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
   try {
     for (let n = 1; Date.now() < deadline; n++) {
       const t0 = Date.now();
-      const r = await runTurn(l, mode, env, n, session, prompt, Math.min(deadline, t0 + limits.turnMs));
+      // The owner answers from the brief while the turn runs (one poll at a time, none queued; a failure fails the session after the turn).
+      let polling: Promise<void> = Promise.resolve();
+      let pollFailure: unknown = null;
+      let inFlight = false;
+      const poller = setInterval(() => {
+        if (inFlight || pollFailure !== null) return;
+        inFlight = true;
+        polling = answerFromBrief(ownerCtx, memory, owner, n).catch((error: unknown) => void (pollFailure = error)).finally(() => void (inFlight = false));
+      }, ANSWER_POLL_MS[mode.kind]);
+      const r = await runTurn(l, mode, env, n, session, prompt, Math.min(deadline, t0 + limits.turnMs)).finally(() => clearInterval(poller));
+      await polling;
       turns.push({ n, kind, prompt, session: r.session, result: r.result, exit: r.exit, ms: Date.now() - t0 });
+      if (pollFailure !== null) throw pollFailure;
       session = r.session;
       if (r.isolation !== null) {
         endedBy = 'session-failed';

@@ -476,11 +476,14 @@ describe('startup rows, brief and ack', () => {
         drift: [{ unit: 'u3', job: 'ckpt-2', findings: [{ id: 'F-2', clauses: ['V-1'] }] }],
       }],
     };
-    same(parseBriefPayload, payload);
+    same(parseBriefPayload, { ...payload, answers: [] });
     assert.doesNotMatch(JSON.stringify(payload), /"at"/, 'no clock field');
+    // The owner-answer channel: `answers` is additive; absent, it reads as none. An answer's `at` is the owner's, not a clock.
+    assert.deepEqual(parseBriefPayload(payload).answers, []);
+    same(parseBriefPayload, { ...payload, answers: [{ schema: 'roadmap/answer-m4a', question: 'P-4', k: 2, answer: '48 hours', at: '2026-10-08T00:00:00.000Z', arc: 'arc-2' }] });
     // The next start's `allowed` is its reason's: a mismatched pair is refused.
     for (const nextStart of [{ allowed: true, reason: 'within-k', k: 1, unacked: 1 }, { allowed: false, reason: 'k-unset' }, { allowed: false, reason: 'previous-incomplete', arc: 'arc-2' }]) {
-      same(parseBriefPayload, { ...payload, chain: { ...payload.chain, nextStart } });
+      same(parseBriefPayload, { ...payload, answers: [], chain: { ...payload.chain, nextStart } });
     }
     assert.throws(() => parseBriefPayload({ ...payload, chain: { ...payload.chain, nextStart: { allowed: true, reason: 'limit', k: 1, unacked: 2 } } }), /allowed/);
   });

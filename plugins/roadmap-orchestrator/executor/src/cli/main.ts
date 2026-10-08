@@ -19,7 +19,9 @@
 // and slice candidates (exit 0 when no row, else 78); `corpus pin` writes the pin and prints it with its sha256, or the
 // refused row (78); `brief` prints the payload (`--json`) or its Markdown, and `--ack` prints the commands it enqueued, or
 // the stale ids (78); `pr` prints the pull request; `issues` prints the capture (or writes `--out`), or the refused row
-// (78); `chain status` prints the chain. Step 0a placed every module at its final path; the landing steps replace them.
+// (78); `chain status` prints the chain. `answer` records the owner's answer (src/answers.ts) and prints
+// `{recorded}` or `{unchanged}` (a rerun with the text in force), or `{refused}` (78: no Phase-0 record, the question
+// unknown or not open in it). Step 0a placed every module at its final path; the landing steps replace them.
 // M4a rev 3 host acts: `witness-check` prints `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78);
 // `resume-arc` prints `{resumed: false, reason}` or the relaunched supervisor's line; `inputs export` prints the export's
 // `export.json`. `apply --ruling` lands ruling sidecars with the edits (I2). Step N0 placed each module at its final path.
@@ -31,6 +33,7 @@ import { createRequire } from 'node:module';
 import { submitCommand } from '../commands/queue.ts';
 import { evaluateApply } from '../commands/apply.ts';
 import { DEFAULT_KEEP, gc } from '../commands/gc.ts';
+import { recordAnswer } from '../answers.ts';
 import { brief } from '../commands/brief.ts';
 import { chainStatus } from '../commands/chain.ts';
 import { corpusPin } from '../commands/corpus.ts';
@@ -206,6 +209,12 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'chain-status':
       process.stdout.write(`${canonicalJson(await chainStatus({ repo: repoOf(command.repo) }))}\n`);
       return;
+    case 'answer': {
+      const outcome = recordAnswer(repoOf(command.repo), command.question, command.text, command.arc);
+      process.stdout.write(`${canonicalJson(outcome.kind === 'refused' ? { refused: outcome.refusal } : { [outcome.kind]: outcome.answer })}\n`);
+      if (outcome.kind === 'refused') process.exitCode = EXIT_REFUSED;
+      return;
+    }
     case 'witness-check': {
       const outcome = await witnessCheck({ laneFile: absPath(resolve(command.laneFile)), cwd: absPath(process.cwd()) });
       if (outcome.kind === 'passed') {

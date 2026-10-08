@@ -24,8 +24,12 @@
 // - **Admits** (M4a rev 3, OR-A1; corpus arcs): the admits classified in the delta (`status`'s `admitViews` over the ref),
 //   the opportunities at the ref, the drift indicator's non-zero lines at the ref (the only check on under-declared admit
 //   targets), and each amendment a converted admit made names that admit.
+// - **Answers** (src/answers.ts): the owner's recorded answers (`roadmap answer`) no Phase-0 record applies yet, read
+//   from the answer log and the newest arcs' records in force (a live arc's run dir before its ref): rendered first, as
+//   the act the root agent owes now.
 // The payload holds no clock; forge state, census figures and timings are in it, so a change of any changes the id.
 import { existsSync } from 'node:fs';
+import { answerLine, unappliedAnswers } from './answers.ts';
 import { type ArcRef, committedAcks, completedHeadOf } from './chain.ts';
 import { type ChainLink, chainHead, chainQuota, chainTo, linkOf, prsOf } from './commands/chain.ts';
 import { type ArcId, type BriefId, type Sha, amendmentRefOf, briefId, invocationDirName } from './core/ids.ts';
@@ -176,6 +180,7 @@ export function computeBrief(repo: AbsPath): Brief {
     coverage: arcs.map((r): CoverageEntry => ({ arc: r.arc, snapshotCommit: r.commit, highWater: r.highWater })),
     items: arcs.filter((r) => live(repo, r)).flatMap((r) => itemsOf(repo, r)).filter((i) => !enqueued.has(itemKey(i))).sort(byKey(itemKey)),
     chain: { position: chain.length, ...chainQuota(repo, chain.map((r) => r.arc), { plan: head.plan, ref: head }, acks) },
+    answers: unappliedAnswers(gitCommonDir(repo)),
     arcs: arcs.map((r) => briefArc(repo, r, from.get(r.arc) ?? 0, prs.get(r.arc)!)),
   };
   // The payload is what its reader accepts (the frozen schema): a bug here fails loud, never a malformed brief.
@@ -244,7 +249,8 @@ export function nextStartLine(n: NextStart): string {
 /** The brief's Markdown, rendered from `payload` alone. */
 export function renderBrief(id: BriefId, payload: BriefPayload): string {
   const ch = payload.chain;
-  return `# Roadmap brief ${id}\n\n${list([
+  const answers = payload.answers.length === 0 ? '' : `\n## Owner answers to apply now\n\n${list(payload.answers.map(answerLine))}`;
+  return `# Roadmap brief ${id}\n${answers}\n${list([
     `chain: position ${ch.position}, K ${ch.k ?? 'unset'}, unacked starts: ${ch.unackedStarts.length === 0 ? 'none' : ch.unackedStarts.join(', ')}`,
     `next start: ${nextStartLine(ch.nextStart)}`,
     `covers: ${payload.coverage.map((c) => `${c.arc} to seq ${c.highWater}`).join(', ')}`,

@@ -8,6 +8,8 @@
 //   {"event":"owner","state":"alive"|"dead"|"none","generation","pid"}     on the first poll and every change
 //   {"event":"units","run":<run.state>,"units":{<unit>:<state>}}           on the first poll and every change
 //   {"event":"superseded","id"}                                            an item a later one superseded (K14: a pack review's)
+//   {"event":"answer","question","k","answer","at"}                        an owner answer (`roadmap answer`) no Phase-0 record
+//                                                                          applies yet (present at start, or new; src/answers.ts)
 //
 // A `superseded` line comes before any `needs-user` line of its poll, as an ack file sorts before its item: a reader that
 // drops answered items (`--actionable`) sees the answer first (paid M4a run 10, R-17).
@@ -21,7 +23,9 @@
 // `roadmap watch --actionable [--heartbeat-min <n>]` prints only what the architect acts on (`ActionableFilter`, the one
 // rule; the M4a driver resumes its headless session through it too): the key transitions plus a fixed slow heartbeat
 // (owner ruling 2026-10-07: paid run 12 woke ~11 times in 65 minutes at ~$0.30 a wake, most with nothing changed). The
-// key transitions: a needs-user item not seen before and not already acknowledged or superseded; a unit newly `merged`
+// key transitions: a needs-user item not seen before and not already acknowledged or superseded; an owner answer not
+// seen before (by question and k, across arcs: the answer log is the repo's, so the session wakes once per answer and
+// applies it at once, paid runs 12-14); a unit newly `merged`
 // or newly parked (its `units` line); the run newly `held`, `blocked` or `draining`; the run reaching a terminal state
 // (`complete`, `refused`, `no-owner`; once per state). The heartbeat is `{"event":"heartbeat","everyMin":<n>}` every n
 // minutes (default HEARTBEAT_MIN, 30) whatever happened: the architect's organic check, no other polling. Owner lines,
@@ -40,6 +44,7 @@ import { type ArcId, needsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
 import { EVENTS_FILE } from './core/log.ts';
 import type { AbsPath } from './core/values.ts';
+import { answerNames, commonDirOfRun, unappliedAnswers } from './answers.ts';
 import { NEEDS_USER_DIR, readNeedsUser, readNeedsUserAck } from './needsuser.ts';
 import { SCHED_FILE } from './schedule/scheduler.ts';
 import { ownerState, unitStates } from './status.ts';
@@ -80,6 +85,7 @@ const keyState = (state: string): 'merged' | 'parked' | null => (state === 'merg
  */
 export class ActionableFilter {
   private readonly items = new Set<string>();
+  private readonly answers = new Set<string>();
   private readonly acked = new Set<string>();
   private readonly terminal = new Set<string>();
   private readonly runs = new Map<string, string>();
@@ -94,7 +100,13 @@ export class ActionableFilter {
 
   /** The line itself when it is actionable, else null. */
   feed(arc: string, line: string): string | null {
-    const e = JSON.parse(line) as { event: string; id?: string; run?: string; units?: Record<string, string> };
+    const e = JSON.parse(line) as { event: string; id?: string; run?: string; units?: Record<string, string>; question?: string; k?: number };
+    if (e.event === 'answer') {
+      const key = `${e.question}#${e.k}`;
+      if (this.answers.has(key)) return null;
+      this.answers.add(key);
+      return line;
+    }
     if ((e.event === 'ack' || e.event === 'superseded') && e.id !== undefined) {
       this.acked.add(itemKey(arc, e.id));
       return null;
@@ -168,6 +180,9 @@ export async function watch(
   let units: string | null = null;
   let view: ReturnType<typeof unitStates> | null = null;
   const dir = join(runDir, NEEDS_USER_DIR);
+  const common = commonDirOfRun(runDir);
+  let answerKey: string | null = null;
+  const seenAnswers = new Set<string>();
   while (!signal.aborted) {
     const names = existsSync(dir) ? readdirSync(dir).sort() : [];
     const state = canonicalJson({ event: 'owner', ...ownerState(runDir, hostDir) });
@@ -195,6 +210,15 @@ export async function watch(
         if (a === null) throw new Error(`${join(dir, name)} vanished while watching; acknowledgements are write-once`);
         seenAcks.add(a.id);
         emit(canonicalJson({ event: 'ack', id: a.id, command: a.command, choice: a.choice }));
+      }
+    }
+    const answers = answerNames(common).join(' ');
+    if (answers !== answerKey) {
+      answerKey = answers;
+      for (const a of answers === '' ? [] : unappliedAnswers(common)) {
+        if (seenAnswers.has(`${a.question}#${a.k}`)) continue;
+        seenAnswers.add(`${a.question}#${a.k}`);
+        emit(canonicalJson({ event: 'answer', question: a.question, k: a.k, answer: a.answer, at: a.at }));
       }
     }
     if (state !== owner) {

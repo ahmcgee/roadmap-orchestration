@@ -92,7 +92,14 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   first. Exits 64 before any snapshot. `nextStart` answers whether a start chained on the head would pass `start`'s own
   chain rows that need no plan: `{allowed: true, reason: within-k, k, unacked}` or `{allowed: false, reason}` with reason
   `limit{k, unacked}`, `k-unset` or `previous-incomplete{arc}` (`unacked` counts that start). Read it; never compute K
-  yourself. `k` is `chain.k` committed at the head arc's baseline, never the live file.
+  yourself. `k` is `chain.k` committed at the head arc's baseline, never the live file. `answers` lists the owner's
+  recorded answers not yet applied, as `status.answers`.
+- `roadmap answer <P-n> --repo <path> --text <text> [--arc <arc>]`: record the owner's answer to `P-n` at once, live
+  arc or not. `P-n` must be open in the Phase-0 record in force of the newest arc that has one (or of `--arc`).
+  Prints `{recorded: {schema, question, k, answer, at, arc}}`; the same text as the answer in force prints
+  `{unchanged}` and writes nothing; another text supersedes it as the next `k`. Refused (78): `no-phase0-record{arc}`,
+  `question-unknown{question, arc}`, `question-not-open{question, arc}`. The answer log is
+  `$(git rev-parse --git-common-dir)/roadmap/answers/<P-n>.<k>.json`, write-once.
 - `roadmap witness-check --lane-file <file>`: the implementer's command, named in its build prompt. Runs one
   required witness lane in the current worktree with fresh reporter output and checks every required test id: prints
   `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78).
@@ -206,6 +213,9 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
 - `host{containment, resources, pools, queue, probes, backends, log{bytes, events, foldMs, compactionDue}}`,
   `parkedBackends`, `rejection`.
 - `timings[{stage, count, p50Ms, maxMs}]`: completed attempts per stage.
+- `answers[{question, k, answer, at, arc, line}]`: the owner's recorded answers no Phase-0 record applies yet (the
+  newest arc carrying the question does not mark it `answered` with that text; a live arc's revision in force counts
+  at once). Apply each now.
 - Holistic arcs (`holistic: true`): `target` (cut line, next milestone, critical path, obligation counts),
   `nowTrue`, `notYetTrue` (with `blockingUnits` and `reason`: `supervision`, `host`, `waiting-dep`, `code`,
   `spec`), `waived`, `deferred`, `vision` (clauses, questions, `advances`, `coverage`), `divergences`,
@@ -234,6 +244,8 @@ the first 16 hex of its sha256, so any change (forge state included) is a new id
   there.
 - `items[{arc, id}]`: the open non-blocking `divergence-digest` and `convergence-bound` items an ack acknowledges.
 - `chain{position, k, unackedStarts, nextStart}`, as `chain status` has them; the Markdown's `next start:` line.
+- `answers[{schema, question, k, answer, at, arc}]`: the recorded answers not yet applied, as `status.answers`; the
+  Markdown opens with them ("Owner answers to apply now").
 - `arcs[]`, per chained arc: `slice{advances, why}` (the arc's Phase-0 slice in force, null without a record; you pick it,
   the owner sees it here afterwards), `divergences`, `digests`, `decisions`, `curation`, `corpusDivergences`,
   `debt{banked, dispositioned}`, `intake` (`job` null for Phase 0), `questions`, `amendments`, `packReviewNotes`,
@@ -249,11 +261,12 @@ or docs publication), and anything not yet published to the ref is not in it.
 
 `{"event":"needs-user", id, blocking, reason, subject, summary}` for every raised item, blocking or not;
 `{"event":"ack", id, command, choice}`; `{"event":"superseded", id}` for an item a later pack review superseded;
-`{"event":"owner", state, generation, pid}`; `{"event":"units", run,
+`{"event":"answer", question, k, answer, at}` for each recorded owner answer no Phase-0 record applies yet (once per
+`question` and `k`); `{"event":"owner", state, generation, pid}`; `{"event":"units", run,
 units: {<unit>: <state>}}` with compact states (`running:build#3`, `waiting:deps=u1`, `parked:retryable`,
 `awaiting-admission:known-defect`, `merged`). Plain `watch` streams every change. `watch --actionable` prints only
 the wakes, the key transitions: a `needs-user` line for an item not seen before and not already acknowledged or
-superseded; the `units` line in which a unit is newly `merged` or newly parked (`parked:*`), in which `run` is newly
+superseded; an `answer` line not seen before; the `units` line in which a unit is newly `merged` or newly parked (`parked:*`), in which `run` is newly
 `held`, `blocked` or `draining`, or in which `run` reaches `complete`, `refused` or `no-owner` (once each). Plus a fixed
 heartbeat, `{"event":"heartbeat","everyMin":<n>}`, every n minutes from the watch's start whatever happened
 (`--heartbeat-min <n>`, a positive integer, default 30; only with `--actionable`). Owner, ack, superseded and every
@@ -280,7 +293,8 @@ run again, and takes its first view of the units as the baseline (no unit wake f
 | `holistic-needs-corpus` | a fresh holistic plan names `architectureDoc` | make it a corpus arc |
 | `vision-unconfirmed{ref, expected, actual}` | `.roadmap/vision.json` unconfirmed, or its `corpus:` hash differs from the pinned vision document (`actual` null: no such pinned file) | run the `vision` skill; commit; re-pin |
 | `corpus-invalid{problems}` | `pin-drift`, `rule-reused{id}`, `rule-retired-reappears{id}`, `rules-in-vision`, `guide-missing`, `source-unreadable{detail}`, `source-remote-mismatch`, `scope-overlaps-corpus{unit}`, `contract-overlaps-corpus{path}` | re-pin after any corpus change; a new meaning takes a new id; no rules block in the vision document; scopes and contracts stay off corpus files |
-| `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `intake-missing{issue}`, `intake-unknown{issue}`, `intake-duplicate{issue}`, `capture-missing`, `capture-foreign{expected, actual}`, `question-reused{id}`, `spec-census-mismatch{unit, item, rule, state}` (a spec declares an obligation whose rule's census is not that obligation, or an acceptance clause or witness item names an `out-of-slice` rule; checked on every revision, so `apply` refuses it too) | complete the Phase-0 record or obligations; re-capture issues for this repo; align the spec with the census |
+| `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `intake-missing{issue}`, `intake-unknown{issue}`, `intake-duplicate{issue}`, `capture-missing`, `capture-foreign{expected, actual}`, `question-reused{id}`, `answer-unapplied{question}` (a fresh start: a recorded owner answer the record does not mark
+`answered` with its text), `spec-census-mismatch{unit, item, rule, state}` (a spec declares an obligation whose rule's census is not that obligation, or an acceptance clause or witness item names an `out-of-slice` rule; checked on every revision, so `apply` refuses it too) | complete the Phase-0 record or obligations (an answer: `answered{answer, at}` with its text, rules to match); re-capture issues for this repo; align the spec with the census |
 | `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K. `chain status` `nextStart` answers `limit`, `k-unset` and `previous-incomplete` before you compose the plan |
 | `issue-policy-untrusted{visibility, policy}` | anyone can open issues | the owner restricts issue creation to collaborators or disables issues |
 | `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |

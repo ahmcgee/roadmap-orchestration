@@ -9,10 +9,14 @@
 //   wake-ups   `pack-review` (blocking): fix guard's spec, `apply` (a new key: the superseding review);
 //              `run: complete`: `roadmap pr`, the brief (never acked: the owner has acknowledged none), `chain status`
 //              (its `nextStart` decides; nothing here computes K), then per script:
-//     story          after arc 1 (`nextStart` within K), the check-in as paid runs 10-13 wrote it: no numbered question,
-//                    P-1 left in the brief, a hold for the spend approval and, last, the action taken on resume (arc 2's
-//                    Phase 0); the owner answers P-1 from the brief (driver.ts); on the answer, the between-arc commit
-//                    and arc 2 (run-only cutoff before its start, so notice's admission is the item's to hold). Arc 2's
+//     story          after arc 1 (`nextStart` within K), the root agent waits in its turn (a Monitor on `watch
+//                    --actionable`) and the owner's answer to P-1 arrives mid-turn through `roadmap answer` (driver.ts,
+//                    from the brief): the `answer` wake; `chain status` lists it unapplied. Then the check-in as paid runs
+//                    10-13 wrote it: no numbered question, P-1 answered, a hold for the spend approval and, last, the
+//                    action taken on resume (arc 2's Phase 0). On the approval, the between-arc commit and arc 2, whose
+//                    Phase-0 record marks P-1 answered with the recorded text (`phase0 check` refuses `answer-unapplied`
+//                    otherwise; after the start `chain status` lists nothing), run-only cutoff before its start, so
+//                    notice's admission is the item's to hold. Arc 2's
 //                    wakes, each synchronised on an event rather than a time: `run: blocked` (cutoff merged, notice
 //                    behind run-only): read status, release the audit waiting for this wake (scenario.ts);
 //                    `issue-policy-untrusted`: read the hold, ask the owner to restrict issue creation; on the answer,
@@ -27,7 +31,8 @@
 // Every command's failure is loud (the process exits non-zero; the driver records the session failed).
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { amendmentsOf, readArcRef } from '../../src/chain.ts';
@@ -70,6 +75,8 @@ type State = {
   blockedSeen: boolean;
   /** The unit the root agent paused in its hung lane, and that lane as status showed it; resumed on the next wake. */
   paused: Readonly<{ unit: string; lane: string }> | null;
+  /** The owner's answer to P-1 as `roadmap answer` recorded it (the `answer` wake), applied by arc 2's Phase 0 and carried by arc 3's. */
+  p1: Readonly<{ answer: string; at: string }> | null;
 };
 
 /** The parts of `roadmap status` the scripted root agent reads. */
@@ -145,6 +152,34 @@ class Turn {
       }
       if (Date.now() >= deadline) throw new Error(`${arc}: not ${what} within ${timeoutMs} ms; the last status: ${r.stdout}`);
       Atomics.wait(SLEEP, 0, 0, 1_000);
+    }
+  }
+
+  /**
+   * In-turn waiting on `roadmap watch --actionable` of `arc` (the agent's Monitor) until a line satisfies `done`; fails
+   * loud after `timeoutMs`. The watch writes to a file this synchronous turn polls, and is killed on return.
+   */
+  watchFor(arc: string, what: string, done: (w: WatchLine) => boolean, timeoutMs = 300_000): WatchLine {
+    const l = layout(this.dir);
+    const args = ['watch', '--actionable', '--repo', l.product, '--arc', arc];
+    const id = `toolu_fake_${++this.n}`;
+    this.emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Monitor', input: { command: `roadmap ${args.join(' ')}`, until: what } }] } });
+    const out = join(l.fake, `watch-${randomUUID()}.jsonl`);
+    const fd = openSync(out, 'w');
+    const child = spawn(process.execPath, [STAGE_CLI, l.plugin, fakeHostDir(this.dir), ...args], { cwd: l.product, env: process.env, stdio: ['ignore', fd, fd] });
+    closeSync(fd);
+    try {
+      for (const deadline = Date.now() + timeoutMs; ; Atomics.wait(SLEEP, 0, 0, 250)) {
+        const text = readFileSync(out, 'utf8');
+        const hit = watchLines(text).find(done);
+        if (hit !== undefined) {
+          this.emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+          return hit;
+        }
+        if (Date.now() >= deadline) throw new Error(`${arc}: no ${what} within ${timeoutMs} ms; the watch printed: ${text}`);
+      }
+    } finally {
+      child.kill('SIGTERM');
     }
   }
 
@@ -240,7 +275,7 @@ function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline
 }
 
 /** Composes arc n's inputs (pin, capture, obligations, specs, ledger, Phase-0 record, plan), its branch, and checks it. */
-function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?: string; previous?: ArcState & { head: string }; draft?: 'vision-silent' }> = {}): ArcState {
+function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?: Readonly<{ answer: string; at: string }>; previous?: ArcState & { head: string }; draft?: 'vision-silent' }> = {}): ArcState {
   const l = layout(c.dir);
   const arc = fakeArc(c.dir, n);
   const inputs = join(l.inputs, arc);
@@ -266,7 +301,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     preimage = { pinSha256: raw.sha256, files: raw.pin.files.filter((f) => f.path === '0030_Bookings.md') };
   }
   const { debt, amendments } = dispositions(c, n, opts.previous, baseline);
-  const question = n === 1 ? { ...ARC1_QUESTION, state: { type: 'open' } } : { ...ARC1_QUESTION, state: { type: 'answered', answer: opts.answer ?? '(none)', at: '2026-10-03T12:00:00.000Z' } };
+  const question = opts.answer === undefined ? { ...ARC1_QUESTION, state: { type: 'open' } } : { ...ARC1_QUESTION, state: { type: 'answered', ...opts.answer } };
   const intake = capture.issues.map((i) => ({
     issue: i.id,
     outcome: n === 1 && i.id === 'issue-1' ? { type: 'acted', on: { type: 'units', ids: ['guard'] } } : { type: 'none', reason: n === 1 ? 'out of this slice: the windows view is not in it' : 'handled in arc 1 (see its intake)' },
@@ -356,7 +391,7 @@ function bootstrapArc1(c: Ctx, k: string): ArcState {
  * second turn writes them, without starting; returns arc 1's plan file. Its commands' events go to `sink`.
  */
 export function prepareArc1(dir: string, sink: Sink = () => {}): string {
-  const state: State = { session: 'prepare', script: 'story', phase: 'bootstrap-asked', arcs: [], policyItem: null, packFixed: false, blockedSeen: false, paused: null };
+  const state: State = { session: 'prepare', script: 'story', phase: 'bootstrap-asked', arcs: [], policyItem: null, packFixed: false, blockedSeen: false, paused: null, p1: null };
   return planOf(bootstrapArc1({ t: new Turn(state.session, dir, sink), dir, state }, '1'));
 }
 
@@ -370,7 +405,7 @@ function bootstrap(c: Ctx, answer: string): string {
   return RUNNING(a);
 }
 
-type WatchLine = Readonly<{ event: string; id?: string; reason?: string; run?: string }>;
+type WatchLine = Readonly<{ event: string; id?: string; reason?: string; run?: string; question?: string; answer?: string; at?: string }>;
 const watchLines = (prompt: string): readonly WatchLine[] =>
   prompt.split('\n').filter((x) => x.trim().startsWith('{')).map((x) => JSON.parse(x) as WatchLine);
 
@@ -438,12 +473,19 @@ function arcComplete(c: Ctx, a: ArcState): string {
   if (a.n === 1) {
     // K = 1 and the bootstrap start counts as acked: arc 2 is allowed (paid run 12's root agent stopped here instead).
     if (chain.nextStart.reason !== 'within-k') throw new Error(`story: after arc 1 the next start should be allowed: ${JSON.stringify(chain)}`);
+    // The owner reads P-1 in the brief and answers it through `roadmap answer` while this turn runs (paid run 14: the
+    // root agent never ended a turn): the `answer` wake, as the answer log holds it.
+    const woke = c.t.watchFor(a.arc, `the owner's answer to ${ARC1_QUESTION.id}`, (w) => w.event === 'answer' && w.question === ARC1_QUESTION.id);
+    const listed = (JSON.parse(c.t.roadmap(['chain', 'status', '--repo', l.product])) as { answers: readonly Readonly<{ question: string; answer: string; at: string }>[] }).answers;
+    const p1 = listed.find((x) => x.question === ARC1_QUESTION.id);
+    if (p1 === undefined || p1.answer !== woke.answer || p1.at !== woke.at) throw new Error(`story: chain status should list the woken answer unapplied: ${JSON.stringify({ woke, listed })}`);
+    c.state.p1 = { answer: p1.answer, at: p1.at };
     c.state.phase = 'cutoff-asked';
-    // The check-in is the turn's final message: preface, the hold, then the action taken on resume. P-1 is not repeated
-    // as a numbered question (paid runs 10, 12, 13): the owner finds it in the brief.
+    // The check-in is the turn's final message: preface, the hold, then the action taken on resume. P-1 is not asked as
+    // a numbered question (paid runs 10, 12, 13): the owner answered it through `roadmap answer`.
     return [
       `Arc ${a.arc} completed and its PR is open against main. The next start is allowed (K ${chain.k}). I chain the next arc (V-5, when plans change) unless you say otherwise.`,
-      `${ARC1_QUESTION.id} (the cancellation cutoff) is open in the brief with its working assumption.`,
+      `${ARC1_QUESTION.id} (the cancellation cutoff) came in through roadmap answer: "${p1.answer}". Arc 2's Phase 0 applies it.`,
       'Arc 2 will likely cost about another $30, so I am holding before its Phase 0 until you approve the spend.',
       '',
       'On resume I start arc 2\'s Phase 0 with your answers, or the working assumptions where you have none.',
@@ -452,7 +494,8 @@ function arcComplete(c: Ctx, a: ArcState): string {
   if (chain.nextStart.reason !== 'limit') throw new Error(`story: after arc 2 the next start should be refused at K: ${JSON.stringify(chain)}`);
   // K is reached. The fixture shows the executor's own refusal too: arc 3's inputs, refused at check and at start.
   const baseline = betweenArc(c, 3, head);
-  const three = composeArc(c, 3, baseline, { previous: { ...a, head }, answer: 'see P-1' });
+  if (c.state.p1 === null) throw new Error('story: arc 3 carries the owner\'s answer to P-1, which never came');
+  const three = composeArc(c, 3, baseline, { previous: { ...a, head }, answer: c.state.p1 });
   const report = phase0Check(c, three, [78]);
   if (report.rows.length !== 1 || report.rows[0]?.kind !== 'chain-invalid') throw new Error(`story: arc 3's phase0 check should refuse only chain-invalid: ${JSON.stringify(report.rows)}`);
   start(c, three, [78]);
@@ -461,20 +504,22 @@ function arcComplete(c: Ctx, a: ArcState): string {
 }
 
 function arc2(c: Ctx, reply: string): string {
-  const answer = new RegExp(`^${ARC1_QUESTION.id}: (.+)$`, 'm').exec(reply)?.[1];
-  if (answer === undefined || !/48/.test(answer)) throw new Error(`story: the owner's reply should answer P-1 with 48 hours: ${reply}`);
+  const answer = c.state.p1;
+  if (answer === null || !/48/.test(answer.answer)) throw new Error(`story: the owner's recorded answer to P-1 should say 48 hours: ${JSON.stringify(answer)}`);
   if (!/spend is approved/i.test(reply)) throw new Error(`story: the owner's reply should approve the spend: ${reply}`);
   const one = c.state.arcs[0]!;
   const head = completedHead(c, one);
   const l = layout(c.dir);
   const baseline = betweenArc(c, 2, head);
-  const a = composeArc(c, 2, baseline, { answer: answer.trim(), previous: { ...one, head } });
+  const a = composeArc(c, 2, baseline, { answer, previous: { ...one, head } });
   c.state.arcs.push(a);
   phase0Check(c, a);
   // notice waits behind cutoff (run-only), so its admission comes after the first checkpoint's capture.
   mkdirSync(join(l.product, '.git', 'roadmap-runtime', a.arc), { recursive: true });
   c.t.roadmap(['run-only', 'cutoff', '--repo', l.product, '--arc', a.arc]);
   start(c, a);
+  const after = (JSON.parse(c.t.roadmap(['chain', 'status', '--repo', l.product])) as { answers: readonly unknown[] }).answers;
+  if (after.length !== 0) throw new Error(`story: arc 2 applies P-1, so chain status should list no answer: ${JSON.stringify(after)}`);
   c.state.phase = 'running';
   return `P-1 answered (48 hours): T-15 replaces T-9 in the between-arc commit, and arc-1/M-1 is applied as T-16. Arc 2 advances V-5. ${RUNNING(a)}`;
 }
@@ -579,7 +624,7 @@ if (import.meta.main) {
   let state: State;
   if (resume === undefined) {
     if (existsSync(statePath)) throw new Error(`${statePath} exists: a fresh session in a used fixture`);
-    state = { session: randomUUID(), script: fakeScript(script), phase: 'new', arcs: [], policyItem: null, packFixed: false, blockedSeen: false, paused: null };
+    state = { session: randomUUID(), script: fakeScript(script), phase: 'new', arcs: [], policyItem: null, packFixed: false, blockedSeen: false, paused: null, p1: null };
   } else {
     state = JSON.parse(readFileSync(statePath, 'utf8')) as State;
     if (state.session !== resume) throw new Error(`resume ${resume}, but the session is ${state.session}`);

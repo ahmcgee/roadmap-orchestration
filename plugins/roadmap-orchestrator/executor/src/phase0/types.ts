@@ -171,6 +171,12 @@ export type Phase0Problem =
   | Readonly<{ type: 'capture-foreign'; expected: RepoIdentity; actual: RepoIdentity }>
   | Readonly<{ type: 'question-reused'; id: PhaseQuestionId }>
   /**
+   * The owner-answer channel (src/answers.ts): a question whose latest recorded owner answer (`roadmap answer`) the new
+   * arc's Phase-0 record does not mark `answered` with that text (nor, for a question the record does not carry, an
+   * earlier arc of the chain). A fresh start's row only.
+   */
+  | Readonly<{ type: 'answer-unapplied'; question: PhaseQuestionId }>
+  /**
    * M4a rev 3 (H3, F07): a pack spec's item that disagrees with the census: a declared obligation (`I-n`) whose rule's
    * census state is not `obligation` naming it or its split parent, or an acceptance clause (`A-n`) or (run 10) witness
    * item (`W-n`) naming a rule whose census state is `out-of-slice`. `state` is the rule's census state.
@@ -195,6 +201,7 @@ export const phase0Problem: Read<Phase0Problem> = tagged('type', {
   'capture-missing': object((f): Phase0Problem => ({ type: f.get('type', literal('capture-missing')) })),
   'capture-foreign': object((f): Phase0Problem => ({ type: f.get('type', literal('capture-foreign')), expected: f.get('expected', repoIdentity), actual: f.get('actual', repoIdentity) })),
   'question-reused': object((f): Phase0Problem => ({ type: f.get('type', literal('question-reused')), id: f.get('id', (v, p) => phaseQuestionId(v, p)) })),
+  'answer-unapplied': object((f): Phase0Problem => ({ type: f.get('type', literal('answer-unapplied')), question: f.get('question', (v, p) => phaseQuestionId(v, p)) })),
   'spec-census-mismatch': object((f): Phase0Problem => ({
     type: f.get('type', literal('spec-census-mismatch')), unit: f.get('unit', (v, p) => unitId(v, p)),
     item: f.get('item', (v, p) => (typeof v === 'string' && /^I-[0-9]+$/.test(v) ? obligationId(v, p) : typeof v === 'string' && /^W-[0-9]+$/.test(v) ? witnessItemId(v, p) : clauseId(v, p))),
@@ -351,6 +358,8 @@ export type BriefPayload = Readonly<{
   coverage: readonly CoverageEntry[];
   items: readonly AckItem[];
   chain: Readonly<{ position: number; k: number | null; unackedStarts: readonly ArcId[]; nextStart: NextStart }>;
+  /** The owner's recorded answers no Phase-0 record applies yet (src/answers.ts), ascending by question; read default `[]`. */
+  answers: readonly OwnerAnswer[];
   /** Ascending by arc. */
   arcs: readonly BriefArc[];
 }>;
@@ -428,6 +437,7 @@ export const briefPayload: Read<BriefPayload> = object((f) => {
       position: g.get('position', positive), k: g.get('k', nullable(positive)), unackedStarts: g.get('unackedStarts', arrayOf((v, p) => arcId(v, p))),
       nextStart: g.get('nextStart', nextStart),
     }))),
+    answers: f.optional('answers', arrayOf(ownerAnswer)) ?? [],
     arcs: f.get('arcs', sortedBy(briefArc, (a) => a.arc)),
   };
   return out;
@@ -435,4 +445,34 @@ export const briefPayload: Read<BriefPayload> = object((f) => {
 
 export function parseBriefPayload(value: unknown): BriefPayload {
   return briefPayload(value, 'brief');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The owner-answer log (src/answers.ts): write-once files `$(git-common-dir)/roadmap/answers/<P-n>.<k>.json`, the k-th
+// answer the owner recorded to question P-n (`roadmap answer`); the highest k is in force, the earlier ones superseded.
+
+export const ANSWER_SCHEMA = 'roadmap/answer-m4a';
+
+export type OwnerAnswer = Readonly<{
+  schema: typeof ANSWER_SCHEMA;
+  question: PhaseQuestionId;
+  /** 1 for the first answer to the question; each later one supersedes the one before. */
+  k: number;
+  answer: string;
+  at: IsoTime;
+  /** The arc whose Phase-0 record in force held the question open when the answer was recorded. */
+  arc: ArcId;
+}>;
+
+export const ownerAnswer: Read<OwnerAnswer> = object((f) => ({
+  schema: f.get('schema', literal(ANSWER_SCHEMA)),
+  question: f.get('question', (v, p) => phaseQuestionId(v, p)),
+  k: f.get('k', positive),
+  answer: f.get('answer', str),
+  at: f.get('at', (v, p) => isoTime(v, p)),
+  arc: f.get('arc', (v, p) => arcId(v, p)),
+}));
+
+export function parseOwnerAnswer(value: unknown): OwnerAnswer {
+  return ownerAnswer(value, 'answer');
 }

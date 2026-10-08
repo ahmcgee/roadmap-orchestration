@@ -535,7 +535,13 @@ more (`corpusAmendments`), and issue intake may yield one. The next Phase 0 disp
 each entry naming its source files: structural and fact-currency edits are autonomous and listed in the curation
 digest; a semantic conflict the vision resolves is a corpus divergence with a preimage of the files and the
 `V-n` it cites, reversible by restoring them; a semantic conflict the vision is silent on is a ranked `P-n`
-question with a working assumption (`P-n` global, never reused).
+question with a working assumption (`P-n` global, never reused). **Owner answers** (paid runs 12-14: an unattended
+root agent that never ends its turn never received the answer) have a durable channel: `roadmap answer <P-n> --text`
+records one at once, live arc or not, in the write-once answer log (`$(git-common-dir)/roadmap/answers/`, beside the
+ack log; a later answer to the same question supersedes); the root agent records a chat answer the same way. An answer
+is applied when the newest arc carrying its question marks it `answered` with its text; `status`, the brief and
+`chain status` list the unapplied ones, `watch` emits an `answer` event (a key transition), and a fresh start refuses
+`answer-unapplied{P-n}` until its Phase-0 record applies every answer.
 
 **Delegation envelope.** **Obligations** are owner-approved: every checkable claim extracted from the target (the
 pinned corpus's rules, or an `architecture-doc` arc's document; extracted, cross-checked, adjudicated by the
@@ -771,6 +777,7 @@ close-out had nothing to change; recovery republishes it when the ref lags (G8).
 | Pack-review inputs | executor | run dir | write-once | ref |
 | Corpus amendments | executor (facts) | run dir | append-only | ref |
 | Brief ack log | CLI | `$(git-common-dir)/roadmap/acks/` | write-once | — |
+| Owner answer log (`P-n` answers) | CLI (`roadmap answer`) | `$(git-common-dir)/roadmap/answers/` | write-once, append (latest k in force) | — |
 | Contracts, architecture doc | executor via publication | product tree | blob-SHA revisions | tree |
 | `config.json` | architect | `.roadmap/` | git commits outside the arc | tree |
 | C-nn ledger | executor via `rule` (executor-owned after `start`) | run dir | append-only, supersede | tree (`constraints.md`), ref |
@@ -1093,7 +1100,7 @@ PRs, comments, labels and releases before and after, and a transcript scan over 
 fails the run on any answer-key or real-repository access.
 
 **Supervision and run 10 (A-M4-26; OR-A3, OR-A2).** The root agent observes cheaply and wakes only on key transitions
-(a new needs-user item, a unit merged or parked, changed constraints, a terminal state) plus a fixed 30-minute
+(a new needs-user item, a unit merged or parked, changed constraints, a terminal state, an unapplied owner answer) plus a fixed 30-minute
 heartbeat (owner ruling 2026-10-07, replacing the measured stall and the quiet-time status reads: run 12 woke ~11 times
 in 65 minutes at ~$0.30 a wake); on each wake it posts a progress note of at most 3 lines, reads status once and acts
 only on something off or a decision; since A-M4-29 the executor applies that one rule (`roadmap watch

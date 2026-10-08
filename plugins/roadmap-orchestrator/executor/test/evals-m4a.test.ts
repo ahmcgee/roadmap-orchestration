@@ -259,16 +259,27 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(numberedQuestions(boundaries[0]!), [], boundaries[0] ?? undefined);
     assert.match(boundaries[0]!, /\n\nOn resume I start arc 2's Phase 0 with your answers, or the working assumptions where you have none\.$/);
     assert.doesNotMatch(boundaries[0]!, /waiting for your answers|ROADMAP-SESSION/);
-    // The owner read P-1 in the brief and approved the spend: the next turn's prompt carries both.
+    // The owner read P-1 in the brief and answered it through `roadmap answer` while arc 1's completion turn ran (the root
+    // agent never ended that turn for it: its Monitor woke on the `answer` event); the reply only approves the spend.
+    const p1 = (JSON.parse(readFileSync(ANSWER_KEY, 'utf8')) as { ownerAnswers: { answer: string }[] }).ownerAnswers[0]!.answer;
     const reply = report.turns[boundaryAt[0]! + 1]!;
     assert.equal(reply.kind, 'owner');
-    assert.equal(reply.prompt, `P-1: ${(JSON.parse(readFileSync(ANSWER_KEY, 'utf8')) as { ownerAnswers: { answer: string }[] }).ownerAnswers[0]!.answer}\n${SPEND_APPROVED}`);
+    assert.equal(reply.prompt, SPEND_APPROVED);
+    const viaCli = report.owner.find((o) => o.via === 'answer');
+    assert.equal(viaCli?.inTurn, report.turns[boundaryAt[0]!]!.n, 'the answer landed mid-turn');
+    assert.ok(boundaries[0]!.includes(`came in through roadmap answer: "${p1}"`), boundaries[0] ?? undefined);
+    const log = readdirSync(join(layout(story.dir).product, '.git', 'roadmap', 'answers'));
+    assert.deepEqual(log, ['P-1.1.json']);
+    const recorded = JSON.parse(readFileSync(join(layout(story.dir).product, '.git', 'roadmap', 'answers', 'P-1.1.json'), 'utf8')) as { answer: string; at: string };
+    const applied = arcView(chainOf(absPath(layout(story.dir).product)).two!).phase0.questions.find((q) => q.id === 'P-1')?.state;
+    assert.deepEqual(applied, { type: 'answered', answer: p1, at: recorded.at }, 'arc 2\'s Phase 0 applied the recorded answer (48 hours)');
+    assert.equal(recorded.answer, p1);
     assert.match(boundaries[1]!, /refuses the next start \(limit: 2 unacked starts with it, K 1\)[\s\S]*\nROADMAP-SESSION: stopped k-limit$/);
     assert.ok(chainOf(absPath(layout(story.dir).product)).two !== null, 'arc 2 started, chained on arc 1');
     assert.deepEqual(checked.result.interventions, { n: 1, byLever: { pause: 1 }, malformed: [] }, 'the one intervention, logged once');
     assert.deepEqual(report.owner.map((o) => [o.via, o.by, o.answer]), [
       ['numbered', 'code', 'K = 1.'], ['numbered', 'code', 'Yes, I accept that slice.'],
-      ['brief', 'simulator', (JSON.parse(readFileSync(ANSWER_KEY, 'utf8')) as { ownerAnswers: { answer: string }[] }).ownerAnswers[0]!.answer],
+      ['answer', 'simulator', p1],
       ['spend-hold', 'code', SPEND_APPROVED],
       ['numbered', 'code', 'Done: issue creation is restricted to collaborators again.'],
     ]);

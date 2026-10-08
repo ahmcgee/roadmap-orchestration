@@ -122,6 +122,7 @@ export const PACK_REVIEW_JOB = 'pack review job (M4a PACK_REVIEW_JOB: PackReview
 export const ISSUE_CAPTURE = 'checkpoint issue capture (M4a ISSUE_CAPTURE: identity, policy, fetch, the capture kept, issues-captured, checkpoint-inputs)';
 export const CORPUS_AMENDMENT = 'corpus amendments and issue intake (M4a CORPUS_AMENDMENT / ISSUE_INTAKE: after the decision, corpus-amendment and issue-intake facts keyed by source)';
 export const BRIEF_ACK = 'brief ack (M4a CLI brief --ack: the pending marker, the ack commands under deterministic ids, the committed marker)';
+export const ANSWER_RECORD = 'owner answer (M4a CLI roadmap answer: the answer published write-once by link, latest k in force)';
 export const LANE_REUSE = 'lane reuse (M4a rev 3 N1 LANE_REUSE: a spec lane reused from a certified series, lane-reused keyed (parent, lane), then the remaining lanes)';
 export const SERIES_CERTIFIED = 'series certificate (M4a rev 3 N1 SERIES_CERTIFIED: lanes, a clean census, the checkout\'s removal, then series-certified)';
 export const RED_CLASS = 'red class (M4a rev 3 N1 RED_CLASS: a red run\'s evidence and host.json, red.json write-once, then the rerun decision)';
@@ -1719,6 +1720,22 @@ export const MATRIX: readonly Row[] = [
         recovery: 'every ack enqueued, the marker still pending: the rerun finds each command file with its own bytes (enqueues nothing again) and commits the marker; each command once',
       },
       B5: { status: 'excluded', why: 'the committed marker is the ack\'s last write; a rerun of a committed id reports its commands and writes nothing' },
+    },
+  },
+  {
+    // `roadmap answer` (src/answers.ts `recordAnswer`), a CLI process crashed after its one write and run again.
+    row: ANSWER_RECORD,
+    test: 'test/answers.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: 'the answer is published write-once by link (exclusivePublish): it is there whole or not at all, and before it nothing is written' },
+      B2: { status: 'excluded', why: 'no intent: the answer file is the act and the record at once' },
+      B3: { status: 'excluded', why: 'the act is one link; B1 covers its before and after' },
+      B4: {
+        status: 'crash',
+        labels: ['answer.after-publish'],
+        recovery: 'the answer durable, its output never printed: the rerun with the same text finds it in force and reports it unchanged, writing nothing; a rerun with another text would supersede it as k 2',
+      },
+      B5: { status: 'excluded', why: 'the publish is the answer\'s last write; nothing follows it' },
     },
   },
   {

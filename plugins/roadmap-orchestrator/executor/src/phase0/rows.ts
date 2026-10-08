@@ -20,6 +20,9 @@
 //   5. amendments  every amendment of the previous arc's verified ref dispositioned (`amendment-undispositioned`);
 //                  intake against the kept capture the record names (`capture-missing`, `intake-missing`,
 //                  `intake-unknown`, `intake-duplicate`, H8).
+//   5a. answers    (a fresh start, live) every owner answer in force in the answer log (`roadmap answer`, src/answers.ts)
+//                  applied: the record marks its question `answered` with its text, or, for a question the record
+//                  does not carry, the newest earlier arc of the chain carrying it does (`answer-unapplied`).
 //   6. vision      confirmed against the pin (`vision-unconfirmed`, src/holistic/vision.ts).
 //   7. forge       (live) the issue policy trusted (`issue-policy-untrusted`, OR-L6) and the capture's repo the one
 //                  `gh repo view` resolves now (`capture-foreign`).
@@ -31,6 +34,7 @@
 // disposition of no amendment) is `plan-invalid{schema}` naming it.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { answerLog, latestAnswers, refQuestions, unappliedOf } from '../answers.ts';
 import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
 import { type ArcId, type DebtId, type IssueId, type UnitId, issueId, phaseQuestionSeq, sha } from '../core/ids.ts';
 import type { SpecM1 } from '../core/records.ts';
@@ -49,7 +53,7 @@ import { resolveRepo } from '../forge/gh.ts';
 import { queryPolicy } from '../forge/policy.ts';
 import { trusted } from '../forge/trust.ts';
 import { type IssueCapture, parseIssueCapture, sameRepo } from '../forge/types.ts';
-import { git, gitRun } from '../git/git.ts';
+import { git, gitCommonDir, gitRun } from '../git/git.ts';
 import { censusProblems, specCensusMismatches } from '../holistic/rederive.ts';
 import {
   type Obligations, type Vision, parseObligations, parseVision,
@@ -62,20 +66,20 @@ import type { RepoConfig } from '../routing/layers.ts';
 import { type Ruling, type RulingCorpus, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, parseSpec } from '../spec/spec.ts';
 import type { CorpusInForce, InputFiles } from '../input/inforce.ts';
-import { type ChainProblem, type CorpusProblem, type Phase0Problem, type Phase0Record, parsePhase0Record } from './types.ts';
+import { type ChainProblem, type CorpusProblem, type Phase0Problem, type Phase0Record, type PhaseQuestion, parsePhase0Record } from './types.ts';
 
 type Row<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
-/** Which live rows run: the forge (7), the chain (8, a fresh start's) and the tree (9). Rows 1-6 always run. */
-export type Phase0Mode = Readonly<{ forge: boolean; chain: boolean; tree: boolean }>;
+/** Which live rows run: the answers (5a) and the chain (8), a fresh start's; the forge (7) and the tree (9). Rows 1-6 always run. */
+export type Phase0Mode = Readonly<{ forge: boolean; chain: boolean; answers: boolean; tree: boolean }>;
 /** `start` of a fresh arc and `phase0 check --plan`: everything. */
-export const FRESH_START: Phase0Mode = { forge: true, chain: true, tree: true };
-/** `start` of an arc with a plan in force: no chain rows (it is not a new start). */
-export const RESTART: Phase0Mode = { forge: true, chain: false, tree: true };
-/** `apply`: no forge, no chain. */
-export const APPLY: Phase0Mode = { forge: false, chain: false, tree: true };
+export const FRESH_START: Phase0Mode = { forge: true, chain: true, answers: true, tree: true };
+/** `start` of an arc with a plan in force: no chain or answer rows (it is not a new start). */
+export const RESTART: Phase0Mode = { forge: true, chain: false, answers: false, tree: true };
+/** `apply`: no forge, no chain, no answers (an answer that comes mid-arc is applied by an apply, not refused by one). */
+export const APPLY: Phase0Mode = { forge: false, chain: false, answers: false, tree: true };
 /** `phase0 check --from-ref`: the recorded closure alone (K20). */
-export const FROM_REF: Phase0Mode = { forge: false, chain: false, tree: false };
+export const FROM_REF: Phase0Mode = { forge: false, chain: false, answers: false, tree: false };
 
 /** What the rows read of a plan's inputs: bytes as the files (or a ref) hold them, null when absent. */
 export type Phase0Input = Readonly<{
@@ -174,6 +178,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     capture = captureOf(input, record, p0, rows, where('the issue capture'));
     if (capture !== null) p0.push(...intakeProblems(record, capture));
     actedReferences(record, plan, pin, rows);
+    if (mode.answers) p0.push(...answerProblems(input.repo, record, previous?.arcs ?? []));
   }
   // 6. The vision confirmed against the pin.
   if (vision !== null && pin !== null) {
@@ -319,6 +324,19 @@ function captureOf(input: Phase0Input, record: Phase0Record, p0: Phase0Problem[]
     return null;
   }
   return load(rows, 'plan.phase0.issueCapture', where, input.capture, parseIssueCapture);
+}
+
+/** 5a. Every answer in force applied by the record, or by the newest earlier arc of the chain carrying its question. */
+function answerProblems(repo: AbsPath, record: Phase0Record, chain: readonly ArcRef[]): readonly Phase0Problem[] {
+  const latest = latestAnswers(answerLog(gitCommonDir(repo)));
+  function* records(): Generator<readonly PhaseQuestion[]> {
+    yield record.questions;
+    for (const ref of [...chain].reverse()) {
+      const q = refQuestions(ref);
+      if (q !== null) yield q;
+    }
+  }
+  return unappliedOf(latest, records()).map((a) => ({ type: 'answer-unapplied', question: a.question }));
 }
 
 /** Exactly one outcome per issue of the kept capture (H8). */

@@ -2,8 +2,8 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PlanRev, type ResourceName, type Sha, type UnitId, arcId, briefId, divergenceId,
-  edgeId, needsUserId, planRev, resourceName, sha, unitId,
+  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PhaseQuestionId, type PlanRev, type ResourceName, type Sha, type UnitId, arcId,
+  briefId, divergenceId, edgeId, needsUserId, phaseQuestionId, planRev, resourceName, sha, unitId,
 } from '../core/ids.ts';
 import { LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
@@ -78,6 +78,11 @@ export type Command =
   | Readonly<{ command: 'issues'; repo: string; out: string | null }>
   /** `chain status`: the chain derived from refs, the ack log and K. */
   | Readonly<{ command: 'chain-status'; repo: string }>
+  /**
+   * `answer <P-n> --text <answer>`: record the owner's answer to an open Phase-0 question in the answer log
+   * (src/answers.ts), live arc or not; `arc` names the arc whose record holds it open (null: the newest arc with one).
+   */
+  | Readonly<{ command: 'answer'; repo: string; question: PhaseQuestionId; text: string; arc: ArcId | null }>
   // M4a rev 3 host acts (no host lock; not queued): src/commands/{witnesscheck,resumearc,inputs}.ts.
   /** `witness-check --lane-file <file>` (D1, R56): run one witness lane in the cwd and compare its required ids (exit 0, or 78). */
   | Readonly<{ command: 'witness-check'; laneFile: string }>
@@ -357,6 +362,18 @@ export function parseCommand(argv: readonly string[]): Command {
       positionals(p, 'chain status', 0);
       return { command: 'chain-status', repo: required(p, 'chain status', 'repo', '<path>') };
     }
+    case 'answer': {
+      const p = parseRest(rest, { repo: 'value', arc: 'value', text: 'value' }, command);
+      const [question] = positionals(p, command, 1);
+      if (question === undefined) throw new CliError('answer: <P-n> is required');
+      const text = required(p, command, 'text', '<answer>');
+      if (text.trim() === '') throw new CliError('answer: --text <answer> is empty');
+      const arc = value(p, 'arc');
+      return {
+        command, repo: required(p, command, 'repo', '<path>'), question: arg(command, '<P-n>', phaseQuestionId, question), text,
+        arc: arc === undefined ? null : arg(command, '--arc', arcId, arc),
+      };
+    }
     case 'witness-check': {
       const p = parseRest(rest, { 'lane-file': 'value' }, command);
       positionals(p, command, 0);
@@ -379,7 +396,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status, witness-check, resume-arc, inputs export`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status, answer, witness-check, resume-arc, inputs export`,
       );
   }
 }

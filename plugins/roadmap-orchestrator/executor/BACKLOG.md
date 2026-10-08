@@ -79,6 +79,9 @@ at triage stay in git history.
   final message ending with the next action or the stop, `refused` proposals in every checkpoint's inputs (scoped to the
   plan rev, not the audit generation: run 12's ckpt-4 was generation 2 and re-proposed generation 1's refusal), and
   readers after the start never parse the live `.roadmap/config.json`.
+- Owner-answer channel (paid runs 12-14, D4 failed three times: answers only reached the session at turn ends, and a
+  root agent that never ends a turn never got one): `roadmap answer` into a write-once answer log, listed by
+  `status`, the brief and `chain status`, an `answer` watch event, and the `answer-unapplied` start row.
 
 ### M4b (after M4a)
 

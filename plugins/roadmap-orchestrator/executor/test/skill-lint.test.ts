@@ -21,14 +21,14 @@ const REFERENCE = join(SKILLS, 'orchestrate', 'reference.md');
 const PLACEHOLDERS: Readonly<Record<string, string>> = {
   path: '/tmp/repo', 'plan.json': 'plan.json', file: 'out.json', 'record.json': 'ruling.json', ms: '1000', min: '30',
   n: '2', K: '3', unit: 'u-1', arc: 'arc-1', edge: 'e-1', text: 'the lane passed', name: 'db', 'needs-user-id': 'nu-7',
-  'option-id': 'apply', 'D-n': 'D-1', lenses: 'invariants,vision', ref: 'HEAD', sha: 'a'.repeat(40), briefId: '0123456789abcdef', dir: 'export',
+  'option-id': 'apply', 'D-n': 'D-1', lenses: 'invariants,vision', ref: 'HEAD', sha: 'a'.repeat(40), briefId: '0123456789abcdef', dir: 'export', 'P-n': 'P-1',
 };
 
 /** Every command kind, so a kind added to `Command` fails typecheck here until reference.md documents it. */
 const KINDS: { readonly [K in Command['command']]: true } = {
   version: true, start: true, status: true, watch: true, stop: true, pause: true, ack: true, resume: true, sweep: true, apply: true,
   'resolve-edge': true, 'run-only': true, rule: true, reverse: true, steer: true, 'merge-in': true, audit: true, 'close-admissions': true,
-  gc: true, 'phase0-check': true, 'corpus-pin': true, brief: true, pr: true, issues: true, 'chain-status': true,
+  gc: true, 'phase0-check': true, 'corpus-pin': true, brief: true, pr: true, issues: true, 'chain-status': true, answer: true,
   'witness-check': true, 'resume-arc': true, 'inputs-export': true,
 };
 

@@ -13,6 +13,9 @@
 //   else the merged one, else a closed one, else `none`; `main` as the integration branch has none. An open PR's
 //   `needsRebase` is `roadmap pr`'s base walk (src/commands/pr.ts `baseOf`): a previous arc whose PR was merged by
 //   squash or rebase (OR-L5). A forge or git failure is the arc's `unavailable{reason}`, never an error.
+// - **Answers** (`chain status` only): the owner's recorded answers no Phase-0 record applies yet (src/answers.ts
+//   `unappliedAnswers`), each with its line: the act the root agent owes now.
+import { answerLine, unappliedAnswers } from '../answers.ts';
 import { type ArcRef, arcsWithRefs, chainBack, committedAcks, nextStartOf, readArcRef, unackedStarts } from '../chain.ts';
 import type { ArcId } from '../core/ids.ts';
 import type { AbsPath, BranchName } from '../core/values.ts';
@@ -20,10 +23,10 @@ import { GhError, resolveRepo } from '../forge/gh.ts';
 import { type Pull, onlyIn, pullsByHead } from '../forge/pr.ts';
 import { MAIN_BRANCH, PushError } from '../forge/push.ts';
 import type { RepoIdentity } from '../forge/types.ts';
-import { GitError } from '../git/git.ts';
+import { GitError, gitCommonDir } from '../git/git.ts';
 import { CliError } from '../input/cli.ts';
 import type { PlanM1 } from '../input/plan.ts';
-import type { AckMarker, BriefPr, NextStart } from '../phase0/types.ts';
+import type { AckMarker, BriefPr, NextStart, OwnerAnswer } from '../phase0/types.ts';
 import { committedRepoConfig } from '../preflight/checks.ts';
 import { baseOf } from './pr.ts';
 
@@ -118,8 +121,14 @@ export function chainStatusOf(repo: AbsPath, links: readonly ChainLink[], head: 
   };
 }
 
-export async function chainStatus(args: ChainStatusArgs): Promise<ChainStatus> {
+/** `chain status`: the chain, and the owner's answers waiting to be applied. */
+export type ChainStatusReport = ChainStatus & Readonly<{ answers: readonly (OwnerAnswer & Readonly<{ line: string }>)[] }>;
+
+export async function chainStatus(args: ChainStatusArgs): Promise<ChainStatusReport> {
   const head = chainHead(args.repo);
   if (head === null) throw new CliError(`chain status: no arc of ${args.repo} has published a snapshot (refs/roadmap/*)`);
-  return chainStatusOf(args.repo, chainTo(args.repo, head).map(linkOf), { plan: head.plan, ref: head });
+  return {
+    ...chainStatusOf(args.repo, chainTo(args.repo, head).map(linkOf), { plan: head.plan, ref: head }),
+    answers: unappliedAnswers(gitCommonDir(args.repo)).map((a) => ({ ...a, line: answerLine(a) })),
+  };
 }

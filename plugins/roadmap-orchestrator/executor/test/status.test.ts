@@ -115,6 +115,7 @@ describe('status.subset', () => {
       issues: null,
       chain: null,
       timings: [],
+      answers: [],
       knownDefects: [],
       checkpointWaits: [],
       admits: [],
@@ -126,7 +127,7 @@ describe('status.subset', () => {
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'admits', 'amendments', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred',
+      'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred',
       'divergences', 'drift', 'edges', 'findings', 'holds', 'holistic', 'host', 'issues', 'knownDefects', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
