@@ -146,7 +146,7 @@ test('rounds.fresh-resolve: after a re-entry\'s conflicted preparation, the reso
   writeFileSync(d.planPath, JSON.stringify(plan));
   recordPlan(r.journal, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [
     { type: 'unit-added', unit: U2 }, { type: 'unit-reentered', unit: U2, reenters: U1, reset: false },
-  ], { profile: 'default', config: null });
+  ], { profile: 'default', config: null, arcRoles: 'm4b' });
   r.journal.close();
 
   const run = contextFor(d);

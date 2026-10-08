@@ -1,7 +1,9 @@
 // A host load sample (M2 flake reruns and host parks): /proc/loadavg and /proc/meminfo as a typed value, and
-// the busy / clear predicates over it. The parsers are pure; readHostSample is the one impure edge.
+// the busy / clear predicates over it; and (M4b) the host fingerprint each start records. The parsers are pure;
+// readHostSample and readHostFingerprint are the impure edges.
 import { readFileSync } from 'node:fs';
-import { availableParallelism } from 'node:os';
+import { arch, availableParallelism, platform } from 'node:os';
+import type { HostFingerprint } from '../flow/types.ts';
 
 export type HostSample = Readonly<{ load1: number; cpus: number; memTotalKb: number; memAvailableKb: number }>;
 
@@ -39,6 +41,15 @@ export function readHostSample(): HostSample {
     cpus: availableParallelism(),
     ...parseMeminfo(readFileSync('/proc/meminfo', 'utf8')),
   };
+}
+
+/**
+ * The host's fingerprint (M4b, R11), read once per start into `executor-started.host`: the platform, the architecture,
+ * the cpus a process may use and MemTotal in whole GiB (at least 1), so a reboot keeps it and a resized host changes it.
+ */
+export function readHostFingerprint(): HostFingerprint {
+  const { memTotalKb } = parseMeminfo(readFileSync('/proc/meminfo', 'utf8'));
+  return { platform: platform(), arch: arch(), cpus: availableParallelism(), memGiB: Math.max(1, Math.round(memTotalKb / (1024 * 1024))) };
 }
 
 export const isBusy = (s: HostSample): boolean => s.load1 / s.cpus >= BUSY_LOAD_PER_CPU || s.memAvailableKb < s.memTotalKb * BUSY_MEM_AVAILABLE_FRACTION;

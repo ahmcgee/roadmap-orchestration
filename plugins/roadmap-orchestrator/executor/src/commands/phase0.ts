@@ -16,7 +16,7 @@ import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { CliError, runDir, type Phase0Source } from '../input/cli.ts';
 import {
-  CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, readInputFiles,
+  CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, arcRolesOf, readInputFiles,
 } from '../input/inforce.ts';
 import { holisticNeedsCorpus, FRESH_START, FROM_REF, type Phase0Input, phase0InputOf, phase0Rows, visionAndObligations } from '../phase0/rows.ts';
 import { gitCommonDir, legacyRoadmapDir, loadPlan, planInvalidCheck, readRepoConfig, revisionInputRows, routingCheck, specLaneCheck } from '../preflight/checks.ts';
@@ -46,7 +46,7 @@ async function fromPlan(repo: AbsPath, planFile: AbsPath): Promise<Checked> {
   let context: StartupContext;
   try {
     context = {
-      repo, planFile, plan, specOf: (u) => files.specs.get(u.id)?.bytes ?? null, profile: selectProfile(null, config),
+      repo, planFile, plan, specOf: (u) => files.specs.get(u.id)?.bytes ?? null, profile: selectProfile(null, config), arcRoles: arcRolesOf(null),
       // No host file is read here (the residue row is a start's): the plan's directory stands in for the host dir.
       runDir: runDir(gitCommonDir(repo), plan.arc), hostDir: absPath(dirname(planFile)),
     };

@@ -1185,10 +1185,11 @@ ladder with its own runnable fixture:
   `docRef` obligations, no census and an unverified vision, under the new class catalogue, and keeps its target
   variant. That defaulting (the vacuous census, the unverified `vision.md#` reference, checkpoint answers without
   the M4a fields, the dev.6 seat decoder and routing-rev alias, the holistic `architecture-doc` variant) is
-  scaffolding, deleted once no dev.6 arc is in flight. Every pre-dev.6 layer (dev.1, dev.3, dev.4 and dev.5,
-  including the legacy serial frontier, dev.5 transient rules and dev.5 routing reconstruction) was deleted in M4a
-  step X0 with the tests that existed only for it (owner ruling OR-L4); an older in-flight arc finishes on its own
-  release.
+  scaffolding, deleted once no dev.6 arc is in flight (1.0.0-dev.8 no longer adopts dev.6 arcs: M4b step 0a deleted
+  the checkpoint-answer defaults and the rev alias; the rest goes with the variant's test migration). Every pre-dev.6
+  layer (dev.1, dev.3, dev.4 and dev.5, including the legacy serial frontier, dev.5 transient rules and dev.5 routing
+  reconstruction) was deleted in M4a step X0 with the tests that existed only for it (owner ruling OR-L4); an older
+  in-flight arc finishes on its own release.
 - **M4b Flow** (seeded from M4a arcs' refs, LR-c). The flow loop, SPC, the flow role, givens, proposals and
   verdicts, the ruler fence, test-set-preserving lane edits, and the two plants. Agreed in the 2026-10-03 design
   grilling (OR-Q1–Q7, Q17, Q21):
@@ -1215,3 +1216,22 @@ ladder with its own runnable fixture:
     Paired guard metrics are never folded into T. Build-seat effort is a flow lever. A lane argv edit is allowed
     only when code proves it test-set-preserving (witness reporter ids on the same SHA).
   - **Acceptance:** the `evals/m4a` fixture plus two plants: a shardable inefficient lane, and Goodhart bait.
+  - **Readings** (plan `/claude-state/plans/m4b-flow.md` rev 2, the lead's, reported to the owner and vetoable).
+    RC-1: checkpoint triggering is ruler (the holistic authority); judgment cost is diagnosed, never tuned. RC-2: T is
+    two numbers, never a weighted sum: `tAdvances` (obligations first held this arc per hour, serving an `advances`
+    clause) and `tOther` (`tUnits` for a non-holistic arc); I is admitted-not-merged plus ready queued, OE executor spend
+    per hour. RC-3: lane-argv levers are suite lanes only (spec lanes are the planner's, arc lanes ruler). RC-4: a
+    suite-lane proof runs both argvs with the lane's exact env and the action's reporter at the integration head in clean
+    checkouts, journalling no `witnessed`; preserved iff the `(testId, selected, outcome)` multisets are equal and the old
+    one is non-empty with a pass, and the new argv differs from the old only in one allowlisted flag's value
+    (`--test-concurrency=<n>`, edited in place: Node 24.21 ignores a flag appended after the selector). RC-5: `flow request`
+    bypasses the cooldown at most once per window; nothing bypasses it automatically. RC-6: no revert command; a `worse`
+    verdict raises `flow-worse` with the preimage and the root agent reverts by `apply`. RC-7: no rope (WIP) lever; the
+    rope is diagnosed only. RC-8: build-seat effort is the build seat's class, moved one class step and never below the
+    tier's built-in class (effort lives in the class binding; a plan cannot rebind a class). RC-9: a rejection is
+    remembered by `(station, lever, target)`, never by the value; a `worse` verdict adds its key, a `red` proof does not.
+  - **The flow seat is on every arc.** `flow` is in force in every arc scope an M4b executor starts (frontier, seat
+    `arc`), holistic or not, so a binding of its class with no flow prompt (Sonnet, or a Codex model) refuses
+    `unsupported-routing` for a non-holistic start too. An arc 1.0.0-dev.7 started records no role set and keeps the dev.7
+    roles: no flow seat, its routing revs unchanged, the flow loop off (scaffolding, deleted once no dev.7 arc is in
+    flight). Version 1.0.0-dev.8 adopts dev.7 arcs only.

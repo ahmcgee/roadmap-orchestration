@@ -11,12 +11,12 @@
 // terminal predicate's input) is a pure function of the log. Items outside the journal (the supervisor's and a
 // refused claim's) are files only (`fileNeedsUser`); `blockingItems` reads both for admission.
 //
-// M3 (B7; the OR rulings) and M4a: whether an item of a reason from M3 on blocks is fixed by its reason (`m3Blocking`),
+// M3 (B7; the OR rulings), M4a and M4b: whether an item of a reason from M3 on blocks is fixed by its reason (`m3Blocking`),
 // and a raise that disagrees fails loud. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`,
 // `new-finding-draining`, `steered`, `not-reproduced`, `owner-request` (A16: only the owner may act), `respec-second`
 // (OR-Q1), and M4a's `pack-review` (K14) and `issue-policy-untrusted` (OR-L6). Non-blocking (`NON_BLOCKING_M3_REASONS`):
-// `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never halt units), `audit-owed` and
-// `divergence-digest`. Blocking means the arc is not `complete` while the item is open (§2.10); what an open item holds
+// `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never halt units), `audit-owed`,
+// `divergence-digest`, and M4b's `flow-proposal`, `flow-host`, `flow-worse`, `flow-invalid` and `ruler-changed`. Blocking means the arc is not `complete` while the item is open (§2.10); what an open item holds
 // back from admission is admission's (src/schedule/ready.ts) and, for `obligation-baseline`, `pack-review` and
 // `issue-policy-untrusted` (every admission until it is answered), the scheduler's. A `pack-review` item a later pack
 // review's end superseded (K14, `supersededPackItems`) is open no more: it holds and blocks nothing.

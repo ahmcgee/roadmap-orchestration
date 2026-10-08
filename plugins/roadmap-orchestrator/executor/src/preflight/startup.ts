@@ -17,7 +17,7 @@ import type { SchemaVersion } from '../core/version.ts';
 import type { PlanM1, PlanUnit } from '../input/plan.ts';
 import type { OverCapacity } from '../resources/pool.ts';
 import {
-  type Backend, type ModelClass, type ProfileName, type RoutingLayerName, type SeatRef, backend, modelClass, profileName, seatFields,
+  type ArcRoleSet, type Backend, type ModelClass, type ProfileName, type RoutingLayerName, type SeatRef, backend, modelClass, profileName, seatFields,
 } from '../routing/types.ts';
 
 /** EX_CONFIG: start refused; fixing the input or disposing the blocker is the user's move. */
@@ -133,6 +133,8 @@ export type StartupContext = Readonly<{
   /** The bytes of a unit's spec as this start reads it (the file, or the plan in force's kept spec), or null when absent. */
   specOf: (unit: PlanUnit) => Buffer | null;
   profile: ProfileName;
+  /** The arc's role set (M4b): `m4b` for a fresh arc, else what its revision 1 recorded (null: started on 1.0.0-dev.7). */
+  arcRoles: ArcRoleSet | null;
   runDir: AbsPath;
   hostDir: AbsPath;
   /**

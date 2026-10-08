@@ -111,7 +111,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
   editPlan(d, (p) => void (p['routing'] = { planCheck: { low: 'summit' } }));
   editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' } }));
   // As a start does (src/preflight/checks.ts `settlePlan`): the routing base is the profile and the repo config read now.
-  const base: RoutingBase = { profile: 'default', config: readRepoConfig(absPath(d.repo)) };
+  const base: RoutingBase = { profile: 'default', config: readRepoConfig(absPath(d.repo)), arcRoles: 'm4b' };
   recordFirst(d, base);
   const r = contextFor(d);
   const ctx = followContext(r);
@@ -122,6 +122,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
       repoConfig: { seats: { gate: { high: 'summit' } }, classes: { efficient: sonnet('medium') } },
       planLayer: { planCheck: { low: 'summit' } },
       unitLayers: { u1: { gate: { med: 'summit' } } },
+      arcRoles: 'm4b',
     });
     await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
     const record = r.journal.view.dispatchOf(U1)!;
@@ -138,7 +139,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
 
     // The architect edits the live config: a revision's routing never re-reads it (H7).
     writeFileSync(configPath, JSON.stringify({ routing: { classes: { efficient: sonnet('high') } } }));
-    const live = unitRouting({ profile: 'default', config: readRepoConfig(absPath(d.repo)) }, plan, unitOf(ctx, 'u1'));
+    const live = unitRouting({ profile: 'default', config: readRepoConfig(absPath(d.repo)), arcRoles: 'm4b' }, plan, unitOf(ctx, 'u1'));
     assert.notEqual(live.rev, record.routingRev, 'the live file would resolve another rev');
     assert.equal(ctx.routing(U1).rev, record.routingRev, 'the routing in force still resolves from the recorded provenance');
     assert.deepEqual(r.journal.view.planApplied()?.routingProvenance, provenance);

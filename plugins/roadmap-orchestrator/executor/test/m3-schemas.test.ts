@@ -444,7 +444,7 @@ describe('M3 judgment outputs', () => {
   const ckpt = {
     decision: 'bundle', reasons: ['F-1'], ops: [op], rulings: [], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r' }],
     interpretations: [{ clauses: ['V-1'], situation: 's', reading: 'r' }], cites: { vision: ['V-2'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }], findings: ['F-1'] },
-    premises: [],
+    premises: [], corpusAmendments: [], issueIntake: [],
   };
 
   it('lens: severities P1-P3, obligation ids, unique clauses', () => {
@@ -470,7 +470,7 @@ describe('M3 judgment outputs', () => {
       { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 2 }] },
       {
         op: 'obligation-split', obligation: 'I-2',
-        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, witness: { lane: 'journey', testIds: ['t'] }, activation: 'must-hold', deliveredBy: [] }],
+        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'] }, activation: 'must-hold', deliveredBy: [] }],
       },
       { op: 'obligation-dispose', obligation: 'I-3', disposition: 'deferred', ruling: 'C-9' },
       { op: 'invalidate-approval', unit: 'u1' },

@@ -40,8 +40,8 @@ inputs (plan, specs, ledger).
   versions for as long as an arc on the older one may be in flight.
 - `test/serial/upgrade.test.ts` is the guard: it starts the M1 fixture on `PREVIOUS_RELEASE` (extracted with `git
   archive`), stops it mid-arc, and finishes it on HEAD. Move `PREVIOUS_RELEASE` at each release.
-- Only 1.0.0-dev.6 is adopted (owner ruling OR-L4, M4a): an arc started on an earlier release finishes on the
-  executor release it started on. M4a step X0 deleted every older read-time layer (the 1.0.0-dev.1, dev.3, dev.4 and
+- Only the previous release is adopted (owner ruling OR-L4): 1.0.0-dev.6 by M4a, 1.0.0-dev.7 since M4b (1.0.0-dev.8,
+  `PREVIOUS_RELEASE` b55ad88). An arc started on an earlier release finishes on the executor release it started on. M4a step X0 deleted every older read-time layer (the 1.0.0-dev.1, dev.3, dev.4 and
   dev.5 defaults recorded below as history), so each field those releases lacked is required where it was defaulted:
   `launch.json` `stallMs`; a first start records revision 1 before anything runs (no arc without a `plan-applied`);
   `plan-applied` `scheduling: 'dag'` on rev 1 (exactly there), `source`, `payloadSha256`, `rulingsSha256`,
@@ -116,11 +116,11 @@ completes as in M3.
 | `ApprovalFingerprint` | `+ corpus?` (the pin's sha256) | absent: none (lasting, byte-identical to dev.6) |
 | `RevisionManifest` (`RevisionInputs`) | `+ corpus?, corpusGuide?, phase0?, phase0Issues?` (all four or none) | absent: none |
 | `checkpoint-inputs` | `+ issues?: captured{sha256} \| unavailable{reason}`, `+ corpusSha256?` | absent: none |
-| Checkpoint answer | `+ corpusAmendments`, `+ issueIntake`; split child `docRef` nullable, `+ rule` | absent: none (`checkpointOutputM4Default`, `splitChildRuleDefault`) |
+| Checkpoint answer | `+ corpusAmendments`, `+ issueIntake`; split child `docRef` nullable, `+ rule` | absent: none (`checkpointOutputM4Default`, `splitChildRuleDefault`; deleted in M4b step 0a: all three required) |
 | `.roadmap/config.json` | `+ chain?{k}` | absent: K unset (lasting) |
 | `Role` | `+ packReview` (seat `arc`, frontier) | in force for every holistic arc (its seat is hashed: revs change, nothing parks, OR-L3) |
 | `JobId` | `+ review-<n>` | none |
-| `DispatchRecord`, `status` routing tables | none persisted | a dev.6 record's `implementerSeatRev` reads back through `seatTripleOf` (lasting); status joins a dev.6 meter row's `routingRev` through `dev6RevAlias` over `DEV6_CLASS_CATALOGUE` (step A2) |
+| `DispatchRecord`, `status` routing tables | none persisted | a dev.6 record's `implementerSeatRev` reads back through `seatTripleOf` (lasting); status joined a dev.6 meter row's `routingRev` through `dev6RevAlias` over `DEV6_CLASS_CATALOGUE` (step A2; deleted in M4b step 0a) |
 | New facts, `NeedsUserReason`, startup rows, `FINDING_LENSES + issue` | "M4a" | none |
 | Every numbered-id list (facts `finding-opened.visionClauses`, `audit-started.priorFindings`, `audit-ended.findings`, `checkpoint-inputs.findings`, `divergence-digest.ids`, `corpus-amendment.rules`; `ApprovalFingerprint.rulingRevs`/`obligationRevs`; vision `bears`; obligations `serves`, split `children`, mapping `obligations`; ruling sidecar `obligations`, `obligationDispositions`, `cites`; divergence `cites`; plan `holistic.advances`; Phase-0 record and brief payload `rules`, `cites`, `bears`, `amendments`, `slice.advances`; `acted{rules}`) | canonical numbered-id order ("Numbered-id order"), was string order | a list strictly ascending in string order (`["T-10","T-9"]`) reads as written, byte-preserving, with one warning per process (`legacyIdOrder`, `idsAscending(…, {legacyStringOrder})`); `fingerprintHolds` compares rev lists as sets, so a dev.6 approval holds against the canonical fingerprint. Lists that were always numeric (the pin, the registry, the census, the debt ledger, Phase-0 `questions`/`debt`) take no legacy order. Also covers arcs started on this branch before the fix and input files (vision, obligations, rulings, Phase-0) written for the old order |
 
@@ -166,6 +166,18 @@ warning per process each, BACKLOG "Scaffolding to delete", dev.6 layer), the res
 | `finding-transition` (run 10, F) | `ruled.by: code{reason + close-out}` | none |
 | `Phase0Problem.spec-census-mismatch` (run 10, C) | `item + W-n` (a witness item) | none |
 | `bundle-request` needs-user items (run 10, E) | an invalid request's (and a twice-failed checkpoint's) `options: [acknowledge, decline]` | an older item's `[]` reads as written; declined at the close-out with `choice: null` |
+
+**1.0.0-dev.7 → 1.0.0-dev.8 (M4b).** `SCHEMA_VERSION` stays 1. `PREVIOUS_RELEASE` is b55ad88 (1.0.0-dev.7, PR #107);
+dev.7 is the only release adopted, so no dev.6 arc is (none was in flight at step 0a: every `/var/tmp` fixture arc was
+started on dev.7). Every change is additive; the one scaffolding default is `dev7ArcRolesDefault` in `src/core/upgrade.ts`.
+
+| Record | Change | Read-time default for dev.7 state |
+|---|---|---|
+| `RoutingProvenance` | `+ arcRoles?: 'm4b'`, written on every revision of an arc dev.8 started (fixed at revision 1: the fold refuses a change) | absent: the dev.7 role set (no `flow` in `routingRevOf`, `seatsInForce`, status's routing tables), the flow loop off (`off-dev7`), warned once (`dev7ArcRolesDefault`; scaffolding) |
+| `executor-started` | `+ host?: HostFingerprint` (every dev.8 start) | absent: no fingerprint (a dev.7 ref never seeds limits) |
+| `Role` | `+ flow` (seat `arc`, frontier) | in force only with `arcRoles: m4b` |
+| `RevisionSource`, `HoldCause`, spawn subject, `CommandBody`, `JobId`, `NeedsUserReason`, facts, `.roadmap/config.json` | "M4b" | none |
+| dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -2964,3 +2976,157 @@ No record changes and no new writes (so no crash rows): each is a read-side rule
 - **R-20. The capture also waits while a unit is in plan-check** (src/holistic/checkpoint.ts `publishing`): an open
   `plan-check` attempt may patch a spec the checkpoint reads (run 11 ckpt-2: stale after a $1.72 call, seq 635–796).
   Same `skipped{publishing}`, same `CAPTURE_WAIT_MAX_MIN` bound. Read-side only: no record change.
+
+## M4b: the flow loop (frozen in M4b step 0a)
+
+The records and signatures of M4b (plan `/claude-state/plans/m4b-flow.md`, revision 2; DESIGN-1.0.md §10 "M4b Flow").
+The types and readers are in `src/flow/types.ts`, `src/core/{ids,events,records,state,upgrade}.ts`,
+`src/routing/{types,profiles,layers}.ts`, `src/input/{inforce,cli}.ts`, `src/prompts/{schemas,inputs,index}.ts` and
+`src/git/snapshot.ts`; the behaviour is the later steps' (A1 series, SPC and constraint; A2 levers, givens and verdicts;
+B1 triggers, the job, the prompt, the series at completion, status and brief; B2 the commands, proofs and applies).
+Step 0a placed every module at its final path (`src/flow/{series,spc,constraint,trigger,job,levers,givens,verdict,proof}.ts`,
+`src/commands/flow.ts`, `src/prompts/flow/claude-opus-5-5.ts`) behind `src/core/notyet.ts`.
+
+**Ids** (`src/core/ids.ts`). `JOB_KINDS += flow, proof` (`flow-<n>`, `proof-<n>`). `ProposalId` `flow-<n>.<k>`: the k-th
+proposal of flow run `flow-<n>` (a run makes at most one, so k is 0; code assigns it, `proposalIdOf`; `proposalJob`).
+`GivenId` `G-<n>` (numbered within the host's givens file, never reused; in the canonical numbered-id order).
+`StationId`, a closed grammar (`parseStationId` → `StationParts`, `stationOf`):
+
+| Station | What |
+|---|---|
+| `stage:<s>` | service of stage `s` ∈ `FLOW_STAGES` (prepare, reproduce, plan-check, build, quiesce, evidence, salvage, teardown, lanes, gate), all attempts |
+| `wait:<s>` | the gap before each attempt of `s`, minus held time |
+| `wait:slot:integration` | gate `stage-outcome` → the publication's integration-slot reserve, minus held time |
+| `suite:<lane>`, `arc-lanes`, `candidate-rest`, `ff`, `snapshot` | the slot's service components (`SLOT_COMPONENTS`); a T-alone rerun is rework, not service |
+| `slot:integration` | the slot's service as a whole: the sum of its components, a constraint and a target, never a key of a point's `minutes` |
+| `held` | hold and park outcomes, paused→resumed, ARC-scope drains, blocking needs-user; never a constraint |
+
+**Kept inputs** (`src/input/inforce.ts`; each named in the snapshot closure, `closureOf` arms in `src/git/snapshot.ts`):
+`inputs/<sha>.flow-inputs.json` (a run's `FlowInputs`, named by `flow-started`), `inputs/<sha>.flow-series.json` (the
+compact `FlowSeries`, named by `flow-series`), `inputs/<sha>.flow-proof.json` (one proof side's witness records, named by
+`flow-proof` when its sha is present).
+
+**`FlowSeries`** (`v: 1` = `FLOW_SERIES_V`; a reader recomputes from the ref's events when a kept `v` differs, and for a
+dev.7 ref): `{v, arc, host: HostFingerprint | null, points: FlowPoint[], suiteRuns: SuiteRun[], accounting}`.
+`FlowPoint = {unit, admittedAt, mergedAt, leadMin, minutes: {<leaf StationId>: min}, costUsd | null, rework, firstRunReds}`;
+the reader refuses a `slot:integration` key, `mergedAt` before `admittedAt`, and minutes not summing to `leadMin` (within
+1e-6 relative); points are unique by unit and in `mergedAt` order. `SuiteRun = {lane, at, minutes, shape: lane | stand-in
+| batch | rerun, red}` (R2's four shapes), in `at` order. `accounting = {tAdvances | null, tOther | null, tUnits, wip,
+oeUsdPerHour}` (RC-2, diagnostic only), `tAdvances` and `tOther` null together (a non-holistic arc). `host` null: no start
+of the arc recorded a fingerprint; such a series never seeds. `HostFingerprint = {platform, arch, cpus, memGiB}`
+(`readHostFingerprint`, src/host/sample.ts: `os.platform()`, `os.arch()`, `availableParallelism()`, MemTotal in whole GiB,
+at least 1); `sameHost` is field equality.
+
+**Levers and actions** (`src/flow/types.ts`). `FLOW_LEVERS = concurrency | resource-pool | suite-lane | sequence |
+build-class | host`. `FlowAction`: `concurrency{cpu}`, `resource-pool{resource, size}`, `suite-lane{lane, argv?, reporter?:
+node-test | go-test-json, cpu?}` (at least one of `argv`, `cpu`), `sequence{unit, priority: high}`, `build-class{tier,
+class}`, `host{note}`. `FlowProposal = {id, target: StationId, action, rationale, risks}`. `LeverTarget` (RC-9, never the
+value): `lane{lane} | resource{resource} | tier{tier} | unit{unit} | capacity | host`, by `leverTargetOf(action)` only;
+`RejectionKey = {station, lever, target}`. `FlowPreimage` (what an applied action replaced; `host` is never applied):
+`concurrency{cpu | null}` (null: no `capacity.cpu`, the host default), `resource-pool{resource, size}`,
+`suite-lane{lane, argv, cpu | null}`, `sequence{unit, priority | null}` (null: absent), `build-class{tier, class | null}`
+(null: no plan routing at that build seat). `TOC_STEPS = exploit | subordinate | elevate`.
+
+**`FlowInputs`** (`roadmap/flow-inputs-m4b`): `{schema, job: flow-n, triggers (non-empty, in FLOW_TRIGGERS order),
+chart: FlowChart | null, stations: StationRow[], constraint: CodeConstraint | null, accounting, levers: LeverState[], givens:
+GivenInForce[], window: FlowWindow | null, verdicts: ClosedVerdict[], rejections: Rejection[], advances: [{id: V-n, text}]
+(ascending)}`. `FLOW_TRIGGERS = buffer-red | yellow-worsening | constraint-shift | verdict-closed | floor | requested`.
+`FlowChart = {centre, ucl, mrBar (log scale), seed: previous{arcs (ascending, non-empty), points} | self{points}, recent:
+[{unit, leadMin, zone}], inFlight: [{unit, ageMin, zone}]}`, `ucl` ≥ `centre`, zones `green | yellow | red`.
+`StationRow = {station, meanMin, share ∈ [0, 1]}`. `CodeConstraint = {station, internal, component | null}`: a service
+station (never `held` or a wait), `component` (a slot component) exactly when the station is `slot:integration`.
+`LeverState`: `concurrency{cpu, set, hostCpus}`, `resource-pool{resource, size}`, `suite-lane{lane, argv, cpu | null}`,
+`sequence{unit, priority}`, `build-class{tier, class, builtin}`. `GivenInForce`: `host{id, lever, note, state: enforced |
+stale}` or `repo{lever, note}`. `FlowWindow = {proposal, lever, target, metric, openedAt, samples}`. `FlowMetric`:
+`lead | suite-run{lane} | wait{station}`. `ClosedVerdict = {proposal, lever, target, verdict}`. `Rejection = {key,
+proposal, cause: rejected | worse | changed | unprovable}`. The prompt renders `FlowPromptInputs` (the inputs without
+`schema` and `job`).
+
+**The flow role's output** (strict; `FLOW_SCHEMA` in src/prompts/schemas.ts, reader `flowOutput`): `{constraint: {station,
+agree, reason}, diagnosis, proposal: {target, action, rationale, risks} | null, noAction: string | null}`, exactly one of
+`proposal` and `noAction`. The model writes no proposal id. Every key is present (strict mode): a suite-lane action's
+unused `argv`, `reporter` or `cpu` is null and reads as absent. A schema failure is `invalid`. Code's checks after the
+schema drop the proposal with a reason (`FLOW_DROP_REASONS`): `target`, `given`, `rejected-before`, `verdict-open`,
+`elevate-early`, `argv-shape`, `lane-cpu`, `concurrency-cpus`, `sequence-repair-waiting`, `sequence-high-set`,
+`build-class-step`.
+
+**Proofs and verdicts.** `PROOF_OUTCOMES = preserved | changed | unprovable | red`. `FLOW_GUARDS = lead | rework |
+first-run-reds | obligation | cost`; a verdict's `guards` are breaches `{guard, detail}`, each guard once, in that order.
+`VerdictBefore = {samples (raw minutes, non-empty), centre, mrBar}`, `VerdictAfter = {samples}`; `MIN_VERDICT_SAMPLES` 3.
+`FLOW_VERDICTS = improved | worse | no-effect | inconclusive`.
+
+**Givens.** Host scope: `$(git rev-parse --git-common-dir)/roadmap/givens.json` (`roadmap/flow-givens-m4b`): `{schema,
+givens: [{id: G-n, lever, note, fingerprint: HostFingerprint, at}]}` ascending by id, write-once entries, never committed.
+Repo scope: `.roadmap/config.json` `flow: {givens: [{lever, note}]}` (owner-committed; an unknown lever is refused).
+
+**Facts** (`FlowFact`, src/core/events.ts; the fold sees the jobs they name and nothing else yet):
+
+| Fact `kind` | Fields |
+|---|---|
+| `flow-series` | `sha256, highWater` (right before an `arc-completed`; skipped when the latest series covers that highWater) |
+| `flow-started` | `job: flow-n, triggers, inputsSha256` (opens the job: the fold checks it is the next `flow-<n>`) |
+| `flow-ended` | `job, outcome: done \| invalid \| failed, proposal: FlowProposal \| null, dropped: {proposal, reason, detail} \| null, constraint: {code: CodeConstraint \| null, judged: {station, agree, reason} \| null}`; not `done` ⇒ no proposal, nothing dropped, `judged` null; `done` ⇒ `judged`; never both a proposal and a dropped one; the id is `<job>.0` |
+| `flow-requested` | `command, reason` |
+| `flow-decided` | `proposal, command, decision: accepted \| rejected, reason` |
+| `flow-proof` | `proposal, job: proof-n, treeSha, oldSha256 \| null, newSha256 \| null, outcome, minutes: {old, new} \| null, breaksStandIn`; `preserved` and `changed` need both shas and the minutes |
+| `flow-applied` | `proposal, revision: PlanRev, preimage` |
+| `flow-verdict` | `proposal, metric, before, after, guards, verdict, preimage`; a breach ⇒ `worse`; `inconclusive` exactly below 3 samples with no breach |
+
+**Other arms and fields.** `executor-started + host?` (every dev.8 start). `RevisionSource + flow{proposal}` (`staleBase`
+forces `--expect-rev` after it, as after a bundle; status rules it `flow{proposal}`). `HoldCause + flow-apply{proposal}`
+(new candidate starts held while an accepted proposal is `pending-apply`; the backend-park release ignores it). Spawn
+subject `+ proof{job: proof-n, proposal, lane, side: old | new, at}` (no usage charge, no `witnessed`). `CommandBody +
+flow-decide{proposal, decision: accept | reject, reason} | flow-request{reason}` (scope ∅). CLI `roadmap flow accept|reject
+<proposal> --reason <text>`, `flow request --reason <text>` (run locator) and `flow given --repo <path> --lever <lever>
+--note <text>`. `NeedsUserReason + flow-proposal, flow-host, flow-worse, flow-invalid, ruler-changed`, all in
+`NON_BLOCKING_M3_REASONS`.
+
+**Routing.** `ROLES += flow`, `ARC_ROLES += flow`, seat `arc`; `BUILTIN_SEATS.flow = {arc: frontier}`.
+`ARC_ROLES_IN_FORCE`: `none: [flow]`, `architecture-doc: [lens, checkpoint, flow]`, `corpus: [lens, checkpoint, packReview,
+flow]`, gated by the arc's role set: `arcRolesInForce(scope, arcRoles)` drops `flow` when `arcRoles` is null.
+`RoutingProvenance.arcRoles?: 'm4b'` (`ARC_ROLE_SETS`); `RoutingStack.arcRoles?`, `ResolvedRouting.arcRoles`,
+`RoutingBase.arcRoles` and `StartupContext.arcRoles` (`arcRolesOf(planApplied)`: `m4b` before the first plan, else the
+revisions'). `routingRevOf(table, scope, arcRoles)` hashes the unit roles and `arcRolesInForce`, so an arc dev.7 started
+keeps its revs. `PROMPTS.flow` mirrors `packReview`: Opus a module (step 0a's placeholder, its render not-yet), Fable
+inherits it, Sonnet and the Codex models unsupported; `ROLE_INPUTS.flow` = the `FlowPromptInputs` keys.
+
+**`LEVER_PATHS`** (src/flow/levers.ts; the fence: `diffPaths(plan, flowRevision(plan, action)) ⊆ LEVER_PATHS[lever]`, else
+a bug). A path is the plan.json field: dotted keys, `[<key>]` an entry of a keyed list, `<tier>` a build tier.
+
+| Lever | Paths | Step (G7) | Verdict metric |
+|---|---|---|---|
+| `concurrency` | `capacity.cpu` | elevate | wait in front of the target |
+| `resource-pool` | `resources[<name>].size` | elevate | wait in front of the target |
+| `suite-lane` | `suite.lanes[<id>].argv`, `suite.lanes[<id>].cpu` | exploit | per-run service of that lane |
+| `sequence` | `units[<id>].priority` | subordinate | lead |
+| `build-class` | `routing.build.<tier>` | exploit | lead (cost the guard) |
+| `host` | none (advice, never applied) | elevate | none |
+
+The one argv flag a suite-lane edit may change in place: `ARGV_FLAGS = --test-concurrency` (its value only, RC-4).
+
+**`RULER_PATHS`** (one table, code-consulted): a revision after the first admission whose source is `command` and that
+touches one raises a non-blocking `ruler-changed` item (bundles and the owner's vision applies are not flagged).
+
+| Path | What |
+|---|---|
+| `holistic.obligations` | the obligations file: obligations, their witness lanes, the arc lanes, the census, the impact mapping |
+| `holistic.audit` | the audit cadence and lens set |
+| `holistic.advances` | the vision clauses the arc advances |
+| `vision` | the vision record |
+| `routing.<judgment role>` | judgment-seat routing in the plan layer (planCheck, gate, lens, checkpoint, packReview, flow) |
+| `units[<id>].routing.<judgment role>` | judgment-seat routing in a unit layer |
+| `units[<id>].risk` | risk floors |
+
+**Crash points** (B1, B2) and their recovery:
+
+| Point | Recovery |
+|---|---|
+| `flow.after-started` (inputs kept, before the call) | the call from the kept inputs (`recordedArcCall`) |
+| `flow.after-call` (before `flow-ended`) | the recorded result read, validated, ended |
+| `flow.after-ended` (item not raised) | raised once per proposal id |
+| a proof started, not ended | rerun in fresh checkouts (residues by job) |
+| `pending-apply`, revision committed, `flow-applied` missing | postcondition: a revision with source `flow{proposal}` exists ⇒ `flow-applied` |
+| `flow.series-before-completed` (series kept, `arc-completed` missing) | re-keeping skipped (highWater covered), completed |
+| a verdict due, its fact missing | computed from the log each tick, written once per proposal |
+
+**Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8.

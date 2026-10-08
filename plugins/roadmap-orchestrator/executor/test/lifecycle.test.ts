@@ -42,7 +42,7 @@ function raiseParked(r: ArcRun, unit: typeof U1, content: NeedsUserContent): Nee
 async function command(r: ArcRun, body: CommandBody, stage: StageContext = r.ctx): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
   const ctx: CommandContext = {
     ...stage, hostEnv: {}, laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing(null) }),
-    routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET,
+    routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET,
     probes: testProbes(stage),
   };
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);

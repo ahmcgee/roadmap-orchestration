@@ -15,7 +15,7 @@ export function followingContext(r: ArcRun): StageContext {
   const routing = (unit: UnitId | null): ResolvedRouting => {
     const { plan, fact } = inForce();
     // A revision recorded without provenance (rev 1 of these arcs) is rebuilt from its plan, as the executor does.
-    const provenance = fact.routingProvenance ?? routingProvenanceOf({ profile: 'default', config: null }, plan);
+    const provenance = fact.routingProvenance ?? routingProvenanceOf({ profile: 'default', config: null, arcRoles: 'm4b' }, plan);
     return resolveRouting(provenanceStack(provenance, arcScopeOf(plan), unit));
   };
   return { ...r.ctx, plan: () => inForce().plan, routing };

@@ -57,7 +57,7 @@ import { advancesReasons } from '../holistic/vision.ts';
 import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
-  type InputFiles, type RoutingBase, appendRevision, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
+  type InputFiles, type RoutingBase, appendRevision, arcRolesOf, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
   recordPlan, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
 import { CORPUS_VISION_FILE, type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason, visionFile } from '../input/plan.ts';
@@ -70,7 +70,7 @@ import { checkLaneTiers } from '../resources/reserve.ts';
 import {
   type RepoConfig, type ResolvedRouting, planStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
 } from '../routing/layers.ts';
-import type { ProfileName } from '../routing/types.ts';
+import type { ArcRoleSet, ProfileName } from '../routing/types.ts';
 import { type Ruling, loadRulings, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, parseSpec } from '../spec/spec.ts';
 import { resolveArgv0 } from './argv0.ts';
@@ -379,7 +379,7 @@ export function committedRepoConfig(repo: AbsPath, commit: Sha): RepoConfig | nu
 
 /** The stack for this arc: the profile, the repo config's seats and class rebinds, the plan's layer (no per-unit layers in M1). */
 export function resolveArcRouting(context: StartupContext): ResolvedRouting {
-  return routingOf(context.profile, context.repo, context.plan);
+  return routingOf(context.profile, context.repo, context.plan, context.arcRoles);
 }
 
 export const routingCheck: StartupCheck<'unsupported-routing'> = {
@@ -480,6 +480,16 @@ function fileSource(planFile: AbsPath, repo: AbsPath): Source | Rejection<'plan-
   return { plan: files.plan, specOf: (unit) => files.specs.get(unit.id)?.bytes ?? null, files };
 }
 
+/** The arc's role set at a start (M4b): its revisions', or `m4b` before its first plan (a corrupt log is refused in group 4). */
+function arcRolesAt(runDir: AbsPath, arc: ArcId): ArcRoleSet | null {
+  try {
+    return arcRolesOf(readJournal(runDir, arc).view.planApplied());
+  } catch (error) {
+    if (error instanceof LogCorruptError) return arcRolesOf(null);
+    throw error;
+  }
+}
+
 /** On a respawn, the plan in force and its kept specs; null when the log records none (or does not read). */
 function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
   let view: JournalView;
@@ -495,9 +505,9 @@ function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
   return { plan: inForce.plan, specOf, files: null };
 }
 
-/** The arc's routing for `plan` under the start's profile and the repo config. */
-export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): ResolvedRouting {
-  return resolveRouting(planStack(profile, readRepoConfig(repo), plan));
+/** The arc's routing for `plan` under the start's profile, the repo config and the arc's role set. */
+export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1, arcRoles: ArcRoleSet | null): ResolvedRouting {
+  return resolveRouting(planStack(profile, readRepoConfig(repo), plan, arcRoles));
 }
 
 /**
@@ -521,7 +531,7 @@ export function settlePlan(
     if (inForce === null) throw new Error('a respawn with no plan in force reads the files');
     return [];
   }
-  const routingBase: RoutingBase = { profile: context.profile, config: readRepoConfig(context.repo) };
+  const routingBase: RoutingBase = { profile: context.profile, config: readRepoConfig(context.repo), arcRoles: context.arcRoles };
   if (inForce === null) {
     // A fresh arc records the files as they are; every unit enters now.
     const reserved = files.plan.units.map((u) => reservedUnitIdReason(u.id)).filter((r) => r !== null);
@@ -591,8 +601,9 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   } catch (error) {
     return refused([...legacyRoadmapDir(input.repo), schemaRejection(error)]);
   }
+  const runDir = runDirOf(gitCommonDir(input.repo), plan.arc);
   const context: StartupContext = {
-    repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, runDir: runDirOf(gitCommonDir(input.repo), plan.arc), hostDir: input.hostDir,
+    repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, arcRoles: arcRolesAt(runDir, plan.arc), runDir, hostDir: input.hostDir,
   };
   const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context)), ...(source.files === null ? [] : revisionInputRows(source.files))];
   if (inputRows.length > 0) return refused(inputRows);

@@ -195,6 +195,7 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
     case 'probe':
     case 'journey':
     case 'mutant':
+    case 'proof':
       return null;
   }
 }

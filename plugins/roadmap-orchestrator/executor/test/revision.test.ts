@@ -56,7 +56,7 @@ import { git, makeRepo, revParse, tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: 60_000 };
 type Json = Record<string, unknown>;
-const BASE: RoutingBase = { profile: 'default', config: null };
+const BASE: RoutingBase = { profile: 'default', config: null, arcRoles: 'm4b' };
 const U1 = unitId('u1');
 const HEX64 = 'a'.repeat(64);
 
@@ -691,7 +691,7 @@ test('startup.obligation-dropped: a published obligation missing or weakened wit
   });
   const context = (): StartupContext => {
     const files = readInputFiles(absPath(d.planPath), absPath(d.repo));
-    return { repo, planFile: absPath(d.planPath), plan: files.plan, specOf: () => null, profile: 'default', runDir: absPath(d.runDir), hostDir: absPath(d.hostDir) };
+    return { repo, planFile: absPath(d.planPath), plan: files.plan, specOf: () => null, profile: 'default', arcRoles: 'm4b', runDir: absPath(d.runDir), hostDir: absPath(d.hostDir) };
   };
   const dropped = (): readonly string[] => obligationDropped(context(), readInputFiles(absPath(d.planPath), absPath(d.repo)));
   writeJson(obligationsPath(d), { ...OBLIGATIONS, obligations: [OBLIGATIONS.obligations[0]] });

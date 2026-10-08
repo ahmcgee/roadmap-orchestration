@@ -826,7 +826,7 @@ export class Fold implements JournalView {
         // M4a rev 3 (F4): a unit that hit a known defect prepares again (its decided outcome is lanes `known-defect`).
         const knownDefect = existing?.state.decided?.stage === 'lanes' && existing.state.decided.outcome === 'known-defect';
         if (f.stage === 'prepare' && (existing?.state.lineage ?? null) === null && !knownDefect) fail(`prepare outcome for ${f.unit}, which re-enters no unit and hit no known defect`);
-        if (f.cause !== undefined && this.#backendParkSeqs.get(f.cause.parkSeq) !== f.cause.backend) {
+        if (f.cause?.type === 'backend' && this.#backendParkSeqs.get(f.cause.parkSeq) !== f.cause.backend) {
           fail(`hold of ${f.unit} ${key} caused by backend ${f.cause.backend}'s park at seq ${f.cause.parkSeq}, which is no park of that backend`);
         }
         const u = this.#unit(f.unit, f.stage);
@@ -1017,6 +1017,22 @@ export class Fold implements JournalView {
         this.#captures.push({ ...rest, seq: at.seq });
         return;
       }
+      // M4b (SCHEMAS.md "M4b"): the fold sees the jobs the flow facts name; their effects are the later steps'.
+      case 'flow-started':
+        this.#openJob(f.job, fail);
+        return;
+      case 'flow-ended':
+        this.#seeJob(f.job);
+        return;
+      case 'flow-proof':
+        this.#seeJob(f.job);
+        return;
+      case 'flow-series':
+      case 'flow-requested':
+      case 'flow-decided':
+      case 'flow-applied':
+      case 'flow-verdict':
+        return;
       default:
         this.#holisticFact(f, fail, at);
     }
@@ -1181,6 +1197,9 @@ export class Fold implements JournalView {
     if (f.command !== null && this.#appliedBy.has(f.command)) fail(`a second plan-applied fact of command ${f.command}`);
     // Revision 1 comes before anything runs (the reader requires `scheduling: 'dag'` on it, and only there).
     if (f.rev === 1 && this.#dispatches.size > 0) fail('plan-applied rev 1 in a log that already dispatched a unit');
+    // M4b (R5): the arc's role set is fixed at revision 1; every later revision carries it unchanged.
+    const roles = this.#planApplied?.routingProvenance.arcRoles;
+    if (this.#planApplied !== null && roles !== f.routingProvenance.arcRoles) fail(`plan-applied rev ${f.rev} records arcRoles ${f.routingProvenance.arcRoles ?? 'none'}; revision 1 fixed ${roles ?? 'none'}`);
     // M3 (A5): the vision, once in force, stays; a bundle's revision is its checkpoint's decision.
     if (this.#holisticOn && f.visionSha256 === undefined) fail(`plan-applied rev ${f.rev} drops the vision (holistic may be added, never removed)`);
     const bundle = f.source.type === 'bundle' ? this.#checkpoints.get(f.source.job) : undefined;
@@ -1384,7 +1403,7 @@ export class Fold implements JournalView {
     for (const [id, u] of this.#units) {
       if (u.state.status !== 'held' || this.#pausedUnits.has(id)) continue;
       const cause = u.state.interrupted?.cause;
-      if (cause !== undefined && cause.backend === backend && cause.parkSeq <= seq) u.state = { ...u.state, status: 'active' };
+      if (cause?.type === 'backend' && cause.backend === backend && cause.parkSeq <= seq) u.state = { ...u.state, status: 'active' };
     }
   }
 

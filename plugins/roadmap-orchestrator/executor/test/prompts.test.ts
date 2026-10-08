@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId, invocationId, opIdOf, witnessItemId,
+  visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
 } from '../src/core/ids.ts';
+import { NotYetError } from '../src/core/notyet.ts';
+import { isoTime } from '../src/core/values.ts';
 import {
   DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
 } from '../src/holistic/types.ts';
@@ -77,6 +79,36 @@ const corpusTarget = (dir: string, visionDoc: string | null) => ({
 const findingView = (id: string, claim: string) => ({
   id: findingId(id), lens: 'invariants' as const, severity: 'P1' as const, state: 'open' as const, obligation: obligationId('I-1'), claim, owner: null,
 });
+
+/**
+ * Roles whose module is a step-0a placeholder (M4b: `flow`, until step B1 writes its prompt): its render throws not-yet, so
+ * the rendering checks assert that instead; its fields, schema and validator are checked like every other role's.
+ */
+const PLACEHOLDER_ROLES: ReadonlySet<Role> = new Set(['flow']);
+
+const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
+  const n = k === 'A' ? 1 : 2;
+  const lane = laneId(k === 'A' ? 'unit' : 'all');
+  return {
+    triggers: k === 'A' ? ['floor'] : ['buffer-red', 'requested'],
+    chart: k === 'A' ? null : {
+      centre: 3.2, ucl: 4.1, mrBar: 0.33, seed: { type: 'previous', arcs: [arcId('arc-one')], points: 12 },
+      recent: [{ unit: unitId('u-two'), leadMin: 41, zone: 'yellow' }], inFlight: [{ unit: unitId('u-three'), ageMin: 90, zone: 'red' }],
+    },
+    stations: [{ station: stationId(k === 'A' ? 'stage:build' : 'suite:all'), meanMin: 10 * n, share: 0.2 * n }],
+    constraint: k === 'A' ? { station: stationId('stage:build'), internal: false, component: null }
+      : { station: stationId('slot:integration'), internal: true, component: stationId('suite:all') },
+    accounting: { tAdvances: k === 'A' ? null : 0.5, tOther: k === 'A' ? null : 0.25, tUnits: n, wip: n + 1, oeUsdPerHour: 3 * n },
+    levers: [{ lever: 'suite-lane', lane, argv: ['node', '--test', `--test-concurrency=${n}`], cpu: k === 'A' ? null : 4 }],
+    givens: k === 'A' ? [] : [{ scope: 'host', id: givenId('G-1'), lever: 'concurrency', note: 'GIVEN-B', state: 'enforced' }],
+    window: k === 'A' ? null : {
+      proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:all'), metric: { type: 'suite-run', lane }, openedAt: isoTime('2026-10-08T00:00:00.000Z'), samples: 2,
+    },
+    verdicts: k === 'A' ? [] : [{ proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:all'), verdict: 'improved' }],
+    rejections: k === 'A' ? [] : [{ key: { station: stationId('stage:build'), lever: 'build-class', target: { type: 'tier', tier: 'low' } }, proposal: proposalId('flow-2.0'), cause: 'rejected' }],
+    advances: [{ id: visionClauseId(`V-${n}`), text: `ADVANCES-${k}` }],
+  };
+};
 
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
@@ -194,9 +226,20 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
     },
   ],
+  // M4b: step 0a's placeholder module renders nothing (not-yet); B1 writes the prompt and its rendering cases.
+  flow: [flowSample('A'), flowSample('B')],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
+  flow: {
+    constraint: { station: 'slot:integration', agree: true, reason: 'the suite lane holds the slot' },
+    diagnosis: 'Units wait for the integration slot; the unit suite lane is most of its service.',
+    proposal: {
+      target: 'suite:unit', action: { lever: 'suite-lane', lane: 'unit', argv: ['node', '--test', '--test-concurrency=6', 'test/*.test.js'], reporter: 'node-test', cpu: null },
+      rationale: 'six isolated files run one at a time', risks: 'shared state between files',
+    },
+    noAction: null,
+  },
   packReview: {
     findings: [{ severity: 'blocking', target: { type: 'census', rule: 'T-1' }, claim: 'T-1 has no census entry', evidence: [{ path: 'obligations.json', line: 1 }] }],
     dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
@@ -236,11 +279,11 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
 };
 
-/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc (every arc role) included. */
+/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc of the m4b role set (every arc role) included. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
   for (const p of PROFILES) {
-    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus' });
+    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
     for (const s of seatsInForce(resolved)) {
       const m = atSeat(resolved.table, s).model;
       seen.set(`${s.role}/${m}`, [s.role, m]);
@@ -294,6 +337,10 @@ describe('prompts', () => {
         if (s.type !== 'prompt') continue;
         const mod = s.prompt as { fields: readonly string[]; render: (i: unknown) => string };
         assert.deepEqual([...mod.fields].sort(), [...ROLE_INPUTS[role]].sort(), `${role}/${model}: fields`);
+        if (PLACEHOLDER_ROLES.has(role)) {
+          assert.throws(() => mod.render(a), NotYetError, `${role}/${model}: a placeholder renders nothing`);
+          continue;
+        }
         const base = mod.render(a);
         for (const field of mod.fields) {
           const swapped = { ...a, [field]: (b as Record<string, unknown>)[field] };
@@ -309,7 +356,7 @@ describe('prompts', () => {
     for (const role of ROLES) assert.ok(seats.some(([r]) => r === role), `${role}: seated by a built-in profile`);
     for (const [role, model] of seats) {
       const mod = promptFor(role, model) as { system: string; schema: JsonValue; render: (i: unknown) => string };
-      for (const input of SAMPLES[role]) {
+      for (const input of PLACEHOLDER_ROLES.has(role) ? [] : SAMPLES[role]) {
         const text = mod.render(input);
         assert.equal(mod.render(input), text, `${role}/${model}: deterministic`);
         assert.ok(text.length > 0 && mod.system.length > 0);
@@ -412,7 +459,7 @@ describe('prompts', () => {
     for (const role of ROLES) for (const [r, m] of builtinSeats()) {
       if (r !== role) continue;
       const mod = promptFor(r, m) as { system: string; render: (i: unknown) => string };
-      assert.doesNotMatch(mod.system + mod.render(SAMPLES[r][1]), /—/,`${r}/${m}`);
+      assert.doesNotMatch(mod.system + (PLACEHOLDER_ROLES.has(r) ? '' : mod.render(SAMPLES[r][1])), /—/,`${r}/${m}`);
     }
   });
 });
@@ -675,7 +722,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.ok(mod.system.includes(`relation one of ${RULE_RELATIONS.map((v) => `"${v}"`).join(', ')}`));
   });
 
-  it('checkpoint schema: corpusAmendments and issueIntake required of the model, acted offers ops only; a dev.6 answer without them reads as none', () => {
+  it('checkpoint schema: corpusAmendments and issueIntake required of the model, acted offers ops only; a dev.6 answer without them is refused', () => {
     const req = (CHECKPOINT_SCHEMA as { required: string[] }).required;
     assert.ok(req.includes('corpusAmendments') && req.includes('issueIntake'));
     const ok = OUTPUTS.checkpoint as Record<string, unknown>;
@@ -690,8 +737,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
       { corpusAmendments: [{ rules: ['C-1'], proposal: 'p', why: 'w' }] },
     ]) assert.throws(() => validateCheckpointOutput({ ...ok, ...bad }), SchemaError, JSON.stringify(bad));
     const { corpusAmendments: _c, issueIntake: _i, ...dev6 } = ok;
-    const old = validateCheckpointOutput(dev6);
-    assert.deepEqual([old.corpusAmendments, old.issueIntake], [[], []]);
+    assert.throws(() => validateCheckpointOutput(dev6), SchemaError, 'a dev.6 answer without amendments and intake is not adopted since 1.0.0-dev.8');
   });
 
   it('the pack review is the ported Phase-0 review brief: read-only, the hunt in order, capped, an empty report legitimate, the architect adjudicates', () => {

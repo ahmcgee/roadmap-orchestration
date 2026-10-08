@@ -4,7 +4,6 @@
 // status.decisions-since, status.divergences-since-ack, status.completion-sealed, status.log-size, status.non-holistic-arc,
 // status.dev6-alias.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -12,7 +11,7 @@ import { describe, it } from 'node:test';
 import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf, RevisionPayload } from '../src/core/events.ts';
 import {
-  type RoutingRev, type Sha, type UnitId, arcId, commandId, envId, invocationId, jobId, opKey, planRev, routingRev, sha, sha256, unitId,
+  type Sha, type UnitId, arcId, commandId, envId, invocationId, jobId, opKey, planRev, sha, sha256, unitId,
 } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
@@ -20,16 +19,14 @@ import { snapshotRequestOf, witnessDir } from '../src/git/snapshot.ts';
 import { type ArcLaneDef, laneRevOf, parseObligations, parseRulingSidecar } from '../src/holistic/types.ts';
 import { witnessRecordOf, writeWitnessRecord } from '../src/holistic/witness.ts';
 import {
-  RULINGS_INPUT, RULING_INPUT, commitRevisionNow, keepInput, keepInputFiles, keptPayload, readInputFiles, routingProvenanceOf,
+  RULINGS_INPUT, RULING_INPUT, commitRevisionNow, keepInput, keptPayload,
 } from '../src/input/inforce.ts';
-import { parsePlan } from '../src/input/plan.ts';
-import { canonicalJson } from '../src/core/json.ts';
 import { ledgerAfter } from '../src/spec/rulings.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
-import { provenanceStack, resolveRouting } from '../src/routing/layers.ts';
-import { MODEL_IDS, type Triple, unitSeatRef } from '../src/routing/types.ts';
+import { resolveRouting } from '../src/routing/layers.ts';
+import { MODEL_IDS } from '../src/routing/types.ts';
 import { type Status, status } from '../src/status.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
 import { runOp } from './fixtures/git-common.ts';
@@ -42,8 +39,6 @@ import { commitAll, git, writeFiles } from './helpers/repo.ts';
 const T = { timeout: 60_000 };
 const U = (id: string): UnitId => unitId(id);
 const CMD = commandId('cmd-00000000000000b9');
-const OPUS_HIGH: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' };
-const FABLE_HIGH: Triple = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' };
 
 const statusOf = (r: ArcRun): Status => status(r.ctx.runDir, arcId(r.d.arc), r.ctx.hostDir);
 /** No model id anywhere in a status but `spend` (the one render-time derivation): state.no-model-ids over the M3 keys. */
@@ -363,7 +358,7 @@ describe('status M3', () => {
     const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
     const r = contextFor(d);
     try {
-      const rev = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null }).rev;
+      const rev = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' }).rev;
       const inv = invocationId(r.journal.begin({
         kind: 'proc.spawn', key: opKey('build:u1'), parent: { type: 'stage', unit: U('u1'), stage: 'build', attempt: 1 }, deadlineAt: null,
         body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: 1, role: 'build', tier: 'med' }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
@@ -378,54 +373,6 @@ describe('status M3', () => {
       assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] });
       assert.deepEqual(s.spend.byModel, { models: [{ model: 'gpt-5.6-luna', calls: 1, input: 10, output: 2, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 }], unresolvedRevs: [] });
       assert.equal(s.routing?.rev, rev);
-      noModelIds(s);
-    } finally {
-      r.journal.close();
-    }
-  });
-});
-
-describe('status: dev.6 routing revs (K12, OR-L3)', () => {
-  it('status.dev6-alias: a dev.6 revision\'s recorded routingRev joins its meter rows to the revision\'s current table: totals equal the meter\'s, nothing unresolved, byModel on today\'s bindings', T, () => {
-    const d = setupArc({ steps: [], units: [{ id: 'u1', risk: 'high' }] });
-    const r = contextFor(d);
-    try {
-      // Revision 2 as dev.6 recorded it: revision 1's payload and ledger, and its routing provenance.
-      const plan = parsePlan(JSON.parse(readFileSync(d.planPath, 'utf8')));
-      const provenance = routingProvenanceOf({ profile: 'default', config: null }, plan);
-      const first = r.journal.view.planApplied()!;
-      r.journal.fact({
-        kind: 'plan-applied', rev: planRev(2), command: null, ...keepInputFiles(r.ctx.runDir, readInputFiles(absPath(d.planPath), absPath(d.repo))), changes: [],
-        source: { type: 'start' }, payloadSha256: first.payloadSha256, rulingsSha256: first.rulingsSha256, routingProvenance: provenance,
-      });
-      // The rev dev.6 recorded: the M2 table under its catalogue (frontier Opus high, summit Fable high), by hand.
-      const now = resolveRouting(provenanceStack(provenance, 'none', null));
-      const dev6Triple = (t: Triple): Triple => (t.model === 'claude-opus-5-5' ? (t.effort === 'xhigh' ? FABLE_HIGH : OPUS_HIGH) : t);
-      const dev6Table = Object.fromEntries((['planCheck', 'build', 'gate'] as const).map((role) => [role, Object.fromEntries(Object.entries(now.table[role]).map(([tier, t]) => [tier, dev6Triple(t)]))]));
-      const dev6Rev = routingRev(createHash('sha256').update(canonicalJson(dev6Table)).digest('hex').slice(0, 16));
-      assert.notEqual(dev6Rev, now.rev, 'the catalogue moved the rev');
-      const meter = (n: number, rev: RoutingRev, role: 'build' | 'gate', tier: 'med' | 'high' | 'escalation', input: number): void => {
-        const inv = invocationId(r.journal.begin({
-          kind: 'proc.spawn', key: opKey(`dev6:${n}`), parent: { type: 'stage', unit: U('u1'), stage: role === 'build' ? 'build' : 'gate', attempt: n }, deadlineAt: null,
-          body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: n, ...unitSeatRef(role, tier) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
-        }).op, 1);
-        r.journal.fact({
-          kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', ...unitSeatRef(role, tier), unit: U('u1'), attempt: n },
-          usage: { inputTokens: input, outputTokens: 1, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null },
-        });
-      };
-      meter(1, dev6Rev, 'build', 'high', 100);
-      meter(2, dev6Rev, 'gate', 'escalation', 20);
-      meter(3, now.rev, 'build', 'med', 5);
-      const s = statusOf(r);
-      // Totals: every metered call renders by model.
-      const byRole = s.spend.byRole.reduce((n, t) => n + t.input, 0);
-      assert.equal(byRole, 125);
-      assert.equal(s.spend.byModel.models.reduce((n, m) => n + m.input, 0), byRole, 'byModel totals equal the meter\'s');
-      // Unresolved: none; the dev.6 rev resolves through its alias.
-      assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
-      // byModel: the dev.6 spend on today's bindings (Opus 5.5 for frontier and summit), never Fable.
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-opus-5-5', 2, 120], ['gpt-5.6-luna', 1, 5]]);
       noModelIds(s);
     } finally {
       r.journal.close();

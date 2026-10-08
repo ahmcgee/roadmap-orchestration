@@ -2,9 +2,10 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PhaseQuestionId, type PlanRev, type ResourceName, type Sha, type UnitId, arcId,
-  briefId, divergenceId, edgeId, needsUserId, phaseQuestionId, planRev, resourceName, sha, unitId,
+  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PhaseQuestionId, type PlanRev, type ProposalId, type ResourceName, type Sha,
+  type UnitId, arcId, briefId, divergenceId, edgeId, needsUserId, phaseQuestionId, planRev, proposalId, resourceName, sha, unitId,
 } from '../core/ids.ts';
+import { FLOW_LEVERS, type FlowLever } from '../flow/types.ts';
 import { LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
@@ -89,7 +90,12 @@ export type Command =
   /** `resume-arc --repo <repo>` (F9): restart the supervisor of this repo's arc whose owner died; a no-op otherwise. */
   | Readonly<{ command: 'resume-arc'; repo: string }>
   /** `inputs export --repo <repo> --arc <arc> --out <dir>` (I1, F17): the arc's current input view, read-only, into a new dir. */
-  | Readonly<{ command: 'inputs-export'; repo: string; arc: ArcId; out: string }>;
+  | Readonly<{ command: 'inputs-export'; repo: string; arc: ArcId; out: string }>
+  // M4b (src/commands/flow.ts): `flow accept|reject <proposal> --reason`, `flow request --reason` (the root agent's, for the
+  // live arc) and `flow given --repo --lever --note` (a host given).
+  | Readonly<{ command: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string; run: RunLocator }>
+  | Readonly<{ command: 'flow-request'; reason: string; run: RunLocator }>
+  | Readonly<{ command: 'flow-given'; repo: string; lever: FlowLever; note: string }>;
 
 /** What `phase0 check` reads: a plan file in the working tree, or every input by the digests `refs/roadmap/<arc>` recorded (K20). */
 export type Phase0Source = Readonly<{ type: 'plan'; plan: string }> | Readonly<{ type: 'ref'; arc: ArcId }>;
@@ -394,11 +400,45 @@ export function parseCommand(argv: readonly string[]): Command {
         out: required(p, 'inputs export', 'out', '<dir>'),
       };
     }
+    case 'flow': {
+      const [sub, ...args] = rest;
+      switch (sub) {
+        case 'accept':
+        case 'reject': {
+          const name = `flow ${sub}`;
+          const p = parseRest(args, { ...LOCATOR, reason: 'value' }, name);
+          const proposal = arg(name, '<proposal>', proposalId, onePositional(p, name, '<proposal>'));
+          return { command: 'flow-decide', proposal, decision: sub, reason: nonBlank(name, 'reason', required(p, name, 'reason', '<text>')), run: locator(p, name) };
+        }
+        case 'request': {
+          const p = parseRest(args, { ...LOCATOR, reason: 'value' }, 'flow request');
+          positionals(p, 'flow request', 0);
+          return { command: 'flow-request', reason: nonBlank('flow request', 'reason', required(p, 'flow request', 'reason', '<text>')), run: locator(p, 'flow request') };
+        }
+        case 'given': {
+          const p = parseRest(args, { repo: 'value', lever: 'value', note: 'value' }, 'flow given');
+          positionals(p, 'flow given', 0);
+          return {
+            command: 'flow-given', repo: required(p, 'flow given', 'repo', '<path>'),
+            lever: arg('flow given', '--lever', (v, path) => oneOf(FLOW_LEVERS)(v, path ?? '--lever'), required(p, 'flow given', 'lever', '<lever class>')),
+            note: nonBlank('flow given', 'note', required(p, 'flow given', 'note', '<text>')),
+          };
+        }
+        default:
+          throw new CliError(`flow: expected the subcommand accept, reject, request or given, got ${JSON.stringify(sub ?? '')}`);
+      }
+    }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status, answer, witness-check, resume-arc, inputs export`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given`,
       );
   }
+}
+
+/** An option's text, refused when blank. */
+function nonBlank(command: string, name: string, text: string): string {
+  if (text.trim() === '') throw new CliError(`${command}: --${name} is empty`);
+  return text;
 }
 
 /** A required `--name <what>` option. */

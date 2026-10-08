@@ -272,7 +272,7 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
   // The architect's evidence-only edit, applied: the unit's spec in force at once.
   recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), absPath(run.repo)), [
     { type: 'spec', unit: U1, edit: 'evidence', specRev: specRev(1), specSha256: fileSha256(run.specPath) },
-  ], { profile: 'default', config: null });
+  ], { profile: 'default', config: null, arcRoles: 'm4b' });
   assert.deepEqual(fingerprintAt(run.ctx, run.unit, run.base), before, 'evidence plumbing is outside the approval fingerprint');
 
   const second = started(await lanes(run.ctx, run.unit, run.base));

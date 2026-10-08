@@ -25,6 +25,8 @@
 // M4a rev 3 host acts: `witness-check` prints `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78);
 // `resume-arc` prints `{resumed: false, reason}` or the relaunched supervisor's line; `inputs export` prints the export's
 // `export.json`. `apply --ruling` lands ruling sidecars with the edits (I2). Step N0 placed each module at its final path.
+// M4b: `flow accept|reject|request` queue the root agent's flow commands and `flow given` writes a host given
+// (src/commands/flow.ts); each prints the queued command or the given, or `{refused}` (78). Step 0a placed the module.
 //
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
 import { existsSync, readFileSync } from 'node:fs';
@@ -41,6 +43,7 @@ import { captureIssues } from '../commands/issues.ts';
 import { phase0Check } from '../commands/phase0.ts';
 import { openPr } from '../commands/pr.ts';
 import { exportInputs } from '../commands/inputs.ts';
+import { flowCommand } from '../commands/flow.ts';
 import { resumeArc } from '../commands/resumearc.ts';
 import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
@@ -51,7 +54,7 @@ import { sha256 } from '../core/ids.ts';
 import { type CommandBody, type HashedFile, type RunStart, runStart } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { START_FILE } from '../executor.ts';
-import { readInputFiles, revisionManifestOf } from '../input/inforce.ts';
+import { arcRolesOf, readInputFiles, revisionManifestOf } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { HOST_DIR } from '../host/hostdir.ts';
 import { readClaim } from '../host/lock.ts';
@@ -238,6 +241,29 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'inputs-export':
       process.stdout.write(`${canonicalJson(await exportInputs({ repo: repoOf(command.repo), arc: command.arc, out: absPath(resolve(command.out)) }))}\n`);
       return;
+    case 'flow-decide':
+    case 'flow-request':
+    case 'flow-given': {
+      const args = command.command === 'flow-decide'
+        ? { type: 'decide' as const, proposal: command.proposal, decision: command.decision, reason: command.reason, run: command.run }
+        : command.command === 'flow-request'
+          ? { type: 'request' as const, reason: command.reason, run: command.run }
+          : { type: 'given' as const, repo: repoOf(command.repo), lever: command.lever, note: command.note };
+      const outcome = await flowCommand(args, hostDir);
+      switch (outcome.kind) {
+        case 'submitted':
+          process.stdout.write(`${canonicalJson({ command: outcome.command, arc: outcome.arc })}\n`);
+          return;
+        case 'given':
+          process.stdout.write(`${canonicalJson({ given: outcome.given })}\n`);
+          return;
+        case 'refused':
+          process.stdout.write(`${canonicalJson({ refused: outcome.reason })}\n`);
+          process.exitCode = EXIT_REFUSED;
+          return;
+      }
+      return;
+    }
   }
 }
 
@@ -267,7 +293,7 @@ function startOf(run: Run): RunStart {
 async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null, rulings: readonly HashedFile[]): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
-    runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo) },
+    runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
     laneEnv: process.env, manifest: null, expectRev, rulings,
   });
   switch (verdict.kind) {

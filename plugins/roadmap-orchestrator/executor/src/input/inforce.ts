@@ -43,7 +43,7 @@ import { type AbsPath, absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { type RepoConfig, type ResolvedRouting, planStack, resolveRouting } from '../routing/layers.ts';
-import type { ProfileName, RoutingLayer, RoutingProvenance } from '../routing/types.ts';
+import type { ArcRoleSet, ProfileName, RoutingLayer, RoutingProvenance } from '../routing/types.ts';
 import { bytesSha256, parseSpec } from '../spec/spec.ts';
 import { type PlanM1, type PlanUnit, parsePlan, visionFile } from './plan.ts';
 
@@ -62,6 +62,13 @@ export const PHASE0_INPUT = 'phase0.json';
 export const ISSUES_INPUT = 'issues.json';
 /** M4a (K8): a pack review's `PackReviewInputs`, kept before its spawn and named by its `pack-review-started`. */
 export const PACK_REVIEW_INPUT = 'pack-review.json';
+/**
+ * M4b: a flow run's `FlowInputs` (named by its `flow-started`), the arc's compact flow series (named by `flow-series`),
+ * and a suite-lane proof's witness records, one per side (named by `flow-proof`).
+ */
+export const FLOW_INPUTS_INPUT = 'flow-inputs.json';
+export const FLOW_SERIES_INPUT = 'flow-series.json';
+export const FLOW_PROOF_INPUT = 'flow-proof.json';
 /** An executor-rendered `.roadmap/` document a revision's docs publication commits (`RevisionPayload.publication.renders`). */
 export const RENDER_INPUT = 'render';
 
@@ -288,22 +295,33 @@ export function keepCorpusFiles(runDir: AbsPath, files: readonly SourceFile[]): 
 // ---------------------------------------------------------------------------------------------------
 // Routing provenance (H7)
 
-/** What a plan's routing resolves under besides the plan: the arc's profile and the repo config read at its start. */
-export type RoutingBase = Readonly<{ profile: ProfileName; config: RepoConfig | null }>;
-
-/** The arc routing of `plan` (no unit layer). */
-export const planRouting = (base: RoutingBase, plan: PlanM1): ResolvedRouting => resolveRouting(planStack(base.profile, base.config, plan));
-/** A unit's routing: the arc's stack with the unit's own layer on top (`route`, `steer --class`). */
-export const unitRouting = (base: RoutingBase, plan: PlanM1, unit: PlanUnit): ResolvedRouting =>
-  resolveRouting({ ...planStack(base.profile, base.config, plan), unit: unit.routing ?? null });
+/**
+ * What a plan's routing resolves under besides the plan: the arc's profile, the repo config read at its start, and (M4b)
+ * the arc's role set, fixed at revision 1 (`arcRolesOf`; null: an arc 1.0.0-dev.7 started).
+ */
+export type RoutingBase = Readonly<{ profile: ProfileName; config: RepoConfig | null; arcRoles: ArcRoleSet | null }>;
 
 /**
- * The routing base a revision's provenance records (H7): its profile and the repo config's seats and class rebinds in
- * force then. A reader after the start (`status`) uses it, never the live repo config (paid M4a run 12).
+ * The arc-role set of the arc whose plan in force is `inForce` (M4b, R5): `m4b` for an arc with no plan yet (a fresh start
+ * records it on revision 1), else what its revisions carry from revision 1 (null: started on 1.0.0-dev.7).
+ */
+export function arcRolesOf(inForce: PlanAppliedFact | null): ArcRoleSet | null {
+  return inForce === null ? 'm4b' : inForce.routingProvenance.arcRoles ?? null;
+}
+
+/** The arc routing of `plan` (no unit layer). */
+export const planRouting = (base: RoutingBase, plan: PlanM1): ResolvedRouting => resolveRouting(planStack(base.profile, base.config, plan, base.arcRoles));
+/** A unit's routing: the arc's stack with the unit's own layer on top (`route`, `steer --class`). */
+export const unitRouting = (base: RoutingBase, plan: PlanM1, unit: PlanUnit): ResolvedRouting =>
+  resolveRouting({ ...planStack(base.profile, base.config, plan, base.arcRoles), unit: unit.routing ?? null });
+
+/**
+ * The routing base a revision's provenance records (H7): its profile, the repo config's seats and class rebinds in
+ * force then, and its role set. A reader after the start (`status`) uses it, never the live repo config (paid M4a run 12).
  */
 export function routingBaseOf(p: RoutingProvenance): RoutingBase {
   const routing = { ...(p.repoConfig.seats === null ? {} : { seats: p.repoConfig.seats }), ...(p.repoConfig.classes === null ? {} : { classes: p.repoConfig.classes }) };
-  return { profile: p.profile, config: { routing } };
+  return { profile: p.profile, config: { routing }, arcRoles: p.arcRoles ?? null };
 }
 
 /** Everything `plan`'s routing revisions resolve from, as its `plan-applied` records it (H7). */
@@ -315,6 +333,7 @@ export function routingProvenanceOf(base: RoutingBase, plan: PlanM1): RoutingPro
     repoConfig: { seats: base.config?.routing?.seats ?? null, classes: base.config?.routing?.classes ?? null },
     planLayer: plan.routing ?? null,
     unitLayers,
+    ...(base.arcRoles === null ? {} : { arcRoles: base.arcRoles }),
   };
 }
 

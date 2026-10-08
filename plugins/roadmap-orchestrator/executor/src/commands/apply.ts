@@ -88,6 +88,7 @@ import { join } from 'node:path';
 import type { IntentOf, OpOutcome, Parent, PlanAppliedFact, PlanChange, RevisionPayload, RevisionSource, StageOutcomeFact } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { holdFence } from '../core/fence.ts';
+import { notYet } from '../core/notyet.ts';
 import { canonicalJson } from '../core/json.ts';
 import { exclusivePublish } from '../core/fsx.ts';
 import { JUDGMENT_STAGES, probeTargetKey } from '../core/events.ts';
@@ -262,6 +263,9 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return requestAudit(ctx, command.id, body.lenses);
     case 'close-admissions':
       return closeAdmissions(ctx, command.id);
+    case 'flow-decide':
+    case 'flow-request':
+      return notYet(`the ${body.type} command's effect`, 'B2');
   }
 }
 
@@ -690,13 +694,13 @@ const rowText = (r: StartupRejection): string => canonicalJson(r);
 
 /**
  * A4: without `--expect-rev`, an apply is refused when the revision in force came from a non-architect source (a
- * bundle or the executor): the architect's files would silently revert its act.
+ * bundle, the executor, or (M4b) an accepted flow proposal): the architect's files would silently revert its act.
  */
 function staleBase(inForce: InForce, expectRev: PlanRev | null): string | null {
   if (expectRev !== null) return null;
   const source = inForce.fact.source;
-  if (source.type !== 'bundle' && source.type !== 'executor') return null;
-  const by = source.type === 'bundle' ? `checkpoint bundle ${source.job}` : `the executor (${source.inv})`;
+  if (source.type === 'start' || source.type === 'command') return null;
+  const by = source.type === 'bundle' ? `checkpoint bundle ${source.job}` : source.type === 'flow' ? `flow proposal ${source.proposal}` : `the executor (${source.inv})`;
   return `stale base: plan rev ${inForce.rev} in force came from ${by}, not an architect; re-read the plan, specs and inputs in force, `
     + `edit on top of them, and apply with --expect-rev ${inForce.rev}`;
 }
@@ -751,7 +755,7 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   if (verdict.kind !== 'accepted') return verdict;
   const context: StartupContext = {
     repo: input.repo, planFile: input.planFile, plan: proposal.plan, specOf: (u) => proposal.specs.get(u.id)?.bytes ?? null, profile: input.routingBase.profile,
-    runDir: input.runDir, hostDir: input.hostDir, ...(records.length === 0 || proposal.ledger.bytes === null ? {} : { ledger: proposal.ledger.bytes }),
+    arcRoles: input.routingBase.arcRoles, runDir: input.runDir, hostDir: input.hostDir, ...(records.length === 0 || proposal.ledger.bytes === null ? {} : { ledger: proposal.ledger.bytes }),
   };
   const routingChanged = verdict.routings.length > 0 || verdict.draft.changes.some((c) => c.type === 'holistic');
   // M4a: the shared Phase-0 rows (src/phase0/rows.ts) over the proposal: the tree, and for a corpus arc the pin

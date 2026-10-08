@@ -30,7 +30,7 @@ import { commitAll, makeRepo, revParse, tmpDir, writeFiles } from './helpers/rep
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;
-const BASE = { profile: 'default', config: null } as const;
+const BASE = { profile: 'default', config: null, arcRoles: 'm4b' } as const;
 const VISION_PATH = 'docs/corpus/0005_Vision.md';
 
 // ---------------------------------------------------------------------------------------------------

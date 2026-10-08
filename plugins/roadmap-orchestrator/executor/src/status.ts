@@ -113,14 +113,13 @@ import {
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
 import {
-  type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev,
+  type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev, type ProposalId,
   type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type InvocationId, type KnownDefectId, type LaneId,
   type OpportunityId, canonicalIds, commandId, compareResourceUnits, cpuToken, invocationId, parseJobId, parseOpId, compareIds,
 } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
 import type { HolisticFold, Lineage, ResourceEntry, UnitState } from './core/state.ts';
-import { DEV6_CLASS_CATALOGUE } from './core/upgrade.ts';
 import type { KnownDefectMatch } from './core/records.ts';
 import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type RevisionInForce, keptInput, keptPayload, planInForce, revisionInForce, routingBaseOf } from './input/inforce.ts';
 import {
@@ -160,7 +159,7 @@ import type { BriefArc, OwnerAnswer, StageTiming } from './phase0/types.ts';
 import { arcDebtLedger } from './pipeline/publish.ts';
 import type { AdmissionConstraint, Rank, ResourceRequest } from './schedule/types.ts';
 import {
-  type ResolvedRouting, type RoutingStack, type SeatSources, arcScopeOf, provenanceStack, resolveRouting, resolveRoutingUnder,
+  type ResolvedRouting, type SeatSources, arcScopeOf, provenanceStack, resolveRouting,
 } from './routing/layers.ts';
 import {
   type Backend, type ClassSource, type ClassTable, type ModelClass, type ProfileName, type RiskTier, type SeatRef,
@@ -389,7 +388,9 @@ export type RuledBy =
   | Readonly<{ type: 'architect'; command: CommandId | null }>
   | Readonly<{ type: 'checkpoint'; job: JobId }>
   | Readonly<{ type: 'judgment'; role: 'planCheck' }>
-  | Readonly<{ type: 'executor' }>;
+  | Readonly<{ type: 'executor' }>
+  /** M4b: an accepted flow proposal's revision. */
+  | Readonly<{ type: 'flow'; proposal: ProposalId }>;
 /** One decision: its log seq, what it is, the id it names (C-n, ckpt-n, a unit, D-n), one line, and who ruled. */
 export type Decision = Readonly<{ seq: number; kind: DecisionKind; id: string; oneLine: string; ruledBy: RuledBy }>;
 
@@ -584,8 +585,7 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
 /**
  * The routing table of every routing revision the log's plan revisions resolve to (the arc's and each unit layer's), from
  * their recorded provenance only: what `spend.byModel` renders historical usage with (never the live repo config). The
- * class catalogue binds every revision (OR-L3), so a 1.0.0-dev.6 meter row's recorded rev is also registered, aliased to
- * its revision's current table (`dev6RevAlias`, scaffolding K12): its spend joins and is attributed to today's bindings.
+ * class catalogue binds every revision (OR-L3).
  */
 function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, RoutingTable> {
   const out = new Map<RoutingRev, RoutingTable>();
@@ -594,23 +594,11 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
     const provenance = e.fact.routingProvenance;
     const scope = arcScopeOf(keptPlan(runDir, e.fact));
     for (const unit of [null, ...(Object.keys(provenance.unitLayers) as UnitId[])]) {
-      const stack = provenanceStack(provenance, scope, unit);
-      const r = resolveRouting(stack);
+      const r = resolveRouting(provenanceStack(provenance, scope, unit));
       out.set(r.rev, r.table);
-      const alias = dev6RevAlias(stack);
-      if (alias !== null) out.set(alias, r.table);
     }
   }
   return out;
-}
-
-/**
- * TEMPORARY SCAFFOLDING (K12; BACKLOG "Scaffolding to delete", dev.6): the `routingRev` a 1.0.0-dev.6 executor recorded
- * for `stack`, its resolution under the dev.6 catalogue. The dev.6 role set (no `packReview`) is the `architecture-doc`
- * scope's (layers.ts `ARC_ROLES_IN_FORCE`), so only the catalogue differs. A corpus arc never ran on dev.6: null.
- */
-function dev6RevAlias(stack: RoutingStack): RoutingRev | null {
-  return stack.arcScope === 'corpus' ? null : resolveRoutingUnder(DEV6_CLASS_CATALOGUE, stack).rev;
 }
 
 function routingView(profile: ProfileName, r: ResolvedRouting): RoutingView {
@@ -1171,6 +1159,8 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
       return { type: 'checkpoint', job: source.job };
     case 'executor':
       return { type: 'executor' };
+    case 'flow':
+      return { type: 'flow', proposal: source.proposal };
   }
 }
 

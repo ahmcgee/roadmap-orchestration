@@ -3,11 +3,11 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
-  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ResourceInstance,
+  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ProposalId, type ResourceInstance,
   type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, type WitnessItemId, arcId, clauseId,
   commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
   obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
-  witnessItemId,
+  witnessItemId, proposalId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -1235,7 +1235,11 @@ export type CommandBody =
   /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
   | Readonly<{ type: 'audit'; lenses: readonly LensKindName[] | null }>
   /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
-  | Readonly<{ type: 'close-admissions' }>;
+  | Readonly<{ type: 'close-admissions' }>
+  /** `roadmap flow accept|reject <proposal> --reason <text>` (M4b): the root agent's decision, idempotent by proposal. Scope ∅. */
+  | Readonly<{ type: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string }>
+  /** `roadmap flow request --reason <text>` (M4b, RC-5): a flow run past the cooldown, once per cooldown window. Scope ∅. */
+  | Readonly<{ type: 'flow-request'; reason: string }>;
 
 /** The lens names a command may carry; `LensKind` in src/holistic/types.ts is the same closed list. */
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
@@ -1299,6 +1303,11 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     type: f.get('type', literal('audit')), lenses: f.get('lenses', nullable(sortedBy(oneOf(LENS_KIND_NAMES), (l) => l, { nonEmpty: true }))),
   })),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
+  'flow-decide': object((f): CommandBody => ({
+    type: f.get('type', literal('flow-decide')), proposal: f.get('proposal', (v, p) => proposalId(v, p)), decision: f.get('decision', oneOf(['accept', 'reject'] as const)),
+    reason: f.get('reason', str),
+  })),
+  'flow-request': object((f): CommandBody => ({ type: f.get('type', literal('flow-request')), reason: f.get('reason', str) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({
@@ -1348,9 +1357,16 @@ export const NEEDS_USER_REASONS = [
   // the first (K14, H9); a checkpoint capture that found the issue policy untrusted, holding admission arc-wide and the
   // capture until acked (OR-L6).
   'pack-review', 'issue-policy-untrusted',
+  // M4b, non-blocking: a flow proposal for the root agent (`flow accept | reject`); host advice for the owner; an applied
+  // proposal's `worse` verdict (with its preimage, RC-6); a flow run without a valid answer after its retry; a ruler path
+  // changed by the root agent's `apply` after the first admission (G11).
+  'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
 ] as const;
-/** The M3 reasons raised non-blocking; every other M3 reason is raised blocking. */
-export const NON_BLOCKING_M3_REASONS = ['bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest'] as const satisfies readonly NeedsUserReason[];
+/** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
+export const NON_BLOCKING_M3_REASONS = [
+  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
+  'ruler-changed',
+] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 
 export type NeedsUserSubject = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'arc' }> | Readonly<{ type: 'host' }>;

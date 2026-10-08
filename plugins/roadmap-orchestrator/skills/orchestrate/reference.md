@@ -108,6 +108,10 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   `no-claim`, `other-repo`, `alive`, `complete`, `refused` or `already-resumed`. "Recovery" has the boot hook.
 - `roadmap inputs export --repo <path> --arc <arc> --out <dir>`: read-only; writes the arc's current inputs into a
   new directory and prints `export.json` `{planRev, specRevs}` ("Recovery").
+- `roadmap flow accept|reject <proposal> --reason <text> [--repo <path> --arc <arc>]`: your decision on a flow
+  proposal (`flow-1.0`), with a one-line reason; idempotent by proposal. `roadmap flow request --reason <text> [--repo
+  <path> --arc <arc>]`: a flow run past the cooldown, on a concrete observation. `roadmap flow given --repo <path> --lever
+  <lever> --note <text>`: declare what cannot be tuned on this host. (M4b: these land with the flow loop.)
 
 ## Files
 

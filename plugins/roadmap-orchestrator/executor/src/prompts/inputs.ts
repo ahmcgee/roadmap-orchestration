@@ -20,6 +20,7 @@ import type {
 } from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
 import type { PinnedRule } from '../corpus/types.ts';
+import type { FlowPromptInputs } from '../flow/types.ts';
 import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
@@ -381,6 +382,8 @@ export type RoleInputs = {
   readonly lens: LensInputs;
   readonly checkpoint: CheckpointInputs;
   readonly packReview: PackReviewPromptInputs;
+  /** M4b: a flow run's kept inputs (src/flow/types.ts `FlowInputs`) without their envelope. */
+  readonly flow: FlowPromptInputs;
 };
 
 export const ROLE_INPUTS = {
@@ -396,6 +399,7 @@ export const ROLE_INPUTS = {
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
+  flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -407,6 +411,7 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   lens: true,
   checkpoint: true,
   packReview: true,
+  flow: true,
 };
 void ROLE_INPUTS_COMPLETE;
 

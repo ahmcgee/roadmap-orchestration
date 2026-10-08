@@ -1,10 +1,12 @@
-// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"): read-time defaults for records written by the previous
-// release (1.0.0-dev.6, the only one adopted: OR-L4), so HEAD adopts an arc it started. Delete each default (and its
-// BACKLOG entry) once no arc started on that release is in flight. Nothing here rewrites a file.
+// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"): read-time defaults for records written by an earlier release,
+// so HEAD adopts an arc it started. The previous release is 1.0.0-dev.7 (the only one adopted since 1.0.0-dev.8,
+// OR-L4): its one default is at the end. The 1.0.0-dev.6 defaults above it are no longer adopted (no dev.6 arc was in
+// flight at M4b step 0a); they go with the holistic `architecture-doc` variant (BACKLOG "Scaffolding to delete").
+// Delete each default (and its BACKLOG entry) once no arc started on its release is in flight. Nothing here rewrites a
+// file.
 //
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
-import type { ClassCatalogue } from '../routing/classes.ts';
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId } from './ids.ts';
@@ -33,14 +35,6 @@ export function censusOf(o: Obligations): readonly CensusEntry[] | null {
   return null;
 }
 
-/**
- * A checkpoint answer's `corpusAmendments` and `issueIntake` (M4a): a recorded dev.6 answer (`upgrade.dev6-checkpoint-open`)
- * has neither, read as none. Step B1 makes both required of the model's schema.
- */
-export function checkpointOutputM4Default(key: 'corpusAmendments' | 'issueIntake'): readonly never[] {
-  warnDefaulted(`checkpoint.${key}`, `a checkpoint answer without ${key} (written before 1.0.0-dev.7); read as none`);
-  return [];
-}
 
 /**
  * A checkpoint `admit` op's `targets` (M4a rev 3, LR-m): absent on an answer recorded before it; read as none, so the
@@ -60,11 +54,6 @@ export function admitSpecTextDefault(text: string): string {
   return text;
 }
 
-/** A split child's `rule` (M4a): absent on a recorded dev.6 answer, whose children are docRef-anchored; read as null. */
-export function splitChildRuleDefault(): null {
-  warnDefaulted('checkpoint.splitChild.rule', 'a split child without rule (a checkpoint answer written before 1.0.0-dev.7); read as null');
-  return null;
-}
 
 /**
  * A numbered-id list in plain string order (`["T-10","T-9"]`): how every release before 1.0.0-dev.7 validated and wrote
@@ -75,24 +64,6 @@ export function legacyIdOrder(path: string): void {
   warnDefaulted('ids.string-order', `${path}: a numbered-id list in string order (written before 1.0.0-dev.7); read as written`);
 }
 
-/**
- * The class catalogue 1.0.0-dev.6 bound (frontier Opus 5.5 `high`, summit Fable 5.1 `high`), kept only so `status`
- * can join a dev.6 meter row's recorded `routingRev` (K12, src/status.ts `dev6RevAlias`). OR-L3: nothing routes under
- * it; HEAD binds every revision through `CLASS_CATALOGUE` (src/routing/classes.ts). A dev.6 dispatch record needs no
- * decoder: its `implementerSeatRev` reads back through `seatTripleOf` (src/pipeline/dispatch.ts) like any other.
- */
-export const DEV6_CLASS_CATALOGUE: ClassCatalogue = {
-  default: {
-    efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
-    frontier: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' },
-    summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
-  },
-  'claude-only': {
-    efficient: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
-    frontier: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' },
-    summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
-  },
-};
 
 // ---------------------------------------------------------------------------------------------------
 // 1.0.0-dev.6 → M4a rev 3 (still 1.0.0-dev.7, LR-g: no version bump). Byte-preserving as above; SCHEMAS.md "M4a rev 3:
@@ -148,4 +119,17 @@ export function buildExperimentsDefault(): readonly never[] {
 export function bundleClassesOf(source: Extract<RevisionSource, { type: 'bundle' }>): Readonly<{ admits: readonly ClassifiedAdmit[]; conversions: readonly Conversion[] }> | 'unclassified' {
   if (source.admits !== undefined && source.conversions !== undefined) return { admits: source.admits, conversions: source.conversions };
   return 'unclassified';
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.7 → M4b (1.0.0-dev.8). SCHEMAS.md "M4b: upgrade". Delete once no arc started on 1.0.0-dev.7 is in flight
+// (BACKLOG "Scaffolding to delete").
+
+/**
+ * A revision's routing provenance without `arcRoles` (M4b, R5): an arc 1.0.0-dev.7 started, read with the dev.7 role set
+ * (no `flow` seat: its routing revs, seats in force and status tables are dev.7's) and the flow track off (`off-dev7`).
+ */
+export function dev7ArcRolesDefault(): null {
+  warnDefaulted('routing.arcRoles', 'a routing provenance without arcRoles (an arc started on 1.0.0-dev.7): the dev.7 role set, the flow loop off');
+  return null;
 }

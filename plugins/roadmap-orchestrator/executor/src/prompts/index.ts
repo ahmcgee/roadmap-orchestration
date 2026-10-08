@@ -5,6 +5,7 @@ import type { ModelId, PromptSupport, PromptTable, Role } from '../routing/types
 import { PROMPT as BUILD_LUNA } from './build/gpt-5.6-luna.ts';
 import { PROMPT as BUILD_OPUS } from './build/claude-opus-5-5.ts';
 import { PROMPT as CHECKPOINT_FABLE } from './checkpoint/claude-fable-5-1.ts';
+import { PROMPT as FLOW_OPUS } from './flow/claude-opus-5-5.ts';
 import { PROMPT as GATE_FABLE } from './gate/claude-fable-5-1.ts';
 import { PROMPT as GATE_OPUS } from './gate/claude-opus-5-5.ts';
 import type { PromptModule, PromptModules } from './inputs.ts';
@@ -94,6 +95,19 @@ export const PROMPTS: PromptTable<PromptModules> = {
       type: 'inherits',
       from: 'claude-opus-5-5',
       reviewed: '2026-10-06: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 pack-review prompt with its M4a rev 3 census cross-check and time-fixture and entry-point checks; no Fable-specific change needed',
+    },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  // M4b: the flow role on frontier (Opus), its rows mirroring packReview's. Step 0a placed a placeholder Opus module whose
+  // render throws (not-yet); step B1 writes the prompt and reviews it for Fable, which inherits it as it does packReview's.
+  flow: {
+    'claude-opus-5-5': { type: 'prompt', prompt: FLOW_OPUS },
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-10-08: placeholder row (M4b step 0a), mirroring packReview; step B1 checks Prompting Claude Fable 5.1 against the Opus 5.5 flow prompt it writes',
     },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },

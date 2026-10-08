@@ -32,7 +32,7 @@ export function openCommandRun(run: CmdRun): Readonly<{ ctx: CommandContext; sta
       hostEnv,
       planDir,
       laneEnv: {}, planFile: absPath(join(run.repo, 'plan.json')),
-      routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET,
+      routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET,
       routing: () => routing,
       probes: testProbes(stage),
     },

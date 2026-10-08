@@ -438,7 +438,7 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
   try {
     assert.equal(readFileSync(join(r.d.planPath, '..', 'rulings.md'), 'utf8'), ledgerBefore, 'the crash left the live ledger behind');
     const context = {
-      repo: start.ctx.repo, planFile: absPath(r.d.planPath), plan: start.ctx.plan(), specOf: () => null, profile: 'default' as never, runDir: start.ctx.runDir, hostDir: start.ctx.hostDir,
+      repo: start.ctx.repo, planFile: absPath(r.d.planPath), plan: start.ctx.plan(), specOf: () => null, profile: 'default' as never, arcRoles: 'm4b' as const, runDir: start.ctx.runDir, hostDir: start.ctx.hostDir,
     };
     const revs = applied(start).length;
     assert.deepEqual(settlePlan(start.journal, context, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo))), [], 'no false ledger-edit refusal');
@@ -462,7 +462,7 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
     assert.ok(existsSync(join(back.d.planPath, '..', 'rulings.md.d', 'C-2.json')));
     // The next start finds the files holding the revision in force.
     const context = {
-      repo: back.ctx.repo, planFile: absPath(back.d.planPath), plan: back.ctx.plan(), specOf: () => null, profile: 'default' as never, runDir: back.ctx.runDir, hostDir: back.ctx.hostDir,
+      repo: back.ctx.repo, planFile: absPath(back.d.planPath), plan: back.ctx.plan(), specOf: () => null, profile: 'default' as never, arcRoles: 'm4b' as const, runDir: back.ctx.runDir, hostDir: back.ctx.hostDir,
     };
     const revs = applied(back).length;
     assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath), absPath(back.d.repo))), []);

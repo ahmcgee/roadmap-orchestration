@@ -119,12 +119,12 @@ export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: Abs
     if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
     keepCorpusFiles(runDir, rows.opened.files);
   }
-  recordPlan(journal, runDir, files, [], { profile, config: null });
+  recordPlan(journal, runDir, files, [], { profile, config: null, arcRoles: 'm4b' });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
 export function applyFilesNow(run: StageRun): void {
-  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: null });
+  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: null, arcRoles: 'm4b' });
 }
 
 /** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */

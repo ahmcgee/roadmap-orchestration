@@ -1,4 +1,4 @@
-// Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`), as strict JSON Schemas (every key required, no additional
+// Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`, M4b `flow`), as strict JSON Schemas (every key required, no additional
 // properties: what `codex exec --output-schema` demands and `claude -p --json-schema` accepts) plus the
 // hand-written validators the adapter runs on the backend's terminal output. The schema is the model's
 // contract; the validator is the executor's, and also enforces the cross-field rules a schema cannot
@@ -14,6 +14,7 @@ import {
   answerIds, findingId, issueId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
+import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
 import type { JsonValue } from '../core/json.ts';
 import { BOUND_FIELDS, type Bounds, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecPatchOp, specM1, specPatchOp } from '../core/records.ts';
 import {
@@ -26,7 +27,7 @@ import {
   type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
+import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault } from '../core/upgrade.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
   JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
@@ -581,13 +582,11 @@ export const CHECKPOINT_SCHEMA: Schema = sObj({
 const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 const splitChild: Read<SplitChild> = object((g) => {
   const docRef = g.get('docRef', nullable(object((h) => ({ path: h.get('path', (v, p) => repoPath(v, p)), anchor: h.get('anchor', str), quotedText: h.get('quotedText', str) }))));
-  const rule = g.optional('rule', nullable((v, p) => ruleId(v, p)));
   const out: SplitChild = {
     id: g.get('id', oid),
     statement: g.get('statement', str),
     docRef,
-    // A dev.6 checkpoint's recorded answer has no `rule` (read as null, scaffolding).
-    rule: rule === undefined ? splitChildRuleDefault() : rule,
+    rule: g.get('rule', nullable((v, p) => ruleId(v, p))),
     witness: g.get('witness', object((h) => ({ lane: h.get('lane', (v, p): LaneId => laneId(v, p)), testIds: h.get('testIds', uniqueIds(str, { nonEmpty: true })) }))),
     activation: g.get('activation', oneOf(ACTIVATIONS)),
     deliveredBy: g.get('deliveredBy', answerSet(unitR, (u) => u, (a, b) => (a < b ? -1 : a > b ? 1 : 0))),
@@ -716,9 +715,8 @@ export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
       findings: g.get('findings', answerIds((v, p): FindingId => findingId(v, p))),
     }))),
     premises: f.get('premises', arrayOf(premise)),
-    // M4a: required of the model (CHECKPOINT_SCHEMA); absent only on a dev.6 checkpoint's recorded answer (read as none, scaffolding).
-    corpusAmendments: f.optional('corpusAmendments', arrayOf(corpusAmendmentProposal)) ?? checkpointOutputM4Default('corpusAmendments'),
-    issueIntake: f.optional('issueIntake', issueIntakeEntries) ?? checkpointOutputM4Default('issueIntake'),
+    corpusAmendments: f.get('corpusAmendments', arrayOf(corpusAmendmentProposal)),
+    issueIntake: f.get('issueIntake', issueIntakeEntries),
   };
   if ((out.decision === 'no-op') !== (out.ops.length === 0)) throw new SchemaError(`${f.path}.ops`, out.decision === 'no-op' ? 'no ops on a no-op' : 'at least one op in a bundle', out.ops);
   if (out.decision === 'no-op' && out.rulings.length > 0) throw new SchemaError(`${f.path}.rulings`, 'no rulings on a no-op', out.rulings);
@@ -774,6 +772,36 @@ export function validatePackReviewOutput(value: unknown): PackReviewOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// flow (M4b): the constraint as the role reads it (it may dispute code's), a diagnosis, and exactly one of a proposal and
+// why no action. The model writes no proposal id (code assigns `<job>.0`); a suite lane's unused `argv`, `reporter` or
+// `cpu` is null. The reader is src/flow/types.ts `flowOutput`; code's checks after it are src/flow/levers.ts's.
+
+export const FLOW_SCHEMA: Schema = sObj({
+  constraint: sObj({ station: S_STR, agree: S_BOOL, reason: S_STR }),
+  diagnosis: S_STR,
+  proposal: sNullable(sObj({
+    target: S_STR,
+    action: {
+      anyOf: [
+        sObj({ lever: sEnum(['concurrency']), cpu: S_INT }),
+        sObj({ lever: sEnum(['resource-pool']), resource: S_STR, size: S_INT }),
+        sObj({ lever: sEnum(['suite-lane']), lane: S_STR, argv: sNullable(sArr(S_STR)), reporter: sNullable(sEnum(FLOW_REPORTERS)), cpu: sNullable(S_INT) }),
+        sObj({ lever: sEnum(['sequence']), unit: S_STR, priority: sEnum(['high']) }),
+        sObj({ lever: sEnum(['build-class']), tier: sEnum(RISK_TIERS), class: sEnum(MODEL_CLASSES) }),
+        sObj({ lever: sEnum(['host']), note: S_STR }),
+      ],
+    },
+    rationale: S_STR,
+    risks: S_STR,
+  })),
+  noAction: sNullable(S_STR),
+});
+
+export function validateFlowOutput(value: unknown): FlowOutput {
+  return flowOutput(value, 'flow');
+}
+
+// ---------------------------------------------------------------------------------------------------
 
 export type RoleOutputs = {
   readonly planCheck: PlanCheckOutput;
@@ -782,9 +810,10 @@ export type RoleOutputs = {
   readonly lens: LensOutput;
   readonly checkpoint: CheckpointOutput;
   readonly packReview: PackReviewOutput;
+  readonly flow: FlowOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
-  planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA,
+  planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
   planCheck: validatePlanCheckOutput,
@@ -793,4 +822,5 @@ export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOu
   lens: validateLensOutput,
   checkpoint: validateCheckpointOutput,
   packReview: validatePackReviewOutput,
+  flow: validateFlowOutput,
 };

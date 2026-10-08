@@ -98,7 +98,7 @@ function decide(r: ArcRun, unit: string, stage: string, outcome: string, cls: st
   r.journal.fact({ kind: 'stage-outcome', unit: id, stage, attempt, outcome, class: cls, chargeable: false } as Fact);
 }
 
-const routingBase = { profile: 'default', config: null } as const;
+const routingBase = { profile: 'default', config: null, arcRoles: 'm4b' } as const;
 
 function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classified {
   const { runDir } = r.ctx;
@@ -305,7 +305,7 @@ const ROWS: readonly Row[] = [
   {
     name: 'routing: re-resolved to a new routingRev',
     edit: (d) => editPlan(d, (p) => void (p['routing'] = { build: { med: 'frontier' } })),
-    expect: (r) => [{ type: 'routing', routingRev: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: { build: { med: 'frontier' } } as never, unit: null }).rev }],
+    expect: (r) => [{ type: 'routing', routingRev: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: { build: { med: 'frontier' } } as never, unit: null, arcRoles: 'm4b' }).rev }],
   },
   { name: 'add a resource declaration: now', edit: (d) => editPlan(d, (p) => void p.resources.push(DB)), expect: () => [{ type: 'resource', resource: resourceName('db'), edit: 'added' }] },
   {

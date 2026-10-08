@@ -31,15 +31,15 @@ export type Triple =
   | { readonly backend: 'codex'; readonly model: CodexModelId; readonly effort: CodexEffort };
 
 /**
- * `lens` and `checkpoint` (M3) and `packReview` (M4a, OR-Q16) are the arc roles: judgment roles that run for the arc,
- * not for a unit, on the one seat `arc`. They come last, so every earlier role keeps its place in seat order.
+ * `lens` and `checkpoint` (M3), `packReview` (M4a, OR-Q16) and `flow` (M4b) are the arc roles: judgment roles that run for
+ * the arc, not for a unit, on the one seat `arc`. They come last, so every earlier role keeps its place in seat order.
  */
-export const ROLES = ['planCheck', 'build', 'gate', 'lens', 'checkpoint', 'packReview'] as const;
+export const ROLES = ['planCheck', 'build', 'gate', 'lens', 'checkpoint', 'packReview', 'flow'] as const;
 export type Role = (typeof ROLES)[number];
 /** The unit pipeline's roles (M1). */
 export const UNIT_ROLES = ['planCheck', 'build', 'gate'] as const satisfies readonly Role[];
 export type UnitRole = (typeof UNIT_ROLES)[number];
-export const ARC_ROLES = ['lens', 'checkpoint', 'packReview'] as const satisfies readonly Role[];
+export const ARC_ROLES = ['lens', 'checkpoint', 'packReview', 'flow'] as const satisfies readonly Role[];
 export type ArcRole = (typeof ARC_ROLES)[number];
 /** The judgment roles of a unit's pipeline. The arc roles judge too (a fresh read-only session): `SessionRole`. */
 export type JudgmentRole = 'planCheck' | 'gate';
@@ -54,7 +54,7 @@ export type RiskTier = (typeof RISK_TIERS)[number];
 /** A unit judgment role's seats: the three risk tiers and `escalation`, where route-ups and risk triggers go. */
 export const JUDGMENT_SEATS = [...RISK_TIERS, 'escalation'] as const;
 export type JudgmentSeat = (typeof JUDGMENT_SEATS)[number];
-/** An arc role's one seat (M3): lens → frontier, checkpoint → summit, packReview → frontier (M4a) in the built-in table. */
+/** An arc role's one seat (M3): lens → frontier, checkpoint → summit, packReview → frontier (M4a), flow → frontier (M4b) in the built-in table. */
 export const ARC_SEATS = ['arc'] as const;
 export type ArcSeat = (typeof ARC_SEATS)[number];
 /** Any role's seat name; `SeatRef` pairs one with a role that has it. */
@@ -62,13 +62,13 @@ export type Seat = JudgmentSeat | ArcSeat;
 /** Build has the three risk seats; each unit judgment role has four; each arc role has `arc`. */
 export type SeatOf<R extends Role> = R extends ArcRole ? ArcSeat : R extends JudgmentRole ? JudgmentSeat : RiskTier;
 export const SEATS: { readonly [R in Role]: readonly SeatOf<R>[] } = {
-  planCheck: JUDGMENT_SEATS, build: RISK_TIERS, gate: JUDGMENT_SEATS, lens: ARC_SEATS, checkpoint: ARC_SEATS, packReview: ARC_SEATS,
+  planCheck: JUDGMENT_SEATS, build: RISK_TIERS, gate: JUDGMENT_SEATS, lens: ARC_SEATS, checkpoint: ARC_SEATS, packReview: ARC_SEATS, flow: ARC_SEATS,
 };
 /** One seat of the table, `role.tier`: `build.escalation` is unrepresentable. */
 export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Role];
 /** A seat of a unit role: what a unit's backend call and its usage name. */
 export type UnitSeatRef = Extract<SeatRef, Readonly<{ role: UnitRole }>>;
-/** An arc role's seat (`lens.arc`, `checkpoint.arc`, `packReview.arc`): what a job's backend call and its usage name (M3). */
+/** An arc role's seat (`lens.arc`, `checkpoint.arc`, `packReview.arc`, `flow.arc`): what a job's backend call and its usage name (M3). */
 export type ArcSeatRef = Extract<SeatRef, Readonly<{ role: ArcRole }>>;
 /** Every seat, role by role in `ROLES` order, each role's tiers in seat order. */
 export const SEAT_REFS: readonly SeatRef[] = ROLES.flatMap((r) => SEATS[r].map((tier) => ({ role: r, tier }) as SeatRef));
@@ -155,7 +155,7 @@ export function unitSeatFields(f: Fields): UnitSeatRef {
   return { role: r, tier: f.get('tier', oneOf(SEATS[r] as readonly Seat[])) } as UnitSeatRef;
 }
 
-/** `seatFields` limited to the arc roles (M3): a job's call sits only on `lens.arc`, `checkpoint.arc` or `packReview.arc`. */
+/** `seatFields` limited to the arc roles (M3): a job's call sits only on an arc role's `arc` seat. */
 export function arcSeatFields(f: Fields): ArcSeatRef {
   return { role: f.get('role', oneOf(ARC_ROLES)), tier: f.get('tier', oneOf(ARC_SEATS)) };
 }
@@ -221,16 +221,25 @@ export const classBindings: Read<ClassBindings> = object((f) => {
 });
 
 /**
+ * The arc-role set an arc runs under (M4b, R5): `m4b` puts `flow` in force in every arc scope. Written by 1.0.0-dev.8 on
+ * every revision of an arc it started (carried from revision 1, which fixes it: the fold refuses a change), absent on
+ * an arc 1.0.0-dev.7 started, which keeps the dev.7 role set (src/routing/layers.ts `arcRolesInForce`; scaffolding).
+ */
+export const ARC_ROLE_SETS = ['m4b'] as const;
+export type ArcRoleSet = (typeof ARC_ROLE_SETS)[number];
+
+/**
  * Everything a routing revision was resolved from (M3, G16, H7), recorded on every `plan-applied` since
  * 1.0.0-dev.6 so the tables behind a `routingRev` are rebuilt from the log alone, never from a live config:
  * the profile, the repo config's seats and class rebinds in force, the plan's layer and each unit's layer
- * (`route`, `steer --class`; ascending by unit, only units that have one).
+ * (`route`, `steer --class`; ascending by unit, only units that have one), and (M4b, additive) the arc-role set.
  */
 export type RoutingProvenance = Readonly<{
   profile: ProfileName;
   repoConfig: Readonly<{ seats: RoutingLayer | null; classes: ClassBindings | null }>;
   planLayer: RoutingLayer | null;
   unitLayers: Readonly<Record<UnitId, RoutingLayer>>;
+  arcRoles?: ArcRoleSet;
 }>;
 
 const unitLayers: Read<Readonly<Record<UnitId, RoutingLayer>>> = (value, path) => {
@@ -243,9 +252,13 @@ const unitLayers: Read<Readonly<Record<UnitId, RoutingLayer>>> = (value, path) =
   return out;
 };
 
-export const routingProvenance: Read<RoutingProvenance> = object((f) => ({
-  profile: f.get('profile', profileName),
-  repoConfig: f.get('repoConfig', object((g) => ({ seats: g.get('seats', nullable(routingLayer)), classes: g.get('classes', nullable(classBindings)) }))),
-  planLayer: f.get('planLayer', nullable(routingLayer)),
-  unitLayers: f.get('unitLayers', unitLayers),
-}));
+export const routingProvenance: Read<RoutingProvenance> = object((f) => {
+  const arcRoles = f.optional('arcRoles', oneOf(ARC_ROLE_SETS));
+  return {
+    profile: f.get('profile', profileName),
+    repoConfig: f.get('repoConfig', object((g) => ({ seats: g.get('seats', nullable(routingLayer)), classes: g.get('classes', nullable(classBindings)) }))),
+    planLayer: f.get('planLayer', nullable(routingLayer)),
+    unitLayers: f.get('unitLayers', unitLayers),
+    ...(arcRoles === undefined ? {} : { arcRoles }),
+  };
+});

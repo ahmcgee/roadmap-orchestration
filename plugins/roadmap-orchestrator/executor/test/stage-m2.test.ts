@@ -497,7 +497,7 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
       stage: ctx,
       commands: {
         ...ctx, hostEnv: backendEnv(ctx.hostEnv), laneEnv: ctx.hostEnv, planFile: absPath(join(run.planDir, 'plan.json')),
-        routingBase: { profile: 'default', config: null }, docs: DOCS_NOT_YET, routing: () => ({ profile: 'default', resolved: ctx.routing(null) }), probes: testProbes(ctx),
+        routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET, routing: () => ({ profile: 'default', resolved: ctx.routing(null) }), probes: testProbes(ctx),
       },
     });
     const u = journal.view.unit(U1);
