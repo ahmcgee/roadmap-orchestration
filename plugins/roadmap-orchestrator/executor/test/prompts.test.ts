@@ -4,7 +4,6 @@ import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
   visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
 } from '../src/core/ids.ts';
-import { NotYetError } from '../src/core/notyet.ts';
 import { isoTime } from '../src/core/values.ts';
 import {
   DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
@@ -79,12 +78,6 @@ const corpusTarget = (dir: string, visionDoc: string | null) => ({
 const findingView = (id: string, claim: string) => ({
   id: findingId(id), lens: 'invariants' as const, severity: 'P1' as const, state: 'open' as const, obligation: obligationId('I-1'), claim, owner: null,
 });
-
-/**
- * Roles whose module is a step-0a placeholder (M4b: `flow`, until step B1 writes its prompt): its render throws not-yet, so
- * the rendering checks assert that instead; its fields, schema and validator are checked like every other role's.
- */
-const PLACEHOLDER_ROLES: ReadonlySet<Role> = new Set(['flow']);
 
 const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
   const n = k === 'A' ? 1 : 2;
@@ -226,7 +219,6 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
     },
   ],
-  // M4b: step 0a's placeholder module renders nothing (not-yet); B1 writes the prompt and its rendering cases.
   flow: [flowSample('A'), flowSample('B')],
 };
 
@@ -337,10 +329,6 @@ describe('prompts', () => {
         if (s.type !== 'prompt') continue;
         const mod = s.prompt as { fields: readonly string[]; render: (i: unknown) => string };
         assert.deepEqual([...mod.fields].sort(), [...ROLE_INPUTS[role]].sort(), `${role}/${model}: fields`);
-        if (PLACEHOLDER_ROLES.has(role)) {
-          assert.throws(() => mod.render(a), NotYetError, `${role}/${model}: a placeholder renders nothing`);
-          continue;
-        }
         const base = mod.render(a);
         for (const field of mod.fields) {
           const swapped = { ...a, [field]: (b as Record<string, unknown>)[field] };
@@ -356,7 +344,7 @@ describe('prompts', () => {
     for (const role of ROLES) assert.ok(seats.some(([r]) => r === role), `${role}: seated by a built-in profile`);
     for (const [role, model] of seats) {
       const mod = promptFor(role, model) as { system: string; schema: JsonValue; render: (i: unknown) => string };
-      for (const input of PLACEHOLDER_ROLES.has(role) ? [] : SAMPLES[role]) {
+      for (const input of SAMPLES[role]) {
         const text = mod.render(input);
         assert.equal(mod.render(input), text, `${role}/${model}: deterministic`);
         assert.ok(text.length > 0 && mod.system.length > 0);
@@ -459,7 +447,7 @@ describe('prompts', () => {
     for (const role of ROLES) for (const [r, m] of builtinSeats()) {
       if (r !== role) continue;
       const mod = promptFor(r, m) as { system: string; render: (i: unknown) => string };
-      assert.doesNotMatch(mod.system + (PLACEHOLDER_ROLES.has(r) ? '' : mod.render(SAMPLES[r][1])), /—/,`${r}/${m}`);
+      assert.doesNotMatch(mod.system + mod.render(SAMPLES[r][1]), /—/,`${r}/${m}`);
     }
   });
 });
@@ -759,6 +747,30 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.match(text, /"why":"WHY-B"/);
     const out = validatePackReviewOutput(OUTPUTS.packReview);
     assert.deepEqual(out.findings[0]?.target, { type: 'census', rule: 'T-1' });
+  });
+
+  it('the flow prompt: the five focusing steps, no tampering, T/I/OE diagnostic only, the ruler out of reach, one proposal, the lever shapes', () => {
+    const fable = PROMPTS.flow['claude-fable-5-1'];
+    assert.ok(fable.type === 'inherits' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/.test(fable.reviewed));
+    const mod = promptFor('flow', 'claude-opus-5-5');
+    for (const needle of [
+      /You change nothing/, /Nobody will answer a question/, /propose at most one change to one lever/,
+      /1\. Identify the constraint[^]*2\. Exploit the constraint[^]*3\. Subordinate everything else[^]*4\. Elevate the constraint only after[^]*5\. Then the constraint moves/,
+      /common-cause variation: noise, not a signal, and a change made to answer it is tampering/, /diagnostics only, never a goal/,
+      /The ruler is out of reach/, /you must not argue around them/, /Prefer exploit and subordinate before elevate/,
+      /may change only the value of one --test-concurrency=<n> element, in place/, /The lane's cpu must cover its concurrency/,
+      /never held, never wait:finding/, /Exactly one of proposal and noAction/,
+    ]) assert.match(mod.system, needle);
+    const a = mod.render(SAMPLES.flow[0]);
+    assert.match(a, /No chart yet/);
+    assert.match(a, /Code's constraint: stage:build \(the largest service\)/);
+    assert.match(a, /suite-lane unit: argv \["node","--test","--test-concurrency=1"\], cpu null \(its tier's default\)/);
+    const b = mod.render(SAMPLES.flow[1]);
+    assert.match(b, /Code's constraint: slot:integration, its largest service component suite:all \(the largest wait in front of it\)/);
+    assert.match(b, /Open: flow-1\.0 \(suite-lane at suite:all\), 2 of 5 samples\. Only host advice or noAction while it is open\./);
+    assert.match(b, /stage:build \/ build-class \/ build tier low: rejected \(flow-2\.0\)/);
+    assert.match(b, /host given G-1 on concurrency: GIVEN-B/);
+    assert.match(b, /Diagnostic only, never a goal\. Obligations first held per hour: 0\.50 serving the advanced clauses/);
   });
 
   it('build/Opus carries the unattended standing instruction (Opus 5.5 guide): nobody answers mid-task; decide, record in decisions.json, keep going', () => {

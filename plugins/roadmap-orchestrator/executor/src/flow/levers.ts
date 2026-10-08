@@ -64,7 +64,7 @@ export function waitInFrontOf(target: StationId): StationId {
     case 'stage': return stationId(`wait:${parts.stage}`);
     case 'wait': case 'slot-wait': return target;
     case 'slot': case 'suite': case 'component': return stationId(SLOT_WAIT_STATION);
-    case 'held': throw new Error(`waitInFrontOf: ${target} is never a target`);
+    case 'held': case 'finding-wait': throw new Error(`waitInFrontOf: ${target} is never a target`);
   }
 }
 
@@ -319,12 +319,13 @@ export const builtinBuildClass = (tier: RiskTier) => BUILTIN_SEATS.build[tier];
 
 /**
  * The target rule (G7): the station is code's constraint, one of its components, or the role's disputed station (or one
- * of its components); a suite-lane action targets its lane's station or the slot; the action names what the plan has
+ * of its components), never `held` or `wait:finding` (diagnostic: the finding's repair moves it, no lever does); a suite-lane action targets its lane's station or the slot; the action names what the plan has
  * (a suite lane, a pooled resource, a unit not cut) and changes something.
  */
 function targetProblem(proposal: FlowProposal, context: ProposalContext): string | null {
   const { target, action } = proposal;
   if (parseStationId(target).type === 'held') return 'held time is never a target';
+  if (parseStationId(target).type === 'finding-wait') return 'wait:finding is diagnostic (an open P1 holds the candidate); no lever targets it';
   const allowed = new Set<string>();
   const admit = (s: StationId): void => {
     allowed.add(s);

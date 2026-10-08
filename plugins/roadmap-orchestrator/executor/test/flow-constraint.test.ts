@@ -36,6 +36,11 @@ describe('flow constraint: code\'s reading', () => {
     assert.deepEqual(codeConstraintOf([stage]), { station: 'stage:build', internal: false, component: null });
   });
 
+  it('the finding wait, when it is the largest wait, is the constraint itself (diagnostic)', () => {
+    const p = point({ 'wait:finding': 20, 'wait:slot:integration': 2, 'stage:build': 10, 'suite:unit': 4 });
+    assert.deepEqual(codeConstraintOf([p]), { station: 'wait:finding', internal: true, component: null });
+  });
+
   it('reads the last ten points only', () => {
     const old = Array.from({ length: 5 }, () => point({ 'wait:gate': 50, 'stage:gate': 1 }));
     const recent = Array.from({ length: 10 }, () => point({ 'stage:build': 9, 'stage:gate': 1 }));

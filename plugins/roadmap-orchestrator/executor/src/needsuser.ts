@@ -127,6 +127,13 @@ export function raisedFor(view: JournalView, parent: Parent): NeedsUserId | null
   return raise === undefined ? null : raise.expect.id;
 }
 
+/** The item of `reason` raised for `parent` (several reasons may share a parent: a flow run's proposal and its verdict), or null. */
+export function raisedWithReason(view: JournalView, runDir: AbsPath, parent: Parent, reason: NeedsUserReason): NeedsUserId | null {
+  const key = canonicalJson(parent);
+  const raise = view.opsOf('needsuser.raise').find((i) => canonicalJson(i.parent) === key && view.doneOf(i.op) !== null && readNeedsUser(runDir, i.expect.id)?.reason === reason);
+  return raise === undefined ? null : raise.expect.id;
+}
+
 /**
  * K14: the `pack-review` items a later pack review's end superseded: the item each review raised (parent `job`), for
  * every review ended before the latest ended one.

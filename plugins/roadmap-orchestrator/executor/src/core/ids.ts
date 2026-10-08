@@ -389,6 +389,11 @@ export type SlotComponent = (typeof SLOT_COMPONENTS)[number];
 export const SLOT_STATION = 'slot:integration';
 export const SLOT_WAIT_STATION = 'wait:slot:integration';
 export const HELD_STATION = 'held';
+/**
+ * The part of a unit's wait in front of candidate admission while an open P1 finding on an obligation it selects holds it
+ * (`finding-blocked`): diagnostic, a constraint code may name, never a lever's target.
+ */
+export const FINDING_WAIT_STATION = 'wait:finding';
 
 /**
  * A flow station (G3): one disjoint share of a unit's lead time, or (`slot:integration`) the slot's service as a whole,
@@ -400,10 +405,11 @@ export type StationParts =
   | Readonly<{ type: 'wait'; stage: FlowStage }>
   | Readonly<{ type: 'slot' }>
   | Readonly<{ type: 'slot-wait' }>
+  | Readonly<{ type: 'finding-wait' }>
   | Readonly<{ type: 'suite'; lane: LaneId }>
   | Readonly<{ type: 'component'; component: SlotComponent }>
   | Readonly<{ type: 'held' }>;
-const STATION_FORM = 'stage:<s> | wait:<s> | slot:integration | wait:slot:integration | suite:<lane> | arc-lanes | candidate-rest | ff | snapshot | held';
+const STATION_FORM = 'stage:<s> | wait:<s> | slot:integration | wait:slot:integration | wait:finding | suite:<lane> | arc-lanes | candidate-rest | ff | snapshot | held';
 export function parseStationId(value: unknown, path = 'StationId'): StationParts {
   const bad = (): never => {
     throw new InvalidIdError('StationId', path, STATION_FORM, value);
@@ -411,6 +417,7 @@ export function parseStationId(value: unknown, path = 'StationId'): StationParts
   if (typeof value !== 'string') return bad();
   if (value === SLOT_STATION) return { type: 'slot' };
   if (value === SLOT_WAIT_STATION) return { type: 'slot-wait' };
+  if (value === FINDING_WAIT_STATION) return { type: 'finding-wait' };
   if (value === HELD_STATION) return { type: 'held' };
   if ((SLOT_COMPONENTS as readonly string[]).includes(value)) return { type: 'component', component: value as SlotComponent };
   const m = /^(stage|wait|suite):(.+)$/.exec(value);
@@ -436,6 +443,7 @@ export function stationOf(parts: StationParts): StationId {
     case 'wait': return stationId(`wait:${parts.stage}`);
     case 'slot': return stationId(SLOT_STATION);
     case 'slot-wait': return stationId(SLOT_WAIT_STATION);
+    case 'finding-wait': return stationId(FINDING_WAIT_STATION);
     case 'suite': return stationId(`suite:${parts.lane}`);
     case 'component': return stationId(parts.component);
     case 'held': return stationId(HELD_STATION);

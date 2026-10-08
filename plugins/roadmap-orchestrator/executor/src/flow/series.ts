@@ -10,7 +10,12 @@
 //     previous outcome whose attempt has no outcome yet (an attempt a restart cut short is service of the next one); a
 //     stage with no op (quiesce, an in-session plan-check) is all wait;
 //   - `wait:<s>` / `stage:<s>` for the pipeline stages (`FLOW_STAGES`); `wait:slot:integration` in front of a candidate
-//     (it ends at the publication's slot reserve, the candidate's first op); the slot's service split into its components:
+//     (it ends at the publication's slot reserve, the candidate's first op), less `wait:finding`, the part of that wait
+//     (held time aside) an active P1 finding covers whose obligation the unit's latest approval before the candidate
+//     selects (its fingerprint's obligation revisions): admission's `finding-blocked` (src/schedule/ready.ts), read from
+//     the log. A P1 is active from its `finding-opened` to its first `finding-transition` to resolved or ruled; a unit
+//     a transition names as its owner repairs it and is never held by it (the log's stand-in for the spec's repairs);
+//     the slot's service split into its components:
 //     `suite:<lane>` (the suite runs on the candidate commit: a `lane{set: suite}` spawn, or an arc lane standing in for an
 //     identical suite lane, F6), `arc-lanes` (journey and mutant runs), `candidate-rest` (the rest of the candidate's hold,
 //     including a red suite's T-alone rerun, which is rework, never service), `ff` and `snapshot` (each whole step, wait
@@ -36,10 +41,10 @@ import type { Buffer } from 'node:buffer';
 import { submittedAtMs } from '../commands/queue.ts';
 import type { Event, IntentOf, OutcomeClass, PlanAppliedFact } from '../core/events.ts';
 import {
-  type ArcId, type LaneId, type ObligationId, type OpId, type Sha, type Sha256Hex, type StationId, type UnitId, FLOW_STAGES, type FlowStage, HELD_STATION,
-  SLOT_STATION, SLOT_WAIT_STATION, parseJobId, parseStationId, stationId,
+  type ArcId, type FindingId, type LaneId, type ObligationId, type OpId, type Sha, type Sha256Hex, type StationId, type UnitId, FINDING_WAIT_STATION, FLOW_STAGES,
+  type FlowStage, HELD_STATION, SLOT_STATION, SLOT_WAIT_STATION, parseJobId, parseStationId, stationId,
 } from '../core/ids.ts';
-import { isRed, type Stage } from '../core/records.ts';
+import { isRed, obligationRevsOf, type Stage } from '../core/records.ts';
 import { type IsoTime, isoTime } from '../core/values.ts';
 import { type Obligations, parseObligations } from '../holistic/types.ts';
 import { drainsArc } from '../input/classify.ts';
@@ -128,6 +133,10 @@ class LogIndex {
   readonly gone = new Set<UnitId>();
   readonly latches: Readonly<{ seq: number; obligation: ObligationId }>[] = [];
   readonly unitCost = new Map<UnitId, number | null>();
+  /** Each unit's approvals, in log order: the obligations its fingerprint selects. */
+  readonly approvals = new Map<UnitId, Readonly<{ seq: number; obligations: ReadonlySet<ObligationId> }>[]>();
+  /** The P1 findings over an obligation: active from their opening to their first resolve or ruling; the units that owned them. */
+  readonly p1s = new Map<FindingId, { readonly obligation: ObligationId; readonly start: number; end: number; readonly owners: Set<UnitId> }>();
   costUsd = 0;
   host: HostFingerprint | null = null;
   first = Number.NaN;
@@ -219,6 +228,19 @@ class LogIndex {
         case 'obligation-latched':
           this.latches.push({ seq: e.seq, obligation: f.obligation });
           break;
+        case 'approval':
+          this.push(this.approvals, f.unit, { seq: e.seq, obligations: new Set(obligationRevsOf(f.fingerprint).map((r) => r.id)) });
+          break;
+        case 'finding-opened':
+          if (f.severity === 'P1' && f.obligation !== null) this.p1s.set(f.id, { obligation: f.obligation, start: at, end: Infinity, owners: new Set() });
+          break;
+        case 'finding-transition': {
+          const p1 = this.p1s.get(f.id);
+          if (p1 === undefined) break;
+          if (f.to.state === 'owned' || f.to.state === 'fixed-on-branch') p1.owners.add(f.to.unit);
+          if ((f.to.state === 'resolved' || f.to.state === 'ruled') && p1.end === Infinity) p1.end = at;
+          break;
+        }
         case 'meter': {
           const cost = f.usage.costUsd;
           this.costUsd += cost ?? 0;
@@ -253,6 +275,13 @@ class LogIndex {
     this.push(this.unitHeld, unit, span);
   }
 
+  /** The spans an active P1 over an obligation `unit`'s latest approval before `seq` selects held its candidate (none it owned). */
+  findingSpans(unit: UnitId, seq: number): readonly Span[] {
+    const approval = (this.approvals.get(unit) ?? []).findLast((a) => a.seq < seq);
+    if (approval === undefined) return [];
+    return [...this.p1s.values()].filter((p) => approval.obligations.has(p.obligation) && !p.owners.has(unit)).map((p) => ({ start: p.start, end: p.end }));
+  }
+
   /** The `plan-applied` in force at `seq`. */
   appliedAt(seq: number): PlanAppliedFact {
     const a = this.applied.findLast((x) => x.seq < seq);
@@ -269,6 +298,7 @@ type Partition = Readonly<{ ms: ReadonlyMap<StationId, number>; rework: number; 
 
 const SLOT_COMPONENT = { candidateRest: stationId('candidate-rest'), arcLanes: stationId('arc-lanes'), ff: stationId('ff'), snapshot: stationId('snapshot') } as const;
 const HELD = stationId(HELD_STATION);
+const FINDING_WAIT = stationId(FINDING_WAIT_STATION);
 const suiteStation = (lane: LaneId): StationId => stationId(`suite:${lane}`);
 
 class SeriesFold {
@@ -373,7 +403,17 @@ class SeriesFold {
       if (o.stage === 'ff' || o.stage === 'snapshot') {
         add(o.stage === 'ff' ? SLOT_COMPONENT.ff : SLOT_COMPONENT.snapshot, o.at - cursor.at);
       } else if (o.stage === 'candidate') {
-        wait(stationId(SLOT_WAIT_STATION), cursor.at, start, holding);
+        if (holding) {
+          wait(stationId(SLOT_WAIT_STATION), cursor.at, start, true);
+        } else {
+          // Held time first; of the rest, what an active P1 over a selected obligation covers is the finding's wait.
+          const h = covered(holds, cursor.at, start);
+          const f = covered([...holds, ...log.findingSpans(unit, o.seq)], cursor.at, start) - h;
+          heldTotal += h;
+          add(HELD, h);
+          add(FINDING_WAIT, f);
+          add(stationId(SLOT_WAIT_STATION), start - cursor.at - h - f);
+        }
         const c = this.candidate(unit, o.attempt, start, o.at);
         for (const [station, t] of c.ms) add(station, t);
         rework += c.reruns;

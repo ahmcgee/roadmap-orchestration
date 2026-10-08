@@ -149,6 +149,8 @@ describe('checkProposal: each drop reason', () => {
     assert.equal(reason(proposal(shard(), stationId('stage:build')), { judged: { station: stationId('stage:build'), agree: false, reason: 'r' } }), 'target', 'a suite-lane action off its lane station');
     assert.equal(reason(proposal({ lever: 'build-class', tier: 'low', class: 'frontier' }, stationId('stage:build')), { judged: { station: stationId('stage:build'), agree: false, reason: 'r' } }), null, 'the disputed station');
     assert.equal(reason(proposal({ lever: 'host', note: 'n' }, stationId('held')), { judged: { station: stationId('held'), agree: false, reason: 'r' } }), 'target', 'held');
+    const finding = stationId('wait:finding');
+    assert.equal(reason(proposal({ lever: 'host', note: 'n' }, finding), { constraint: { station: finding, internal: true, component: null } }), 'target', 'the finding wait, even as the constraint');
     assert.equal(reason(proposal({ lever: 'suite-lane', lane: laneId('nope'), cpu: 4 }, SLOT)), 'target', 'no such lane');
     assert.equal(reason(proposal({ lever: 'resource-pool', resource: resourceName('cache'), size: 2 }, SLOT), AFTER_EXPLOIT), 'target', 'an unpooled resource');
     assert.equal(reason(proposal({ lever: 'sequence', unit: unitId('u3'), priority: 'high' }, SLOT)), 'target', 'a cut unit');

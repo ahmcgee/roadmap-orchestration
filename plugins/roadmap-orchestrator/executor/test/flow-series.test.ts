@@ -162,6 +162,60 @@ describe('flow series: held time', () => {
   });
 });
 
+describe('flow series: the finding wait', () => {
+  /** An approval of `unit` selecting `obligations` (the fingerprint fields the series reads). */
+  const approval = (log: FlowLog, min: number, unit: string, attempt: number, obligations: readonly string[]): void => {
+    log.fact(min, { kind: 'approval', unit, attempt, fingerprint: { obligationRevs: obligations.map((id) => ({ id, rev: 1 })) } });
+  };
+  const p1 = (log: FlowLog, min: number, id: string, obligation: string, severity = 'P1'): void => {
+    log.fact(min, { kind: 'finding-opened', id, severity, obligation });
+  };
+
+  it('splits the candidate wait: an active P1 over a selected obligation is wait:finding, held time stays held, the rest the slot\'s', () => {
+    const log = new FlowLog();
+    log.applied(0, 1);
+    log.dispatch(0, 'u1');
+    log.step(0, 2, 'u1', 'gate', 1);
+    approval(log, 2, 'u1', 1, ['I-1', 'I-2']);
+    p1(log, 1, 'F-1', 'I-1'); // active 1..20: covers the wait 2..20
+    log.fact(4, { kind: 'paused', command: commandAt(4), target: { type: 'all' } }); // held 4..6 inside it
+    log.fact(6, { kind: 'resumed', command: commandAt(6), target: { type: 'all' } });
+    p1(log, 3, 'F-2', 'I-9'); // not selected: no wait
+    p1(log, 3, 'F-3', 'I-2', 'P2'); // not a P1: no wait
+    log.fact(20, { kind: 'finding-transition', id: 'F-1', to: { state: 'resolved' } });
+    log.candidateStart(26, 'u1', 2); // slot wait 20..26
+    log.outcome(27, 'u1', 'candidate', 2, 'green');
+    log.outcome(27, 'u1', 'ff', 3, 'published');
+    log.outcome(27, 'u1', 'snapshot', 4, 'published', 'retire');
+    const [p] = series(log).points;
+    assert.deepEqual(minutes(p!), { 'stage:gate': 2, held: 2, 'wait:finding': 16, 'wait:slot:integration': 6, 'candidate-rest': 1 });
+    assert.ok(near(sum(p!), p!.leadMin));
+  });
+
+  it('a unit owning the finding repairs it and is never held by it; a ruling ends it; no approval selects nothing', () => {
+    const log = new FlowLog();
+    log.applied(0, 1);
+    p1(log, 0, 'F-1', 'I-1');
+    for (const u of ['owner', 'other', 'unapproved']) {
+      log.dispatch(0, u);
+      log.step(0, 1, u, 'gate', 1);
+      if (u !== 'unapproved') approval(log, 1, u, 1, ['I-1']);
+    }
+    log.fact(2, { kind: 'finding-transition', id: 'F-1', to: { state: 'owned', unit: 'owner' } });
+    log.fact(5, { kind: 'finding-transition', id: 'F-1', to: { state: 'ruled', disposition: 'dismissed', by: { type: 'ruling', ruling: 'C-1' } } });
+    for (const u of ['owner', 'other', 'unapproved']) {
+      log.candidateStart(9, u, 2);
+      log.outcome(10, u, 'candidate', 2, 'green');
+      log.outcome(10, u, 'ff', 3, 'published');
+      log.outcome(10, u, 'snapshot', 4, 'published', 'retire');
+    }
+    const byUnit = new Map(series(log).points.map((p) => [p.unit as string, minutes(p)]));
+    assert.deepEqual(byUnit.get('owner'), { 'stage:gate': 1, 'wait:slot:integration': 8, 'candidate-rest': 1 });
+    assert.deepEqual(byUnit.get('other'), { 'stage:gate': 1, 'wait:finding': 4, 'wait:slot:integration': 4, 'candidate-rest': 1 });
+    assert.deepEqual(byUnit.get('unapproved'), { 'stage:gate': 1, 'wait:slot:integration': 8, 'candidate-rest': 1 });
+  });
+});
+
 describe('flow series: suite runs', () => {
   const STAND_IN = arcLaneDef('unit-tests', ['node', '--test']); // identical to the suite lane `suite`
   const GOLDEN = arcLaneDef('golden', ['node', 'journey.js']);

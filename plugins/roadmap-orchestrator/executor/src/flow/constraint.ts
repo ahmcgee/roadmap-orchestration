@@ -1,7 +1,9 @@
 // The constraint (plan "Constraint", G7): over the last min(10, n) points, the non-`held` station with the largest mean
 // wait in front of it (`wait:<s>` → `stage:<s>`, the slot's wait → `slot:integration`) when that wait is ≥ 10 % of mean
 // lead (`internal: true`), else the station with the largest mean service (`internal: false`; the slot competes as the
-// sum of its components). For the slot, its largest service component too. Ties go to the station id first in order.
+// sum of its components). For the slot, its largest service component too. `wait:finding` (a unit's candidate wait held
+// by an open P1 on an obligation it selects) stands in front of nothing a lever moves: when it is the largest wait it is
+// the constraint itself, diagnostic (no lever targets it, src/flow/levers.ts). Ties go to the station id first in order.
 // The flow role may dispute it; a proposal's target must be the constraint, one of its components, or the disputed
 // station (or one of its components). Pure.
 import { type StationId, SLOT_STATION, parseStationId, stationId, stationOf } from '../core/ids.ts';
@@ -16,11 +18,12 @@ const SLOT = stationId(SLOT_STATION);
 /** The points the constraint reads: the last min(10, n). */
 export const constraintWindow = (points: readonly FlowPoint[]): readonly FlowPoint[] => points.slice(-CONSTRAINT_WINDOW);
 
-/** The station a wait stands in front of; null for a service station. */
+/** The station a wait stands in front of (the finding wait: itself); null for a service station. */
 function waitedOn(station: StationId): StationId | null {
   const p = parseStationId(station);
   if (p.type === 'wait') return stationOf({ type: 'stage', stage: p.stage });
   if (p.type === 'slot-wait') return SLOT;
+  if (p.type === 'finding-wait') return station;
   return null;
 }
 

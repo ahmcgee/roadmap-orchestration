@@ -268,13 +268,15 @@ export const flowPreimage: Read<FlowPreimage> = tagged('lever', {
 /**
  * Code's constraint over the last min(10, n) points: the station with the largest mean wait in front of it when that
  * wait is ≥ 10 % of mean lead (`internal: true`), else the station with the largest mean service (`internal: false`).
- * `component` names the slot's largest service component exactly when the station is `slot:integration`.
+ * `component` names the slot's largest service component exactly when the station is `slot:integration`. The one wait
+ * it may name is `wait:finding` (internal, diagnostic: no lever targets it).
  */
 export type CodeConstraint = Readonly<{ station: StationId; internal: boolean; component: StationId | null }>;
 export const codeConstraint: Read<CodeConstraint> = object((f) => {
   const out = { station: f.get('station', stationR), internal: f.get('internal', bool), component: f.get('component', nullable(stationR)) };
   const parts = parseStationId(out.station);
-  if (parts.type === 'held' || parts.type === 'slot-wait' || parts.type === 'wait') throw new SchemaError(`${f.path}.station`, 'a service station (never held or a wait)', out.station);
+  if (parts.type === 'held' || parts.type === 'slot-wait' || parts.type === 'wait') throw new SchemaError(`${f.path}.station`, 'a service station or wait:finding (never held or another wait)', out.station);
+  if (parts.type === 'finding-wait' && !out.internal) throw new SchemaError(`${f.path}.internal`, 'true for wait:finding (a wait)', out.internal);
   const isSlot = parts.type === 'slot';
   if (isSlot !== (out.component !== null)) throw new SchemaError(`${f.path}.component`, isSlot ? 'the slot\'s largest component' : 'null off the slot', out.component);
   if (out.component !== null) {
@@ -508,13 +510,13 @@ export const guardBreaches: Read<readonly GuardBreach[]> = sortedBy(
   object((f) => ({ guard: f.get('guard', oneOf(FLOW_GUARDS)), detail: f.get('detail', str) })), (g) => String(FLOW_GUARDS.indexOf(g.guard)).padStart(2, '0'),
   { order: 'in FLOW_GUARDS order, each once' },
 );
-/** The before-window: its last samples (raw minutes), the XmR centre and mR̄ (on log for lead). */
+/** The before-window: its last samples (raw minutes, possibly none), the XmR centre and mR̄ (on log for lead; 0 when empty). */
 export type VerdictBefore = Readonly<{ samples: readonly number[]; centre: number; mrBar: number }>;
-export const verdictBefore: Read<VerdictBefore> = object((f) => ({ samples: f.get('samples', arrayOf(amount, { nonEmpty: true })), centre: f.get('centre', finite), mrBar: f.get('mrBar', amount) }));
+export const verdictBefore: Read<VerdictBefore> = object((f) => ({ samples: f.get('samples', arrayOf(amount)), centre: f.get('centre', finite), mrBar: f.get('mrBar', amount) }));
 /** A verdict window's samples (raw minutes), taken from units admitted after the change or suite runs after it. */
 export type VerdictAfter = Readonly<{ samples: readonly number[] }>;
 export const verdictAfter: Read<VerdictAfter> = object((f) => ({ samples: f.get('samples', arrayOf(amount)) }));
-/** Fewer after-samples than this is `inconclusive`. */
+/** Fewer after-samples, or before-samples, than this is `inconclusive`. */
 export const MIN_VERDICT_SAMPLES = 3;
 
 // ---------------------------------------------------------------------------------------------------

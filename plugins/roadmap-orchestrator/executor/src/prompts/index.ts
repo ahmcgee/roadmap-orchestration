@@ -100,14 +100,15 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
-  // M4b: the flow role on frontier (Opus), its rows mirroring packReview's. Step 0a placed a placeholder Opus module whose
-  // render throws (not-yet); step B1 writes the prompt and reviews it for Fable, which inherits it as it does packReview's.
+  // M4b: the flow role on frontier (Opus), its rows mirroring packReview's. Fable reads the Opus flow prompt unchanged, as
+  // it reads the pack review's: its rules (the whole method in order, plain literal sentences, the ruler and the lever
+  // shapes as the only scope, change nothing, one report) are what the Fable guide asks of a judgment.
   flow: {
     'claude-opus-5-5': { type: 'prompt', prompt: FLOW_OPUS },
     'claude-fable-5-1': {
       type: 'inherits',
       from: 'claude-opus-5-5',
-      reviewed: '2026-10-08: placeholder row (M4b step 0a), mirroring packReview; step B1 checks Prompting Claude Fable 5.1 against the Opus 5.5 flow prompt it writes',
+      reviewed: '2026-10-08: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 flow prompt (the five focusing steps, no tampering, the ruler out of reach, the lever catalogue with code\'s checks); no Fable-specific change needed',
     },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },

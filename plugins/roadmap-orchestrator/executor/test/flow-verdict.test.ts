@@ -88,6 +88,11 @@ describe('the verdict', () => {
   it('below 3 samples inconclusive; any guard breach worse, whatever the samples', () => {
     assert.equal(verdictOf(SUITE, before, { samples: [2, 2] }, []), 'inconclusive');
     assert.equal(verdictOf(SUITE, before, { samples: [] }, []), 'inconclusive');
+    // M4b B1: a before-window of fewer than 3 samples (an undefined or single moving range) is inconclusive too; empty reads as 0, 0.
+    const thin = beforeOf(SUITE, samples([1, 6], [2, 6.2]));
+    assert.equal(verdictOf(SUITE, thin, { samples: [2.1, 2.2, 2.0] }, []), 'inconclusive');
+    assert.deepEqual(beforeOf(SUITE, []), { samples: [], centre: 0, mrBar: 0 });
+    assert.equal(verdictOf(SUITE, beforeOf(SUITE, []), { samples: [2.1, 2.2, 2.0] }, [{ guard: 'cost', detail: 'd' }]), 'worse', 'a breach still decides');
     assert.equal(verdictOf(SUITE, before, { samples: [2] }, [{ guard: 'rework', detail: 'd' }]), 'worse');
     assert.equal(verdictOf(SUITE, before, { samples: [2.1, 2.2, 2.0] }, [{ guard: 'obligation', detail: 'd' }]), 'worse');
   });

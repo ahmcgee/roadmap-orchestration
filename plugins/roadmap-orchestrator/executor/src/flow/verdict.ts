@@ -3,7 +3,9 @@
 // its clock; it closes at 5 samples, 6 h or `arc-completed`, whichever is first, < 3 samples being `inconclusive`.
 // Before = the last 5 samples completed before the revision. `improved` / `worse`: the after-mean below / above the
 // before-window's centre ∓ 2.66·mR̄/√n (on log for lead), else `no-effect`; any guard breach (absolute floors) makes it
-// `worse`. Pure: B1 computes a due verdict from the log each tick and writes it once per proposal.
+// `worse`. A before-window of fewer than 3 samples (M4b B1 amendment: its mR̄ is undefined or a single range) is
+// `inconclusive` too, as is one empty (centre and mR̄ 0, never read). Pure: src/flow/track.ts computes a due verdict
+// from the log each tick and writes it once per proposal.
 import type { ObligationId } from '../core/ids.ts';
 import type { IsoTime } from '../core/values.ts';
 import {
@@ -110,18 +112,21 @@ export function afterOf(samples: readonly MetricSample[], close: WindowClose): V
 // ---------------------------------------------------------------------------------------------------
 // The test
 
-/** The before-window: its samples (raw minutes), and the XmR centre and mR̄ on the metric's scale (log for lead). */
+/** The before-window: its samples (raw minutes), and the XmR centre and mR̄ on the metric's scale (log for lead); 0 and 0 when empty. */
 export function beforeOf(metric: FlowMetric, samples: readonly MetricSample[]): VerdictBefore {
-  if (samples.length === 0) throw new Error('verdict: an empty before-window (a revision before any sample)');
+  if (samples.length === 0) return { samples: [], centre: 0, mrBar: 0 };
   const xs = samples.map((s) => scaled(metric, s.minutes));
   return { samples: samples.map((s) => s.minutes), centre: mean(xs), mrBar: mrBarOf(xs) };
 }
 
-/** The verdict of a closed window: a breach is `worse`; < 3 samples `inconclusive`; else the after-mean against the before-window's limits for a mean of n. */
+/**
+ * The verdict of a closed window: a breach is `worse`; < 3 samples after, or < 3 before, `inconclusive`; else the
+ * after-mean against the before-window's limits for a mean of n.
+ */
 export function verdictOf(metric: FlowMetric, before: VerdictBefore, after: VerdictAfter, guards: readonly GuardBreach[]): FlowVerdictKind {
   if (guards.length > 0) return 'worse';
   const n = after.samples.length;
-  if (n < MIN_VERDICT_SAMPLES) return 'inconclusive';
+  if (n < MIN_VERDICT_SAMPLES || before.samples.length < MIN_VERDICT_SAMPLES) return 'inconclusive';
   const m = mean(after.samples.map((x) => scaled(metric, x)));
   const half = (E2 * before.mrBar) / Math.sqrt(n);
   if (m < before.centre - half) return 'improved';

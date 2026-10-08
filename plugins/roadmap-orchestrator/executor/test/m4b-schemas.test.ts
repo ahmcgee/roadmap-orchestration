@@ -50,10 +50,11 @@ describe('m4b ids', () => {
     assert.equal(proposalJob(proposalId('flow-4.0')), 'flow-4');
     assert.throws(() => proposalIdOf(jobId('ckpt', 4), 0), InvalidIdError);
     for (const bad of ['flow-0.0', 'flow-1', 'ckpt-1.0', 'flow-1.01']) assert.throws(() => proposalId(bad), InvalidIdError, bad);
-    for (const ok of ['stage:build', 'wait:gate', 'slot:integration', 'wait:slot:integration', 'suite:unit', 'arc-lanes', 'candidate-rest', 'ff', 'snapshot', 'held']) {
+    for (const ok of ['stage:build', 'wait:gate', 'slot:integration', 'wait:slot:integration', 'suite:unit', 'arc-lanes', 'candidate-rest', 'ff', 'snapshot', 'held', 'wait:finding']) {
       assert.equal(stationId(ok), ok);
     }
     assert.deepEqual(parseStationId('wait:plan-check'), { type: 'wait', stage: 'plan-check' });
+    assert.deepEqual(parseStationId('wait:finding'), { type: 'finding-wait' });
     for (const bad of ['stage:candidate', 'wait:ff', 'stage:retire', 'suite:9x', 'slot', 'idle']) assert.throws(() => stationId(bad), InvalidIdError, bad);
     assert.equal(jobId('proof', 1), 'proof-1');
   });
@@ -99,12 +100,14 @@ describe('m4b facts', () => {
     refuses(fact({ kind: 'flow-started', job: 'flow-2', triggers: [], inputsSha256: H }), /\.triggers$/);
     refuses(fact({ kind: 'flow-proof', proposal: 'flow-2.0', job: 'proof-1', treeSha: A, oldSha256: H, newSha256: null, outcome: 'changed', minutes: null, breaksStandIn: true }), /\.minutes$/);
     const verdict = {
-      kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'lead' }, before: { samples: [40], centre: 3.7, mrBar: 0.2 }, after: { samples: [30, 31, 29] },
+      kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'lead' }, before: { samples: [40, 42, 38], centre: 3.7, mrBar: 0.2 }, after: { samples: [30, 31, 29] },
       guards: [], verdict: 'improved', preimage: { lever: 'concurrency', cpu: null },
     };
     refuses(fact({ ...verdict, guards: [{ guard: 'rework', detail: '+1 in 3 merges' }] }), /\.verdict$/);
     refuses(fact({ ...verdict, verdict: 'inconclusive' }), /\.verdict$/);
     refuses(fact({ ...verdict, after: { samples: [30] } }), /\.verdict$/);
+    refuses(fact({ ...verdict, before: { samples: [40], centre: 3.7, mrBar: 0 } }), /\.verdict$/);
+    roundTrip(fact({ ...verdict, before: { samples: [], centre: 0, mrBar: 0 }, verdict: 'inconclusive' }));
     refuses(fact({ ...verdict, guards: [{ guard: 'cost', detail: 'c' }, { guard: 'lead', detail: 'l' }], verdict: 'worse' }), /\.guards\[1\]$/);
   });
 

@@ -1662,11 +1662,13 @@ const FLOW_FACT_READERS: { readonly [K in FlowFactKind]: Read<Fact> } = {
       after: f.get('after', verdictAfter), guards: f.get('guards', guardBreaches), verdict: f.get('verdict', oneOf(FLOW_VERDICTS)), preimage: f.get('preimage', flowPreimage),
     };
     if (out.guards.length > 0 && out.verdict !== 'worse') throw new SchemaError(`${f.path}.verdict`, 'worse (a guard was breached)', out.verdict);
-    if (out.verdict === 'inconclusive' && out.after.samples.length >= MIN_VERDICT_SAMPLES) {
-      throw new SchemaError(`${f.path}.verdict`, `conclusive with ${out.after.samples.length} samples (inconclusive below ${MIN_VERDICT_SAMPLES})`, out.verdict);
+    // Too few samples on either side (M4b B1 amendment: the before-window's too) is inconclusive, a breach aside.
+    const few = Math.min(out.after.samples.length, out.before.samples.length) < MIN_VERDICT_SAMPLES;
+    if (out.verdict === 'inconclusive' && !few) {
+      throw new SchemaError(`${f.path}.verdict`, `conclusive with ${out.before.samples.length} samples before and ${out.after.samples.length} after (inconclusive below ${MIN_VERDICT_SAMPLES})`, out.verdict);
     }
-    if (out.verdict !== 'inconclusive' && out.verdict !== 'worse' && out.after.samples.length < MIN_VERDICT_SAMPLES) {
-      throw new SchemaError(`${f.path}.verdict`, `inconclusive with ${out.after.samples.length} samples`, out.verdict);
+    if (out.verdict !== 'inconclusive' && out.verdict !== 'worse' && few) {
+      throw new SchemaError(`${f.path}.verdict`, `inconclusive with ${out.before.samples.length} samples before and ${out.after.samples.length} after`, out.verdict);
     }
     return out;
   }),
