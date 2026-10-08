@@ -77,6 +77,8 @@
 //   audit    (M3, B7) `audit [--lens]`: `audit-requested`, run by the scheduler's audit job (src/commands/audit.ts).
 //            Mutation, no scope.
 //   close-admissions (M3, B7): `admissions-closed`, the arc drains (src/commands/admissions.ts). Mutation, no scope.
+//   flow-decide, flow-request (M4b) `flow accept|reject <proposal>`: `flow-decided` once per proposal and its item
+//            acknowledged; `flow request`: `flow-requested` (src/commands/flow.ts). Mutations, no scope.
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
@@ -88,7 +90,6 @@ import { join } from 'node:path';
 import type { IntentOf, OpOutcome, Parent, PlanAppliedFact, PlanChange, RevisionPayload, RevisionSource, StageOutcomeFact } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { holdFence } from '../core/fence.ts';
-import { notYet } from '../core/notyet.ts';
 import { canonicalJson } from '../core/json.ts';
 import { exclusivePublish } from '../core/fsx.ts';
 import { JUDGMENT_STAGES, probeTargetKey } from '../core/events.ts';
@@ -133,6 +134,7 @@ import type { Backend } from '../routing/types.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { parseRulings } from '../spec/rulings.ts';
 import { closeAdmissions } from './admissions.ts';
+import { decideFlow, requestFlow } from './flow.ts';
 import { requestAudit } from './audit.ts';
 import { resolveEdge, runOnly } from './graph.ts';
 import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from './queue.ts';
@@ -264,8 +266,9 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'close-admissions':
       return closeAdmissions(ctx, command.id);
     case 'flow-decide':
+      return decideFlow(ctx, command.id, body);
     case 'flow-request':
-      return notYet(`the ${body.type} command's effect`, 'B2');
+      return requestFlow(ctx, command.id, body.reason);
   }
 }
 
@@ -298,7 +301,7 @@ function ackedBy(ctx: CommandContext, item: NeedsUserId): CommandId | null {
 }
 
 /** The ack's effect, only what is missing: `<id>.ack.json` naming `id`, then the `needs-user-acked` fact. */
-function acknowledge(ctx: CommandContext, id: CommandId, item: NeedsUserId, choice: string | null): readonly string[] {
+export function acknowledge(ctx: Pick<CommandContext, 'journal' | 'runDir'>, id: CommandId, item: NeedsUserId, choice: string | null): readonly string[] {
   if (readNeedsUserAck(ctx.runDir, item) === null) {
     const record: NeedsUserAck = { v: SCHEMA_VERSION, id: item, command: id, choice, at: isoTimeOf(new Date()) };
     exclusivePublish(needsUserAckPath(ctx.runDir, item), canonicalJson(record));
@@ -822,13 +825,16 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
   }
 }
 
+/** What a commit under the fence touches: the log and run dir, the revision context's inputs, and the docs publisher. */
+export type FencedCommitContext = Pick<CommandContext, 'journal' | 'runDir' | 'hostDir' | 'planFile' | 'routingBase' | 'docs'>;
+
 /**
  * A12, A19: under the fence, the proposal evaluated again, synchronously and with nothing awaited before the commit
  * begins, against the log as it is now (the startup rows and the smoke awaited; other work went on); then the commit
  * (src/recover/revision.ts). Why it may no longer commit, or the fact it wrote.
  */
 export async function commitUnderFence(
-  ctx: CommandContext, evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>, proposer: Proposer, source: RevisionSource, parent: Parent,
+  ctx: FencedCommitContext, evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>, proposer: Proposer, source: RevisionSource, parent: Parent,
 ): Promise<Readonly<{ kind: 'applied'; fact: PlanAppliedFact }> | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>> {
   const hold = await holdFence(ctx.journal);
   try {

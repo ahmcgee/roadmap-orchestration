@@ -44,10 +44,11 @@ import { phase0Check } from '../commands/phase0.ts';
 import { openPr } from '../commands/pr.ts';
 import { exportInputs } from '../commands/inputs.ts';
 import { flowCommand } from '../commands/flow.ts';
+import { type Run, locate } from './locate.ts';
 import { resumeArc } from '../commands/resumearc.ts';
 import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
-import type { ArcId, PlanRev } from '../core/ids.ts';
+import type { PlanRev } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { sha256 } from '../core/ids.ts';
@@ -57,9 +58,8 @@ import { START_FILE } from '../executor.ts';
 import { arcRolesOf, readInputFiles, revisionManifestOf } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { HOST_DIR } from '../host/hostdir.ts';
-import { readClaim } from '../host/lock.ts';
-import { CliError, type Command, type RunLocator, parseCommand, runDir } from '../input/cli.ts';
-import { gitCommonDir, readRepoConfig } from '../preflight/checks.ts';
+import { CliError, type Command, type RunLocator, parseCommand } from '../input/cli.ts';
+import { readRepoConfig } from '../preflight/checks.ts';
 import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection } from '../preflight/startup.ts';
 import { status } from '../status.ts';
 import { START_WAIT_MS, launchSupervisor } from '../supervisor.ts';
@@ -69,18 +69,6 @@ const pkg = createRequire(import.meta.url)('../../package.json') as { version: s
 
 /** EX_USAGE: the arguments were wrong. */
 const EXIT_USAGE = 64;
-
-type Run = Readonly<{ runDir: AbsPath; arc: ArcId }>;
-
-function locate(locator: RunLocator, hostDir: AbsPath): Run {
-  if (locator.type === 'explicit') {
-    const repo = absPath(resolve(locator.repo));
-    return { runDir: runDir(gitCommonDir(repo), locator.arc), arc: locator.arc };
-  }
-  const claim = readClaim(hostDir);
-  if (claim === null) throw new CliError(`no arc holds this host (${hostDir}); name the run with --repo and --arc`);
-  return { runDir: claim.runDir, arc: claim.arc };
-}
 
 function submit(locator: RunLocator, hostDir: AbsPath, body: CommandBody): void {
   const run = locate(locator, hostDir);
