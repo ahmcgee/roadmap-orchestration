@@ -108,10 +108,17 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   `no-claim`, `other-repo`, `alive`, `complete`, `refused` or `already-resumed`. "Recovery" has the boot hook.
 - `roadmap inputs export --repo <path> --arc <arc> --out <dir>`: read-only; writes the arc's current inputs into a
   new directory and prints `export.json` `{planRev, specRevs}` ("Recovery").
-- `roadmap flow accept|reject <proposal> --reason <text> [--repo <path> --arc <arc>]`: your decision on a flow
-  proposal (`flow-1.0`), with a one-line reason; idempotent by proposal. `roadmap flow request --reason <text> [--repo
-  <path> --arc <arc>]`: a flow run past the cooldown, on a concrete observation. `roadmap flow given --repo <path> --lever
-  <lever> --note <text>`: declare what cannot be tuned on this host. (M4b: these land with the flow loop.)
+- `roadmap flow accept|reject <proposal> --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). Your
+  decision on flow proposal `flow-<n>.0` with a one-line reason; acknowledges its `flow-proposal` or `flow-host` item.
+  Idempotent by proposal; refused (78) for a proposal no run made, one code's checks dropped (the reason is printed), or
+  one already decided the other way. A reject remembers its `(station, lever, target)`: no run proposes it again.
+- `roadmap flow request --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). A flow run once the judgment track
+  is free; it bypasses the 120-minute cooldown once per cooldown window (`status.flow.next.bypass`).
+- `roadmap flow given --repo <path> --lever <lever> --note <text>`: a host act, not queued. Declares that `<lever>`
+  (`concurrency`, `resource-pool`, `suite-lane`, `sequence`, `build-class`, `host`) cannot be tuned on this host;
+  write-once in `$(git rev-parse --git-common-dir)/roadmap/givens.json` under this host's fingerprint (`stale`, and not
+  enforced, on another host). Prints `{given: {id: G-n, lever, note, fingerprint, at}}`; the same lever and note print
+  the entry already there.
 
 ## Files
 
@@ -125,8 +132,8 @@ operator log `skill-feedback.md` ("The operator log").
 registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the executor; and `config.json`,
 `vision.json`, `corpus.md`, yours, committed. Anything else is a 0.x layout (`legacy-roadmap-dir`).
 
-**`.roadmap/config.json`**: `{routing?: {profile?, seats?, classes?}, chain?: {k}}`; unknown keys refused; read at
-`start`. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
+**`.roadmap/config.json`**: `{routing?: {profile?, seats?, classes?}, chain?: {k}, flow?: {givens: [{lever, note}]}}`;
+unknown keys refused; read at `start`. `flow.givens` are the owner's repo givens, never yours to add. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
 effort}` and is the only place a model is named (ids in `executor/src/routing/models.ts`).
 
 **Run dir** `$(git rev-parse --path-format=absolute --git-common-dir)/roadmap-runtime/<arc>/`. Read, never write:
@@ -232,6 +239,21 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   `debt{banked, ledger}`, `issues{lastCapture, intake}`, `chain{arcs, k, unackedStarts, nextStart, position}` (the
   next start after this arc). `status` reads the repo config the arc's revision recorded (routing) and the one committed
   at its baseline (K), never the live `.roadmap/config.json`.
+- Every arc: `flow` (null before a start): `{state: off-dev7}` for an arc an older release started, else `{state: on,
+  constraint, chart, accounting, window, verdicts, pending, givens, rulerChanged, next}`:
+  - `constraint{station, internal, component}`: code's constraint over the last 10 merges, null before the first.
+    `station` is `stage:<s>`, `slot:integration` (then `component` is its largest service part: `suite:<lane>`,
+    `arc-lanes`, `candidate-rest`, `ff`, `snapshot`) or `wait:finding` (`internal`, no lever targets it).
+  - `chart{centre, ucl, mrBar, seed, recent[{unit, leadMin, zone}], inFlight[{unit, ageMin, zone}]}`: the XmR chart on
+    log lead minutes, frozen for the arc; zones `green | yellow | red`; null until seeded (5 merges, or 5 points of
+    earlier arcs on an equal host).
+  - `accounting{tAdvances, tOther, tUnits, wip, oeUsdPerHour}`: diagnostic only, never a goal.
+  - `window{proposal, lever, target, metric, openedAt, samples}`: the one change being judged, or null. `verdicts[{proposal,
+    lever, target, verdict: improved | worse | no-effect | inconclusive}]`.
+  - `pending[{proposal, line, phase: undecided | pending-proof | pending-apply}]`; `givens[]` (`host{id, lever, note,
+    state: enforced | stale}` or `repo{lever, note}`); `rulerChanged[{command, rev, seq, at, paths, needsUser}]`.
+  - `next{running, due, cooldownUntil, bypass}`: the flow run in progress, the triggers due now, the cooldown's end and
+    whether a request may still bypass it.
 - Every arc: `knownDefects[{id, match, fixUnit, fixMerged, holds}]` (the units each holds at prepare now);
   `checkpointWaits[{job, waitingFor, line}]`, a checkpoint rejected `busy` waiting for "<unit> <stage> boundary".
 - Corpus arcs (empty otherwise): `admits[{seq, job, index, unit, class: repair|oversight|opportunity, clauses,
@@ -257,6 +279,10 @@ the first 16 hex of its sha256, so any change (forge state included) is a new id
   (the attempts completed since the last ack), `pr` (`pr{number, url, state, base, needsRebase}`, `none` or
   `unavailable{reason}`); corpus arcs also `admits` (classified since the last ack), `opportunities` and the
   non-zero `drift` lines, and an amendment a converted admit made names that admit.
+- `arcs[].flow` (null with the loop off), rendered lines: `constraint` (at the ref, null before a merge), `accounting`
+  (T/I/OE, diagnostic), and in the delta `verdicts`, `rulerChanges` (command revisions after the first admission that
+  touched a ruler path), `hostAdvice` (`flow-host` proposals), and `dropped` (a lever the previous arc applied, with no
+  worse verdict, that this arc's plan no longer carries). The Markdown's Flow section.
 
 The brief reads only the verified snapshot refs: an arc joins it with its first snapshot (its first fast-forward
 or docs publication), and anything not yet published to the ref is not in it.
@@ -328,6 +354,10 @@ Blocking unless noted. Read the item file before acting.
   close-out is left, the executor declines it, a corpus arc's with an amendment `source: request`, and a later ack is
   rejected), `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest` (the brief ack
   acknowledges the digest and convergence-bound items).
+- Flow, non-blocking (SKILL.md "The flow loop"): `flow-proposal` and `flow-host` (`flow accept` or `flow reject`; the
+  item's evidence is the run's inputs file), `flow-worse` (revert by `apply` to the `preimage` of the proposal's
+  `flow-verdict` fact in the run dir's `events.jsonl`, then `ack`), `ruler-changed` (confirm or revert, then `ack`),
+  `flow-invalid` (`ack`).
 - At the close-out of a corpus arc, every open P2 or P3 finding that names no obligation is banked as
   `finding-deferred` debt and ruled deferred (`by: code{close-out}`): the next Phase 0 dispositions it. A finding over
   an obligation never banks.
@@ -353,3 +383,5 @@ Blocking unless noted. Read the item file before acting.
   the Phase-0 record, the issue capture, debt, the brief and the ack log.
 - "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck`, spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
+- "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,
+  proofs, verdicts, givens and the flow facts.

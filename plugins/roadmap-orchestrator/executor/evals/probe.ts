@@ -48,6 +48,12 @@
 //                       reporter: exit 0 when both required ids pass, 78 listing the missing id when one is absent
 //   m4a3.sonnet-build   claude-sonnet-5-5 medium build through the real build prompt and buildSchemaFor (`experiments`): the
 //                       answer validates (buildOutputFor), the fast lane is reported, the file exists
+//   m4b.flow            (M4b) flow.arc (frontier, the default table with the m4b role set): the real flow prompt module over a
+//                       small synthetic FlowInputs (the integration slot the constraint, its suite lane serial); the answer
+//                       must validate (ROLE_VALIDATORS.flow); the detail names the proposal and code's argv-shape verdict on it
+//   m4b.proof           (M4b) the production suite-lane proof (runProof) on a tiny product of two 2 s timer test files: suite
+//                       argv `node --test --test-concurrency=1 'test/unit/*.test.js'` to `=2`, the node-test reporter, real
+//                       node in clean checkouts: the outcome must be `preserved` with equal kept records, the new side faster
 //   effort.*            (OI-2) a session started at one effort, resumed at another: claude (high then medium), codex
 //                       (low then medium); reports whether each CLI accepts the change
 //
@@ -70,7 +76,7 @@ import { queryPolicy } from '../src/forge/policy.ts';
 import { trusted } from '../src/forge/trust.ts';
 import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
 import {
-  type ImplementerSessionId, witnessItemId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId, visionClauseId,
+  type ImplementerSessionId, witnessItemId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, proposalId, questionId, ruleId, rulingId, sha, sha256, specRev, stationId, unitId, visionClauseId,
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
@@ -91,6 +97,14 @@ import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
 import { arcStack, resolveRouting, type ResolvedRouting } from '../src/routing/layers.ts';
 import { type Backend, type JudgmentRole, type Role, type JudgmentSeat, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
+import { argvShapeProblem } from '../src/flow/levers.ts';
+import { runProof } from '../src/flow/proof.ts';
+import type { FlowAction, FlowPromptInputs, FlowProposal } from '../src/flow/types.ts';
+import { FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, keepInput, keptInput } from '../src/input/inforce.ts';
+import { commitAll, writeFiles } from '../test/helpers/repo.ts';
+import { wire } from '../test/fixtures/publish-common.ts';
+import { followingContext } from '../test/fixtures/steer-common.ts';
+import { contextFor, setupArc } from '../test/fixtures/unit-common.ts';
 
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } as const;
@@ -246,7 +260,7 @@ function validates<R extends Role>(name: string, role: R, check: (out: RoleOutpu
  * harness (smoke.ts CallRequest) labels judgment calls with a unit judgment role and seat only, and the judgment
  * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
  */
-function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview'>(
+function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview' | 'flow'>(
   resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: JudgmentRole; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
   inputs: Parameters<ReturnType<typeof promptFor<R>>['render']>[0],
 ): BackendInvocation {
@@ -657,6 +671,69 @@ async function main(): Promise<void> {
         return false;
       }
     });
+  });
+
+  // M4b: the flow role on its own seat (flow.arc, the m4b role set in force), over a small synthetic FlowInputs.
+  await rev3('m4b.flow', async () => {
+    const flowRouting = resolveRouting({ ...arcStack(profile, null, null), arcRoles: 'm4b' });
+    const flowDir = dir(join(root, 'm4b-flow'));
+    const SUITE = laneId('suite');
+    const serial = ['node', '--test', '--test-concurrency=1', 'test/unit/*.test.js'];
+    const flowInputs: FlowPromptInputs = {
+      triggers: ['constraint-shift', 'floor'],
+      chart: {
+        centre: 3.4, ucl: 3.9, mrBar: 0.19, seed: { type: 'self', points: 5 },
+        recent: [31, 29, 34, 30, 33, 32].map((m, i) => ({ unit: unitId(`u-${i + 1}`), leadMin: m, zone: Math.log(m) > 3.4 ? 'yellow' as const : 'green' as const })),
+        inFlight: [{ unit: unitId('u-7'), ageMin: 12, zone: 'green' }],
+      },
+      stations: [
+        { station: stationId('stage:build'), meanMin: 6, share: 0.19 },
+        { station: stationId('wait:slot:integration'), meanMin: 9, share: 0.28 },
+        { station: stationId('suite:suite'), meanMin: 12, share: 0.38 },
+        { station: stationId('arc-lanes'), meanMin: 1, share: 0.03 },
+        { station: stationId('stage:gate'), meanMin: 4, share: 0.12 },
+      ],
+      constraint: { station: stationId('slot:integration'), internal: false, component: stationId('suite:suite') },
+      accounting: { tAdvances: null, tOther: null, tUnits: 1.9, wip: 3, oeUsdPerHour: 4.1 },
+      levers: [
+        { lever: 'concurrency', cpu: 4, set: false, hostCpus: 8 },
+        { lever: 'suite-lane', lane: SUITE, argv: serial, cpu: null },
+        { lever: 'build-class', tier: 'med', class: 'frontier', builtin: 'frontier' },
+      ],
+      givens: [], window: null, verdicts: [], rejections: [], advances: [],
+    };
+    const call = seatCall(flowRouting, 'flow', 'arc', { role: 'planCheck', tier: 'high' }, 'm4b-flow', flowDir, flowInputs);
+    await backend(ctx, 'm4b.flow', call, validates('m4b.flow', 'flow', (out) => {
+      const p = out.proposal;
+      const shape = p !== null && p.action.lever === 'suite-lane' && p.action.argv !== undefined ? argvShapeProblem(serial, p.action.argv) ?? 'argv shape ok' : 'no argv';
+      report(true, 'm4b.flow.answer', `constraint=${JSON.stringify(out.constraint)} proposal=${JSON.stringify(p)} noAction=${JSON.stringify(out.noAction)} (${shape})`);
+      return true;
+    }));
+  });
+
+  // M4b: the production proof of a suite-lane argv change (concurrency 1 → 2) on a tiny two-file product, real node.
+  await rev3('m4b.proof', async () => {
+    const timer = (name: string): string => `import { test } from 'node:test';\n\ntest('${name}', async () => {\n  await new Promise((resolve) => setTimeout(resolve, 2000));\n});\n`;
+    const serial = ['node', '--test', '--test-concurrency=1', 'test/unit/*.test.js'];
+    const base = setupArc({ steps: [], suite: [{ id: 'suite', argv: serial }] });
+    writeFiles(base.repo, { 'test/unit/a.test.js': timer('a'), 'test/unit/b.test.js': timer('b') });
+    const head = commitAll(base.repo, 'product tests');
+    writeFileSync(base.planPath, JSON.stringify({ ...(JSON.parse(readFileSync(base.planPath, 'utf8')) as Record<string, unknown>), baseline: head }));
+    const r = contextFor(base);
+    try {
+      const job = jobId('flow', 1);
+      const action: FlowAction = { lever: 'suite-lane', lane: laneId('suite'), argv: ['node', '--test', '--test-concurrency=2', 'test/unit/*.test.js'], reporter: 'node-test' };
+      const proposal: FlowProposal = { id: proposalId('flow-1.0'), target: stationId('suite:suite'), action, rationale: 'the suite is the slot\'s largest component', risks: 'shared state between files' };
+      r.journal.fact({ kind: 'flow-started', job, triggers: ['requested'], inputsSha256: keepInput(r.ctx.runDir, Buffer.from('{"probe":true}'), FLOW_INPUTS_INPUT) });
+      r.journal.fact({ kind: 'flow-ended', job, outcome: 'done', proposal, dropped: null, constraint: { code: null, judged: { station: stationId('suite:suite'), agree: true, reason: 'probe' } } });
+      await runProof({ ...followingContext(r), acquireFirst: wire(r).arbiter.acquireFirst }, proposal, jobId('proof', 1));
+      const proof = r.journal.view.flowFacts().flatMap((x) => (x.fact.kind === 'flow-proof' ? [x.fact] : []))[0];
+      const records = proof?.oldSha256 == null ? null : keptInput(r.ctx.runDir, proof.oldSha256, FLOW_PROOF_INPUT)?.toString('utf8') ?? null;
+      const ok = proof !== undefined && proof.outcome === 'preserved' && proof.oldSha256 === proof.newSha256 && proof.minutes !== null && proof.minutes.new < proof.minutes.old;
+      report(ok, 'm4b.proof', `outcome=${proof?.outcome} minutes=${JSON.stringify(proof?.minutes ?? null)} records=${records} runDir=${r.ctx.runDir}`);
+    } finally {
+      r.journal.close();
+    }
   });
 
   // Effort-changed resume (OI-2): the same session, a different effort.

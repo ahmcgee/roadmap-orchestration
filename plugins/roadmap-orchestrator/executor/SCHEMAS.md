@@ -2985,7 +2985,8 @@ The types and readers are in `src/flow/types.ts`, `src/core/{ids,events,records,
 `src/git/snapshot.ts`; the behaviour is the later steps' (A1 series, SPC and constraint; A2 levers, givens and verdicts;
 B1 triggers, the job, the prompt, the series at completion, status and brief; B2 the commands, proofs and applies).
 Step 0a placed every module at its final path (`src/flow/{series,spc,constraint,trigger,job,levers,givens,verdict,proof}.ts`,
-`src/commands/flow.ts`, `src/prompts/flow/claude-opus-5-5.ts`) behind `src/core/notyet.ts`.
+`src/commands/flow.ts`, `src/prompts/flow/claude-opus-5-5.ts`) behind `src/core/notyet.ts`; step C deleted it once every
+placeholder had landed.
 
 **Ids** (`src/core/ids.ts`). `JOB_KINDS += flow, proof` (`flow-<n>`, `proof-<n>`). `ProposalId` `flow-<n>.<k>`: the k-th
 proposal of flow run `flow-<n>` (a run makes at most one, so k is 0; code assigns it, `proposalIdOf`; `proposalJob`).
@@ -3089,7 +3090,7 @@ flow]`, gated by the arc's role set: `arcRolesInForce(scope, arcRoles)` drops `f
 `RoutingProvenance.arcRoles?: 'm4b'` (`ARC_ROLE_SETS`); `RoutingStack.arcRoles?`, `ResolvedRouting.arcRoles`,
 `RoutingBase.arcRoles` and `StartupContext.arcRoles` (`arcRolesOf(planApplied)`: `m4b` before the first plan, else the
 revisions'). `routingRevOf(table, scope, arcRoles)` hashes the unit roles and `arcRolesInForce`, so an arc dev.7 started
-keeps its revs. `PROMPTS.flow` mirrors `packReview`: Opus a module (step 0a's placeholder, its render not-yet), Fable
+keeps its revs. `PROMPTS.flow` mirrors `packReview`: Opus a module (src/prompts/flow/claude-opus-5-5.ts), Fable
 inherits it, Sonnet and the Codex models unsupported; `ROLE_INPUTS.flow` = the `FlowPromptInputs` keys.
 
 **`LEVER_PATHS`** (src/flow/levers.ts; the fence: `diffPaths(plan, flowRevision(plan, action)) ⊆ LEVER_PATHS[lever]`, else

@@ -310,7 +310,7 @@ unattended week is only safe if the owner can see, in one place, everything deci
   merges the stack with merge commits.
 - **Routing.** OR-Q17 and L3: the frontier and summit classes bind one model at different efforts, retroactively,
   with no routing generations; an effort-only change of a build seat re-pins and resumes its session.
-- **Efficiency waits for M4b.** M4a only measures stage timings; the root agent reports slowdowns as
+- **Efficiency waits for M4b** (§19). M4a only measures stage timings; the root agent reports slowdowns as
   observations and changes nothing that grades the work.
 
 ## 18. Checks that run, admits that are classed, supervision that is logged [M4]
@@ -346,3 +346,36 @@ own scripts.
   change that would have made it unnecessary; the fixture counts them, so an executor that needs less supervision
   scores better.
 
+## 19. The flow loop: constraints say where, control charts say when, code holds the ruler [M4]
+
+**Evidence.** Wall-clock, not money, bound arc 1 (Obs §6), and the M4a runs showed the same shape: the integration slot
+serialises every candidate, so the suite inside it sets the pace of the whole arc while the build stages wait. M4a gave
+the root agent timings and nothing to act with, so a slowdown became a check-in line. Two failure modes bracket any
+fix. Tuning wherever a number looks bad moves effort to stations that do not bind and adds variance. Optimising a
+measured number invites the cheapest way to move it: drop the slow test, loosen the lane, cheapen the judge
+(Goodhart). Arc 1's courier incidents (§2) showed that a prompt saying "never" does not stop the second.
+
+**Decision.** Plan `m4b-flow` rev 2 (DESIGN-1.0.md §10 "M4b Flow", decisions OR-Q1 to Q7):
+
+- **Theory of constraints says where.** Lead time is partitioned into disjoint stations (stage service, the waits in
+  front of them, the slot and its components). Code names the constraint, the largest wait or else the largest service.
+  A proposal must target the constraint or one of its components, and an elevate lever (more cpu, a bigger pool) waits
+  until an exploit or subordinate change on that target has a verdict, because elevating an unexploited constraint
+  buys capacity the arc never uses.
+- **Statistical process control says when.** One XmR chart on log lead time, seeded from earlier arcs on an equal host
+  and frozen for the arc. A point inside the limits is common-cause noise; acting on it is tampering. Only a special
+  cause, a constraint shift, a closed verdict or a floor of 10 merges triggers a run, behind a cooldown, with at most
+  one change judged at a time, so each verdict can be attributed to one cause.
+- **The Goodhart fence is code, not prose.** Each lever maps to a fixed set of plan paths, and the revision is asserted
+  against them (a violation is an executor bug). The ruler (obligations, witness lanes, arc lanes, audit, advances, the
+  vision, judgment routing, risk) is outside every lever. A suite-lane change may alter only the
+  `--test-concurrency` value in place, and it is applied only after a proof shows equal `(test, selected, outcome)`
+  records on both argvs. Verdicts carry guards (rework, first-run reds, obligations, cost) that turn an "improvement"
+  bought with quality into `worse`. A root-agent `apply` that touches the ruler mid-arc is reported to the owner as
+  `ruler-changed`, not blocked: the root agent may need it for convergence, and the owner sees it.
+- **The proposer never applies.** The flow role sees numbers, not the product. It proposes; the root agent, who holds
+  the vision and the corpus, accepts or rejects with a reason; code proves, applies under the fence and judges. Each
+  of the three can fail without the others failing with it. A `worse` verdict hands back the preimage and the root agent
+  reverts by `apply`, because a revert is a plan edit like any other and keeps one write path.
+- **T, I and OE are diagnostic.** Throughput, inventory and operating expense are reported and never targeted:
+  convergence on the vision is the goal, and an arc that merges faster by converging less is worse.
