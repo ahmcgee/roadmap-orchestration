@@ -590,8 +590,12 @@ async function main(): Promise<void> {
 
   // (2) The acceptance-shape plan-check: PLAN_CHECK_ACCEPTANCE_SCHEMA, witness items through the patch channel.
   await rev3('m4a3.plan-check-acceptance', async () => {
-    const accInputs: PlanCheckInputs = { ...planCheckInputs, acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [laneId('unit')] } };
-    const call = { ...seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm4a3-plan-check-acceptance', m3Dir, accInputs), schema: PLAN_CHECK_ACCEPTANCE_SCHEMA };
+    // The tip predates the unit (no convert.ts), so the acceptance is behaviour the change newly makes pass: witness items are owed.
+    const accDir = dir(join(root, 'm4a3-acceptance'));
+    const accInputs: PlanCheckInputs = {
+      ...planCheckInputs, checkouts: { tip: { path: accDir, at: TREE }, branch: null }, acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [laneId('unit')] },
+    };
+    const call = { ...seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm4a3-plan-check-acceptance', accDir, accInputs), schema: PLAN_CHECK_ACCEPTANCE_SCHEMA };
     await backend(ctx, 'm4a3.plan-check-acceptance', call, (v) => {
       try {
         const out = validatePlanCheckAcceptanceOutput(v);
