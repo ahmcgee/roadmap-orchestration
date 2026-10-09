@@ -73,7 +73,7 @@ import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
   type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, verdictOf,
 } from '../pipeline/dispatch.ts';
-import { arcJourneyLane, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
+import { arcJourneyLane, jobSeriesCheckout, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { candidateRedCause } from '../pipeline/unit.ts';
 import { architecture, docAt, inMs, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
@@ -112,8 +112,7 @@ export type CheckpointOutcome =
 
 const jobParent = (job: JobId): JobParent => ({ type: 'job', job });
 const triggerKey = (t: CheckpointTrigger): string => canonicalJson(t);
-const checkoutOf = (ctx: CheckpointContext, job: JobId, what: 'checkpoint' | 'rewitness'): AbsPath =>
-  absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.${what}`));
+const checkpointCheckout = (ctx: CheckpointContext, job: JobId): AbsPath => absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.checkpoint`));
 
 // ---------------------------------------------------------------------------------------------------
 // Consumed calls
@@ -631,7 +630,7 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     const r = recorded(ctx, s);
     const { triple } = arcSeat(ctx, 'checkpoint');
     const prompt = promptFor('checkpoint', triple.model);
-    const checkout = checkoutOf(ctx, s.job, 'checkpoint');
+    const checkout = checkpointCheckout(ctx, s.job);
     await removeJobCheckouts(ctx, s.job);
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${s.job}`, jobParent(s.job), { path: checkout, checkout: { type: 'detached', at: s.headSha } });
     const inputs = checkpointInputs(ctx, s, r);
@@ -661,7 +660,7 @@ async function rewitnessCited(ctx: CheckpointContext, prev: CheckpointState): Pr
   const head: Sha = integrationHeadNow(ctx);
   await removeJobCheckouts(ctx, prev.inputs.job);
   await runJourneySeries(ctx, { type: 'job', job: prev.inputs.job, acquireFirst: ctx.acquireFirst }, lanes.map(arcJourneyLane), {
-    path: checkoutOf(ctx, prev.inputs.job, 'rewitness'), checkout: { type: 'detached', at: head },
+    path: jobSeriesCheckout(ctx, prev.inputs.job, 'rewitness'), checkout: { type: 'detached', at: head },
   }, { reuse: true, stop: () => false });
 }
 
