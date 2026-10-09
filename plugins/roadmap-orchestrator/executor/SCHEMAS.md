@@ -1638,6 +1638,12 @@ supersede the A4 items they name):
   an arc lane of one id, or two invocations, never share an evidence dest. An arc lane's reporter writes `witness.lines`
   there and its `witness.json` is written there, which the snapshot finds from the `witnessed` fact's `lane` and `inv` (always an arc lane).
   B2 extends this to a unit candidate's journey lanes and moves the job series into src/pipeline/lanes.ts (below).
+- **A job's series checkouts.** A job may run a journey series of one kind more than once (a baseline resumed or re-run
+  on a moved tip, an audit resumed, a re-witness asked again), so each takes its own detached checkout
+  `<job>.<kind>-<k>` (`jobSeriesCheckout`: the baseline's `checkout`, an audit's `lanes` and `rewitness`, a checkpoint's
+  `rewitness` under the audit or rejected job). An earlier executor's `<job>.checkout`, `<job>.lanes` and
+  `<job>.rewitness` are only read back from the log (`removeJobCheckouts` removes a leftover one, `certifiedRun` matches
+  its certificate), never made again: no record changes.
 - **A job's checkout integrity (finding 3).** After a job's lanes, the detached checkout must still be the commit:
   tracked or unignored changes (`dirtyPaths`, as a candidate suite) are snapshotted to `<job root>/_dirty-<checkout>` (B2: a job may run several series) before the
   checkout's removal (which then cites that snapshot), and a HEAD other than the commit is recorded. `JobSeries`
@@ -1778,7 +1784,10 @@ supersede the A4 items they name):
    does not exist yet), null when none is there.
 7. **The baseline job** (src/pipeline/baseline.ts): `baselineDue` names `baseline-<n>` while a holistic arc with
    obligations lacks a witness of every arc lane on the tip by it, or has a problem not raised; `runBaseline` resumes the
-   same job (its leftover checkout removed, only missing lanes run). Problems (a must-hold not held, a future already
+   same job (its leftover checkout removed, only missing lanes run), and so is a job whose tip moved after a plan
+   revision added a lane it never witnessed (every arc lane runs on the new tip; paid M4b run 3). Each run is its own
+   series on its own checkout `baseline-<n>.checkout-<k>` (`jobSeriesCheckout`, src/pipeline/lanes.ts: `k` one past the
+   job's checkouts of that kind begun, so each series is certified once). Problems (a must-hold not held, a future already
    held: vacuous) raise one blocking `obligation-baseline` parented by the job. The scheduler (B7) calls it before
    admitting any unit.
 8. **The repair batch** (`publishBatch`): the slot under `batch{finding, attempt}` through `acquireFirst` with the job as
@@ -2589,8 +2598,9 @@ edit reads it: `live` → "is running <stage> attempt n; apply the edit at its s
 - `lane-reused{parent: Parent, lane, from: {parent, inv, at}}`: a series reused a lane's earlier pass (F1a, R52); one per
   `(parent, lane)`, `from.inv` an invocation the log opened.
 - `series-certified{parent, checkout: AbsPath, at: Sha}`: a series' completed clean certificate (its lanes ran, its
-  checkout's census was clean, the checkout was removed; Q12, R51). One per `(parent, checkout)`. Absence is unknown,
-  never clean: an uncertified series is never reused.
+  checkout's census was clean, the checkout was removed; Q12, R51). One per `(parent, checkout)`: every series makes
+  its checkout at a path no earlier series under its parent used (a unit attempt's per-attempt paths; a job's
+  `jobSeriesCheckout`). Absence is unknown, never clean: an uncertified series is never reused.
 - `smoke-ran{unit, attempt, key: Sha256Hex, verdict: {killed, survived, inconclusive}}`: a unit attempt's mutation smoke
   (D2, Q17), one per attempt; `key` the allowance key; each target in exactly one verdict list (`TestRef` ascending by
   lane then test id), at least one target.

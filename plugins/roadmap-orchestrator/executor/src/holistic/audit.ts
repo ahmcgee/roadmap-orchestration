@@ -59,7 +59,7 @@ import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
   type BackendCallOutcome, type JobParent, type StageContext, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, unitBranch, verdictOf,
 } from '../pipeline/dispatch.ts';
-import { type JourneyEnd, arcJourneyLane, dirtyPaths, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
+import { type JourneyEnd, arcJourneyLane, dirtyPaths, jobSeriesCheckout, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
 import { type FindingView, type LensInputs, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
@@ -105,9 +105,12 @@ type Started = AuditState['started'];
 const NEVER = new AbortController().signal;
 const jobParent = (job: JobId): JobParent => ({ type: 'job', job });
 
-/** Where an audit's checkouts go: the lanes' series, the lenses', a re-witness series (each basename starts with the job id). */
-const checkoutOf = (ctx: StageContext, job: JobId, what: 'lanes' | 'lenses' | 'rewitness'): AbsPath =>
-  absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.${what}`));
+/**
+ * Where an audit's lenses' checkout goes (its basename starts with the job id). Its journey series (the lanes', a
+ * re-witness) each take their own (`jobSeriesCheckout`: `<job>.lanes-<k>`, `<job>.rewitness-<k>`).
+ */
+const lensesCheckout = (ctx: StageContext, job: JobId): AbsPath =>
+  absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.lenses`));
 
 // ---------------------------------------------------------------------------------------------------
 // Findings
@@ -429,7 +432,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   // 2–3: the arc lanes on the audited SHA, then code's P1s.
   if (r.obligations !== null && r.obligations.lanes.length > 0) {
     const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, r.obligations.lanes.map(arcJourneyLane), {
-      path: checkoutOf(ctx, job, 'lanes'), checkout: { type: 'detached', at: s.integrationSha },
+      path: jobSeriesCheckout(ctx, job, 'lanes'), checkout: { type: 'detached', at: s.integrationSha },
     }, { reuse: true, stop: () => false });
     if (series.end.kind !== 'ran') return { kind: 'incomplete', job, end: series.end };
     const records = new Map(series.runs.flatMap((x) => (x.record === null ? [] : [[x.lane, x.record] as const])));
@@ -439,7 +442,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   // 4: the lenses, serially, the vision first.
   const base = coverageBase(ctx, s.integrationSha, s.seq);
   if (base === null) throw new Error(`${job}: no vision revision before its start`);
-  const checkout = checkoutOf(ctx, job, 'lenses');
+  const checkout = lensesCheckout(ctx, job);
   const { triple } = arcSeat(ctx, 'lens');
   const prompt = promptFor('lens', triple.model);
   let made = false;
@@ -525,7 +528,7 @@ export async function rewitnessP1s(ctx: AuditContext, job: JobId): Promise<reado
   const laneIds = new Set(defs.map((d) => d.o.witness!.lane));
   await removeJobCheckouts(ctx, job);
   const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, obligations.lanes.filter((l) => laneIds.has(l.id)).map(arcJourneyLane), {
-    path: checkoutOf(ctx, job, 'rewitness'), checkout: { type: 'detached', at: head },
+    path: jobSeriesCheckout(ctx, job, 'rewitness'), checkout: { type: 'detached', at: head },
   }, { reuse: true, stop: () => false });
   const records = new Map(series.runs.flatMap((x) => (x.record === null ? [] : [[x.lane, x.record] as const])));
   return defs.map(({ finding, o }) => {

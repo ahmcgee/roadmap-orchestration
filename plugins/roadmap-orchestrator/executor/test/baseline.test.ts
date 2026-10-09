@@ -1,11 +1,14 @@
 // M3 step B2: the baseline witness job (src/pipeline/baseline.ts, A6) and journey-series lane reuse (src/pipeline/lanes.ts),
 // over real arcs (real git, real processes, fake witness lanes scripted per tree). Named tests: baseline.held,
-// baseline.must-hold-not-held, baseline.future-vacuous, baseline.resume, baseline.not-holistic, lanes.reuse.
+// baseline.must-hold-not-held, baseline.future-vacuous, baseline.resume, baseline.rerun-after-revision,
+// baseline.not-holistic, lanes.reuse.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
+import { applyCommand } from '../src/commands/apply.ts';
+import { submitCommand } from '../src/commands/queue.ts';
 import { jobId, sha } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
@@ -13,11 +16,12 @@ import { holisticInForce } from '../src/pipeline/stages.ts';
 import { type BaselineContext, baselineDue, runBaseline } from '../src/pipeline/baseline.ts';
 import { jobEvidenceRoot } from '../src/git/snapshot.ts';
 import { arcJourneyLane, runJourneySeries } from '../src/pipeline/lanes.ts';
+import { baselineOwed } from '../src/schedule/scheduler.ts';
 import { git, tmpDir } from './helpers/repo.ts';
-import { type HolisticOptions, holisticArc } from './fixtures/brake-common.ts';
-import { publishArc, wire } from './fixtures/publish-common.ts';
+import { type HolisticOptions, holisticArc, obligationsJson } from './fixtures/brake-common.ts';
+import { type Wired, publishArc, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
-import { type ArcRun, contextFor } from './fixtures/unit-common.ts';
+import { type ArcRun, applyBody, contextFor } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
@@ -25,11 +29,11 @@ type Json = Record<string, unknown>;
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 const spawnsOf = (r: ArcRun, lane: string): number => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey' && i.expect.subject.lane === lane).length;
 
-function arc(opts: Omit<HolisticOptions, 'steps' | 'mapping'>): Readonly<{ r: ArcRun; ctx: BaselineContext }> {
-  const { d } = holisticArc({ steps: [], mapping: [], ...opts });
+function arc(opts: Omit<HolisticOptions, 'steps' | 'mapping'>): Readonly<{ r: ArcRun; ctx: BaselineContext; w: Wired; control: string }> {
+  const { d, control } = holisticArc({ steps: [], mapping: [], ...opts });
   const r = contextFor(d);
   const w = wire(r);
-  return { r, ctx: { ...r.ctx, acquireFirst: w.arbiter.acquireFirst } };
+  return { r, ctx: { ...r.ctx, acquireFirst: w.arbiter.acquireFirst }, w, control };
 }
 
 describe('the baseline witness (A6)', () => {
@@ -101,6 +105,34 @@ describe('the baseline witness (A6)', () => {
       assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
       assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [1, 1], 'only the missing lane ran again');
       assert.equal(baselineDue(ctx), null);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('baseline.rerun-after-revision: a revision adding a lane the job never witnessed, its docs publication moving the tip, re-runs every arc lane as the same job on a checkout of its own; each series certified once (paid M4b run 3 crashed on a second certificate)', T, async () => {
+    const { r, ctx, w, control } = arc({ obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
+    try {
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      assert.equal(baselineDue(ctx), null);
+      // Rev 2 adds lane `other` (I-2); its docs publication (docs-1) moves the tip.
+      const before = git(r.d.repo, 'rev-parse', 'main');
+      const obligations = [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }];
+      writeFileSync(join(r.d.planPath, '..', 'obligations.json'), JSON.stringify(obligationsJson({ obligations, mapping: [], lanes: ['journey', 'other'] }, control)));
+      const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(r.d)));
+      assert.equal(applied.kind, 'applied', JSON.stringify(applied));
+      assert.notEqual(git(r.d.repo, 'rev-parse', 'main'), before, 'the docs publication moved the tip');
+      assert.equal(baselineOwed(w.stage), 'baseline-1', 'not done elsewhere: the tree it left lacks lane other');
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      assert.equal(baselineDue(ctx), null);
+      const ran = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey' && i.parent.type === 'job' && i.parent.job === 'baseline-1');
+      assert.deepEqual(ran.map((i) => i.expect.subject.purpose === 'journey' && i.expect.subject.lane), ['journey', 'journey', 'other'], 'every arc lane ran again on the new tip');
+      const root = join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc);
+      assert.deepEqual(facts(r).flatMap((f) => (f.kind === 'series-certified' && f.parent.type === 'job' && f.parent.job === 'baseline-1' ? [[f.parent, f.checkout]] : [])), [
+        [{ type: 'job', job: 'baseline-1' }, join(root, 'baseline-1.checkout-1')],
+        [{ type: 'job', job: 'baseline-1' }, join(root, 'baseline-1.checkout-2')],
+      ], 'one certificate per series, each on its own checkout');
+      assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {
       r.journal.close();
     }

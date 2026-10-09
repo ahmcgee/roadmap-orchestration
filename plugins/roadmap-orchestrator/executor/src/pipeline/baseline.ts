@@ -8,18 +8,20 @@
 // The job's lanes run as a journey series under `job{baseline-n}` (src/pipeline/lanes.ts): reserved first of every
 // unit, the red-lane protocol, a `witnessed{for: job{baseline-n}}` fact per lane. A job cut short (a crash, a lane
 // without a verdict, a failed cleanup whose job-owned residue the job's holder reclaims) is resumed as the same job:
-// its leftover checkout removed, only the lanes it has not witnessed on the tip run again. It is complete once every arc
+// its leftover checkout removed, only the lanes it has not witnessed on the tip run again. So is a job whose tip moved
+// under a plan revision that added a lane it never witnessed (paid M4b run 3: rev 2 added a lane and a docs publication
+// moved the tip): every arc lane runs again on the new tip. Each run is its own series on its own checkout
+// (`jobSeriesCheckout`: `baseline-<n>.checkout-<k>`), certified once. It is complete once every arc
 // lane is witnessed for it on one tip and any problem is raised (`raisedFor` its job): `baselineDue` then answers null
 // for good (`holistic` is never removed, so an arc has one baseline).
 //
 // The scheduler (step B7) runs `runBaseline` while `baselineDue` names a job, before admitting any unit.
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Parent } from '../core/events.ts';
 import { type JobId, type LaneId, type ObligationId, type Sha, jobId, parseJobId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent } from '../core/records.ts';
-import { type AbsPath, absPath, branchRef } from '../core/values.ts';
+import { type AbsPath, branchRef } from '../core/values.ts';
 import { revParse } from '../git/git.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { type Obligations, type WitnessRecord, isExempt, witnessRecord } from '../holistic/types.ts';
@@ -27,7 +29,7 @@ import type { PlanM1 } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
-import { type JourneyContext, type JourneyEnd, arcJourneyLane, removeJobCheckouts, runJourneySeries, witnessRecordPath } from './lanes.ts';
+import { type JourneyContext, type JourneyEnd, arcJourneyLane, jobSeriesCheckout, removeJobCheckouts, runJourneySeries, witnessRecordPath } from './lanes.ts';
 import { holisticInForce } from './stages.ts';
 
 export type BaselineContext = JourneyContext & Readonly<{ acquireFirst: AcquireFirst }>;
@@ -106,9 +108,6 @@ export function baselineDue(ctx: Reader): JobId | null {
   return problems.length > 0 && raisedFor(ctx.journal.view, jobParent(s.job)) === null ? s.job : null;
 }
 
-/** Where a baseline job's checkout goes. */
-const baselineWorktree = (root: AbsPath, arc: string, job: JobId): AbsPath => absPath(join(root, arc, `${job}.checkout`));
-
 function baselineNeedsUser(ctx: BaselineContext, job: JobId, tip: Sha, problems: readonly BaselineProblem[]): NeedsUserContent {
   const notHeld = problems.filter((p) => p.kind === 'not-held').map((p) => `${p.obligation} (${p.verdict})`);
   const vacuous = problems.filter((p) => p.kind === 'vacuous').map((p) => p.obligation);
@@ -138,7 +137,7 @@ export async function runBaseline(ctx: BaselineContext): Promise<BaselineOutcome
   if (s.missing.length > 0) {
     const lanes = obligations.lanes.filter((l) => s.missing.includes(l.id)).map(arcJourneyLane);
     const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, lanes, {
-      path: baselineWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, job), checkout: { type: 'detached', at: tip },
+      path: jobSeriesCheckout(ctx, job, 'checkout'), checkout: { type: 'detached', at: tip },
     }, { reuse: false, stop: () => false });
     if (series.end.kind !== 'ran') return { kind: 'incomplete', end: series.end };
   }

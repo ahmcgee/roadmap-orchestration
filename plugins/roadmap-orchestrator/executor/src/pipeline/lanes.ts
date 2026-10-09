@@ -1057,6 +1057,23 @@ export async function removeJobCheckouts(ctx: ResourceContext, job: JobId): Prom
   }
 }
 
+/** A job's kinds of journey series: the baseline's, an audit's lanes, a re-witness (an audit's or a checkpoint's). */
+export type JobSeriesKind = 'checkout' | 'lanes' | 'rewitness';
+
+/**
+ * The checkout of a job's next journey series of kind `what`: `<worktreeRoot>/<arc>/<job>.<what>-<n>`, n one past the
+ * checkouts of that kind the job has begun. A job may run such a series more than once (resumed after it was cut short,
+ * a baseline re-run on a tip a plan revision left unwitnessed, a re-witness asked again), so each series gets a checkout
+ * of its own: its certificate (one `series-certified` per parent and checkout), its `_dirty-<checkout>` evidence and its
+ * runs' cwd (`certifiedRun`) name that series alone, and `removeJobCheckouts` never mistakes it for an earlier one.
+ */
+export function jobSeriesCheckout(ctx: Pick<ResourceContext, 'journal' | 'plan'>, job: JobId, what: JobSeriesKind): AbsPath {
+  const parent = canonicalJson({ type: 'job', job } satisfies Parent);
+  const stem = `${job}.${what}-`;
+  const begun = ctx.journal.view.opsOf('worktree.create').filter((i) => canonicalJson(i.parent) === parent && basename(i.expect.path).startsWith(stem)).length;
+  return absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${stem}${begun + 1}`));
+}
+
 /** Where a witness run's record is kept: `witness.json` in its execution's dir (what a `witnessed` fact names). */
 export const witnessRecordPath = (runDir: AbsPath, fact: Parameters<typeof witnessDir>[1]): AbsPath => absPath(join(witnessDir(runDir, fact), WITNESS_RECORD_FILE));
 

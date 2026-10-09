@@ -195,7 +195,7 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.equal(spawnSync('node', ['src/cli.js', 'total', '0.1', '0.2'], { cwd: l.repo, encoding: 'utf8' }).stdout, '0.30\n', 'sums are exact');
 
   // The barrier (branch R): an audit's lane checkout without the regression passes; with it, the run waits until released.
-  const checkout = join(tmpDir('m3-checkouts'), 'audit-1.lanes');
+  const checkout = join(tmpDir('m3-checkouts'), 'audit-1.lanes-1');
   git(l.repo, 'worktree', 'add', '--detach', checkout, MAIN);
   const clean = runArcLane(o, MONEY_LANE, checkout);
   assert.equal(clean.run().status, 0, 'no regression: the audit\'s run passes straight through');
