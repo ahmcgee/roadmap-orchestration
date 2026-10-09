@@ -416,7 +416,8 @@ rejected. An edit you never apply has no effect, even after a restart.
   spec's `witnesses`, its must-hold obligations') by exact test id; a missing or failing one is a fix round. Acceptance
   a witness lane must prove goes in the spec's `witnesses` section: `{id: W-<n>, lane: <arc lane>, testId: <exact
   id>, clause: <the spec's acceptance clause id, e.g. A2>, skeleton: <what the test does>}`. Name only a test the
-  change makes pass: mutation smoke reports a witness that passes with the change reverted.
+  change makes pass: mutation smoke reports a witness that passes with the change reverted. A check that existing
+  behaviour holds is a must-hold obligation's witness, never a spec witness.
 - **Clocks.** A unit whose behaviour depends on the date or time zone pins the product's own clock seam in every test
   it touches, existing ones included, and declares a second fast lane that runs its witnesses with the seam shifted
   far ahead (+400 days) under a non-UTC `TZ`. No real wait in a fast lane: inject the timeout, and check the production

@@ -19,6 +19,8 @@
 // clock and entry-point defect classes (D3) and the acceptance shape (E, R59).
 // Run 10 (C, 2026-10-06): <prior_attempt> after the ask's inputs carries why the executor refused the previous answer's
 // patch (an acceptance clause or witness item citing an out-of-slice rule), for the retry to correct.
+// M4b (2026-10-09, paid run): the acceptance shape names only a test the change newly makes pass; a preservation check
+// passes with the change reverted, so mutation smoke flags it by construction: it is a must-hold's witness.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
   acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,

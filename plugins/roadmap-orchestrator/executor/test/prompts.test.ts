@@ -856,7 +856,7 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       for (const needle of [/<acceptance_shape>/, /may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted/,
         /a new item takes the next free id, W-3, and further new items the ids after it in order, written without leading zeros/,
         /lane: one of the arc lanes: journey, e2e/, /testId: the test's exact id/, /" > "/, /skeleton/, /real entry point/,
-        /sends the unit back while one is missing or failing/]) {
+        /sends the unit back while one is missing or failing/, /Name only a test the change newly makes pass/, /belongs to a must-hold obligation's witness/]) {
         assert.match(text, needle, `planCheck/${model}: ${needle}`);
       }
       namesEvery(mod.system + text, requiredKeys(PLAN_CHECK_ACCEPTANCE_SCHEMA, [], ['patch'], ['patch', 'item']), `planCheck acceptance/${model}`);

@@ -2802,8 +2802,10 @@ sections and marks converted amendments.
 12. **Mutation smoke (N3, D2, Q15–Q17, Q25; src/pipeline/smoke.ts).** `notRun` reasons in order: `low-risk` (the pinned
     floor), `no-targets`, `no-test-paths`, `tests-only-diff`, then `allowance` (the unit's smoke `mutant.apply` intents,
     blocked runs and crash retries included, reach `smokeRuns`). The key is sha256 of the kept reverse patch's sha256 and
-    each target lane's rev, env id and target tests; an earlier `smoke-ran` of the unit with that key is reused (a new
-    `smoke-ran` for this attempt, nothing runs). Every target is inconclusive, with a `smoke-ran`, when the production
+    each target lane's rev, env id, target tests and test files (path, mode and blob of each path its `testPaths` match
+    at the salvaged commit); an earlier `smoke-ran` of the unit with that key is reused (a new `smoke-ran` for this
+    attempt, nothing runs), so a fix that edits only tests runs the mutant again. A key recorded by an older release
+    never matches the current computation: that unit's smoke runs once more (an execution against `smokeRuns`). Every target is inconclusive, with a `smoke-ran`, when the production
     diff holds a binary path or a rename (keyed by the diff itself, nothing made), or the patch is corrupt or does not
     apply. A target is `killed` on a non-malformed record with `selected > 0` and `fail`, `survived` on `pass`, else
     inconclusive; any survivor is `smoke-survived`, otherwise (inconclusive ones included) the stage goes on green.

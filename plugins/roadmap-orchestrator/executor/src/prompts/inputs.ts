@@ -571,10 +571,6 @@ Read the spec, the documents above and the code the spec depends on, then return
 ${vision}`;
 }
 
-/**
- * The acceptance shape of a plan-check (E, R59), or nothing for the uniform check: the redirect may only add or replace
- * witness items and facts, and cite; witness items take ids from the spec's next free `W-n`.
- */
 /** Run 10 (C): the previous plan-check answer's refused patch, as the retry reads it (empty when there was none). */
 export function planCheckPriorInvalidText(reason: string | null): string {
   if (reason === null) return '';
@@ -585,6 +581,10 @@ Your previous answer on this unit redirected with a patch the executor refused, 
 </prior_attempt>`;
 }
 
+/**
+ * The acceptance shape of a plan-check (E, R59), or nothing for the uniform check: the redirect may only add or replace
+ * witness items and facts, and cite; witness items take ids from the spec's next free `W-n`.
+ */
 export function acceptanceShapeText(a: PlanCheckAcceptance | null): string {
   if (a === null) return '';
   const lanes = a.arcLanes.length === 0 ? '(none: this arc declares no arc lanes, so no witness item can be written; say so in notes)' : a.arcLanes.join(', ');
@@ -599,6 +599,7 @@ A witness item is {id, lane, testId, clause, skeleton}:
 - id: a new item takes the next free id, ${a.nextWitnessId}, and further new items the ids after it in order, written without leading zeros; replace names a witness id the spec already holds.
 - lane: one of the arc lanes: ${lanes}.
 - testId: the test's exact id as that lane's reporter gives it (for node --test, the suite and test names joined by " > ").
+  Name only a test the change newly makes pass. A check that existing behaviour is preserved passes with the change reverted, so mutation smoke reports it against the unit; it is not a witness item but belongs to a must-hold obligation's witness.
 - clause: the id of the acceptance clause it witnesses.
 - skeleton: the test's shape in one or two plain sentences: the entry point it drives, the fixture it injects, what it asserts. A negative witness drives the real entry point with an injected fixture, never a helper.
 

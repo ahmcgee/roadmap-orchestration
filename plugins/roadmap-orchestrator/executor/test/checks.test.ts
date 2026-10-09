@@ -58,6 +58,8 @@ async function lanesOf(opts: ChecksOptions): Promise<Readonly<{ a: ChecksArc; r:
 
 
 const FIX = codexStep([{ type: 'commit', message: 'more tests', files: { 'test/more.test.js': '// more\n' } }], { argv: ['exec', 'resume'] });
+/** A fix round that changes nothing. */
+const NOOP_FIX = codexStep([], { argv: ['exec', 'resume'] });
 
 describe('D1 witness presence', () => {
   test('witnesscheck.missing-fails-fast: a required witness absent on the salvage SHA is witnesses-missing; no gate call; the fix round names the id and what requires it', T, async () => {
@@ -229,8 +231,8 @@ describe('D2 mutation smoke', () => {
     }
   });
 
-  test('smoke.survivor-one-round-then-gate / smoke.allowance-reused-same-key: a survivor is one charged fix round; the same production diff reuses the verdict; then the gate decides with it', T, async () => {
-    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), FIX, gateStep({ decision: 'approve' })], null);
+  test('smoke.survivor-one-round-then-gate / smoke.allowance-reused-same-key: a survivor is one charged fix round; an unchanged unit reuses the verdict; then the gate decides with it', T, async () => {
+    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null);
     try {
       const f = lanesFacts(a.d).at(-1)!;
       assert.deepEqual([f.outcome, f.class, f.chargeable], ['smoke-survived', 'smoke', true]);
@@ -248,10 +250,24 @@ describe('D2 mutation smoke', () => {
     }
   });
 
+  test('smoke.tests-only-fix-reruns: a fix round after a survivor that edits only test files changes the key; the mutant runs again', T, async () => {
+    // Paid M4b run (unit confirm-by-text): the key left the tests out, so a tests-only fix reused the stale `survived`.
+    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), FIX, gateStep({ decision: 'approve' })], null);
+    try {
+      assert.equal(lanesFacts(a.d).at(-1)!.outcome, 'smoke-survived');
+      await stepUntil(r, 'u1', (x) => x.stage === 'snapshot');
+      assert.deepEqual(lanesFacts(a.d).map((x) => [x.outcome, x.class]), [['smoke-survived', 'smoke'], ['smoke-survived', 'advance']]);
+      assert.equal(smokeApplies(a.d).length, 2, 'the second attempt ran its own mutant');
+      const [first, second] = smokeRan(a.d);
+      assert.notEqual(first!.key, second!.key);
+    } finally {
+      r.journal.close();
+    }
+  });
+
   test('gate.no-spec-lanes-after-smoke (paid M4a run 11): a unit whose spec declares no lanes, its D1 witness journey and a surviving smoke, one fix round, then the gate finds the last lanes attempt\'s own checkout and the unit merges', T, async () => {
     // Run 11 (witness-hardening, seq 1585-1641): no spec lane ran, so no verification checkout existed; the only checkout of
     // the attempt was D1's witness journey's, removed before its certificate; the gate threw on every restart.
-    const NOOP_FIX = codexStep([], { argv: ['exec', 'resume'] });
     const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null, { noSpecLanes: true });
     try {
       assert.deepEqual(spawns(a.d).filter((i) => i.expect.subject.purpose === 'lane'), [], 'no spec lane exists');
