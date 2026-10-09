@@ -4,7 +4,7 @@
 // the cleanup of the fixture's processes on real processes.
 // Named tests: evals-m4a.turn-cap-equals-session, evals-m4a.turn-timeout-distinct, evals-m4a.driver-reaps-fixture,
 // evals-m4a.driver-stops-held-arc,
-// evals-m4a.check-restores-on-throw, evals-m4a.operator-log-metric, evals-m4a.profile-criterion,
+// evals-m4a.check-restores-on-throw, evals-m4a.operator-log-metric, evals-m4a.profile-criterion, evals-m4a.pressure-criterion,
 // evals-m4a.watch-absorbs-routine, evals-m4a.terminal-seq-and-post-run, evals-m4a.cost-deltas-and-unknowns.
 import assert from 'node:assert/strict';
 import { spawn as spawnProc } from 'node:child_process';
@@ -20,7 +20,8 @@ import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
 import { type ArcForensics, LIMITS, arcForensics, drive, fixtureProcesses, initialPrompt, isWatchTail, killProcs, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
 import { ActionableFilter, HEARTBEAT_MIN } from '../src/watch.ts';
-import { CRITERIA, LEVERS, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, profileVerdict } from '../evals/m4a/check.ts';
+import { CRITERIA, LEVERS, type PressureArc, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, pressureRecordedVerdict, profileVerdict } from '../evals/m4a/check.ts';
+import type { FlowInputs } from '../src/flow/types.ts';
 import { layout } from '../evals/m4a/layout.ts';
 import { costTotals, exportCosts, invocationCosts, rootCosts } from '../evals/m4a/transcript.ts';
 import { fakeArc, fakeHostDir } from '../evals/m4a/fake-root.ts';
@@ -132,6 +133,35 @@ test('evals-m4a.profile-criterion: every arc\'s first plan-applied is under the 
   const names = CRITERIA.map(([name]) => name);
   assert.ok(names.includes('profile') && names.includes('host-released'));
   assert.ok(!names.includes('interventions'), 'interventions is a metric, never a criterion');
+});
+
+/** An arc log for `pressure-recorded` from its records (cast, never parsed); its flow runs kept inputs at window pressure `window`. */
+function pressureArc(records: readonly object[], window: number | null = 0.3): PressureArc {
+  const events = records.map((r, i) => ({ v: 1, seq: i + 1, prev: null, at: '2026-10-09T10:00:00.000Z', arc: 'arc-p', ...r })) as unknown as Event[];
+  return { arc: 'arc-p', events, flowInputs: () => ({ pressure: { now: null, threshold: 0.25, available: true, window, cpuInUse: 2, hostCpus: 8 } }) as unknown as FlowInputs };
+}
+const startRec = (pressure: 'available' | 'unavailable') => ({ type: 'fact', fact: { kind: 'executor-started', generation: 1, pressure } });
+const laneIntent = (op: string, purpose = 'lane') => ({ type: 'intent', kind: 'proc.spawn', op, parent: { type: 'stage' }, expect: { subject: { purpose } } });
+const laneDone = (op: string, pressure: number | null) => ({ type: 'done', kind: 'proc.spawn', op, outcome: { kind: 'result', summary: { type: 'command', verdict: 'pass' }, pressure } });
+const flowRun = (station: string) => [
+  { type: 'fact', fact: { kind: 'flow-started', job: 'flow-1', triggers: ['host-pressure'], inputsSha256: 'a'.repeat(64) } },
+  { type: 'fact', fact: { kind: 'flow-ended', job: 'flow-1', outcome: 'done', proposal: null, dropped: null, constraint: { code: { station, internal: true, component: null }, judged: null } } },
+];
+
+test('evals-m4a.pressure-criterion: lane runs watched under a PSI start carry pressure; host:cpu only at a saturated window; graded', () => {
+  const good = pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', 0.04), laneIntent('o2', 'journey'), laneDone('o2', 0.3), ...flowRun('host:cpu')]);
+  assert.equal(pressureRecordedVerdict([good]).pass, true, pressureRecordedVerdict([good]).detail);
+  // An adopted run (its intent under an earlier start) and a run under a start without PSI record null legitimately.
+  const adopted = pressureArc([startRec('available'), laneIntent('o1'), startRec('available'), laneDone('o1', null), startRec('unavailable'), laneIntent('o2'), laneDone('o2', null)]);
+  assert.equal(pressureRecordedVerdict([adopted]).pass, true, pressureRecordedVerdict([adopted]).detail);
+  const missing = pressureRecordedVerdict([pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', null)])]);
+  assert.equal(missing.pass, false);
+  assert.match(missing.detail, /o1's lane run has no pressure/);
+  const calm = pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('host:cpu')], 0.2)]);
+  assert.match(calm.detail, /flow-1 named host:cpu at window pressure 0.2/);
+  assert.equal(pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('slot:integration')], null)]).pass, true, 'no host:cpu: no window read');
+  assert.match(pressureRecordedVerdict([pressureArc([startRec('unavailable')])]).detail, /no executor start recorded PSI available/);
+  assert.ok(CRITERIA.map(([name]) => name).includes('pressure-recorded'));
 });
 
 // ---------------------------------------------------------------------------------------------------

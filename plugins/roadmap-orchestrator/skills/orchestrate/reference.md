@@ -240,10 +240,12 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   next start after this arc). `status` reads the repo config the arc's revision recorded (routing) and the one committed
   at its baseline (K), never the live `.roadmap/config.json`.
 - Every arc: `flow` (null before a start): `{state: off-dev7}` for an arc an older release started, else `{state: on,
-  constraint, chart, accounting, window, verdicts, pending, givens, rulerChanged, next}`:
+  constraint, chart, accounting, window, verdicts, pending, givens, rulerChanged, pressure, next}`:
   - `constraint{station, internal, component}`: code's constraint over the last 10 merges, null before the first.
     `station` is `stage:<s>`, `slot:integration` (then `component` is its largest service part: `suite:<lane>`,
-    `arc-lanes`, `candidate-rest`, `ff`, `snapshot`) or `wait:finding` (`internal`, no lever targets it).
+    `arc-lanes`, `candidate-rest`, `ff`, `snapshot`), `wait:finding` (`internal`, no lever targets it) or `host:cpu`
+    (`internal`: those merges' mean cpu pressure is at or above the threshold; only load decreases or `host` advice
+    there).
   - `chart{centre, ucl, mrBar, seed, recent[{unit, leadMin, zone}], inFlight[{unit, ageMin, zone}]}`: the XmR chart on
     log lead minutes, frozen for the arc; zones `green | yellow | red`; null until seeded (5 merges, or 5 points of
     earlier arcs on an equal host).
@@ -252,8 +254,10 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
     lever, target, verdict: improved | worse | no-effect | inconclusive}]`.
   - `pending[{proposal, line, phase: undecided | pending-proof | pending-apply}]`; `givens[]` (`host{id, lever, note,
     state: enforced | stale}` or `repo{lever, note}`); `rulerChanged[{command, rev, seq, at, paths, needsUser}]`.
-  - `next{running, due, cooldownUntil, bypass}`: the flow run in progress, the triggers due now, the cooldown's end and
-    whether a request may still bypass it.
+  - `pressure{now{avg10, avg60}, threshold, available}`: the host's cpu pressure now (Linux PSI, fractions; `now` null
+    when the host reports none), the saturation threshold (0.25).
+  - `next{running, due, cooldownUntil, bypass}`: the flow run in progress, the triggers due now (never `host-pressure`,
+    which reads the executor's in-memory tick history), the cooldown's end and whether a request may still bypass it.
 - Every arc: `knownDefects[{id, match, fixUnit, fixMerged, holds}]` (the units each holds at prepare now);
   `checkpointWaits[{job, waitingFor, line}]`, a checkpoint rejected `busy` waiting for "<unit> <stage> boundary".
 - Corpus arcs (empty otherwise): `admits[{seq, job, index, unit, class: repair|oversight|opportunity, clauses,
@@ -279,7 +283,8 @@ the first 16 hex of its sha256, so any change (forge state included) is a new id
   (the attempts completed since the last ack), `pr` (`pr{number, url, state, base, needsRebase}`, `none` or
   `unavailable{reason}`); corpus arcs also `admits` (classified since the last ack), `opportunities` and the
   non-zero `drift` lines, and an amendment a converted admit made names that admit.
-- `arcs[].flow` (null with the loop off), rendered lines: `constraint` (at the ref, null before a merge), `accounting`
+- `arcs[].flow` (null with the loop off), rendered lines: `constraint` (at the ref, null before a merge; `host:cpu`
+  names the window's mean cpu pressure and the threshold), `accounting`
   (T/I/OE, diagnostic), and in the delta `verdicts`, `rulerChanges` (command revisions after the first admission that
   touched a ruler path), `hostAdvice` (`flow-host` proposals), and `dropped` (a lever the previous arc applied, with no
   worse verdict, that this arc's plan no longer carries). The Markdown's Flow section.

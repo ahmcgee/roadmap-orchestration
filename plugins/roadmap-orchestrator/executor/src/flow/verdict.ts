@@ -4,7 +4,9 @@
 // Before = the last 5 samples completed before the revision. `improved` / `worse`: the after-mean below / above the
 // before-window's centre ∓ 2.66·mR̄/√n (on log for lead), else `no-effect`; any guard breach (absolute floors) makes it
 // `worse`. A before-window of fewer than 3 samples (M4b B1 amendment: its mR̄ is undefined or a single range) is
-// `inconclusive` too, as is one empty (centre and mR̄ 0, never read). Pure: src/flow/track.ts computes a due verdict
+// `inconclusive` too, as is one empty (centre and mR̄ 0, never read). The pressure metric (M4b rev 3, RC-12: a lever at
+// `host:cpu`) samples the interval pressure of the units on each side (a fraction in place of minutes), a unit without one
+// (no PSI, an unwatched spawn) being no sample. Pure: src/flow/track.ts computes a due verdict
 // from the log each tick and writes it once per proposal.
 import type { ObligationId } from '../core/ids.ts';
 import type { IsoTime } from '../core/values.ts';
@@ -38,35 +40,36 @@ const mrBarOf = (xs: readonly number[]): number => (xs.length < 2 ? 0 : mean(xs.
 // ---------------------------------------------------------------------------------------------------
 // Samples
 
-/** One sample of a metric: its minutes and when it became a sample (a unit's merge, a suite run's time). */
+/** One sample of a metric: its minutes (a fraction for pressure) and when it became a sample (a unit's merge, a suite run's time). */
 export type MetricSample = Readonly<{ at: IsoTime; minutes: number }>;
 
-/** A point's sample of a lead or wait metric. */
-function pointSample(metric: FlowMetric, p: FlowPoint): MetricSample {
+/** A point's sample of a lead, wait or pressure metric; none for a unit that measured no pressure. */
+function pointSample(metric: Exclude<FlowMetric, { type: 'suite-run' }>, p: FlowPoint): MetricSample | null {
   switch (metric.type) {
     case 'wait': return { at: p.mergedAt, minutes: p.minutes[metric.station] ?? 0 };
-    case 'lead': case 'suite-run': return { at: p.mergedAt, minutes: p.leadMin };
-    // Rev 3 step H1 samples the pressure metric (RC-12); until then no lever derives it.
-    case 'pressure': throw new Error('verdict: the pressure metric (RC-12) has no sampler yet');
+    case 'lead': return { at: p.mergedAt, minutes: p.leadMin };
+    case 'pressure': return p.pressure === null ? null : { at: p.mergedAt, minutes: p.pressure };
   }
 }
 
 /**
  * The before and after samples of `metric` around a revision in force from `openedAt`, in time order, and the merged
- * units on each side (what the guards read). Before: the last 5 units merged, or suite runs taken, at or before it. After:
+ * units on each side (what the guards read). Before: the last 5 samples of units merged, or suite runs taken, at or before it. After:
  * units admitted after it (a unit admitted before and merged after belongs to neither side) or suite runs after it; all
  * of them, `closeWindow` cuts them at the close.
  */
 export function windowSamples(metric: FlowMetric, openedAt: IsoTime, series: Pick<FlowSeries, 'points' | 'suiteRuns'>): Readonly<{
   before: readonly MetricSample[]; after: readonly MetricSample[]; beforePoints: readonly FlowPoint[]; afterPoints: readonly FlowPoint[];
 }> {
-  const beforePoints = series.points.filter((p) => ms(p.mergedAt) <= ms(openedAt)).slice(-BEFORE_SAMPLES);
+  const merged = series.points.filter((p) => ms(p.mergedAt) <= ms(openedAt));
+  const beforePoints = merged.slice(-BEFORE_SAMPLES);
   const afterPoints = series.points.filter((p) => ms(p.admittedAt) > ms(openedAt));
   if (metric.type === 'suite-run') {
     const runs = series.suiteRuns.filter((r) => r.lane === metric.lane).map((r): MetricSample => ({ at: r.at, minutes: r.minutes }));
     return { before: runs.filter((r) => ms(r.at) <= ms(openedAt)).slice(-BEFORE_SAMPLES), after: runs.filter((r) => ms(r.at) > ms(openedAt)), beforePoints, afterPoints };
   }
-  return { before: beforePoints.map((p) => pointSample(metric, p)), after: afterPoints.map((p) => pointSample(metric, p)), beforePoints, afterPoints };
+  const samples = (ps: readonly FlowPoint[]): MetricSample[] => ps.flatMap((p) => pointSample(metric, p) ?? []);
+  return { before: samples(merged).slice(-BEFORE_SAMPLES), after: samples(afterPoints), beforePoints, afterPoints };
 }
 
 // ---------------------------------------------------------------------------------------------------

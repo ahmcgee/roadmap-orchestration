@@ -88,7 +88,7 @@ const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
       centre: 3.2, ucl: 4.1, mrBar: 0.33, seed: { type: 'previous', arcs: [arcId('arc-one')], points: 12 },
       recent: [{ unit: unitId('u-two'), leadMin: 41, zone: 'yellow' }], inFlight: [{ unit: unitId('u-three'), ageMin: 90, zone: 'red' }],
     },
-    stations: [{ station: stationId(k === 'A' ? 'stage:build' : 'suite:all'), meanMin: 10 * n, share: 0.2 * n }],
+    stations: [{ station: stationId(k === 'A' ? 'stage:build' : 'suite:all'), meanMin: 10 * n, share: 0.2 * n, pressure: k === 'A' ? null : 0.31 }],
     constraint: k === 'A' ? { station: stationId('stage:build'), internal: false, component: null }
       : { station: stationId('slot:integration'), internal: true, component: stationId('suite:all') },
     accounting: { tAdvances: k === 'A' ? null : 0.5, tOther: k === 'A' ? null : 0.25, tUnits: n, wip: n + 1, oeUsdPerHour: 3 * n },
@@ -100,6 +100,8 @@ const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
     verdicts: k === 'A' ? [] : [{ proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:all'), verdict: 'improved' }],
     rejections: k === 'A' ? [] : [{ key: { station: stationId('stage:build'), lever: 'build-class', target: { type: 'tier', tier: 'low' } }, proposal: proposalId('flow-2.0'), cause: 'rejected' }],
     advances: [{ id: visionClauseId(`V-${n}`), text: `ADVANCES-${k}` }],
+    pressure: k === 'A' ? { now: null, threshold: 0.25, available: false, window: null, cpuInUse: 1, hostCpus: 4 }
+      : { now: { avg10: 0.41, avg60: 0.37 }, threshold: 0.25, available: true, window: 0.33, cpuInUse: 7, hostCpus: 8 },
   };
 };
 

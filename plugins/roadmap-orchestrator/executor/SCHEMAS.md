@@ -177,7 +177,7 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | `executor-started` | `+ host?: HostFingerprint` (every dev.8 start) | absent: no fingerprint (a dev.7 ref never seeds limits) |
 | `executor-started` (rev 3) | `+ pressure?: available \| unavailable` (every start since rev 3) | absent: `unavailable` (`startPressureOf`, warned once; scaffolding) |
 | `proc.spawn` done `result` (rev 3) | `+ pressure?: number \| null` (every spawn closed since rev 3) | absent: null (`spawnPressureOf`, warned once; scaffolding): no pressure rule applies |
-| `FlowSeries` (rev 3) | `v: 2`; `FlowPoint.pressure`, `SuiteRun.pressure` required | a kept `v: 1` series is recomputed from the ref's events |
+| `FlowSeries` (rev 3) | `v: 2`; `FlowPoint.pressure`, `FlowPoint.stationPressure` (H1), `SuiteRun.pressure` required | a kept `v: 1` series is recomputed from the ref's events |
 | `Role` | `+ flow` (seat `arc`, frontier) | in force only with `arcRoles: m4b` |
 | `RevisionSource`, `HoldCause`, spawn subject, `CommandBody`, `JobId`, `NeedsUserReason`, facts, `.roadmap/config.json` | "M4b" | none |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
@@ -3040,7 +3040,7 @@ GivenInForce[], window: FlowWindow | null, verdicts: ClosedVerdict[], rejections
 (ascending)}`. `FLOW_TRIGGERS = buffer-red | yellow-worsening | constraint-shift | verdict-closed | floor | requested`.
 `FlowChart = {centre, ucl, mrBar (log scale), seed: previous{arcs (ascending, non-empty), points} | self{points}, recent:
 [{unit, leadMin, zone}], inFlight: [{unit, ageMin, zone}]}`, `ucl` ≥ `centre`, zones `green | yellow | red`.
-`StationRow = {station, meanMin, share ∈ [0, 1]}`. `CodeConstraint = {station, internal, component | null}`: a service
+`StationRow = {station, meanMin, share ∈ [0, 1]}` (rev 3 H1: `+ pressure`; and `FlowInputs + pressure`, "Rev 3: host pressure"). `CodeConstraint = {station, internal, component | null}`: a service
 station (never `held` or a wait; B1: or `wait:finding`, internal), `component` (a slot component) exactly when the station is `slot:integration`.
 `LeverState`: `concurrency{cpu, set, hostCpus}`, `resource-pool{resource, size}`, `suite-lane{lane, argv, cpu | null}`,
 `sequence{unit, priority}`, `build-class{tier, class, builtin}`. `GivenInForce`: `host{id, lever, note, state: enforced |
@@ -3178,19 +3178,22 @@ runner) records null. The scheduler reads PSI once per loop iteration into `Pres
 | `executor-started` | `pressure?: PressureAvailability` (`available \| unavailable`) | whether this host reports PSI at this start; a sibling of `host`, whose fingerprint seeds and givens compare by field equality, so PSI availability never changes a fingerprint (the plan's `executor-started.host.pressure`). Read: `startPressureOf` |
 | `proc.spawn` done, `result` arm | `pressure?: number \| null` (a fraction) | the launch's interval pressure; null without PSI or unwatched. Read: `spawnPressureOf` (src/core/upgrade.ts) |
 | `LaneRun` (src/pipeline/lanes.ts) | `pressure: number \| null` | the lane run's spawn's interval pressure, from its done record |
-| `FlowPoint` | `pressure: number \| null` | the time-weighted mean interval pressure over the unit's service intervals, null if any is null (H1; H0 writes null) |
+| `FlowPoint` | `pressure: number \| null` | the time-weighted mean interval pressure over the unit's service intervals (every spawn its stages ran, clipped to its lead time), null if any is null or there is none (H1) |
+| `FlowPoint` | `stationPressure: Record<StationId, number \| null>` (H1) | the same mean per leaf station those spawns served (`stage:<s>`, `suite:<lane>`, `arc-lanes`, `candidate-rest`, `ff`, `snapshot`; never the slot or `host:cpu`) |
+| `StationRow` | `pressure: number \| null` (H1) | the station's points' `stationPressure` (the slot's: its components'), weighted by its minutes in each; null when no spawn served it or any is null |
+| `FlowInputs` | `pressure: FlowPressureStatus & {window, cpuInUse, hostCpus}` (H1) | the PSI now, the threshold, availability (`now` null exactly when unavailable); `window` the constraint window's mean interval pressure (`windowPressure`, null when no point measured one); the arc's own `@cpu` tokens held and the fingerprint's cpus |
 | `SuiteRun` | `pressure: number \| null` | the run's spawn's interval pressure |
 | `FlowSeries` | `v: 2` (`FLOW_SERIES_V`) | a kept series of another `v` is recomputed |
 | `StationId` | `+ host:cpu` (`HOST_CPU_STATION`, parts `{type: host-cpu}`) | the host's cpu: internal, never a key of a point's `minutes`; `waitInFrontOf` refuses it (its levers' metric is pressure) |
 | `CodeConstraint` | `station: host:cpu` with `internal: true`, `component: null` | ahead of the wait and service rules when the window's mean pressure ≥ `PRESSURE_SATURATED` (H1) |
-| `FLOW_TRIGGERS` | `+ host-pressure`, after `yellow-worsening` | the tick avg60 ≥ `PRESSURE_SATURATED` sustained ≥ 10 min while units are in flight (H1) |
+| `FLOW_TRIGGERS` | `+ host-pressure`, after `yellow-worsening` | with units in flight, the ticks since the last run's start end in a run with avg60 ≥ `PRESSURE_SATURATED` spanning ≥ 10 min (H1, `sustainedPressure`); `status.flow.next.due` never holds it (the ticks are the executor's memory) |
 | `FLOW_DROP_REASONS` | `+ direction`, after `elevate-early` | an increase at `host:cpu` (only decreases or `host` advice) |
-| `FlowMetric` | `+ pressure{}` | RC-12: a lever at `host:cpu` is measured by the interval pressure of the units admitted after; lead stays a guard (H1 samples it; until then the verdict sampler refuses it) |
+| `FlowMetric` | `+ pressure{}` | RC-12: a lever at `host:cpu` is measured by the interval pressure of the units admitted after (a unit without one is no sample); lead stays a guard. Its step is `subordinate` (`stepOf`) |
 | `HoldCause` | `+ host-pressure{inv}` | RC-11: a unit whose run `inv` was starved, or red under pressure with its rerun pending, held until a tick since the hold shows avg60 < `PRESSURE_SATURATED` or 30 min pass (H2; see "Charging") |
 | `Starved` (src/host/pressure.ts) | `{kind: starved, inv, pressure}` | RC-11: a lane run or stage invocation ended by `deadline` or `stall` with interval pressure ≥ `PRESSURE_SATURATED`: no product verdict, not chargeable, no fix round; after `STARVED_MAX` host-pressure holds of one unit, today's handling (H2) |
 | `AdmissionConstraint` (src/schedule/types.ts) | `+ host-pressure{inv}` | H2: the re-run of a unit with a pending host-pressure hold waits (status's station: `host`) |
 | `AdmitInput` | `+ pressure: {ticks, nowMs}` (`PressureNow`) | H2: the scheduler's `PressureTicks` and the wall time; status reads one PSI sample as its tick (`pressureNowOf`) |
-| `FlowPressureStatus` (src/flow/types.ts) | `{now: {avg10, avg60} \| null, threshold, available}` | `status.flow.pressure` (H1 wires it) |
+| `FlowPressureStatus` (src/flow/types.ts) | `{now: {avg10, avg60} \| null, threshold, available}` | `status.flow.pressure`, read at each status (src/flow/live.ts `pressureNow`) |
 
 **Charging (step H2, RC-11).** No new record: the hold is the stage's `interrupted` outcome, class `hold`, with cause
 `host-pressure{inv}`, so no counter moves and no retry is spent. `pressureRuling` (src/host/pressure.ts, pure) reads the

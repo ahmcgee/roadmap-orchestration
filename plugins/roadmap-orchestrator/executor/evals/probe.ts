@@ -687,11 +687,11 @@ async function main(): Promise<void> {
         inFlight: [{ unit: unitId('u-7'), ageMin: 12, zone: 'green' }],
       },
       stations: [
-        { station: stationId('stage:build'), meanMin: 6, share: 0.19 },
-        { station: stationId('wait:slot:integration'), meanMin: 9, share: 0.28 },
-        { station: stationId('suite:suite'), meanMin: 12, share: 0.38 },
-        { station: stationId('arc-lanes'), meanMin: 1, share: 0.03 },
-        { station: stationId('stage:gate'), meanMin: 4, share: 0.12 },
+        { station: stationId('stage:build'), meanMin: 6, share: 0.19, pressure: 0.07 },
+        { station: stationId('wait:slot:integration'), meanMin: 9, share: 0.28, pressure: null },
+        { station: stationId('suite:suite'), meanMin: 12, share: 0.38, pressure: 0.04 },
+        { station: stationId('arc-lanes'), meanMin: 1, share: 0.03, pressure: 0.05 },
+        { station: stationId('stage:gate'), meanMin: 4, share: 0.12, pressure: 0.06 },
       ],
       constraint: { station: stationId('slot:integration'), internal: false, component: stationId('suite:suite') },
       accounting: { tAdvances: null, tOther: null, tUnits: 1.9, wip: 3, oeUsdPerHour: 4.1 },
@@ -701,6 +701,8 @@ async function main(): Promise<void> {
         { lever: 'build-class', tier: 'med', class: 'frontier', builtin: 'frontier' },
       ],
       givens: [], window: null, verdicts: [], rejections: [], advances: [],
+      // M4b rev 3: the role sees a pressure reading below saturation (the slot stays the constraint).
+      pressure: { now: { avg10: 0.06, avg60: 0.09 }, threshold: 0.25, available: true, window: 0.05, cpuInUse: 3, hostCpus: 8 },
     };
     const call = seatCall(flowRouting, 'flow', 'arc', { role: 'planCheck', tier: 'high' }, 'm4b-flow', flowDir, flowInputs);
     await backend(ctx, 'm4b.flow', call, validates('m4b.flow', 'flow', (out) => {

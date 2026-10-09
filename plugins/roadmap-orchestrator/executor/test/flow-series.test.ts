@@ -1,6 +1,7 @@
 // M4b A1: the flow series (src/flow/series.ts) over synthetic arc logs: the disjoint station partition summing to the lead
 // time, held time out of the waits, the four suite-run shapes (the T-alone rerun as rework), batch merges out of the
-// points but in T, the accounting, in-flight ages; and the reader of other arcs' series (src/flow/history.ts).
+// points but in T, the accounting, in-flight ages; the points' and the station table's pressure (M4b rev 3); and the
+// reader of other arcs' series (src/flow/history.ts).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { ArcRef } from '../src/chain.ts';
@@ -334,6 +335,57 @@ describe('flow series: the station table', () => {
     const rows = stationTable(series(log).points);
     assert.deepEqual(rows.map((r) => [r.station, r.meanMin]), [['slot:integration', 3], ['suite:suite', 2], ['snapshot', 1], ['stage:build', 1], ['stage:gate', 1]]);
     assert.ok(near(rows.filter((r) => r.station !== 'slot:integration').reduce((a, r) => a + r.share, 0), 1));
+  });
+});
+
+describe('flow series: pressure (M4b rev 3)', () => {
+  const GOLDEN = arcLaneDef('golden', ['node', 'journey.js']);
+  /** u1: a build, a lane run, a suite run and an arc lane, each with a known interval pressure; u2: a suite run without one. */
+  function pressured(): FlowLog {
+    const log = new FlowLog();
+    log.applied(0, 1, { obligations: 'o' });
+    log.dispatch(0, 'u1');
+    log.spawn(1, 4, stageOf('u1', 'build', 1), { purpose: 'build', unit: 'u1' }, 'pass', 0.2);
+    log.outcome(4, 'u1', 'build', 1, 'success');
+    log.spawn(5, 6, stageOf('u1', 'lanes', 2), { purpose: 'lane', unit: 'u1', lane: 'unit', set: 'spec', at: CAND }, 'pass', 0.5);
+    log.outcome(6, 'u1', 'lanes', 2, 'green');
+    log.candidateStart(7, 'u1', 3);
+    log.suiteLane(7, 9, 'u1', 3, 'suite', CAND, 'pass', 0.8);
+    log.spawn(9, 10, stageOf('u1', 'candidate', 3), { purpose: 'journey', lane: 'golden', laneRev: '0123456789abcdef', at: CAND, owner: { type: 'unit', unit: 'u1' } }, 'pass', 0.4);
+    log.outcome(10, 'u1', 'candidate', 3, 'green');
+    log.outcome(10, 'u1', 'ff', 4, 'published');
+    log.outcome(10.5, 'u1', 'snapshot', 5, 'published', 'retire');
+    log.straight(20, 'u2');
+    return log;
+  }
+
+  it('a point\'s pressure is the time-weighted mean of its service intervals, per station too; one unmeasured interval nulls it', () => {
+    const [p1, p2] = series(pressured(), PLAN, obligationsOf([GOLDEN])).points;
+    assert.ok(near(p1!.pressure!, (0.2 * 3 + 0.5 * 1 + 0.8 * 2 + 0.4 * 1) / 7), String(p1!.pressure));
+    assert.deepEqual(p1!.stationPressure, { 'arc-lanes': 0.4, 'stage:build': 0.2, 'stage:lanes': 0.5, 'suite:suite': 0.8 });
+    assert.equal(p2!.pressure, null, 'a spawn closed without pressure');
+    assert.deepEqual(p2!.stationPressure, { 'suite:suite': null });
+    const lost = new FlowLog();
+    lost.applied(0, 1);
+    lost.dispatch(0, 'u1');
+    lost.spawn(1, 2, stageOf('u1', 'build', 1), { purpose: 'build', unit: 'u1' }, null);
+    lost.spawn(2, 4, stageOf('u1', 'build', 1), { purpose: 'build', unit: 'u1' }, 'pass', 0.3);
+    lost.outcome(4, 'u1', 'build', 1, 'success');
+    lost.outcome(4, 'u1', 'snapshot', 2, 'published', 'retire');
+    assert.equal(series(lost).points[0]!.pressure, null, 'a lost run measured nothing');
+  });
+
+  it('the station table weighs each point\'s station pressure by its minutes; the slot by its components; null when any is', () => {
+    const [p1, p2] = series(pressured(), PLAN, obligationsOf([GOLDEN])).points;
+    const one = new Map(stationTable([p1!]).map((r) => [r.station as string, r.pressure]));
+    assert.ok(near(one.get('slot:integration')!, (0.8 * 2 + 0.4 * 1) / 3));
+    assert.ok(near(one.get('stage:build')!, 0.2));
+    assert.equal(one.get('wait:lanes'), null, 'no spawn serves a wait');
+    const both = new Map(stationTable([p1!, p2!]).map((r) => [r.station as string, r.pressure]));
+    assert.equal(both.get('suite:suite'), null);
+    assert.equal(both.get('slot:integration'), null);
+    assert.ok(near(both.get('stage:build')!, 0.2), 'only u1 ran a build spawn');
+    assert.ok(near(both.get('arc-lanes')!, 0.4));
   });
 });
 

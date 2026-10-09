@@ -399,7 +399,7 @@ export const ROLE_INPUTS = {
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
-  flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances'],
+  flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.

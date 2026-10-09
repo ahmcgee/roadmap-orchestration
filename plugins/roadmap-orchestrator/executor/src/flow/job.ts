@@ -3,7 +3,8 @@
 //
 // - **Capture** under the revision fence: the run's `FlowInputs` (the triggers; the chart, the station table and code's
 //   constraint over the series; the accounting, stated diagnostic only; the lever catalogue of the plan in force; the
-//   givens in force; the open window, the closed verdicts and the rejection memory; the `advances` clause texts), kept
+//   givens in force; the open window, the closed verdicts and the rejection memory; the `advances` clause texts; the
+//   host's cpu pressure now and over the constraint's window, and the arc's own `@cpu` tokens held, M4b rev 3), kept
 //   as `inputs/<sha>.flow-inputs.json`, then `flow-started{job, triggers, inputsSha256}`.
 // - **The call**: the `flow` seat `arc` (`callArcRole`, a fresh read-only session, cwd a detached checkout of the
 //   integration head, which the prompt lets it read to judge a lever's risk; `@cpu`×1 under the job), rendered from the
@@ -40,9 +41,9 @@ import { inMs } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
 import { validateFlowOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
-import { constraintWindow, codeConstraintOf } from './constraint.ts';
-import { type FlowNow, flowNow, givensNow, leverCatalogue, windowNow } from './live.ts';
-import { LEVER_STEP, type ProposalContext, checkProposal, metricOf } from './levers.ts';
+import { constraintWindow, codeConstraintOf, windowPressure } from './constraint.ts';
+import { type FlowNow, cpuInUse, flowNow, givensNow, leverCatalogue, pressureNow, windowNow } from './live.ts';
+import { type ProposalContext, checkProposal, metricOf, stepOf } from './levers.ts';
 import { rejectionMemory } from './apply.ts';
 import { type FlowLog, type FlowRun, closedVerdicts, proposalOf, runningRun } from './log.ts';
 import { stationTable } from './series.ts';
@@ -122,6 +123,7 @@ export function flowInputsNow(ctx: FlowJobContext, job: JobId, triggers: readonl
     verdicts: closedVerdicts(flow.log),
     rejections: rejectionMemory(view),
     advances: advancesNow(ctx),
+    pressure: { ...pressureNow(), window: windowPressure(points), cpuInUse: cpuInUse(view), hostCpus: flow.host.cpus },
   };
 }
 
@@ -255,7 +257,7 @@ export function proposalLine(p: FlowProposal): string {
   const metric = metricOf(p.action, p.target);
   const m = metric === null ? 'none' : metric.type === 'lead' ? 'lead time' : metric.type === 'suite-run' ? `per-run service of ${metric.lane}`
     : metric.type === 'pressure' ? 'interval pressure' : `the wait ${metric.station}`;
-  return `${p.id}: ${describe(p.action)} at ${p.target} (${LEVER_STEP[p.action.lever]}; verdict metric ${m})`;
+  return `${p.id}: ${describe(p.action)} at ${p.target} (${stepOf(p.action.lever, p.target)}; verdict metric ${m})`;
 }
 
 function itemContent(p: FlowProposal, inputsPath: AbsPath): NeedsUserContent {

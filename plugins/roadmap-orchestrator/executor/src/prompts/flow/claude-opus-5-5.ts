@@ -10,7 +10,11 @@
 // around it. One proposal or noAction. The lever catalogue gives each action's exact shape and code's checks, so the
 // role writes what code will keep: a suite-lane argv edit changes only `--test-concurrency=<n>`'s value in place and
 // raises the lane's `cpu` to cover it (the lane-cpu check), and an elevate lever waits for an exploit or subordinate
-// verdict on its target (elevate-early). Rendered from the kept `FlowInputs` alone: no clock, no timestamps.
+// verdict on its target (elevate-early). M4b rev 3 (RC-10..12): a saturated host cpu is a constraint of its own,
+// `host:cpu`; the prompt explains how code names it, that only load decreases or host advice are kept there, and how to
+// tell the arc's own load (its `@cpu` tokens against the host's cpus, its lanes' concurrency) from an outside tenant's,
+// which no lever reaches (host advice). Rendered from the kept `FlowInputs` alone: no clock, no timestamps.
+import { HOST_CPU_STATION } from '../../core/ids.ts';
 import type { FlowPromptInputs } from '../../flow/types.ts';
 import type { LeverState, LeverTarget } from '../../flow/types.ts';
 import type { PromptModule } from '../inputs.ts';
@@ -22,12 +26,18 @@ You run in a fresh session. Nobody will answer a question: your whole output is 
 
 <method>
 Work the five focusing steps in order:
-1. Identify the constraint. Code names one from the station table: the station with the largest mean wait in front of it when that wait is at least 10 % of mean lead, else the station with the largest mean service; for the integration slot it names the slot's largest service component too (suite:<lane>, arc-lanes, candidate-rest, ff, snapshot). Check its reading against the table. Dispute it (agree false, your station, the reason) only when the table shows it is wrong, for example a wait whose cause is plainly elsewhere.
+1. Identify the constraint. Code names one from the station table. First the host: when the mean cpu pressure over the window is at or above the threshold, code names host:cpu (see <host_cpu>). Otherwise the station with the largest mean wait in front of it when that wait is at least 10 % of mean lead, else the station with the largest mean service; for the integration slot it names the slot's largest service component too (suite:<lane>, arc-lanes, candidate-rest, ff, snapshot). Check its reading against the table. Dispute it (agree false, your station, the reason) only when the table shows it is wrong, for example a wait whose cause is plainly elsewhere.
 2. Exploit the constraint: get more out of it as it is (a suite lane's test concurrency, a build tier's class).
 3. Subordinate everything else to it: order the work so the constraint never starves or waits (a unit's priority).
 4. Elevate the constraint only after exploiting or subordinating it has had its verdict: add capacity (the cpu capacity, a resource pool). Code refuses an elevate lever on a target before an exploit or subordinate verdict closed on that target this arc.
 5. Then the constraint moves. Do not let the previous change become the new constraint, and do not chase a station that is not the constraint: improving a non-constraint does not shorten lead time.
 </method>
+
+<host_cpu>
+Cpu pressure is the fraction of wall time during which some runnable task waited for a cpu (Linux PSI cpu "some"), sampled over every launch the executor watches. A contended cpu slows every station's service at once, so when it is saturated the largest station in the table is a symptom, not the constraint, and code names host:cpu instead. Whether host:cpu is the constraint is code's reading of the pressure; dispute it only when the pressure section shows it is wrong.
+At host:cpu every lever subordinates to the cpu, and its verdict is measured by the interval pressure of the units admitted after the change (lead time stays a guard). Code keeps only a decrease of the arc's own load (concurrency cpu down, a resource pool's size down, a suite lane's cpu or --test-concurrency down) or host advice; an increase or any other lever at host:cpu is dropped.
+First tell whose load it is. The pressure section gives the arc's own @cpu tokens held now against the host's cpus. When the arc's own work explains the pressure (it holds about as many tokens as the host has cpus, or a suite lane runs more test files at once than its cpu covers), propose a decrease of that load. When the arc holds few tokens and the pressure is still high, another tenant of the machine is loading it: no lever reaches that, so give host advice for the owner (what is loading the host, what would relieve it), never a decrease that only slows the arc.
+</host_cpu>
 
 <variation>
 The chart is an individuals chart on the logarithm of lead time, its limits frozen for the arc. A unit inside the limits is common-cause variation: noise, not a signal, and a change made to answer it is tampering, which adds variation. Only a special cause (a point above the upper limit, or two of three beyond two sigma) or a shift of the constraint is evidence about a station. When the triggers show nothing but noise, return noAction and say so.
@@ -43,9 +53,9 @@ The ruler is out of reach: the tests and what they select, the suite's selectors
 
 <levers>
 Each proposal names one lever, a target station and an action in exactly one of these shapes (every key present; a suite-lane action's unused argv, reporter or cpu is null):
-- concurrency {lever: "concurrency", cpu}: the plan's cpu capacity, at most the host's cpus. Elevate.
+- concurrency {lever: "concurrency", cpu}: the plan's cpu capacity, at most the host's cpus. Elevate (at host:cpu, a decrease subordinates).
 - resource-pool {lever: "resource-pool", resource, size}: a pooled resource's size. Elevate.
-- suite-lane {lever: "suite-lane", lane, argv, reporter, cpu}: a suite lane's argv and/or its cpu. An argv change may change only the value of one --test-concurrency=<n> element, in place: the new argv equals the old one element for element, with that one value different; never append, remove or reorder an element, and never touch a selector. Name the reporter that reads the lane's test ids, node-test for node --test or go-test-json for go test -json: code runs the old and the new argv on the same tree and refuses the change unless the set of tests, each selected and with its outcome, is identical. The lane's cpu must cover its concurrency: with --test-concurrency=<n> the lane's cpu (its tier's default when the catalogue shows null) must be at least n, so set cpu to n in the same action when it does not. Its target is suite:<lane> or slot:integration. Exploit.
+- suite-lane {lever: "suite-lane", lane, argv, reporter, cpu}: a suite lane's argv and/or its cpu. An argv change may change only the value of one --test-concurrency=<n> element, in place: the new argv equals the old one element for element, with that one value different; never append, remove or reorder an element, and never touch a selector. Name the reporter that reads the lane's test ids, node-test for node --test or go-test-json for go test -json: code runs the old and the new argv on the same tree and refuses the change unless the set of tests, each selected and with its outcome, is identical. The lane's cpu must cover its concurrency: with --test-concurrency=<n> the lane's cpu (its tier's default when the catalogue shows null) must be at least n, so set cpu to n in the same action when it does not. Its target is suite:<lane>, slot:integration or host:cpu. Exploit (at host:cpu, a decrease subordinates).
 - sequence {lever: "sequence", unit, priority: "high"}: an active unit to high priority; one flow-set high unit at a time, never while a repair unit waits. Subordinate.
 - build-class {lever: "build-class", tier, class}: a build tier's model class (efficient, frontier, summit), one step from its class in force and never below its built-in class; spend per merge is a guard. Exploit.
 - host {lever: "host", note}: advice for the owner, never applied, for a constraint no lever reaches (the machine, the network, a service outside the build). Elevate.
@@ -93,12 +103,23 @@ function targetText(t: LeverTarget): string {
   }
 }
 
+const pressure = (p: number | null): string => (p === null ? 'not measured' : fmt(p));
+
+function pressureText(p: FlowPromptInputs['pressure']): string {
+  if (p.now === null) return 'This host reports no cpu pressure (no PSI): no pressure rule applies.';
+  return [
+    `Cpu pressure now: ${fmt(p.now.avg10)} over the last 10 s, ${fmt(p.now.avg60)} over the last 60 s; saturated at ${fmt(p.threshold)} or more.`,
+    `Mean interval pressure of the units in the constraint's window: ${pressure(p.window)}.`,
+    `The arc's own load: ${p.cpuInUse} @cpu tokens held now; the host has ${p.hostCpus} cpus.`,
+  ].join('\n');
+}
+
 const lines = (items: readonly string[], empty: string): string => (items.length === 0 ? empty : items.map((x) => `- ${x}`).join('\n'));
 
 export const PROMPT: PromptModule<'flow'> = {
   system,
   schema: FLOW_SCHEMA,
-  fields: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances'],
+  fields: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
   render: (i: FlowPromptInputs) => `<triggers>
 ${i.triggers.join(', ')}
 </triggers>
@@ -108,11 +129,15 @@ ${chartText(i.chart)}
 </chart>
 
 <stations>
-${lines(i.stations.map((s) => `${s.station}: mean ${fmt(s.meanMin)} min, ${fmt(s.share * 100)} % of mean lead`), 'No merged unit yet.')}
+${lines(i.stations.map((s) => `${s.station}: mean ${fmt(s.meanMin)} min, ${fmt(s.share * 100)} % of mean lead, cpu pressure ${pressure(s.pressure)}`), 'No merged unit yet.')}
 </stations>
 
+<pressure>
+${pressureText(i.pressure)}
+</pressure>
+
 <constraint>
-${i.constraint === null ? 'Code names no constraint yet (no merged unit).' : `Code's constraint: ${i.constraint.station}${i.constraint.component === null ? '' : `, its largest service component ${i.constraint.component}`} (${i.constraint.internal ? 'the largest wait in front of it' : 'the largest service'}).`}
+${i.constraint === null ? 'Code names no constraint yet (no merged unit).' : `Code's constraint: ${i.constraint.station}${i.constraint.component === null ? '' : `, its largest service component ${i.constraint.component}`} (${i.constraint.station === HOST_CPU_STATION ? 'the host\'s cpu is saturated' : i.constraint.internal ? 'the largest wait in front of it' : 'the largest service'}).`}
 </constraint>
 
 <accounting>

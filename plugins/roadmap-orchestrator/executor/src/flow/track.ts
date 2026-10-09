@@ -34,7 +34,7 @@ import { raiseNeedsUser, raisedWithReason } from '../needsuser.ts';
 import { applyPendingFlow, flowApplyHolds, proofDue } from './apply.ts';
 import { flowSkipped, proposalLine, runFlowJob } from './job.ts';
 import { codeConstraintOf } from './constraint.ts';
-import { type FlowNow, type FlowReader, flowNow, givensNow, windowNow } from './live.ts';
+import { type FlowNow, type FlowReader, flowNow, givensNow, pressureNow, windowNow } from './live.ts';
 import { metricOf, rulerChanges } from './levers.ts';
 import { closedVerdicts, proposalOf, proposalsOf, runningRun } from './log.ts';
 import { runProof } from './proof.ts';
@@ -42,7 +42,7 @@ import type { SeriesInputs } from './series.ts';
 import type { PressureTick } from '../host/pressure.ts';
 import { chartOf } from './spc.ts';
 import { cooldownOf, dueTriggers } from './trigger.ts';
-import type { ClosedVerdict, CodeConstraint, FlowAccounting, FlowChart, FlowProposal, FlowTrigger, FlowWindow, GivenInForce } from './types.ts';
+import type { ClosedVerdict, CodeConstraint, FlowAccounting, FlowChart, FlowPressureStatus, FlowProposal, FlowTrigger, FlowWindow, GivenInForce } from './types.ts';
 import { type IdleSpan, afterOf, beforeOf, closeWindow, guardBreaches, verdictOf, windowSamples } from './verdict.ts';
 
 export type FlowTrackContext = CheckpointContext;
@@ -188,10 +188,7 @@ export type FlowTrackInput = Readonly<{
   holisticRunning: () => boolean;
   /** Told while the flow job (the judgment) runs, so no holistic job starts meanwhile. */
   judging: (on: boolean) => void;
-  /**
-   * M4b rev 3: the scheduler's per-tick PSI avg60, newest last (empty without PSI): what the `host-pressure` trigger reads
-   * (step H1).
-   */
+  /** M4b rev 3: the scheduler's per-tick PSI avg60, newest last (empty without PSI): what the `host-pressure` trigger reads. */
   pressure: () => readonly PressureTick[];
 }>;
 
@@ -209,7 +206,7 @@ export async function runFlowTrack(ctx: FlowTrackContext, input: FlowTrackInput)
   const flow = flowNow(ctx, now());
   const running = runningRun(flow.log) !== null;
   if (!input.holisticRunning() && flowSkipped(ctx) === null && (running || workRemains(ctx))) {
-    const triggers = running ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window: windowNow(flow), now: now() });
+    const triggers = running ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window: windowNow(flow), now: now(), pressure: input.pressure() });
     if (running || triggers.length > 0) {
       input.judging(true);
       try {
@@ -242,7 +239,12 @@ export type FlowStatus =
     pending: readonly FlowProposalLine[];
     givens: readonly GivenInForce[];
     rulerChanged: readonly (RulerChange & Readonly<{ needsUser: NeedsUserId | null }>)[];
-    /** The run in progress, the triggers due now and the cooldown (its end, and whether a request may still bypass it). */
+    /** M4b rev 3: the host's PSI cpu now, the saturation threshold, and whether this host reports PSI. */
+    pressure: FlowPressureStatus;
+    /**
+     * The run in progress, the triggers due now and the cooldown (its end, and whether a request may still bypass it).
+     * `due` never holds `host-pressure`: the tick history lives in the executor's memory, which `status` cannot read.
+     */
     next: Readonly<{ running: JobId | null; due: readonly FlowTrigger[]; cooldownUntil: IsoTime | null; bypass: boolean }>;
   }>;
 
@@ -269,9 +271,10 @@ export function flowStatus(r: FlowReader, head: Sha, at: IsoTime): FlowStatus {
     }),
     givens: givensNow(r.repo, head, flow.host),
     rulerChanged: rulerChangesOf(flow.events, flow.inputs).map((c) => ({ ...c, needsUser: raisedWithReason(view, r.runDir, { type: 'command', command: c.command }, 'ruler-changed') })),
+    pressure: pressureNow(),
     next: {
       running: running?.started.job ?? null,
-      due: running !== null ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window, now: at }),
+      due: running !== null ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window, now: at, pressure: [] }),
       cooldownUntil: cooldown.until, bypass: cooldown.bypass,
     },
   };

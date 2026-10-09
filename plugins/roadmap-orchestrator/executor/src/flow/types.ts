@@ -69,7 +69,10 @@ export const FLOW_SERIES_V = 2;
  * publication ends (its `snapshot` outcome right after the ff, so the slot's `ff` and `snapshot` components lie inside the
  * lead time; src/flow/series.ts). `minutes` partitions `leadMin` over disjoint stations (`slot:integration` itself is never a key: its
  * components are; nor is `host:cpu`); `rework` counts T-alone reruns and other rework, `firstRunReds` the suite reds of first runs.
- * `pressure` (rev 3): the time-weighted mean interval pressure over the unit's service intervals, null if any is null.
+ * `pressure` (rev 3): the time-weighted mean interval pressure over the unit's service intervals (the spawns its stages
+ * ran, clipped to its lead time), null if any is null or it ran none; `stationPressure` the same mean per station those
+ * spawns served (a key per service station with at least one spawn: `stage:<s>`, `suite:<lane>`, `arc-lanes`,
+ * `candidate-rest`), what the station table's per-station pressure reads.
  */
 export type FlowPoint = Readonly<{
   unit: UnitId;
@@ -81,6 +84,7 @@ export type FlowPoint = Readonly<{
   rework: number;
   firstRunReds: number;
   pressure: number | null;
+  stationPressure: Readonly<Record<StationId, number | null>>;
 }>;
 
 /** The four shapes a suite run takes (R2): a `lane{set: suite}` spawn, a unit's F6 stand-in journey, a batch job's journey, a red path's T-alone rerun. */
@@ -118,11 +122,23 @@ const minutesRecord: Read<Readonly<Record<StationId, number>>> = (value, path) =
   return out;
 };
 
+/** A point's per-station pressure: leaf stations only (never the slot or host:cpu), each a fraction or null. */
+const stationPressureRecord: Read<Readonly<Record<StationId, number | null>>> = (value, path) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'an object of station pressures', value);
+  const out: Record<StationId, number | null> = {};
+  for (const [key, v] of Object.entries(value)) {
+    const parts = parseStationId(key, `${path}.${key}`);
+    if (parts.type === 'slot' || parts.type === 'host-cpu') throw new SchemaError(`${path}.${key}`, 'a leaf station', key);
+    out[key as StationId] = nullable(fraction)(v, `${path}.${key}`);
+  }
+  return out;
+};
+
 const flowPoint: Read<FlowPoint> = object((f) => {
   const out = {
     unit: f.get('unit', unitR), admittedAt: f.get('admittedAt', timeR), mergedAt: f.get('mergedAt', timeR), leadMin: f.get('leadMin', amount),
     minutes: f.get('minutes', minutesRecord), costUsd: f.get('costUsd', nullable(amount)), rework: f.get('rework', nat), firstRunReds: f.get('firstRunReds', nat),
-    pressure: f.get('pressure', nullable(fraction)),
+    pressure: f.get('pressure', nullable(fraction)), stationPressure: f.get('stationPressure', stationPressureRecord),
   };
   if (out.mergedAt < out.admittedAt) throw new SchemaError(`${f.path}.mergedAt`, `not before admittedAt ${out.admittedAt}`, out.mergedAt);
   const sum = Object.values(out.minutes).reduce((a, b) => a + b, 0);
@@ -345,9 +361,15 @@ const flowChart: Read<FlowChart> = object((f) => {
   return out;
 });
 
-/** One station's mean minutes over the constraint's window, and its share of mean lead. */
-export type StationRow = Readonly<{ station: StationId; meanMin: number; share: number }>;
-const stationRow: Read<StationRow> = object((f) => ({ station: f.get('station', stationR), meanMin: f.get('meanMin', amount), share: f.get('share', fraction) }));
+/**
+ * One station's mean minutes over the constraint's window, its share of mean lead, and (rev 3) the mean interval pressure
+ * of the spawns that served it, weighted by the station's minutes in each point: null for a station no spawn served (a
+ * wait, held time) or when any of its points' pressure is null.
+ */
+export type StationRow = Readonly<{ station: StationId; meanMin: number; share: number; pressure: number | null }>;
+const stationRow: Read<StationRow> = object((f) => ({
+  station: f.get('station', stationR), meanMin: f.get('meanMin', amount), share: f.get('share', fraction), pressure: f.get('pressure', nullable(fraction)),
+}));
 
 /**
  * A lever's current value in the plan in force (the catalogue a run reads). `concurrency.set`: the plan sets
@@ -418,12 +440,35 @@ export type RejectionCause = (typeof REJECTION_CAUSES)[number];
 export type Rejection = Readonly<{ key: RejectionKey; proposal: ProposalId; cause: RejectionCause }>;
 const rejection: Read<Rejection> = object((f) => ({ key: f.get('key', rejectionKey), proposal: f.get('proposal', proposalR), cause: f.get('cause', oneOf(REJECTION_CAUSES)) }));
 
+/**
+ * `status.flow.pressure` (rev 3): the host's PSI now (`avg10`, `avg60` as fractions; null when unavailable), the
+ * saturation threshold, and whether this host reports PSI.
+ */
+export type FlowPressureStatus = Readonly<{ now: Readonly<{ avg10: number; avg60: number }> | null; threshold: number; available: boolean }>;
+
+/**
+ * A run's pressure reading (rev 3), what lets the role tell the arc's own load from an outside tenant's: the PSI now, the
+ * threshold and availability (`FlowPressureStatus`); `window` the mean interval pressure over the constraint's window
+ * (src/flow/constraint.ts `windowPressure`, null when none of its points measured one); `cpuInUse` the arc's own `@cpu`
+ * tokens reserved or running now, `hostCpus` the host fingerprint's cpus.
+ */
+export type FlowInputsPressure = FlowPressureStatus & Readonly<{ window: number | null; cpuInUse: number; hostCpus: number }>;
+const flowInputsPressure: Read<FlowInputsPressure> = object((f) => {
+  const out = {
+    now: f.get('now', nullable(object((g) => ({ avg10: g.get('avg10', fraction), avg60: g.get('avg60', fraction) })))),
+    threshold: f.get('threshold', fraction), available: f.get('available', bool), window: f.get('window', nullable(fraction)), cpuInUse: f.get('cpuInUse', nat),
+    hostCpus: f.get('hostCpus', positive),
+  };
+  if (out.available !== (out.now !== null)) throw new SchemaError(`${f.path}.now`, out.available ? 'the PSI reading of a host that reports it' : 'null on a host without PSI', out.now);
+  return out;
+});
+
 export const FLOW_INPUTS_SCHEMA = 'roadmap/flow-inputs-m4b';
 
 /**
  * What a flow run binds, kept before its call; recovery and a resumed call read only these bytes. `chart` is null before
  * the limits are seeded; `constraint` null before the first point; `advances` the arc's `holistic.advances` clause texts
- * (empty on a non-holistic arc).
+ * (empty on a non-holistic arc); `pressure` (rev 3) the host's cpu pressure and the arc's own cpu load.
  */
 export type FlowInputs = Readonly<{
   schema: typeof FLOW_INPUTS_SCHEMA;
@@ -439,6 +484,7 @@ export type FlowInputs = Readonly<{
   verdicts: readonly ClosedVerdict[];
   rejections: readonly Rejection[];
   advances: readonly Readonly<{ id: VisionClauseId; text: string }>[];
+  pressure: FlowInputsPressure;
 }>;
 export const flowInputs: Read<FlowInputs> = object((f) => ({
   schema: f.get('schema', literal(FLOW_INPUTS_SCHEMA)),
@@ -454,6 +500,7 @@ export const flowInputs: Read<FlowInputs> = object((f) => ({
   verdicts: f.get('verdicts', arrayOf(closedVerdict)),
   rejections: f.get('rejections', arrayOf(rejection)),
   advances: f.get('advances', idsAscending(object((g) => ({ id: g.get('id', (v, p) => visionClauseId(v, p)), text: g.get('text', str) })), (a) => a.id)),
+  pressure: f.get('pressure', flowInputsPressure),
 }));
 export function parseFlowInputs(value: unknown): FlowInputs {
   return flowInputs(value, 'flowInputs');
@@ -481,11 +528,6 @@ export const flowDropped: Read<FlowDropped> = object((f) => ({ proposal: f.get('
 export type FlowEndedConstraint = Readonly<{ code: CodeConstraint | null; judged: JudgedConstraint | null }>;
 export const flowEndedConstraint: Read<FlowEndedConstraint> = object((f) => ({ code: f.get('code', nullable(codeConstraint)), judged: f.get('judged', nullable(judgedConstraint)) }));
 
-/**
- * `status.flow.pressure` (rev 3): the host's PSI now (`avg10`, `avg60` as fractions; null when unavailable), the
- * saturation threshold, and whether this host reports PSI.
- */
-export type FlowPressureStatus = Readonly<{ now: Readonly<{ avg10: number; avg60: number }> | null; threshold: number; available: boolean }>;
 
 // ---------------------------------------------------------------------------------------------------
 // The flow role's output (strict schema in src/prompts/schemas.ts): exactly one of `proposal` and `noAction`
