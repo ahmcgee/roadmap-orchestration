@@ -9,11 +9,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
-import { arcId } from '../src/core/ids.ts';
+import { arcId, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import { step } from '../src/pipeline/unit.ts';
+import { unitTip } from '../src/pipeline/gate.ts';
 import { verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { removeVerificationTree, seriesTree } from '../src/pipeline/lanes.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -116,6 +117,34 @@ describe('D1 witness presence', () => {
       assert.deepEqual(lanesFacts(alone.a.d).at(-1)!.detail, { kind: 'witnesses-missing', missing: [{ lane: 'journey', testId: 't1' }], failed: [] }, 'u1 completes I-1: a target');
     } finally {
       alone.r.journal.close();
+    }
+  });
+
+  test('witnesscheck.latch-after-cut: an obligation another unit latched after this unit was cut is not required on its tree; its candidate grades it (paid M4b run 3)', T, async () => {
+    // u2 delivers future I-1 and u1 declares it. u1 is cut and built first; u2 then publishes, latching I-1, whose test u1's
+    // tree cannot hold. Before the fix u1's lanes demanded it: witnesses-missing, chargeable, on every rebuild of the same base.
+    const a = await checksArc({
+      steps: [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/u1.js': 'export const u1 = 1;\n' }), planCheckStep({ decision: 'approve' }), mulBuild({ 'src/u2.js': 'export const u2 = 2;\n' }), gateStep({ decision: 'approve' }), gateStep({ decision: 'approve' })],
+      activation: 'future', deliveredBy: ['u2'], more: ['u2'],
+    });
+    const r = contextFor(a.d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'teardown');
+      const u1Tip = unitTip(r.ctx, unitId('u1'));
+      scriptTree(a.control, git(a.d.repo, 'rev-parse', `${u1Tip}^{tree}`), { outcomes: {} });
+      await stepUntil(r, 'u2', (f) => f.stage === 'snapshot');
+      const latch = facts(a.d).find((f) => f.kind === 'obligation-latched');
+      assert.deepEqual(latch === undefined ? null : [latch.obligation, latch.unit], ['I-1', 'u2'], 'u2\'s publication latched I-1');
+      await stepUntil(r, 'u1', (f) => f.stage === 'lanes');
+      const f = lanesFacts(a.d).at(-1)!;
+      assert.deepEqual([f.outcome, f.chargeable], ['green', false], 'u2\'s latch is not in u1\'s tree: nothing required at the lanes stage');
+      assert.deepEqual(journeyRuns(a.d, f.attempt).filter((i) => i.parent.type === 'stage' && i.parent.unit === 'u1'), []);
+      await stepUntil(r, 'u1', (x) => x.stage === 'snapshot');
+      assert.deepEqual(outcomes(a.d), [...PRE_LANES, 'lanes:green', ...MERGED]);
+      const graded = spawns(a.d).filter((i) => i.expect.subject.purpose === 'journey' && i.parent.type === 'stage' && i.parent.unit === 'u1' && i.parent.stage === 'candidate');
+      assert.equal(graded.length, 1, 'the candidate, u1 merged onto the tip holding u2, ran I-1\'s witness lane');
+    } finally {
+      r.journal.close();
     }
   });
 

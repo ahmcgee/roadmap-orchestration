@@ -84,7 +84,7 @@ export async function checksArc(opts: ChecksOptions): Promise<ChecksArc> {
   });
   for (const id of opts.more ?? []) {
     const spec = JSON.parse(readFileSync(specPathOf(d, 'u1'), 'utf8')) as Json;
-    writeFileSync(specPathOf(d, id), JSON.stringify({ ...spec, unit: id, obligations: [], witnesses: undefined }));
+    writeFileSync(specPathOf(d, id), JSON.stringify({ ...spec, unit: id, obligations: undefined, witnesses: undefined }));
   }
   editPlan(d, (p) => {
     const u1 = p.units[0]!;
