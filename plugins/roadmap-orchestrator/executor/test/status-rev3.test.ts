@@ -184,7 +184,7 @@ test('status.known-defect-holds: a unit that hit K-1 waits at prepare under it (
   });
   const r = contextFor(d);
   const admitted: Gate = (next) => Promise.resolve(next.kind === 'chain' || admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx))({
-    view: r.journal.view, plan: r.ctx.plan(), unit: r.unit('u1'), stage: next.stage, blocking: [], drains: [], tripped: [],
+    view: r.journal.view, plan: r.ctx.plan(), unit: r.unit('u1'), stage: next.stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
   }).kind === 'admit');
   try {
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitted), { kind: 'held', needsUser: null });

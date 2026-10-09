@@ -110,7 +110,7 @@ type Extras = Partial<Pick<AdmitInput, 'blocking' | 'drains' | 'tripped'>>;
 const NO_REPAIRS: SpecFactsOf = () => ({ reproduces: false, repairs: new Set() });
 
 const inputOf = (log: Log, plan: PlanM1, extras: Extras = {}): ReadyInput => ({
-  view: log.view(), plan, blocking: [], drains: [], tripped: [], routing: () => ROUTING, spec: NO_REPAIRS, ...extras,
+  view: log.view(), plan, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 }, routing: () => ROUTING, spec: NO_REPAIRS, ...extras,
 });
 const readyOf = (log: Log, plan: PlanM1, extras: Extras = {}): readonly (readonly [UnitId, AdmissionStage])[] =>
   ready(inputOf(log, plan, extras)).map((r) => [r.unit.id, r.stage] as const);
@@ -187,7 +187,7 @@ describe('ready: DAG arcs', () => {
     log.add(fact({ kind: 'run-only', command: CMD, units: [B, C] }));
     assert.deepEqual(readyOf(log, plan), [[B, 'plan-check']], 'C is allowed but still waits on A');
     const view = log.view();
-    assert.deepEqual(admitter(() => ROUTING, NO_REPAIRS)({ view, plan, unit: unit(A), stage: 'plan-check', blocking: [], drains: [], tripped: [] }), { kind: 'wait', constraints: [{ type: 'run-only' }] });
+    assert.deepEqual(admitter(() => ROUTING, NO_REPAIRS)({ view, plan, unit: unit(A), stage: 'plan-check', blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } }), { kind: 'wait', constraints: [{ type: 'run-only' }] });
     log.add(fact({ kind: 'run-only', command: CMD, units: null }));
     assert.deepEqual(readyOf(log, plan), [[A, 'plan-check'], [B, 'plan-check']]);
   });
@@ -215,7 +215,7 @@ describe('admit (A12, A17)', () => {
     const admit = admitter(() => ROUTING, NO_REPAIRS);
     const view = log.view();
     return Object.fromEntries(STAGES.map((stage) => {
-      const a = admit({ view, plan, unit: u, stage, blocking: [], drains: [], tripped: [], ...extras });
+      const a = admit({ view, plan, unit: u, stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 }, ...extras });
       return [stage, a.kind === 'admit' ? 'admit' : a.constraints];
     })) as Record<AdmissionStage, unknown>;
   }
@@ -276,11 +276,11 @@ describe('admit (A12, A17)', () => {
     assert.equal(admits(log, high).candidate, 'admit', 'a candidate selecting other obligations is not held');
     const repairs: SpecFactsOf = (u) => ({ reproduces: false, repairs: new Set(u.id === M ? [I1 as never] : []) });
     const view = log.view();
-    assert.deepEqual(admitter(() => ROUTING, repairs)({ view, plan, unit: med, stage: 'candidate', blocking: [], drains: [], tripped: [] }), { kind: 'admit' }, 'p1.repair-exempt: the declared repair is admitted');
+    assert.deepEqual(admitter(() => ROUTING, repairs)({ view, plan, unit: med, stage: 'candidate', blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } }), { kind: 'admit' }, 'p1.repair-exempt: the declared repair is admitted');
     log.add(fact({ kind: 'finding-transition', id: 'F-1', to: { state: 'ruled', disposition: 'dismissed', by: { type: 'checkpoint', job: 'ckpt-1' } } }));
     assert.equal(admits(log, med).candidate, 'admit', 'a ruled finding blocks nothing');
     // A reproduce runs a lane: the host breaker holds it as it holds lanes.
-    assert.deepEqual(admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: med, stage: 'reproduce', blocking: [], drains: [], tripped: [{ type: 'host' }] }),
+    assert.deepEqual(admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: med, stage: 'reproduce', blocking: [], drains: [], tripped: [{ type: 'host' }], pressure: { ticks: [], nowMs: 0 } }),
       { kind: 'wait', constraints: [{ type: 'breaker', target: { type: 'host' } }] });
   });
 
@@ -397,7 +397,7 @@ describe('known defects (F4)', () => {
   const hit = (u: UnitId, attempt: number, k: KnownDefect): LogRecord =>
     outcome(u, 'lanes', attempt, 'known-defect', 'advance', { detail: { kind: 'known-defect', id: k.id, match: k.match } });
   const prepareAdmission = (log: Log, plan: PlanM1, u: UnitId) =>
-    admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: plan.units.find((x) => x.id === u)!, stage: 'prepare', blocking: [], drains: [], tripped: [] });
+    admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: plan.units.find((x) => x.id === u)!, stage: 'prepare', blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } });
 
   it('knowndefect.fixer-not-self-held: the fixer\'s own lineage is never held; another unit declaring the lane is, until the fixer merges', () => {
     const k1 = kd(1, F);
@@ -481,5 +481,53 @@ describe('known defects (F4)', () => {
     log.merge(F2, 3);
     assert.equal(knownDefectActive(log.view(), plan, k1, A), false, 'the lineage head merged');
     assert.deepEqual(readyOf(log, plan), [[A, 'prepare']]);
+  });
+});
+
+describe('host-pressure holds (M4b rev 3, RC-11)', () => {
+  const med = unit(M);
+  const plan = planOf([med]);
+  const INV = invocationId(opId(ARC, 7), 1);
+  const HELD_AT = Date.parse('2026-09-25T12:00:00.000Z');
+  const admitLanes = (log: Log, ticks: readonly Readonly<{ atMs: number; avg60: number }>[], nowMs: number) =>
+    admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: med, stage: 'lanes', blocking: [], drains: [], tripped: [], pressure: { ticks, nowMs } });
+  const heldLog = (): Log => {
+    const log = new Log([M]);
+    log.add(dispatch(M), outcome(M, 'teardown', 1, 'released', 'advance'), outcome(M, 'lanes', 2, 'interrupted', 'hold', { cause: { type: 'host-pressure', inv: INV } }));
+    return log;
+  };
+  const WAIT = { kind: 'wait', constraints: [{ type: 'host-pressure', inv: INV }] };
+
+  it('pressure.hold-active: the hold leaves the unit active (it waits on admission, not a resume), records its run and time, and counts', () => {
+    const u = heldLog().view().unit(M);
+    assert.equal(u.status, 'active');
+    assert.deepEqual(u.pressureHold, { inv: INV, at: '2026-09-25T12:00:00.000Z' });
+    assert.equal(u.pressureHolds, 1);
+    assert.equal(u.counters.chargeableFailures, 0);
+    assert.equal(u.interrupted?.attempt, 2, 'the held attempt is the one its re-run starts from');
+  });
+
+  it('pressure.hold-admission: admission holds the re-run until a tick since the hold shows avg60 below the threshold, or 30 min pass', () => {
+    const log = heldLog();
+    assert.deepEqual(admitLanes(log, [], HELD_AT + 1_000), WAIT, 'no tick since the hold (a fresh restart): it waits');
+    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT - 1, avg60: 0.01 }], HELD_AT + 1_000), WAIT, 'a tick before the hold says nothing');
+    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.25 }], HELD_AT + 1_000), WAIT, 'avg60 at the threshold still holds');
+    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.1 }, { atMs: HELD_AT + 900, avg60: 0.9 }], HELD_AT + 1_000), WAIT, 'the latest tick decides');
+    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.9 }, { atMs: HELD_AT + 900, avg60: 0.24 }], HELD_AT + 1_000), { kind: 'admit' });
+    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.9 }], HELD_AT + 30 * 60_000 - 1), WAIT);
+    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.9 }], HELD_AT + 30 * 60_000), { kind: 'admit' }, 'the 30-min bound');
+    assert.deepEqual(readyOf(log, plan), [], 'ready offers it only once admitted');
+  });
+
+  it('pressure.hold-cleared: the re-run\'s decided outcome clears the hold (its count stays); a pause hold in between keeps it', () => {
+    const log = heldLog();
+    log.add(outcome(M, 'lanes', 3, 'interrupted', 'hold'));
+    assert.deepEqual(log.view().unit(M).pressureHold, { inv: INV, at: '2026-09-25T12:00:00.000Z' }, 'a pause hold keeps the pressure hold');
+    assert.equal(log.view().unit(M).status, 'held', 'a pause hold waits for a resume');
+    log.add(fact({ kind: 'resumed', command: CMD, target: { type: 'unit', unit: M } }), outcome(M, 'lanes', 4, 'green', 'advance'));
+    const u = log.view().unit(M);
+    assert.equal(u.pressureHold, null);
+    assert.equal(u.pressureHolds, 1);
+    assert.deepEqual(admitLanes(log, [], HELD_AT), { kind: 'admit' });
   });
 });

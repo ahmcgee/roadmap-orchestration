@@ -113,6 +113,8 @@ at triage stay in git history.
 - Ranking pools by utilisation.
 - Feeding `ruler-changed` items into the audit lens inputs (narrowed to the brief and `status.flow`).
 - More than one open verdict window arc-wide.
+- Host-pressure charging (RC-11, H2) for the D1/D2 checks' lanes, journey lanes and jobs' calls: they keep the handling
+  without pressure. Bring in when a paid run shows one of them blocked or red under a saturated host.
 
 ### Deferred from M4a
 

@@ -65,7 +65,8 @@
 // holistic job runs, and no holistic job starts while it runs. While a proposal is pending its apply, new candidates
 // wait (`flowApply`). Right before `arc-completed`, the verdicts the completion closes and the compact flow series.
 // M4b rev 3: each loop iteration reads the host's PSI cpu avg60 into an in-memory tick history (`PressureTicks`, a
-// restart starts it fresh), which the flow track reads (`FlowTrackInput.pressure`).
+// restart starts it fresh), which the flow track reads (`FlowTrackInput.pressure`) and admission reads to release a
+// host-pressure hold (`AdmitInput.pressure`, src/schedule/ready.ts).
 //
 // The scheduler's holds (on top of admission's, src/schedule/ready.ts):
 //   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
@@ -874,6 +875,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   const admissionInput = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>) => ({
     view: view(), plan: plan(), blocking, drains: mutations.map((m) => ({ command: m.command.id, scope: m.scope })), tripped: trippedTargets(view()),
+    pressure: { ticks: pressure.ticks(), nowMs: Date.now() },
   });
 
   const admitWaiting = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>, holds: Holds): void => {

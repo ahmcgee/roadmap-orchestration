@@ -21,6 +21,8 @@
 //                round; uncharged, and the diff base is recomputed (T), so the unit is gated again;
 //              - red (or a suite that dirtied the checkout): the suite runs again on T alone in its own
 //                detached checkout: red there too → `base-red` (uncharged), else a fix round (C);
+//              - M4b rev 3 (RC-11): either suite with a lane its watchdog ended under host pressure (starved), or red
+//                under it and not the rerun after a hold → `interrupted`, a `host-pressure` hold, uncharged (starved.ts);
 //              - green → in a holistic arc, the held-claims brake (M3 B2, below): the arc lanes witnessing the
 //                obligations the approval selects run on the candidate as journey lanes; red claims take the same
 //                path, witnessing T alone (`base-red`, `red`, or green by the known-regression rule). A suite lane
@@ -59,7 +61,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, OpOutcome, Parent } from '../core/events.ts';
+import type { HoldCause, IntentOf, OpOutcome, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type Sha, type UnitId, invocationId, canonicalIds } from '../core/ids.ts';
@@ -96,6 +98,7 @@ import {
   removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns,
 } from './lanes.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
+import { pressureCause, seriesRuling } from './starved.ts';
 import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
@@ -143,6 +146,8 @@ type CandidateEnd = Readonly<{
   needsUser: NeedsUserContent | null;
   /** The instances a suite lane's cleanup failed (`cleanup-failed`): the park's targets. */
   failed: readonly ResourceInstance[];
+  /** M4b rev 3 (RC-11): an `interrupted` suite under host pressure, starved or red with its rerun pending (starved.ts). */
+  cause?: HoldCause;
 }>;
 
 const ended = (kind: CandidateEnd['kind'], needsUser: NeedsUserContent | null = null): CandidateEnd => ({ kind, needsUser, failed: [] });
@@ -173,6 +178,16 @@ function seriesFault(series: Series): CandidateEnd | null {
     case 'occupied':
       return ended('occupied', series.end.needsUser);
   }
+}
+
+/**
+ * A suite series read under host pressure (M4b rev 3, RC-11): a lane its watchdog ended under pressure is starved, and a
+ * red one under it reruns once; either holds the candidate (`interrupted`, cause `host-pressure`), uncharged. Null when
+ * the series is read as without pressure.
+ */
+function pressureHeld(ctx: StageContext, unit: UnitId, series: Series): CandidateEnd | null {
+  const cause = pressureCause(seriesRuling(ctx.runDir, ctx.journal.view.unit(unit), series.end));
+  return cause === null ? null : { kind: 'interrupted', needsUser: null, failed: [], cause };
 }
 
 /** Where a candidate attempt keeps the evidence of its suite on the candidate, and on the tip alone. */
@@ -220,14 +235,14 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       const claims = unitClaims(ctx, unit, intent.expect.integrationTip, intent.expect.unitCommit);
       const standIns = suiteStandIns(ctx.plan().suite.lanes, claims === null || claims.selected.size === 0 ? [] : claims.lanes);
       const onCandidate = await suite(ctx, parent, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent), standIns);
-      const fault = seriesFault(onCandidate);
+      const fault = pressureHeld(ctx, unit.id, onCandidate) ?? seriesFault(onCandidate);
       if (fault !== null) return fault;
       if (!failed(onCandidate)) return heldClaims(ctx, unit, parent, intent);
       if (ctx.signal.reason === 'preempt') return ended('preempted');
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
       const alone = await suite(ctx, parent, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent), new Map());
-      const baseFault = seriesFault(alone);
+      const baseFault = pressureHeld(ctx, unit.id, alone) ?? seriesFault(alone);
       if (baseFault !== null) return baseFault;
       if (!failed(alone)) return ended('red');
       return ended('base-red', baseRedNeedsUser(ctx, unit.id, tip, [candidateSeriesRoot(ctx.runDir, parent), baseSeriesRoot(ctx.runDir, parent)]));
@@ -287,7 +302,7 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
   } finally {
     await preempt.close();
   }
-  const done = record(ctx, parent, end.kind, end.needsUser, failedFacts(end.failed));
+  const done = record(ctx, parent, end.kind, end.needsUser, failedFacts(end.failed), end.cause);
   if (end.kind !== 'green') await releasePublication(ctx, held, parent);
   return done;
 }

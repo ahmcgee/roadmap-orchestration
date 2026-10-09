@@ -116,6 +116,15 @@ export type UnitState = Readonly<{
    * src/pipeline/rounds.ts); a chain of pauses keeps the latest.
    */
   interrupted: StageOutcomeFact | null;
+  /**
+   * M4b rev 3 (RC-11): the unit's latest host-pressure hold while no later outcome has decided (a pause hold since keeps
+   * it): the run it was held for, and when. Admission holds the stage's re-run until the tick avg60 falls below
+   * `PRESSURE_SATURATED` or `STARVED_HOLD_MS` pass (src/schedule/ready.ts), and that re-run is the one rerun a red under
+   * pressure gets. A host-pressure hold leaves the unit `active`: it waits on admission, not on a resume. Null otherwise.
+   */
+  pressureHold: Readonly<{ inv: InvocationId; at: IsoTime }> | null;
+  /** M4b rev 3 (RC-11): the unit's host-pressure holds so far; from `STARVED_MAX` on its runs are charged as without pressure. */
+  pressureHolds: number;
   /** The latest gate approval: its attempt and the fingerprint it binds to; null before one. */
   approval: Readonly<{ attempt: number; fingerprint: ApprovalFingerprint }> | null;
   /**
@@ -172,8 +181,8 @@ export type UnitState = Readonly<{
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null, bounds: Bounds = DEFAULT_BOUNDS): UnitState {
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
-    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, approval: null, open: null,
-    counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
+    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
+    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null,
   };
@@ -846,7 +855,11 @@ export class Fold implements JournalView {
         if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
         else {
           u.beforeDecided = { decided: u.state.decided, interrupted: u.state.interrupted };
-          u.state = { ...u.state, decided: f, interrupted: null };
+          u.state = { ...u.state, decided: f, interrupted: null, pressureHold: null };
+        }
+        // M4b rev 3 (RC-11): a host-pressure hold waits on admission (ready.ts), not on a resume.
+        if (f.cause?.type === 'host-pressure') {
+          u.state = { ...u.state, status: 'active', pressureHold: { inv: f.cause.inv, at: at.at }, pressureHolds: u.state.pressureHolds + 1 };
         }
         if (f.class === 'park') {
           u.state = { ...u.state, park: { seq: at.seq, at: at.at, park: f.park ?? unclassedParkRecord(f), passed: [] } };
@@ -1332,7 +1345,7 @@ export class Fold implements JournalView {
       fail(`steered unit ${f.unit}, which is ${s.status}${s.open === null ? '' : ` with ${s.open.stage}#${s.open.attempt} open`}, not parked or preparing`);
     }
     u.state = {
-      ...s, status: 'active', park: null, interrupted: null, approval: null,
+      ...s, status: 'active', park: null, interrupted: null, pressureHold: null, approval: null,
       entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume },
     };
   }
@@ -1348,7 +1361,7 @@ export class Fold implements JournalView {
     const s = u.state;
     if (!(s.status === 'active' || s.status === 'held' || s.status === 'park-pending') || s.open !== null) fail(`merged-in unit ${f.unit}, which is ${s.status}`);
     u.state = {
-      ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, approval: null,
+      ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, pressureHold: null, approval: null,
       entry: { kind: 'merge-in', seq, command: f.command }, steering: null,
     };
   }
@@ -1446,7 +1459,7 @@ export class Fold implements JournalView {
     const spec = u.state.spec;
     if (spec === null || f.specRev !== spec.rev + 1) fail(`reopen of unit ${f.unit} at spec rev ${f.specRev}; its recorded rev is ${spec?.rev ?? 'none'}`);
     u.state = {
-      ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
+      ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
       reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects, pendingRevision: null,
     };
   }
