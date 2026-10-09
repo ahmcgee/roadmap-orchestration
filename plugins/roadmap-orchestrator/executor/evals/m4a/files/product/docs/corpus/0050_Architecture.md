@@ -50,9 +50,9 @@ to crash with a stack trace, so the office notices and tells us.
 
 ## Testing
 
-Unit tests live in `test/unit/` and run with `npm test`, which is `node --test --test-concurrency=1
-'test/unit/*.test.js'`. That command is the suite gate: no change goes onto the office machine until it passes,
-run exactly like that. There is no other test setup.
+Unit tests live in `test/unit/`, and the suite gate is that every one of them passes: no change is copied to the
+kiosk until the whole of `test/unit/` has passed on the office machine. They run with `npm test`, whose script is
+`node --test --test-concurrency=1 'test/unit/*.test.js'`. There is no other test setup.
 
 Most of the files are replay tests. Each replays a stretch of harbour time a step at a time, paced like the kiosk
 (`test/unit/clock.js`), so each one takes about a minute and the whole suite a few minutes.
