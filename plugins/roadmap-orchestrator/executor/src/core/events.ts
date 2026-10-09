@@ -329,9 +329,9 @@ export type OpOutcome = {
   'worktree.remove': Readonly<{ kind: 'removed' }>;
   'resource.transition': Readonly<{ kind: 'transitioned' }>;
   /**
-   * `pressure` (M4b rev 3, additive): the launch's interval pressure (src/host/pressure.ts), sampled by the live executor
-   * around the runner; null when PSI is unavailable or the runner ended unwatched (adopted, recovered). Absent on a spawn
-   * an earlier executor closed: read as null (`spawnPressureOf`).
+   * `pressure` (M4b rev 3, additive): the launch's own cpu wait (src/host/pressure.ts), read from its exit.json `cpu`
+   * in every settle mode; null without schedstat, for a launch under `PRESSURE_MIN_WALL_MS`, or an exit.json an earlier
+   * runner wrote. Absent on a spawn an earlier executor closed: read as null (`spawnPressureOf`).
    */
   'proc.spawn':
     | Readonly<{ kind: 'result'; resultSha256: Sha256Hex; summary: ResultSummary; pressure?: number | null }>
@@ -498,7 +498,7 @@ export type ParkRecord =
  * seq. A covering passing probe or `resume --backend` releases exactly such holds; operator pauses stay. M4b: an
  * accepted flow proposal `pending-apply` holds new candidate starts until its revision is committed (`flow-apply`).
  * M4b rev 3 (RC-11, step H2): a unit whose run `inv` was starved, or red under pressure with its rerun pending, is held
- * until the tick avg60 falls below `PRESSURE_SATURATED` or 30 min pass (`host-pressure`).
+ * until a minute of scheduler ticks since the hold shows the host's cpu wait below `PRESSURE_SATURATED` or 30 min pass (`host-pressure`).
  */
 export type HoldCause =
   | Readonly<{ type: 'backend'; backend: Backend; parkSeq: number }>
@@ -636,7 +636,7 @@ export type Fact =
    */
   /**
    * `host` (M4b, additive): this start's host fingerprint; absent on a 1.0.0-dev.7 start. `pressure` (M4b rev 3,
-   * additive): whether this host reports PSI cpu pressure (src/host/pressure.ts); absent on an earlier start, read as
+   * additive): whether this host reports schedstat cpu wait (src/host/pressure.ts); absent on an earlier start, read as
    * `unavailable` (`startPressureOf`). A sibling of the fingerprint, which seeds and givens compare by field equality.
    */
   | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint; pressure?: PressureAvailability }>

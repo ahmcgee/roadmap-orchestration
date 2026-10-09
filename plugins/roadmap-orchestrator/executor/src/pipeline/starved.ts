@@ -1,7 +1,7 @@
 // Charging under host pressure (M4b rev 3, RC-11, step H2; SCHEMAS.md "Rev 3: host pressure"): the impure edge of
 // `pressureRuling` (src/host/pressure.ts). A stage reads each run that ended its attempt without a pass (a backend call
 // that ended `process-fault`, a lane series' red or blocked lane) as a `PressureRun`: its exit cause from exit.json, its
-// interval pressure from its spawn's done record, and its unit's pressure holds from the fold. A `starved` or
+// pressure from its spawn's done record, and its unit's pressure holds from the fold. A `starved` or
 // `red-rerun` ruling is recorded as the stage's `interrupted` hold with cause `host-pressure{inv}`: uncharged, no fix
 // round, no park; admission holds the re-run (src/schedule/ready.ts). Nothing here is journaled: the hold fact is the
 // stage's one outcome, so a crash before it re-runs the attempt as any crash does, and the fold derives the rest.
@@ -23,12 +23,12 @@ export const pressureHoldsOf = (u: UnitState): PressureHolds => ({ count: u.pres
 /** The hold cause a `starved` or `red-rerun` ruling records; null for `counts`. */
 export const pressureCause = (r: PressureRuling): HoldCause | null => (r.kind === 'counts' ? null : { type: 'host-pressure', inv: r.inv });
 
-/** A closed run as the rules read it: its exit cause (deadline, stall), else red or not, with its interval pressure. */
+/** A closed run as the rules read it: its exit cause (deadline, stall), else red or not, with its pressure. */
 function runOf(runDir: AbsPath, inv: InvocationId, pressure: number | null, red: boolean): PressureRun {
   // Without pressure no rule applies: exit.json is not read (a lost runner has none).
   if (pressure === null) return { inv, end: 'other', pressure };
   const exit = runnerFiles(invocationDir(runDir, inv), inv).read('exit.json');
-  if (exit === null) throw new Error(`${inv}: a run with interval pressure ${pressure} and no exit.json`);
+  if (exit === null) throw new Error(`${inv}: a run with pressure ${pressure} and no exit.json`);
   return { inv, end: exit.cause === 'deadline' || exit.cause === 'stall' ? exit.cause : red ? 'red' : 'other', pressure };
 }
 

@@ -141,7 +141,7 @@ describe('m4b rev 3: host pressure records', () => {
   const done = (outcome: object): LogRecord => ({ type: 'done', op: opId(ARC, 2), kind: 'proc.spawn', outcome, recoveredBy: null }) as unknown as LogRecord;
   const ended = (code: object) => fact({ kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: null, constraint: { code, judged: JUDGED } });
 
-  it('a start records PSI availability and a spawn result its interval pressure; both absent on an earlier executor\'s, read with defaults', () => {
+  it('a start records schedstat availability and a spawn result its pressure; both absent on an earlier executor\'s, read with defaults', () => {
     roundTrip(fact({ kind: 'executor-started', generation: 3, host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 31 }, pressure: 'available' }));
     roundTrip(fact({ kind: 'executor-started', generation: 3, pressure: 'unavailable' }));
     refuses(fact({ kind: 'executor-started', generation: 3, pressure: 'none' }), /\.pressure$/);
@@ -212,13 +212,14 @@ describe('m4b kept records', () => {
       schema: 'roadmap/flow-inputs-m4b', job: 'flow-1', triggers: ['floor'], chart: null, stations: [{ station: 'stage:build', meanMin: 20, share: 0.66, pressure: 0.12 }], constraint: null,
       accounting: series.accounting, levers: [{ lever: 'concurrency', cpu: 8, set: false, hostCpus: 8 }], givens: [{ scope: 'repo', lever: 'host', note: 'a fixed host' }],
       window: null, verdicts: [], rejections: [], advances: [],
-      pressure: { now: { avg10: 0.3, avg60: 0.28 }, threshold: 0.25, available: true, window: 0.31, cpuInUse: 6, hostCpus: 8 },
+      pressure: { threshold: 0.5, available: true, now: 0.3, window: 0.31, cpuInUse: 6, hostCpus: 8 },
     };
     assert.equal(canonicalJson(parseFlowInputs(JSON.parse(JSON.stringify(inputs)))), canonicalJson(inputs));
     assert.throws(() => parseFlowInputs({ ...inputs, job: 'review-1' }), SchemaError);
-    const unavailable = { now: null, threshold: 0.25, available: false, window: null, cpuInUse: 0, hostCpus: 8 };
+    const unavailable = { threshold: 0.5, available: false, now: null, window: null, cpuInUse: 0, hostCpus: 8 };
     assert.equal(parseFlowInputs({ ...inputs, pressure: unavailable }).pressure.now, null);
-    assert.throws(() => parseFlowInputs({ ...inputs, pressure: { ...unavailable, available: true } }), SchemaError, 'available names a reading');
+    assert.equal(parseFlowInputs({ ...inputs, pressure: { ...unavailable, available: true } }).pressure.now, null, 'available, under a minute of ticks');
+    assert.throws(() => parseFlowInputs({ ...inputs, pressure: { ...unavailable, now: 0.2 } }), SchemaError, 'a reading on a host without schedstat');
     const { pressure: _p, ...noPressure } = inputs;
     assert.throws(() => parseFlowInputs(noPressure), SchemaError);
     const given = (id: string) => ({ id, lever: 'concurrency', note: 'n', fingerprint: { platform: 'linux', arch: 'x64', cpus: 4, memGiB: 16 }, at: AT });

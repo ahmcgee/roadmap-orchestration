@@ -115,6 +115,9 @@ at triage stay in git history.
 - More than one open verdict window arc-wide.
 - Host-pressure charging (RC-11, H2) for the D1/D2 checks' lanes, journey lanes and jobs' calls: they keep the handling
   without pressure. Bring in when a paid run shows one of them blocked or red under a saturated host.
+- `status` has no tick history, so it shows a host-pressure hold waiting until its 30-min bound even after the host
+  calmed (the executor releases it on its own ticks). Bring in (the scheduler publishing its host cpu wait in sched.json)
+  when an operator is misled by it.
 
 ### Deferred from M4a
 
@@ -247,7 +250,8 @@ None.
   `dev7ArcRolesDefault` and `arcRolesInForce`'s null arm (src/routing/layers.ts): a routing provenance without
   `arcRoles` reads as the dev.7 role set (no `flow`), the flow loop off (`off-dev7`). With it, `arcRoles` becomes required.
   The M4b rev 3 defaults go with it: `spawnPressureOf` (a spawn result without `pressure` reads null) and
-  `startPressureOf` (an `executor-started` without `pressure` reads `unavailable`); both fields then become required.
+  `startPressureOf` (an `executor-started` without `pressure` reads `unavailable`) and `exitCpuOf` (an exit.json without
+  `cpu` reads null); the three fields then become required.
 - The 1.0.0-dev.6 layer below is no longer adopted (1.0.0-dev.8 adopts dev.7 only; no dev.6 arc was in flight at M4b
   step 0a, which moved `PREVIOUS_RELEASE` to b55ad88 and dropped the dev.6 upgrade cases). Step 0a deleted the
   self-contained part: `checkpointOutputM4Default`, `splitChildRuleDefault` (a checkpoint answer now needs

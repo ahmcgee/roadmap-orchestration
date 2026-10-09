@@ -1,15 +1,14 @@
 // M4b B1: the flow triggers (src/flow/trigger.ts), pure: evidence since the last run's start, coalesced; the 120-minute
 // cooldown with one `requested` bypass per window (RC-5); the window rule; the first constraint label at 3 points (OI-1);
 // the floor at 10 merges; buffer-red from the frozen chart, a point or a newly red in-flight unit; host-pressure (M4b rev
-// 3) from a synthetic tick history.
+// 3) from the times of host-pressure holds.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { commandId, jobId, laneId, proposalId, sha256, stationId, unitId } from '../src/core/ids.ts';
 import { type IsoTime, isoTime } from '../src/core/values.ts';
 import type { FlowLog, FlowRun } from '../src/flow/log.ts';
 import { type XmrLimits } from '../src/flow/spc.ts';
-import { type TriggerInput, cooldownOf, dueTriggers, sustainedPressure } from '../src/flow/trigger.ts';
-import type { PressureTick } from '../src/host/pressure.ts';
+import { type TriggerInput, cooldownOf, dueTriggers } from '../src/flow/trigger.ts';
 import type { FlowPoint, FlowWindow } from '../src/flow/types.ts';
 
 const T0 = Date.parse('2026-10-08T09:00:00.000Z');
@@ -37,7 +36,7 @@ const log = (x: Partial<{ runs: FlowRun[]; requests: number[]; verdicts: number[
   }] as const)),
   series: [], completions: [], proposals: new Map(), accepted: [],
 });
-const input = (x: Partial<Omit<TriggerInput, 'now'>> & { now: number }): TriggerInput => ({ log: log(), points: [], limits: null, inFlight: [], window: null, pressure: [], ...x, now: at(x.now) });
+const input = (x: Partial<Omit<TriggerInput, 'now'>> & { now: number }): TriggerInput => ({ log: log(), points: [], limits: null, inFlight: [], window: null, pressureHolds: [], ...x, now: at(x.now) });
 /** Limits with the centre at 10 minutes and the upper limit at 20. */
 const LIMITS: XmrLimits = { centre: Math.log(10), ucl: Math.log(20), mrBar: (Math.log(20) - Math.log(10)) / 2.66 };
 const WINDOW: FlowWindow = { proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:unit'), metric: { type: 'suite-run', lane: laneId('unit') }, openedAt: at(0), samples: 1 };
@@ -91,33 +90,19 @@ describe('flow triggers', () => {
 });
 
 describe('flow triggers: host-pressure', () => {
-  /** One tick per minute from `from` to `to` (inclusive) at avg60 `avg60`. */
-  const ticks = (from: number, to: number, avg60: number): PressureTick[] =>
-    Array.from({ length: to - from + 1 }, (_, i) => ({ atMs: Date.parse(at(from + i)), avg60 }));
   const busy = [{ unit: unitId('x'), ageMin: 5 }];
 
-  it('fires with units in flight once the tick avg60 stays at the threshold or above for 10 minutes; fires before any merge', () => {
-    assert.deepEqual(dueTriggers(input({ now: 300, inFlight: busy, pressure: ticks(290, 300, 0.25) })), ['host-pressure']);
-    assert.deepEqual(dueTriggers(input({ now: 300, inFlight: busy, pressure: ticks(291, 300, 0.6) })), [], '9 minutes');
-    assert.deepEqual(dueTriggers(input({ now: 300, inFlight: [], pressure: ticks(280, 300, 0.6) })), [], 'no unit in flight');
-    assert.deepEqual(dueTriggers(input({ now: 300, inFlight: busy, pressure: [] })), [], 'no ticks: a host without PSI');
+  it('fires with units in flight once a unit was held for host pressure since the last run\'s start; fires before any merge', () => {
+    assert.deepEqual(dueTriggers(input({ now: 300, inFlight: busy, pressureHolds: [at(299)] })), ['host-pressure']);
+    assert.deepEqual(dueTriggers(input({ now: 300, inFlight: [], pressureHolds: [at(299)] })), [], 'no unit in flight');
+    assert.deepEqual(dueTriggers(input({ now: 300, inFlight: busy, pressureHolds: [] })), [], 'no hold: a clear host, or one without schedstat');
   });
 
-  it('the run must reach the newest tick unbroken; a dip below the threshold restarts it', () => {
-    const dip = [...ticks(280, 294, 0.5), ...ticks(295, 295, 0.1), ...ticks(296, 300, 0.5)];
-    assert.equal(sustainedPressure(dip, null), false);
-    assert.equal(sustainedPressure([...ticks(280, 299, 0.5), ...ticks(300, 300, 0.24)], null), false, 'calm now');
-    assert.equal(sustainedPressure(ticks(280, 300, 0.5), null), true);
-  });
-
-  it('only ticks after the last run\'s start count, and the cooldown and an open window hold it like the others', () => {
-    const hot = ticks(270, 400, 0.5);
-    const since = (min: number) => Date.parse(at(min));
-    assert.equal(sustainedPressure(hot, since(395)), false, '5 minutes since the run');
-    assert.equal(sustainedPressure(hot, since(380)), true);
-    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressure: hot, log: log({ runs: [run(1, 350)] }) })), [], 'inside the cooldown');
-    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressure: hot, log: log({ runs: [run(1, 100)] }) })), ['host-pressure']);
-    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressure: hot, window: WINDOW })), [], 'suppressed under an open window');
-    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressure: hot, log: log({ requests: [399] }) })), ['host-pressure', 'requested'], 'coalesced in order');
+  it('only holds after the last run\'s start count, and the cooldown and an open window hold it like the others', () => {
+    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressureHolds: [at(90)], log: log({ runs: [run(1, 100)] }) })), [], 'held before the run');
+    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressureHolds: [at(90), at(390)], log: log({ runs: [run(1, 100)] }) })), ['host-pressure']);
+    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressureHolds: [at(390)], log: log({ runs: [run(1, 350)] }) })), [], 'inside the cooldown');
+    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressureHolds: [at(390)], window: WINDOW })), [], 'suppressed under an open window');
+    assert.deepEqual(dueTriggers(input({ now: 400, inFlight: busy, pressureHolds: [at(390)], log: log({ requests: [399] }) })), ['host-pressure', 'requested'], 'coalesced in order');
   });
 });

@@ -140,7 +140,7 @@ function briefFlow(ref: ArcRef, from: number, previous: ArcRef | null): BriefFlo
   const prevLog = previous === null || arcRolesOf(previous.view.planApplied()) !== 'm4b' ? null : flowLog(previous.view, previous.events);
   return {
     constraint: c === null ? null : c.station === HOST_CPU_STATION
-      ? `${c.station}, the host's cpu saturated: mean interval pressure ${windowPressure(series.points)!.toFixed(2)} over the last merges (threshold ${PRESSURE_SATURATED})`
+      ? `${c.station}, the host's cpu saturated: mean pressure ${windowPressure(series.points)!.toFixed(2)} over the last merges (threshold ${PRESSURE_SATURATED})`
       : `${c.station}${c.component === null ? '' : ` (${c.component})`}${c.internal ? ', the largest wait in front of it' : ', the largest service'}`,
     accounting: `diagnostic only: ${a.tAdvances === null ? '' : `obligations first held ${a.tAdvances.toFixed(2)}/h advancing, ${(a.tOther ?? 0).toFixed(2)}/h other; `}units merged ${a.tUnits.toFixed(2)}/h; inventory ${a.wip}; spend $${a.oeUsdPerHour.toFixed(2)}/h`,
     verdicts: [...log.verdicts.values()].filter((v) => v.seq > from).map((v) => `${proposalLine(proposalOf(log, v.proposal))}: ${v.verdict}${v.guards.length === 0 ? '' : ` (${v.guards.map((g) => `${g.guard}: ${g.detail}`).join('; ')})`}`),

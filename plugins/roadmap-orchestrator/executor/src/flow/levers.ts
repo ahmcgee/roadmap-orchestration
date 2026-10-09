@@ -9,7 +9,7 @@
 // paths a revision touched (B1 raises `ruler-changed` from it for a `command` revision after the first admission).
 //
 // At `host:cpu` (M4b rev 3, RC-12) every lever subordinates to the saturated cpu: its step is `subordinate` and its
-// verdict metric the interval pressure of the units admitted after (lead stays a guard); only a decrease of the arc's own
+// verdict metric the pressure of the units admitted after (lead stays a guard); only a decrease of the arc's own
 // load (`concurrency` cpu down, a pool's size down, a suite lane's cpu or `--test-concurrency` down) or `host` advice is
 // kept, anything else is dropped `direction`.
 import {
@@ -83,7 +83,7 @@ export function waitInFrontOf(target: StationId): StationId {
 }
 
 /**
- * The verdict metric of an action (G7): at `host:cpu` the units' interval pressure (RC-12); else a suite lane's per-run
+ * The verdict metric of an action (G7): at `host:cpu` the units' pressure (RC-12); else a suite lane's per-run
  * service, the wait in front of `target`, or lead; null for `host`.
  */
 export function metricOf(action: FlowAction, target: StationId): FlowMetric | null {

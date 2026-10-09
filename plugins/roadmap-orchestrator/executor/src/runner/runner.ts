@@ -6,6 +6,11 @@
 //   → wait for child exit | deadlineAt | stall | cancel.json → wait until the workload is empty (killing it
 //   on deadline, stall or cancel, also while waiting for descendants) → exit.json → exit 0.
 //
+// Cpu wait (M4b rev 3): at every poll the runner reads the schedstat of every thread of the workload
+// (src/host/pressure.ts `WorkloadCpu`: the members when the stall watchdog or the descendants' wait scans
+// them, else the child's process tree) and writes the totals, with the wall time from spawn to quiescence,
+// as exit.json's `cpu` (null on a host without schedstat): the launch's pressure is read from them.
+//
 // Stall watchdog (launch.json `stallMs`, lanes only): at every poll the runner takes the workload's progress
 // mark, its members' total CPU time, which members exist, and the sizes of its stdout and stderr. A mark
 // unchanged for `stallMs` is a hang (a deadlock, a wait on something that never comes) and is killed with
@@ -22,9 +27,10 @@ import { identityOf, readBootId, statOf } from '../contain/proc.ts';
 import { ENV_INV } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
 import { invocationIdOf } from '../core/ids.ts';
-import type { Containment, WorkloadRef } from '../core/interfaces.ts';
-import { type ChildEnd, type ExitCause, type ExitFile, type KillReason, STDERR_FILE, STDOUT_FILE } from '../core/records.ts';
+import type { WorkloadRef } from '../core/interfaces.ts';
+import { type ChildEnd, type ExitCause, type ExitFile, type KillReason, type ProcIdentity, STDERR_FILE, STDOUT_FILE } from '../core/records.ts';
 import { type IsoTime, absPath, isoTimeOf } from '../core/values.ts';
+import { WorkloadCpu, pressureAvailability } from '../host/pressure.ts';
 import { runnerFiles } from './files.ts';
 
 /** cancel.json is polled at this interval while the child runs. */
@@ -37,10 +43,10 @@ type Stop = Readonly<{ cause: Exclude<ExitCause, 'exited'>; reason: KillReason }
 const now = (): IsoTime => isoTimeOf(new Date());
 
 /** The workload's progress mark: equal marks mean nothing moved in between. */
-function progressMark(containment: Containment, workload: WorkloadRef, invDir: string): string {
+function progressMark(members: readonly ProcIdentity[], invDir: string): string {
   let cpu = 0;
   const alive: string[] = [];
-  for (const m of containment.members(workload)) {
+  for (const m of members) {
     const stat = statOf(m.pid);
     if (stat === null || stat.start !== m.start) continue;
     cpu += stat.cpu;
@@ -67,19 +73,27 @@ export async function runnerMain(): Promise<void> {
   const deadline = new Date(launch.deadlineAt).getTime();
 
   let mark: Readonly<{ value: string; since: number }> | null = null;
-  const stalled = (workload: WorkloadRef): boolean => {
+  const stalled = (members: readonly ProcIdentity[]): boolean => {
     if (launch.stallMs === null) return false;
-    const value = progressMark(containment, workload, invDir);
+    const value = progressMark(members, invDir);
     const t = Date.now();
     if (mark === null || mark.value !== value) mark = { value, since: t };
     return t - mark.since >= launch.stallMs;
   };
 
-  const stopRequested = (workload: WorkloadRef): Stop | null => {
+  const cpu = pressureAvailability() === 'available' ? new WorkloadCpu() : null;
+  /**
+   * One poll. The membership scan runs when the stall watchdog needs it or once the child has exited (descendants
+   * only); otherwise the cpu wait reads the child's process tree, which costs no scan of every process.
+   */
+  const stopRequested = (workload: WorkloadRef & Readonly<{ child: ProcIdentity }>, childExited: boolean): Stop | null => {
+    const members = launch.stallMs !== null || childExited ? containment.members(workload) : null;
+    if (members !== null) cpu?.observe(members);
+    else cpu?.observeTree(workload.child);
     const cancel = files.read('cancel.json');
     if (cancel !== null) return cancel.reason === 'recovery' ? { cause: 'recovery-kill', reason: 'recovery' } : { cause: 'cancel', reason: cancel.reason };
     if (Date.now() >= deadline) return { cause: 'deadline', reason: 'deadline' };
-    return stalled(workload) ? { cause: 'stall', reason: 'stall' } : null;
+    return members !== null && stalled(members) ? { cause: 'stall', reason: 'stall' } : null;
   };
 
   crashPoint('runner.before-runner-json');
@@ -89,13 +103,14 @@ export async function runnerMain(): Promise<void> {
   const spawned = await containment.launch(launch, invDir);
   if (spawned.kind === 'spawn-failed') {
     const at = now();
-    files.write('exit.json', { ...binding, child: { type: 'spawn-failed', error: spawned.error }, cause: 'exited', endedAt: at, quiescedAt: at });
+    files.write('exit.json', { ...binding, child: { type: 'spawn-failed', error: spawned.error }, cause: 'exited', endedAt: at, quiescedAt: at, cpu: cpu?.total(0) ?? null });
     crashPoint('runner.after-exit-json');
     return;
   }
+  const spawnedAt = Date.now();
   crashPoint('runner.after-child-spawn');
   files.write('runner.json', { ...binding, runner, child: spawned.child });
-  const workload: WorkloadRef = { inv, child: spawned.child };
+  const workload = { inv, child: spawned.child } satisfies WorkloadRef;
 
   let ended: Readonly<{ end: ChildEnd; at: IsoTime }> | null = null;
   const endedAt = spawned.ended.then((end) => {
@@ -111,7 +126,7 @@ export async function runnerMain(): Promise<void> {
 
   // Phase 1: the child runs until it exits or the runner is told (or times out) to stop it.
   while (ended === null) {
-    const stop = stopRequested(workload);
+    const stop = stopRequested(workload, false);
     if (stop !== null) {
       await killFor(stop);
       break;
@@ -123,7 +138,7 @@ export async function runnerMain(): Promise<void> {
 
   // Phase 2: descendants may outlive the child; the invocation ends only when the workload is empty.
   while (cause === 'exited' && !containment.empty(workload)) {
-    const stop = stopRequested(workload);
+    const stop = stopRequested(workload, true);
     if (stop !== null) {
       await killFor(stop);
       break;
@@ -131,7 +146,7 @@ export async function runnerMain(): Promise<void> {
     await sleep(QUIESCE_POLL_MS);
   }
 
-  const exit: ExitFile = { ...binding, child: end, cause, endedAt: at, quiescedAt: now() };
+  const exit: ExitFile = { ...binding, child: end, cause, endedAt: at, quiescedAt: now(), cpu: cpu?.total(Date.now() - spawnedAt) ?? null };
   files.write('exit.json', exit);
   crashPoint('runner.after-exit-json');
 }

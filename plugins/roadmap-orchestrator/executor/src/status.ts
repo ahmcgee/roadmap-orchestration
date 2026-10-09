@@ -166,7 +166,6 @@ import {
   type RoutingTable,
 } from './routing/types.ts';
 import { readClaim } from './host/lock.ts';
-import { pressureNowOf, readPressure } from './host/pressure.ts';
 import { isAlive } from './host/liveness.ts';
 import { readOwner } from './host/owner.ts';
 import { revParse } from './git/git.ts';
@@ -740,7 +739,8 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   if (next?.kind === 'admission' && routing !== null) {
     const a = admitter(routing, x.spec)({
       view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view),
-      pressure: pressureNowOf(readPressure(), Date.now()),
+      // Status has no tick history: a host-pressure hold reads as waiting until its 30-min bound (src/host/pressure.ts).
+      pressure: { ticks: [], nowMs: Date.now() },
     });
     if (a.kind === 'wait') {
       const state = a.constraints.some((c) => c.type === 'paused') ? 'held' : 'awaiting-admission';

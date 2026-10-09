@@ -30,13 +30,14 @@
 // Suite-lane service is sampled per run in all four shapes (`suiteRuns`): `lane` and `stand-in` on a unit's candidate,
 // `batch` on a repair batch's candidate, `rerun` on the tip alone (a unit's or a batch's red path). Only runs with a
 // verdict count (pass, fail, stall; a cancelled, faulted or lost run measures nothing). Docs publications run the suite
-// too; the plan's four shapes leave them out. A run's `pressure` is its spawn's interval pressure (M4b rev 3).
+// too; the plan's four shapes leave them out. A run's `pressure` is its spawn's pressure (M4b rev 3: its own cpu wait).
 //
-// A point's `pressure` (M4b rev 3) is the time-weighted mean interval pressure of the unit's service intervals: every
-// spawn its stages ran, clipped to its lead time, null when any of them has none (no PSI, unwatched, lost) or there is
-// none; `stationPressure` the same per station the spawn served (`stage:<s>`; on the candidate `suite:<lane>`, `arc-lanes`
-// or `candidate-rest`, as the slot's components split it; `ff`, `snapshot`). A spawn of no length weighs nothing; a
-// station whose spawns all have none takes their plain mean.
+// A point's `pressure` (M4b rev 3) is the time-weighted mean pressure (src/host/pressure.ts: a launch's own cpu wait) of
+// the unit's service intervals: every spawn its stages ran that has one, clipped to its lead time; null when none has
+// one (no schedstat, every spawn shorter than `PRESSURE_MIN_WALL_MS`, lost); `stationPressure` the same per station the
+// spawn served (`stage:<s>`; on the candidate `suite:<lane>`, `arc-lanes` or `candidate-rest`, as the slot's components
+// split it; `ff`, `snapshot`). A spawn of no length weighs nothing; a station whose spawns all have none takes their
+// plain mean.
 //
 // The accounting (RC-2) is diagnostic only: T per hour of the log's span (first to last event); `tAdvances` / `tOther`
 // split the obligations held for the first time this arc (their `obligation-latched` facts) by whether the obligation in
@@ -113,7 +114,7 @@ type Spawn = Readonly<{
   end: number | null;
   /** The run's verdict (a command's), null when it has none. */
   red: boolean | null;
-  /** Its interval pressure (M4b rev 3; null: no result, no PSI, or closed unwatched or before rev 3). */
+  /** Its pressure (M4b rev 3; null: no result, no schedstat, shorter than `PRESSURE_MIN_WALL_MS`, or before rev 3). */
   pressure: number | null;
 }>;
 /** A candidate merge's two trees: the candidate commit and the tip it merged onto (a T-alone run's tree). */
@@ -520,26 +521,23 @@ class SeriesFold {
   }
 }
 
-/** A time-weighted mean of interval pressures: null once any is null, or with none; the plain mean when none has length. */
+/** A time-weighted mean of the pressures that are measured: null with none; the plain mean when none has length. */
 class PressureMean {
   #weighted = 0;
   #ms = 0;
   #sum = 0;
   #n = 0;
-  #unknown = false;
 
   add(pressure: number | null, ms: number): void {
-    if (pressure === null) this.#unknown = true;
-    else {
-      this.#weighted += pressure * ms;
-      this.#ms += ms;
-      this.#sum += pressure;
-      this.#n++;
-    }
+    if (pressure === null) return;
+    this.#weighted += pressure * ms;
+    this.#ms += ms;
+    this.#sum += pressure;
+    this.#n++;
   }
 
   value(): number | null {
-    if (this.#unknown || this.#n === 0) return null;
+    if (this.#n === 0) return null;
     return this.#ms > 0 ? this.#weighted / this.#ms : this.#sum / this.#n;
   }
 }
@@ -641,7 +639,7 @@ export function stationMeans(points: readonly FlowPoint[]): ReadonlyMap<StationI
  * Each station's mean minutes and share of mean lead over `points` (the constraint's window), largest first: every leaf
  * station and `slot:integration` (its components' sum, so the shares of the leaves alone sum to 1). A station's
  * `pressure` (M4b rev 3) is its points' `stationPressure` (the slot's: its components'), weighted by the station's minutes
- * in each (the plain mean when they have none); null when no spawn served it or any of them is null.
+ * in each (the plain mean when they have none); null when no spawn that served it has one.
  */
 export function stationTable(points: readonly FlowPoint[]): readonly StationRow[] {
   if (points.length === 0) return [];

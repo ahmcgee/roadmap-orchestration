@@ -217,6 +217,11 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'hang':
       sleepSync(act.ms);
       return;
+    case 'spin': {
+      const end = Date.now() + act.ms;
+      while (Date.now() < end) { /* busy */ }
+      return;
+    }
     case 'forkSetsid': {
       const child = spawn(process.execPath, ['-e', `setTimeout(() => {}, ${act.lifeMs})`], {
         detached: true,

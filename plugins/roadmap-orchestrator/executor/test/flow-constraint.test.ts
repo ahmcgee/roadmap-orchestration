@@ -54,13 +54,13 @@ describe('flow constraint: host:cpu (RC-10)', () => {
   const slowWait = { 'wait:slot:integration': 5, 'stage:build': 20, 'suite:unit': 6 };
 
   it('a window mean pressure at the threshold or above names host:cpu, ahead of the wait and service rules', () => {
-    assert.deepEqual(codeConstraintOf([point(slowWait, 0.2), point(slowWait, 0.3)]), HOST_CPU, 'mean 0.25');
-    assert.deepEqual(codeConstraintOf([point(slowWait, 0.2), point(slowWait, 0.29)])?.station, 'slot:integration', 'mean 0.245');
+    assert.deepEqual(codeConstraintOf([point(slowWait, 0.4), point(slowWait, 0.6)]), HOST_CPU, 'mean 0.5');
+    assert.deepEqual(codeConstraintOf([point(slowWait, 0.4), point(slowWait, 0.59)])?.station, 'slot:integration', 'mean 0.495');
   });
 
-  it('the mean reads the window\'s measured points only; none measured (no PSI) turns the rule off', () => {
-    assert.equal(windowPressure([point(slowWait, null), point(slowWait, 0.4)]), 0.4);
-    assert.deepEqual(codeConstraintOf([point(slowWait, null), point(slowWait, 0.4)]), HOST_CPU);
+  it('the mean reads the window\'s measured points only; none measured (no schedstat) turns the rule off', () => {
+    assert.equal(windowPressure([point(slowWait, null), point(slowWait, 0.6)]), 0.6);
+    assert.deepEqual(codeConstraintOf([point(slowWait, null), point(slowWait, 0.6)]), HOST_CPU);
     assert.equal(windowPressure([point(slowWait), point(slowWait)]), null);
     assert.deepEqual(codeConstraintOf([point(slowWait), point(slowWait)])?.station, 'slot:integration');
     const old = Array.from({ length: 5 }, () => point(slowWait, 0.9));

@@ -39,9 +39,8 @@ import { metricOf, rulerChanges } from './levers.ts';
 import { closedVerdicts, proposalOf, proposalsOf, runningRun } from './log.ts';
 import { runProof } from './proof.ts';
 import type { SeriesInputs } from './series.ts';
-import type { PressureTick } from '../host/pressure.ts';
 import { chartOf } from './spc.ts';
-import { cooldownOf, dueTriggers } from './trigger.ts';
+import { cooldownOf, dueTriggers, pressureHoldTimes } from './trigger.ts';
 import type { ClosedVerdict, CodeConstraint, FlowAccounting, FlowChart, FlowPressureStatus, FlowProposal, FlowTrigger, FlowWindow, GivenInForce } from './types.ts';
 import { type IdleSpan, afterOf, beforeOf, closeWindow, guardBreaches, verdictOf, windowSamples } from './verdict.ts';
 
@@ -188,8 +187,8 @@ export type FlowTrackInput = Readonly<{
   holisticRunning: () => boolean;
   /** Told while the flow job (the judgment) runs, so no holistic job starts meanwhile. */
   judging: (on: boolean) => void;
-  /** M4b rev 3: the scheduler's per-tick PSI avg60, newest last (empty without PSI): what the `host-pressure` trigger reads. */
-  pressure: () => readonly PressureTick[];
+  /** M4b rev 3: the host's cpu wait over the last minute of the scheduler's ticks (null without them), for a run's inputs. */
+  hostPressure: () => number | null;
 }>;
 
 /** One run of the track (see the header); whether it wrote anything (progress) or found nothing to do. */
@@ -206,11 +205,11 @@ export async function runFlowTrack(ctx: FlowTrackContext, input: FlowTrackInput)
   const flow = flowNow(ctx, now());
   const running = runningRun(flow.log) !== null;
   if (!input.holisticRunning() && flowSkipped(ctx) === null && (running || workRemains(ctx))) {
-    const triggers = running ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window: windowNow(flow), now: now(), pressure: input.pressure() });
+    const triggers = running ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window: windowNow(flow), now: now(), pressureHolds: pressureHoldTimes(flow.events) });
     if (running || triggers.length > 0) {
       input.judging(true);
       try {
-        await runFlowJob(ctx, triggers);
+        await runFlowJob(ctx, triggers, input.hostPressure());
       } finally {
         input.judging(false);
       }
@@ -239,12 +238,9 @@ export type FlowStatus =
     pending: readonly FlowProposalLine[];
     givens: readonly GivenInForce[];
     rulerChanged: readonly (RulerChange & Readonly<{ needsUser: NeedsUserId | null }>)[];
-    /** M4b rev 3: the host's PSI cpu now, the saturation threshold, and whether this host reports PSI. */
+    /** M4b rev 3: the cpu-wait saturation threshold and whether this host reports schedstat. */
     pressure: FlowPressureStatus;
-    /**
-     * The run in progress, the triggers due now and the cooldown (its end, and whether a request may still bypass it).
-     * `due` never holds `host-pressure`: the tick history lives in the executor's memory, which `status` cannot read.
-     */
+    /** The run in progress, the triggers due now and the cooldown (its end, and whether a request may still bypass it). */
     next: Readonly<{ running: JobId | null; due: readonly FlowTrigger[]; cooldownUntil: IsoTime | null; bypass: boolean }>;
   }>;
 
@@ -274,7 +270,7 @@ export function flowStatus(r: FlowReader, head: Sha, at: IsoTime): FlowStatus {
     pressure: pressureNow(),
     next: {
       running: running?.started.job ?? null,
-      due: running !== null ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window, now: at, pressure: [] }),
+      due: running !== null ? [] : dueTriggers({ log: flow.log, points: flow.series.points, limits: flow.limits, inFlight: flow.inFlight, window, now: at, pressureHolds: pressureHoldTimes(flow.events) }),
       cooldownUntil: cooldown.until, bypass: cooldown.bypass,
     },
   };

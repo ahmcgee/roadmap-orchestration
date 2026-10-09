@@ -177,6 +177,7 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | `executor-started` | `+ host?: HostFingerprint` (every dev.8 start) | absent: no fingerprint (a dev.7 ref never seeds limits) |
 | `executor-started` (rev 3) | `+ pressure?: available \| unavailable` (every start since rev 3) | absent: `unavailable` (`startPressureOf`, warned once; scaffolding) |
 | `proc.spawn` done `result` (rev 3) | `+ pressure?: number \| null` (every spawn closed since rev 3) | absent: null (`spawnPressureOf`, warned once; scaffolding): no pressure rule applies |
+| exit.json (rev 3 calibration) | `+ cpu?: LaunchCpu \| null` (every runner since the calibration) | absent: null (`exitCpuOf`, warned once; scaffolding): the launch has no pressure |
 | `FlowSeries` (rev 3) | `v: 2`; `FlowPoint.pressure`, `FlowPoint.stationPressure` (H1), `SuiteRun.pressure` required | a kept `v: 1` series is recomputed from the ref's events |
 | `Role` | `+ flow` (seat `arc`, frontier) | in force only with `arcRoles: m4b` |
 | `RevisionSource`, `HoldCause`, spawn subject, `CommandBody`, `JobId`, `NeedsUserReason`, facts, `.roadmap/config.json` | "M4b" | none |
@@ -3155,45 +3156,70 @@ Owner ruling 2026-10-09 (plan rev 3): cpu saturation is a constraint. Code measu
 subordinate to it, and no unit is charged for a starved host. Step H0 froze the records and the measurement; H1 (series,
 constraint, trigger, levers, verdict, inputs, prompt, surfaces) and H2 (charging) own the behaviour.
 
-**Measure** (`src/host/pressure.ts`). Linux PSI `/proc/pressure/cpu` (`PSI_CPU`), its `some` line: `total` (µs during
-which a runnable task waited for a cpu, cumulative), `avg10` and `avg60` (read as fractions). `parsePsiCpu` refuses a text
-without a `some` line or with a field missing or malformed; `readPressure()` is `unavailable` when the file is absent or
-the read fails `EOPNOTSUPP` (PSI disabled at boot), and fails loud on any other error or a malformed file. The interval
-pressure over two samples is Δtotal / Δwall (wall from `performance.now()`), in [0, 1] (capped at 1: the two clocks are
-read microseconds apart); a non-positive Δwall or a falling total throws. Constants: `PRESSURE_SATURATED = 0.25` (RC-10),
-`STARVED_MAX = 3` (RC-11).
+**Measure** (`src/host/pressure.ts`; recalibrated after H2, "Calibration" below). Cpu wait: the time a task was
+runnable but waited for a cpu (the scheduler's `run_delay`, Linux schedstat).
 
-**Sampling.** `invoke` (src/pipeline/invoke.ts) and the start-up smoke (src/preflight/smoke.ts) read PSI right before
-starting the runner and right after it is gone, so every launch the live executor watches (stage invocations, lane and
-journey runs, mutants, teardowns, probes, holistic, flow and proof calls, smokes) records its interval on its done record;
-`settle` takes it in `SettleMode{type: live, pressure}`, and an adopted or recovered spawn (no executor watched its
-runner) records null. The scheduler reads PSI once per loop iteration into `PressureTicks` (in memory, newest last, kept
-`PRESSURE_TICKS_MS` = 30 min, empty without PSI; a restart starts it fresh) and hands it to the flow track as
-`FlowTrackInput.pressure`.
+- *A launch's pressure* is its own cpu wait. Its runner reads `/proc/<pid>/task/<tid>/schedstat` (`parseTaskSchedstat`:
+  `<run ns> <wait ns> <timeslices>`) for every thread of every workload member at each poll (`WorkloadCpu`: the member
+  scan when the stall watchdog runs or the child has exited, else the child's process tree through
+  `/proc/<pid>/task/<tid>/children`), keeps each thread's latest reading (a lower bound: a thread that ends between polls
+  keeps its last one), and writes exit.json `cpu: LaunchCpu | null` (null without schedstat). `launchPressure(cpu)` =
+  `waitMs / max(wallMs, runMs + waitMs)` in [0, 1]: a cpu-bound launch's share of runnable time spent waiting, an idle
+  one's (a call waiting on its API, a hung process) share of wall time, so a launch that sleeps is never read as starved.
+  Null without a reading or under `PRESSURE_MIN_WALL_MS` (5 s): a shorter launch's reading is its start-up, which waits
+  on any busy host.
+- *The host's pressure* is the same ratio over every cpu: `/proc/schedstat` (`parseHostSchedstat`: version ≥ 15, each
+  `cpu<N>` line's fields 7 and 8, ns run and ns waited, summed) read once per scheduler loop iteration (`readHostCpu`,
+  `PressureTick{atMs, runNs, waitNs}`) into `PressureTicks` (in memory, newest last, kept `PRESSURE_TICKS_MS` = 30 min,
+  empty without schedstat; a restart starts it fresh; totals going back throw). `hostPressure(ticks, since)`: between the
+  newest tick and the latest one at least `HOST_WINDOW_MS` (60 s) before it, both at or after `since`; null when the
+  ticks span less.
+- *Availability*: `pressureAvailability()` is `available` when `/proc/schedstat` exists. Without it every launch's
+  pressure is null and every pressure rule is off; a present malformed file fails loud.
+- *PSI* (`/proc/pressure/cpu`) is not read (H0 read it): on a many-cpu host `some` is high whenever any task waits, and
+  it did not separate a healthy busy host from a starving one (below).
+- Constants: `PRESSURE_SATURATED = 0.5` (RC-10: the work waited half its time or more, it ran at under half speed),
+  `PRESSURE_MIN_WALL_MS = 5000`, `HOST_WINDOW_MS = 60000`, `STARVED_MAX = 3` (RC-11).
+
+**Sampling.** `settle` (src/pipeline/invoke.ts) reads the launch's pressure from exit.json in every mode (live, adopted,
+recovered: the runner measured it), and the start-up smoke (src/preflight/smoke.ts) from its exit.json, so every launch
+(stage invocations, lane and journey runs, mutants, teardowns, probes, holistic, flow and proof calls, smokes) records it
+on its done record. The scheduler records a host tick per loop iteration; admission reads the ticks (`AdmitInput.pressure`),
+and a new flow run binds the host's pressure over them as its inputs' `pressure.now`.
+
+**Calibration** (measured on the 16-cpu dev host, 2026-10-09; distributions of the per-launch metric over the
+executor's own main test tier and a cpu-bound probe launch, 1.5 s of single-thread work plus six short children, run
+every 10 to 20 s alongside). Main tier at `--test-concurrency=8` (its failures there were the old PSI rule's holds;
+PSI `some` avg60 median 0.37, p90 0.54): every suite launch of 5 s or more ≤ 0.14, the probe ≤ 0.47 (p90 0.36). Default concurrency (starving): suite launches of
+5 s or more ≤ 0.20, the probe's long runs median 0.52, max 0.60. 2 × cpus busy loops: probe 0.44 to 0.57; 4 × cpus:
+0.69 to 0.74. Host 60 s cpu wait: 0.48 median at concurrency 8, 0.56 at 2 × cpus, 0.77 at 4 × cpus, about 0 idle. PSI
+`some` does not separate: 0.37 median at concurrency 8, 0.31 at the default, 0.61 to 0.73 under burners. Launches
+under 5 s read up to 0.88 at concurrency 8 (process start-up), which is why they have no pressure.
 
 **Records.**
 
 | Record | Field | Meaning |
 |---|---|---|
-| `executor-started` | `pressure?: PressureAvailability` (`available \| unavailable`) | whether this host reports PSI at this start; a sibling of `host`, whose fingerprint seeds and givens compare by field equality, so PSI availability never changes a fingerprint (the plan's `executor-started.host.pressure`). Read: `startPressureOf` |
-| `proc.spawn` done, `result` arm | `pressure?: number \| null` (a fraction) | the launch's interval pressure; null without PSI or unwatched. Read: `spawnPressureOf` (src/core/upgrade.ts) |
-| `LaneRun` (src/pipeline/lanes.ts) | `pressure: number \| null` | the lane run's spawn's interval pressure, from its done record |
-| `FlowPoint` | `pressure: number \| null` | the time-weighted mean interval pressure over the unit's service intervals (every spawn its stages ran, clipped to its lead time), null if any is null or there is none (H1) |
+| `executor-started` | `pressure?: PressureAvailability` (`available \| unavailable`) | whether this host reports schedstat at this start; a sibling of `host`, whose fingerprint seeds and givens compare by field equality, so PSI availability never changes a fingerprint (the plan's `executor-started.host.pressure`). Read: `startPressureOf` |
+| `proc.spawn` done, `result` arm | `pressure?: number \| null` (a fraction) | the launch's pressure, from its exit.json `cpu`; null without schedstat, under `PRESSURE_MIN_WALL_MS`, or an exit.json without `cpu` (`exitCpuOf`, read with a warning). Read: `spawnPressureOf` (src/core/upgrade.ts) |
+| exit.json | `cpu?: LaunchCpu \| null` (`{wallMs, runMs, waitMs}`, ms) | the workload's cpu time as its runner observed it (spawn to quiescence); null without schedstat; absent from an earlier runner's file, read as null (`exitCpuOf`) |
+| `LaneRun` (src/pipeline/lanes.ts) | `pressure: number \| null` | the lane run's spawn's pressure, from its done record |
+| `FlowPoint` | `pressure: number \| null` | the time-weighted mean pressure over the unit's measured service intervals (every spawn its stages ran that has a pressure, clipped to its lead time), null when none has one (H1) |
 | `FlowPoint` | `stationPressure: Record<StationId, number \| null>` (H1) | the same mean per leaf station those spawns served (`stage:<s>`, `suite:<lane>`, `arc-lanes`, `candidate-rest`, `ff`, `snapshot`; never the slot or `host:cpu`) |
-| `StationRow` | `pressure: number \| null` (H1) | the station's points' `stationPressure` (the slot's: its components'), weighted by its minutes in each; null when no spawn served it or any is null |
-| `FlowInputs` | `pressure: FlowPressureStatus & {window, cpuInUse, hostCpus}` (H1) | the PSI now, the threshold, availability (`now` null exactly when unavailable); `window` the constraint window's mean interval pressure (`windowPressure`, null when no point measured one); the arc's own `@cpu` tokens held and the fingerprint's cpus |
-| `SuiteRun` | `pressure: number \| null` | the run's spawn's interval pressure |
+| `StationRow` | `pressure: number \| null` (H1) | the station's points' `stationPressure` (the slot's: its components'), weighted by its minutes in each, measured ones only; null when no spawn that served it has one |
+| `FlowInputs` | `pressure: FlowPressureStatus & {now, window, cpuInUse, hostCpus}` (H1) | the threshold and schedstat availability; `now` the host's cpu wait over the last minute of the scheduler's ticks (`FlowTrackInput.hostPressure`, `hostPressure`; null without schedstat or under a minute of ticks, always null when unavailable); `window` the constraint window's mean pressure (`windowPressure`, null when no point measured one); the arc's own `@cpu` tokens held and the fingerprint's cpus |
+| `SuiteRun` | `pressure: number \| null` | the run's spawn's pressure |
 | `FlowSeries` | `v: 2` (`FLOW_SERIES_V`) | a kept series of another `v` is recomputed |
 | `StationId` | `+ host:cpu` (`HOST_CPU_STATION`, parts `{type: host-cpu}`) | the host's cpu: internal, never a key of a point's `minutes`; `waitInFrontOf` refuses it (its levers' metric is pressure) |
 | `CodeConstraint` | `station: host:cpu` with `internal: true`, `component: null` | ahead of the wait and service rules when the window's mean pressure ≥ `PRESSURE_SATURATED` (H1) |
-| `FLOW_TRIGGERS` | `+ host-pressure`, after `yellow-worsening` | with units in flight, the ticks since the last run's start end in a run with avg60 ≥ `PRESSURE_SATURATED` spanning ≥ 10 min (H1, `sustainedPressure`); `status.flow.next.due` never holds it (the ticks are the executor's memory) |
+| `FLOW_TRIGGERS` | `+ host-pressure`, after `yellow-worsening` | with units in flight, a host-pressure hold since the last run's start (its stage outcome's time, `pressureHoldTimes` over the log; recalibration: was 10 min of PSI avg60 ≥ the threshold, which a healthy busy host reaches) |
 | `FLOW_DROP_REASONS` | `+ direction`, after `elevate-early` | an increase at `host:cpu` (only decreases or `host` advice) |
-| `FlowMetric` | `+ pressure{}` | RC-12: a lever at `host:cpu` is measured by the interval pressure of the units admitted after (a unit without one is no sample); lead stays a guard. Its step is `subordinate` (`stepOf`) |
-| `HoldCause` | `+ host-pressure{inv}` | RC-11: a unit whose run `inv` was starved, or red under pressure with its rerun pending, held until a tick since the hold shows avg60 < `PRESSURE_SATURATED` or 30 min pass (H2; see "Charging") |
-| `Starved` (src/host/pressure.ts) | `{kind: starved, inv, pressure}` | RC-11: a lane run or stage invocation ended by `deadline` or `stall` with interval pressure ≥ `PRESSURE_SATURATED`: no product verdict, not chargeable, no fix round; after `STARVED_MAX` host-pressure holds of one unit, today's handling (H2) |
+| `FlowMetric` | `+ pressure{}` | RC-12: a lever at `host:cpu` is measured by the pressure of the units admitted after (a unit without one is no sample); lead stays a guard. Its step is `subordinate` (`stepOf`) |
+| `HoldCause` | `+ host-pressure{inv}` | RC-11: a unit whose run `inv` was starved, or red under pressure with its rerun pending, held until a minute of ticks since the hold shows the host's cpu wait < `PRESSURE_SATURATED` or 30 min pass (H2; see "Charging") |
+| `Starved` (src/host/pressure.ts) | `{kind: starved, inv, pressure}` | RC-11: a lane run or stage invocation ended by `deadline` or `stall` with its own pressure ≥ `PRESSURE_SATURATED`: no product verdict, not chargeable, no fix round; after `STARVED_MAX` host-pressure holds of one unit, today's handling (H2) |
 | `AdmissionConstraint` (src/schedule/types.ts) | `+ host-pressure{inv}` | H2: the re-run of a unit with a pending host-pressure hold waits (status's station: `host`) |
-| `AdmitInput` | `+ pressure: {ticks, nowMs}` (`PressureNow`) | H2: the scheduler's `PressureTicks` and the wall time; status reads one PSI sample as its tick (`pressureNowOf`) |
-| `FlowPressureStatus` (src/flow/types.ts) | `{now: {avg10, avg60} \| null, threshold, available}` | `status.flow.pressure`, read at each status (src/flow/live.ts `pressureNow`) |
+| `AdmitInput` | `+ pressure: {ticks, nowMs}` (`PressureNow`) | H2: the scheduler's `PressureTicks` and the wall time; status has no ticks (`{ticks: [], nowMs}`), so it shows a hold waiting until its 30-min bound |
+| `FlowPressureStatus` (src/flow/types.ts) | `{threshold, available}` | `status.flow.pressure` (src/flow/live.ts `pressureNow`): the cpu-wait threshold and schedstat availability; no live reading, so status stays a function of the log |
 
 **Charging (step H2, RC-11).** No new record: the hold is the stage's `interrupted` outcome, class `hold`, with cause
 `host-pressure{inv}`, so no counter moves and no retry is spent. `pressureRuling` (src/host/pressure.ts, pure) reads the
@@ -3208,8 +3234,8 @@ its diagnostic rerun; a host-signature rerun's voided first run is not read. The
 keep today's handling. The fold derives `UnitState.pressureHold{inv, at}` (the latest host-pressure hold, until an
 outcome decides; a pause hold since keeps it; reopen, steer and merge-in clear it) and `pressureHolds` (a count); a
 host-pressure hold leaves the unit `active`, and admission waits under `host-pressure{inv}` while `pressureHoldWaits`:
-under `STARVED_HOLD_MS` (30 min) since the hold and no tick taken since it with avg60 < `PRESSURE_SATURATED` (none yet,
-as after a restart, waits). A held build re-runs as the `continue` round of the session its deadline cut off, as after a
+under `STARVED_HOLD_MS` (30 min) since the hold and the host's cpu wait over the last minute of ticks since it unknown (under
+a minute of ticks, as right after the hold or a restart) or ≥ `PRESSURE_SATURATED`. A held build re-runs as the `continue` round of the session its deadline cut off, as after a
 pause. Recovery: nothing beyond the hold fact is journaled, so no new crash row; a crash before it re-runs the attempt as
 any crash does, and the hold's release is derived from the log, the ticks and the clock.
 

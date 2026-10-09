@@ -137,7 +137,7 @@ export type AdmissionConstraint =
   | Readonly<{ type: 'known-defect'; id: KnownDefectId; fixUnit: UnitId }>
   /**
    * M4b rev 3 (RC-11): the unit's run `inv` was starved, or red under pressure with its rerun pending (`UnitState.pressureHold`):
-   * its re-run waits until a tick since the hold shows avg60 below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass.
+   * its re-run waits until a minute of scheduler ticks since the hold shows the host's cpu wait below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass.
    */
   | Readonly<{ type: 'host-pressure'; inv: InvocationId }>;
 

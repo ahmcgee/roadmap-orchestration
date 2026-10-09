@@ -63,7 +63,7 @@ import { isAlive, selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
 import { readHostFingerprint, readHostSample } from './host/sample.ts';
-import { availabilityOf, readPressure } from './host/pressure.ts';
+import { pressureAvailability } from './host/pressure.ts';
 import { arcRolesOf, requirePlanInForce } from './input/inforce.ts';
 import type { PlanM1 } from './input/plan.ts';
 import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
@@ -228,7 +228,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     const start: RunStart = { v: SCHEMA_VERSION, generation: claim.generation, at: isoTimeOf(new Date()), repo: context.repo, planFile: context.planFile, profile: context.profile };
     atomicJson(join(context.runDir, START_FILE), start);
     writeHeartbeat(context.runDir, claim.generation);
-    journal.fact({ kind: 'executor-started', generation: claim.generation, host: readHostFingerprint(), pressure: availabilityOf(readPressure()) });
+    journal.fact({ kind: 'executor-started', generation: claim.generation, host: readHostFingerprint(), pressure: pressureAvailability() });
 
     const x = contexts(args, context, routing.profile, journal);
     const stopped = args.controlOnly ? await controlOnly(x) : null;

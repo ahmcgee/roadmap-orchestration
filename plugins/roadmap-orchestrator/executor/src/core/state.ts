@@ -118,8 +118,8 @@ export type UnitState = Readonly<{
   interrupted: StageOutcomeFact | null;
   /**
    * M4b rev 3 (RC-11): the unit's latest host-pressure hold while no later outcome has decided (a pause hold since keeps
-   * it): the run it was held for, and when. Admission holds the stage's re-run until the tick avg60 falls below
-   * `PRESSURE_SATURATED` or `STARVED_HOLD_MS` pass (src/schedule/ready.ts), and that re-run is the one rerun a red under
+   * it): the run it was held for, and when. Admission holds the stage's re-run until a minute of scheduler ticks since the hold shows the host's cpu wait below `PRESSURE_SATURATED`
+   * or `STARVED_HOLD_MS` pass (src/schedule/ready.ts), and that re-run is the one rerun a red under
    * pressure gets. A host-pressure hold leaves the unit `active`: it waits on admission, not on a resume. Null otherwise.
    */
   pressureHold: Readonly<{ inv: InvocationId; at: IsoTime }> | null;

@@ -100,8 +100,8 @@ const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
     verdicts: k === 'A' ? [] : [{ proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:all'), verdict: 'improved' }],
     rejections: k === 'A' ? [] : [{ key: { station: stationId('stage:build'), lever: 'build-class', target: { type: 'tier', tier: 'low' } }, proposal: proposalId('flow-2.0'), cause: 'rejected' }],
     advances: [{ id: visionClauseId(`V-${n}`), text: `ADVANCES-${k}` }],
-    pressure: k === 'A' ? { now: null, threshold: 0.25, available: false, window: null, cpuInUse: 1, hostCpus: 4 }
-      : { now: { avg10: 0.41, avg60: 0.37 }, threshold: 0.25, available: true, window: 0.33, cpuInUse: 7, hostCpus: 8 },
+    pressure: k === 'A' ? { now: null, threshold: 0.5, available: false, window: null, cpuInUse: 1, hostCpus: 4 }
+      : { now: 0.41, threshold: 0.5, available: true, window: 0.33, cpuInUse: 7, hostCpus: 8 },
   };
 };
 

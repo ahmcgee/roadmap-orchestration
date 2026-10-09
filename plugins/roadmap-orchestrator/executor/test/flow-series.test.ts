@@ -340,7 +340,7 @@ describe('flow series: the station table', () => {
 
 describe('flow series: pressure (M4b rev 3)', () => {
   const GOLDEN = arcLaneDef('golden', ['node', 'journey.js']);
-  /** u1: a build, a lane run, a suite run and an arc lane, each with a known interval pressure; u2: a suite run without one. */
+  /** u1: a build, a lane run, a suite run and an arc lane, each with a known pressure; u2: a suite run without one. */
   function pressured(): FlowLog {
     const log = new FlowLog();
     log.applied(0, 1, { obligations: 'o' });
@@ -359,11 +359,11 @@ describe('flow series: pressure (M4b rev 3)', () => {
     return log;
   }
 
-  it('a point\'s pressure is the time-weighted mean of its service intervals, per station too; one unmeasured interval nulls it', () => {
+  it('a point\'s pressure is the time-weighted mean of its measured service intervals, per station too; none measured is null', () => {
     const [p1, p2] = series(pressured(), PLAN, obligationsOf([GOLDEN])).points;
     assert.ok(near(p1!.pressure!, (0.2 * 3 + 0.5 * 1 + 0.8 * 2 + 0.4 * 1) / 7), String(p1!.pressure));
     assert.deepEqual(p1!.stationPressure, { 'arc-lanes': 0.4, 'stage:build': 0.2, 'stage:lanes': 0.5, 'suite:suite': 0.8 });
-    assert.equal(p2!.pressure, null, 'a spawn closed without pressure');
+    assert.equal(p2!.pressure, null, 'its one spawn closed without pressure');
     assert.deepEqual(p2!.stationPressure, { 'suite:suite': null });
     const lost = new FlowLog();
     lost.applied(0, 1);
@@ -372,18 +372,19 @@ describe('flow series: pressure (M4b rev 3)', () => {
     lost.spawn(2, 4, stageOf('u1', 'build', 1), { purpose: 'build', unit: 'u1' }, 'pass', 0.3);
     lost.outcome(4, 'u1', 'build', 1, 'success');
     lost.outcome(4, 'u1', 'snapshot', 2, 'published', 'retire');
-    assert.equal(series(lost).points[0]!.pressure, null, 'a lost run measured nothing');
+    assert.equal(series(lost).points[0]!.pressure, 0.3, 'a lost run measured nothing and weighs nothing');
   });
 
-  it('the station table weighs each point\'s station pressure by its minutes; the slot by its components; null when any is', () => {
+  it('the station table weighs each point\'s measured station pressure by its minutes; the slot by its components; null when none is', () => {
     const [p1, p2] = series(pressured(), PLAN, obligationsOf([GOLDEN])).points;
     const one = new Map(stationTable([p1!]).map((r) => [r.station as string, r.pressure]));
     assert.ok(near(one.get('slot:integration')!, (0.8 * 2 + 0.4 * 1) / 3));
     assert.ok(near(one.get('stage:build')!, 0.2));
     assert.equal(one.get('wait:lanes'), null, 'no spawn serves a wait');
     const both = new Map(stationTable([p1!, p2!]).map((r) => [r.station as string, r.pressure]));
-    assert.equal(both.get('suite:suite'), null);
-    assert.equal(both.get('slot:integration'), null);
+    assert.ok(near(both.get('suite:suite')!, 0.8), 'u2\'s unmeasured run is left out');
+    assert.ok(near(both.get('slot:integration')!, (0.8 * 2 + 0.4 * 1) / 3));
+    assert.equal(stationTable([p2!]).find((r) => r.station === 'suite:suite')?.pressure, null, 'none measured');
     assert.ok(near(both.get('stage:build')!, 0.2), 'only u1 ran a build spawn');
     assert.ok(near(both.get('arc-lanes')!, 0.4));
   });

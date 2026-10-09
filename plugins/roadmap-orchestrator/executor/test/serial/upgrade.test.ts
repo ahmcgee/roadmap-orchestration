@@ -11,7 +11,7 @@
 // and kept every M3 and M4a record, so its arcs run on HEAD as they ran on it; an arc it started without the holistic
 // layer runs with M2 semantics and no new spend unless the architect opts in, and (M4b) every arc it started keeps the
 // dev.7 role set: no flow seat, no flow loop, its routing revs unchanged. Its starts and spawns carry no pressure (M4b
-// rev 3) and read with the defaults; HEAD's record this host's PSI.
+// rev 3) and read with the defaults; HEAD's record this host's schedstat cpu wait.
 //
 // A crashed previous release: its executor is armed with a crash trigger (src/core/crash.ts), and its supervisor
 // is frozen (SIGSTOP) as soon as it is ready, so no generation of the previous release recovers the crash; once
@@ -88,7 +88,7 @@ import { incomingPath, terminalReceipt } from '../../src/commands/queue.ts';
 import type { ExitReason } from '../../src/executor.ts';
 import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
 import { readOwner } from '../../src/host/owner.ts';
-import { availabilityOf, readPressure } from '../../src/host/pressure.ts';
+import { pressureAvailability } from '../../src/host/pressure.ts';
 import { RESIDUE_ARCHIVE, bodyOf, readResidues, recordDisposition, recordResidue } from '../../src/host/residues.ts';
 import { requirePlanInForce } from '../../src/input/inforce.ts';
 import { overCapacity } from '../../src/resources/pool.ts';
@@ -374,19 +374,23 @@ function assertFinished(f: Finished): void {
 
 /**
  * M4b rev 3: the previous release's starts and spawns carry no pressure and read with the defaults (`unavailable`, null);
- * HEAD's starts record this host's PSI availability and its live spawns an interval exactly when PSI is available.
+ * HEAD's starts record this host's schedstat availability and every spawn it closed records its pressure (a number, or
+ * null for a launch under `PRESSURE_MIN_WALL_MS`; null always without schedstat).
  */
 function assertPressure(f: Finished): void {
   const headFirst = f.after[0]?.seq ?? Infinity;
   const before = f.events.filter((e) => e.seq < headFirst);
-  const available = availabilityOf(readPressure());
+  const available = pressureAvailability();
   assert.deepEqual(factsOf(before, 'executor-started').map((s) => [s.pressure, startPressureOf(s)]), factsOf(before, 'executor-started').map(() => [undefined, 'unavailable']));
   for (const s of factsOf(f.after, 'executor-started')) assert.equal(s.pressure, available);
   const spawnResults = (events: readonly Event[]) => events.flatMap((e) => (e.type === 'done' && e.kind === 'proc.spawn' && e.outcome.kind === 'result' ? [{ e, outcome: e.outcome }] : []));
   for (const { outcome } of spawnResults(before)) assert.equal(spawnPressureOf(outcome), null);
-  const live = spawnResults(f.after).filter((x) => x.e.recoveredBy === null);
-  assert.ok(live.length > 0, 'HEAD closed spawns it watched');
-  for (const { outcome } of live) assert.equal(typeof outcome.pressure === 'number', available === 'available', JSON.stringify(outcome));
+  const closed = spawnResults(f.after);
+  assert.ok(closed.length > 0, 'HEAD closed spawns');
+  for (const { outcome } of closed) {
+    assert.notEqual(outcome.pressure, undefined, JSON.stringify(outcome));
+    if (available === 'unavailable') assert.equal(outcome.pressure, null, JSON.stringify(outcome));
+  }
 }
 
 /**

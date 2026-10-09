@@ -136,9 +136,10 @@ test('evals-m4a.profile-criterion: every arc\'s first plan-applied is under the 
 });
 
 /** An arc log for `pressure-recorded` from its records (cast, never parsed); its flow runs kept inputs at window pressure `window`. */
-function pressureArc(records: readonly object[], window: number | null = 0.3): PressureArc {
-  const events = records.map((r, i) => ({ v: 1, seq: i + 1, prev: null, at: '2026-10-09T10:00:00.000Z', arc: 'arc-p', ...r })) as unknown as Event[];
-  return { arc: 'arc-p', events, flowInputs: () => ({ pressure: { now: null, threshold: 0.25, available: true, window, cpuInUse: 2, hostCpus: 8 } }) as unknown as FlowInputs };
+function pressureArc(records: readonly object[], window: number | null = 0.6): PressureArc {
+  // A minute between records: every lane run is long enough to carry a pressure, unless a record gives its own `at`.
+  const events = records.map((r, i) => ({ v: 1, seq: i + 1, prev: null, at: new Date(Date.parse('2026-10-09T10:00:00.000Z') + i * 60_000).toISOString(), arc: 'arc-p', ...r })) as unknown as Event[];
+  return { arc: 'arc-p', events, flowInputs: () => ({ pressure: { now: null, threshold: 0.5, available: true, window, cpuInUse: 2, hostCpus: 8 } }) as unknown as FlowInputs };
 }
 const startRec = (pressure: 'available' | 'unavailable') => ({ type: 'fact', fact: { kind: 'executor-started', generation: 1, pressure } });
 const laneIntent = (op: string, purpose = 'lane') => ({ type: 'intent', kind: 'proc.spawn', op, parent: { type: 'stage' }, expect: { subject: { purpose } } });
@@ -148,19 +149,22 @@ const flowRun = (station: string) => [
   { type: 'fact', fact: { kind: 'flow-ended', job: 'flow-1', outcome: 'done', proposal: null, dropped: null, constraint: { code: { station, internal: true, component: null }, judged: null } } },
 ];
 
-test('evals-m4a.pressure-criterion: lane runs watched under a PSI start carry pressure; host:cpu only at a saturated window; graded', () => {
+test('evals-m4a.pressure-criterion: long lane runs under a schedstat start carry pressure; host:cpu only at a saturated window; graded', () => {
   const good = pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', 0.04), laneIntent('o2', 'journey'), laneDone('o2', 0.3), ...flowRun('host:cpu')]);
   assert.equal(pressureRecordedVerdict([good]).pass, true, pressureRecordedVerdict([good]).detail);
-  // An adopted run (its intent under an earlier start) and a run under a start without PSI record null legitimately.
-  const adopted = pressureArc([startRec('available'), laneIntent('o1'), startRec('available'), laneDone('o1', null), startRec('unavailable'), laneIntent('o2'), laneDone('o2', null)]);
+  // A run whose intent was under an earlier start, a run under a start without schedstat, and a short run record null legitimately.
+  const adopted = pressureArc([
+    startRec('available'), laneIntent('o1'), startRec('available'), laneDone('o1', null), startRec('unavailable'), laneIntent('o2'), laneDone('o2', null),
+    startRec('available'), { ...laneIntent('o3'), at: '2026-10-09T11:00:00.000Z' }, { ...laneDone('o3', null), at: '2026-10-09T11:00:09.000Z' },
+  ]);
   assert.equal(pressureRecordedVerdict([adopted]).pass, true, pressureRecordedVerdict([adopted]).detail);
   const missing = pressureRecordedVerdict([pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', null)])]);
   assert.equal(missing.pass, false);
   assert.match(missing.detail, /o1's lane run has no pressure/);
-  const calm = pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('host:cpu')], 0.2)]);
-  assert.match(calm.detail, /flow-1 named host:cpu at window pressure 0.2/);
+  const calm = pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('host:cpu')], 0.4)]);
+  assert.match(calm.detail, /flow-1 named host:cpu at window pressure 0.4/);
   assert.equal(pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('slot:integration')], null)]).pass, true, 'no host:cpu: no window read');
-  assert.match(pressureRecordedVerdict([pressureArc([startRec('unavailable')])]).detail, /no executor start recorded PSI available/);
+  assert.match(pressureRecordedVerdict([pressureArc([startRec('unavailable')])]).detail, /no executor start recorded schedstat available/);
   assert.ok(CRITERIA.map(([name]) => name).includes('pressure-recorded'));
 });
 

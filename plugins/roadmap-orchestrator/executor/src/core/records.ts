@@ -248,8 +248,19 @@ export type ChildEnd =
 /** `exited` = the child ended on its own; the others name why the runner killed the workload. */
 export type ExitCause = 'exited' | 'deadline' | 'stall' | 'cancel' | 'recovery-kill';
 
-/** exit.json: written by the runner after the workload is empty, before the adapter runs. */
-export type ExitFile = InvocationBinding & Readonly<{ child: ChildEnd; cause: ExitCause; endedAt: IsoTime; quiescedAt: IsoTime }>;
+/**
+ * A workload's cpu time as its runner observed it (M4b rev 3, src/host/pressure.ts `WorkloadCpu`): `wallMs` from spawn to
+ * quiescence, `runMs` on a cpu and `waitMs` runnable but waiting for one, summed over every thread of every member.
+ */
+export type LaunchCpu = Readonly<{ wallMs: number; runMs: number; waitMs: number }>;
+const launchCpu: Read<LaunchCpu> = object((f) => ({ wallMs: f.get('wallMs', nat), runMs: f.get('runMs', nat), waitMs: f.get('waitMs', nat) }));
+
+/**
+ * exit.json: written by the runner after the workload is empty, before the adapter runs. `cpu` (M4b rev 3, additive):
+ * the workload's cpu time, null on a host without schedstat; absent from an earlier runner's file, read as null
+ * (`exitCpuOf`, src/core/upgrade.ts).
+ */
+export type ExitFile = InvocationBinding & Readonly<{ child: ChildEnd; cause: ExitCause; endedAt: IsoTime; quiescedAt: IsoTime; cpu?: LaunchCpu | null }>;
 
 const childEnd: Read<ChildEnd> = tagged('type', {
   exited: object((f): ChildEnd => ({ type: f.get('type', literal('exited')), code: f.get('code', exitCode) })),
@@ -265,13 +276,15 @@ const childEnd: Read<ChildEnd> = tagged('type', {
 });
 
 export const exitFile: Read<ExitFile> = object((f) => {
-  const out: ExitFile = {
+  let out: ExitFile = {
     ...binding(f),
     child: f.get('child', childEnd),
     cause: f.get('cause', oneOf(['exited', 'deadline', 'stall', 'cancel', 'recovery-kill'] as const)),
     endedAt: f.get('endedAt', time),
     quiescedAt: f.get('quiescedAt', time),
   };
+  const cpu = f.optional('cpu', nullable(launchCpu));
+  if (cpu !== undefined) out = { ...out, cpu };
   if (out.child.type === 'spawn-failed' && out.cause !== 'exited') throw new SchemaError(`${f.path}.cause`, '"exited" for a child that never spawned', out.cause);
   if (out.quiescedAt < out.endedAt) throw new SchemaError(`${f.path}.quiescedAt`, `not before endedAt ${out.endedAt}`, out.quiescedAt);
   return out;

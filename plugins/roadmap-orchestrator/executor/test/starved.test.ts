@@ -8,7 +8,7 @@ import { describe, it } from 'node:test';
 import { invocationId, opId } from '../src/core/ids.ts';
 import { newUnitState } from '../src/core/state.ts';
 import {
-  PRESSURE_SATURATED, type PressureRun, STARVED_HOLD_MS, STARVED_MAX, pressureHoldWaits, pressureNowOf, pressureRuling,
+  PRESSURE_SATURATED, type PressureRun, STARVED_HOLD_MS, STARVED_MAX, pressureHoldWaits, pressureRuling,
 } from '../src/host/pressure.ts';
 import { type StageOutcome, outcomeFact, transition } from '../src/pipeline/transitions.ts';
 import { ARC, U1 } from './fixtures/log-records.ts';
@@ -19,18 +19,18 @@ const run = (end: PressureRun['end'], pressure: number | null, inv = INV): Press
 const FIRST = { count: 0, rerun: false };
 
 describe('pressure.ruling', () => {
-  it('starved: a deadline or stall kill at or above the threshold; below it, or without PSI, today\'s handling', () => {
+  it('starved: a deadline or stall kill at or above the threshold; below it, or without a pressure, today\'s handling', () => {
     assert.deepEqual(pressureRuling([run('deadline', PRESSURE_SATURATED)], FIRST), { kind: 'starved', inv: INV, pressure: PRESSURE_SATURATED });
     assert.deepEqual(pressureRuling([run('stall', 0.9)], FIRST), { kind: 'starved', inv: INV, pressure: 0.9 });
-    assert.deepEqual(pressureRuling([run('deadline', 0.2499)], FIRST), { kind: 'counts' });
-    assert.deepEqual(pressureRuling([run('deadline', null)], FIRST), { kind: 'counts' }, 'PSI unavailable: null never counts as starved');
+    assert.deepEqual(pressureRuling([run('deadline', 0.4999)], FIRST), { kind: 'counts' });
+    assert.deepEqual(pressureRuling([run('deadline', null)], FIRST), { kind: 'counts' }, 'no pressure (no schedstat, or a short run): null never counts as starved');
     assert.deepEqual(pressureRuling([run('other', 1)], FIRST), { kind: 'counts' }, 'a signal or a lost runner is no watchdog kill');
   });
 
   it('red-rerun: a red at or above the threshold reruns once; the rerun\'s red counts; a starved run wins over a red one', () => {
     assert.deepEqual(pressureRuling([run('red', 0.5)], FIRST), { kind: 'red-rerun', inv: INV, pressure: 0.5 });
     assert.deepEqual(pressureRuling([run('red', 0.5)], { count: 1, rerun: true }), { kind: 'counts' }, 'only the rerun\'s verdict counts');
-    assert.deepEqual(pressureRuling([run('red', 0.1)], FIRST), { kind: 'counts' });
+    assert.deepEqual(pressureRuling([run('red', 0.49)], FIRST), { kind: 'counts' });
     assert.deepEqual(pressureRuling([run('red', null)], FIRST), { kind: 'counts' });
     // A red lane and its diagnostic rerun killed by its deadline: the starved rerun decides.
     assert.deepEqual(pressureRuling([run('red', 0.6), run('deadline', 0.7, INV2)], FIRST), { kind: 'starved', inv: INV2, pressure: 0.7 });
@@ -48,15 +48,13 @@ describe('pressure.ruling', () => {
 
 describe('pressure.hold-release', () => {
   const AT = 1_000_000;
-  it('waits under 30 min unless a tick since the hold shows avg60 below the threshold', () => {
+  const t = (dMs: number, runNs: number, waitNs: number) => ({ atMs: AT + dMs, runNs, waitNs });
+  it('waits under 30 min unless a minute of ticks since the hold shows the host\'s cpu wait below the threshold', () => {
     assert.equal(pressureHoldWaits(AT, { ticks: [], nowMs: AT }), true);
     assert.equal(pressureHoldWaits(AT, { ticks: [], nowMs: AT + STARVED_HOLD_MS }), false);
-    assert.equal(pressureHoldWaits(AT, { ticks: [{ atMs: AT, avg60: 0.2 }], nowMs: AT + 1 }), false);
-    assert.equal(pressureHoldWaits(AT, { ticks: [{ atMs: AT - 1, avg60: 0.2 }], nowMs: AT + 1 }), true);
-  });
-  it('a process without the tick history reads one PSI sample as its tick', () => {
-    assert.deepEqual(pressureNowOf('unavailable', 5), { ticks: [], nowMs: 5 });
-    assert.deepEqual(pressureNowOf({ totalUs: 1, avg10: 0.5, avg60: 0.3, atMs: 1 }, 5), { ticks: [{ atMs: 5, avg60: 0.3 }], nowMs: 5 });
+    assert.equal(pressureHoldWaits(AT, { ticks: [t(0, 0, 0), t(60_000, 80, 20)], nowMs: AT + 60_001 }), false);
+    assert.equal(pressureHoldWaits(AT, { ticks: [t(-1, 0, 0), t(59_999, 80, 20)], nowMs: AT + 60_001 }), true, 'the first tick is before the hold');
+    assert.equal(pressureHoldWaits(AT, { ticks: [t(0, 0, 0), t(60_000, 20, 80)], nowMs: AT + 60_001 }), true);
   });
 });
 
