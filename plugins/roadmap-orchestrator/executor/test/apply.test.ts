@@ -951,6 +951,44 @@ test('apply.rejections: a stale expectRev, files changed since they were hashed,
   }
 });
 
+test('apply.lane-row-live-units (paid M4b run 3, OP-3): the lane row checks what a revision makes live: a unit in force with an unrunnable lane is re-entered or cut, while a revision keeping it live, or a successor with the same lane, is refused', T, async () => {
+  // u2's and u3's lane runs `node` on a PATH without it (in force unchecked, as checkpoint ckpt-14 admitted outbox-fragment).
+  const empty = tmpDir('empty-path');
+  const unrunnable = { id: 'u2', argv: ['node', '--test'], env: { set: { PATH: empty }, pass: [] } };
+  const row = (unit: string) => new RegExp(`"kind":"spec-lane-unrunnable","lane":"u2","problem":\\{"argv0":"node","type":"argv0-unresolvable"\\},"unit":"${unit}"`);
+  const reason = (o: CommandOutcome): string => (o.kind === 'rejected' ? o.reason : assert.fail(`not rejected: ${JSON.stringify(o)}`));
+  const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2', lanes: [unrunnable] }, { id: 'u3', lanes: [unrunnable] }] });
+  const r = contextFor(d);
+  try {
+    // A revision that keeps u2 live and changes it re-runs the row over it.
+    const inForce = readFileSync(specPath(d, 'u2'));
+    editSpec(d, 'u2', (s) => {
+      addClause(s);
+      s['rev'] = 2;
+    });
+    assert.match(reason((await command(r, applyBody(d))).outcome), row('u2'));
+    writeFileSync(specPath(d, 'u2'), inForce);
+    // Its re-entry under a successor with u1's lanes: u2 is superseded, so its lanes are not checked.
+    parkAtGate(r, 'u2');
+    reenter('u4', 'u2')(d);
+    const reentry = await command(r, applyBody(d));
+    assert.equal(reentry.outcome.kind, 'applied', JSON.stringify(reentry.outcome));
+    // A successor carrying the same lane is refused for its own lane.
+    parkAtGate(r, 'u3');
+    reenter('u5', 'u3')(d);
+    editSpec(d, 'u5', (s) => void (s['lanes'] = [{ ...unrunnable, cwd: '.', expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' }]));
+    assert.match(reason((await command(r, applyBody(d))).outcome), row('u5'));
+    editPlan(d, (p) => void (p.units = p.units.filter((u) => u.id !== 'u5')));
+    // A cut of the parked u3: the row never runs on what the revision retires.
+    cutUnits('u3')(d);
+    const cut = await command(r, applyBody(d));
+    assert.equal(cut.outcome.kind, 'applied', JSON.stringify(cut.outcome));
+    assert.deepEqual(applied(d).at(-1)!.changes.filter((c) => c.type === 'unit-cut'), [cutChange('u3')]);
+  } finally {
+    r.journal.close();
+  }
+});
+
 test('apply.smoke-new-backend: a routing apply that seats a backend the plan in force did not smokes it first; a failed smoke rejects it', T, async () => {
   const OK = { ok: true } as const;
   const d = setupArc({

@@ -186,7 +186,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
   const proposal: InputFiles = { ...current, plan, planBytes, specs, obligations };
 
   const evaluated = evaluateRevision(
-    { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase }, proposal, { type: 'reverse' },
+    { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv }, proposal, { type: 'reverse' },
   );
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons, 'reverse') };
   if (evaluated.kind === 'unchanged') return { kind: 'applied', verified: [`${divergence}'s preimage is in force already (rev ${evaluated.rev})`] };

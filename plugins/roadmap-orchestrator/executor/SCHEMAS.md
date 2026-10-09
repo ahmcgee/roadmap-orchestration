@@ -735,9 +735,14 @@ unit's spec into the command's manifest. The effect (`src/commands/apply.ts`, a 
 (A12, "Executor, status, recovery"); nothing live is killed): the plan in force's `rev` must equal `expectRev`
 when given (`stale: …`); the files are re-read and must hash to the manifest (`the files changed since …`); every
 change is classified against the plan in force and the log (`src/input/classify.ts`); the startup rows re-run
-(`applyRows`: `plan-invalid` and `spec-lane-unrunnable` over the units whose entry or spec changed, all units when a
-resource was changed or removed or the contracts or rulings changed; `unsupported-routing` when the routing
-changed); a backend the new routing seats that the routing in force did not passes its smoke. Then the bytes are
+(`applyRows`: `plan-invalid` over the units whose entry or spec changed, all units when a resource was changed or
+removed or the contracts or rulings changed; `unsupported-routing` when the routing changed); `spec-lane-unrunnable`
+over the same units is the apply core's (`evaluateRevision`, src/preflight/lanerows.ts `laneRows`, the one lane
+validator), so every revision runs it (an `apply` and its dry run, a checkpoint bundle, a flow proposal, `steer`,
+`rule`, `reverse`), and it checks only what the revision leaves live: a cut unit, and a unit another unit of the plan
+re-enters, run no lane again and are never checked (paid M4b run 3, OP-3; a start checks every live unit); a ruling
+the revision lands is validated against the units of the revision's own plan, at the apply and again at its docs
+publication (OP-2: a ruling may apply to a unit the same revision adds); a backend the new routing seats that the routing in force did not passes its smoke. Then the bytes are
 kept (`plan.apply.after-inputs`) and `plan-applied{rev + 1, command}` written, the postcondition: a re-run after a
 crash finds it (`planAppliedBy`) and applies nothing twice. All or nothing: the rejected receipt's `reason` is
 `apply rejected (<n> reason[s]): (1) …; (2) …`, every reason of the first step that found any (a startup row as its

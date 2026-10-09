@@ -487,6 +487,50 @@ describe('the activation checks', () => {
       r.journal.close();
     }
   });
+
+  test('bundle.lane-unrunnable-invalid (paid M4b run 3, OP-3): an admit whose lane cannot resolve its argv[0] on its own PATH is invalid through the apply core\'s lane row; nothing applies', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      // The program every lane in force runs (so no owner-only lane-program request), on a PATH that does not hold it.
+      const lane = { id: 'u2', argv: ['node', '--test'], cwd: '.', env: { set: { PATH: tmpDir('empty-path') }, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' };
+      appendSteps(d, [checkpointStep('ckpt-1', bundle([admitOp(d, 'u2', [lane])]))]);
+      await completedAudit(r, ctx);
+      const rev = r.journal.view.planApplied()!.rev;
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
+      assert.match(out.decision.detail, /"kind":"spec-lane-unrunnable","lane":"u2","problem":\{"argv0":"node","type":"argv0-unresolvable"\},"unit":"u2"/);
+      assert.equal(r.journal.view.planApplied()!.rev, rev, 'nothing applied');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.ruling-for-admitted-unit (paid M4b run 3, OP-2): a ruling applying to a unit the same bundle admits lands, its docs publication included', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      const ruling = JSON.stringify({
+        schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'u2 keeps the helpers pure.', kind: 'decision', trigger: 'checkpoint',
+        supersedes: [], condition: null, docRefs: [{ path: 'contracts/api.md', anchor: '#api-contract', quotedText: 'returns the sum', relation: 'consistent' }],
+        contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: ['V-1'],
+        evidence: ['the repair needs a rule of its own'], appliesTo: { type: 'units', units: ['u2'] }, lifetime: 'arc', status: 'active',
+      });
+      const ops = [admitOp(d, 'u2'), { op: 'rule', ruling: 'C-2', cites: ['V-1'], evidence: ['the repair needs a rule of its own'] }];
+      appendSteps(d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops, rulings: [ruling] }))]);
+      await completedAudit(r, ctx);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      const applied = r.journal.view.planApplied()!;
+      assert.ok(applied.publication !== undefined, 'published through its docs publication');
+      assert.deepEqual(Object.keys(keptPayload(r.ctx.runDir, applied.payloadSha256!).manifest.rulings.sidecars), ['C-2']);
+      assert.equal(requirePlan(r).units.find((u) => u.id === 'u2')?.origin, 'checkpoint');
+    } finally {
+      r.journal.close();
+    }
+  });
 });
 
 describe('convergence', () => {

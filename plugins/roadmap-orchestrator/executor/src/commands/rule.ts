@@ -98,7 +98,7 @@ export async function rule(ctx: CommandContext, id: CommandId, body: RuleBody): 
   const before = writtenBackOf(revision.manifest);
   const proposal = withRulings(current, [record]);
 
-  const rctx = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase };
+  const rctx = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv };
   const evaluated = evaluateRevision(rctx, proposal, { type: 'rule' });
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons, 'rule') };
   if (evaluated.kind === 'unchanged') throw new Error(`rule ${sidecar.id}: a new ruling left the rulings in force unchanged`);

@@ -109,7 +109,7 @@ async function routeClass(ctx: CommandContext, id: CommandId, unit: UnitId, cls:
   entry.routing = { ...layer, build: { ...layer.build, [tier]: cls } };
   const planBytes = Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8');
   const proposal = { ...current, plan: parsePlan(JSON.parse(planBytes.toString('utf8'))), planBytes };
-  const rctx = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase };
+  const rctx = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv };
   const evaluated = evaluateRevision(rctx, proposal, { type: 'apply' });
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons) };
   if (evaluated.kind === 'unchanged') return { kind: 'applied', verified: [`unit ${unit}'s routing is in force already`] };

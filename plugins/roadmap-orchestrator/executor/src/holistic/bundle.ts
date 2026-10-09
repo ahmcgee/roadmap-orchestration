@@ -46,7 +46,8 @@
 //   6. Convergence (src/holistic/convergence.ts): an open brake, or a second material change of one causal identity
 //      (a `convergence-identity` item raised with it) → `bundle-request`. An owner-approved bundle request (`enact`)
 //      skips 4 and 6.
-//   7. All-or-none `evaluateRevision`. A refusal → `rejected{invalid}` as in 2. Nothing changes → `no-op` (step 8).
+//   7. All-or-none `evaluateRevision` (the classifier, then the lane row `spec-lane-unrunnable` over the units the bundle
+//      changes: paid M4b run 3, OP-3). A refusal → `rejected{invalid}` as in 2. Nothing changes → `no-op` (step 8).
 //   8. No-op: `bundle-decided{no-op}` (with its conversions when every admit converted and nothing else changes), then
 //      the divergences of its interpretations (H12), keyed `(job, index)`.
 //   9. Divergences, computed by code from the ops against the revisions in force, plus one per interpretation (H13:
@@ -111,8 +112,11 @@ import {
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
-/** What a checkpoint needs beyond an audit's context: the revision core's plan file, routing base and docs publisher. */
-export type CheckpointContext = AuditContext & Readonly<{ planFile: AbsPath; routingBase: RoutingBase; docs: DocsPublisher }>;
+/**
+ * What a checkpoint needs beyond an audit's context: the revision core's plan file, routing base, docs publisher and lane
+ * environment (the stage's `hostEnv`, which lanes launch under).
+ */
+export type CheckpointContext = AuditContext & Readonly<{ planFile: AbsPath; routingBase: RoutingBase; docs: DocsPublisher; laneEnv: Readonly<Record<string, string | undefined>> }>;
 
 /** A checkpoint's captured inputs, as the fold has them. */
 export type Captured = CheckpointState['inputs'];
@@ -218,7 +222,8 @@ export function vectorAt(ctx: CheckpointContext, inForce: InForce, revision: Rev
 }
 
 const readerOf = (ctx: CheckpointContext) => ({ journal: ctx.journal, runDir: ctx.runDir, planFile: ctx.planFile, repo: ctx.repo });
-const revisionContext = (ctx: CheckpointContext): RevisionContext => ({ runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase });
+const revisionContext = (ctx: CheckpointContext): RevisionContext =>
+  ({ runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv });
 const integrationHead = (ctx: CheckpointContext) => revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
 
 /** The plan's bytes (sha256) at plan rev `rev`, from its revision's payload. */
@@ -603,19 +608,6 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     touched.plan = true;
   }
 
-  // The rulings, each at the tip with the earlier valid ones landed (their contract ops outside the documents are H10's).
-  // An invalid ruling is never folded in: its reasons reject the bundle, and the ledger the next one is checked against
-  // stays one the reader parses (paid M4a run 1: a proposed C-2 the ledger already held, folded, repeated the id and
-  // crashed the executor).
-  const tip = rulingContextAt(readerOf(ctx), integrationHead(ctx));
-  let ledger = revision.ledger.bytes.toString('utf8');
-  for (const s of landing) {
-    const inside = { ...s, contractOps: s.contractOps.filter((o) => documents.has(o.path)) };
-    const why = validateRuling(inside, { ...tip, ledger: parseRulings(ledger, 'the rulings ledger') });
-    reasons.push(...why);
-    if (why.length === 0) ledger = ledgerAfter(ledger, s);
-  }
-
   let parsed: PlanM1 | null = null;
   const planBytes = touched.plan ? jsonBytes(plan) : current.planBytes;
   try {
@@ -623,6 +615,22 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
   } catch (error) {
     if (!(error instanceof SchemaError)) throw error;
     reasons.push(`the plan with the ops applied does not parse: ${error.message}`);
+  }
+
+  // The rulings, each at the tip with the earlier valid ones landed (their contract ops outside the documents are H10's),
+  // applying to the units of the plan with the ops applied (OP-2: a ruling for a unit the bundle admits or re-enters).
+  // An invalid ruling is never folded in: its reasons reject the bundle, and the ledger the next one is checked against
+  // stays one the reader parses (paid M4a run 1: a proposed C-2 the ledger already held, folded, repeated the id and
+  // crashed the executor). A plan that does not parse rejects the bundle already.
+  if (parsed !== null) {
+    const tip = { ...rulingContextAt(readerOf(ctx), integrationHead(ctx)), units: parsed.units.map((u) => u.id) };
+    let ledger = revision.ledger.bytes.toString('utf8');
+    for (const s of landing) {
+      const inside = { ...s, contractOps: s.contractOps.filter((o) => documents.has(o.path)) };
+      const why = validateRuling(inside, { ...tip, ledger: parseRulings(ledger, 'the rulings ledger') });
+      reasons.push(...why);
+      if (why.length === 0) ledger = ledgerAfter(ledger, s);
+    }
   }
   let obligations: InputFile | null = current.obligations;
   let obligationsAfter = obligationsNow;

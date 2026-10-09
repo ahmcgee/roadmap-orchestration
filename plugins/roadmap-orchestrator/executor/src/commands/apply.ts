@@ -98,7 +98,8 @@ import {
   planRev, resourceInstance, canonicalIds,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { CommandBody, CommandFile, HashedFile, NeedsUserAck, ResidueKey, RevisionManifest, Stage } from '../core/records.ts';
+import type { CommandBody, CommandFile, HashedFile, NeedsUserAck, ResidueKey, RevisionManifest, SpecM1, Stage } from '../core/records.ts';
+import type { PlanUnit } from '../input/plan.ts';
 import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
@@ -119,6 +120,7 @@ import { needsUserAckPath, raisedFor, readNeedsUser, readNeedsUserAck } from '..
 import { dispatchOf, repin } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
+import { laneRows } from '../preflight/lanerows.ts';
 import type { SourceFile } from '../corpus/source.ts';
 import { APPLY, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
@@ -570,7 +572,10 @@ async function sweep(ctx: CommandContext, id: CommandId, only: ResourceName | nu
 // apply, and the apply core every revision shares (G1)
 
 /** What a revision is evaluated against: the log and run dir, the host's residues, the plan file, the arc's routing base. */
-export type RevisionContext = Readonly<{ runDir: AbsPath; view: JournalView; hostDir: AbsPath; planFile: AbsPath; routingBase: RoutingBase }>;
+/** `laneEnv`: the executor's own environment, which the lane row resolves every revision's lanes against. */
+export type RevisionContext = Readonly<{
+  runDir: AbsPath; view: JournalView; hostDir: AbsPath; planFile: AbsPath; routingBase: RoutingBase; laneEnv: Readonly<Record<string, string | undefined>>;
+}>;
 
 /** A payload before its source: what a dry run shows and a commit completes (`payloadOf`). */
 export type RevisionDraft = Omit<RevisionPayload, 'source'>;
@@ -639,6 +644,14 @@ export function evaluateRevision(
   });
   if (verdict.kind === 'rejected') return verdict;
   if (verdict.kind === 'unchanged') return { kind: 'unchanged', rev: inForce.rev };
+  // The lane row (src/preflight/lanerows.ts) over the units the revision changes, on every path a revision takes.
+  const specOf = (unit: PlanUnit): SpecM1 => {
+    const file = proposal.specs.get(unit.id);
+    if (file?.bytes === null || file === undefined) throw new Error(`an accepted revision without the spec of ${unit.id} (the classifier refuses it)`);
+    return parseSpec(file.bytes, file.path);
+  };
+  const lanes = laneRows(proposal.plan, verdict.scoped, specOf, ctx.laneEnv);
+  if (lanes.length > 0) return { kind: 'rejected', reasons: lanes.map(rowText) };
   const manifest = revisionManifestOf(proposal);
   if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };
   const publication = publicationOf(ctx.view, revision, verdict.inputs);
@@ -673,7 +686,6 @@ export function keepRevision(runDir: AbsPath, verdict: Extract<RevisionVerdict, 
 /** What an apply needs to evaluate the files, in the executor or read-only (`apply --dry-run`). */
 export type ApplyInput = RevisionContext & Readonly<{
   repo: AbsPath;
-  laneEnv: Readonly<Record<string, string | undefined>>;
   /** The manifest the command carries (null for a dry run, which hashes the files itself), and its expectRev. */
   manifest: RevisionManifest | null;
   expectRev: PlanRev | null;
@@ -764,7 +776,7 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   // M4a: the shared Phase-0 rows (src/phase0/rows.ts) over the proposal: the tree, and for a corpus arc the pin
   // re-derived, corpus overlap, census, debt, questions, amendments, intake and the vision confirmed.
   const p0 = phase0Rows(phase0InputOf(proposal, input.routingBase.config), APPLY);
-  const rows = [...(await applyRows(context, verdict.scoped, routingChanged, input.laneEnv)), ...p0.rows];
+  const rows = [...(await applyRows(context, verdict.scoped, routingChanged)), ...p0.rows];
   if (rows.length > 0) return { kind: 'rejected', reasons: rows.map(rowText) };
   const before = new Set(backendsOf(planRouting(input.routingBase, inForce.plan)));
   const smoke = [...new Set(verdict.routings.flatMap((r) => backendsOf(r)))].filter((b) => !before.has(b)).sort();
@@ -826,7 +838,7 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
 }
 
 /** What a commit under the fence touches: the log and run dir, the revision context's inputs, and the docs publisher. */
-export type FencedCommitContext = Pick<CommandContext, 'journal' | 'runDir' | 'hostDir' | 'planFile' | 'routingBase' | 'docs'>;
+export type FencedCommitContext = Pick<CommandContext, 'journal' | 'runDir' | 'hostDir' | 'planFile' | 'routingBase' | 'laneEnv' | 'docs'>;
 
 /**
  * A12, A19: under the fence, the proposal evaluated again, synchronously and with nothing awaited before the commit
@@ -838,7 +850,7 @@ export async function commitUnderFence(
 ): Promise<Readonly<{ kind: 'applied'; fact: PlanAppliedFact }> | Readonly<{ kind: 'rejected'; reasons: readonly string[] }>> {
   const hold = await holdFence(ctx.journal);
   try {
-    const rctx: RevisionContext = { runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase };
+    const rctx: RevisionContext = { runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv };
     const again = evaluateRevision(rctx, evaluated.next, proposer);
     if (again.kind === 'rejected') return again;
     if (again.kind === 'accepted' && again.draft.base !== evaluated.draft.base) {

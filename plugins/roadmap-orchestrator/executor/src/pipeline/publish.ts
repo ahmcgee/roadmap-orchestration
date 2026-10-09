@@ -76,9 +76,9 @@ import { verdictOf } from '../holistic/observe.ts';
 import { brakesOn, obligationEffects } from '../holistic/table.ts';
 import { type ArcLaneDef, type Conversion, type Obligations, type RulingSidecar, isExempt, parseObligations, parseRulingSidecar } from '../holistic/types.ts';
 import {
-  OBLIGATIONS_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
+  OBLIGATIONS_INPUT, PLAN_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
 } from '../input/inforce.ts';
-import { type PlanM1, contractOpDocuments } from '../input/plan.ts';
+import { type PlanM1, contractOpDocuments, parsePlan } from '../input/plan.ts';
 import {
   type DocsHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run,
 } from '../resources/reserve.ts';
@@ -178,10 +178,12 @@ type Reader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPa
 
 /**
  * What `validateRuling` reads (A1) at the integration tip `tip`: the ledger, obligations and vision in force, the
- * tip's documents and blobs, the plan's contracts and architecture doc, its units. The `rule` command validates a
- * sidecar against it, and a docs publication again under the slot.
+ * tip's documents and blobs, the plan's contracts and architecture doc. Not the units: a ruling may apply to a unit
+ * its own revision adds, so each caller names the units of the plan the ruling lands with (paid M4b run 3, OP-2: the
+ * in-force plan's units refused a ruling for a unit the same apply or bundle added, at the docs publication though its
+ * dry run accepted it). The `rule` command validates a sidecar against it, and a docs publication again under the slot.
  */
-export function rulingContextAt(ctx: Reader, tip: Sha): RulingContext {
+export function rulingContextAt(ctx: Reader, tip: Sha): Omit<RulingContext, 'units'> {
   const inForce = requirePlanInForce(ctx.runDir, ctx.journal.view);
   const revision = revisionInForce(ctx.runDir, inForce);
   return {
@@ -195,7 +197,6 @@ export function rulingContextAt(ctx: Reader, tip: Sha): RulingContext {
     documents: contractOpDocuments(inForce.plan),
     obligations: revision.obligations?.value ?? null,
     vision: revision.vision?.value ?? null,
-    units: inForce.plan.units.map((u) => u.id),
     corpus: revision.corpus === null ? null : rulingCorpusOf(revision.corpus),
   };
 }
@@ -293,7 +294,9 @@ function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
   if (canonicalJson(ops) !== canonicalJson(publication.contractOps)) {
     throw new Error(`revision ${payload.rev}: its publication's contract ops are not its new rulings' (${canonicalJson(publication.contractOps)} vs ${canonicalJson(ops)})`);
   }
-  const base = rulingContextAt(ctx, tip);
+  // The rulings land with the revision's own plan: its units are the ones a ruling may apply to.
+  const planBytes = keptOr(ctx.runDir, payload.manifest.planSha256, PLAN_INPUT);
+  const base = { ...rulingContextAt(ctx, tip), units: parsePlan(JSON.parse(planBytes.toString('utf8'))).units.map((u) => u.id) };
   const reasons: string[] = [];
   let ledgerText = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).ledger.bytes.toString('utf8');
   const edited = new Map<RepoPath, string>();
