@@ -15,6 +15,7 @@
 // supervisor respawn of an established arc, a failed smoke parks its backend instead of refusing (A18,
 // `smokeOutages`, src/preflight/checks.ts `smokeCheck`).
 import { join } from 'node:path';
+import { launchPressure, readPressure } from '../host/pressure.ts';
 import { resultBytes, writeResult } from '../backends/adapter.ts';
 import {
   type Argv, type BackendCall, type ClaudeImplementerSession, type ClaudeTriple, type CodexSession, type CodexTriple,
@@ -173,7 +174,9 @@ async function run(ctx: InvocationContext, subject: SmokeSubject, prepare: (invD
   if (planned === null) throw new Error(`journal.begin returned ${inv} without calling the intent body`);  const { invDir, prepared, launch } = planned as { invDir: AbsPath; prepared: Prepared; launch: LaunchFile };
   durableMkdir(invDir);
   for (const [name, text] of Object.entries(prepared.inputs)) durableWrite(join(invDir, name), text);
+  const before = readPressure();
   const end = await awaitRunner(startRunner(invDir, launch));
+  const pressure = launchPressure(before, readPressure());
   if (end.kind !== 'exited') throw new Error(`smoke ${subject.check}: the runner of ${inv} ended without exit.json (${end.kind}); see ${invDir}/runner.log`);
   const result = writeResult(invDir);
   const summary = result.type === 'backend'
@@ -185,7 +188,7 @@ async function run(ctx: InvocationContext, subject: SmokeSubject, prepare: (invD
     if (charge === null) throw new Error(`${inv}: a command smoke produced a backend result`);
     ctx.journal.fact(usageFact(charge, inv, result.usage));
   }
-  ctx.journal.done(op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(resultBytes(result))), summary }, null);
+  ctx.journal.done(op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(resultBytes(result))), summary, pressure }, null);
   return { inv, invDir, argv: prepared.argv, exit: end.exit, result };
 }
 

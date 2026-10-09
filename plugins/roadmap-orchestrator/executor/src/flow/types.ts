@@ -2,7 +2,9 @@
 // /claude-state/plans/m4b-flow.md rev 2). Frozen in step 0a: the series and its points, the host fingerprint, the levers
 // and their actions, a flow run's kept inputs and its strict output, proofs, verdicts, preimages and givens. The facts
 // that carry them are src/core/events.ts's `FlowFact`; the behaviour is the later steps' (series, SPC, constraint,
-// triggers, the job, levers, givens, verdicts, proofs).
+// triggers, the job, levers, givens, verdicts, proofs). Rev 3 (host pressure, step H0; SCHEMAS.md "Rev 3: host
+// pressure") adds the points' and suite runs' `pressure`, the `host-pressure` trigger, the `direction` drop reason, the
+// `pressure` metric and `status.flow.pressure`'s shape.
 import {
   type ArcId, type GivenId, type JobId, type LaneId, type ProposalId, type ResourceName, type StationId, type UnitId, type VisionClauseId, arcId, givenId,
   idsAscending, jobIdOfKind, laneId, parseStationId, proposalId, resourceName, stationId, unitId, visionClauseId,
@@ -27,7 +29,8 @@ export const amount: Read<number> = (value, path) => {
   if (n < 0) throw new SchemaError(path, 'a finite non-negative number', value);
   return n;
 };
-const fraction: Read<number> = (value, path) => {
+/** A fraction in [0, 1]: a share, an interval pressure. */
+export const fraction: Read<number> = (value, path) => {
   const n = amount(value, path);
   if (n > 1) throw new SchemaError(path, 'a fraction in [0, 1]', value);
   return n;
@@ -55,14 +58,18 @@ export const sameHost = (a: HostFingerprint, b: HostFingerprint): boolean => a.p
 // ---------------------------------------------------------------------------------------------------
 // The flow series (`inputs/<sha>.flow-series.json`, named by `flow-series`; src/flow/series.ts computes it)
 
-/** The kept series' format; a reader recomputes the series from the ref's events when a kept record's `v` differs. */
-export const FLOW_SERIES_V = 1;
+/**
+ * The kept series' format; a reader recomputes the series from the ref's events when a kept record's `v` differs. 2 (M4b
+ * rev 3): points and suite runs carry `pressure`.
+ */
+export const FLOW_SERIES_V = 2;
 
 /**
  * One merged unit (batch-merged units are counted in T and excluded): admitted at its first `dispatch`, merged when its
  * publication ends (its `snapshot` outcome right after the ff, so the slot's `ff` and `snapshot` components lie inside the
  * lead time; src/flow/series.ts). `minutes` partitions `leadMin` over disjoint stations (`slot:integration` itself is never a key: its
- * components are); `rework` counts T-alone reruns and other rework, `firstRunReds` the suite reds of first runs.
+ * components are; nor is `host:cpu`); `rework` counts T-alone reruns and other rework, `firstRunReds` the suite reds of first runs.
+ * `pressure` (rev 3): the time-weighted mean interval pressure over the unit's service intervals, null if any is null.
  */
 export type FlowPoint = Readonly<{
   unit: UnitId;
@@ -73,13 +80,14 @@ export type FlowPoint = Readonly<{
   costUsd: number | null;
   rework: number;
   firstRunReds: number;
+  pressure: number | null;
 }>;
 
 /** The four shapes a suite run takes (R2): a `lane{set: suite}` spawn, a unit's F6 stand-in journey, a batch job's journey, a red path's T-alone rerun. */
 export const SUITE_RUN_SHAPES = ['lane', 'stand-in', 'batch', 'rerun'] as const;
 export type SuiteRunShape = (typeof SUITE_RUN_SHAPES)[number];
-/** One suite-lane run, sampled per run: the verdict metric of a `suite-lane` lever. */
-export type SuiteRun = Readonly<{ lane: LaneId; at: IsoTime; minutes: number; shape: SuiteRunShape; red: boolean }>;
+/** One suite-lane run, sampled per run: the verdict metric of a `suite-lane` lever. `pressure` (rev 3): its spawn's interval pressure. */
+export type SuiteRun = Readonly<{ lane: LaneId; at: IsoTime; minutes: number; shape: SuiteRunShape; red: boolean; pressure: number | null }>;
 
 /**
  * Throughput accounting (RC-2), diagnostic only, never a goal: `tAdvances` (obligations held for the first time this arc
@@ -104,6 +112,7 @@ const minutesRecord: Read<Readonly<Record<StationId, number>>> = (value, path) =
   for (const [key, v] of Object.entries(value)) {
     const parts = parseStationId(key, `${path}.${key}`);
     if (parts.type === 'slot') throw new SchemaError(`${path}.${key}`, 'a leaf station (the slot is the sum of its components)', key);
+    if (parts.type === 'host-cpu') throw new SchemaError(`${path}.${key}`, 'a share of lead time (host:cpu is none)', key);
     out[key as StationId] = amount(v, `${path}.${key}`);
   }
   return out;
@@ -113,6 +122,7 @@ const flowPoint: Read<FlowPoint> = object((f) => {
   const out = {
     unit: f.get('unit', unitR), admittedAt: f.get('admittedAt', timeR), mergedAt: f.get('mergedAt', timeR), leadMin: f.get('leadMin', amount),
     minutes: f.get('minutes', minutesRecord), costUsd: f.get('costUsd', nullable(amount)), rework: f.get('rework', nat), firstRunReds: f.get('firstRunReds', nat),
+    pressure: f.get('pressure', nullable(fraction)),
   };
   if (out.mergedAt < out.admittedAt) throw new SchemaError(`${f.path}.mergedAt`, `not before admittedAt ${out.admittedAt}`, out.mergedAt);
   const sum = Object.values(out.minutes).reduce((a, b) => a + b, 0);
@@ -122,6 +132,7 @@ const flowPoint: Read<FlowPoint> = object((f) => {
 
 const suiteRun: Read<SuiteRun> = object((f) => ({
   lane: f.get('lane', laneR), at: f.get('at', timeR), minutes: f.get('minutes', amount), shape: f.get('shape', oneOf(SUITE_RUN_SHAPES)), red: f.get('red', bool),
+  pressure: f.get('pressure', nullable(fraction)),
 }));
 
 export const flowAccounting: Read<FlowAccounting> = object((f) => {
@@ -269,7 +280,8 @@ export const flowPreimage: Read<FlowPreimage> = tagged('lever', {
  * Code's constraint over the last min(10, n) points: the station with the largest mean wait in front of it when that
  * wait is ≥ 10 % of mean lead (`internal: true`), else the station with the largest mean service (`internal: false`).
  * `component` names the slot's largest service component exactly when the station is `slot:integration`. The one wait
- * it may name is `wait:finding` (internal, diagnostic: no lever targets it).
+ * it may name is `wait:finding` (internal, diagnostic: no lever targets it). Rev 3 (RC-10): `host:cpu` (internal), ahead of
+ * the wait and service rules when the window's mean interval pressure is at least `PRESSURE_SATURATED`.
  */
 export type CodeConstraint = Readonly<{ station: StationId; internal: boolean; component: StationId | null }>;
 export const codeConstraint: Read<CodeConstraint> = object((f) => {
@@ -277,6 +289,7 @@ export const codeConstraint: Read<CodeConstraint> = object((f) => {
   const parts = parseStationId(out.station);
   if (parts.type === 'held' || parts.type === 'slot-wait' || parts.type === 'wait') throw new SchemaError(`${f.path}.station`, 'a service station or wait:finding (never held or another wait)', out.station);
   if (parts.type === 'finding-wait' && !out.internal) throw new SchemaError(`${f.path}.internal`, 'true for wait:finding (a wait)', out.internal);
+  if (parts.type === 'host-cpu' && !out.internal) throw new SchemaError(`${f.path}.internal`, 'true for host:cpu', out.internal);
   const isSlot = parts.type === 'slot';
   if (isSlot !== (out.component !== null)) throw new SchemaError(`${f.path}.component`, isSlot ? 'the slot\'s largest component' : 'null off the slot', out.component);
   if (out.component !== null) {
@@ -293,8 +306,11 @@ const judgedConstraint: Read<JudgedConstraint> = object((f) => ({ station: f.get
 // ---------------------------------------------------------------------------------------------------
 // A flow run's kept inputs (`inputs/<sha>.flow-inputs.json`, named by `flow-started`; src/flow/job.ts captures them)
 
-/** Coalesced triggers, in this order (src/flow/trigger.ts). */
-export const FLOW_TRIGGERS = ['buffer-red', 'yellow-worsening', 'constraint-shift', 'verdict-closed', 'floor', 'requested'] as const;
+/**
+ * Coalesced triggers, in this order (src/flow/trigger.ts). `host-pressure` (rev 3): the tick avg60 at or above
+ * `PRESSURE_SATURATED` sustained for 10 min while units are in flight.
+ */
+export const FLOW_TRIGGERS = ['buffer-red', 'yellow-worsening', 'host-pressure', 'constraint-shift', 'verdict-closed', 'floor', 'requested'] as const;
 export type FlowTrigger = (typeof FLOW_TRIGGERS)[number];
 /** Triggers as a fact or the inputs record them: non-empty, each once, in `FLOW_TRIGGERS` order. */
 export const flowTriggers: Read<readonly FlowTrigger[]> = sortedBy(oneOf(FLOW_TRIGGERS), (t) => String(FLOW_TRIGGERS.indexOf(t)).padStart(2, '0'), { nonEmpty: true, order: 'in FLOW_TRIGGERS order' });
@@ -368,10 +384,15 @@ const givenInForce: Read<GivenInForce> = tagged('scope', {
   repo: object((f): GivenInForce => ({ scope: f.get('scope', literal('repo')), lever: f.get('lever', oneOf(FLOW_LEVERS)), note: f.get('note', str) })),
 });
 
-/** A verdict's metric (G7), derived by code from the lever: lead, one suite lane's per-run service, or the wait in front of a station. */
-export type FlowMetric = Readonly<{ type: 'lead' }> | Readonly<{ type: 'suite-run'; lane: LaneId }> | Readonly<{ type: 'wait'; station: StationId }>;
+/**
+ * A verdict's metric (G7), derived by code from the lever: lead, one suite lane's per-run service, the wait in front of a
+ * station, or (rev 3, RC-12: any lever at `host:cpu`) the interval pressure of the units admitted after.
+ */
+export type FlowMetric =
+  | Readonly<{ type: 'lead' }> | Readonly<{ type: 'suite-run'; lane: LaneId }> | Readonly<{ type: 'wait'; station: StationId }> | Readonly<{ type: 'pressure' }>;
 export const flowMetric: Read<FlowMetric> = tagged('type', {
   lead: object((f): FlowMetric => ({ type: f.get('type', literal('lead')) })),
+  pressure: object((f): FlowMetric => ({ type: f.get('type', literal('pressure')) })),
   'suite-run': object((f): FlowMetric => ({ type: f.get('type', literal('suite-run')), lane: f.get('lane', laneR) })),
   wait: object((f): FlowMetric => ({ type: f.get('type', literal('wait')), station: f.get('station', stationR) })),
 });
@@ -445,9 +466,12 @@ export type FlowPromptInputs = Omit<FlowInputs, 'schema' | 'job'>;
 
 export const FLOW_OUTCOMES = ['done', 'invalid', 'failed'] as const;
 export type FlowOutcome = (typeof FLOW_OUTCOMES)[number];
-/** Code's checks after the schema (src/flow/levers.ts): each drops the proposal with its reason. */
+/**
+ * Code's checks after the schema (src/flow/levers.ts): each drops the proposal with its reason. `direction` (rev 3): an
+ * increase at `host:cpu` (only decreases or `host` advice subordinate to a saturated cpu).
+ */
 export const FLOW_DROP_REASONS = [
-  'target', 'given', 'rejected-before', 'verdict-open', 'elevate-early', 'argv-shape', 'lane-cpu', 'concurrency-cpus', 'sequence-repair-waiting',
+  'target', 'given', 'rejected-before', 'verdict-open', 'elevate-early', 'direction', 'argv-shape', 'lane-cpu', 'concurrency-cpus', 'sequence-repair-waiting',
   'sequence-high-set', 'build-class-step',
 ] as const;
 export type FlowDropReason = (typeof FLOW_DROP_REASONS)[number];
@@ -456,6 +480,12 @@ export const flowDropped: Read<FlowDropped> = object((f) => ({ proposal: f.get('
 /** The constraint a run ended with: code's (null before the first point) and the role's (null unless `done`). */
 export type FlowEndedConstraint = Readonly<{ code: CodeConstraint | null; judged: JudgedConstraint | null }>;
 export const flowEndedConstraint: Read<FlowEndedConstraint> = object((f) => ({ code: f.get('code', nullable(codeConstraint)), judged: f.get('judged', nullable(judgedConstraint)) }));
+
+/**
+ * `status.flow.pressure` (rev 3): the host's PSI now (`avg10`, `avg60` as fractions; null when unavailable), the
+ * saturation threshold, and whether this host reports PSI.
+ */
+export type FlowPressureStatus = Readonly<{ now: Readonly<{ avg10: number; avg60: number }> | null; threshold: number; available: boolean }>;
 
 // ---------------------------------------------------------------------------------------------------
 // The flow role's output (strict schema in src/prompts/schemas.ts): exactly one of `proposal` and `noAction`

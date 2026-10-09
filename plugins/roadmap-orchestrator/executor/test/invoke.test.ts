@@ -70,6 +70,18 @@ test('invoke.command-verdicts', T, async () => {
   assert.deepEqual(usageFacts(r.runDir), [], 'commands carry no usage');
 });
 
+// M4b rev 3: the live executor samples PSI around each launch; this host has PSI, so every interval is a fraction.
+test('invoke.pressure', T, async () => {
+  const r = run();
+  const journal = open(r.runDir, r.arc);
+  await invoke(journal, context(journal, r.runDir).containment, specFor(command(r, 'lane', workload('workload-exit.ts', '0'))));
+  journal.close();
+  const done = spawnDones(r.runDir)[0];
+  assert.ok(done !== undefined && done.outcome.kind === 'result');
+  const { pressure } = done.outcome;
+  assert.ok(typeof pressure === 'number' && pressure >= 0 && pressure <= 1, `interval pressure ${pressure}`);
+});
+
 test('invoke.deadline', T, async () => {
   const r = run();
   const s = scenario([{ as: 'claude', expect: {}, acts: [{ type: 'hang', ms: 60_000 }, { type: 'emit', value: OK }] }]);

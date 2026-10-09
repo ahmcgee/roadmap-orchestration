@@ -224,7 +224,7 @@ describe('ruler-changed', () => {
       const command = submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d));
       const out = await applyCommand(commandContextFor(r), command);
       assert.equal(out.kind, 'applied', JSON.stringify(out));
-      const track = { holisticRunning: () => false, judging: () => {} };
+      const track = { holisticRunning: () => false, judging: () => {}, pressure: () => [] };
       await runFlowTrack(ctx, track);
       await runFlowTrack(ctx, track);
       const items = itemsOf(r, 'ruler-changed');

@@ -16,10 +16,11 @@ import { type BankReason, type DebtSource, BANK_REASONS, debtSource } from '../d
 import {
   type FlowDropped, type FlowEndedConstraint, type FlowMetric, type FlowOutcome, type FlowPreimage, type FlowProposal, type FlowTrigger, type FlowVerdictKind,
   type GuardBreach, type HostFingerprint, type ProofMinutes, type ProofOutcome, type VerdictAfter, type VerdictBefore, FLOW_OUTCOMES, FLOW_VERDICTS,
-  MIN_VERDICT_SAMPLES, PROOF_OUTCOMES, flowDropped, flowEndedConstraint, flowMetric, flowPreimage, flowProposal, flowTriggers, guardBreaches, hostFingerprint,
+  MIN_VERDICT_SAMPLES, PROOF_OUTCOMES, flowDropped, fraction, flowEndedConstraint, flowMetric, flowPreimage, flowProposal, flowTriggers, guardBreaches, hostFingerprint,
   proofMinutes, verdictAfter, verdictBefore,
 } from '../flow/types.ts';
 import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIdentity } from '../forge/types.ts';
+import { type PressureAvailability, PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
   COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
@@ -327,8 +328,13 @@ export type OpOutcome = {
   'worktree.create': Readonly<{ kind: 'created'; head: Sha }>;
   'worktree.remove': Readonly<{ kind: 'removed' }>;
   'resource.transition': Readonly<{ kind: 'transitioned' }>;
+  /**
+   * `pressure` (M4b rev 3, additive): the launch's interval pressure (src/host/pressure.ts), sampled by the live executor
+   * around the runner; null when PSI is unavailable or the runner ended unwatched (adopted, recovered). Absent on a spawn
+   * an earlier executor closed: read as null (`spawnPressureOf`).
+   */
   'proc.spawn':
-    | Readonly<{ kind: 'result'; resultSha256: Sha256Hex; summary: ResultSummary }>
+    | Readonly<{ kind: 'result'; resultSha256: Sha256Hex; summary: ResultSummary; pressure?: number | null }>
     | Readonly<{ kind: 'lost'; treeEffects: boolean }>;
   'proc.kill': Readonly<{ kind: 'quiesced' }>;
   'evidence.snapshot': Readonly<{ kind: 'captured'; manifestSha256: Sha256Hex; files: number }>;
@@ -491,10 +497,13 @@ export type ParkRecord =
  * Why a stage was interrupted, when not an operator pause or stop (G5): its backend parked, at the park fact's
  * seq. A covering passing probe or `resume --backend` releases exactly such holds; operator pauses stay. M4b: an
  * accepted flow proposal `pending-apply` holds new candidate starts until its revision is committed (`flow-apply`).
+ * M4b rev 3 (RC-11, step H2): a unit whose run `inv` was starved, or red under pressure with its rerun pending, is held
+ * until the tick avg60 falls below `PRESSURE_SATURATED` or 30 min pass (`host-pressure`).
  */
 export type HoldCause =
   | Readonly<{ type: 'backend'; backend: Backend; parkSeq: number }>
-  | Readonly<{ type: 'flow-apply'; proposal: ProposalId }>;
+  | Readonly<{ type: 'flow-apply'; proposal: ProposalId }>
+  | Readonly<{ type: 'host-pressure'; inv: InvocationId }>;
 
 /** A witness test of an arc lane, as a required-witness or smoke detail names it. */
 export type TestRef = Readonly<{ lane: LaneId; testId: string }>;
@@ -625,8 +634,12 @@ export type Fact =
    * journal is open. It clears the stop marker: a stop ends one run, not the arc. Pause markers and holds
    * persist until a `resume`.
    */
-  /** `host` (M4b, additive): this start's host fingerprint; absent on a 1.0.0-dev.7 start. */
-  | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint }>
+  /**
+   * `host` (M4b, additive): this start's host fingerprint; absent on a 1.0.0-dev.7 start. `pressure` (M4b rev 3,
+   * additive): whether this host reports PSI cpu pressure (src/host/pressure.ts); absent on an earlier start, read as
+   * `unavailable` (`startPressureOf`). A sibling of the fingerprint, which seeds and givens compare by field equality.
+   */
+  | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint; pressure?: PressureAvailability }>
   /**
    * The gate at `attempt` approved the unit, bound to `fingerprint` (R2): recorded before its stage-outcome,
    * read by the candidate and ff stages, and re-checked at T before `integration.ff`.
@@ -1179,7 +1192,10 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     expect: object((f) => ({ subject: f.get('subject', spawnSubject), launchSha256: f.get('launchSha256', sha256R) })),
     post: nothing,
     outcome: tagged('kind', {
-      result: object((f): OpOutcome['proc.spawn'] => ({ kind: f.get('kind', literal('result')), resultSha256: f.get('resultSha256', sha256R), summary: f.get('summary', resultSummary) })),
+      result: object((f): OpOutcome['proc.spawn'] => {
+        const pressure = f.optional('pressure', nullable(fraction));
+        return { kind: f.get('kind', literal('result')), resultSha256: f.get('resultSha256', sha256R), summary: f.get('summary', resultSummary), ...(pressure === undefined ? {} : { pressure }) };
+      }),
       lost: object((f): OpOutcome['proc.spawn'] => ({ kind: f.get('kind', literal('lost')), treeEffects: f.get('treeEffects', bool) })),
     }),
   },
@@ -1486,6 +1502,7 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
 const holdCause: Read<HoldCause> = tagged('type', {
   backend: object((f): HoldCause => ({ type: f.get('type', literal('backend')), backend: f.get('backend', backend), parkSeq: f.get('parkSeq', positive) })),
   'flow-apply': object((f): HoldCause => ({ type: f.get('type', literal('flow-apply')), proposal: f.get('proposal', proposalR) })),
+  'host-pressure': object((f): HoldCause => ({ type: f.get('type', literal('host-pressure')), inv: f.get('inv', invR) })),
 });
 
 /** Strictly ascending seqs, non-empty. */
@@ -1860,7 +1877,11 @@ export const fact: Read<Fact> = tagged('kind', {
   }),
   'executor-started': object((f): Fact => {
     const host = f.optional('host', hostFingerprint);
-    return { kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive), ...(host === undefined ? {} : { host }) };
+    const pressure = f.optional('pressure', oneOf(PRESSURE_AVAILABILITIES));
+    return {
+      kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive), ...(host === undefined ? {} : { host }),
+      ...(pressure === undefined ? {} : { pressure }),
+    };
   }),
   approval: object((f): Fact => ({
     kind: f.get('kind', literal('approval')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), fingerprint: f.get('fingerprint', approvalFingerprint),

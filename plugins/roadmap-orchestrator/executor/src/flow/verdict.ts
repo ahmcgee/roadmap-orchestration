@@ -43,7 +43,12 @@ export type MetricSample = Readonly<{ at: IsoTime; minutes: number }>;
 
 /** A point's sample of a lead or wait metric. */
 function pointSample(metric: FlowMetric, p: FlowPoint): MetricSample {
-  return { at: p.mergedAt, minutes: metric.type === 'wait' ? (p.minutes[metric.station] ?? 0) : p.leadMin };
+  switch (metric.type) {
+    case 'wait': return { at: p.mergedAt, minutes: p.minutes[metric.station] ?? 0 };
+    case 'lead': case 'suite-run': return { at: p.mergedAt, minutes: p.leadMin };
+    // Rev 3 step H1 samples the pressure metric (RC-12); until then no lever derives it.
+    case 'pressure': throw new Error('verdict: the pressure metric (RC-12) has no sampler yet');
+  }
 }
 
 /**

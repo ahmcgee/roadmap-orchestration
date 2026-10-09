@@ -175,6 +175,9 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 |---|---|---|
 | `RoutingProvenance` | `+ arcRoles?: 'm4b'`, written on every revision of an arc dev.8 started (fixed at revision 1: the fold refuses a change) | absent: the dev.7 role set (no `flow` in `routingRevOf`, `seatsInForce`, status's routing tables), the flow loop off (`off-dev7`), warned once (`dev7ArcRolesDefault`; scaffolding) |
 | `executor-started` | `+ host?: HostFingerprint` (every dev.8 start) | absent: no fingerprint (a dev.7 ref never seeds limits) |
+| `executor-started` (rev 3) | `+ pressure?: available \| unavailable` (every start since rev 3) | absent: `unavailable` (`startPressureOf`, warned once; scaffolding) |
+| `proc.spawn` done `result` (rev 3) | `+ pressure?: number \| null` (every spawn closed since rev 3) | absent: null (`spawnPressureOf`, warned once; scaffolding): no pressure rule applies |
+| `FlowSeries` (rev 3) | `v: 2`; `FlowPoint.pressure`, `SuiteRun.pressure` required | a kept `v: 1` series is recomputed from the ref's events |
 | `Role` | `+ flow` (seat `arc`, frontier) | in force only with `arcRoles: m4b` |
 | `RevisionSource`, `HoldCause`, spawn subject, `CommandBody`, `JobId`, `NeedsUserReason`, facts, `.roadmap/config.json` | "M4b" | none |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
@@ -3145,5 +3148,46 @@ obligation as no longer held when a P1 over it opened inside the window; idle ti
 givens, ruler changes with their item, next: running, due, cooldownUntil, bypass); the brief payload's `BriefArc.flow`
 (null with the loop off): constraint and accounting at the ref, verdicts, ruler changes and host advice in the delta, and the
 previous chained arc's applied levers this plan dropped, as rendered lines.
+
+### Rev 3: host pressure (frozen in step H0)
+
+Owner ruling 2026-10-09 (plan rev 3): cpu saturation is a constraint. Code measures it, the flow role names it, the levers
+subordinate to it, and no unit is charged for a starved host. Step H0 froze the records and the measurement; H1 (series,
+constraint, trigger, levers, verdict, inputs, prompt, surfaces) and H2 (charging) own the behaviour.
+
+**Measure** (`src/host/pressure.ts`). Linux PSI `/proc/pressure/cpu` (`PSI_CPU`), its `some` line: `total` (µs during
+which a runnable task waited for a cpu, cumulative), `avg10` and `avg60` (read as fractions). `parsePsiCpu` refuses a text
+without a `some` line or with a field missing or malformed; `readPressure()` is `unavailable` when the file is absent or
+the read fails `EOPNOTSUPP` (PSI disabled at boot), and fails loud on any other error or a malformed file. The interval
+pressure over two samples is Δtotal / Δwall (wall from `performance.now()`), in [0, 1] (capped at 1: the two clocks are
+read microseconds apart); a non-positive Δwall or a falling total throws. Constants: `PRESSURE_SATURATED = 0.25` (RC-10),
+`STARVED_MAX = 3` (RC-11).
+
+**Sampling.** `invoke` (src/pipeline/invoke.ts) and the start-up smoke (src/preflight/smoke.ts) read PSI right before
+starting the runner and right after it is gone, so every launch the live executor watches (stage invocations, lane and
+journey runs, mutants, teardowns, probes, holistic, flow and proof calls, smokes) records its interval on its done record;
+`settle` takes it in `SettleMode{type: live, pressure}`, and an adopted or recovered spawn (no executor watched its
+runner) records null. The scheduler reads PSI once per loop iteration into `PressureTicks` (in memory, newest last, kept
+`PRESSURE_TICKS_MS` = 30 min, empty without PSI; a restart starts it fresh) and hands it to the flow track as
+`FlowTrackInput.pressure`.
+
+**Records.**
+
+| Record | Field | Meaning |
+|---|---|---|
+| `executor-started` | `pressure?: PressureAvailability` (`available \| unavailable`) | whether this host reports PSI at this start; a sibling of `host`, whose fingerprint seeds and givens compare by field equality, so PSI availability never changes a fingerprint (the plan's `executor-started.host.pressure`). Read: `startPressureOf` |
+| `proc.spawn` done, `result` arm | `pressure?: number \| null` (a fraction) | the launch's interval pressure; null without PSI or unwatched. Read: `spawnPressureOf` (src/core/upgrade.ts) |
+| `LaneRun` (src/pipeline/lanes.ts) | `pressure: number \| null` | the lane run's spawn's interval pressure, from its done record |
+| `FlowPoint` | `pressure: number \| null` | the time-weighted mean interval pressure over the unit's service intervals, null if any is null (H1; H0 writes null) |
+| `SuiteRun` | `pressure: number \| null` | the run's spawn's interval pressure |
+| `FlowSeries` | `v: 2` (`FLOW_SERIES_V`) | a kept series of another `v` is recomputed |
+| `StationId` | `+ host:cpu` (`HOST_CPU_STATION`, parts `{type: host-cpu}`) | the host's cpu: internal, never a key of a point's `minutes`; `waitInFrontOf` refuses it (its levers' metric is pressure) |
+| `CodeConstraint` | `station: host:cpu` with `internal: true`, `component: null` | ahead of the wait and service rules when the window's mean pressure ≥ `PRESSURE_SATURATED` (H1) |
+| `FLOW_TRIGGERS` | `+ host-pressure`, after `yellow-worsening` | the tick avg60 ≥ `PRESSURE_SATURATED` sustained ≥ 10 min while units are in flight (H1) |
+| `FLOW_DROP_REASONS` | `+ direction`, after `elevate-early` | an increase at `host:cpu` (only decreases or `host` advice) |
+| `FlowMetric` | `+ pressure{}` | RC-12: a lever at `host:cpu` is measured by the interval pressure of the units admitted after; lead stays a guard (H1 samples it; until then the verdict sampler refuses it) |
+| `HoldCause` | `+ host-pressure{inv}` | RC-11: a unit whose run `inv` was starved, or red under pressure with its rerun pending, held until the tick avg60 < `PRESSURE_SATURATED` or 30 min pass (H2) |
+| `Starved` (src/host/pressure.ts) | `{kind: starved, inv, pressure}` | RC-11: a lane run or stage invocation ended by `deadline` or `stall` with interval pressure ≥ `PRESSURE_SATURATED`: no product verdict, not chargeable, no fix round; after `STARVED_MAX` starved runs of one unit, today's handling (H2) |
+| `FlowPressureStatus` (src/flow/types.ts) | `{now: {avg10, avg60} \| null, threshold, available}` | `status.flow.pressure` (H1 wires it) |
 
 **Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8.

@@ -30,7 +30,7 @@
 // Suite-lane service is sampled per run in all four shapes (`suiteRuns`): `lane` and `stand-in` on a unit's candidate,
 // `batch` on a repair batch's candidate, `rerun` on the tip alone (a unit's or a batch's red path). Only runs with a
 // verdict count (pass, fail, stall; a cancelled, faulted or lost run measures nothing). Docs publications run the suite
-// too; the plan's four shapes leave them out.
+// too; the plan's four shapes leave them out. A run's `pressure` is its spawn's interval pressure (M4b rev 3).
 //
 // The accounting (RC-2) is diagnostic only: T per hour of the log's span (first to last event); `tAdvances` / `tOther`
 // split the obligations held for the first time this arc (their `obligation-latched` facts) by whether the obligation in
@@ -45,6 +45,7 @@ import {
   type FlowStage, HELD_STATION, SLOT_STATION, SLOT_WAIT_STATION, parseJobId, parseStationId, stationId,
 } from '../core/ids.ts';
 import { isRed, obligationRevsOf, type Stage } from '../core/records.ts';
+import { spawnPressureOf } from '../core/upgrade.ts';
 import { type IsoTime, isoTime } from '../core/values.ts';
 import { type Obligations, parseObligations } from '../holistic/types.ts';
 import { drainsArc } from '../input/classify.ts';
@@ -106,6 +107,8 @@ type Spawn = Readonly<{
   end: number | null;
   /** The run's verdict (a command's), null when it has none. */
   red: boolean | null;
+  /** Its interval pressure (M4b rev 3; null: no result, no PSI, or closed unwatched or before rev 3). */
+  pressure: number | null;
 }>;
 /** A candidate merge's two trees: the candidate commit and the tip it merged onto (a T-alone run's tree). */
 type CandidateTrees = Readonly<{ candidate: Sha; tip: Sha }>;
@@ -178,7 +181,8 @@ class LogIndex {
           intents.delete(e.op);
           const red = e.type === 'done' && e.kind === 'proc.spawn' && e.outcome.kind === 'result' && e.outcome.summary.type === 'command'
             && ['pass', 'fail', 'stall'].includes(e.outcome.summary.verdict) ? isRed(e.outcome.summary.verdict) : null;
-          this.spawns.push({ intent: spawn.intent, seq: spawn.seq, start: spawn.at, end: at, red });
+          const pressure = e.type === 'done' && e.kind === 'proc.spawn' && e.outcome.kind === 'result' ? spawnPressureOf(e.outcome) : null;
+          this.spawns.push({ intent: spawn.intent, seq: spawn.seq, start: spawn.at, end: at, red, pressure });
         }
         const job = batchFfs.get(e.op);
         if (job !== undefined && e.type === 'done' && e.kind === 'integration.ff' && e.outcome.kind === 'published') {
@@ -258,7 +262,7 @@ class LogIndex {
       }
     }
     // Still open at the end of the log.
-    for (const s of intents.values()) this.spawns.push({ intent: s.intent, seq: s.seq, start: s.at, end: null, red: null });
+    for (const s of intents.values()) this.spawns.push({ intent: s.intent, seq: s.seq, start: s.at, end: null, red: null, pressure: null });
     this.spawns.sort((a, b) => a.seq - b.seq);
     if (pausedAllAt !== null) this.globalHeld.push({ start: pausedAllAt, end: Infinity });
     for (const [u, start] of pausedUnit) this.held(u, { start, end: Infinity });
@@ -366,7 +370,7 @@ class SeriesFold {
       if (s.end === null || s.red === null) continue;
       const run = this.suiteRunOf(s, this.treesOf(s));
       if (run === null) continue;
-      out.push({ lane: run.lane, at: iso(s.start), minutes: minutesOf(s.end - s.start), shape: run.shape, red: s.red });
+      out.push({ lane: run.lane, at: iso(s.start), minutes: minutesOf(s.end - s.start), shape: run.shape, red: s.red, pressure: s.pressure });
     }
     return out.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   }
@@ -502,6 +506,8 @@ export function flowSeries(arc: ArcId, events: readonly Event[], inputs: SeriesI
     points.push({
       unit, admittedAt: iso(admittedAt), mergedAt: iso(p.end), leadMin: minutesOf(p.end - admittedAt), minutes,
       costUsd: log.unitCost.has(unit) ? log.unitCost.get(unit)! : 0, rework: p.rework, firstRunReds: p.firstRunReds,
+      // Rev 3 step H1: the time-weighted mean of the unit's service intervals' pressure (`Spawn.pressure`).
+      pressure: null,
     });
   }
   points.sort((a, b) => (a.mergedAt < b.mergedAt ? -1 : a.mergedAt > b.mergedAt ? 1 : 0));

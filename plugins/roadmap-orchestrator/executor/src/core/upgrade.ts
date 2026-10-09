@@ -10,6 +10,7 @@
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId } from './ids.ts';
+import type { PressureAvailability } from '../host/pressure.ts';
 
 const warned = new Set<string>();
 
@@ -132,4 +133,21 @@ export function bundleClassesOf(source: Extract<RevisionSource, { type: 'bundle'
 export function dev7ArcRolesDefault(): null {
   warnDefaulted('routing.arcRoles', 'a routing provenance without arcRoles (an arc started on 1.0.0-dev.7): the dev.7 role set, the flow loop off');
   return null;
+}
+
+// M4b rev 3 (host pressure, still 1.0.0-dev.8): records an earlier executor wrote lack the pressure fields. Byte-preserving:
+// the readers keep them absent, these read them.
+
+/** A spawn's interval pressure: absent on a spawn an earlier executor closed, read as null (no pressure rule applies). */
+export function spawnPressureOf(outcome: Readonly<{ pressure?: number | null }>): number | null {
+  if (outcome.pressure !== undefined) return outcome.pressure;
+  warnDefaulted('proc.spawn.pressure', 'a spawn result without pressure (closed before M4b rev 3); read as null');
+  return null;
+}
+
+/** A start's PSI availability: absent on a start before M4b rev 3, read as `unavailable` (its spawns carry no pressure). */
+export function startPressureOf(fact: Readonly<{ pressure?: PressureAvailability }>): PressureAvailability {
+  if (fact.pressure !== undefined) return fact.pressure;
+  warnDefaulted('executor-started.pressure', 'an executor start without pressure (before M4b rev 3); read as unavailable');
+  return 'unavailable';
 }

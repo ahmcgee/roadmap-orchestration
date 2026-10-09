@@ -16,7 +16,7 @@ const H = sha256('a'.repeat(64));
 
 /** A merged unit at `min` with a lead of `lead` minutes, all of it `station`. */
 const point = (min: number, lead = 10, station = 'stage:build', unit = `u${min}`): FlowPoint => ({
-  unit: unitId(unit), admittedAt: at(min - lead), mergedAt: at(min), leadMin: lead, minutes: { [stationId(station)]: lead }, costUsd: null, rework: 0, firstRunReds: 0,
+  unit: unitId(unit), admittedAt: at(min - lead), mergedAt: at(min), leadMin: lead, minutes: { [stationId(station)]: lead }, costUsd: null, rework: 0, firstRunReds: 0, pressure: null,
 });
 const run = (n: number, min: number, code: { station: string } | null = null): FlowRun => ({
   started: { kind: 'flow-started', job: jobId('flow', n), triggers: ['floor'], inputsSha256: H, at: at(min), seq: n * 10 },

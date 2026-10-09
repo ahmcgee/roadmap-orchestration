@@ -27,9 +27,9 @@ export async function reattach(ctx: ProcContext, intent: IntentOf<'proc.spawn'>)
     throw new Error(`${files.invDir}/launch.json does not hash to the intent's launchSha256 ${intent.expect.launchSha256}`);
   }
   const runner = liveRunner(files);
-  if (runner === null) return { how: 'runner-gone', settled: await settle(ctx, intent, 'recovered') };
+  if (runner === null) return { how: 'runner-gone', settled: await settle(ctx, intent, { type: 'recovered' }) };
   // A live runner was started by this intent, so launch.json was written before it.
   if (launch === null) throw new Error(`${files.invDir}: runner ${runner.pid} is alive but launch.json is missing`);
   await awaitRunner({ files, launch, runner });
-  return { how: 'adopted', settled: await settle(ctx, intent, 'adopted') };
+  return { how: 'adopted', settled: await settle(ctx, intent, { type: 'adopted' }) };
 }

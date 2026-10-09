@@ -18,6 +18,7 @@ import { parseFlowInputs, parseFlowSeries, parseHostGivens } from '../src/flow/t
 import { FLOW_SCHEMA, validateFlowOutput } from '../src/prompts/schemas.ts';
 import { arcStack, parseRepoConfig, resolveRouting, routingRevOf, seatsInForce } from '../src/routing/layers.ts';
 import { routingProvenance } from '../src/routing/types.ts';
+import { spawnPressureOf, startPressureOf } from '../src/core/upgrade.ts';
 
 const ARC = arcId('arc-3');
 const A = sha('a'.repeat(40));
@@ -135,10 +136,60 @@ describe('m4b facts', () => {
   });
 });
 
+describe('m4b rev 3: host pressure records', () => {
+  const result = { kind: 'result', resultSha256: H, summary: { type: 'command', verdict: 'stall' } };
+  const done = (outcome: object): LogRecord => ({ type: 'done', op: opId(ARC, 2), kind: 'proc.spawn', outcome, recoveredBy: null }) as unknown as LogRecord;
+  const ended = (code: object) => fact({ kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: null, constraint: { code, judged: JUDGED } });
+
+  it('a start records PSI availability and a spawn result its interval pressure; both absent on an earlier executor\'s, read with defaults', () => {
+    roundTrip(fact({ kind: 'executor-started', generation: 3, host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 31 }, pressure: 'available' }));
+    roundTrip(fact({ kind: 'executor-started', generation: 3, pressure: 'unavailable' }));
+    refuses(fact({ kind: 'executor-started', generation: 3, pressure: 'none' }), /\.pressure$/);
+    for (const pressure of [0, 0.37, 1, null]) roundTrip(done({ ...result, pressure }));
+    for (const pressure of [1.01, -0.1, '0.3']) refuses(done({ ...result, pressure }), /\.pressure$/);
+    const old = roundTrip(done(result));
+    assert.ok(old.type === 'done' && old.kind === 'proc.spawn' && old.outcome.kind === 'result');
+    assert.equal(spawnPressureOf(old.outcome), null);
+    assert.equal(spawnPressureOf({ pressure: 0.4 }), 0.4);
+    assert.equal(startPressureOf({}), 'unavailable');
+    assert.equal(startPressureOf({ pressure: 'available' }), 'available');
+  });
+
+  it('host:cpu is an internal station, never a share of lead; the trigger, drop reason, metric and hold cause arms', () => {
+    assert.deepEqual(parseStationId('host:cpu'), { type: 'host-cpu' });
+    assert.equal(stationId('host:cpu'), 'host:cpu');
+    assert.throws(() => stationId('host:mem'), InvalidIdError);
+    roundTrip(ended({ station: 'host:cpu', internal: true, component: null }));
+    refuses(ended({ station: 'host:cpu', internal: false, component: null }), /\.internal$/);
+    refuses(ended({ station: 'host:cpu', internal: true, component: 'ff' }), /\.component$/);
+    roundTrip(fact({ kind: 'flow-started', job: 'flow-2', triggers: ['yellow-worsening', 'host-pressure', 'constraint-shift'], inputsSha256: H }));
+    refuses(fact({ kind: 'flow-started', job: 'flow-2', triggers: ['constraint-shift', 'host-pressure'], inputsSha256: H }), /\.triggers\[1\]$/);
+    const proposal = { ...PROPOSAL, target: 'host:cpu', action: { lever: 'concurrency', cpu: 12 } };
+    roundTrip(fact({ kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: { proposal, reason: 'direction', detail: 'an increase at host:cpu' }, constraint: { code: null, judged: JUDGED } }));
+    roundTrip(fact({
+      kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'pressure' }, before: { samples: [0.4, 0.5, 0.45], centre: 0.45, mrBar: 0.07 },
+      after: { samples: [0.1, 0.12, 0.09] }, guards: [], verdict: 'improved', preimage: { lever: 'concurrency', cpu: null },
+    }));
+    const held = { kind: 'stage-outcome', unit: 'u1', stage: 'lanes', attempt: 1, outcome: 'interrupted', class: 'hold', chargeable: false, cause: { type: 'host-pressure', inv: 'arc-3/7#1' } };
+    roundTrip(fact(held));
+    refuses(fact({ ...held, cause: { type: 'host-pressure', inv: 'u1' } }), /\.cause\.inv$/);
+  });
+
+  it('a series point and a suite run carry pressure (series v2); host:cpu is no minutes key', () => {
+    const point = { unit: 'u1', admittedAt: AT, mergedAt: AT, leadMin: 5, minutes: { 'stage:build': 5 }, costUsd: null, rework: 0, firstRunReds: 0, pressure: null };
+    const series = { v: 2, arc: 'arc-3', host: null, points: [point], suiteRuns: [], accounting: { tAdvances: null, tOther: null, tUnits: 0, wip: 0, oeUsdPerHour: 0 } };
+    assert.equal(parseFlowSeries(series).points[0]?.pressure, null);
+    assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, minutes: { 'stage:build': 4, 'host:cpu': 1 } }] }), SchemaError);
+    assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, pressure: 2 }] }), SchemaError);
+    const { pressure: _, ...withoutPressure } = point;
+    assert.throws(() => parseFlowSeries({ ...series, points: [withoutPressure] }), SchemaError);
+  });
+});
+
 describe('m4b kept records', () => {
-  const point = { unit: 'u1', admittedAt: AT, mergedAt: '2026-10-08T12:30:00.000Z', leadMin: 30, minutes: { 'stage:build': 20, 'wait:slot:integration': 4, 'suite:unit': 6 }, costUsd: 1.5, rework: 0, firstRunReds: 0 };
+  const point = { unit: 'u1', admittedAt: AT, mergedAt: '2026-10-08T12:30:00.000Z', leadMin: 30, minutes: { 'stage:build': 20, 'wait:slot:integration': 4, 'suite:unit': 6 }, costUsd: 1.5, rework: 0, firstRunReds: 0, pressure: 0.12 };
   const series = {
-    v: 1, arc: 'arc-3', host: null, points: [point], suiteRuns: [{ lane: 'unit', at: AT, minutes: 6, shape: 'stand-in', red: false }],
+    v: 2, arc: 'arc-3', host: null, points: [point], suiteRuns: [{ lane: 'unit', at: AT, minutes: 6, shape: 'stand-in', red: false, pressure: null }],
     accounting: { tAdvances: null, tOther: null, tUnits: 2, wip: 1, oeUsdPerHour: 3 },
   };
 
@@ -147,7 +198,7 @@ describe('m4b kept records', () => {
     assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, leadMin: 31 }] }), (e: unknown) => e instanceof SchemaError && /\.minutes$/.test(e.field));
     assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, minutes: { 'slot:integration': 10, 'stage:build': 20 } }] }), SchemaError);
     assert.throws(() => parseFlowSeries({ ...series, accounting: { ...series.accounting, tAdvances: 1 } }), SchemaError);
-    assert.throws(() => parseFlowSeries({ ...series, v: 2 }), SchemaError);
+    assert.throws(() => parseFlowSeries({ ...series, v: 1 }), SchemaError);
     assert.throws(() => parseFlowSeries({ ...series, points: [point, point] }), SchemaError);
   });
 

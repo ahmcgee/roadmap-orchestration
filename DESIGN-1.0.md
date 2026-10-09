@@ -1230,6 +1230,19 @@ ladder with its own runnable fixture:
     rope is diagnosed only. RC-8: build-seat effort is the build seat's class, moved one class step and never below the
     tier's built-in class (effort lives in the class binding; a plan cannot rebind a class). RC-9: a rejection is
     remembered by `(station, lever, target)`, never by the value; a `worse` verdict adds its key, a `red` proof does not.
+  - **Host pressure is a constraint** (owner ruling 2026-10-09, plan rev 3): cpu saturation that degrades every pipeline
+    is optimized like a serial suite. Code measures Linux PSI cpu (`some`) over each launch and per scheduler tick, the
+    flow role may name the internal station `host:cpu`, the levers subordinate to it, and no unit is charged for a starved
+    host; a host without PSI records `unavailable` once and every pressure rule is off. RC-10: saturated is an interval
+    pressure (PSI `some`, the fraction of wall time a runnable task waited for a cpu) of at least 0.25; at or above it
+    over the constraint window, the code constraint is `host:cpu`, ahead of the wait and service rules. RC-11: a lane run
+    or stage invocation ended by `deadline` or `stall` under saturation is `starved` (no product verdict, not chargeable,
+    no fix round), and a red lane run under saturation reruns once with only the rerun's verdict counting (its first red
+    still counts as a first-run red); such a unit is held (`host-pressure`) until the tick avg60 falls below 0.25 or 30
+    min pass, and after 3 starved runs it falls back to the handling without pressure. RC-12: a lever at `host:cpu` only
+    decreases (concurrency, a pool, a suite lane's cpu or `--test-concurrency`) or gives `host` advice, an increase is
+    dropped (`direction`); its step is subordinate and its verdict metric the interval pressure of the units admitted
+    after, lead a guard.
   - **The flow seat is on every arc.** `flow` is in force in every arc scope an M4b executor starts (frontier, seat
     `arc`), holistic or not, so a binding of its class with no flow prompt (Sonnet, or a Codex model) refuses
     `unsupported-routing` for a non-holistic start too. An arc 1.0.0-dev.7 started records no role set and keeps the dev.7

@@ -64,6 +64,8 @@
 // the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a
 // holistic job runs, and no holistic job starts while it runs. While a proposal is pending its apply, new candidates
 // wait (`flowApply`). Right before `arc-completed`, the verdicts the completion closes and the compact flow series.
+// M4b rev 3: each loop iteration reads the host's PSI cpu avg60 into an in-memory tick history (`PressureTicks`, a
+// restart starts it fresh), which the flow track reads (`FlowTrackInput.pressure`).
 //
 // The scheduler's holds (on top of admission's, src/schedule/ready.ts):
 //   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
@@ -120,6 +122,7 @@ import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.t
 import { type CheckpointContext, type DesignParkRoute, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
 import { beforeCompletion, flowApplyHeld, flowOn, runFlowTrack } from '../flow/track.ts';
+import { PressureTicks, readPressure } from '../host/pressure.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
@@ -722,6 +725,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** While the flow job (the flow track's judgment) runs: no holistic job starts (one judgment job at a time). */
   let flowJudging = false;
   let lastTick = 0;
+  const pressure = new PressureTicks();
 
   let wakeup: (() => void) | null = null;
   const kick = (): void => wakeup?.();
@@ -1088,6 +1092,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       judging: (on) => {
         flowJudging = on;
       },
+      pressure: () => pressure.ticks(),
     })) === 'progress' ? PROGRESS : WAIT));
   };
 
@@ -1188,6 +1193,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   for (;;) {
     if (failures.length > 0) throw failures[0];
+    pressure.record(readPressure(), Date.now());
     const arc = view().arc;
     /** The pending mutations' scopes, for sched.json: none while stopping (nothing will apply). */
     let drains: SchedFile['drains'] = [];

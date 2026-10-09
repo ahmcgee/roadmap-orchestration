@@ -9,7 +9,7 @@ import { FLOW_SERIES_V, type FlowPoint, type FlowSeries, type HostFingerprint } 
 import { HOST } from './helpers/flowlog.ts';
 
 const AT = isoTime('2026-10-08T09:00:00.000Z');
-const point = (n: number, leadMin: number): FlowPoint => ({ unit: unitId(`u${n}`), admittedAt: AT, mergedAt: AT, leadMin, minutes: {}, costUsd: null, rework: 0, firstRunReds: 0 });
+const point = (n: number, leadMin: number): FlowPoint => ({ unit: unitId(`u${n}`), admittedAt: AT, mergedAt: AT, leadMin, minutes: {}, costUsd: null, rework: 0, firstRunReds: 0, pressure: null });
 const series = (arc: string, leads: readonly number[], host: HostFingerprint | null = HOST): FlowSeries => ({
   v: FLOW_SERIES_V, arc: arcId(arc), host, points: leads.map((l, i) => point(i + 1, l)), suiteRuns: [],
   accounting: { tAdvances: null, tOther: null, tUnits: 0, wip: 0, oeUsdPerHour: 0 },

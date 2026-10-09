@@ -253,7 +253,8 @@ const describe = (a: FlowAction): string => {
 /** One line naming a proposal: its lever's change, target, focusing step and verdict metric. */
 export function proposalLine(p: FlowProposal): string {
   const metric = metricOf(p.action, p.target);
-  const m = metric === null ? 'none' : metric.type === 'lead' ? 'lead time' : metric.type === 'suite-run' ? `per-run service of ${metric.lane}` : `the wait ${metric.station}`;
+  const m = metric === null ? 'none' : metric.type === 'lead' ? 'lead time' : metric.type === 'suite-run' ? `per-run service of ${metric.lane}`
+    : metric.type === 'pressure' ? 'interval pressure' : `the wait ${metric.station}`;
   return `${p.id}: ${describe(p.action)} at ${p.target} (${LEVER_STEP[p.action.lever]}; verdict metric ${m})`;
 }
 

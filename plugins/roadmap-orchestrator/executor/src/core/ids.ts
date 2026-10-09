@@ -394,6 +394,11 @@ export const HELD_STATION = 'held';
  * (`finding-blocked`): diagnostic, a constraint code may name, never a lever's target.
  */
 export const FINDING_WAIT_STATION = 'wait:finding';
+/**
+ * M4b rev 3 (RC-10): the host's cpu, the constraint when the window's mean interval pressure is saturated (a contended
+ * cpu inflates every station's service). Internal; never a key of a point's minutes (it is no share of lead time).
+ */
+export const HOST_CPU_STATION = 'host:cpu';
 
 /**
  * A flow station (G3): one disjoint share of a unit's lead time, or (`slot:integration`) the slot's service as a whole,
@@ -408,8 +413,9 @@ export type StationParts =
   | Readonly<{ type: 'finding-wait' }>
   | Readonly<{ type: 'suite'; lane: LaneId }>
   | Readonly<{ type: 'component'; component: SlotComponent }>
-  | Readonly<{ type: 'held' }>;
-const STATION_FORM = 'stage:<s> | wait:<s> | slot:integration | wait:slot:integration | wait:finding | suite:<lane> | arc-lanes | candidate-rest | ff | snapshot | held';
+  | Readonly<{ type: 'held' }>
+  | Readonly<{ type: 'host-cpu' }>;
+const STATION_FORM = 'stage:<s> | wait:<s> | slot:integration | wait:slot:integration | wait:finding | suite:<lane> | arc-lanes | candidate-rest | ff | snapshot | held | host:cpu';
 export function parseStationId(value: unknown, path = 'StationId'): StationParts {
   const bad = (): never => {
     throw new InvalidIdError('StationId', path, STATION_FORM, value);
@@ -419,6 +425,7 @@ export function parseStationId(value: unknown, path = 'StationId'): StationParts
   if (value === SLOT_WAIT_STATION) return { type: 'slot-wait' };
   if (value === FINDING_WAIT_STATION) return { type: 'finding-wait' };
   if (value === HELD_STATION) return { type: 'held' };
+  if (value === HOST_CPU_STATION) return { type: 'host-cpu' };
   if ((SLOT_COMPONENTS as readonly string[]).includes(value)) return { type: 'component', component: value as SlotComponent };
   const m = /^(stage|wait|suite):(.+)$/.exec(value);
   if (m === null) return bad();
@@ -447,6 +454,7 @@ export function stationOf(parts: StationParts): StationId {
     case 'suite': return stationId(`suite:${parts.lane}`);
     case 'component': return stationId(parts.component);
     case 'held': return stationId(HELD_STATION);
+    case 'host-cpu': return stationId(HOST_CPU_STATION);
   }
 }
 

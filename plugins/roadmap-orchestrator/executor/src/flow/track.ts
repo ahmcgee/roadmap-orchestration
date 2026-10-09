@@ -39,6 +39,7 @@ import { metricOf, rulerChanges } from './levers.ts';
 import { closedVerdicts, proposalOf, proposalsOf, runningRun } from './log.ts';
 import { runProof } from './proof.ts';
 import type { SeriesInputs } from './series.ts';
+import type { PressureTick } from '../host/pressure.ts';
 import { chartOf } from './spc.ts';
 import { cooldownOf, dueTriggers } from './trigger.ts';
 import type { ClosedVerdict, CodeConstraint, FlowAccounting, FlowChart, FlowProposal, FlowTrigger, FlowWindow, GivenInForce } from './types.ts';
@@ -187,6 +188,11 @@ export type FlowTrackInput = Readonly<{
   holisticRunning: () => boolean;
   /** Told while the flow job (the judgment) runs, so no holistic job starts meanwhile. */
   judging: (on: boolean) => void;
+  /**
+   * M4b rev 3: the scheduler's per-tick PSI avg60, newest last (empty without PSI): what the `host-pressure` trigger reads
+   * (step H1).
+   */
+  pressure: () => readonly PressureTick[];
 }>;
 
 /** One run of the track (see the header); whether it wrote anything (progress) or found nothing to do. */

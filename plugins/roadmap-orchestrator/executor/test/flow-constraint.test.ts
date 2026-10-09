@@ -11,7 +11,7 @@ import type { FlowPoint } from '../src/flow/types.ts';
 const AT = isoTime('2026-10-08T09:00:00.000Z');
 const point = (minutes: Readonly<Record<string, number>>): FlowPoint => ({
   unit: unitId('u1'), admittedAt: AT, mergedAt: AT, leadMin: Object.values(minutes).reduce((a, b) => a + b, 0), minutes: minutes as FlowPoint['minutes'],
-  costUsd: null, rework: 0, firstRunReds: 0,
+  costUsd: null, rework: 0, firstRunReds: 0, pressure: null,
 });
 
 describe('flow constraint: code\'s reading', () => {

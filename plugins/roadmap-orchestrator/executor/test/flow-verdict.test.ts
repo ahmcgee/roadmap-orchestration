@@ -15,9 +15,9 @@ const SUITE: FlowMetric = { type: 'suite-run', lane: laneId('unit') };
 let n = 0;
 function point(admitted: number, merged: number, extra: Partial<FlowPoint> = {}): FlowPoint {
   const leadMin = merged - admitted;
-  return { unit: unitId(`u${++n}`), admittedAt: at(admitted), mergedAt: at(merged), leadMin, minutes: { [stationId('stage:build')]: leadMin }, costUsd: null, rework: 0, firstRunReds: 0, ...extra };
+  return { unit: unitId(`u${++n}`), admittedAt: at(admitted), mergedAt: at(merged), leadMin, minutes: { [stationId('stage:build')]: leadMin }, costUsd: null, rework: 0, firstRunReds: 0, pressure: null, ...extra };
 }
-const run = (min: number, minutes: number, lane = 'unit'): SuiteRun => ({ lane: laneId(lane), at: at(min), minutes, shape: 'lane', red: false });
+const run = (min: number, minutes: number, lane = 'unit'): SuiteRun => ({ lane: laneId(lane), at: at(min), minutes, shape: 'lane', red: false, pressure: null });
 const samples = (...xs: readonly [number, number][]): MetricSample[] => xs.map(([t, m]) => ({ at: at(t), minutes: m }));
 
 describe('window samples', () => {

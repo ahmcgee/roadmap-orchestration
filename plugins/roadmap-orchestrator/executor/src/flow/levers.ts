@@ -65,6 +65,8 @@ export function waitInFrontOf(target: StationId): StationId {
     case 'wait': case 'slot-wait': return target;
     case 'slot': case 'suite': case 'component': return stationId(SLOT_WAIT_STATION);
     case 'held': case 'finding-wait': throw new Error(`waitInFrontOf: ${target} is never a target`);
+    // RC-12: a lever at host:cpu is measured by pressure, not a wait (step H1 derives that metric).
+    case 'host-cpu': throw new Error(`waitInFrontOf: ${target} has no wait in front of it`);
   }
 }
 
