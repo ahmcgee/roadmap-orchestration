@@ -46,7 +46,7 @@ import { REJECTION_FILE } from '../../src/executor.ts';
 import { candidateRef } from '../../src/git/candidate.ts';
 import { git, refTarget, revParse } from '../../src/git/git.ts';
 import { snapshotRef, verifySnapshot } from '../../src/git/snapshot.ts';
-import { transientViolations } from '../../src/git/transient.ts';
+import { laneEvidenceGlobs, transientViolations } from '../../src/git/transient.ts';
 import { ROADMAP_DIR_ALLOWED } from '../../src/preflight/checks.ts';
 import { outputSignatures } from '../../src/host/signatures.ts';
 import { readResidues, undispositioned } from '../../src/host/residues.ts';
@@ -462,7 +462,7 @@ function diffProductOnly(run: Run): Verdict {
   // other path is under the transient rules, bounded by the union of the units' scopes.
   const published = (p: string): boolean => p.startsWith('.roadmap/') && (ROADMAP_DIR_ALLOWED as readonly string[]).includes(p.split('/')[1]!);
   const violations = transientViolations(
-    { evidenceGlobs: specs.flatMap((s) => s.lanes.flatMap((l) => l.evidenceGlobs)), scope: specs.flatMap((s) => s.scope) },
+    { evidenceGlobs: specs.flatMap(laneEvidenceGlobs), scope: specs.flatMap((s) => s.scope) },
     paths.filter((p) => !published(p)),
   );
   return { pass: violations.length === 0, detail: violations.length > 0 ? violations.map((v) => `${v.path} (${v.rule})`).join(', ') : `${paths.length} product paths: ${paths.join(', ')}` };

@@ -20,6 +20,10 @@
 //                               it, a unit parked at a judgment stage by `resume <unit>`); taking a pending
 //                               revision back (`withdrawn`); anything else, and any edit of a merged,
 //                               approved, publishing, stopped or finally parked unit: refused
+//   lane evidence (run 3 of M4b) a unit added or whose entry or spec changes: no lane's `evidenceGlobs` entry covers
+//                               a pattern of its scope (a literal path it names, or the same pattern;
+//                               src/spec/spec.ts `evidenceScopeConflicts`, also run at a fresh start). A spec in force
+//                               is never refused for it: only the edit that touches the unit
 //   cut (M2)                    refused on a merged or superseded unit and on one in a task (active past its
 //                               first dispatch and not paused, or with an attempt a crash cut short); a cut is
 //                               final; every unit that runs `after` a cut unit is cut too or drops the edge
@@ -124,7 +128,7 @@ import { readJournal } from '../core/log.ts';
 import { effectiveGraph, findCycle } from '../schedule/graph.ts';
 import type { CommandScope, ScopeOf } from '../schedule/types.ts';
 import { type Ruling, ledgerAfter, parseRulings, sidecarsAfter } from '../spec/rulings.ts';
-import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
+import { SpecFileError, bytesSha256, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import {
   type InForce, type InputFile, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
   readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, unitRouting,
@@ -944,7 +948,8 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
 }
 
 /**
- * The spec rows of every unit the revision adds or whose spec or entry it changes: its declared obligations exist and
+ * The spec rows of every unit the revision adds or whose spec or entry it changes: no lane's `evidenceGlobs` entry
+ * covers a pattern of its scope (src/spec/spec.ts `evidenceScopeConflicts`); its declared obligations exist and
  * cover every non-exempt obligation of a mapping pattern that may overlap its scope (prefix-conservative); a `repair`
  * unit declares repairs, each an obligation or a finding of the arc.
  */
@@ -955,6 +960,7 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
   for (const unit of input.next.plan.units) {
     const spec = specs.get(unit.id);
     if (!touched.has(unit.id) || spec === undefined) continue;
+    reasons.push(...evidenceScopeConflicts(unit.id, [...unit.scope, ...spec.scope], spec));
     const declared = specObligations(spec);
     const byId = new Map((obligations?.obligations ?? []).map((o) => [o.id, o]));
     const unknown = declared.filter((id) => !byId.has(id));

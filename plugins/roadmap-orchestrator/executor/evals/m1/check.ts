@@ -33,7 +33,7 @@ import { type AbsPath, absPath, repoPath } from '../../src/core/values.ts';
 import { candidateRef } from '../../src/git/candidate.ts';
 import { git, refTarget, revParse } from '../../src/git/git.ts';
 import { snapshotRef, verifySnapshot } from '../../src/git/snapshot.ts';
-import { transientViolations } from '../../src/git/transient.ts';
+import { laneEvidenceGlobs, transientViolations } from '../../src/git/transient.ts';
 import { ROADMAP_DIR_ALLOWED } from '../../src/preflight/checks.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
@@ -155,7 +155,7 @@ function diffProductOnly(run: Run): Verdict {
   // other path is under the transient rules, bounded by the union of the units' scopes.
   const published = (p: string): boolean => p.startsWith('.roadmap/') && (ROADMAP_DIR_ALLOWED as readonly string[]).includes(p.split('/')[1]!);
   const violations = transientViolations(
-    { evidenceGlobs: specs.flatMap((s) => s.lanes.flatMap((l) => l.evidenceGlobs)), scope: specs.flatMap((s) => s.scope) },
+    { evidenceGlobs: specs.flatMap(laneEvidenceGlobs), scope: specs.flatMap((s) => s.scope) },
     paths.filter((p) => !published(p)),
   );
   return {

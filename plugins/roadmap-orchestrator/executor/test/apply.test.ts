@@ -7,7 +7,7 @@
 // classify.plan-check-shape-edit, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
 // classify.knowndefect-cut-fixer-refused, classify.reentry-widen-with-ruling, classify.reentry-widen-without-ruling-refused; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
 // apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
-// apply.stale-after-evidence-revision.
+// apply.stale-after-evidence-revision, classify.evidence-covers-scope (M4b run 3).
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -206,6 +206,42 @@ const ROWS: readonly Row[] = [
     expect: () => [{ type: 'unit-changed', unit: unitId('u2') }],
   },
   { name: 'an evidence-only edit of an in-flight unit: in force at once', setup: inFlight, edit: (d) => editSpec(d, 'u1', evidenceGlobs), expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)] },
+  {
+    name: 'classify.evidence-covers-scope: evidenceGlobs naming the unit\'s own paths are refused, the lane, entry and scope pattern named',
+    edit: (d) => {
+      editPlan(d, (p) => void (p.units[1]!['scope'] = ['src/cli.js', 'test/unit/u2.test.js']));
+      editSpec(d, 'u2', (s) => {
+        s['scope'] = ['src/cli.js', 'test/unit/u2.test.js'];
+        s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**/*.js', 'test/unit/u2.test.js', 'coverage/**'] }));
+      });
+      editSpec(d, 'u3', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['test/**'] }))));
+    },
+    expect: [
+      /^unit u2 lane mul: evidenceGlobs entry `src\/\*\*\/\*\.js` covers `src\/cli\.js` of the unit's scope\. evidenceGlobs declare the files the lane's run writes \(its outputs\)/,
+      /^unit u2 lane mul: evidenceGlobs entry `test\/unit\/u2\.test\.js` covers `test\/unit\/u2\.test\.js` of the unit's scope/,
+      /^unit u3 lane mul: evidenceGlobs entry `test\/\*\*` covers `test\/\*\*` of the unit's scope/,
+    ],
+  },
+  {
+    name: 'classify.evidence-covers-scope: a spec in force that breaks the rule (an older release\'s arc) stays readable; an edit not touching its unit applies',
+    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**'] })))),
+    setup: inFlight,
+    edit: (d) => editSpec(d, 'u2', addClause),
+    expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)],
+  },
+  {
+    name: 'classify.evidence-covers-scope: that in-flight unit\'s evidence edit applies once it fixes the entry, and is refused while it keeps it',
+    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**'] })))),
+    setup: inFlight,
+    edit: (d, r) => {
+      editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**', 'out/**'] }))));
+      const kept = classifyNow(r);
+      assert.equal(kept.kind, 'rejected', JSON.stringify(kept));
+      if (kept.kind === 'rejected') assert.deepEqual(kept.reasons.map((x) => x.split('.')[0]), ['unit u1 lane mul: evidenceGlobs entry `src/**` covers `src/**` of the unit\'s scope']);
+      editSpec(d, 'u1', evidenceGlobs);
+    },
+    expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)],
+  },
   { name: 'any other edit at the same rev: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', addClause), expect: [/changed but is still at rev 1; a revision sets rev 2/] },
   { name: 'rev + 1 of an in-flight unit: pending', setup: inFlight, edit: revise, expect: (r) => [specChange(r.d, 'u1', 'revision', 2)] },
   { name: 'rev + 2: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', (s) => void (s['rev'] = 3)), expect: [/is at rev 3, but the unit's recorded rev is 1; a revision sets rev 2/] },

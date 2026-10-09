@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IntentOf, OpKind, RecoveredBy } from '../../src/core/events.ts';
-import { type OpId, type Sha, type UnitId, sha, unitId } from '../../src/core/ids.ts';
+import { type OpId, type Sha, type UnitId, laneId, sha, unitId } from '../../src/core/ids.ts';
 import type { Disposition, Journal } from '../../src/core/interfaces.ts';
 import type { ApprovalFingerprint } from '../../src/core/records.ts';
 import { type AbsPath, type RefName, absPath, refName, repoPattern } from '../../src/core/values.ts';
@@ -82,7 +82,7 @@ export function candidateRequest(worktree: AbsPath, unitCommit: Sha): CandidateR
     integration: INTEGRATION,
     unitCommit,
     worktree,
-    rules: { evidenceGlobs: [repoPattern('out/lanes')], scope: [repoPattern('**')] },
+    rules: { evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }], scope: [repoPattern('**')] },
     identity: IDENTITY,
     message: `roadmap: candidate ${UNIT}\n`,
   };

@@ -10,7 +10,8 @@
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
 //                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
-//                   `obligation-dropped`, reported as plan-change-refused), a start whose files differ applies
+//                   `obligation-dropped`, and the classifier's lane-evidence row `evidenceScopeConflicts` over
+//                   every unit, both reported as plan-change-refused), a start whose files differ applies
 //                   them through the apply core (src/commands/apply.ts `evaluateRevision`, source `start`) or
 //                   refuses (plan-change-refused); a revision a crash left mid-commit is recovery's first, and so
 //                   is a committed command's write-back (its `command.apply` still open with its revision in force:
@@ -72,7 +73,7 @@ import {
 } from '../routing/layers.ts';
 import type { ArcRoleSet, ProfileName } from '../routing/types.ts';
 import { type Ruling, loadRulings, parseRulings } from '../spec/rulings.ts';
-import { SpecFileError, parseSpec } from '../spec/spec.ts';
+import { SpecFileError, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import { resolveArgv0 } from './argv0.ts';
 import { type SmokePark, type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeOutages, smokeRejections } from './smoke.ts';
 import type { CommandProblem, StartupCheck, StartupContext, StartupRejection } from './startup.ts';
@@ -536,6 +537,14 @@ export function settlePlan(
     // A fresh arc records the files as they are; every unit enters now.
     const reserved = files.plan.units.map((u) => reservedUnitIdReason(u.id)).filter((r) => r !== null);
     if (reserved.length > 0) return [{ kind: 'plan-change-refused', reasons: reserved }];
+    // The classifier's lane-evidence row, over every unit (group 1 already refused a spec that does not load).
+    const evidence = files.plan.units.flatMap((u) => {
+      const file = files.specs.get(u.id);
+      if (file === undefined || file.bytes === null) throw new Error(`settlePlan: unit ${u.id}'s spec is absent, which plan-invalid refuses first`);
+      const spec = parseSpec(file.bytes, file.path);
+      return evidenceScopeConflicts(u.id, [...u.scope, ...spec.scope], spec);
+    });
+    if (evidence.length > 0) return [{ kind: 'plan-change-refused', reasons: evidence }];
     const dropped = obligationDropped(context, files);
     if (dropped.length > 0) return [{ kind: 'plan-change-refused', reasons: dropped }];
     keepCorpusFiles(context.runDir, corpusFiles);
