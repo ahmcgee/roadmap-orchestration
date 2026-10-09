@@ -55,7 +55,10 @@ function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
  *     other deliverer's published merge is an ancestor of `at`); of each binding obligation its spec repairs; and the
  *     spec's active witness items;
  *   - preservation: the witnesses of each binding obligation its spec declares that is must-hold (by activation, or a
- *     future one latched by a publication) and is not already a target.
+ *     future one latched by a publication whose merge is an ancestor of `at`) and is not already a target.
+ * A latch whose publication `at` does not contain binds nothing here: the unit's tree was cut before the witness test
+ * landed, so it cannot hold it (paid M4b run 3). The candidate, the unit merged onto the current tip, grades it as a
+ * must-hold (DESIGN-1.0.md §2.8 Witnesses: unit-branch success never certifies an integrated claim).
  */
 export function requiredWitnesses(view: JournalView, obligations: Obligations, unit: UnitId, spec: SpecM1, at: WitnessTree): readonly RequiredWitness[] {
   const byId = new Map(obligations.obligations.map((o) => [o.id, o]));
@@ -73,7 +76,14 @@ export function requiredWitnesses(view: JournalView, obligations: Obligations, u
     if (o === undefined) throw new Error(`unit ${unit}: its spec repairs ${ref}, which the obligations in force do not hold`);
     if (binding(o)) targets.add(o.id);
   }
-  const latched = new Set(view.holistic().latched.map((l) => l.obligation));
+  const latchedBy = new Map(view.holistic().latched.map((l) => [l.obligation, l.unit]));
+  const latchedInTree = (id: ObligationId): boolean => {
+    const by = latchedBy.get(id);
+    if (by === undefined) return false;
+    const merge = merges.get(by);
+    if (merge === undefined) throw new Error(`obligation ${id} is latched by ${by}, which has no published merge`);
+    return at.isAncestor(merge);
+  };
   const rows: RequiredWitness[] = [];
   for (const id of targets) rows.push(...obligationRows(byId.get(id) as ObligationDef, 'target'));
   for (const w of specWitnesses(spec)) {
@@ -82,7 +92,7 @@ export function requiredWitnesses(view: JournalView, obligations: Obligations, u
   for (const id of specObligations(spec)) {
     const o = byId.get(id);
     if (o === undefined) throw new Error(`unit ${unit}: its spec declares ${id}, which the obligations in force do not hold`);
-    if (targets.has(id) || !binding(o) || !(o.activation === 'must-hold' || latched.has(id))) continue;
+    if (targets.has(id) || !binding(o) || !(o.activation === 'must-hold' || latchedInTree(id))) continue;
     rows.push(...obligationRows(o, 'preservation'));
   }
   return [...new Map(rows.map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));

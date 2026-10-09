@@ -2644,7 +2644,11 @@ preservation}`, ascending by lane, test id, then source: targets are the witness
 obligation the unit completes (its `deliveredBy` names the unit and every other deliverer's published merge, read from the
 log's `integration.ff` dones, is an ancestor of `at`), of each binding obligation its spec repairs, and the spec's
 active witness items; preservation rows are the witnesses of each binding obligation the spec declares that is must-hold
-(by activation, or a latched future) and not already a target. A spec naming an obligation the file lacks fails loud.
+(by activation, or a latched future whose latching unit's published merge is an ancestor of `at`) and not already a target.
+A latch the tree does not contain binds nothing at the lanes stage: a unit cut before another unit published cannot hold
+that unit's witness test, and its candidate (the merge onto the current tip) grades the obligation as must-hold (paid M4b
+run 3: three chargeable `witnesses-missing` on a stale base parked a unit for design). A latch whose unit has no
+published merge fails loud. A spec naming an obligation the file lacks fails loud.
 `smokeTargets(required)` = the target rows (Q16). `missingWitnesses(records, required: TestRef[])` →
 `{missing, failed, malformed: LaneId[]}`: an id is `failed` when its record failed, else `missing` unless it passed with
 `selected > 0` (absent record or test, malformed record, zero-selected, skip); at most one record per lane (fails loud).

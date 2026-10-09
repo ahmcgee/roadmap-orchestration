@@ -81,9 +81,16 @@ describe('required', () => {
 
   it('required.preservation: declared must-holds (by activation or latched) not already targets, in lane and test order', () => {
     const s = spec({ obligations: ['I-1', 'I-4', 'I-5', 'I-6'] });
-    const r = requiredWitnesses(view({}, ['I-6']), OBLIGATIONS, unitId('u1'), s, tree([]));
+    const r = requiredWitnesses(view({ u0: C1 }, ['I-6']), OBLIGATIONS, unitId('u1'), s, tree([C1]));
     assert.deepEqual(rows(r), ['target I-1 t-delivered', 'preservation I-4 t-kept', 'preservation I-6 t-latched', 'preservation I-4 t-shared']);
     assert.deepEqual(smokeTargets(r).map((x) => x.testId), ['t-delivered'], 'smoke-targets: preservation must-holds are never smoked');
+  });
+
+  it('required.latch-outside-tree: a latch whose publication the tree does not contain binds nothing (paid M4b run 3)', () => {
+    const s = spec({ obligations: ['I-6'] });
+    assert.deepEqual(rows(requiredWitnesses(view({ u0: C1 }, ['I-6']), OBLIGATIONS, unitId('u1'), s, tree([]))), ['target I-1 t-delivered'], 'u0 latched I-6 after u1 was cut');
+    assert.deepEqual(rows(requiredWitnesses(view({ u0: C1 }, ['I-6']), OBLIGATIONS, unitId('u1'), s, tree([C1]))), ['target I-1 t-delivered', 'preservation I-6 t-latched']);
+    assert.throws(() => requiredWitnesses(view({}, ['I-6']), OBLIGATIONS, unitId('u1'), s, tree([])), /I-6 is latched by u0, which has no published merge/);
   });
 
   it('required.unknown-obligation-fails-loud: a spec naming an obligation the file lacks is a bug', () => {
