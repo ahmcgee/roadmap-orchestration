@@ -266,6 +266,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const { driver, report, checked } = story;
     assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
     assert.deepEqual([report.endedBy, report.stopReason, report.failure], ['stopped', 'k-limit', null]);
+    assert.deepEqual(report.leftovers, [], 'nothing of the fixture outlived the session and the stop of its arc');
     // A unit merging wakes the root agent too (owner ruling 2026-10-07), on a `units` line of a running run; when it lands
     // apart from the story's events is timing, so those wakes and lines are set aside: each such wake shows a merged
     // unit and the scripted root agent does nothing on it. So is arc 2's flow-proposal item (M4b): its run starts whenever

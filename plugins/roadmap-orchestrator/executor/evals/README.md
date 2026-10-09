@@ -334,7 +334,10 @@ node evals/m4a/adjudicate.ts /var/tmp/m4a
   run newly held, blocked or draining, a terminal run state, the 30-minute heartbeat; routine transitions are absorbed;
   `src/watch.ts` `ActionableFilter`, the same filter as `watch --actionable`). Allowlisted env,
   the fake gh first on PATH, cwd the product. Before and after, from its own env, a canary of this repository's real
-  forge (refs, issues, PRs, comments, labels, releases; `canary.json`) needs an authenticated real `gh`. It scrambles
+  forge (refs, issues, PRs, comments, labels, releases; `canary.json`) needs an authenticated real `gh`. Each turn runs
+  in a process group of its own; at its end the rest of the group and every `roadmap watch` tail in the fixture (a
+  Monitor's, which may sit outside the group) are killed. At the session's end, after the held arc is stopped, any
+  process still running in the fixture 30 s later is killed and named in `report.json` `leftovers`. It scrambles
   the live corpus and `.roadmap/` files at the end, writes `transcript.jsonl` and `report.json`; hard timeout 420 min.
   It uses the machine's host lock, so no other arc may run on the host meanwhile.
 - `check.ts <dir>` prints one JSON line and the not-exercised line, exits non-zero on any failed criterion: isolation,

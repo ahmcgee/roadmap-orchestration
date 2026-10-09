@@ -39,7 +39,14 @@
 //     With nothing to wait on (no arc seen, or the last one ended and was reported) and nothing asked, it nudges the
 //     session, at most 3 times in a row (`stalled`).
 //   - at the end, whatever the end (a `finally`), an arc of this product still holding the host is stopped with the
-//     staged `roadmap stop` and the claim awaited (`released`; criterion `host-released`).
+//     staged `roadmap stop` and the claim awaited (`released`; criterion `host-released`); then every process still
+//     running in the fixture (its cwd or an argv element under the fixture dir; the driver and its ancestors aside)
+//     LEFTOVER_GRACE_MS later is killed and named in `leftovers`.
+// A turn runs in a process group of its own. When it ends, however it ended, what is left of the group is killed, and
+// so is every `roadmap watch` tail of the fixture (`isWatchTail`, found by /proc scan: a tool may start its child in a
+// session of its own, out of the group's reach): after paid M4b run 2 the `roadmap watch --actionable` its root agent
+// ran under Monitor was still alive 3 h after the driver exited, and a fake root killed inside its Monitor wait leaves
+// the watch it spawned. Between turns only the arc's own processes run.
 //
 // Isolation (LR-f, L1, K6, H1). The driver stages the plugin (this repository's plugins/roadmap-orchestrator without
 // executor/evals, executor/test, node_modules) into the fixture and launches every session with an allowlisted env
@@ -67,12 +74,13 @@
 // checks it from the live run dirs every owner poll and after every turn; once arc 1 has a plan in force failing either,
 // it kills the turn and ends the run `fail-fast` (the run would cost hours and grade nothing of M4b). The owner simulator declines dropping the soak test (plant G) from the key.
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { arcsWithRefs, completedHeadOf, readArcRef } from '../../src/chain.ts';
+import { statOf } from '../../src/contain/proc.ts';
 import { HOST_DIR } from '../../src/host/hostdir.ts';
 import { readClaim } from '../../src/host/lock.ts';
 import { parseBriefPayload, type BriefPayload } from '../../src/phase0/types.ts';
@@ -113,6 +121,8 @@ const WAKE_DEBOUNCE_MS = 3_000;
 const ANSWER_POLL_MS: Readonly<Record<Mode['kind'], number>> = { real: 60_000, fake: 1_000 };
 /** How long the end-of-run stop waits for the host claim to clear. */
 const RELEASE_WAIT_MS = 5 * 60_000;
+/** How long the fixture's processes get to exit on their own once the host is released, before they are killed. */
+const LEFTOVER_GRACE_MS = 30_000;
 const MAX_NUDGES = 3;
 
 // ---------------------------------------------------------------------------------------------------
@@ -428,6 +438,8 @@ export type Report = Readonly<{
   scrambled: readonly string[];
   /** Arcs still holding the host when the session ended, stopped by the driver (empty: none did). */
   released: readonly Released[];
+  /** The fixture's processes still running after that stop (`pid argv`), killed by the driver (empty: none were). */
+  leftovers: readonly string[];
   arcs: readonly ArcForensics[];
   postRun: readonly PostRun[];
 }>;
@@ -446,16 +458,92 @@ export const initialPrompt = (profile: ProfileName): string => [
   `Start every arc with \`--profile ${profile}\`; never change it.`,
 ].join('\n');
 
+// ---------------------------------------------------------------------------------------------------
+// The fixture's processes (see the header: turn-end and session-end cleanup)
+
+export type FixtureProc = Readonly<{ pid: number; argv: readonly string[] }>;
+
+const gone = (error: unknown): boolean => ['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '');
+/** A zombie has ended; only its entry remains. */
+const alive = (pid: number): boolean => {
+  const stat = statOf(pid);
+  return stat !== null && stat.state !== 'Z';
+};
+
+/**
+ * Every live process whose cwd lies under `dir` or whose argv names a path under it, but this process and its
+ * ancestors (the driver's own argv names the fixture dir, and so may the shell that launched it).
+ */
+export function fixtureProcesses(dir: string): readonly FixtureProc[] {
+  const root = resolve(dir);
+  const under = (p: string): boolean => p === root || p.startsWith(`${root}/`);
+  const spared = new Set<number>();
+  for (let pid = process.pid; pid > 1 && !spared.has(pid); pid = statOf(pid)?.ppid ?? 0) spared.add(pid);
+  return readdirSync('/proc').flatMap((name) => {
+    if (!/^[0-9]+$/.test(name) || spared.has(Number(name))) return [];
+    const pid = Number(name);
+    try {
+      if (!alive(pid)) return [];
+      const argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter((a) => a !== '');
+      if (under(readlinkSync(`/proc/${pid}/cwd`)) || argv.some((a) => a.split(/[\s=]/).some(under))) return [{ pid, argv }];
+      return [];
+    } catch (error) {
+      if (gone(error) || (error as NodeJS.ErrnoException).code === 'EACCES') return [];
+      throw error;
+    }
+  });
+}
+
+/**
+ * A `roadmap watch` tail: the CLI (`bin/roadmap`, `roadmap` on PATH, or the fake's `stage-cli.ts <plugin> <host>`) with
+ * `watch` as its subcommand, or a shell running one.
+ */
+export function isWatchTail(argv: readonly string[]): boolean {
+  const cli = argv.findIndex((a) => /(^|\/)roadmap$/.test(a) || a.endsWith('/stage-cli.ts'));
+  if (cli >= 0 && argv[cli + (argv[cli]!.endsWith('/stage-cli.ts') ? 3 : 1)] === 'watch') return true;
+  return argv.some((a) => /(^|[\s/])roadmap\s+watch\b/.test(a));
+}
+
+/** SIGKILLs `procs` and waits until each is gone; fails loud naming any that outlives the bound. */
+export async function killProcs(procs: readonly FixtureProc[], waitMs = 10_000): Promise<void> {
+  for (const p of procs) {
+    try {
+      process.kill(p.pid, 'SIGKILL');
+    } catch (error) {
+      if (!gone(error)) throw error;
+    }
+  }
+  const deadline = Date.now() + waitMs;
+  for (let left = procs.filter((p) => alive(p.pid)); left.length > 0; left = left.filter((p) => alive(p.pid))) {
+    if (Date.now() >= deadline) throw new Error(`could not kill ${left.map(showProc).join('; ')}`);
+    await sleep(50);
+  }
+}
+
+export const showProc = (p: FixtureProc): string => `${p.pid} ${p.argv.join(' ')}`;
+
+/** Signals the process group `pgid` leads (a turn's); a group already empty is fine. */
+function killGroup(pgid: number | undefined, signal: NodeJS.Signals): void {
+  if (pgid === undefined) return;
+  try {
+    process.kill(-pgid, signal);
+  } catch (error) {
+    if (!gone(error)) throw error;
+  }
+}
+
 /**
  * One turn: launch or resume, stream events into the transcript, return the final text and session id, or the
  * isolation breach its init event shows (an MCP server or a memory path), on which the turn is killed. `abort` kills it
- * too (the fail-fast).
+ * too (the fail-fast). The turn leads a process group of its own; when it ends, the rest of the group and the
+ * fixture's watch tails are killed (see the header).
  */
 async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number, abort: AbortSignal): Promise<{ session: string | null; result: string | null; exit: number | null; isolation: string | null; timedOut: boolean }> {
   const argv = mode.kind === 'real'
     ? ['claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--plugin-dir', l.plugin, '--permission-mode', 'bypassPermissions', ...CLAUDE_ISOLATION, '--output-format', 'stream-json', '--verbose', ...(session === null ? [] : ['--resume', session]), prompt]] as const
     : [process.execPath, [FAKE_ROOT, '--fixture', l.dir, '--script', mode.script, ...(session === null ? [] : ['--resume', session]), '--', prompt]] as const;
-  const child: ChildProcess = spawn(argv[0], [...argv[1]], { cwd: l.product, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child: ChildProcess = spawn(argv[0], [...argv[1]], { cwd: l.product, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const kill = (): void => killGroup(child.pid, 'SIGTERM');
   let buffered = '';
   let stderr = '';
   let sid = session;
@@ -481,7 +569,7 @@ async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, strin
         const mcp = Array.isArray(event.mcp_servers) ? event.mcp_servers.length : 0;
         if (mcp > 0 || event.memory_paths !== undefined) {
           isolation = `turn ${n}'s session is not isolated: mcp_servers ${JSON.stringify(event.mcp_servers)}, memory_paths ${JSON.stringify(event.memory_paths)}`;
-          child.kill('SIGTERM');
+          kill();
         }
       }
       writes.push(appendFile(l.transcript, `${JSON.stringify({ turn: n, event })}\n`));
@@ -492,13 +580,15 @@ async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, strin
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    child.kill('SIGTERM');
+    kill();
   }, Math.max(0, deadline - Date.now()));
-  const onAbort = (): void => void child.kill('SIGTERM');
-  abort.addEventListener('abort', onAbort, { once: true });
+  abort.addEventListener('abort', kill, { once: true });
   const exit = await new Promise<number | null>((done) => child.on('close', (code) => done(code)));
   clearTimeout(timer);
-  abort.removeEventListener('abort', onAbort);
+  abort.removeEventListener('abort', kill);
+  // The turn is over: nothing it started may outlive it (see the header).
+  killGroup(child.pid, 'SIGKILL');
+  await killProcs(fixtureProcesses(l.dir).filter((p) => isWatchTail(p.argv)));
   await Promise.all(writes);
   if (exit !== 0) writeFileSync(join(l.dir, `turn-${n}.stderr`), stderr);
   return { session: sid, result, exit, isolation, timedOut };
@@ -554,16 +644,19 @@ async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>
   child.stderr.on('data', (c: string) => void (stderr += c));
   let exited = false;
   child.on('close', () => void (exited = true));
-  while (!exited && Date.now() < deadline && (firstAt === null || Date.now() - firstAt < WAKE_DEBOUNCE_MS)) {
-    const beat = firstAt === null ? w.filter.heartbeat(Date.now()) : null;
-    if (beat !== null) {
-      if (mode.kind === 'fake') throw new Error('a heartbeat fell inside a fake run: the scripted story must stay shorter than HEARTBEAT_MIN');
-      lines.push(beat);
-      firstAt = Date.now();
+  try {
+    while (!exited && Date.now() < deadline && (firstAt === null || Date.now() - firstAt < WAKE_DEBOUNCE_MS)) {
+      const beat = firstAt === null ? w.filter.heartbeat(Date.now()) : null;
+      if (beat !== null) {
+        if (mode.kind === 'fake') throw new Error('a heartbeat fell inside a fake run: the scripted story must stay shorter than HEARTBEAT_MIN');
+        lines.push(beat);
+        firstAt = Date.now();
+      }
+      await sleep(250);
     }
-    await sleep(250);
+  } finally {
+    child.kill('SIGTERM');
   }
-  child.kill('SIGTERM');
   if (exited && lines.length === 0) throw new Error(`roadmap watch exited: ${stderr}`);
   return lines.length === 0 ? '' : `roadmap watch (arc ${w.arc}):\n${lines.join('\n')}`;
 }
@@ -765,6 +858,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
   let kind: Turn['kind'] = 'start';
   let nudges = 0;
   let released: readonly Released[] = [];
+  let leftovers: readonly string[] = [];
   const sessionEnd = new Map<string, number>();
   const product = absPath(l.product);
   // The fail-fast (M4b plant S and arc 1's unit floor): checked until arc 1's first plan in force is known, then never again.
@@ -806,8 +900,12 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
         break;
       }
       if (r.timedOut) {
+        // Which bound killed it: the turn's own cap, or the session's deadline falling first (the turn cap equals the
+        // session cap, so after turn 1 it is the session's: a fake story at 30 min reads as slow, not as a hung turn).
         endedBy = 'turn-timeout';
-        failure = `turn ${n} was killed at its ${limits.turnMs} ms cap (turn-${n}.stderr)`;
+        failure = t0 + limits.turnMs <= deadline
+          ? `turn ${n} was killed at its ${limits.turnMs} ms cap (turn-${n}.stderr)`
+          : `turn ${n} was killed at the session's ${limits.sessionMs} ms deadline, ${Date.now() - t0} ms into the turn (turn-${n}.stderr)`;
         break;
       }
       if (r.exit !== 0 || r.result === null) {
@@ -862,6 +960,15 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
       const [cmd, args] = roadmapArgv(l, mode, ['stop', '--repo', l.product, '--arc', arc]);
       return spawnSync(cmd, [...args], { cwd: l.product, env, encoding: 'utf8', timeout: RELEASE_WAIT_MS }).status;
     }, RELEASE_WAIT_MS);
+    // An arc winding down after its stop gets LEFTOVER_GRACE_MS to exit on its own; what is still running then is killed.
+    const graceEnd = Date.now() + LEFTOVER_GRACE_MS;
+    let left = fixtureProcesses(l.dir);
+    while (left.length > 0 && Date.now() < graceEnd) {
+      await sleep(250);
+      left = fixtureProcesses(l.dir);
+    }
+    leftovers = left.map(showProc);
+    await killProcs(left);
   }
 
   let canary: Report['canary'] = null;
@@ -887,7 +994,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
     transcriptHits: scanTranscript(l.transcript, needles()),
     turns, owner, devices,
     scrambled: scramble(l),
-    released, arcs,
+    released, leftovers, arcs,
     postRun: arcs.flatMap((a) => postRunOf(a) ?? []),
   };
   writeFileSync(l.report, json(report), { flag: 'wx' });

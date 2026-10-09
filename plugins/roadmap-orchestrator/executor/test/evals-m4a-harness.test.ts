@@ -1,20 +1,24 @@
 // The M4a fixture's harness (evals/m4a/{driver,check,layout,transcript}.ts), rev 3.1 section A: what the driver and the
 // checker do around the session, tested without paying. The pure parts are tested on constructed inputs; the driver's
-// stop of a held arc on a real host claim; the turn timeout and the report's forensic fields on a real fake-backed run.
-// Named tests: evals-m4a.turn-cap-equals-session, evals-m4a.turn-timeout-distinct, evals-m4a.driver-stops-held-arc,
+// stop of a held arc on a real host claim; the turn timeout and the report's forensic fields on a real fake-backed run;
+// the cleanup of the fixture's processes on real processes.
+// Named tests: evals-m4a.turn-cap-equals-session, evals-m4a.turn-timeout-distinct, evals-m4a.driver-reaps-fixture,
+// evals-m4a.driver-stops-held-arc,
 // evals-m4a.check-restores-on-throw, evals-m4a.operator-log-metric, evals-m4a.profile-criterion,
 // evals-m4a.watch-absorbs-routine, evals-m4a.terminal-seq-and-post-run, evals-m4a.cost-deltas-and-unknowns.
 import assert from 'node:assert/strict';
+import { spawn as spawnProc } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { after, test } from 'node:test';
 import type { Event } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { type ArcForensics, LIMITS, arcForensics, drive, initialPrompt, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
+import { type ArcForensics, LIMITS, arcForensics, drive, fixtureProcesses, initialPrompt, isWatchTail, killProcs, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
 import { ActionableFilter, HEARTBEAT_MIN } from '../src/watch.ts';
 import { CRITERIA, LEVERS, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, profileVerdict } from '../evals/m4a/check.ts';
 import { layout } from '../evals/m4a/layout.ts';
@@ -341,8 +345,9 @@ test('evals-m4a.cost-deltas-and-unknowns: per-invocation rows keep unknowns expl
 
 // ---------------------------------------------------------------------------------------------------
 
-test('evals-m4a.turn-timeout-distinct: a turn killed at its cap ends the run turn-timeout, not session-failed, and the report carries the forensic fields', T, async () => {
-  const dir = join(tmpDir('m4a-timeout'), 'fx');
+/** A fresh fixture driven on the fake story under `limits`; any arc left running is stopped. */
+async function driveTimed(name: string, limits: Readonly<{ sessionMs: number; turnMs: number }>): Promise<Readonly<{ dir: string; report: Awaited<ReturnType<typeof drive>> }>> {
+  const dir = join(tmpDir(name), 'fx');
   const setup = await runUntilExit(process.execPath, [join(EVALS, 'setup.ts'), dir], { env: ENV, timeoutMs: 5 * 60_000 });
   assert.equal(setup.code, 0, setup.stderr);
   const scope: RunScope = {
@@ -355,14 +360,53 @@ test('evals-m4a.turn-timeout-distinct: a turn killed at its cap ends the run tur
     },
   };
   track(scope);
-  const report = await drive(dir, { kind: 'fake', script: 'story' }, { profile: 'default', limits: { sessionMs: 600_000, turnMs: 300 } }).finally(() => teardown(scope));
+  return { dir, report: await drive(dir, { kind: 'fake', script: 'story' }, { profile: 'default', limits }).finally(() => teardown(scope)) };
+}
+
+test('evals-m4a.turn-timeout-distinct: a turn killed at its cap ends the run turn-timeout, not session-failed, and the report carries the forensic fields', T, async () => {
+  const { dir, report } = await driveTimed('m4a-timeout', { sessionMs: 600_000, turnMs: 300 });
   assert.equal(report.endedBy, 'turn-timeout');
   assert.match(report.failure ?? '', /turn 1 was killed at its 300 ms cap/);
   assert.equal(report.turns.length, 1);
   assert.equal(report.profile, 'default');
   assert.deepEqual(report.released, []);
+  assert.deepEqual(report.leftovers, [], 'the killed turn left nothing running');
+  assert.deepEqual(fixtureProcesses(dir), []);
   assert.deepEqual(report.arcs, []);
   assert.deepEqual(report.postRun, []);
   assert.ok(existsSync(layout(dir).costs), 'costs.jsonl is written even for a run that never started an arc');
   assert.ok(existsSync(layout(dir).diagnostics));
+  // The session's deadline falling inside a turn names the session's bound, not the turn's (the suite run on cc939ee:
+  // a fake story slowed to 30 min read "killed at its 1800000 ms cap" for a turn 21 s old).
+  const late = await driveTimed('m4a-deadline', { sessionMs: 1_000, turnMs: 600_000 });
+  assert.equal(late.report.endedBy, 'turn-timeout');
+  assert.match(late.report.failure ?? '', /turn 1 was killed at the session's 1000 ms deadline, \d+ ms into the turn/);
+});
+
+test('evals-m4a.driver-reaps-fixture: the fixture\'s processes are found by cwd or argv, a watch tail is told from an arc\'s process, and both are killed', T, async () => {
+  const dir = join(tmpDir('m4a-reap'), 'fx');
+  const product = join(dir, 'stage', 'product');
+  mkdirSync(product, { recursive: true });
+  // A Monitor's tail as paid M4b run 2 left it (relative argv, cwd the product, a session of its own), an arc process
+  // naming the fixture in its argv, and a watch elsewhere.
+  const start = (args: readonly string[], cwd: string): number => {
+    const child = spawnProc(process.execPath, ['-e', 'setInterval(() => {}, 1_000)', ...args], { cwd, detached: true, stdio: 'ignore' });
+    child.unref();
+    return child.pid!;
+  };
+  const tail = start(['../plugin/executor/bin/roadmap', 'watch', '--actionable'], product);
+  const arc = start(['supervisor.ts', join(dir, 'host', 'roadmap'), '--repo', product], tmpDir('m4a-elsewhere'));
+  const other = start(['../plugin/executor/bin/roadmap', 'watch'], tmpDir('m4a-other'));
+  try {
+    for (let i = 0; i < 50 && fixtureProcesses(dir).length < 2; i++) await sleep(100);
+    const found = fixtureProcesses(dir);
+    assert.deepEqual(found.map((p) => p.pid).sort(), [tail, arc].sort(), 'by cwd and by argv; never a process elsewhere');
+    assert.deepEqual(found.filter((p) => isWatchTail(p.argv)).map((p) => p.pid), [tail], 'the watch tail, not the arc');
+    await killProcs(found);
+    assert.deepEqual(fixtureProcesses(dir), []);
+  } finally {
+    process.kill(other, 'SIGKILL');
+  }
+  for (const argv of [['node', '/x/stage-cli.ts', '/x/plugin', '/x/host', 'watch', '--repo', '/x'], ['sh', '-c', 'roadmap watch --actionable --repo /x'], ['node', '/x/plugin/executor/bin/roadmap', 'watch']]) assert.ok(isWatchTail(argv), argv.join(' '));
+  for (const argv of [['node', '/x/stage-cli.ts', '/x/plugin', '/x/host', 'status'], ['node', 'supervisor.ts', '/x/host/roadmap', '--repo', '/x'], ['node', '/x/bin/roadmap', 'start', '--plan', 'watch.json']]) assert.ok(!isWatchTail(argv), argv.join(' '));
 });
