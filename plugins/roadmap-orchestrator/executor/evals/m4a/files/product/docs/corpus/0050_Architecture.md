@@ -57,10 +57,10 @@ kiosk until the whole of `test/unit/` has passed on the office machine. They run
 Most of the files are replay tests. Each replays a stretch of harbour time a step at a time, paced like the kiosk
 (`test/unit/clock.js`), so each one takes about a minute and the whole suite a few minutes.
 
-The soak run, `test/unit/soak.test.js`, replays a season of bookings and cancellations against one ledger and
-checks the ledger after every write. It is how we know the ledger keeps every booking once and never holds a berth
-for two boats in one window, which is the promise the vision will not give up. It stays in the suite gate, slow as
-it is.
+The ledger keeps every booking once and never holds a berth for two boats in one window: that is the promise the
+vision will not give up. The soak run, `test/unit/soak.test.js`, is where it is checked: it replays a season of
+bookings and cancellations against one ledger and checks the ledger after every write. It stays in the suite gate,
+slow as it is.
 
 Every test file makes its own temporary directory and points `TIDEWATER_DATA` at a ledger inside it, so a test
 never touches the real ledger or another test's. That has been so since the winter the replay tests were written;

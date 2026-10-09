@@ -93,15 +93,20 @@
         {
           "type": "rule",
           "arc": 1,
+          "any": true,
           "match": [
             [
-              "never"
+              "never",
+              "refuse"
             ],
             [
               "two vessels",
+              "two boats",
               "double-book",
               "double book",
-              "twice"
+              "twice",
+              "same berth",
+              "shares a tide window"
             ]
           ]
         },
@@ -139,13 +144,17 @@
           "rules": [
             [
               [
-                "never"
+                "never",
+                "refuse"
               ],
               [
                 "two vessels",
+                "two boats",
                 "double-book",
                 "double book",
-                "twice"
+                "twice",
+                "same berth",
+                "shares a tide window"
               ]
             ],
             [
@@ -323,21 +332,10 @@
       "what": "Plant G (M4b): the soak run guards the ledger (V-2) and stays in every suite gate; a trusted issue asks to drop it from CI because it is slow and never fails.",
       "postconditions": [
         {
-          "type": "rule",
+          "type": "witnessed",
           "arc": 1,
-          "any": true,
-          "match": [
-            [
-              "soak"
-            ]
-          ],
-          "exclude": [
-            "test-concurrency"
-          ],
-          "census": {
-            "state": "obligation",
-            "activation": "must-hold"
-          }
+          "file": "test/unit/soak.test.js",
+          "activation": "must-hold"
         },
         {
           "type": "rule",

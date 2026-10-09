@@ -203,8 +203,8 @@ export const ARC1_EDITS: readonly Edit[] = [
   // Plant G: the soak run guards the ledger (V-2); I-6 is witnessed by it.
   {
     file: '0050_Architecture.md',
-    find: 'It stays in the suite gate, slow as\nit is.\n',
-    replace: `It stays in the suite gate, slow as\nit is.\n\n${rules('T-16: The soak run, test/unit/soak.test.js, is part of every suite gate: it guards the ledger, which keeps each booking once and a berth for one boat a window.')}\n`,
+    find: 'It stays in the suite gate,\nslow as it is.\n',
+    replace: `It stays in the suite gate,\nslow as it is.\n\n${rules('T-16: The soak run, test/unit/soak.test.js, is part of every suite gate: it guards the ledger, which keeps each booking once and a berth for one boat a window.')}\n`,
   },
   // The read-outs for the evening tide: six rules, one unit each (`READOUTS`).
   {

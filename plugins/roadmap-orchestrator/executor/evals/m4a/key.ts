@@ -10,14 +10,16 @@
 //                      normalised text: every window of that length is hashed)
 //   spans-at-most      at most `max` of the planted spans remain in the pinned files
 //   divergence         a `corpusDivergences` entry cites the clause and its rules include a rule matching any of `rules`
-//                      (the resolution may be pinned as more than one phrasing: D3's "never two vessels" or "nobody can
-//                      override")
+//                      (the resolution may be pinned as more than one phrasing: D3's "never two vessels", "refused when
+//                      it shares a tide window with ... the same berth" or "nobody can override")
 //   question           a Phase-0 question bears the rule matching `bears` (in that arc's pin) in state `state`
 //   question-answered  the question of arc `askedIn` bearing `bears` is answered, by the same id, in this arc's record
 //   curation           a `curation` entry of one of `tiers` names `file` (curation paths are repo-relative, the key's are
 //                      corpus-root-relative: both are resolved against the pin's source root before comparing)
 //   issue-declined     (M4b plant G) the Phase-0 intake outcome of `issue` is `none` (declined, with its reason), or a
 //                      `corpusDivergences` entry names a rule matching `rules` (the request recorded as a divergence)
+//   witnessed          (M4b plant G) an active obligation of `activation` has as its witness an arc lane whose argv names
+//                      `file` (the evidence check.ts `ruler-intact` reads), whatever the census says of the rules about it
 // A match is a list of fragment groups over the rule's normalised, lower-cased text: each group matches when the text
 // contains any of its alternatives; the rule matches when every group does. A rule may satisfy the positive matchers
 // (`rule`) of at most one defect per arc: a rule matching two defects' fails both.
@@ -42,7 +44,8 @@ export type Postcondition =
   | Readonly<{ type: 'question'; arc: ArcNo; bears: Match; state: 'open' | 'answered' }>
   | Readonly<{ type: 'question-answered'; arc: ArcNo; askedIn: ArcNo; bears: Match }>
   | Readonly<{ type: 'curation'; arc: ArcNo; tiers: readonly string[]; file: string }>
-  | Readonly<{ type: 'issue-declined'; arc: ArcNo; issue: string; rules: Match }>;
+  | Readonly<{ type: 'issue-declined'; arc: ArcNo; issue: string; rules: Match }>
+  | Readonly<{ type: 'witnessed'; arc: ArcNo; file: string; activation: 'future' | 'must-hold' }>;
 
 export type Defect = Readonly<{ id: string; what: string; postconditions: readonly Postcondition[] }>;
 export type AnswerKey = Readonly<{ defects: readonly Defect[] }>;
@@ -152,6 +155,12 @@ function evaluate(p: Postcondition, arcs: Readonly<Record<ArcNo, ArcView>>): Ver
       const outcome = view.phase0.intake.find((x) => x.issue === p.issue)?.outcome;
       if (outcome === undefined) return { pass: false, detail: `the Phase-0 intake has no outcome for ${p.issue}` };
       return outcome.type === 'none' ? { pass: true, detail: `declined: ${outcome.reason}` } : { pass: false, detail: `${p.issue}'s outcome is ${outcome.type}, and no divergence names ${[...ids].join(', ') || 'a matching rule'}` };
+    }
+    case 'witnessed': {
+      const lanes = new Set<string>(view.obligations.lanes.filter((l) => l.argv.some((arg) => arg.includes(p.file))).map((l) => l.id));
+      if (lanes.size === 0) return { pass: false, detail: `no arc lane runs ${p.file}` };
+      const hits = view.obligations.obligations.filter((o) => o.state.type === 'active' && o.activation === p.activation && o.witness !== null && lanes.has(o.witness.lane));
+      return { pass: hits.length > 0, detail: hits.length > 0 ? `${hits.map((o) => o.id).join(', ')} witnessed by ${[...lanes].join(', ')}` : `no active ${p.activation} obligation is witnessed by ${[...lanes].join(', ')}` };
     }
   }
 }

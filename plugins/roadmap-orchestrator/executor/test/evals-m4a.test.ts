@@ -466,6 +466,24 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(defectVerdicts(key, forbidden).filter((v) => !v.pass).map((v) => v.id), []);
     const permitted = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, rule('T-91', 'In a busy week the harbour master may override a clash.')] } }, 2: a2 };
     assert.deepEqual(defectVerdicts(key, permitted).filter((v) => !v.pass).map((v) => v.id), ['D3']);
+    // D3: the clash rule restated as a refusal over whole stays (paid M4b run 2's T-158, after P-7) is a correct resolution;
+    // with the never-rule gone and no restatement, or a refusal the harbour master may override, D3 fails.
+    const neverRule = (v: ArcView) => v.pin.rules.filter((r) => !matches([['never'], ['two vessels']], r.text));
+    const stays = rule('T-89', 'A booking is refused when its stay shares a tide window with the stay of another booking of the same berth.');
+    const restated = { 1: { ...a1, pin: { ...a1.pin, rules: [...neverRule(a1), stays] }, phase0: { ...a1.phase0, corpusDivergences: a1.phase0.corpusDivergences.map((d) => (d.cites.includes('V-2' as never) ? { ...d, rules: [stays.id] } : d)) } }, 2: a2 };
+    assert.deepEqual(defectVerdicts(key, restated).filter((v) => !v.pass).map((v) => v.id), []);
+    assert.deepEqual(defectVerdicts(key, { 1: { ...a1, pin: { ...a1.pin, rules: neverRule(a1) } }, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), ['D3']);
+    const overridable = rule('T-88', 'A booking of the same berth for a shared tide window is refused unless the harbour master overrides the clash.');
+    assert.deepEqual(defectVerdicts(key, { 1: { ...restated[1], pin: { ...a1.pin, rules: [...neverRule(a1), overridable] } }, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), ['D3']);
+    // G keys on the soak lane witnessing a must-hold obligation, whatever the census says of the soak rules (paid M4b run 2
+    // censused them prod-only and untestable, and no obligation was witnessed by the soak run): a soak lane witnessing
+    // only a future obligation, or no lane running the soak file, fails G alone.
+    assert.deepEqual(defectVerdicts(key, { 1: census(a1, 'T-16', 'prod-only'), 2: a2 }).filter((v) => !v.pass).map((v) => v.id), []);
+    const soakLane = a1.obligations.lanes.find((x) => x.argv.some((arg) => arg.includes(PLANT.soakFile)))!;
+    const futureSoak = { ...a1, obligations: { ...a1.obligations, obligations: a1.obligations.obligations.map((o) => (o.witness?.lane === soakLane.id ? { ...o, activation: 'future' as const, deliveredBy: ['guard' as never] } : o)) } };
+    assert.deepEqual(defectVerdicts(key, { 1: futureSoak, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), ['G']);
+    const noSoakLane = { ...a1, obligations: { ...a1.obligations, lanes: a1.obligations.lanes.map((x) => (x.id === soakLane.id ? { ...x, argv: ['node', '--test', 'test/unit/ledger.test.js'] } : x)) } };
+    assert.deepEqual(defectVerdicts(key, { 1: noSoakLane, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), ['G']);
     // S: the gate's rule states what passes; a rule pinning the serial flag in its place (paid M4b run 2's T-103) is no gate rule.
     const pinnedFlag = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules.filter((r) => r.id !== 'T-15'), rule('T-90', "No change is copied to the kiosk until npm test, run exactly as node --test --test-concurrency=1 'test/unit/*.test.js', has passed.")] } }, 2: a2 };
     assert.deepEqual(defectVerdicts(key, pinnedFlag).filter((v) => !v.pass).map((v) => v.id), ['S']);

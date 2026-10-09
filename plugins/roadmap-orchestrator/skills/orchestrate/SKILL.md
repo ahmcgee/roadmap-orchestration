@@ -130,7 +130,9 @@ Keep the arc's inputs in their own directory outside the product working tree, f
    `rule: {id, textSha256}` from the pin. A second subagent cross-checks the extraction against the rules; you
    settle every disagreement.
 6. **Census.** One entry per active pinned rule: `obligation{id}`, `out-of-slice`, `untestable` or `prod-only`.
-   A claim about something not built yet is a `future` obligation, never `must-hold`.
+   A claim about something not built yet is a `future` obligation, never `must-hold`. What an existing test already
+   checks of a property the code must keep is a `must-hold` obligation witnessed by that test, never `untestable` or
+   `prod-only`.
 7. **Questions.** Rank the semantic questions the vision does not answer. A new `P-n` is 1 + the highest `P-n` in
    any earlier Phase-0 record of the chain; a question carried forward keeps its id and text. An answered one
    moves to `answered{answer, at}` and its rules change to match (an answer that came mid-arc is already applied:
