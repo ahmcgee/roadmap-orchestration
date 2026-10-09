@@ -32,7 +32,7 @@ export type Wired = ReturnType<typeof auditContext>['w'];
 /** The checkpoint context: the audit context plus the command context's plan file, routing base and docs publisher. */
 export function checkpointContext(r: ArcRun, clock: Clock = () => 0): Readonly<{ ctx: CheckpointContext; w: Wired }> {
   const { ctx, w } = auditContext(r, clock);
-  return { ctx: { ...ctx, planFile: w.commands.planFile, routingBase: w.commands.routingBase, docs: w.commands.docs }, w };
+  return { ctx: { ...ctx, planFile: w.commands.planFile, routingBase: w.commands.routingBase, docs: w.commands.docs, laneEnv: ctx.hostEnv }, w };
 }
 
 let commands = 0;

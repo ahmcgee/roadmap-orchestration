@@ -9,12 +9,13 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, test } from 'node:test';
-import { applyCommand } from '../src/commands/apply.ts';
+import { applyCommand, evaluateApply } from '../src/commands/apply.ts';
 import { readReceipt, submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf, IntentRecord, PlanAppliedFact } from '../src/core/events.ts';
 import { INTEGRATION_SLOT, findingId, invocationDirName, jobId, laneId, obligationId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
+import { bytesSha256 } from '../src/spec/spec.ts';
 import { changedPaths } from '../src/git/docs.ts';
 import { git as rawGit } from '../src/git/git.ts';
 import { jobLaneDir, verifySnapshot } from '../src/git/snapshot.ts';
@@ -114,6 +115,36 @@ test('rule.publish: a ruling with a contract op lands through its docs publicati
     assert.equal(again.kind, 'applied', JSON.stringify(again));
     assert.equal(applied(r).at(-1)!.publication?.pub, 'docs-2');
     assert.deepEqual(r.journal.view.openIntents(), []);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('apply.ruling-for-added-unit (paid M4b run 3, OP-2): `apply --ruling` with a ruling applying to a unit the same apply adds lands through its docs publication, as its dry run said', T, async () => {
+  const d = publishArc({ steps: [] });
+  const r = contextFor(d);
+  const w = wire(r);
+  try {
+    const dir = join(d.planPath, '..');
+    writeFileSync(join(dir, 'u2.json'), JSON.stringify({ ...(JSON.parse(readFileSync(join(dir, 'u1.json'), 'utf8')) as Json), unit: 'u2', rev: 1 }));
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Json & { units: Json[] };
+    writeFileSync(d.planPath, JSON.stringify({ ...plan, units: [...plan.units, { ...plan.units[0]!, id: 'u2', spec: 'u2.json' }] }));
+    const path = join(tmpDir('apply-ruling'), 'C-2.json');
+    const bytes = Buffer.from(`${JSON.stringify(ruleRecord(r, 'C-2', { statement: 'u2 keeps the helpers pure.', appliesTo: { type: 'units', units: ['u2'] } }), null, 2)}\n`, 'utf8');
+    writeFileSync(path, bytes);
+    const rulings = [{ path: absPath(path), sha256: bytesSha256(bytes) }];
+    const c = w.commands;
+    const dry = await evaluateApply({
+      runDir: c.runDir, view: r.journal.view, hostDir: c.hostDir, repo: c.repo, planFile: c.planFile, routingBase: c.routingBase, laneEnv: c.laneEnv, manifest: null, expectRev: null, rulings,
+    });
+    assert.equal(dry.kind, 'accepted', JSON.stringify(dry));
+    const tip = head(d);
+    const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, { ...applyBody(d), rulings } as never);
+    const outcome = await applyCommand(c, file);
+    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+    const fact = assertPublished(r, file.id, 'docs-1', tip);
+    assert.deepEqual(fact.changes.filter((x) => x.type === 'unit-added'), [{ type: 'unit-added', unit: 'u2' }]);
+    assert.match(show(d, fact.publication!.head, '.roadmap/constraints.md'), /C-2/);
   } finally {
     r.journal.close();
   }
@@ -441,7 +472,7 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
       repo: start.ctx.repo, planFile: absPath(r.d.planPath), plan: start.ctx.plan(), specOf: () => null, profile: 'default' as never, arcRoles: 'm4b' as const, runDir: start.ctx.runDir, hostDir: start.ctx.hostDir,
     };
     const revs = applied(start).length;
-    assert.deepEqual(settlePlan(start.journal, context, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo))), [], 'no false ledger-edit refusal');
+    assert.deepEqual(settlePlan(start.journal, context, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), process.env), [], 'no false ledger-edit refusal');
     assert.equal(applied(start).length, revs, 'the files wait for the next start');
   } finally {
     start.journal.close();
@@ -465,7 +496,7 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
       repo: back.ctx.repo, planFile: absPath(back.d.planPath), plan: back.ctx.plan(), specOf: () => null, profile: 'default' as never, arcRoles: 'm4b' as const, runDir: back.ctx.runDir, hostDir: back.ctx.hostDir,
     };
     const revs = applied(back).length;
-    assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath), absPath(back.d.repo))), []);
+    assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath), absPath(back.d.repo)), process.env), []);
     assert.equal(applied(back).length, revs, 'unchanged');
   } finally {
     back.journal.close();

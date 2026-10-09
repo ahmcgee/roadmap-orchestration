@@ -117,6 +117,18 @@ test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix 
   assert.deepEqual(seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(run.runDir, spawnParent)), done.ledger);
 });
 
+test('lanes.vanished-program-host-fault (paid M4b run 3, OP-3): a lane whose program left the host after admission fails to spawn; that is a host fault, blocked with no verdict, never red', T, async () => {
+  // Admission resolved the program (the lane row); it is gone at launch, so the spawn fails ENOENT.
+  const tool = join(tmpDir('vanished-tool'), 'lane-tool');
+  const run = laneRun([{ id: 'gone', argv: [tool] }]);
+  assert.ok(!existsSync(tool));
+  const done = started(await lanes(run.ctx, run.unit, run.base));
+  assert.equal(done.outcome.kind, 'blocked');
+  const fact = outcomeFacts(run).at(-1)!;
+  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'blocked' && !fact.chargeable, JSON.stringify(fact));
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
+});
+
 test('lanes.signature-no-evidence: a host signature on a host its samples show clear is blocked, not rerun and not red', T, async () => {
   const run = laneRun([{ id: 'forky', argv: ['sh', '-c', 'echo "sh: fork: Resource temporarily unavailable" >&2; exit 1'] }, { id: 'after', argv: ['true'] }]);
   const done = await series(run, runtime(run.ctx, () => CLEAR));

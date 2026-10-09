@@ -148,7 +148,7 @@ function holisticArc(): ArcRun {
 // Commands
 
 const ctxOf = (r: ArcRun): CommandContext => ({ ...commandContextFor(r), docs: fakeDocs(r.journal, absPath(r.d.repo), branchName('main')) });
-const rctxOf = (r: ArcRun): RevisionContext => ({ runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: BASE });
+const rctxOf = (r: ArcRun): RevisionContext => ({ runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: BASE, laneEnv: process.env });
 
 async function command(r: ArcRun, body: CommandBody): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);

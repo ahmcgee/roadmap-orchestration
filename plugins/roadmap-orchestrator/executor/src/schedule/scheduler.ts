@@ -319,7 +319,7 @@ export function holisticContexts(
   const audit: AuditContext = { ...x.stage, acquireFirst: x.arbiter.acquireFirst, clock };
   return {
     audit,
-    checkpoint: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs },
+    checkpoint: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs, laneEnv: x.stage.hostEnv },
     docs: { ...x.stage, planFile: x.commands.planFile, arbiter: x.arbiter },
     laneEnv: (lane) => laneEnvId(x.stage, lane),
   };

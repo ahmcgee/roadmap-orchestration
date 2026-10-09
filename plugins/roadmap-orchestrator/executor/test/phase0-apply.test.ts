@@ -238,7 +238,7 @@ describe('re-pin (the corpus edit class)', () => {
     try {
       const commit = commitCorpus(a, '0020_Berths.md', (t) => t.replace('A booking names one berth and one tide window.', 'A booking names one berth.'));
       await repin(a, commit);
-      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE }, filesOf(a), { type: 'start' });
+      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE, laneEnv: process.env }, filesOf(a), { type: 'start' });
       assert.equal(v.kind, 'rejected');
       if (v.kind !== 'rejected') return;
       assert.ok(v.reasons.some((r) => r.includes('the corpus pin changes only through an architect `apply`, not a start')), JSON.stringify(v.reasons));
@@ -300,7 +300,7 @@ describe('the specs against the census at every revision (run 10, C)', () => {
       }));
       const row = canonicalJson({ kind: 'phase0-invalid', problems: [{ type: 'spec-census-mismatch', unit: 'u1', item: 'A2', rule: 'T-2', state: 'out-of-slice' }] });
       assert.deepEqual(rejected(await apply(a, j)), [row], 'the apply: the classifier\'s row alone, naming unit, item and rule');
-      const ctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE };
+      const ctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE, laneEnv: process.env };
       const bundle = evaluateRevision(ctx, filesOf(a), { type: 'bundle', job: jobId('ckpt', 1), cites: [visionClauseId('V-1')], evidence: ['e'], admits: [] });
       assert.equal(bundle.kind, 'rejected');
       if (bundle.kind !== 'rejected') return;

@@ -107,7 +107,7 @@ async function applyOne(ctx: FlowApplyContext, proposal: FlowProposal): Promise<
   const current = inForceFiles(ctx.runDir, view, inForce, revisionInForce(ctx.runDir, inForce), ctx.planFile, ctx.repo);
   const next = flowRevision(inForce.plan, action);
   const proposalFiles = { ...current, plan: next, planBytes: planBytesOf(current.planBytes, action, next) };
-  const rctx = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase };
+  const rctx = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv };
   const evaluated = evaluateRevision(rctx, proposalFiles, { type: 'executor' });
   // A refusal (a suite edit while a candidate is under way, a moved seat) is retried at the next tick.
   if (evaluated.kind === 'rejected') return;

@@ -104,7 +104,7 @@ export type RulingContext = Readonly<{
 const judgedPaths = (s: RulingSidecar): readonly RepoPath[] => [...new Set([...s.contractRefs, ...s.contractOps.map((o) => o.path)])].sort();
 
 /** The `judgedRevs` a fresh `consistency` of `s` records: the revisions in force and the head blob of each contract it names or edits. */
-export function consistencyRevs(s: RulingSidecar, ctx: RulingContext): Readonly<{ revs: Consistency['judgedRevs'] }> | Readonly<{ reasons: readonly string[] }> {
+export function consistencyRevs(s: RulingSidecar, ctx: Pick<RulingContext, 'inForce' | 'blobAt'>): Readonly<{ revs: Consistency['judgedRevs'] }> | Readonly<{ reasons: readonly string[] }> {
   const missing = judgedPaths(s).filter((p) => ctx.blobAt(p) === null);
   if (missing.length > 0) return { reasons: missing.map((p) => `${s.id} names contract ${p}, which is not at the head`) };
   return { revs: { ...ctx.inForce, contracts: judgedPaths(s).map((path) => ({ path, blob: ctx.blobAt(path)! })) } };
