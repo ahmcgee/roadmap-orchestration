@@ -601,7 +601,11 @@ export function backendOf(called: BackendCallOutcome): Backend {
 export function verdictOf(ctx: StageContext, parent: CallParent, called: BackendCallOutcome): BackendVerdict {
   if (called.kind === 'lost') return { kind: 'process-fault', detail: `${called.inv} was lost with its runner` };
   const { result } = called;
-  if (result.outcome.kind === 'cancelled') return { kind: 'interrupted', reason: result.outcome.reason, cause: null, needsUser: null };
+  if (result.outcome.kind === 'cancelled') {
+    // A superseded call is a checkpoint's, which asks again or decides stale itself (src/holistic/checkpoint.ts `ask`).
+    if (result.outcome.reason === 'supersede') throw new Error(`${called.inv} was superseded: only the checkpoint reads a superseded call`);
+    return { kind: 'interrupted', reason: result.outcome.reason, cause: null, needsUser: null };
+  }
   if (result.outcome.kind !== 'success') {
     const park = result.backendErrors.map((e) => e.class).find((c): c is BackendParkClass & BackendErrorClass => (BACKEND_PARK_CLASSES as readonly string[]).includes(c));
     if (park !== undefined) {

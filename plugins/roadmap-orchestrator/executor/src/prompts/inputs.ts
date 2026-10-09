@@ -15,7 +15,7 @@ import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
 import type {
-  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding,
+  BundleRejection, DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding,
   Vision, VisionClause, VisionCoverage, VisionQuestion,
 } from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
@@ -295,14 +295,17 @@ export type TriggerView =
 /** A checkpoint decision the executor refused: rejected invalid, or sent to the owner as not applicable as proposed. */
 export type RefusedProposal = Readonly<{ job: JobId; outcome: 'rejected-invalid' | 'owner-request'; reasons: string }>;
 
+/** An earlier job of this checkpoint's trigger whose decision the executor rejected: its reason and detail verbatim. */
+export type PriorRejection = Readonly<{ job: JobId; reason: BundleRejection; detail: string }>;
+
 export type CheckpointInputs = Readonly<{
   vision: VisionInput;
   trigger: TriggerView;
-  /** The previous job of this trigger, when the executor rejected its decision as invalid: its job and reasons verbatim. */
-  priorInvalid: Readonly<{ job: JobId; reasons: string }> | null;
+  /** Paid M4b run 3: every earlier job of this trigger whose decision the executor rejected, any reason, oldest first. */
+  priorRejected: readonly PriorRejection[];
   /**
    * Paid M4a run 12: the proposals refused earlier under the plan revision of this capture, any trigger (the most recent
-   * few, oldest first; `priorInvalid`'s job excluded), each with the executor's reasons verbatim: what no checkpoint
+   * few, oldest first; `priorRejected`'s jobs excluded), each with the executor's reasons verbatim: what no checkpoint
    * proposes again unchanged.
    */
   refused: readonly RefusedProposal[];
@@ -395,7 +398,7 @@ export const ROLE_INPUTS = {
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
-    'vision', 'trigger', 'priorInvalid', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
@@ -815,10 +818,20 @@ export function divergencesText(divergences: CheckpointInputs['divergences']): s
   return divergences.length === 0 ? '(none)' : divergences.map((d) => `- ${d.id} (${d.type}): ${d.what}`).join('\n');
 }
 
-/** The previous attempt's invalid decision, as the retry reads it (empty when there was none). */
-export function priorInvalidText(p: CheckpointInputs['priorInvalid']): string {
-  if (p === null) return '';
-  return `\n\n<prior_attempt>\nThe previous checkpoint on this trigger, ${p.job}, decided a bundle the executor rejected as invalid, for these reasons: ${p.reasons}\nThis is the last attempt: a second invalid decision goes to the owner as a request. Correct each reason above; do not repeat it.\n</prior_attempt>`;
+/** What a rejection of each reason tells the next attempt, after its detail. */
+const PRIOR_REJECTION_TEXT: Readonly<Record<PriorRejection['reason'], Readonly<{ as: string; then: string }>>> = {
+  invalid: { as: 'rejected as invalid, for these reasons', then: 'Correct each reason; do not repeat it.' },
+  evidence: { as: 'rejected on its evidence', then: 'The lanes it cited were witnessed again on the head: cite the observations given below, not the ones it cited.' },
+  stale: { as: 'rejected as stale', then: 'What it read changed after its capture: decide again from the inputs below.' },
+  busy: { as: 'rejected as busy', then: 'The stage attempts it named have closed: decide again from the inputs below.' },
+};
+
+/** The earlier rejected decisions of this trigger, as the next attempt reads them (empty when there were none). */
+export function priorRejectedText(prior: CheckpointInputs['priorRejected']): string {
+  if (prior.length === 0) return '';
+  const line = (p: PriorRejection): string => `- ${p.job}, ${PRIOR_REJECTION_TEXT[p.reason].as}: ${p.detail}\n  ${PRIOR_REJECTION_TEXT[p.reason].then}`;
+  const last = prior.some((p) => p.reason === 'invalid') ? '\nThis is the last attempt: a second invalid decision goes to the owner as a request.' : '';
+  return `\n\n<prior_attempt>\nEarlier checkpoints on this trigger decided what the executor rejected, oldest first:\n${prior.map(line).join('\n')}${last}\n</prior_attempt>`;
 }
 
 /** The proposals already refused and why, as every checkpoint reads them (empty when there are none). */

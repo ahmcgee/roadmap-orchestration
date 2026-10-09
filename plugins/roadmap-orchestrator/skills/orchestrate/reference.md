@@ -45,7 +45,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 - `roadmap apply [--expect-rev <n>] [--dry-run] [--ruling <file>]`: put the edited plan, specs and other revisioned
   inputs in force at the next stage boundary. Each `--ruling` (repeatable) is a ruling sidecar validated as `rule`
   validates it and landed with the edits as one revision. `--dry-run` always exits 0 and prints `kind`:
-  `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke}`; it queues nothing.
+  `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke}`; it queues nothing. A revision
+  that changes the plan or the vision cancels a checkpoint deciding on the earlier one (rejected `stale`); its trigger
+  is decided again on your revision.
 - `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
 - `roadmap run-only (<unit>... | --clear)`: limit admission to these units, or lift the limit.
 - `roadmap rule <record.json>`: land a ruling (a `roadmap/ruling-m3` sidecar); published through a docs

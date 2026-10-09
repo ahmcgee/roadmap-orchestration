@@ -10,8 +10,9 @@
 //   1. A running job (captured, undecided) resumes from its recorded inputs. Otherwise the first due trigger, parks
 //      first (they hold units), then completed audits in order. A trigger is due while it has no job, or its latest job
 //      was rejected (`stale` or `evidence`: re-evaluated whole; `busy` (M4a rev 3, C5): once every open attempt it named
-//      has closed, so no paid call is made while a unit it changes is mid-stage; `invalid`: once, its prompt carrying the rejected
-//      job's reasons verbatim (`priorInvalid`), the second goes to the owner), or its
+//      has closed, so no paid call is made while a unit it changes is mid-stage; `invalid`: once, the second goes to the
+//      owner; whatever the reason, the next job's prompt carries every rejected job of its trigger with its reason and
+//      detail verbatim, `priorRejected`), or its
 //      latest job's bundle request was acknowledged `apply` (the next job enacts that bundle: no call, the brakes and
 //      draining skipped, staleness and the rest checked as ever); a request answered otherwise ends the trigger's decision
 //      (its generation quiescent, `quiescentGenerations`). A due job is skipped, writing nothing, while the
@@ -46,6 +47,15 @@
 //      checkpoint, on unchanged grounds, are not listed (`issuesUnchangedSince`, src/holistic/intake.ts `issueReuse`). A resumed job consumes a
 //      call it made; a call interrupted (a pause, a stop, a backend park) leaves the job running and a later run asks
 //      again as the next attempt. A refusal, malformed answer or fault is an invalid decision.
+//   4b. Drift (paid M4b run 3). A decision is checked at its activation against the arc as it is then, strictly; what
+//      moved since the capture is handled by what can judge it. Code can re-check the head: the decision's cited lanes
+//      with no observation on the head now (a publication moved it under the call) are witnessed there before the
+//      activation (`witnessDrift`), so the evidence base compares each citation with the head's own observation (one it
+//      contradicts still rejects `evidence`). Only a fresh read can judge a new plan or vision: a revision that changes
+//      either supersedes the job at once (`supersededBy`): its call in flight is cancelled (`proc.kill{supersede}`,
+//      `supersedable`), or not made, and the job decides `rejected{stale}`, so the trigger is captured again on the new
+//      revision. Neither spends the trigger's one invalid retry. Other revisions (a spec patch, a ruling) leave the call
+//      running; the activation's staleness checks what the bundle touches.
 //   5. The activation (src/holistic/bundle.ts): `plan-applied{source: bundle{job}}` or `bundle-decided`; then (an
 //      applied or no-op decision) its amendments and issue outcomes (src/holistic/{amendments,intake}.ts).
 //
@@ -56,7 +66,9 @@ import { crashPoint } from '../core/crash.ts';
 import type { CheckpointIssues, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, INTEGRATION_SLOT, parseInvocationId, canonicalIds } from '../core/ids.ts';
+import { type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, INTEGRATION_SLOT, invocationId, parseInvocationId, canonicalIds } from '../core/ids.ts';
+import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
+import { runnerFiles } from '../runner/files.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { BACKEND_PARK_CLASSES } from '../core/events.ts';
 import { DEFAULT_BOUNDS, specWitnesses } from '../core/records.ts';
@@ -92,7 +104,7 @@ import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
 import { captureCheckpointIssues, issueReuse, issuesInputOf } from './intake.ts';
-import { keyOf } from './observe.ts';
+import { keyOf, reuse } from './observe.ts';
 import { type BusyAttempt, type CheckpointTrigger, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
 
@@ -521,11 +533,16 @@ function triggerView(ctx: CheckpointContext, t: CheckpointTrigger): TriggerView 
   return { ...t, cause: { stage: f.stage, attempt: f.attempt, outcome: f.outcome, reason: d.reason, design, detail } };
 }
 
-/** The previous job of `job`'s trigger, when its decision was rejected invalid: what the retry must not repeat. */
-function priorInvalid(ctx: CheckpointContext, job: JobId): CheckpointInputs['priorInvalid'] {
-  const prev = previousOf(ctx, job);
-  const d = prev?.decided;
-  return d?.kind === 'rejected' && d.reason === 'invalid' ? { job: prev!.inputs.job, reasons: d.detail } : null;
+/**
+ * Paid M4b run 3 (ckpt-5 re-ran blind to ckpt-4's evidence rejection): every earlier job of `s`'s trigger the executor
+ * rejected, oldest first, each with its reason and detail verbatim, whatever the reason (`invalid`: what the retry must
+ * not repeat; `evidence`, `stale`, `busy`: what moved under it). Only rejections: a trigger's other decisions end it, or
+ * (an approved request) are enacted with no call.
+ */
+function priorRejected(ctx: CheckpointContext, s: Captured): CheckpointInputs['priorRejected'] {
+  return ctx.journal.view.holistic().checkpoints
+    .filter((c) => triggerKey(c.inputs.trigger) === triggerKey(s.trigger) && c.inputs.seq < s.seq)
+    .flatMap((c) => (c.decided?.kind === 'rejected' ? [{ job: c.inputs.job, reason: c.decided.reason, detail: c.decided.detail }] : []));
 }
 
 /** How many refused proposals a checkpoint's prompt carries at most: the most recent. */
@@ -535,12 +552,13 @@ export const REFUSED_MAX = 3;
  * Paid M4a run 12 (ckpt-3 to ckpt-5 re-proposed one invalid split, each a paid call): the decisions captured before `s`
  * under its plan rev, on any trigger, that the executor refused: rejected `invalid` (its detail), or sent to the owner as
  * not applicable as proposed (an invalid second decision, or no valid decision twice: the request's summary). The most
- * recent REFUSED_MAX, oldest first, without `prior` (rendered as `priorInvalid`). A later plan rev drops them: the
- * plan they were refused against changed.
+ * recent REFUSED_MAX, oldest first, without the jobs of `prior` (this trigger's, rendered as `priorRejected`). A later
+ * plan rev drops them: the plan they were refused against changed.
  */
-function refusedOf(ctx: CheckpointContext, s: Captured, prior: JobId | null): CheckpointInputs['refused'] {
+function refusedOf(ctx: CheckpointContext, s: Captured, prior: CheckpointInputs['priorRejected']): CheckpointInputs['refused'] {
+  const shown = new Set(prior.map((p) => p.job));
   return ctx.journal.view.holistic().checkpoints
-    .filter((c) => c.inputs.seq < s.seq && c.inputs.vector.plan === s.vector.plan && c.inputs.job !== prior)
+    .filter((c) => c.inputs.seq < s.seq && c.inputs.vector.plan === s.vector.plan && !shown.has(c.inputs.job))
     .flatMap((c): CheckpointInputs['refused'] => {
       const d = c.decided;
       if (d?.kind === 'rejected' && d.reason === 'invalid') return [{ job: c.inputs.job, outcome: 'rejected-invalid', reasons: d.detail }];
@@ -560,12 +578,12 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
   const reuse = issueReuse(ctx.journal.view, ctx.runDir, s);
   const sidecars = Object.entries(payloadAt(ctx, r.planRev).manifest.rulings.sidecars)
     .map(([, sha]) => parseRulingSidecar(JSON.parse(kept(ctx, sha, RULING_INPUT).toString('utf8'))));
-  const prior = priorInvalid(ctx, s.job);
+  const prior = priorRejected(ctx, s);
   return {
     vision: visionInputOf(r.vision, advancesOf(r.plan)),
     trigger: triggerView(ctx, s.trigger),
-    priorInvalid: prior,
-    refused: refusedOf(ctx, s, prior?.job ?? null),
+    priorRejected: prior,
+    refused: refusedOf(ctx, s, prior),
     head: s.headSha,
     plan: renderPlan(ctx, s, r),
     // A closeout (H5) repeats neither the findings nor the specs the no-op it follows weighed.
@@ -594,7 +612,61 @@ type Asked =
   | Readonly<{ kind: 'output'; output: CheckpointOutput; inv: InvocationId }>
   | Readonly<{ kind: 'failed'; detail: string; inv: InvocationId }>
   | Readonly<{ kind: 'interrupted'; detail: string }>
-  | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' }>;
+  | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' }>
+  /** A revision superseded the captured inputs (`supersededBy`): decided `rejected{stale}` with no (further) call. */
+  | Readonly<{ kind: 'superseded'; detail: string }>;
+
+/**
+ * Why a revision since `s`'s capture supersedes its call, or null: the plan's bytes or the vision changed, the arc-wide
+ * inputs nearly every decision rests on and only a fresh read can judge (a bundle touching the plan is stale against
+ * the first, every bundle against the second, H3). The wording is the activation's staleness reasons'.
+ */
+export function supersededBy(ctx: CheckpointContext, s: Captured): string | null {
+  const view = ctx.journal.view;
+  if (view.planApplied()?.rev === s.vector.plan) return null;
+  const inForce = requirePlanInForce(ctx.runDir, view);
+  if (revisionInForce(ctx.runDir, inForce).vision?.sha256 !== s.visionSha256) return 'the vision changed since the checkpoint read it';
+  return payloadAt(ctx, s.vector.plan).manifest.planSha256 !== inForce.manifest.planSha256 ? `the plan changed since plan rev ${s.vector.plan}` : null;
+}
+
+/** How often a checkpoint call in flight looks for a superseding revision. */
+export const SUPERSEDE_POLL_MS = 1000;
+
+/**
+ * Runs `call` (the job's backend call), cancelling it (`proc.kill{supersede}`) once a revision supersedes `s`
+ * (`supersededBy`), so a call is not paid to its end only to be rejected stale (paid M4b run 3: ckpt-7 ran seven
+ * minutes past the owner's apply).
+ */
+async function supersedable<T>(ctx: CheckpointContext, s: Captured, call: () => Promise<T>): Promise<T> {
+  let killing: Promise<void> | null = null;
+  let failure: unknown = null;
+  const poll = (): void => {
+    if (killing !== null || supersededBy(ctx, s) === null) return;
+    const spawn = ctx.journal.view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.job === s.job && ctx.journal.view.doneOf(i.op) === null);
+    if (spawn === undefined) return;
+    const inv = invocationId(spawn.op, spawn.ordinal);
+    // A runner that has not written runner.json may not have exec'd yet: the next poll finds it (as the scheduler's kills).
+    const files = runnerFiles(invocationDir(ctx.runDir, inv), inv);
+    if (files.read('runner.json') === null || files.read('exit.json') !== null) return;
+    killing = killWorkload(ctx, { inv, scope: 'invocation', reason: 'supersede' }).catch((error: unknown) => {
+      failure = error;
+    });
+  };
+  const timer = setInterval(() => {
+    try {
+      poll();
+    } catch (error) {
+      failure = error;
+    }
+  }, SUPERSEDE_POLL_MS);
+  try {
+    return await call();
+  } finally {
+    clearInterval(timer);
+    if (killing !== null) await killing;
+    if (failure !== null) throw failure;
+  }
+}
 
 /** Reads a call: an output, a failure (an invalid decision), or an interruption (its park or usage-limit item written). */
 function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome): Asked {
@@ -625,6 +697,9 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     const recordedCall = recordedArcCall(ctx, s.job, 'checkpoint', attempt);
     if (recordedCall !== null && interruptedCall(recordedCall)) continue;
     if (recordedCall !== null && recordedCall.kind === 'result') return read(ctx, s.job, recordedCall);
+    // Paid M4b run 3: inputs a revision superseded are not asked (again); a superseded call ends here as well.
+    const superseded = supersededBy(ctx, s);
+    if (superseded !== null) return { kind: 'superseded', detail: superseded };
     const skip = checkpointSkip(ctx);
     if (skip !== null) return { kind: 'skipped', reason: skip };
     const r = recorded(ctx, s);
@@ -635,11 +710,12 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${s.job}`, jobParent(s.job), { path: checkout, checkout: { type: 'detached', at: s.headSha } });
     const inputs = checkpointInputs(ctx, s, r);
     const rendered = prompt.render(inputs);
-    const called = await withCpu(ctx, s.job, () => callArcRole(ctx, {
+    const called = await withCpu(ctx, s.job, () => supersedable(ctx, s, () => callArcRole(ctx, {
       job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
       deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
-    }));
+    })));
     await removeCheckout(ctx, s.job, checkout);
+    if (called.kind === 'result' && called.result.outcome.kind === 'cancelled' && called.result.outcome.reason === 'supersede') continue;
     if (called.kind === 'lost') return { kind: 'failed', detail: `${called.inv} was lost with its runner`, inv: called.inv };
     return read(ctx, s.job, called);
   }
@@ -648,20 +724,54 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
 // ---------------------------------------------------------------------------------------------------
 // Before a capture: re-witnessing
 
+/**
+ * The arc lanes in force of `output`'s cited observations that have none on `head`'s tree under their lane rev and this
+ * host's environment: what the evidence base (src/holistic/bundle.ts step 5) would find missing there. A citation on
+ * the head's own tree, or whose lane the head already observed, is not among them.
+ */
+function citedLanesUnobserved(ctx: CheckpointContext, output: CheckpointOutput, head: Sha) {
+  const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view));
+  const tree = revParse(ctx.repo, `${head}^{tree}`);
+  const store = observations(ctx);
+  const wanted = new Set<LaneId>(output.cites.observations.filter((k) => k.treeSha !== tree).map((k) => k.lane));
+  return (revision.obligations?.value.lanes ?? []).filter((l) => wanted.has(l.id) && reuse(store, keyOf(tree, l, laneEnvId(ctx, l))) === null);
+}
+
+/** Witnesses on the head now, under `job`, `output`'s cited lanes that have no observation there; the head, or null when none was due. */
+async function witnessCited(ctx: CheckpointContext, job: JobId, output: CheckpointOutput): Promise<Sha | null> {
+  const head: Sha = integrationHeadNow(ctx);
+  const lanes = citedLanesUnobserved(ctx, output, head);
+  if (lanes.length === 0) return null;
+  await removeJobCheckouts(ctx, job);
+  await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, lanes.map(arcJourneyLane), {
+    path: jobSeriesCheckout(ctx, job, 'rewitness'), checkout: { type: 'detached', at: head },
+  }, { reuse: true, stop: () => false });
+  return head;
+}
+
 /** After an evidence rejection: the cited observations' lanes re-witnessed on the head (under the rejected job). */
 async function rewitnessCited(ctx: CheckpointContext, prev: CheckpointState): Promise<void> {
   if (prev.decided?.kind !== 'rejected' || prev.decided.reason !== 'evidence') return;
   const out = outputOf(ctx, prev.inputs.job);
   if (out === null) throw new Error(`${prev.inputs.job} was rejected on its evidence, but its output is not recorded`);
-  const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view));
-  const wanted = new Set<LaneId>(out.output.cites.observations.map((k) => k.lane));
-  const lanes = (revision.obligations?.value.lanes ?? []).filter((l) => wanted.has(l.id));
-  if (lanes.length === 0) return;
-  const head: Sha = integrationHeadNow(ctx);
-  await removeJobCheckouts(ctx, prev.inputs.job);
-  await runJourneySeries(ctx, { type: 'job', job: prev.inputs.job, acquireFirst: ctx.acquireFirst }, lanes.map(arcJourneyLane), {
-    path: jobSeriesCheckout(ctx, prev.inputs.job, 'rewitness'), checkout: { type: 'detached', at: head },
-  }, { reuse: true, stop: () => false });
+  await witnessCited(ctx, prev.inputs.job, out.output);
+}
+
+/** How many times a decided job re-witnesses its cited lanes on a head that keeps moving before it activates anyway. */
+export const DRIFT_ROUNDS_MAX = 3;
+
+/**
+ * Paid M4b run 3 (ckpt-4, $2.01): a publication moved the head while the call ran, the decision's cited observation had
+ * none on the new head, and a decision valid for the tree it read was rejected `evidence` and paid for again. Before the
+ * activation, the cited lanes with no observation on the head now are witnessed there (no call), so the evidence base
+ * compares each citation with the head's own observation, strict as ever: a citation the new head contradicts still
+ * rejects. Again while the head moves under the re-witness, at most DRIFT_ROUNDS_MAX rounds; then the activation reads
+ * the head as it is (a citation still unobserved there rejects `evidence`, and `rewitnessCited` runs before the next).
+ */
+async function witnessDrift(ctx: CheckpointContext, job: JobId, output: CheckpointOutput): Promise<void> {
+  for (let round = 0; round < DRIFT_ROUNDS_MAX; round++) {
+    if (await witnessCited(ctx, job, output) === null) return;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -736,8 +846,14 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
     asked = await ask(ctx, s);
   }
   if (asked.kind === 'skipped') return asked;
+  if (asked.kind === 'superseded') {
+    const decision: BundleDecision = { kind: 'rejected', reason: 'stale', detail: asked.detail };
+    ctx.journal.fact({ kind: 'bundle-decided', job, outcome: decision });
+    return { kind: 'decided', job, trigger: s.trigger, decision };
+  }
   if (asked.kind === 'interrupted') return { kind: 'interrupted', job, detail: asked.detail };
   crashPoint('checkpoint.after-call');
+  if (asked.kind === 'output') await witnessDrift(ctx, job, asked.output);
 
   const { trigger } = s;
   const secondInvalid = ctx.journal.view.holistic().checkpoints.some((c) => triggerKey(c.inputs.trigger) === triggerKey(trigger) && c.decided?.kind === 'rejected' && c.decided.reason === 'invalid');
