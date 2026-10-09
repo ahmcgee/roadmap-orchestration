@@ -697,6 +697,13 @@ export type AuditInputs = Readonly<{
 /** One lens's covered range: `from` its watermark before, `to` the audited SHA. */
 export type CoveredRange = Readonly<{ lens: LensKindName; from: Sha; to: Sha }>;
 
+/**
+ * A lens draft an audit refused at admission (H6; M4b, paid run 3): a vacuity mutant that could not be made against the
+ * audited tree, from the lens's call `attempt`, with the reason (git's stderr for a corrupt pre-M4b patch). Its finding
+ * was not opened.
+ */
+export type LensRefusal = Readonly<{ lens: LensKindName; attempt: number; claim: string; cause: string; reason: string }>;
+
 /** The M3 facts (SCHEMAS.md "M3: the holistic layer"). */
 export type HolisticFact =
   /** A witness run's records (`witness.json`, hashed): the observation key and whom it ran for. */
@@ -710,7 +717,11 @@ export type HolisticFact =
   }>
   | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
   | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
-  | Readonly<{ kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned' }>
+  /** M4b: `refused` (absent on an earlier executor's fact: none recorded), in call order. */
+  | Readonly<{
+    kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned';
+    refused?: readonly LensRefusal[];
+  }>
   /** A17, H8: a docs-only publication covers its own edge U→D by construction. */
   | Readonly<{ kind: 'docs-covered'; pub: JobId; from: Sha; to: Sha }>
   /** M4a: `issues` (the checkpoint's issue capture; absent on a dev.6 fact: none) and `corpusSha256` (the pin in force; absent: none). */
@@ -1742,14 +1753,20 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     priorFindings: f.get('priorFindings', findingSet),
     highWater: f.get('highWater', positive),
   })),
-  'audit-ended': object((f): Fact => ({
-    kind: f.get('kind', literal('audit-ended')),
-    job: f.get('job', auditJobR),
-    covered: f.get('covered', sortedBy(object((g) => ({ lens: g.get('lens', lensR), from: g.get('from', shaR), to: g.get('to', shaR) })), (c) => c.lens)),
-    findings: f.get('findings', findingSet),
-    suppressed: f.get('suppressed', nat),
-    outcome: f.get('outcome', oneOf(['completed', 'abandoned'] as const)),
-  })),
+  'audit-ended': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('audit-ended')),
+      job: f.get('job', auditJobR),
+      covered: f.get('covered', sortedBy(object((g) => ({ lens: g.get('lens', lensR), from: g.get('from', shaR), to: g.get('to', shaR) })), (c) => c.lens)),
+      findings: f.get('findings', findingSet),
+      suppressed: f.get('suppressed', nat),
+      outcome: f.get('outcome', oneOf(['completed', 'abandoned'] as const)),
+    };
+    const refused = f.optional('refused', arrayOf(object((g): LensRefusal => ({
+      lens: g.get('lens', lensR), attempt: g.get('attempt', positive), claim: g.get('claim', str), cause: g.get('cause', str), reason: g.get('reason', str),
+    }))));
+    return { ...out, ...(refused === undefined ? {} : { refused }) };
+  }),
   'docs-covered': object((f): Fact => ({ kind: f.get('kind', literal('docs-covered')), pub: f.get('pub', docsJobR), from: f.get('from', shaR), to: f.get('to', shaR) })),
   'checkpoint-inputs': object((f): Fact => {
     const out = {

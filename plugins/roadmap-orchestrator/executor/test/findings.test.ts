@@ -1,7 +1,7 @@
 // M3 step B3: the findings store (src/holistic/findings.ts). Dedupe and dismissals over a real journal
 // (findings.dedupe, findings.dismissal-arc-scoped); ruling (P1s never bank); ownership moves, due needs-user items and
-// the per-finding instrumentation over folded logs. M4a rev 3 (N5): findings.corrupt-patch-refused (H6) and
-// findings.cross-key (H7); the audit-level flows are in test/audit.test.ts.
+// the per-finding instrumentation over folded logs. M4a rev 3 (N5): findings.mutant-refused (H6) and
+// findings.cross-key (H7); M4b: findings.mutant-edits-kept; the audit-level flows are in test/audit.test.ts.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -12,7 +12,7 @@ import { arcId, commandId, findingId, jobId, laneId, obligationId, planRev, sha,
 import { openJournal } from '../src/core/log.ts';
 import { Fold } from '../src/core/state.ts';
 import { absPath, isoTime } from '../src/core/values.ts';
-import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
+import { MUTANT_PATCH_INPUT, patchedTree } from '../src/git/mutant.ts';
 import {
   type FindingDraft, type RepairUnit, admitMutant, batchable, crossKey, keepMutantPatch, findingItemsDue, findingMetrics, openFinding, ownershipMoves, repairedObligations, ruleFinding, rulingRefusal,
   visionConflictDraft, witnessFindingDraft,
@@ -20,7 +20,7 @@ import {
 import { inputPath } from '../src/input/inforce.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
 import { ARC, AT, H, U1, appliedFields, chain } from './fixtures/log-records.ts';
-import { makeRepo, tmpDir } from './helpers/repo.ts';
+import { git, makeRepo, tmpDir } from './helpers/repo.ts';
 
 const I1 = obligationId('I-1');
 const B1 = sha('b'.repeat(40));
@@ -170,16 +170,33 @@ describe('ruling and ownership', () => {
 });
 
 describe('admission (M4a rev 3)', () => {
-  it('findings.corrupt-patch-refused (H6): a mutant patch git cannot parse is refused with its stderr and never kept; a well-formed one is kept', () => {
+  it('findings.mutant-edits-kept (M4b): a vacuity mutant\'s exact edits become a patch git wrote against the audited tree, kept, which applies there', () => {
+    const repo = absPath(makeRepo(tmpDir('findings-edits-repo'), { files: { 'src/a.js': 'export const a = 1;\nexport const b = 2;\n' } }));
+    const runDir = absPath(tmpDir('findings-edits-run'));
+    const at = sha(git(repo, 'rev-parse', 'HEAD'));
+    const kept = admitMutant(repo, runDir, at, { kind: 'edits', lane: laneId('journey'), edits: [{ path: 'src/a.js', old: 'a = 1', new: 'a = 0' }] });
+    assert.ok(kept.kind === 'kept', JSON.stringify(kept));
+    assert.equal(kept.mutant.lane, 'journey');
+    const path = inputPath(runDir, kept.mutant.patchSha256, MUTANT_PATCH_INPUT);
+    const made = patchedTree(repo, at, path);
+    assert.ok(made.kind === 'applied', JSON.stringify(made));
+    assert.equal(git(repo, 'cat-file', 'blob', `${made.tree}:src/a.js`), 'export const a = 0;\nexport const b = 2;');
+    assert.equal(git(repo, 'status', '--porcelain'), '', 'the checkout is untouched');
+  });
+
+  it('findings.mutant-refused (H6, M4b): edits that cannot be made, and a recorded patch git cannot parse (paid M4b run 3: a miscounted hunk), are refused with the reason and never kept', () => {
     const repo = absPath(makeRepo(tmpDir('findings-patch-repo'), { files: { 'src/a.js': 'export const a = 1;\n' } }));
     const runDir = absPath(tmpDir('findings-patch-run'));
-    const patch = 'diff --git a/src/a.js b/src/a.js\n--- a/src/a.js\n+++ b/src/a.js\n@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n';
-    const corrupt = admitMutant(repo, runDir, 'not a patch\n', laneId('journey'));
-    assert.ok(corrupt.kind === 'corrupt' && corrupt.stderr.length > 0, JSON.stringify(corrupt));
+    const at = sha(git(repo, 'rev-parse', 'HEAD'));
+    const edits = (path: string, old: string, n: string) => ({ kind: 'edits' as const, lane: laneId('journey'), edits: [{ path, old, new: n }] });
+    const corrupt = admitMutant(repo, runDir, at, { kind: 'patch', lane: laneId('journey'), patch: '--- a/src/a.js\n+++ b/src/a.js\n@@ -1,3 +1,3 @@\n-export const a = 1;\n+export const a = 2;\n' });
+    assert.ok(corrupt.kind === 'refused' && /corrupt/.test(corrupt.reason), JSON.stringify(corrupt));
+    assert.ok(admitMutant(repo, runDir, at, edits('src/a.js', 'a = 9', 'a = 0')).kind === 'refused');
     assert.equal(existsSync(join(runDir, 'inputs')), false, 'nothing kept');
-    const kept = admitMutant(repo, runDir, patch, laneId('journey'));
+    const patch = 'diff --git a/src/a.js b/src/a.js\n--- a/src/a.js\n+++ b/src/a.js\n@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n';
+    const kept = admitMutant(repo, runDir, at, { kind: 'patch', lane: laneId('journey'), patch });
     assert.ok(kept.kind === 'kept', JSON.stringify(kept));
-    assert.equal(readFileSync(inputPath(runDir, kept.mutant.patchSha256, MUTANT_PATCH_INPUT), 'utf8'), patch);
+    assert.equal(readFileSync(inputPath(runDir, kept.mutant.patchSha256, MUTANT_PATCH_INPUT), 'utf8'), patch, 'a recorded well-formed patch is kept as written');
   });
 
   it('findings.cross-key (H7): the lens and absolute paths are left out; obligation, cause and repo paths (set, sorted) count', () => {

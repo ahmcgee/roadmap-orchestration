@@ -27,7 +27,8 @@ import {
   type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault } from '../core/upgrade.ts';
+import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, lensPatchMutantDefault } from '../core/upgrade.ts';
+import type { MutantEdit } from '../git/mutant.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
   JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
@@ -388,7 +389,16 @@ const lineEvidence = arrayOf(object((g) => ({ path: g.get('path', str), line: g.
 // ---------------------------------------------------------------------------------------------------
 // lens (M3, §2.5): one lens kind per call; findings only, the checkpoint acts.
 
-/** A lens's finding. `cause` feeds the dedupe key (`findingKey`); a vacuity finding carries its mutant (a unified diff). */
+/**
+ * A vacuity finding's mutant: its exact replacements (`MutantEdit`), from which the executor has git write the patch
+ * (`editsPatch`), or, read from a lens call an earlier executor recorded, the hand-written unified diff it asked for then
+ * (`kind: patch`, `lensPatchMutantDefault`).
+ */
+export type LensMutant =
+  | Readonly<{ kind: 'edits'; lane: LaneId; edits: readonly MutantEdit[] }>
+  | Readonly<{ kind: 'patch'; lane: LaneId; patch: string }>;
+
+/** A lens's finding. `cause` feeds the dedupe key (`findingKey`); a vacuity finding carries its mutant. */
 export type LensFinding = Readonly<{
   severity: FindingSeverity;
   obligation: ObligationId | null;
@@ -396,7 +406,7 @@ export type LensFinding = Readonly<{
   claim: string;
   cause: string;
   evidence: readonly Readonly<{ path: string; line: number }>[];
-  mutant: Readonly<{ patch: string; lane: LaneId }> | null;
+  mutant: LensMutant | null;
 }>;
 export type LensOutput = Readonly<{ findings: readonly LensFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
 /** The finding cap the lens prompt states (anti-spiral: it bounds reporting, never reading). Not enforced. */
@@ -410,10 +420,17 @@ export const LENS_SCHEMA: Schema = sObj({
     claim: S_STR,
     cause: S_STR,
     evidence: S_EVIDENCE_LINES,
-    mutant: sNullable(sObj({ patch: S_STR, lane: S_STR })),
+    mutant: sNullable(sObj({ lane: S_STR, edits: sArr(sObj({ path: S_STR, old: S_STR, new: S_STR })) })),
   })),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
+});
+
+const lensMutant: Read<LensMutant> = object((h) => {
+  const lane = h.get('lane', (v, p): LaneId => laneId(v, p));
+  const edits = h.optional('edits', arrayOf(object((e): MutantEdit => ({ path: e.get('path', text), old: e.get('old', text), new: e.get('new', text) })), { nonEmpty: true }));
+  if (edits !== undefined) return { kind: 'edits', lane, edits };
+  return { kind: 'patch', lane, patch: lensPatchMutantDefault(h.get('patch', str)) };
 });
 
 export const lensOutput: Read<LensOutput> = object((f) => ({
@@ -424,7 +441,7 @@ export const lensOutput: Read<LensOutput> = object((f) => ({
     claim: g.get('claim', str),
     cause: g.get('cause', str),
     evidence: g.get('evidence', lineEvidence),
-    mutant: g.get('mutant', nullable(object((h) => ({ patch: h.get('patch', str), lane: h.get('lane', (v, p): LaneId => laneId(v, p)) })))),
+    mutant: g.get('mutant', nullable(lensMutant)),
   })))),
   reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
   premises: f.get('premises', arrayOf(premise)),

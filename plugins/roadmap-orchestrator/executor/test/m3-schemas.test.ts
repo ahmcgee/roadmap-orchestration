@@ -437,7 +437,7 @@ describe('M3 file records', () => {
 
 describe('M3 judgment outputs', () => {
   const lens = {
-    findings: [{ severity: 'P2', obligation: null, visionClauses: ['V-1'], claim: 'c', cause: 'k', evidence: [{ path: 'src/a.js', line: 2 }], mutant: { patch: '--- a\n+++ b\n', lane: 'journey' } }],
+    findings: [{ severity: 'P2', obligation: null, visionClauses: ['V-1'], claim: 'c', cause: 'k', evidence: [{ path: 'src/a.js', line: 2 }], mutant: { lane: 'journey', edits: [{ path: 'src/a.js', old: 'a', new: '' }] } }],
     reasons: ['r'], premises: [],
   };
   const op = { op: 'admit', unit: { id: 'r1', risk: 'med', scope: ['src/format.js'], after: [], origin: 'repair' }, spec: '{}', cites: ['V-2'], evidence: ['F-1'] };
@@ -451,6 +451,11 @@ describe('M3 judgment outputs', () => {
     validateLensOutput(lens);
     assert.throws(() => validateLensOutput({ ...lens, findings: [{ ...lens.findings[0], severity: 'blocking' }] }), /severity/);
     assert.throws(() => validateLensOutput({ ...lens, findings: [{ ...lens.findings[0], visionClauses: ['V-1', 'V-1'] }] }), /visionClauses/);
+    // M4b: a mutant is edits (non-empty); a lens answer recorded before M4b reads its unified diff as written.
+    assert.deepEqual(validateLensOutput(lens).findings[0]!.mutant, { kind: 'edits', lane: 'journey', edits: [{ path: 'src/a.js', old: 'a', new: '' }] });
+    assert.throws(() => validateLensOutput({ ...lens, findings: [{ ...lens.findings[0], mutant: { lane: 'journey', edits: [] } }] }), /edits/);
+    const legacy = { ...lens, findings: [{ ...lens.findings[0], mutant: { patch: '--- a\n+++ b\n', lane: 'journey' } }] };
+    assert.deepEqual(validateLensOutput(legacy).findings[0]!.mutant, { kind: 'patch', lane: 'journey', patch: '--- a\n+++ b\n' });
   });
 
   it('checkpoint: every op cites active-looking clauses and evidence; ops exactly on a bundle; owner-only acts only as a request (A16)', () => {

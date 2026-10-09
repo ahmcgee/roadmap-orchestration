@@ -7,8 +7,9 @@
 //   fixed-on-branch) merges into it: nothing is written. A key matching a finding ruled `dismissed` is suppressed unless
 //   a cited evidence blob changed (a path both cite, with a different blob): a dismissal lasts the arc's lifetime (the
 //   growth control is its scope: the arc's own log, never carried into the next arc). A vacuity finding's mutant patch
-//   is checked at admission and kept content-addressed first (`admitMutant`: `checkPatch`, then `keepMutantPatch`,
-//   `inputs/<sha256>.patch`), so its fact names kept bytes; a patch git cannot parse refuses the draft (H6). Within one
+//   is made at admission and kept content-addressed first (`admitMutant`: the lens's edits made a patch by git,
+//   `editsPatch`, or a recorded pre-M4b patch syntax-checked, `checkPatch`; then `keepMutantPatch`,
+//   `inputs/<sha256>.patch`), so its fact names kept bytes; a mutant that cannot be made refuses the draft (H6). Within one
 //   audit, a second lens's draft with an equal `crossKey` corroborates the first (`corroborateFinding`, H7).
 // - **States (R5).** `open → owned → fixed-on-branch → resolved`, or `ruled`. Ownership follows the units that repair a
 //   finding (`ownershipMoves`, driven by src/pipeline/reproduce.ts `syncRepairs`): the first live unit whose spec
@@ -29,13 +30,14 @@ import { isAbsolute } from 'node:path';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Event, HolisticFact, Parent } from '../core/events.ts';
 import {
-  type FindingId, type IssueId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, sha256,
+  type FindingId, type IssueId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, sha256,
 } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
 import type { AbsPath } from '../core/values.ts';
-import { MUTANT_PATCH_INPUT } from '../git/mutant.ts';
+import { MUTANT_PATCH_INPUT, editsPatch } from '../git/mutant.ts';
+import type { LensMutant } from '../prompts/schemas.ts';
 import { checkPatch } from '../git/patchcheck.ts';
 import { keepInput } from '../input/inforce.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
@@ -57,19 +59,29 @@ export type FindingDraft = Omit<Extract<HolisticFact, { kind: 'finding-opened' }
 /** Keeps a mutant's patch (a unified diff against the repo root) as `inputs/<sha256>.patch`; its sha names it. */
 export const keepMutantPatch = (runDir: AbsPath, patch: string): Sha256Hex => keepInput(runDir, Buffer.from(patch, 'utf8'), MUTANT_PATCH_INPUT);
 
-/** A vacuity draft's mutant at admission: kept, or refused because git cannot parse its patch (git's stderr). */
+/** A vacuity draft's mutant at admission: kept, or refused with the reason (git's stderr for a corrupt recorded patch). */
 export type MutantAdmission =
   | Readonly<{ kind: 'kept'; mutant: Readonly<{ patchSha256: Sha256Hex; lane: LaneId }> }>
-  | Readonly<{ kind: 'corrupt'; stderr: string }>;
+  | Readonly<{ kind: 'refused'; reason: string }>;
 
 /**
- * H6 (F14): a vacuity finding's mutant patch checked before anything rests on it (`checkPatch`, read-only in `repo`),
- * then kept. A corrupt patch is never kept: its draft is refused (nothing opened) with git's stderr.
+ * H6 (F14), M4b: a vacuity finding's mutant made a patch against the audited tree `at` before anything rests on it, then
+ * kept. Edits become a patch git writes (`editsPatch`), refused when one cannot be made at `at`; a recorded hand-written
+ * patch (before M4b) is syntax-checked (`checkPatch`, read-only in `repo`) and refused, with git's stderr, when corrupt.
+ * A refused mutant is never kept, and its draft opens nothing.
  */
-export function admitMutant(repo: AbsPath, runDir: AbsPath, patch: string, lane: LaneId): MutantAdmission {
-  const check = checkPatch(repo, patch);
-  if (check.kind === 'corrupt') return check;
-  return { kind: 'kept', mutant: { patchSha256: keepMutantPatch(runDir, patch), lane } };
+export function admitMutant(repo: AbsPath, runDir: AbsPath, at: Sha, mutant: LensMutant): MutantAdmission {
+  let patch: string;
+  if (mutant.kind === 'edits') {
+    const made = editsPatch(repo, at, mutant.edits);
+    if (made.kind === 'refused') return made;
+    patch = made.patch;
+  } else {
+    const check = checkPatch(repo, mutant.patch);
+    if (check.kind === 'corrupt') return { kind: 'refused', reason: `the patch is corrupt: ${check.stderr}` };
+    patch = mutant.patch;
+  }
+  return { kind: 'kept', mutant: { patchSha256: keepMutantPatch(runDir, patch), lane: mutant.lane } };
 }
 
 const ACTIVE: ReadonlySet<FindingStateName> = new Set(['open', 'owned', 'fixed-on-branch']);

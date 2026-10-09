@@ -180,6 +180,8 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | exit.json (rev 3 calibration) | `+ cpu?: LaunchCpu \| null` (every runner since the calibration) | absent: null (`exitCpuOf`, warned once; scaffolding): the launch has no pressure |
 | `FlowSeries` (rev 3) | `v: 2`; `FlowPoint.pressure`, `FlowPoint.stationPressure` (H1), `SuiteRun.pressure` required | a kept `v: 1` series is recomputed from the ref's events |
 | `Role` | `+ flow` (seat `arc`, frontier) | in force only with `arcRoles: m4b` |
+| `audit-ended` (paid M4b run 3) | `+ refused?: [{lens, attempt, claim, cause, reason}]` (every audit dev.8 ends since; in call order) | absent: none recorded (nothing reads it back) |
+| Lens answer `mutant` (paid M4b run 3) | `{lane, edits: [{path, old, new}]}` (non-empty) in place of `{patch, lane}`: the prompt and `LENS_SCHEMA` cut over | a recorded lens call's `{patch, lane}` reads as written (`kind: patch`, `lensPatchMutantDefault`, warned once; scaffolding) and is syntax-checked at admission as before |
 | Kill and cancel reasons (paid M4b run 3) | `+ supersede` (`KILL_REASONS`, `CANCEL_REASONS`; a backend call's `cancelled{reason}`, `BACKEND_CANCEL_REASONS`): a checkpoint call a revision superseded | none: dev.7 records never hold it |
 | `RevisionSource`, `HoldCause`, spawn subject, `CommandBody`, `JobId`, `NeedsUserReason`, facts, `.roadmap/config.json` | "M4b" | none |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
@@ -1313,7 +1315,7 @@ added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`, `a
 | `finding-opened` | `id, key (findingKey = sha256 of canonical {lens, obligation, cause}), lens: LensKind\|witness\|plan-check, severity: P1\|P2\|P3, obligation\|null, visionClauses (ascending), claim, evidence: [{path, blob\|null}], mutant: {patchSha256, lane}\|null (vacuity only), source: job{job} \| stage{unit, stage: plan-check, attempt}, gateHadPassed`. Plan-check (R17) opens only P3 findings citing clauses, from its attempt (the only `stage` source); a `witness` finding is a P1 over its obligation; a `vision` finding is P2 or P3 |
 | `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced \| close-out}}` (`close-out`: run 10, F) |
 | `audit-started` | `job (audit-n), triggers: [cadence \| unwitnessed{obligation} \| drift{planRev} \| wall-clock \| requested{command} \| final] (non-empty), generation, lenses (ascending, a subset of L), integrationSha, planRev, ledgerSha256\|null, obligationsSha256\|null, visionSha256, owners: [{unit, head}] (ascending), priorFindings, highWater` |
-| `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens), findings, suppressed, outcome: completed\|abandoned` |
+| `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens), findings, suppressed, outcome: completed\|abandoned, refused?: [{lens, attempt, claim, cause, reason}]` (M4b: each lens draft refused at admission, in call order; absent on an earlier executor's) |
 | `docs-covered` | `pub, from: U, to: D` (A17, H8) |
 | `checkpoint-inputs` | `job (ckpt-n), trigger: audit{job} \| park{unit, seq}, generation, vector: {plan, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, visionSha256, contracts: [{path, blob}]}, headSha, visionSha256 (= the vector's), findings, observations: ObservationKey[]` |
 | `bundle-decided` | `job, outcome: no-op \| rejected{reason: stale\|evidence\|invalid, detail} \| requested{needsUser}`; an applied bundle is its `plan-applied{source: bundle{job}}` instead |
@@ -1370,11 +1372,12 @@ checkpoint/Opus inherits it; Sonnet and Codex are `unsupported` for both, so a h
 one is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why: no-prompt}` at startup. Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses, questions, advances} (`visionInputOf`;
 `advances` from the plan at the revision the inputs were captured at),
 lens, obligations: ObligationView[] ({obligation, exempt, observation{key, verdict}|null}), range{from, to, diff},
-owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout}`;
+owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout, specsOnly, retry:
+{refused: [{claim, cause, reason}], recorded: [{claim, cause}]}|null}` (M4b: `retry` on a lens asked again);
 `CheckpointInputs = {vision, trigger, head, plan (rendered), findings, obligations, coverage: VisionCoverage,
 divergences[{id, type, what}], contracts, rulings, index, architecture, direction}`. Outputs (strict; every key
 required): `LensOutput = {findings: [{severity: P1|P2|P3, obligation|null, visionClauses, claim, cause, evidence:
-[{path, line}], mutant: {patch, lane}|null}], reasons, premises}`; `CheckpointOutput = {decision: no-op|bundle,
+[{path, line}], mutant: {lane, edits: [{path, old, new}] (non-empty)}|null}], reasons, premises}` (M4b; was `{patch, lane}`); `CheckpointOutput = {decision: no-op|bundle,
 reasons, ops: BundleOp[] (empty exactly on a no-op), rulings: string[] (sidecars as JSON text; none on a no-op),
 findingDispositions[{finding, disposition, reason}], interpretations[{clauses, situation, reading}], cites{vision,
 observations, findings}, premises}`, `BundleOp = (admit{unit{id, risk, scope, after, origin: checkpoint|repair},
@@ -1933,8 +1936,9 @@ src/pipeline/dispatch.ts `callArcRole`):
    vision first, each `@cpu`×1 under the job holder through `acquireFirst`, in a detached checkout `<job>.lenses`,
    reading the recorded vision, obligations and ledger by their kept bytes, every plan contract at the audited SHA in
    full, owner branch diffs from `diffBase`. A lens call is `arc-backend{role: lens, tier: arc, routingRev, job,
-   attempt}`, `attempt` its place in the run order; a resumed job consumes a recorded call (`recordedArcCall`) and asks
-   again only for a lost one. A lens's refusal, malformed report or fault abandons the audit after the rest; a usage
+   attempt}`, `attempt` its place in the run order (a retry's: after every lens's first call, numbered in order, M4b); a
+   resumed job consumes a recorded call (`recordedArcCall`) and asks again only for a lost one. A lens's refusal,
+   malformed report or fault, or a draft refused again after its retry, abandons the audit after the rest; a usage
    limit or capacity parks the backend (`verdictOf` with a job parent; the usage-limit item parented by the spawn op)
    and stops it. The lens checkout is removed (citing an evidence snapshot) before `audit-ended`, so a crash never
    strands it. `covered` lists only lenses that reported with a non-empty range, from their watermark at the capture to
@@ -1946,7 +1950,8 @@ src/pipeline/dispatch.ts `callArcRole`):
 9. **Findings from audits** go through B3's store (`openFinding`, src/holistic/findings.ts; see "Choices made in M3 B3"
    item 1); the ids it opened or merged and the suppressed count are `audit-ended{findings, suppressed}`.
    `gateHadPassed`: a unit had published before the audit started. A vision-lens P1 is recorded P2; unknown obligation
-   and clause ids are dropped; a vacuity mutant is kept content-addressed (`.patch`) only on a known lane.
+   and clause ids are dropped; a vacuity mutant is kept content-addressed (`.patch`) (M4b: a mutant on no arc lane
+   refuses its draft, as one that cannot be made does: item 19 of "M4a rev 3").
 10. **Smoke and argv:** the claude-judgment role is any `FreshRole`, so a probe can call `lens.arc` or `checkpoint.arc`.
 
 **Choices made in M3 B6** (the checkpoint job and its bundles; src/holistic/{checkpoint,bundle,convergence,divergence}.ts):
@@ -2897,10 +2902,20 @@ sections and marks converted amendments.
     lens alone (the full drift's lenses when it has none) with `LensInputs.specsOnly`, the code lenses keeping their
     watermarks. `crossKey` (relative repo evidence paths, obligation, cause; not the lens): within one audit a second
     lens's equal draft writes `finding-corroborated` (`corroborateFinding`, once) instead of opening a finding.
-19. **Corrupt mutant patches (N5, H6).** `admitMutant` runs `checkPatch` before keeping the patch: a vacuity draft whose
-    patch git cannot parse is refused (nothing opened, git's stderr reported and written to the executor's stderr).
-    `patchedTree` returns `corrupt`; reproduce treats it as inapplicable and smoke as inconclusive, so no `mutant.apply`
-    names one.
+19. **Corrupt mutant patches (N5, H6; M4b, paid run 3).** A vacuity lens writes its mutant as exact replacements
+    `{lane, edits: [{path, old, new}]}`; `admitMutant` has git write the patch against the audited SHA (`editsPatch`,
+    src/git/mutant.ts: each `old` must occur exactly once in its file there, edits to one file applying in order, the
+    diff `git diff --full-index` between the audited tree and the edited one through a private index), so a kept patch
+    always parses and applies to the audited tree. A recorded pre-M4b answer's `patch` is still checked by `checkPatch`.
+    A draft whose mutant cannot be made (a path naming no regular file, `old` absent, repeated or empty, an edit that
+    changes nothing, a corrupt recorded patch) or names no arc lane is refused: nothing opened, nothing kept, the reason
+    recorded in `audit-ended.refused{lens, attempt, claim, cause, reason}` and written to the executor's stderr. The lens
+    is then asked once more (a fresh call, `attempt` after every lens's first, numbered in order), its prompt's
+    `<previous_report>` naming each refused draft with its reason and the report's admitted findings; it counts as
+    reported (covered) only when the retry's report is admitted whole, else the audit ends `abandoned` and stays owed.
+    (Run 3's audit-4: the lens's hand-written diff claimed 7 old lines in a 6-line hunk, git refused it as corrupt, the
+    finding went to stderr only, and `vacuity` was still reported covered.) `patchedTree` returns `corrupt`; reproduce
+    treats it as inapplicable and smoke as inconclusive, so no `mutant.apply` names one.
 20. **Delta pack re-review (N5, H3; src/holistic/packreview.ts).** The first review, and one after an abandoned one, is
     full. A later one follows `previousReview` with the changed specs, `packChanges` and `unresolvedAfter` (that review's
     findings and those it kept `still-open`); its answer dispositions each exactly once (else malformed), recorded as
@@ -2988,7 +3003,8 @@ No record changes and no new writes (so no crash rows): each is a read-side rule
   seq; the scheduler's `processClock`), it captures anyway. Evidence: ckpt-3 (clear-cancellations seq 1496) captured while
   refusal-next-steps was at gate (seq 1482), which published at seq 1540, 4 s later; ckpt-3 was rejected (1564) and ckpt-4
   re-ran (1566–1584).
-- **R-16. One lens call per lens per audit** (unchanged; test `audit.one-call-per-lens`). audit-4's four spawns (seq 1616,
+- **R-16. One lens call per lens per audit** (test `audit.one-call-per-lens`; since paid M4b run 3, plus at most one
+  retry of a lens whose draft was refused at admission, "M4a rev 3" item 19). audit-4's four spawns (seq 1616,
   1629, 1642, 1655) were its four lenses in run order (vision F-19/F-20, drift F-21/F-22, invariants F-23/F-24, vacuity
   F-25) over a new range (66bc65f→24ad8b0, `audit-ended` 1667); the `arc-backend` subject's `attempt` is the lens's
   ordinal. The observer's preamble now says so.

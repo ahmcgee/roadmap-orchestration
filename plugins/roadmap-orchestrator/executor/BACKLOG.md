@@ -252,6 +252,9 @@ None.
   The M4b rev 3 defaults go with it: `spawnPressureOf` (a spawn result without `pressure` reads null) and
   `startPressureOf` (an `executor-started` without `pressure` reads `unavailable`) and `exitCpuOf` (an exit.json without
   `cpu` reads null); the three fields then become required.
+- `lensPatchMutantDefault` (src/core/upgrade.ts) and `LensMutant`'s `kind: patch` arm with `admitMutant`'s `checkPatch`
+  branch, once no audit an executor before paid M4b run 3's fix started is running: a recorded lens answer's mutant
+  `{patch, lane}` (a hand-written diff) reads as written. With it, a lens mutant is edits only.
 - The 1.0.0-dev.6 layer below is no longer adopted (1.0.0-dev.8 adopts dev.7 only; no dev.6 arc was in flight at M4b
   step 0a, which moved `PREVIOUS_RELEASE` to b55ad88 and dropped the dev.6 upgrade cases). Step 0a deleted the
   self-contained part: `checkpointOutputM4Default`, `splitChildRuleDefault` (a checkpoint answer now needs
