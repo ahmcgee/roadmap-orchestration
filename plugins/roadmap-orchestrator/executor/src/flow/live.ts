@@ -2,7 +2,7 @@
 // log and kept inputs folded into its series, the chart's frozen limits (seeded from the completed previous arcs of the
 // repo, src/flow/history.ts), the in-flight ages, the flow facts (src/flow/log.ts), the host fingerprint, the givens in
 // force and the lever catalogue of the plan in force. The executor's flow track, `status` and the job's capture read it.
-// M4b rev 3: the host's PSI now (`pressureNow`, read at each call) and the arc's own `@cpu` tokens held (`cpuInUse`).
+// M4b rev 3: the cpu-wait threshold and schedstat availability (`pressureNow`) and the arc's own `@cpu` tokens held (`cpuInUse`).
 //
 // Reading is the only effect. The log is parsed once per high-water mark (the flow track asks every few seconds), and
 // the previous arcs' series once per repo and arc: one arc runs per host, so no previous arc completes while this one
@@ -15,7 +15,7 @@ import { gitCommonDir } from '../git/git.ts';
 import { eventsPrefix } from '../git/snapshot.ts';
 import { FLOW_SERIES_INPUT, inputPath, keptInput } from '../input/inforce.ts';
 import { type PlanM1, priorityOf } from '../input/plan.ts';
-import { PRESSURE_SATURATED, readPressure } from '../host/pressure.ts';
+import { PRESSURE_SATURATED, pressureAvailability } from '../host/pressure.ts';
 import { readHostFingerprint } from '../host/sample.ts';
 import { committedRepoConfig } from '../preflight/checks.ts';
 import { RISK_TIERS, type ClassTable } from '../routing/types.ts';
@@ -118,12 +118,9 @@ export function leverCatalogue(plan: PlanM1, hostCpus: number, classes: ClassTab
   ];
 }
 
-/** The host's PSI cpu now (`status.flow.pressure`, a run's inputs): `avg10` and `avg60`, null on a host without PSI. */
+/** The cpu-wait threshold and whether this host reports schedstat (`status.flow.pressure`, a run's inputs). */
 export function pressureNow(): FlowPressureStatus {
-  const s = readPressure();
-  return s === 'unavailable'
-    ? { now: null, threshold: PRESSURE_SATURATED, available: false }
-    : { now: { avg10: s.avg10, avg60: s.avg60 }, threshold: PRESSURE_SATURATED, available: true };
+  return { threshold: PRESSURE_SATURATED, available: pressureAvailability() === 'available' };
 }
 
 /** The arc's own `@cpu` tokens held now (reserved, running or cleaning), from the journal's resource table. */

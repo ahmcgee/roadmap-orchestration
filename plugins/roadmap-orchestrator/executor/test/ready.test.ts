@@ -14,6 +14,7 @@ import { arcStack, resolveRouting } from '../src/routing/layers.ts';
 import type { RiskTier } from '../src/routing/types.ts';
 import { type ReadyInput, type SpecFactsOf, activeKnownDefects, admitter, knownDefectActive, rankOf, ready } from '../src/schedule/ready.ts';
 import { type AdmissionStage, type AdmitInput, type CommandScope, type Rank, PROMOTION_BYPASS, compareRank } from '../src/schedule/types.ts';
+import type { PressureTick } from '../src/host/pressure.ts';
 import { ARC, H, REV, appliedFields, chain } from './fixtures/log-records.ts';
 
 const ROUTING = resolveRouting(arcStack('default', null, null)).table;
@@ -489,7 +490,7 @@ describe('host-pressure holds (M4b rev 3, RC-11)', () => {
   const plan = planOf([med]);
   const INV = invocationId(opId(ARC, 7), 1);
   const HELD_AT = Date.parse('2026-09-25T12:00:00.000Z');
-  const admitLanes = (log: Log, ticks: readonly Readonly<{ atMs: number; avg60: number }>[], nowMs: number) =>
+  const admitLanes = (log: Log, ticks: readonly PressureTick[], nowMs: number) =>
     admitter(() => ROUTING, NO_REPAIRS)({ view: log.view(), plan, unit: med, stage: 'lanes', blocking: [], drains: [], tripped: [], pressure: { ticks, nowMs } });
   const heldLog = (): Log => {
     const log = new Log([M]);
@@ -507,15 +508,17 @@ describe('host-pressure holds (M4b rev 3, RC-11)', () => {
     assert.equal(u.interrupted?.attempt, 2, 'the held attempt is the one its re-run starts from');
   });
 
-  it('pressure.hold-admission: admission holds the re-run until a tick since the hold shows avg60 below the threshold, or 30 min pass', () => {
+  it('pressure.hold-admission: admission holds the re-run until the host\'s cpu wait over a minute of ticks since the hold is below the threshold, or 30 min pass', () => {
     const log = heldLog();
+    const t = (dMs: number, runNs: number, waitNs: number): PressureTick => ({ atMs: HELD_AT + dMs, runNs, waitNs });
     assert.deepEqual(admitLanes(log, [], HELD_AT + 1_000), WAIT, 'no tick since the hold (a fresh restart): it waits');
-    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT - 1, avg60: 0.01 }], HELD_AT + 1_000), WAIT, 'a tick before the hold says nothing');
-    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.25 }], HELD_AT + 1_000), WAIT, 'avg60 at the threshold still holds');
-    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.1 }, { atMs: HELD_AT + 900, avg60: 0.9 }], HELD_AT + 1_000), WAIT, 'the latest tick decides');
-    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.9 }, { atMs: HELD_AT + 900, avg60: 0.24 }], HELD_AT + 1_000), { kind: 'admit' });
-    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.9 }], HELD_AT + 30 * 60_000 - 1), WAIT);
-    assert.deepEqual(admitLanes(log, [{ atMs: HELD_AT + 500, avg60: 0.9 }], HELD_AT + 30 * 60_000), { kind: 'admit' }, 'the 30-min bound');
+    assert.deepEqual(admitLanes(log, [t(-120_000, 0, 0), t(-1, 100, 0)], HELD_AT + 1_000), WAIT, 'ticks before the hold say nothing');
+    assert.deepEqual(admitLanes(log, [t(1_000, 0, 0), t(59_000, 100, 0)], HELD_AT + 60_000), WAIT, 'under a minute of ticks since the hold');
+    assert.deepEqual(admitLanes(log, [t(1_000, 0, 0), t(61_000, 50, 50)], HELD_AT + 62_000), WAIT, 'at the threshold still holds');
+    assert.deepEqual(admitLanes(log, [t(1_000, 0, 0), t(61_000, 60, 40)], HELD_AT + 62_000), { kind: 'admit' });
+    assert.deepEqual(admitLanes(log, [t(1_000, 0, 0), t(61_000, 90, 10), t(121_000, 100, 90)], HELD_AT + 122_000), WAIT, 'the latest minute decides');
+    assert.deepEqual(admitLanes(log, [t(1_000, 0, 0), t(61_000, 0, 100)], HELD_AT + 30 * 60_000 - 1), WAIT);
+    assert.deepEqual(admitLanes(log, [t(1_000, 0, 0), t(61_000, 0, 100)], HELD_AT + 30 * 60_000), { kind: 'admit' }, 'the 30-min bound');
     assert.deepEqual(readyOf(log, plan), [], 'ready offers it only once admitted');
   });
 

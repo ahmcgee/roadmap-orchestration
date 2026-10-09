@@ -7,10 +7,10 @@
 // The flow role may dispute it; a proposal's target must be the constraint, one of its components, or the disputed
 // station (or one of its components). Pure.
 //
-// Ahead of both rules (M4b rev 3, RC-10): when the window's mean interval pressure is at least `PRESSURE_SATURATED`, the
+// Ahead of both rules (M4b rev 3, RC-10): when the window's mean pressure is at least `PRESSURE_SATURATED`, the
 // constraint is `host:cpu` (internal): a contended cpu inflates every station's service, so the largest station is a
-// symptom. The window's pressure is the mean of its points' that measured one; with none (a host without PSI) the rule
-// is off.
+// symptom. The window's pressure is the mean of its points' that measured one; with none (a host without schedstat) the
+// rule is off.
 import { type StationId, HOST_CPU_STATION, SLOT_STATION, parseStationId, stationId, stationOf } from '../core/ids.ts';
 import { PRESSURE_SATURATED } from '../host/pressure.ts';
 import { isSlotComponent, stationMeans } from './series.ts';
@@ -24,7 +24,7 @@ const SLOT = stationId(SLOT_STATION);
 /** The points the constraint reads: the last min(10, n). */
 export const constraintWindow = (points: readonly FlowPoint[]): readonly FlowPoint[] => points.slice(-CONSTRAINT_WINDOW);
 
-/** The mean interval pressure of the window's points that measured one; null when none did. */
+/** The mean pressure of the window's points that measured one; null when none did. */
 export function windowPressure(points: readonly FlowPoint[]): number | null {
   const measured = constraintWindow(points).flatMap((p) => (p.pressure === null ? [] : [p.pressure]));
   return measured.length === 0 ? null : measured.reduce((a, b) => a + b, 0) / measured.length;

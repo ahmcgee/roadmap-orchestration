@@ -702,7 +702,7 @@ async function main(): Promise<void> {
       ],
       givens: [], window: null, verdicts: [], rejections: [], advances: [],
       // M4b rev 3: the role sees a pressure reading below saturation (the slot stays the constraint).
-      pressure: { now: { avg10: 0.06, avg60: 0.09 }, threshold: 0.25, available: true, window: 0.05, cpuInUse: 3, hostCpus: 8 },
+      pressure: { now: 0.09, threshold: 0.5, available: true, window: 0.05, cpuInUse: 3, hostCpus: 8 },
     };
     const call = seatCall(flowRouting, 'flow', 'arc', { role: 'planCheck', tier: 'high' }, 'm4b-flow', flowDir, flowInputs);
     await backend(ctx, 'm4b.flow', call, validates('m4b.flow', 'flow', (out) => {

@@ -11,7 +11,7 @@ if (json === undefined || (mode !== 'job' && mode !== 'series')) throw new Error
 const r = contextFor(JSON.parse(json) as ArcDescriptor);
 try {
   const { ctx } = checkpointContext(r);
-  if (mode === 'job') process.stdout.write(`${JSON.stringify(await runFlowJob(ctx, ['requested']))}\n`);
+  if (mode === 'job') process.stdout.write(`${JSON.stringify(await runFlowJob(ctx, ['requested'], null))}\n`);
   else beforeCompletion(ctx);
 } finally {
   r.journal.close();

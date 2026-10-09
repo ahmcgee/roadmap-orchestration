@@ -48,6 +48,8 @@ export type WorldAct =
   | Readonly<{ type: 'dirty'; files: FileSet }>
   | Readonly<{ type: 'exit'; code: number }>
   | Readonly<{ type: 'hang'; ms: number }>
+  /** A busy loop for `ms`: a cpu-bound hang (M4b rev 3: a call that waits for a cpu, unlike `hang`, which sleeps). */
+  | Readonly<{ type: 'spin'; ms: number }>
   /** A detached (setsid) child that outlives the fake for `lifeMs`; its pid goes to `pidFile`. */
   | Readonly<{ type: 'forkSetsid'; env: 'keepEnv' | 'envClear'; lifeMs: number; pidFile: string }>
   /**

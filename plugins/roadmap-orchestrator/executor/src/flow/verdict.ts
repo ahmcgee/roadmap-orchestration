@@ -5,8 +5,8 @@
 // before-window's centre ∓ 2.66·mR̄/√n (on log for lead), else `no-effect`; any guard breach (absolute floors) makes it
 // `worse`. A before-window of fewer than 3 samples (M4b B1 amendment: its mR̄ is undefined or a single range) is
 // `inconclusive` too, as is one empty (centre and mR̄ 0, never read). The pressure metric (M4b rev 3, RC-12: a lever at
-// `host:cpu`) samples the interval pressure of the units on each side (a fraction in place of minutes), a unit without one
-// (no PSI, an unwatched spawn) being no sample. Pure: src/flow/track.ts computes a due verdict
+// `host:cpu`) samples the pressure of the units on each side (a fraction in place of minutes), a unit without one (no
+// schedstat, no launch long enough to measure) being no sample. Pure: src/flow/track.ts computes a due verdict
 // from the log each tick and writes it once per proposal.
 import type { ObligationId } from '../core/ids.ts';
 import type { IsoTime } from '../core/values.ts';

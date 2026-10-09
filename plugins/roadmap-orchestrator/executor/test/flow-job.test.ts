@@ -61,7 +61,7 @@ test('flow.job-proposal-item: a request starts a run from kept inputs; its survi
   const { d, r, ctx } = arc([flowStep('flow-1', SEQUENCE)]);
   try {
     request(r);
-    assert.deepEqual(await runFlowJob(ctx, ['requested']), { kind: 'ended', job: 'flow-1', outcome: 'done' });
+    assert.deepEqual(await runFlowJob(ctx, ['requested'], null), { kind: 'ended', job: 'flow-1', outcome: 'done' });
     const [started] = flowFacts(r, 'flow-started');
     assert.deepEqual([started!.job, started!.triggers], ['flow-1', ['requested']]);
     const inputs = parseFlowInputs(JSON.parse(readFileSync(join(d.runDir, 'inputs', `${started!.inputsSha256}.${FLOW_INPUTS_INPUT}`), 'utf8')));
@@ -82,7 +82,7 @@ test('flow.job-proposal-item: a request starts a run from kept inputs; its survi
     const [call] = flowCalls(d);
     assert.equal(basename(call!.cwd), 'flow-1.flow', 'a checkout of the integration head');
     assert.match(call!.stdin, /<levers>[^]*sequence u1: priority normal/);
-    assert.deepEqual(await runFlowJob(ctx, []), { kind: 'none' }, 'nothing due, nothing running');
+    assert.deepEqual(await runFlowJob(ctx, [], null), { kind: 'none' }, 'nothing due, nothing running');
     assert.equal(itemsOf(r, 'flow-proposal').length, 1, 'raised once');
     assert.equal(flowCalls(d).length, 1);
     const s = status(r.ctx.runDir, r.journal.view.arc, absPath(d.hostDir)).flow;
@@ -101,9 +101,9 @@ test('flow.host-and-dropped: host advice raises flow-host; a proposal off the co
     flowStep('flow-2', flowAnswer({ proposal: { target: 'stage:gate', action: flowAction.sequence('u1') } })),
   ]);
   try {
-    await runFlowJob(ctx, ['requested']);
+    await runFlowJob(ctx, ['requested'], null);
     assert.equal(itemsOf(r, 'flow-host').length, 1);
-    await runFlowJob(ctx, ['requested']);
+    await runFlowJob(ctx, ['requested'], null);
     const ended = flowFacts(r, 'flow-ended')[1]!;
     assert.deepEqual([ended.job, ended.proposal, ended.dropped?.reason, ended.dropped?.proposal.id], ['flow-2', null, 'target', 'flow-2.0']);
     assert.deepEqual([itemsOf(r, 'flow-proposal').length, itemsOf(r, 'flow-host').length], [0, 1]);
@@ -118,12 +118,12 @@ test('flow.invalid-retry: an answer the reader refuses is asked once more, told 
     flowStep('flow-2', INVALID_FLOW_ANSWER), flowStep('flow-2', INVALID_FLOW_ANSWER),
   ]);
   try {
-    assert.deepEqual(await runFlowJob(ctx, ['requested']), { kind: 'ended', job: 'flow-1', outcome: 'done' });
+    assert.deepEqual(await runFlowJob(ctx, ['requested'], null), { kind: 'ended', job: 'flow-1', outcome: 'done' });
     const [first, retry] = flowCalls(d);
     assert.doesNotMatch(first!.stdin, /previous_answer_refused/);
     assert.match(retry!.stdin, /<previous_answer_refused>[^]*refused by the report's reader/);
     assert.deepEqual(itemsOf(r, 'flow-invalid'), [], 'a noAction raises nothing');
-    assert.deepEqual(await runFlowJob(ctx, ['requested']), { kind: 'ended', job: 'flow-2', outcome: 'invalid' });
+    assert.deepEqual(await runFlowJob(ctx, ['requested'], null), { kind: 'ended', job: 'flow-2', outcome: 'invalid' });
     const ended = flowFacts(r, 'flow-ended')[1]!;
     assert.deepEqual([ended.proposal, ended.dropped, ended.constraint.judged], [null, null, null]);
     assert.equal(flowCalls(d).length, 4, 'one retry each, no third call');
@@ -177,7 +177,7 @@ test('flow.off-dev7: an arc whose revisions carry no role set (1.0.0-dev.7) runs
 test('flow.verdict-at-completion: an applied proposal\'s window the completion closes gets its verdict once, before the series (too few samples: inconclusive)', T, async () => {
   const { r, ctx } = arc([flowStep('flow-1', SEQUENCE)]);
   try {
-    await runFlowJob(ctx, ['requested']);
+    await runFlowJob(ctx, ['requested'], null);
     const proposal = flowFacts(r, 'flow-ended')[0]!.proposal!.id;
     r.journal.fact({ kind: 'flow-decided', proposal, command: request(r), decision: 'accepted', reason: 'scripted accept' });
     r.journal.fact({ kind: 'flow-applied', proposal, revision: r.journal.view.planApplied()!.rev, preimage: { lever: 'sequence', unit: unitId('u1'), priority: null } });
@@ -224,7 +224,7 @@ describe('ruler-changed', () => {
       const command = submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d));
       const out = await applyCommand(commandContextFor(r), command);
       assert.equal(out.kind, 'applied', JSON.stringify(out));
-      const track = { holisticRunning: () => false, judging: () => {}, pressure: () => [] };
+      const track = { holisticRunning: () => false, judging: () => {}, hostPressure: () => null };
       await runFlowTrack(ctx, track);
       await runFlowTrack(ctx, track);
       const items = itemsOf(r, 'ruler-changed');
@@ -264,7 +264,7 @@ describe(`matrix row ${FLOW_JOB}`, () => {
     test(`flow job crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
       const { d, r, ctx } = await crashed([flowStep('flow-1', SEQUENCE)], 'job', cell.label);
       try {
-        const out = await runFlowJob(ctx, []);
+        const out = await runFlowJob(ctx, [], null);
         if (cell.label === 'flow.after-ended') assert.deepEqual(out, { kind: 'none' }, 'the restart only raises the item');
         else assert.deepEqual(out, { kind: 'ended', job: 'flow-1', outcome: 'done' });
         assert.deepEqual(flowFacts(r, 'flow-started').map((f) => f.job), ['flow-1'], 'one run');

@@ -395,7 +395,7 @@ export const HELD_STATION = 'held';
  */
 export const FINDING_WAIT_STATION = 'wait:finding';
 /**
- * M4b rev 3 (RC-10): the host's cpu, the constraint when the window's mean interval pressure is saturated (a contended
+ * M4b rev 3 (RC-10): the host's cpu, the constraint when the window's mean pressure is saturated (a contended
  * cpu inflates every station's service). Internal; never a key of a point's minutes (it is no share of lead time).
  */
 export const HOST_CPU_STATION = 'host:cpu';

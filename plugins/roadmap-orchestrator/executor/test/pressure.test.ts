@@ -1,81 +1,111 @@
-// M4b rev 3: the PSI cpu reader (src/host/pressure.ts): the `some` line parsed, the interval fraction over two samples,
-// an absent file read as unavailable, a malformed one refused, this host's PSI read, and the per-tick history pruned.
+// M4b rev 3: cpu wait (src/host/pressure.ts): a thread's and the host's schedstat parsed, a launch's pressure from its
+// cpu totals, a real workload's wait read through its process tree, the host's pressure over the tick history, and
+// this host's files read.
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, it } from 'node:test';
+import { statOf } from '../src/contain/proc.ts';
 import {
-  PRESSURE_SATURATED, PRESSURE_TICKS_MS, PSI_CPU, type PressureSample, PressureTicks, STARVED_MAX, intervalPressure, launchPressure, parsePsiCpu, readPressure,
-  readPressureAt,
+  HOST_WINDOW_MS, PRESSURE_MIN_WALL_MS, PRESSURE_SATURATED, PRESSURE_TICKS_MS, type PressureTick, PressureTicks, STARVED_MAX, WorkloadCpu,
+  hostPressure, launchPressure, parseHostSchedstat, parseTaskSchedstat, pressureAvailability, readHostCpu, readHostCpuAt,
 } from '../src/host/pressure.ts';
 import { tmpDir } from './helpers/repo.ts';
 
-const PSI = 'some avg10=68.56 avg60=64.89 avg300=50.87 total=49740819350\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n';
-const sample = (totalUs: number, atMs: number): PressureSample => ({ totalUs, avg10: 0, avg60: 0, atMs });
+const SCHEDSTAT = [
+  'version 17', 'timestamp 4788975902',
+  'cpu0 0 0 0 0 0 0 1000 3000 786583281', 'domain0 SMT 0003 0 0 0 0',
+  'cpu1 0 0 0 0 0 0 2000 4000 12', 'domain0 SMT 0003 0 0 0 0', '',
+].join('\n');
+const tick = (atMs: number, runNs: number, waitNs: number): PressureTick => ({ atMs, runNs, waitNs });
 
 describe('pressure.parse', () => {
-  it('reads total (µs) and avg10/avg60 (as fractions) from the some line', () => {
-    assert.deepEqual(parsePsiCpu(PSI), { totalUs: 49740819350, avg10: 0.6856, avg60: 0.6489 });
-    assert.deepEqual(parsePsiCpu('some avg10=0.00 avg60=100.00 avg300=0.00 total=0\n'), { totalUs: 0, avg10: 0, avg60: 1 });
+  it('a thread\'s schedstat: ns on a cpu, ns waiting; anything else refused', () => {
+    assert.deepEqual(parseTaskSchedstat('p', '83596 120 1\n'), { runNs: 83596, waitNs: 120 });
+    for (const bad of ['', '1 2\n', 'a 2 3\n', '1 2 3 4\n']) assert.throws(() => parseTaskSchedstat('p', bad), /^Error: p: /, JSON.stringify(bad));
   });
-  it('refuses a text without a some line, or with a field malformed or missing', () => {
-    for (const bad of [
-      '', 'full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n', 'some avg10=0.00 avg60=0.00 avg300=0.00\n', 'some avg10=0.00 avg300=0.00 total=5\n',
-      'some avg10=x avg60=0.00 total=5\n', 'some avg10=0.00 avg60=101.00 total=5\n', 'some avg10=0.00 avg60=0.00 total=-5\n', 'some avg10=0.00 avg60=0.00 total=1.5\n',
-      'some avg10 avg60=0.00 total=5\n',
-    ]) assert.throws(() => parsePsiCpu(bad), /\/proc\/pressure\/cpu/, JSON.stringify(bad));
+  it('the host\'s schedstat: fields 7 and 8 of each cpu line, summed; an old version, no cpu line or a short one refused', () => {
+    assert.deepEqual(parseHostSchedstat(SCHEDSTAT), { runNs: 3000, waitNs: 7000 });
+    for (const bad of ['cpu0 0 0 0 0 0 0 1 2 3\n', 'version 14\ncpu0 0 0 0 0 0 0 1 2 3\n', 'version 17\n', 'version 17\ncpu0 0 0 0 0 0 0 1\n']) {
+      assert.throws(() => parseHostSchedstat(bad), /\/proc\/schedstat/, JSON.stringify(bad));
+    }
   });
 });
 
-describe('pressure.interval', () => {
-  it('is the stalled µs over the wall µs between two samples', () => {
-    assert.equal(intervalPressure(sample(1_000, 0), sample(251_000, 1_000)), 0.25);
-    assert.equal(intervalPressure(sample(5, 10), sample(5, 20)), 0);
+describe('pressure.launch', () => {
+  it('is wait over the larger of wall and run + wait: a cpu-bound launch\'s runnable share, an idle one\'s wall share', () => {
+    assert.equal(launchPressure({ wallMs: 10_000, runMs: 4_000, waitMs: 6_000 }), 0.6);
+    assert.equal(launchPressure({ wallMs: 10_000, runMs: 30_000, waitMs: 10_000 }), 0.25, 'parallel: the share of runnable time');
+    assert.equal(launchPressure({ wallMs: 60_000, runMs: 100, waitMs: 900 }), 0.015, 'a sleeping launch is not starved however its start-up waited');
+    assert.equal(launchPressure({ wallMs: PRESSURE_MIN_WALL_MS, runMs: 0, waitMs: 0 }), 0);
   });
-  it('caps at 1 (the kernel clock and ours are read apart), and refuses time or total going back', () => {
-    assert.equal(intervalPressure(sample(0, 0), sample(1_000_010, 1_000)), 1);
-    assert.throws(() => intervalPressure(sample(0, 5), sample(0, 5)), /not after start/);
-    assert.throws(() => intervalPressure(sample(10, 0), sample(5, 1)), /went back/);
-  });
-  it('is null over a launch when either end is unavailable', () => {
-    assert.equal(launchPressure('unavailable', sample(0, 1)), null);
-    assert.equal(launchPressure(sample(0, 0), 'unavailable'), null);
-    assert.equal(launchPressure(sample(0, 0), sample(500, 1)), 0.5);
+  it('is null without a reading or under the minimum wall time (its reading is its start-up)', () => {
+    assert.equal(launchPressure(null), null);
+    assert.equal(launchPressure({ wallMs: PRESSURE_MIN_WALL_MS - 1, runMs: 100, waitMs: 900 }), null);
   });
   it('the constants of RC-10 and RC-11', () => {
-    assert.equal(PRESSURE_SATURATED, 0.25);
-    assert.equal(STARVED_MAX, 3);
+    assert.deepEqual([PRESSURE_SATURATED, PRESSURE_MIN_WALL_MS, STARVED_MAX], [0.5, 5_000, 3]);
+  });
+  it('a real workload: its tree\'s threads are read, a busy one\'s run grows, the totals keep a reading past the process', async () => {
+    // 400 ms of cpu time (not wall time: on a busy host the loop waits for a cpu), then idle.
+    const busy = 'while (process.cpuUsage().user < 400_000) {} require("node:fs").writeFileSync(process.argv[1], "done"); setTimeout(() => {}, 30_000)';
+    const marker = join(tmpDir('pressure-busy'), 'done');
+    const child = spawn(process.execPath, ['-e', busy, marker], { stdio: 'ignore' });
+    try {
+      for (const end = Date.now() + 60_000; !existsSync(marker); await sleep(50)) assert.ok(Date.now() < end, 'the busy loop ended within a minute');
+      const stat = statOf(child.pid!);
+      assert.ok(stat !== null);
+      const cpu = new WorkloadCpu();
+      cpu.observeTree({ pid: child.pid!, start: stat.start });
+      const t = cpu.total(1_000);
+      assert.ok(t.runMs >= 300, `the busy loop ran on a cpu: ${JSON.stringify(t)}`);
+      child.kill('SIGKILL');
+      await sleep(100);
+      cpu.observeTree({ pid: child.pid!, start: stat.start });
+      assert.deepEqual(cpu.total(1_000), t, 'a gone process keeps its last reading');
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+});
+
+describe('pressure.host', () => {
+  it('is the wait share between the newest tick and the latest one a window before it, since the given time', () => {
+    const ticks = [tick(0, 0, 0), tick(30_000, 100, 100), tick(60_000, 200, 200), tick(90_000, 400, 200)];
+    assert.equal(hostPressure(ticks, 0), 0.25, 'newest less the 30 s tick: run 300, wait 100');
+    assert.equal(hostPressure(ticks, 31_000), null, 'the ticks since 31 s span less than the window');
+    assert.equal(hostPressure([], 0), null);
+    assert.equal(hostPressure([tick(0, 5, 5), tick(HOST_WINDOW_MS, 5, 5)], 0), 0, 'an idle host');
+  });
+  it('the ticks keep each available reading, newest last, for PRESSURE_TICKS_MS, and refuse totals going back', () => {
+    const t = new PressureTicks();
+    t.record(tick(1_000, 1, 1));
+    t.record('unavailable');
+    t.record(tick(3_000, 2, 2));
+    assert.deepEqual(t.ticks(), [tick(1_000, 1, 1), tick(3_000, 2, 2)]);
+    t.record(tick(2_000 + PRESSURE_TICKS_MS, 3, 3));
+    assert.deepEqual(t.ticks(), [tick(3_000, 2, 2), tick(2_000 + PRESSURE_TICKS_MS, 3, 3)]);
+    assert.throws(() => t.record(tick(3_000 + PRESSURE_TICKS_MS, 2, 3)), /went back/);
   });
 });
 
 describe('pressure.read', () => {
-  it('an absent file is unavailable; a present malformed one fails loud', () => {
+  it('absent files are unavailable; present malformed ones fail loud', () => {
     const dir = tmpDir('pressure');
-    assert.equal(readPressureAt(join(dir, 'none')), 'unavailable');
-    writeFileSync(join(dir, 'cpu'), 'garbage\n');
-    assert.throws(() => readPressureAt(join(dir, 'cpu')), /no "some" line/);
-    writeFileSync(join(dir, 'cpu'), PSI);
-    const s = readPressureAt(join(dir, 'cpu'));
-    assert.ok(s !== 'unavailable');
-    assert.equal(s.totalUs, 49740819350);
+    assert.equal(readHostCpuAt(join(dir, 'none'), 0), 'unavailable');
+    assert.equal(pressureAvailability(join(dir, 'none')), 'unavailable');
+    writeFileSync(join(dir, 'garbage'), 'garbage\n');
+    assert.throws(() => readHostCpuAt(join(dir, 'garbage'), 0), /version/);
+    writeFileSync(join(dir, 'schedstat'), SCHEDSTAT);
+    assert.deepEqual(readHostCpuAt(join(dir, 'schedstat'), 7), tick(7, 3000, 7000));
   });
-  it(`reads this host's ${PSI_CPU}, whose total only grows`, () => {
-    const a = readPressure();
-    const b = readPressure();
-    assert.ok(a !== 'unavailable' && b !== 'unavailable', 'PSI is available on this host');
-    assert.ok(b.totalUs >= a.totalUs && b.atMs >= a.atMs);
-    assert.ok(a.avg60 >= 0 && a.avg60 <= 1);
-  });
-});
-
-describe('pressure.ticks', () => {
-  it('keeps each available tick, newest last, for PRESSURE_TICKS_MS', () => {
-    const t = new PressureTicks();
-    t.record({ ...sample(0, 0), avg60: 0.3 }, 1_000);
-    t.record('unavailable', 2_000);
-    t.record({ ...sample(0, 0), avg60: 0.4 }, 3_000);
-    assert.deepEqual(t.ticks(), [{ atMs: 1_000, avg60: 0.3 }, { atMs: 3_000, avg60: 0.4 }]);
-    t.record({ ...sample(0, 0), avg60: 0.1 }, 2_000 + PRESSURE_TICKS_MS);
-    assert.deepEqual(t.ticks(), [{ atMs: 3_000, avg60: 0.4 }, { atMs: 2_000 + PRESSURE_TICKS_MS, avg60: 0.1 }]);
+  it('reads this host\'s /proc/schedstat (totals only grow)', () => {
+    assert.equal(pressureAvailability(), 'available', 'this host reports schedstat');
+    const a = readHostCpu();
+    const b = readHostCpu();
+    assert.ok(a !== 'unavailable' && b !== 'unavailable');
+    assert.ok(b.runNs >= a.runNs && b.waitNs >= a.waitNs && b.atMs >= a.atMs);
   });
 });

@@ -29,7 +29,7 @@ export const amount: Read<number> = (value, path) => {
   if (n < 0) throw new SchemaError(path, 'a finite non-negative number', value);
   return n;
 };
-/** A fraction in [0, 1]: a share, an interval pressure. */
+/** A fraction in [0, 1]: a share, a pressure. */
 export const fraction: Read<number> = (value, path) => {
   const n = amount(value, path);
   if (n > 1) throw new SchemaError(path, 'a fraction in [0, 1]', value);
@@ -69,8 +69,8 @@ export const FLOW_SERIES_V = 2;
  * publication ends (its `snapshot` outcome right after the ff, so the slot's `ff` and `snapshot` components lie inside the
  * lead time; src/flow/series.ts). `minutes` partitions `leadMin` over disjoint stations (`slot:integration` itself is never a key: its
  * components are; nor is `host:cpu`); `rework` counts T-alone reruns and other rework, `firstRunReds` the suite reds of first runs.
- * `pressure` (rev 3): the time-weighted mean interval pressure over the unit's service intervals (the spawns its stages
- * ran, clipped to its lead time), null if any is null or it ran none; `stationPressure` the same mean per station those
+ * `pressure` (rev 3): the time-weighted mean pressure (a launch's own cpu wait, src/host/pressure.ts) over the unit's
+ * measured service intervals (the spawns its stages ran that have one, clipped to its lead time), null when none has; `stationPressure` the same mean per station those
  * spawns served (a key per service station with at least one spawn: `stage:<s>`, `suite:<lane>`, `arc-lanes`,
  * `candidate-rest`), what the station table's per-station pressure reads.
  */
@@ -90,7 +90,7 @@ export type FlowPoint = Readonly<{
 /** The four shapes a suite run takes (R2): a `lane{set: suite}` spawn, a unit's F6 stand-in journey, a batch job's journey, a red path's T-alone rerun. */
 export const SUITE_RUN_SHAPES = ['lane', 'stand-in', 'batch', 'rerun'] as const;
 export type SuiteRunShape = (typeof SUITE_RUN_SHAPES)[number];
-/** One suite-lane run, sampled per run: the verdict metric of a `suite-lane` lever. `pressure` (rev 3): its spawn's interval pressure. */
+/** One suite-lane run, sampled per run: the verdict metric of a `suite-lane` lever. `pressure` (rev 3): its spawn's pressure. */
 export type SuiteRun = Readonly<{ lane: LaneId; at: IsoTime; minutes: number; shape: SuiteRunShape; red: boolean; pressure: number | null }>;
 
 /**
@@ -297,7 +297,7 @@ export const flowPreimage: Read<FlowPreimage> = tagged('lever', {
  * wait is ≥ 10 % of mean lead (`internal: true`), else the station with the largest mean service (`internal: false`).
  * `component` names the slot's largest service component exactly when the station is `slot:integration`. The one wait
  * it may name is `wait:finding` (internal, diagnostic: no lever targets it). Rev 3 (RC-10): `host:cpu` (internal), ahead of
- * the wait and service rules when the window's mean interval pressure is at least `PRESSURE_SATURATED`.
+ * the wait and service rules when the window's mean pressure is at least `PRESSURE_SATURATED`.
  */
 export type CodeConstraint = Readonly<{ station: StationId; internal: boolean; component: StationId | null }>;
 export const codeConstraint: Read<CodeConstraint> = object((f) => {
@@ -323,8 +323,8 @@ const judgedConstraint: Read<JudgedConstraint> = object((f) => ({ station: f.get
 // A flow run's kept inputs (`inputs/<sha>.flow-inputs.json`, named by `flow-started`; src/flow/job.ts captures them)
 
 /**
- * Coalesced triggers, in this order (src/flow/trigger.ts). `host-pressure` (rev 3): the tick avg60 at or above
- * `PRESSURE_SATURATED` sustained for 10 min while units are in flight.
+ * Coalesced triggers, in this order (src/flow/trigger.ts). `host-pressure` (rev 3): a unit held for host pressure (a run
+ * starved, or red under pressure) since the last run's start, while units are in flight.
  */
 export const FLOW_TRIGGERS = ['buffer-red', 'yellow-worsening', 'host-pressure', 'constraint-shift', 'verdict-closed', 'floor', 'requested'] as const;
 export type FlowTrigger = (typeof FLOW_TRIGGERS)[number];
@@ -362,9 +362,9 @@ const flowChart: Read<FlowChart> = object((f) => {
 });
 
 /**
- * One station's mean minutes over the constraint's window, its share of mean lead, and (rev 3) the mean interval pressure
+ * One station's mean minutes over the constraint's window, its share of mean lead, and (rev 3) the mean pressure
  * of the spawns that served it, weighted by the station's minutes in each point: null for a station no spawn served (a
- * wait, held time) or when any of its points' pressure is null.
+ * wait, held time) or when none of them has a pressure.
  */
 export type StationRow = Readonly<{ station: StationId; meanMin: number; share: number; pressure: number | null }>;
 const stationRow: Read<StationRow> = object((f) => ({
@@ -408,7 +408,7 @@ const givenInForce: Read<GivenInForce> = tagged('scope', {
 
 /**
  * A verdict's metric (G7), derived by code from the lever: lead, one suite lane's per-run service, the wait in front of a
- * station, or (rev 3, RC-12: any lever at `host:cpu`) the interval pressure of the units admitted after.
+ * station, or (rev 3, RC-12: any lever at `host:cpu`) the pressure of the units admitted after.
  */
 export type FlowMetric =
   | Readonly<{ type: 'lead' }> | Readonly<{ type: 'suite-run'; lane: LaneId }> | Readonly<{ type: 'wait'; station: StationId }> | Readonly<{ type: 'pressure' }>;
@@ -441,25 +441,25 @@ export type Rejection = Readonly<{ key: RejectionKey; proposal: ProposalId; caus
 const rejection: Read<Rejection> = object((f) => ({ key: f.get('key', rejectionKey), proposal: f.get('proposal', proposalR), cause: f.get('cause', oneOf(REJECTION_CAUSES)) }));
 
 /**
- * `status.flow.pressure` (rev 3): the host's PSI now (`avg10`, `avg60` as fractions; null when unavailable), the
- * saturation threshold, and whether this host reports PSI.
+ * `status.flow.pressure` (rev 3): the saturation threshold of cpu wait (src/host/pressure.ts) and whether this host
+ * reports schedstat. No live reading: status is derived from the log (the window's pressure is on the constraint).
  */
-export type FlowPressureStatus = Readonly<{ now: Readonly<{ avg10: number; avg60: number }> | null; threshold: number; available: boolean }>;
+export type FlowPressureStatus = Readonly<{ threshold: number; available: boolean }>;
 
 /**
- * A run's pressure reading (rev 3), what lets the role tell the arc's own load from an outside tenant's: the PSI now, the
- * threshold and availability (`FlowPressureStatus`); `window` the mean interval pressure over the constraint's window
- * (src/flow/constraint.ts `windowPressure`, null when none of its points measured one); `cpuInUse` the arc's own `@cpu`
- * tokens reserved or running now, `hostCpus` the host fingerprint's cpus.
+ * A run's pressure reading (rev 3), what lets the role tell the arc's own load from an outside tenant's: the threshold
+ * and availability (`FlowPressureStatus`); `now` the host's cpu wait over the last minute of the scheduler's ticks
+ * (src/host/pressure.ts `hostPressure`; null without schedstat or under a minute of ticks); `window` the mean pressure
+ * over the constraint's window (src/flow/constraint.ts `windowPressure`, null when none of its points measured one);
+ * `cpuInUse` the arc's own `@cpu` tokens reserved or running now, `hostCpus` the host fingerprint's cpus.
  */
-export type FlowInputsPressure = FlowPressureStatus & Readonly<{ window: number | null; cpuInUse: number; hostCpus: number }>;
+export type FlowInputsPressure = FlowPressureStatus & Readonly<{ now: number | null; window: number | null; cpuInUse: number; hostCpus: number }>;
 const flowInputsPressure: Read<FlowInputsPressure> = object((f) => {
   const out = {
-    now: f.get('now', nullable(object((g) => ({ avg10: g.get('avg10', fraction), avg60: g.get('avg60', fraction) })))),
-    threshold: f.get('threshold', fraction), available: f.get('available', bool), window: f.get('window', nullable(fraction)), cpuInUse: f.get('cpuInUse', nat),
-    hostCpus: f.get('hostCpus', positive),
+    threshold: f.get('threshold', fraction), available: f.get('available', bool), now: f.get('now', nullable(fraction)), window: f.get('window', nullable(fraction)),
+    cpuInUse: f.get('cpuInUse', nat), hostCpus: f.get('hostCpus', positive),
   };
-  if (out.available !== (out.now !== null)) throw new SchemaError(`${f.path}.now`, out.available ? 'the PSI reading of a host that reports it' : 'null on a host without PSI', out.now);
+  if (!out.available && out.now !== null) throw new SchemaError(`${f.path}.now`, 'null on a host without schedstat', out.now);
   return out;
 });
 

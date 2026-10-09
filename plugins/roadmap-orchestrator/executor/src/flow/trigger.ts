@@ -4,9 +4,9 @@
 //     unit red now that was not at the last run's start (its age then: its age now less the time since; no limits, no
 //     trigger: a self-seeded chart has none before its fifth merge);
 //   - `yellow-worsening`: rule 2, the latest point merged since;
-//   - `host-pressure` (M4b rev 3): with units in flight, the scheduler's ticks since then end in a run whose PSI avg60 is
-//     at or above `PRESSURE_SATURATED` spanning at least 10 minutes (it needs no merge: a starved host fails lanes
-//     before it merges anything; no ticks, a host without PSI, never fires it);
+//   - `host-pressure` (M4b rev 3): with units in flight, a unit was held for host pressure since then (a run starved, or
+//     red under pressure: src/host/pressure.ts `pressureRuling`). It needs no merge: a starved host fails lanes before
+//     it merges anything; a host without schedstat never holds, so never fires it;
 //   - `constraint-shift`: once ≥ 3 points exist (OI-1), code's label (station and slot component) differs from the one the
 //     last ended run recorded, or no run has recorded one (the first label);
 //   - `verdict-closed`: a `flow-verdict` since; `floor`: 10 merges since; `requested`: a `flow-requested` since.
@@ -15,7 +15,7 @@
 // takes every trigger due with it. While the one open window arc-wide is open only `verdict-closed`, `buffer-red` and
 // `requested` fire, which also suppresses every trigger about a station under it (`constraint-shift` is the one such).
 import type { UnitId } from '../core/ids.ts';
-import { PRESSURE_SATURATED, type PressureTick } from '../host/pressure.ts';
+import type { Event } from '../core/events.ts';
 import type { IsoTime } from '../core/values.ts';
 import { codeConstraintOf } from './constraint.ts';
 import type { FlowLog } from './log.ts';
@@ -26,8 +26,6 @@ export const COOLDOWN_MIN = 120;
 export const FLOOR_MERGES = 10;
 /** OI-1: the points a first constraint label needs; measured in paid run 1. */
 export const FIRST_LABEL_POINTS = 3;
-/** How long the tick avg60 must stay at or above the threshold for `host-pressure`. */
-export const SUSTAINED_MIN = 10;
 /** What fires while a window is open. */
 const UNDER_WINDOW: readonly FlowTrigger[] = ['verdict-closed', 'buffer-red', 'requested'];
 
@@ -41,22 +39,16 @@ export type TriggerInput = Readonly<{
   inFlight: readonly Readonly<{ unit: UnitId; ageMin: number }>[];
   window: FlowWindow | null;
   now: IsoTime;
-  /** The scheduler's per-tick PSI avg60, newest last (src/host/pressure.ts `PressureTicks`); empty without PSI. */
-  pressure: readonly PressureTick[];
+  /** When the arc's host-pressure holds were recorded, in log order (`pressureHoldTimes`). */
+  pressureHolds: readonly IsoTime[];
 }>;
 
 /** A label as one comparable string: the station and, for the slot, its component. */
 const labelOf = (c: CodeConstraint | null): string | null => (c === null ? null : `${c.station}|${c.component ?? ''}`);
 
-/** Whether the ticks after `since` (epoch ms; null: all) end in a run at or above the threshold spanning ≥ 10 minutes. */
-export function sustainedPressure(ticks: readonly PressureTick[], since: number | null): boolean {
-  let first: PressureTick | null = null;
-  for (let i = ticks.length - 1; i >= 0; i--) {
-    const t = ticks[i]!;
-    if ((since !== null && t.atMs <= since) || t.avg60 < PRESSURE_SATURATED) break;
-    first = t;
-  }
-  return first !== null && ticks.at(-1)!.atMs - first.atMs >= SUSTAINED_MIN * 60_000;
+/** The times of the log's host-pressure holds: each stage outcome whose cause is `host-pressure`. */
+export function pressureHoldTimes(events: readonly Event[]): readonly IsoTime[] {
+  return events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.cause?.type === 'host-pressure' ? [e.at] : []));
 }
 
 /** Whether run `i` of the log started inside its predecessor's cooldown (a `requested` bypass). */
@@ -91,7 +83,7 @@ function evidence(input: TriggerInput): ReadonlySet<FlowTrigger> {
     const newlyRed = inFlight.some((u) => u.ageMin > 0 && zoneOf(limits, u.ageMin) === 'red' && (u.ageMin - elapsedMin <= 0 || zoneOf(limits, u.ageMin - elapsedMin) !== 'red'));
     if (newlyRed) out.add('buffer-red');
   }
-  if (inFlight.length > 0 && sustainedPressure(input.pressure, since)) out.add('host-pressure');
+  if (inFlight.length > 0 && input.pressureHolds.some(after)) out.add('host-pressure');
   if (points.length >= FIRST_LABEL_POINTS) {
     const recorded = log.runs.findLast((r) => r.ended !== null)?.ended?.constraint.code ?? null;
     const label = labelOf(codeConstraintOf(points));

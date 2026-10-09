@@ -1231,20 +1231,24 @@ ladder with its own runnable fixture:
     tier's built-in class (effort lives in the class binding; a plan cannot rebind a class). RC-9: a rejection is
     remembered by `(station, lever, target)`, never by the value; a `worse` verdict adds its key, a `red` proof does not.
   - **Host pressure is a constraint** (owner ruling 2026-10-09, plan rev 3): cpu saturation that degrades every pipeline
-    is optimized like a serial suite. Code measures Linux PSI cpu (`some`) over each launch and per scheduler tick, the
-    flow role may name the internal station `host:cpu`, the levers subordinate to it, and no unit is charged for a starved
-    host; a host without PSI records `unavailable` once and every pressure rule is off. RC-10: saturated is an interval
-    pressure (PSI `some`, the fraction of wall time a runnable task waited for a cpu) of at least 0.25; at or above it
-    over the constraint window, the code constraint is `host:cpu`, ahead of the wait and service rules. RC-11: a lane run
-    or stage invocation ended by `deadline` or `stall` under saturation is `starved` (no product verdict, not chargeable,
-    no fix round), and a red lane run under saturation reruns once with only the rerun's verdict counting (its first red
-    still counts as a first-run red); such a unit is held (`host-pressure`, an admission hold: the unit stays active)
-    until a scheduler tick since the hold shows avg60 below 0.25 or 30 min pass, and after 3 such holds (starved runs and
-    red reruns alike) it falls back to the handling without pressure. The rule reads a unit's backend calls and its spec
-    and suite lane series; the D1/D2 checks' lanes, journey lanes and jobs' calls keep the handling without pressure. RC-12: a lever at `host:cpu` only
-    decreases (concurrency, a pool, a suite lane's cpu or `--test-concurrency`) or gives `host` advice, an increase is
-    dropped (`direction`); its step is subordinate and its verdict metric the interval pressure of the units admitted
-    after, lead a guard.
+    is optimized like a serial suite. Code measures cpu wait (Linux schedstat `run_delay`: time runnable but waiting for
+    a cpu) over each launch's own process tree and over the host per scheduler tick, the flow role may name the internal
+    station `host:cpu`, the levers subordinate to it, and no unit is charged for a starved host; a host without schedstat
+    records `unavailable` once and every pressure rule is off. PSI is not read: on a many-cpu host `some` is high
+    whenever any task waits, and it did not separate a healthy busy host from a starving one. RC-10: a launch's pressure
+    is its own wait / max(wall, run + wait) (none under 5 s of wall: that reading is its start-up); saturated is at
+    least 0.5 (the work ran at under half speed); at or above it as the mean over the constraint window, the code
+    constraint is `host:cpu`, ahead of the wait and service rules. RC-11: a lane run or stage invocation ended by
+    `deadline` or `stall` whose own pressure is saturated is `starved` (no product verdict, not chargeable, no fix
+    round), and a red lane run whose own pressure is saturated reruns once with only the rerun's verdict counting (its
+    first red still counts as a first-run red); such a unit is held (`host-pressure`, an admission hold: the unit stays
+    active) until a minute of scheduler ticks since the hold shows the host's cpu wait below 0.5 or 30 min pass, and
+    after 3 such holds (starved runs and red reruns alike) it falls back to the handling without pressure; a hold
+    since the last flow run triggers one (`host-pressure`). The rule reads a unit's backend calls and its spec and
+    suite lane series; the D1/D2 checks' lanes, journey lanes and jobs' calls keep the handling without pressure.
+    RC-12: a lever at `host:cpu` only decreases (concurrency, a pool, a suite lane's cpu or `--test-concurrency`) or
+    gives `host` advice, an increase is dropped (`direction`); its step is subordinate and its verdict metric the
+    pressure of the units admitted after, lead a guard.
   - **The flow seat is on every arc.** `flow` is in force in every arc scope an M4b executor starts (frontier, seat
     `arc`), holistic or not, so a binding of its class with no flow prompt (Sonnet, or a Codex model) refuses
     `unsupported-routing` for a non-holistic start too. An arc 1.0.0-dev.7 started records no role set and keeps the dev.7

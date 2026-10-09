@@ -416,9 +416,9 @@ is an arc lane running `test/unit/soak.test.js` (`witnessed`, the evidence `rule
 still stands in arc 2; Phase 0 declined issue #4 or recorded a divergence over the soak rule
 (`issue-declined`). Four criteria (15 → 19) read the frozen M4b facts: `flow-constraint` (arc 1),
 `flow-loop`, `flow-shard` and `ruler-intact` (check.ts header). Rev 3 adds `pressure-recorded` (20): every lane and
-journey run an executor started with PSI available watched carries a non-null interval pressure (some start must be
-available: this host reports PSI), and a `host:cpu` code constraint appears only on inputs whose window pressure is at
-or above the 0.25 threshold. `ruler-intact` runs the suite itself at the final head:
+journey run of 10 s or more that an executor started with schedstat available closed carries a non-null pressure (its
+own cpu wait; a shorter run's is null by design; some start must be available: this host reports schedstat), and a
+`host:cpu` code constraint appears only on inputs whose window pressure is at or above the 0.5 threshold. `ruler-intact` runs the suite itself at the final head:
 the seed argv and every in-force argv of the plant lane, about 6 + 1 minutes on the paid host. Fail-fast: the driver
 ends the run `fail-fast` once arc 1's first plan in force has no suite lane whose argv carries `--test-concurrency=1` and
 `test/unit/*.test.js` as elements of their own (`plantLaneOf`; `npm test` or `sh -c` hides the argv from an in-place

@@ -110,8 +110,8 @@ export const LANE_GRACE_MS = 5_000;
  * ignored output when it has any. `host`: its host samples (null when none were recorded: a lane an older
  * executor ran, or a crash before the write). `signatures`: the host signatures in a red run's output (empty
  * for any other verdict), by the table its spawn was stamped with (`redRev`; null: an unstamped 1.0.0-dev.6 run,
- * read with `HOST_SIGNATURES_DEV6`). `pressure` (M4b rev 3): its spawn's interval pressure (null: lost, no PSI, closed
- * unwatched, or before rev 3), which the starved classification reads (RC-11).
+ * read with `HOST_SIGNATURES_DEV6`). `pressure` (M4b rev 3): its spawn's pressure (null: lost, no schedstat, under
+ * `PRESSURE_MIN_WALL_MS`, or before rev 3), which the starved classification reads (RC-11).
  */
 export type LaneRun = LaneLedgerEntry & Readonly<{
   inv: InvocationId; at: IsoTime; endedAt: IsoTime; fixDirs: readonly AbsPath[]; host: LaneHost | null; signatures: readonly HostSignatureId[];
@@ -329,7 +329,7 @@ function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDe
   };
 }
 
-/** A closed spawn's interval pressure (M4b rev 3); null while open, lost or aborted. */
+/** A closed spawn's pressure (M4b rev 3); null while open, lost or aborted. */
 function donePressure(view: JournalView, op: OpId): number | null {
   const done = view.doneOf(op);
   return done !== null && done.kind === 'proc.spawn' && done.outcome.kind === 'result' ? spawnPressureOf(done.outcome) : null;

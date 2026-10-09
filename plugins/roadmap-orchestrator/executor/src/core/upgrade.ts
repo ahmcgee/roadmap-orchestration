@@ -11,6 +11,7 @@ import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../h
 import type { MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
+import type { LaunchCpu } from './records.ts';
 
 const warned = new Set<string>();
 
@@ -138,16 +139,23 @@ export function dev7ArcRolesDefault(): null {
 // M4b rev 3 (host pressure, still 1.0.0-dev.8): records an earlier executor wrote lack the pressure fields. Byte-preserving:
 // the readers keep them absent, these read them.
 
-/** A spawn's interval pressure: absent on a spawn an earlier executor closed, read as null (no pressure rule applies). */
+/** A spawn's pressure: absent on a spawn an earlier executor closed, read as null (no pressure rule applies). */
 export function spawnPressureOf(outcome: Readonly<{ pressure?: number | null }>): number | null {
   if (outcome.pressure !== undefined) return outcome.pressure;
   warnDefaulted('proc.spawn.pressure', 'a spawn result without pressure (closed before M4b rev 3); read as null');
   return null;
 }
 
-/** A start's PSI availability: absent on a start before M4b rev 3, read as `unavailable` (its spawns carry no pressure). */
+/** A start's schedstat availability: absent on a start before M4b rev 3, read as `unavailable` (its spawns carry no pressure). */
 export function startPressureOf(fact: Readonly<{ pressure?: PressureAvailability }>): PressureAvailability {
   if (fact.pressure !== undefined) return fact.pressure;
   warnDefaulted('executor-started.pressure', 'an executor start without pressure (before M4b rev 3); read as unavailable');
   return 'unavailable';
+}
+
+/** A workload's cpu time: absent from an exit.json an earlier runner wrote, read as null (its launch has no pressure). */
+export function exitCpuOf(exit: Readonly<{ cpu?: LaunchCpu | null }>): LaunchCpu | null {
+  if (exit.cpu !== undefined) return exit.cpu;
+  warnDefaulted('exit.cpu', 'an exit.json without cpu (a runner before M4b rev 3 calibration); its launch has no pressure');
+  return null;
 }

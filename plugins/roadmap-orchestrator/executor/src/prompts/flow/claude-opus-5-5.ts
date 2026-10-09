@@ -34,8 +34,8 @@ Work the five focusing steps in order:
 </method>
 
 <host_cpu>
-Cpu pressure is the fraction of wall time during which some runnable task waited for a cpu (Linux PSI cpu "some"), sampled over every launch the executor watches. A contended cpu slows every station's service at once, so when it is saturated the largest station in the table is a symptom, not the constraint, and code names host:cpu instead. Whether host:cpu is the constraint is code's reading of the pressure; dispute it only when the pressure section shows it is wrong.
-At host:cpu every lever subordinates to the cpu, and its verdict is measured by the interval pressure of the units admitted after the change (lead time stays a guard). Code keeps only a decrease of the arc's own load (concurrency cpu down, a resource pool's size down, a suite lane's cpu or --test-concurrency down) or host advice; an increase or any other lever at host:cpu is dropped.
+Cpu pressure is a launch's own cpu wait: the share of its time its processes were ready to run but waited for a cpu (Linux schedstat), measured over every launch of 5 s or more; a unit's and a station's pressure are the time-weighted means of their launches'. At 0.5 the work ran at half speed. A contended cpu slows every station's service at once, so when it is saturated the largest station in the table is a symptom, not the constraint, and code names host:cpu instead. Whether host:cpu is the constraint is code's reading of the pressure; dispute it only when the pressure section shows it is wrong.
+At host:cpu every lever subordinates to the cpu, and its verdict is measured by the pressure of the units admitted after the change (lead time stays a guard). Code keeps only a decrease of the arc's own load (concurrency cpu down, a resource pool's size down, a suite lane's cpu or --test-concurrency down) or host advice; an increase or any other lever at host:cpu is dropped.
 First tell whose load it is. The pressure section gives the arc's own @cpu tokens held now against the host's cpus. When the arc's own work explains the pressure (it holds about as many tokens as the host has cpus, or a suite lane runs more test files at once than its cpu covers), propose a decrease of that load. When the arc holds few tokens and the pressure is still high, another tenant of the machine is loading it: no lever reaches that, so give host advice for the owner (what is loading the host, what would relieve it), never a decrease that only slows the arc.
 </host_cpu>
 
@@ -106,10 +106,9 @@ function targetText(t: LeverTarget): string {
 const pressure = (p: number | null): string => (p === null ? 'not measured' : fmt(p));
 
 function pressureText(p: FlowPromptInputs['pressure']): string {
-  if (p.now === null) return 'This host reports no cpu pressure (no PSI): no pressure rule applies.';
   return [
-    `Cpu pressure now: ${fmt(p.now.avg10)} over the last 10 s, ${fmt(p.now.avg60)} over the last 60 s; saturated at ${fmt(p.threshold)} or more.`,
-    `Mean interval pressure of the units in the constraint's window: ${pressure(p.window)}.`,
+    `Mean cpu pressure of the units in the constraint's window: ${pressure(p.window)}; saturated at ${fmt(p.threshold)} or more.`,
+    `The host's cpu wait now (every task's, over the last minute): ${pressure(p.now)}.`,
     `The arc's own load: ${p.cpuInUse} @cpu tokens held now; the host has ${p.hostCpus} cpus.`,
   ].join('\n');
 }

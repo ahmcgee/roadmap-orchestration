@@ -244,8 +244,8 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   - `constraint{station, internal, component}`: code's constraint over the last 10 merges, null before the first.
     `station` is `stage:<s>`, `slot:integration` (then `component` is its largest service part: `suite:<lane>`,
     `arc-lanes`, `candidate-rest`, `ff`, `snapshot`), `wait:finding` (`internal`, no lever targets it) or `host:cpu`
-    (`internal`: those merges' mean cpu pressure is at or above the threshold; only load decreases or `host` advice
-    there).
+    (`internal`: those merges' mean cpu pressure, their launches' own cpu wait, is at or above the threshold; only load
+    decreases or `host` advice there).
   - `chart{centre, ucl, mrBar, seed, recent[{unit, leadMin, zone}], inFlight[{unit, ageMin, zone}]}`: the XmR chart on
     log lead minutes, frozen for the arc; zones `green | yellow | red`; null until seeded (5 merges, or 5 points of
     earlier arcs on an equal host).
@@ -254,10 +254,10 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
     lever, target, verdict: improved | worse | no-effect | inconclusive}]`.
   - `pending[{proposal, line, phase: undecided | pending-proof | pending-apply}]`; `givens[]` (`host{id, lever, note,
     state: enforced | stale}` or `repo{lever, note}`); `rulerChanged[{command, rev, seq, at, paths, needsUser}]`.
-  - `pressure{now{avg10, avg60}, threshold, available}`: the host's cpu pressure now (Linux PSI, fractions; `now` null
-    when the host reports none), the saturation threshold (0.25).
-  - `next{running, due, cooldownUntil, bypass}`: the flow run in progress, the triggers due now (never `host-pressure`,
-    which reads the executor's in-memory tick history), the cooldown's end and whether a request may still bypass it.
+  - `pressure{threshold, available}`: the saturation of cpu wait (0.5: a launch, a merge window or the host that waited
+    for a cpu half its time or more) and whether the host reports it (Linux schedstat).
+  - `next{running, due, cooldownUntil, bypass}`: the flow run in progress, the triggers due now (`host-pressure`: a unit
+    held for host pressure since the last run), the cooldown's end and whether a request may still bypass it.
 - Every arc: `knownDefects[{id, match, fixUnit, fixMerged, holds}]` (the units each holds at prepare now);
   `checkpointWaits[{job, waitingFor, line}]`, a checkpoint rejected `busy` waiting for "<unit> <stage> boundary".
 - Corpus arcs (empty otherwise): `admits[{seq, job, index, unit, class: repair|oversight|opportunity, clauses,

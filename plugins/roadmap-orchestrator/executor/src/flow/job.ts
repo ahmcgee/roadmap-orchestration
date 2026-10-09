@@ -105,7 +105,7 @@ export function flowHighOf(ctx: Pick<FlowJobContext, 'journal'>, log: FlowLog): 
 const repairWaiting = (ctx: FlowJobContext): boolean => ctx.plan().units.some((u) => u.origin === 'repair' && ctx.journal.view.unit(u.id).status === 'active');
 
 /** The inputs a run binds now, as `job` (see the header). */
-export function flowInputsNow(ctx: FlowJobContext, job: JobId, triggers: readonly FlowTrigger[], flow: FlowNow): FlowInputs {
+export function flowInputsNow(ctx: FlowJobContext, job: JobId, triggers: readonly FlowTrigger[], flow: FlowNow, hostNow: number | null): FlowInputs {
   const plan = ctx.plan();
   const points = flow.series.points;
   const view = ctx.journal.view;
@@ -123,7 +123,7 @@ export function flowInputsNow(ctx: FlowJobContext, job: JobId, triggers: readonl
     verdicts: closedVerdicts(flow.log),
     rejections: rejectionMemory(view),
     advances: advancesNow(ctx),
-    pressure: { ...pressureNow(), window: windowPressure(points), cpuInUse: cpuInUse(view), hostCpus: flow.host.cpus },
+    pressure: { ...pressureNow(), now: hostNow, window: windowPressure(points), cpuInUse: cpuInUse(view), hostCpus: flow.host.cpus },
   };
 }
 
@@ -256,7 +256,7 @@ const describe = (a: FlowAction): string => {
 export function proposalLine(p: FlowProposal): string {
   const metric = metricOf(p.action, p.target);
   const m = metric === null ? 'none' : metric.type === 'lead' ? 'lead time' : metric.type === 'suite-run' ? `per-run service of ${metric.lane}`
-    : metric.type === 'pressure' ? 'interval pressure' : `the wait ${metric.station}`;
+    : metric.type === 'pressure' ? 'cpu pressure' : `the wait ${metric.station}`;
   return `${p.id}: ${describe(p.action)} at ${p.target} (${stepOf(p.action.lever, p.target)}; verdict metric ${m})`;
 }
 
@@ -326,7 +326,8 @@ const now = (): IsoTime => isoTimeOf(new Date());
  * Runs the flow job: resumes the run started and not ended, or starts one for `triggers` (none: nothing to do). See the
  * header.
  */
-export async function runFlowJob(ctx: FlowJobContext, triggers: readonly FlowTrigger[]): Promise<FlowJobOutcome> {
+/** `hostNow`: the host's cpu wait over the last minute of the scheduler's ticks (null without them), bound into a new run's inputs. */
+export async function runFlowJob(ctx: FlowJobContext, triggers: readonly FlowTrigger[], hostNow: number | null): Promise<FlowJobOutcome> {
   settleFlowItems(ctx, flowNow(ctx, now()).log);
   let run = runningRun(flowNow(ctx, now()).log);
   if (run === null) {
@@ -335,7 +336,7 @@ export async function runFlowJob(ctx: FlowJobContext, triggers: readonly FlowTri
     if (why !== null) return { kind: 'skipped', reason: why };
     run = await captureUnderFence(ctx.journal, () => {
       const job = ctx.journal.view.nextJobId('flow');
-      const inputs = flowInputsNow(ctx, job, triggers, flowNow(ctx, now()));
+      const inputs = flowInputsNow(ctx, job, triggers, flowNow(ctx, now()), hostNow);
       const inputsSha256 = keepInput(ctx.runDir, Buffer.from(canonicalJson(inputs), 'utf8'), FLOW_INPUTS_INPUT);
       ctx.journal.fact({ kind: 'flow-started', job, triggers, inputsSha256 });
       return runningRun(flowNow(ctx, now()).log)!;
