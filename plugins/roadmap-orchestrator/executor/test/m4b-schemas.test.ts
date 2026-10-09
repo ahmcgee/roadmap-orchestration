@@ -175,19 +175,24 @@ describe('m4b rev 3: host pressure records', () => {
     refuses(fact({ ...held, cause: { type: 'host-pressure', inv: 'u1' } }), /\.cause\.inv$/);
   });
 
-  it('a series point and a suite run carry pressure (series v2); host:cpu is no minutes key', () => {
-    const point = { unit: 'u1', admittedAt: AT, mergedAt: AT, leadMin: 5, minutes: { 'stage:build': 5 }, costUsd: null, rework: 0, firstRunReds: 0, pressure: null };
+  it('a series point and a suite run carry pressure (series v2), a point per station too; host:cpu is no minutes or station-pressure key', () => {
+    const point = { unit: 'u1', admittedAt: AT, mergedAt: AT, leadMin: 5, minutes: { 'stage:build': 5 }, costUsd: null, rework: 0, firstRunReds: 0, pressure: null, stationPressure: { 'stage:build': null } };
     const series = { v: 2, arc: 'arc-3', host: null, points: [point], suiteRuns: [], accounting: { tAdvances: null, tOther: null, tUnits: 0, wip: 0, oeUsdPerHour: 0 } };
     assert.equal(parseFlowSeries(series).points[0]?.pressure, null);
     assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, minutes: { 'stage:build': 4, 'host:cpu': 1 } }] }), SchemaError);
     assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, pressure: 2 }] }), SchemaError);
     const { pressure: _, ...withoutPressure } = point;
     assert.throws(() => parseFlowSeries({ ...series, points: [withoutPressure] }), SchemaError);
+    assert.equal(parseFlowSeries({ ...series, points: [{ ...point, stationPressure: { 'stage:build': 0.3, 'suite:unit': 0.5 } }] }).points[0]?.stationPressure[stationId('stage:build')], 0.3);
+    for (const stationPressure of [{ 'host:cpu': 0.3 }, { 'slot:integration': 0.3 }, { 'stage:build': 1.5 }]) {
+      assert.throws(() => parseFlowSeries({ ...series, points: [{ ...point, stationPressure }] }), SchemaError, JSON.stringify(stationPressure));
+    }
   });
 });
 
 describe('m4b kept records', () => {
-  const point = { unit: 'u1', admittedAt: AT, mergedAt: '2026-10-08T12:30:00.000Z', leadMin: 30, minutes: { 'stage:build': 20, 'wait:slot:integration': 4, 'suite:unit': 6 }, costUsd: 1.5, rework: 0, firstRunReds: 0, pressure: 0.12 };
+  const point = { unit: 'u1', admittedAt: AT, mergedAt: '2026-10-08T12:30:00.000Z', leadMin: 30, minutes: { 'stage:build': 20, 'wait:slot:integration': 4, 'suite:unit': 6 }, costUsd: 1.5, rework: 0, firstRunReds: 0, pressure: 0.12,
+    stationPressure: { 'stage:build': 0.1, 'suite:unit': 0.18 } };
   const series = {
     v: 2, arc: 'arc-3', host: null, points: [point], suiteRuns: [{ lane: 'unit', at: AT, minutes: 6, shape: 'stand-in', red: false, pressure: null }],
     accounting: { tAdvances: null, tOther: null, tUnits: 2, wip: 1, oeUsdPerHour: 3 },
@@ -204,12 +209,18 @@ describe('m4b kept records', () => {
 
   it('flow inputs and host givens read; givens ascend by id', () => {
     const inputs = {
-      schema: 'roadmap/flow-inputs-m4b', job: 'flow-1', triggers: ['floor'], chart: null, stations: [{ station: 'stage:build', meanMin: 20, share: 0.66 }], constraint: null,
+      schema: 'roadmap/flow-inputs-m4b', job: 'flow-1', triggers: ['floor'], chart: null, stations: [{ station: 'stage:build', meanMin: 20, share: 0.66, pressure: 0.12 }], constraint: null,
       accounting: series.accounting, levers: [{ lever: 'concurrency', cpu: 8, set: false, hostCpus: 8 }], givens: [{ scope: 'repo', lever: 'host', note: 'a fixed host' }],
       window: null, verdicts: [], rejections: [], advances: [],
+      pressure: { now: { avg10: 0.3, avg60: 0.28 }, threshold: 0.25, available: true, window: 0.31, cpuInUse: 6, hostCpus: 8 },
     };
     assert.equal(canonicalJson(parseFlowInputs(JSON.parse(JSON.stringify(inputs)))), canonicalJson(inputs));
     assert.throws(() => parseFlowInputs({ ...inputs, job: 'review-1' }), SchemaError);
+    const unavailable = { now: null, threshold: 0.25, available: false, window: null, cpuInUse: 0, hostCpus: 8 };
+    assert.equal(parseFlowInputs({ ...inputs, pressure: unavailable }).pressure.now, null);
+    assert.throws(() => parseFlowInputs({ ...inputs, pressure: { ...unavailable, available: true } }), SchemaError, 'available names a reading');
+    const { pressure: _p, ...noPressure } = inputs;
+    assert.throws(() => parseFlowInputs(noPressure), SchemaError);
     const given = (id: string) => ({ id, lever: 'concurrency', note: 'n', fingerprint: { platform: 'linux', arch: 'x64', cpus: 4, memGiB: 16 }, at: AT });
     assert.equal(parseHostGivens({ schema: 'roadmap/flow-givens-m4b', givens: [given('G-2'), given('G-10')] }).givens.length, 2);
     assert.throws(() => parseHostGivens({ schema: 'roadmap/flow-givens-m4b', givens: [given('G-10'), given('G-2')] }), SchemaError);

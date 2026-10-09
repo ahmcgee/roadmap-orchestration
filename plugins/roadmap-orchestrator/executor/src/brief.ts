@@ -35,7 +35,8 @@ import { existsSync } from 'node:fs';
 import { answerLine, unappliedAnswers } from './answers.ts';
 import { type ArcRef, committedAcks, completedHeadOf } from './chain.ts';
 import { type ChainLink, chainHead, chainQuota, chainTo, linkOf, prsOf } from './commands/chain.ts';
-import { type ArcId, type BriefId, type Sha, amendmentRefOf, briefId, invocationDirName } from './core/ids.ts';
+import { type ArcId, type BriefId, type Sha, HOST_CPU_STATION, amendmentRefOf, briefId, invocationDirName } from './core/ids.ts';
+import { PRESSURE_SATURATED } from './host/pressure.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import { type CommandBody, needsUserRecord } from './core/records.ts';
 import { parseRevisionPayload } from './core/events.ts';
@@ -49,7 +50,7 @@ import { NEEDS_USER_DIR, openNeedsUser } from './needsuser.ts';
 import { type AckItem, BRIEF_SCHEMA, type BriefArc, type BriefFlow, type BriefPayload, type BriefPr, type CoverageEntry, type NextStart, parseBriefPayload, parsePhase0Record } from './phase0/types.ts';
 import { meterOf } from './meter.ts';
 import { type Decision, admitViews, censusCounts, decisionsAfter, heldPct, obligationLeaves, stageTimings } from './status.ts';
-import { codeConstraintOf } from './flow/constraint.ts';
+import { codeConstraintOf, windowPressure } from './flow/constraint.ts';
 import { seriesOfRef } from './flow/history.ts';
 import { proposalLine } from './flow/job.ts';
 import { flowLog, proposalOf } from './flow/log.ts';
@@ -138,7 +139,9 @@ function briefFlow(ref: ArcRef, from: number, previous: ArcRef | null): BriefFlo
   const log = flowLog(ref.view, ref.events);
   const prevLog = previous === null || arcRolesOf(previous.view.planApplied()) !== 'm4b' ? null : flowLog(previous.view, previous.events);
   return {
-    constraint: c === null ? null : `${c.station}${c.component === null ? '' : ` (${c.component})`}${c.internal ? ', the largest wait in front of it' : ', the largest service'}`,
+    constraint: c === null ? null : c.station === HOST_CPU_STATION
+      ? `${c.station}, the host's cpu saturated: mean interval pressure ${windowPressure(series.points)!.toFixed(2)} over the last merges (threshold ${PRESSURE_SATURATED})`
+      : `${c.station}${c.component === null ? '' : ` (${c.component})`}${c.internal ? ', the largest wait in front of it' : ', the largest service'}`,
     accounting: `diagnostic only: ${a.tAdvances === null ? '' : `obligations first held ${a.tAdvances.toFixed(2)}/h advancing, ${(a.tOther ?? 0).toFixed(2)}/h other; `}units merged ${a.tUnits.toFixed(2)}/h; inventory ${a.wip}; spend $${a.oeUsdPerHour.toFixed(2)}/h`,
     verdicts: [...log.verdicts.values()].filter((v) => v.seq > from).map((v) => `${proposalLine(proposalOf(log, v.proposal))}: ${v.verdict}${v.guards.length === 0 ? '' : ` (${v.guards.map((g) => `${g.guard}: ${g.detail}`).join('; ')})`}`),
     rulerChanges: rulerChangesOf(ref.events, seriesInputs(ref.input)).filter((r) => r.seq > from).map((r) => `rev ${r.rev} (${r.command}): ${r.paths.join(', ')}`),

@@ -89,16 +89,16 @@ export class FlowLog {
     this.intent(min, 'candidate.merge', stageOf(unit, 'candidate', attempt), { integrationTip: TIP }, { new: CAND });
   }
 
-  /** A spawn under `parent` from `from` to `to` with `verdict` (null: lost). */
-  spawn(from: number, to: number, parent: object, subject: object, verdict: 'pass' | 'fail' | 'stall' | 'cancelled' | null = 'pass'): void {
+  /** A spawn under `parent` from `from` to `to` with `verdict` (null: lost) and, given, its interval `pressure` (M4b rev 3). */
+  spawn(from: number, to: number, parent: object, subject: object, verdict: 'pass' | 'fail' | 'stall' | 'cancelled' | null = 'pass', pressure?: number | null): void {
     const op = this.intent(from, 'proc.spawn', parent, { subject, launchSha256: H });
     this.done(to, op, 'proc.spawn', verdict === null
       ? { kind: 'lost', treeEffects: false }
-      : { kind: 'result', resultSha256: H, summary: { type: 'command', verdict } });
+      : { kind: 'result', resultSha256: H, summary: { type: 'command', verdict }, ...(pressure === undefined ? {} : { pressure }) });
   }
 
-  suiteLane(from: number, to: number, unit: string, attempt: number, lane: string, at: string, verdict: 'pass' | 'fail' = 'pass'): void {
-    this.spawn(from, to, stageOf(unit, 'candidate', attempt), { purpose: 'lane', unit, lane, set: 'suite', at }, verdict);
+  suiteLane(from: number, to: number, unit: string, attempt: number, lane: string, at: string, verdict: 'pass' | 'fail' = 'pass', pressure?: number | null): void {
+    this.spawn(from, to, stageOf(unit, 'candidate', attempt), { purpose: 'lane', unit, lane, set: 'suite', at }, verdict, pressure);
   }
 
   journey(from: number, to: number, parent: object, owner: object, lane: string, at: string, verdict: 'pass' | 'fail' = 'pass'): void {

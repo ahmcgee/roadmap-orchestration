@@ -222,6 +222,11 @@ touches only that lever's plan fields, and judges it on the chart (`status.flow`
 
   Then `roadmap flow accept <proposal> --reason <text>` or `roadmap flow reject …`, the reason one line. The decision
   acknowledges the item.
+- **A `host:cpu` proposal.** The host's cpu is saturated (`status.flow.pressure`), and code accepts only a decrease of
+  the arc's own load there, or `host` advice. Accept a decrease when the arc's own load explains the pressure (its
+  `@cpu` tokens near the host's cpus, a suite lane running more files at once than its cpu covers: the inputs file's
+  `pressure`). When the arc holds few tokens and the pressure stays high, another tenant loads the machine: reject a
+  decrease, which would only slow the arc, and pass the `host` advice to the owner or declare a given.
 - **The ruler is never a lever.** Never edit a ruler path to make a number move: obligations and their witness
   lanes, arc lanes, `holistic.audit`, `holistic.advances`, the vision, judgment-seat routing, risk. An `apply` of
   yours that touches one after the first admission raises `ruler-changed` (`status.flow`, the brief). Ack it only for

@@ -7,8 +7,13 @@
 // Pure. `flowRevision` builds the next plan from an action alone and asserts the fence; `checkProposal` is code's check
 // after the schema, the first failing rule dropping the proposal with its closed reason; `rulerChanges` names the ruler
 // paths a revision touched (B1 raises `ruler-changed` from it for a `command` revision after the first admission).
+//
+// At `host:cpu` (M4b rev 3, RC-12) every lever subordinates to the saturated cpu: its step is `subordinate` and its
+// verdict metric the interval pressure of the units admitted after (lead stays a guard); only a decrease of the arc's own
+// load (`concurrency` cpu down, a pool's size down, a suite lane's cpu or `--test-concurrency` down) or `host` advice is
+// kept, anything else is dropped `direction`.
 import {
-  type Sha256Hex, type StationId, type UnitId, SLOT_COMPONENTS, SLOT_STATION, SLOT_WAIT_STATION, parseStationId, stationId,
+  type Sha256Hex, type StationId, type UnitId, HOST_CPU_STATION, SLOT_COMPONENTS, SLOT_STATION, SLOT_WAIT_STATION, parseStationId, stationId,
 } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type PlanM1, visionFile } from '../input/plan.ts';
@@ -46,10 +51,17 @@ export const RULER_PATHS: readonly Readonly<{ path: string; what: string }>[] = 
   { path: 'units[<id>].risk', what: 'risk floors' },
 ];
 
-/** The focusing step each lever serves (G7). */
+/** The focusing step each lever serves (G7), off `host:cpu` (`stepOf`). */
 export const LEVER_STEP: { readonly [L in FlowLever]: TocStep } = {
   'suite-lane': 'exploit', 'build-class': 'exploit', sequence: 'subordinate', concurrency: 'elevate', 'resource-pool': 'elevate', host: 'elevate',
 };
+
+const atHostCpu = (target: StationId): boolean => target === HOST_CPU_STATION;
+
+/** The focusing step a lever serves at `target`: `subordinate` for any lever but `host` at `host:cpu` (RC-12), else `LEVER_STEP`. */
+export function stepOf(lever: FlowLever, target: StationId): TocStep {
+  return atHostCpu(target) && lever !== 'host' ? 'subordinate' : LEVER_STEP[lever];
+}
 
 /** The one flag a suite-lane argv edit may change in place (RC-4, OI-2): its value only; selectors and every other element never change. */
 export const ARGV_FLAGS = ['--test-concurrency'] as const;
@@ -65,13 +77,17 @@ export function waitInFrontOf(target: StationId): StationId {
     case 'wait': case 'slot-wait': return target;
     case 'slot': case 'suite': case 'component': return stationId(SLOT_WAIT_STATION);
     case 'held': case 'finding-wait': throw new Error(`waitInFrontOf: ${target} is never a target`);
-    // RC-12: a lever at host:cpu is measured by pressure, not a wait (step H1 derives that metric).
+    // RC-12: `metricOf` measures a lever at host:cpu by pressure and never asks.
     case 'host-cpu': throw new Error(`waitInFrontOf: ${target} has no wait in front of it`);
   }
 }
 
-/** The verdict metric of an action (G7): a suite lane's per-run service, the wait in front of `target`, or lead; null for `host`. */
+/**
+ * The verdict metric of an action (G7): at `host:cpu` the units' interval pressure (RC-12); else a suite lane's per-run
+ * service, the wait in front of `target`, or lead; null for `host`.
+ */
 export function metricOf(action: FlowAction, target: StationId): FlowMetric | null {
+  if (action.lever !== 'host' && atHostCpu(target)) return { type: 'pressure' };
   switch (action.lever) {
     case 'suite-lane': return { type: 'suite-run', lane: action.lane };
     case 'concurrency': case 'resource-pool': return { type: 'wait', station: waitInFrontOf(target) };
@@ -278,9 +294,14 @@ export function checkProposal(proposal: FlowProposal, context: ProposalContext):
 
   if (context.window !== null && action.lever !== 'host') return drop('verdict-open', `the window of ${context.window.proposal} is open; only host advice meanwhile`);
 
-  if (LEVER_STEP[action.lever] === 'elevate' && action.lever !== 'host') {
-    const earlier = context.verdicts.some((v) => v.target === proposal.target && LEVER_STEP[v.lever] !== 'elevate');
+  if (stepOf(action.lever, proposal.target) === 'elevate' && action.lever !== 'host') {
+    const earlier = context.verdicts.some((v) => v.target === proposal.target && stepOf(v.lever, v.target) !== 'elevate');
     if (!earlier) return drop('elevate-early', `no exploit or subordinate verdict closed on ${proposal.target} this arc`);
+  }
+
+  if (atHostCpu(proposal.target) && action.lever !== 'host') {
+    const direction = directionProblem(action, context);
+    if (direction !== null) return drop('direction', direction);
   }
 
   switch (action.lever) {
@@ -316,6 +337,31 @@ export function checkProposal(proposal: FlowProposal, context: ProposalContext):
   }
 }
 
+/** Why an action at `host:cpu` is not a decrease of the arc's own load, or null (RC-12). */
+function directionProblem(action: Exclude<FlowAction, { lever: 'host' }>, context: ProposalContext): string | null {
+  const notDown = (what: string, from: number, to: number): string | null => (to < from ? null : `${what} ${from} → ${to} at host:cpu is not a decrease (only decreases or host advice)`);
+  switch (action.lever) {
+    case 'concurrency': {
+      const state = context.levers.find((l) => l.lever === 'concurrency');
+      if (state === undefined) throw new Error('checkProposal: the lever catalogue has no concurrency row');
+      return notDown('capacity.cpu', state.cpu, action.cpu);
+    }
+    case 'resource-pool': return notDown(`resource ${action.resource}'s pool`, poolOf(context.plan, action.resource), action.size);
+    case 'suite-lane': {
+      const lane = suiteLaneOf(context.plan, action.lane);
+      if (action.cpu !== undefined) {
+        const cpu = notDown(`suite lane ${action.lane}'s cpu`, laneCpu(lane), action.cpu);
+        if (cpu !== null) return cpu;
+      }
+      const from = parsedConcurrency(lane.argv);
+      const to = action.argv === undefined ? null : parsedConcurrency(action.argv);
+      // An argv edit that is no --test-concurrency edit is the argv-shape check's.
+      return from === null || to === null ? null : notDown(`suite lane ${action.lane}'s --test-concurrency`, from, to);
+    }
+    case 'sequence': case 'build-class': return `a ${action.lever} change at host:cpu decreases no load (only decreases or host advice)`;
+  }
+}
+
 /** The built-in class of a build tier: the floor of the build-class lever (RC-8). */
 export const builtinBuildClass = (tier: RiskTier) => BUILTIN_SEATS.build[tier];
 
@@ -341,7 +387,7 @@ function targetProblem(proposal: FlowProposal, context: ProposalContext): string
   switch (action.lever) {
     case 'suite-lane':
       if (!plan.suite.lanes.some((l) => l.id === action.lane)) return `no suite lane ${action.lane}`;
-      if (target !== `suite:${action.lane}` && target !== SLOT_STATION) return `a suite-lane action on ${action.lane} targets suite:${action.lane} or the slot`;
+      if (target !== `suite:${action.lane}` && target !== SLOT_STATION && !atHostCpu(target)) return `a suite-lane action on ${action.lane} targets suite:${action.lane}, the slot or host:cpu`;
       break;
     case 'resource-pool':
       if (plan.resources.find((r) => r.name === action.resource)?.pool === undefined) return `no pooled resource ${action.resource}`;

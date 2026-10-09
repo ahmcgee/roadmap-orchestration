@@ -1,11 +1,12 @@
 // M4b step A2: levers, the fence, code's checks after the schema and the ruler (plan "Levers, proposals and the fence",
-// RC-4, RC-8, RC-9). Pure.
+// RC-4, RC-8, RC-9), and at host:cpu (M4b rev 3, RC-12): the pressure metric, the subordinate step, the direction check.
+// Pure.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { givenId, laneId, proposalId, resourceName, sha256, stationId, unitId } from '../src/core/ids.ts';
 import { type PlanM1, parsePlan } from '../src/input/plan.ts';
 import {
-  type ProposalContext, LEVER_STEP, argvShapeProblem, assertFenced, checkProposal, diffPaths, flowRevision, metricOf, preimageOf, rejectionKeyOf,
+  type ProposalContext, LEVER_STEP, argvShapeProblem, stepOf, assertFenced, checkProposal, diffPaths, flowRevision, metricOf, preimageOf, rejectionKeyOf,
   rejectionKeyText, rulerChanges,
 } from '../src/flow/levers.ts';
 import { type FlowAction, type FlowDropReason, type FlowProposal, FLOW_LEVERS } from '../src/flow/types.ts';
@@ -216,6 +217,56 @@ describe('checkProposal: each drop reason', () => {
     assert.equal(reason(build('low', 'frontier'), judged), null);
     assert.equal(reason(build('high', 'efficient'), judged), 'build-class-step', 'below the built-in frontier');
     assert.equal(reason(build('med', 'efficient'), { ...judged, levers: CONTEXT.levers }), null, 'back down to the built-in');
+  });
+});
+
+describe('levers at host:cpu (RC-12)', () => {
+  const HOST_CPU = stationId('host:cpu');
+  const AT_CPU: Partial<ProposalContext> = {
+    plan: planWith({ capacity: { cpu: 6 } }),
+    constraint: { station: HOST_CPU, internal: true, component: null },
+    judged: { station: HOST_CPU, agree: true, reason: 'every service is inflated' },
+    levers: [{ lever: 'concurrency', cpu: 6, set: true, hostCpus: 8 }, ...CONTEXT.levers],
+  };
+  const at = (action: FlowAction): FlowDropReason | null => reason(proposal(action, HOST_CPU), AT_CPU);
+  const unitArgv = (n: number): readonly string[] => ['node', '--test', `--test-concurrency=${n}`, 'test/unit/*.test.js'];
+  const highLane = planWith({ capacity: { cpu: 6 }, suite: { lanes: [{ ...lane('unit', unitArgv(2)), cpu: 4 }, lane('lint', ['npm', 'run', 'lint'])] } });
+
+  it('every lever but host advice is measured by pressure and subordinates; host advice stays elevate with no metric', () => {
+    for (const action of [{ lever: 'concurrency', cpu: 2 }, shard(), { lever: 'sequence', unit: unitId('u1'), priority: 'high' }] as const satisfies readonly FlowAction[]) {
+      assert.deepEqual(metricOf(action, HOST_CPU), { type: 'pressure' }, action.lever);
+      assert.equal(stepOf(action.lever, HOST_CPU), 'subordinate', action.lever);
+    }
+    assert.equal(metricOf({ lever: 'host', note: 'n' }, HOST_CPU), null);
+    assert.equal(stepOf('host', HOST_CPU), 'elevate');
+    assert.equal(stepOf('concurrency', SLOT), 'elevate', 'off host:cpu, the lever\'s own step');
+  });
+
+  it('a decrease of the arc\'s own load is kept, with no exploit verdict first (it subordinates)', () => {
+    assert.equal(at({ lever: 'concurrency', cpu: 4 }), null);
+    assert.equal(at({ lever: 'resource-pool', resource: resourceName('db'), size: 1 }), null);
+    assert.equal(reason(proposal({ lever: 'suite-lane', lane: UNIT, cpu: 2 }, HOST_CPU), { ...AT_CPU, plan: highLane }), null, 'a lane cpu down');
+    const down = { lever: 'suite-lane', lane: UNIT, argv: unitArgv(1), reporter: 'node-test', cpu: 1 } as const;
+    assert.equal(reason(proposal(down, HOST_CPU), { ...AT_CPU, plan: highLane }), null, '--test-concurrency and its cpu down, in place');
+    assert.equal(at({ lever: 'host', note: 'another tenant loads the host' }), null, 'host advice');
+  });
+
+  it('direction: an increase, or a lever that decreases no load, is dropped', () => {
+    assert.equal(at({ lever: 'concurrency', cpu: 7 }), 'direction');
+    assert.equal(at({ lever: 'resource-pool', resource: resourceName('db'), size: 3 }), 'direction');
+    assert.equal(at(shard()), 'direction', '--test-concurrency 1 → 6');
+    const cpuUp = { lever: 'suite-lane', lane: UNIT, argv: unitArgv(1), reporter: 'node-test', cpu: 6 } as const;
+    assert.equal(reason(proposal(cpuUp, HOST_CPU), { ...AT_CPU, plan: highLane }), 'direction', 'the lane cpu 4 → 6 beside a concurrency decrease');
+    assert.equal(at({ lever: 'sequence', unit: unitId('u1'), priority: 'high' }), 'direction');
+    assert.equal(at({ lever: 'build-class', tier: 'low', class: 'frontier' }), 'direction');
+    const detail = checkProposal(proposal({ lever: 'concurrency', cpu: 8 }, HOST_CPU), { ...CONTEXT, ...AT_CPU })?.detail;
+    assert.match(detail ?? '', /capacity\.cpu 6 → 8 at host:cpu is not a decrease/);
+  });
+
+  it('the target rule: host:cpu only as code\'s constraint or the disputed station', () => {
+    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 4 }, HOST_CPU), { plan: planWith({ capacity: { cpu: 6 } }) }), 'target');
+    const disputed = { judged: { station: HOST_CPU, agree: false, reason: 'the suite runs eight files on four cpus' } };
+    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 4 }, HOST_CPU), { ...AT_CPU, constraint: CONTEXT.constraint, ...disputed }), null);
   });
 });
 

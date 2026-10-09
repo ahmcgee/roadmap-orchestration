@@ -1,5 +1,6 @@
 // M4b step A2: verdicts (plan "Verdicts", G8, G9). Window samples and close, the before-window XmR test on the after-mean
-// (log for lead), inconclusive below 3 samples, and the guards' absolute floors. Pure.
+// (log for lead), inconclusive below 3 samples, and the guards' absolute floors; the pressure metric (M4b rev 3, RC-12).
+// Pure.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { laneId, obligationId, stationId, unitId } from '../src/core/ids.ts';
@@ -15,7 +16,7 @@ const SUITE: FlowMetric = { type: 'suite-run', lane: laneId('unit') };
 let n = 0;
 function point(admitted: number, merged: number, extra: Partial<FlowPoint> = {}): FlowPoint {
   const leadMin = merged - admitted;
-  return { unit: unitId(`u${++n}`), admittedAt: at(admitted), mergedAt: at(merged), leadMin, minutes: { [stationId('stage:build')]: leadMin }, costUsd: null, rework: 0, firstRunReds: 0, pressure: null, ...extra };
+  return { unit: unitId(`u${++n}`), admittedAt: at(admitted), mergedAt: at(merged), leadMin, minutes: { [stationId('stage:build')]: leadMin }, costUsd: null, rework: 0, firstRunReds: 0, pressure: null, stationPressure: {}, ...extra };
 }
 const run = (min: number, minutes: number, lane = 'unit'): SuiteRun => ({ lane: laneId(lane), at: at(min), minutes, shape: 'lane', red: false, pressure: null });
 const samples = (...xs: readonly [number, number][]): MetricSample[] => xs.map(([t, m]) => ({ at: at(t), minutes: m }));
@@ -37,6 +38,23 @@ describe('window samples', () => {
     const w = windowSamples(SUITE, OPENED, { points: [], suiteRuns: [run(500, 6), run(590, 6.2), run(600, 6.1), run(610, 6, 'lint'), run(620, 2.1)] });
     assert.deepEqual(w.before.map((s) => s.minutes), [6, 6.2, 6.1]);
     assert.deepEqual(w.after, samples([620, 2.1]));
+  });
+});
+
+describe('the pressure metric (RC-12)', () => {
+  const PRESSURE: FlowMetric = { type: 'pressure' };
+  it('samples the units\' interval pressure on each side; a unit without one is no sample; lead stays a guard', () => {
+    const before = [0, 50, 100, 150, 200, 250, 300].map((t, i) => point(t, t + 40, { pressure: [0.4, 0.41, 0.42, 0.43, 0.44, null, 0.46][i] ?? null }));
+    const after = [point(610, 700, { pressure: 0.1 }), point(620, 710, { pressure: null }), point(630, 720, { pressure: 0.12 }), point(640, 730, { pressure: 0.09 })];
+    const w = windowSamples(PRESSURE, OPENED, { points: [...before, ...after], suiteRuns: [] });
+    assert.deepEqual(w.before.map((s) => s.minutes), [0.41, 0.42, 0.43, 0.44, 0.46], 'the last five measured');
+    assert.deepEqual(w.after.map((s) => s.minutes), [0.1, 0.12, 0.09]);
+    assert.deepEqual(w.beforePoints, before.slice(2), 'the guards read the last five merged');
+    const b = beforeOf(PRESSURE, w.before);
+    assert.ok(Math.abs(b.centre - 0.432) < 1e-9, 'on the raw scale');
+    assert.equal(verdictOf(PRESSURE, b, afterOf(w.after, { at: Date.parse(at(800)), reason: 'samples' }), []), 'improved');
+    const slow = [point(610, 800), point(620, 900), point(630, 690)];
+    assert.deepEqual(guardBreaches({ metric: PRESSURE, beforePoints: [], afterPoints: slow, leadUcl: Math.log(120), unheld: [] }).map((g) => g.guard), ['lead']);
   });
 });
 

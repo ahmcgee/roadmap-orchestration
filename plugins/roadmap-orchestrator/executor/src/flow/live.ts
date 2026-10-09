@@ -2,18 +2,20 @@
 // log and kept inputs folded into its series, the chart's frozen limits (seeded from the completed previous arcs of the
 // repo, src/flow/history.ts), the in-flight ages, the flow facts (src/flow/log.ts), the host fingerprint, the givens in
 // force and the lever catalogue of the plan in force. The executor's flow track, `status` and the job's capture read it.
+// M4b rev 3: the host's PSI now (`pressureNow`, read at each call) and the arc's own `@cpu` tokens held (`cpuInUse`).
 //
 // Reading is the only effect. The log is parsed once per high-water mark (the flow track asks every few seconds), and
 // the previous arcs' series once per repo and arc: one arc runs per host, so no previous arc completes while this one
 // runs.
 import type { Event } from '../core/events.ts';
-import type { ArcId, Sha256Hex, UnitId } from '../core/ids.ts';
+import { type ArcId, type Sha256Hex, type UnitId, CPU_POOL } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type AbsPath, type IsoTime } from '../core/values.ts';
 import { gitCommonDir } from '../git/git.ts';
 import { eventsPrefix } from '../git/snapshot.ts';
 import { FLOW_SERIES_INPUT, inputPath, keptInput } from '../input/inforce.ts';
 import { type PlanM1, priorityOf } from '../input/plan.ts';
+import { PRESSURE_SATURATED, readPressure } from '../host/pressure.ts';
 import { readHostFingerprint } from '../host/sample.ts';
 import { committedRepoConfig } from '../preflight/checks.ts';
 import { RISK_TIERS, type ClassTable } from '../routing/types.ts';
@@ -23,7 +25,7 @@ import { builtinBuildClass } from './levers.ts';
 import { type FlowLog, flowLog, openWindow } from './log.ts';
 import { type SeriesInputs, flowSeries, inFlightAges, seriesInputs } from './series.ts';
 import { type SeededLimits, seedLimits } from './spc.ts';
-import { type FlowSeries, type FlowWindow, type GivenInForce, type HostFingerprint, type LeverState, parseFlowSeries } from './types.ts';
+import { type FlowPressureStatus, type FlowSeries, type FlowWindow, type GivenInForce, type HostFingerprint, type LeverState, parseFlowSeries } from './types.ts';
 import { WINDOW_SAMPLES, windowSamples } from './verdict.ts';
 import type { Sha } from '../core/ids.ts';
 
@@ -114,4 +116,17 @@ export function leverCatalogue(plan: PlanM1, hostCpus: number, classes: ClassTab
     ...plan.units.filter((u) => u.cut === undefined && active(u.id)).map((u): LeverState => ({ lever: 'sequence', unit: u.id, priority: priorityOf(u) })),
     ...RISK_TIERS.map((tier): LeverState => ({ lever: 'build-class', tier, class: classes.build[tier], builtin: builtinBuildClass(tier) })),
   ];
+}
+
+/** The host's PSI cpu now (`status.flow.pressure`, a run's inputs): `avg10` and `avg60`, null on a host without PSI. */
+export function pressureNow(): FlowPressureStatus {
+  const s = readPressure();
+  return s === 'unavailable'
+    ? { now: null, threshold: PRESSURE_SATURATED, available: false }
+    : { now: { avg10: s.avg10, avg60: s.avg60 }, threshold: PRESSURE_SATURATED, available: true };
+}
+
+/** The arc's own `@cpu` tokens held now (reserved, running or cleaning), from the journal's resource table. */
+export function cpuInUse(view: JournalView): number {
+  return [...view.resources()].filter(([unit, e]) => unit.startsWith(`${CPU_POOL}#`) && e.status.state !== 'free').length;
 }

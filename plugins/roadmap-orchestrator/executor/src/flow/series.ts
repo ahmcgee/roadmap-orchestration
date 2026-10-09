@@ -32,6 +32,12 @@
 // verdict count (pass, fail, stall; a cancelled, faulted or lost run measures nothing). Docs publications run the suite
 // too; the plan's four shapes leave them out. A run's `pressure` is its spawn's interval pressure (M4b rev 3).
 //
+// A point's `pressure` (M4b rev 3) is the time-weighted mean interval pressure of the unit's service intervals: every
+// spawn its stages ran, clipped to its lead time, null when any of them has none (no PSI, unwatched, lost) or there is
+// none; `stationPressure` the same per station the spawn served (`stage:<s>`; on the candidate `suite:<lane>`, `arc-lanes`
+// or `candidate-rest`, as the slot's components split it; `ff`, `snapshot`). A spawn of no length weighs nothing; a
+// station whose spawns all have none takes their plain mean.
+//
 // The accounting (RC-2) is diagnostic only: T per hour of the log's span (first to last event); `tAdvances` / `tOther`
 // split the obligations held for the first time this arc (their `obligation-latched` facts) by whether the obligation in
 // force serves a clause of the plan's `holistic.advances`; null both on a non-holistic arc. `wip` counts the active
@@ -356,6 +362,41 @@ class SeriesFold {
     return lane === null ? null : { lane, shape: onTip ? 'rerun' : 'batch' };
   }
 
+  /** The station a spawn of `unit`'s stage served, as `partition` and `candidate` split the unit's lead. */
+  spawnStation(s: Spawn, parent: Readonly<{ unit: UnitId; stage: Stage; attempt: number }>): StationId {
+    const { stage } = parent;
+    if (stage === 'candidate') {
+      const run = this.suiteRunOf(s, this.#log.candidates.get(`${parent.unit}#${parent.attempt}`));
+      if (run !== null) return run.shape === 'rerun' ? SLOT_COMPONENT.candidateRest : suiteStation(run.lane);
+      const purpose = s.intent.expect.subject.purpose;
+      return purpose === 'journey' || purpose === 'mutant' ? SLOT_COMPONENT.arcLanes : SLOT_COMPONENT.candidateRest;
+    }
+    if (stage === 'ff') return SLOT_COMPONENT.ff;
+    if (stage === 'snapshot') return SLOT_COMPONENT.snapshot;
+    if (isFlowStage(stage)) return stationId(`stage:${stage}`);
+    throw new Error(`flow series: unit ${parent.unit} ran a spawn under stage ${stage}`);
+  }
+
+  /** The unit's service pressure over [from, to] (its lead time): overall and per station (see the header). */
+  servicePressure(unit: UnitId, from: number, to: number): Readonly<{ pressure: number | null; byStation: Readonly<Record<StationId, number | null>> }> {
+    const total = new PressureMean();
+    const byStation = new Map<StationId, PressureMean>();
+    for (const s of this.#log.spawns) {
+      const p = s.intent.parent;
+      if (p.type !== 'stage' || p.unit !== unit) continue;
+      const start = Math.max(s.start, from);
+      const end = Math.min(s.end ?? to, to);
+      if (end < start) continue;
+      const station = this.spawnStation(s, p);
+      const mean = byStation.get(station) ?? byStation.set(station, new PressureMean()).get(station)!;
+      mean.add(s.pressure, end - start);
+      total.add(s.pressure, end - start);
+    }
+    const out: Record<StationId, number | null> = {};
+    for (const [station, m] of [...byStation].sort(([a], [b]) => (a < b ? -1 : 1))) out[station] = m.value();
+    return { pressure: total.value(), byStation: out };
+  }
+
   /** The candidate merge a spawn's parent made. */
   treesOf(s: Spawn): CandidateTrees | undefined {
     const p = s.intent.parent;
@@ -479,6 +520,30 @@ class SeriesFold {
   }
 }
 
+/** A time-weighted mean of interval pressures: null once any is null, or with none; the plain mean when none has length. */
+class PressureMean {
+  #weighted = 0;
+  #ms = 0;
+  #sum = 0;
+  #n = 0;
+  #unknown = false;
+
+  add(pressure: number | null, ms: number): void {
+    if (pressure === null) this.#unknown = true;
+    else {
+      this.#weighted += pressure * ms;
+      this.#ms += ms;
+      this.#sum += pressure;
+      this.#n++;
+    }
+  }
+
+  value(): number | null {
+    if (this.#unknown || this.#n === 0) return null;
+    return this.#ms > 0 ? this.#weighted / this.#ms : this.#sum / this.#n;
+  }
+}
+
 const minutesOf = (t: number): number => t / MS_PER_MIN;
 const iso = (t: number): IsoTime => isoTime(new Date(t).toISOString());
 const retired = (log: LogIndex, u: UnitId): boolean => (log.outcomes.get(u) ?? []).some((o) => o.stage === 'snapshot' && o.cls === 'retire');
@@ -503,11 +568,11 @@ export function flowSeries(arc: ArcId, events: readonly Event[], inputs: SeriesI
     const admittedAt = log.admitted.get(unit)!.at;
     const minutes: Record<StationId, number> = {};
     for (const [station, t] of [...p.ms].sort(([a], [b]) => (a < b ? -1 : 1))) minutes[station] = minutesOf(t);
+    const pressure = fold.servicePressure(unit, admittedAt, p.end);
     points.push({
       unit, admittedAt: iso(admittedAt), mergedAt: iso(p.end), leadMin: minutesOf(p.end - admittedAt), minutes,
       costUsd: log.unitCost.has(unit) ? log.unitCost.get(unit)! : 0, rework: p.rework, firstRunReds: p.firstRunReds,
-      // Rev 3 step H1: the time-weighted mean of the unit's service intervals' pressure (`Spawn.pressure`).
-      pressure: null,
+      pressure: pressure.pressure, stationPressure: pressure.byStation,
     });
   }
   points.sort((a, b) => (a.mergedAt < b.mergedAt ? -1 : a.mergedAt > b.mergedAt ? 1 : 0));
@@ -574,11 +639,24 @@ export function stationMeans(points: readonly FlowPoint[]): ReadonlyMap<StationI
 
 /**
  * Each station's mean minutes and share of mean lead over `points` (the constraint's window), largest first: every leaf
- * station and `slot:integration` (its components' sum, so the shares of the leaves alone sum to 1).
+ * station and `slot:integration` (its components' sum, so the shares of the leaves alone sum to 1). A station's
+ * `pressure` (M4b rev 3) is its points' `stationPressure` (the slot's: its components'), weighted by the station's minutes
+ * in each (the plain mean when they have none); null when no spawn served it or any of them is null.
  */
 export function stationTable(points: readonly FlowPoint[]): readonly StationRow[] {
   if (points.length === 0) return [];
   const lead = points.reduce((a, p) => a + p.leadMin, 0) / points.length;
-  return [...stationMeans(points)].map(([station, meanMin]) => ({ station, meanMin, share: lead === 0 ? 0 : Math.min(1, meanMin / lead) }))
-    .sort((a, b) => b.meanMin - a.meanMin || (a.station < b.station ? -1 : 1));
+  return [...stationMeans(points)].map(([station, meanMin]) => ({
+    station, meanMin, share: lead === 0 ? 0 : Math.min(1, meanMin / lead), pressure: stationPressureOf(points, station),
+  })).sort((a, b) => b.meanMin - a.meanMin || (a.station < b.station ? -1 : 1));
+}
+
+function stationPressureOf(points: readonly FlowPoint[], station: StationId): number | null {
+  const mean = new PressureMean();
+  for (const p of points) {
+    for (const [leaf, pressure] of Object.entries(p.stationPressure) as [StationId, number | null][]) {
+      if (leaf === station || (station === SLOT && isSlotComponent(leaf))) mean.add(pressure, p.minutes[leaf] ?? 0);
+    }
+  }
+  return mean.value();
 }

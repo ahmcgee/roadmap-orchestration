@@ -347,7 +347,7 @@ node evals/m4a/adjudicate.ts /var/tmp/m4a
   defects, phase0-green (`--from-ref`, after the scramble), census-complete, intake-filtered, arc1-complete,
   arc2-chained, stopped-at-k (reason exactly `k-limit`), stacked-prs, config, brief-acked-once (no committed brief
   ack: the bootstrap arc is the only acked start), no-model-ids, snapshot-closure, host-released, profile, and (M4b,
-  below) flow-constraint, flow-loop, flow-shard, ruler-intact. It also reports, never as a criterion, the interventions
+  below) flow-constraint, flow-loop, flow-shard, ruler-intact, and (M4b rev 3) pressure-recorded. It also reports, never as a criterion, the interventions
   in the root agent's operator log (`stage/roadmap-inputs/skill-feedback.md`).
 - `adjudicate.ts <dir>` (not in `npm test`): one `claude -p --model claude-opus-5-5 --effort xhigh --tools
   Read,Glob,Grep` session in the same isolation env, role-playing the vision's owner over a read-only tree of copies
@@ -415,7 +415,10 @@ passes, not the flag (a rule naming `concurrency` does not count); in arc 1 an a
 is an arc lane running `test/unit/soak.test.js` (`witnessed`, the evidence `ruler-intact` reads), and a soak rule
 still stands in arc 2; Phase 0 declined issue #4 or recorded a divergence over the soak rule
 (`issue-declined`). Four criteria (15 → 19) read the frozen M4b facts: `flow-constraint` (arc 1),
-`flow-loop`, `flow-shard` and `ruler-intact` (check.ts header). `ruler-intact` runs the suite itself at the final head:
+`flow-loop`, `flow-shard` and `ruler-intact` (check.ts header). Rev 3 adds `pressure-recorded` (20): every lane and
+journey run an executor started with PSI available watched carries a non-null interval pressure (some start must be
+available: this host reports PSI), and a `host:cpu` code constraint appears only on inputs whose window pressure is at
+or above the 0.25 threshold. `ruler-intact` runs the suite itself at the final head:
 the seed argv and every in-force argv of the plant lane, about 6 + 1 minutes on the paid host. Fail-fast: the driver
 ends the run `fail-fast` once arc 1's first plan in force has no suite lane whose argv carries `--test-concurrency=1` and
 `test/unit/*.test.js` as elements of their own (`plantLaneOf`; `npm test` or `sh -c` hides the argv from an in-place

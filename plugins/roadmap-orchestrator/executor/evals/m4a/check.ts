@@ -50,6 +50,11 @@
 //                     with `selected` unchanged; the arc lane running the soak file keeps arc 1's first `laneRev` in every
 //                     revision; no `flow-applied` changed a suite argv without a `preserved` proof; every `ruler-changed`
 //                     item is listed in the detail (never a failure by itself)
+//   pressure-recorded (M4b rev 3, RC-10) over the chain: every lane and journey run whose result an executor started with
+//                     PSI `available` watched (its intent and done under that one start) carries a non-null interval
+//                     pressure, and some start was `available` (this host reports PSI); every flow run that ended with
+//                     code's constraint `host:cpu` bound inputs whose window pressure is at or above the threshold
+//                     (consistency, the negative control)
 //
 // Also reported, never a criterion: `interventions` {n, byLever, malformed} from the architect's operator log
 // (`<fixture>/roadmap-inputs/skill-feedback.md`, SKILL.md "Supervising the executor"); a missing log is 0. The scrambled
@@ -66,10 +71,12 @@ import { basename, join, relative, resolve } from 'node:path';
 import { computeBrief } from '../../src/brief.ts';
 import { type ArcRef, amendmentsOf, arcsWithRefs, committedAcks, completedHeadOf, readArcRef, unackedStarts } from '../../src/chain.ts';
 import { phase0Check } from '../../src/commands/phase0.ts';
-import type { Fact } from '../../src/core/events.ts';
-import { type ArcId } from '../../src/core/ids.ts';
+import type { Event, Fact } from '../../src/core/events.ts';
+import { type ArcId, type Sha256Hex, HOST_CPU_STATION } from '../../src/core/ids.ts';
+import { spawnPressureOf, startPressureOf } from '../../src/core/upgrade.ts';
+import { PRESSURE_SATURATED } from '../../src/host/pressure.ts';
 import type { LaneDef } from '../../src/core/records.ts';
-import type { FlowProposal } from '../../src/flow/types.ts';
+import { type FlowInputs, type FlowProposal, parseFlowInputs } from '../../src/flow/types.ts';
 import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
 import { type ArcLaneDef, type Obligations, type WitnessTest, laneRevOf, parseObligations } from '../../src/holistic/types.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
@@ -80,7 +87,7 @@ import { MERGE_COMMIT_LINE } from '../../src/forge/pr.ts';
 import { parseIssueCapture } from '../../src/forge/types.ts';
 import { git, gitCommonDir } from '../../src/git/git.ts';
 import { censusProblems } from '../../src/holistic/rederive.ts';
-import { CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT, PLAN_INPUT } from '../../src/input/inforce.ts';
+import { CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT, PLAN_INPUT } from '../../src/input/inforce.ts';
 import { runDir } from '../../src/input/cli.ts';
 import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { type HostLockClaim } from '../../src/core/records.ts';
@@ -617,6 +624,56 @@ function rulerIntact(run: Run): Verdict {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// M4b rev 3: host pressure (plan "Rev 3", RC-10), read by the frozen records (SCHEMAS.md "Rev 3: host pressure")
+
+/** One arc as `pressure-recorded` reads it: its log and the flow inputs its runs kept. */
+export type PressureArc = Readonly<{ arc: string; events: readonly Event[]; flowInputs: (sha: Sha256Hex) => FlowInputs }>;
+
+export function pressureArcOf(ref: ArcRef): PressureArc {
+  return { arc: ref.arc, events: ref.events, flowInputs: (sha) => parseFlowInputs(JSON.parse(ref.input(sha, FLOW_INPUTS_INPUT).toString('utf8'))) };
+}
+
+/** `pressure-recorded` (check.ts header): lane runs watched under a PSI start carry pressure; a host:cpu constraint only at a saturated window. */
+export function pressureRecordedVerdict(arcs: readonly PressureArc[]): Verdict {
+  const problems: string[] = [];
+  let available = 0;
+  let runs = 0;
+  let hostCpu = 0;
+  for (const a of arcs) {
+    let start = 0;
+    let psi = false;
+    const lanes = new Map<string, number>();
+    const inputs = new Map<string, Sha256Hex>();
+    for (const e of a.events) {
+      if (e.type === 'fact' && e.fact.kind === 'executor-started') {
+        start++;
+        psi = startPressureOf(e.fact) === 'available';
+        if (psi) available++;
+      } else if (e.type === 'intent' && e.kind === 'proc.spawn' && psi && ['lane', 'journey'].includes(e.expect.subject.purpose)) {
+        lanes.set(e.op, start);
+      } else if (e.type === 'done' && e.kind === 'proc.spawn' && e.outcome.kind === 'result' && lanes.get(e.op) === start) {
+        runs++;
+        if (spawnPressureOf(e.outcome) === null) problems.push(`${a.arc}: ${e.op}'s lane run has no pressure`);
+      } else if (e.type === 'fact' && e.fact.kind === 'flow-started') {
+        inputs.set(e.fact.job, e.fact.inputsSha256);
+      } else if (e.type === 'fact' && e.fact.kind === 'flow-ended' && e.fact.constraint.code?.station === HOST_CPU_STATION) {
+        hostCpu++;
+        const sha = inputs.get(e.fact.job);
+        if (sha === undefined) throw new Error(`${a.arc}: ${e.fact.job} ended without a flow-started`);
+        const window = a.flowInputs(sha).pressure.window;
+        if (window === null || window < PRESSURE_SATURATED) problems.push(`${a.arc}: ${e.fact.job} named host:cpu at window pressure ${window ?? 'none'} (threshold ${PRESSURE_SATURATED})`);
+      }
+    }
+  }
+  if (available === 0) problems.push('no executor start recorded PSI available: this host should report it');
+  return verdict(problems, `${runs} lane runs under ${available} PSI starts carry pressure; ${hostCpu} host:cpu constraints, each at a saturated window`);
+}
+
+function pressureRecorded(run: Run): Verdict {
+  return pressureRecordedVerdict([need(run.one, 'arc 1'), ...(run.two === null ? [] : [run.two])].map(pressureArcOf));
+}
+
+// ---------------------------------------------------------------------------------------------------
 // The interventions metric (OR-A3, A4): the architect's operator log, never a criterion
 
 /** The closed lever list of an operator-log entry (SKILL.md "Supervising the executor"). */
@@ -698,6 +755,7 @@ export const CRITERIA: readonly Grade[] = [
   ['flow-loop', flowLoop],
   ['flow-shard', flowShard],
   ['ruler-intact', rulerIntact],
+  ['pressure-recorded', pressureRecorded],
 ];
 
 /** The product's arcs, with arc 1 (no chain) and arc 2 (chained on arc 1). */
