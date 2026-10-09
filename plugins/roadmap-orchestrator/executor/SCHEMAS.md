@@ -180,6 +180,7 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | exit.json (rev 3 calibration) | `+ cpu?: LaunchCpu \| null` (every runner since the calibration) | absent: null (`exitCpuOf`, warned once; scaffolding): the launch has no pressure |
 | `FlowSeries` (rev 3) | `v: 2`; `FlowPoint.pressure`, `FlowPoint.stationPressure` (H1), `SuiteRun.pressure` required | a kept `v: 1` series is recomputed from the ref's events |
 | `Role` | `+ flow` (seat `arc`, frontier) | in force only with `arcRoles: m4b` |
+| Kill and cancel reasons (paid M4b run 3) | `+ supersede` (`KILL_REASONS`, `CANCEL_REASONS`; a backend call's `cancelled{reason}`, `BACKEND_CANCEL_REASONS`): a checkpoint call a revision superseded | none: dev.7 records never hold it |
 | `RevisionSource`, `HoldCause`, spawn subject, `CommandBody`, `JobId`, `NeedsUserReason`, facts, `.roadmap/config.json` | "M4b" | none |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
@@ -465,7 +466,7 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 ## Op kinds (`OP_KINDS`, `OP_SCHEMAS`)
 
 `proc.spawn` purposes: `backend | lane | teardown | probe | smoke` (M3 subjects add `arc-backend | journey | mutant`).
-`proc.kill` reasons: `deadline | stall | pause | stop | recovery | external-unknown | preempt` (`preempt`: M3, lanes only).
+`proc.kill` reasons: `deadline | stall | pause | stop | recovery | external-unknown | preempt | supersede` (`preempt`: M3, lanes only; `supersede`: M4b, a checkpoint call only).
 
 | Kind | `expect` (`OpExpect`) | `post` (`OpPost`) | done `outcome` (`OpOutcome`) |
 |---|---|---|---|
@@ -543,7 +544,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 |---|---|---|---|
 | `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; required), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
-| `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt, at` (`preempt`: M3, a lane only) |
+| `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only) |
 | `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill, endedAt ≤ quiescedAt` |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
@@ -559,7 +560,7 @@ also `preempt`, M3) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or 
 that hung is red, a verdict on the tree; cause `cancel` ⇒ `cancelled{reason}` from cancel.json, the same
 interruption a backend call records as outcome `cancelled{reason}`; `classifyCommand(exit, cancel, expectedExit)`).
 `outcome = success{value} | refusal{stopReason} | malformed{detail} | process-fault{detail} |
-cancelled{reason: pause|stop}`; `usage = known{tokens: TokenUsage} | unavailable{reason}` with `TokenUsage =
+cancelled{reason: pause|stop|supersede}` (`supersede`: M4b, a checkpoint call only); `usage = known{tokens: TokenUsage} | unavailable{reason}` with `TokenUsage =
 {inputTokens, outputTokens, cacheReadTokens|null, cacheWriteTokens|null, turns|null, costUsd|null}` (`turns`
 and `costUsd` are the CLI's own `num_turns` and `total_cost_usd`, list price: Claude reports both, Codex
 neither); `backendErrors[].class = usage-limit | capacity | platform | backend`, classified only from
@@ -569,7 +570,7 @@ neither); `backendErrors[].class = usage-limit | capacity | platform | backend`,
 **Precedence** (`classifyTerminal(exit, cancel, output, schemaValid): TerminalOutcome`, pure; `cancel` is
 cancel.json or null):
 
-1. cause `cancel` → `cancelled{reason}` (cancel.json's `pause | stop`; any other cancel.json is a loud error),
+1. cause `cancel` → `cancelled{reason}` (cancel.json's `pause | stop`, or `supersede` for a backend; any other cancel.json is a loud error),
    whatever the output: an interruption, not a failure of the call;
 2. cause `deadline | stall | recovery-kill`, a signal, or a failed spawn → `process-fault`, whatever the output;
 3. non-zero exit with schema-valid output → `malformed`; non-zero exit without it → `process-fault`;
@@ -1415,7 +1416,8 @@ work, whose queue is empty, whose head is in integration history and whose ref v
    invariant, and A3 writes `bounds` (and `transientRules: 'm3'`) at every dispatch.
 6. **The arc seats are hashed only in a holistic arc** (`routingRevOf(table, holistic)`), so every dev.5 routing rev
    is reproduced by dev.6 code and nothing is re-pinned on upgrade; `planStack` sets `holistic` from the plan.
-7. **`preempt` is a lane-only interrupt reason** (`LANE_INTERRUPT_REASONS`): a backend call is never preempted.
+7. **`preempt` is a lane-only interrupt reason** (`LANE_INTERRUPT_REASONS`): a backend call is never preempted. (M4b: `supersede`
+   is its backend-only counterpart, a checkpoint call only; a command is never superseded.)
 8. **`reproduce inapplicable` parks with reason `not-reproduced`** (design): the frozen reason list has no other fit.
 9. **`amended`** is an obligation disposition beside `waived | deferred | retired`: a statement, docRef or
    activation change is weakening and needs a ruling naming it.
@@ -1976,11 +1978,14 @@ src/pipeline/dispatch.ts `callArcRole`):
 9. **Due and re-queue.** A trigger (`audit{job}` for a completed audit; `park{unit, seq}` for an operator-design park,
    `seq` the park's) is due while it has no job, or its latest job was rejected (stale or evidence: always; invalid:
    the next is the last, since a trigger's second invalid decision, a failed call included, is a non-blocking
-   `bundle-request` with no options; its prompt carries the rejected job's reasons verbatim, `<prior_attempt>`), or its latest job's `bundle-request` was acknowledged `apply`. Paid run 12: every
+   `bundle-request` with no options), or its latest job's `bundle-request` was acknowledged `apply`. Paid M4b run 3:
+   every called job's inputs carry `priorRejected[{job, reason: stale | evidence | invalid | busy, detail}]`, every
+   earlier job of its trigger the executor rejected, oldest first, the detail verbatim, rendered `<prior_attempt>` with
+   what each reason asks of the retry (and, after an invalid one, that this is the last attempt). Paid run 12: every
    checkpoint's inputs also carry `refused[{job, outcome: rejected-invalid | owner-request, reasons}]`, the decisions
    captured before it under its plan rev, any trigger, that were rejected `invalid` (the detail) or sent to the owner
    as not applicable (`INVALID_REQUEST_OPTIONS`; the request's summary), the most recent `REFUSED_MAX` (3), oldest
-   first, the `<prior_attempt>` job excluded; rendered `<refused_proposals>`. Derived from the log before the capture,
+   first, the `priorRejected` jobs excluded; rendered `<refused_proposals>`. Derived from the log before the capture,
    so a resumed job renders the same prompt. That next job
    enacts the requested bundle: it captures as ever, makes no call, activates the requester's output against the
    requester's captured inputs with draining and the brakes skipped. Parks are served before audits. A park
@@ -1990,6 +1995,19 @@ src/pipeline/dispatch.ts `callArcRole`):
    directives, `candidateRedCause`), so an executor-side red is never read as a design question (paid m3 run 7).
 10. **Evidence.** After `rejected{evidence}`, the lanes of the observations it cited are re-witnessed on the head under
     the rejected job before the trigger's next capture (a crash in between repeats it, reusing what ran).
+10a. **Drift** (paid M4b run 3). A decision is checked at activation against the arc as it is then; drift since the
+    capture is handled by what can judge it. Head drift, which code can re-check: before activating an output, the
+    job witnesses on the head now (under itself, `<job>.rewitness-<k>`) each cited observation's arc lane with no
+    observation there under its lane rev and environment, again while the head moves under it, at most
+    `DRIFT_ROUNDS_MAX` (3) rounds, so step 5 of the activation compares the citations with the head's own observations
+    (a contradicted one still rejects `evidence`). Plan or vision drift, which only a fresh read can judge
+    (`supersededBy`: a revision since the capture changed the plan's bytes or the vision): the job is superseded. A call
+    in flight is cancelled (`proc.kill{reason: supersede}`, polled every `SUPERSEDE_POLL_MS`, 1 s; outcome
+    `cancelled{supersede}`), a call not yet made is not made, and the job decides `rejected{stale}` with the activation's
+    staleness wording, so the trigger is captured again on the new revision. A crash after the cancel resumes into the
+    same decision once the cancel is done (the recorded cancelled call is skipped; `supersededBy` still holds). Neither path spends the
+    trigger's one invalid retry. Other revisions (a spec patch, a ruling) leave the call running; the activation's
+    staleness checks what the bundle touches.
 11. **Interrupted calls.** A call cancelled or failed with a backend-park class leaves the job running; a later run asks
     again as the next attempt (the meter's attempt), skipped while the seat's backend is parked or the arc paused.
 12. **OR-Q1.** `designParkRoute(ctx, unit)` is the scheduler's (B7) answer for a design park: `checkpoint` (hold its

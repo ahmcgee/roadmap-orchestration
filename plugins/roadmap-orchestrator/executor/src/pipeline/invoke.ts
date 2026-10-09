@@ -278,7 +278,7 @@ export function quiescent(ctx: Pick<ProcContext, 'containment' | 'runDir'>, targ
 }
 
 const CANCEL_REASONS: Readonly<Record<KillTarget['reason'], CancelReason | null>> = {
-  pause: 'pause', stop: 'stop', recovery: 'recovery', preempt: 'preempt', deadline: null, stall: null, 'external-unknown': null,
+  pause: 'pause', stop: 'stop', recovery: 'recovery', preempt: 'preempt', supersede: 'supersede', deadline: null, stall: null, 'external-unknown': null,
 };
 
 /**

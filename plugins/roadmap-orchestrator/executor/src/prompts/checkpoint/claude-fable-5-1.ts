@@ -17,7 +17,8 @@
 // (paid m3 run 7): the ruling sidecar field by field, its schema value and closed enums from the reader's constants;
 // a park trigger names its cause; a split keeps the children restating a must-hold obligation must-hold. Run 9: a
 // P1 is never accepted or deferred (left to its repair); anchors as `anchorSection` reads them; a retry reads the
-// rejected attempt's reasons. M4a (reviewed 2026-10-03 against the Opus 5.5 and Fable 5.1 guides): the `target` input (the
+// rejected attempt's reasons (paid M4b run 3: every rejected attempt of the trigger, any reason, with what it asks of the
+// retry). M4a (reviewed 2026-10-03 against the Opus 5.5 and Fable 5.1 guides): the `target` input (the
 // corpus rules index with each rule's text hash, which a ruling's rule reference quotes); split children and ruling
 // references anchored at a corpus rule; corpusAmendments proposed for the next Phase 0; the captured issues as
 // <pasted_content> data from trusted collaborators (LR-d), acted on like any evidence, one issueIntake outcome each, an
@@ -32,7 +33,7 @@
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   checkpointSpecsText, closeoutText, coverageText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
-  priorInvalidText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
+  priorRejectedText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
 } from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
 import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
@@ -125,7 +126,7 @@ export const PROMPT: PromptModule<'checkpoint'> = {
   system,
   schema: CHECKPOINT_SCHEMA,
   fields: [
-    'vision', 'trigger', 'priorInvalid', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   render: (i) => `<vision>
@@ -134,7 +135,7 @@ ${visionText(i.vision)}
 
 <trigger>
 This checkpoint runs because ${triggerText(i.trigger)} The integration head is ${i.head}.
-</trigger>${priorInvalidText(i.priorInvalid)}${refusedText(i.refused)}${closeoutText(i.closeout)}
+</trigger>${priorRejectedText(i.priorRejected)}${refusedText(i.refused)}${closeoutText(i.closeout)}
 
 <vision_coverage>
 ${coverageText(i.coverage)}

@@ -32,13 +32,16 @@ import {
 export type ProcIdentity = Readonly<{ pid: number; start: number }>;
 export const procIdentity: Read<ProcIdentity> = object((f) => ({ pid: f.get('pid', positive), start: f.get('start', nat) }));
 
-/** `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. */
-export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt'] as const;
+/**
+ * `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. `supersede` (paid M4b run 3):
+ * a revision changed the plan or vision an in-flight checkpoint call was captured on (src/holistic/checkpoint.ts).
+ */
+export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt', 'supersede'] as const;
 export type KillReason = (typeof KILL_REASONS)[number];
 export const killReason: Read<KillReason> = oneOf(KILL_REASONS);
 
 /** What the executor writes into cancel.json. `deadline` and `stall` are the runner's own; `external-unknown` kills are not invocation cancels. */
-export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt'] as const;
+export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt', 'supersede'] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 /** The cancel reasons that end a workload with exit cause `cancel` (the runner turns `recovery` into `recovery-kill`). */
 export const INTERRUPT_REASONS = ['pause', 'stop'] as const;
@@ -46,6 +49,9 @@ export type InterruptReason = (typeof INTERRUPT_REASONS)[number];
 /** A command (a lane) may also be cancelled by a preempting docs publication (M3, A7); a backend call never is. */
 export const LANE_INTERRUPT_REASONS = [...INTERRUPT_REASONS, 'preempt'] as const;
 export type LaneInterruptReason = (typeof LANE_INTERRUPT_REASONS)[number];
+/** A backend call may also be cancelled because a revision superseded the checkpoint inputs it runs on; a lane never is. */
+export const BACKEND_CANCEL_REASONS = [...INTERRUPT_REASONS, 'supersede'] as const;
+export type BackendCancelReason = (typeof BACKEND_CANCEL_REASONS)[number];
 
 export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
 export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
@@ -337,10 +343,11 @@ export type BackendOutcome =
   | Readonly<{ kind: 'malformed'; detail: string }>
   | Readonly<{ kind: 'process-fault'; detail: string }>
   /**
-   * The executor cancelled the workload for a pause or stop (exit cause `cancel`); `reason` is cancel.json's.
-   * Not a failure of the call. A recovery cancel ends as cause `recovery-kill`, a process fault.
+   * The executor cancelled the workload for a pause, a stop or (a checkpoint call) a superseding revision (exit cause
+   * `cancel`); `reason` is cancel.json's. Not a failure of the call. A recovery cancel ends as cause `recovery-kill`, a
+   * process fault.
    */
-  | Readonly<{ kind: 'cancelled'; reason: InterruptReason }>;
+  | Readonly<{ kind: 'cancelled'; reason: BackendCancelReason }>;
 export type BackendOutcomeKind = BackendOutcome['kind'];
 /** What the precedence rule alone decides; refusal is the adapter's reading of a backend stop reason. */
 export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
@@ -386,7 +393,7 @@ const backendOutcome: Read<BackendOutcome> = tagged('kind', {
   refusal: object((f): BackendOutcome => ({ kind: f.get('kind', literal('refusal')), stopReason: f.get('stopReason', str) })),
   malformed: object((f): BackendOutcome => ({ kind: f.get('kind', literal('malformed')), detail: f.get('detail', str) })),
   'process-fault': object((f): BackendOutcome => ({ kind: f.get('kind', literal('process-fault')), detail: f.get('detail', str) })),
-  cancelled: object((f): BackendOutcome => ({ kind: f.get('kind', literal('cancelled')), reason: f.get('reason', oneOf(INTERRUPT_REASONS)) })),
+  cancelled: object((f): BackendOutcome => ({ kind: f.get('kind', literal('cancelled')), reason: f.get('reason', oneOf(BACKEND_CANCEL_REASONS)) })),
 });
 
 const backendError: Read<BackendError> = object((f) => ({
@@ -449,7 +456,7 @@ function processFault(exit: ExitFile): string | null {
 export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, output: unknown, schemaValid: boolean): TerminalOutcome {
   if (exit.cause === 'cancel') {
     if (cancel === null || cancel.reason === 'recovery' || cancel.reason === 'preempt') {
-      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop (a backend call is never preempted)`);
+      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause, stop or supersede (a backend call is never preempted)`);
     }
     return { kind: 'cancelled', reason: cancel.reason };
   }
@@ -472,7 +479,9 @@ export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, outp
 export function classifyCommand(exit: ExitFile, cancel: CancelFile | null, expectedExit: number): CommandEnd {
   const exitCode = exit.child.type === 'exited' ? exit.child.code : null;
   if (exit.cause === 'cancel') {
-    if (cancel === null || cancel.reason === 'recovery') throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop`);
+    if (cancel === null || cancel.reason === 'recovery' || cancel.reason === 'supersede') {
+      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause, stop or preempt (a command is never superseded)`);
+    }
     return { exitCode, verdict: 'cancelled', reason: cancel.reason };
   }
   if (exit.cause === 'stall') return { exitCode, verdict: 'stall' };
