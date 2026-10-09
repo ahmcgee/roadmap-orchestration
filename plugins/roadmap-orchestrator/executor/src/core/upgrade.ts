@@ -159,3 +159,12 @@ export function exitCpuOf(exit: Readonly<{ cpu?: LaunchCpu | null }>): LaunchCpu
   warnDefaulted('exit.cpu', 'an exit.json without cpu (a runner before M4b rev 3 calibration); its launch has no pressure');
   return null;
 }
+
+// M4b (paid run 3): a vacuity lens's mutant is exact replacements (`edits`); a lens call an earlier executor recorded asked
+// for a hand-written unified diff. Delete once no audit an earlier executor started is running.
+
+/** A recorded lens answer's mutant `patch` (before M4b's `edits`): read as written, syntax-checked at admission as before. */
+export function lensPatchMutantDefault(patch: string): string {
+  warnDefaulted('lens.mutant.patch', 'a lens answer whose mutant is a unified diff (recorded before M4b edits); read as written');
+  return patch;
+}

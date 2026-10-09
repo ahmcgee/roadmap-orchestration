@@ -16,7 +16,8 @@ export type LensFindingSpec = Readonly<{
   claim?: string;
   cause?: string;
   evidence?: readonly Readonly<{ path: string; line: number }>[];
-  mutant?: Readonly<{ patch: string; lane: string }> | null;
+  /** The wire form: `edits` (M4b), or a pre-M4b recorded answer's `patch`. */
+  mutant?: Readonly<{ lane: string; edits: readonly Readonly<{ path: string; old: string; new: string }>[] }> | Readonly<{ lane: string; patch: string }> | null;
 }>;
 
 /** A lens's answer: `findings` with defaults filled (a P2 citing V-1), plus the required reasons and premises. */
@@ -110,9 +111,12 @@ export function interpretationOnlyNoop(clauses: readonly string[] = ['V-1'], sit
 
 const step = (key: { unit?: string; lens?: LensKindName }, acts: readonly ClaudeAct[]): Step => ({ as: 'claude', ...key, expect: {}, acts });
 
-/** A lens call of `lens` in job `job` answers `findings`; `extra` acts (commit, hang, barrier...) run first. */
-export function lensStep(job: string | undefined, lens: LensKindName, findings: readonly LensFindingSpec[] = [], extra: readonly ClaudeAct[] = []): Step {
-  return step({ ...(job === undefined ? {} : { unit: job }), lens }, [...extra, { type: 'emit', value: lensAnswer(findings) }]);
+/**
+ * A lens call of `lens` in job `job` answers `findings`; `extra` acts (commit, hang, barrier...) run first; `stdinContains`,
+ * text its prompt must hold.
+ */
+export function lensStep(job: string | undefined, lens: LensKindName, findings: readonly LensFindingSpec[] = [], extra: readonly ClaudeAct[] = [], stdinContains: readonly string[] = []): Step {
+  return { ...step({ ...(job === undefined ? {} : { unit: job }), lens }, [...extra, { type: 'emit', value: lensAnswer(findings) }]), expect: { stdinContains } };
 }
 
 /** A checkpoint call of job `job` (a `ckpt-n`) answers `answer`. */

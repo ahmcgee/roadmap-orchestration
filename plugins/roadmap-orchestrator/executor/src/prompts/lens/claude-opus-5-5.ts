@@ -17,9 +17,12 @@
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): `cause` as "<affected operation>: <failure condition>",
 // lens-agnostic, since one audit merges findings across lenses on paths, obligation and cause (H7, R62); a specs-only
 // drift runs the vision lens over the changed specs alone (H2, R61).
+// M4b (paid run 3, reviewed 2026-10-09 against the same guides): the vacuity mutant is exact old/new replacements, not a
+// hand-written unified diff (its hunk counts were miscounted and git refused it); a lens whose draft was refused is asked
+// once more with <previous_report> naming each refused draft and why.
 import type { LensInputs, PromptModule } from '../inputs.ts';
 import {
-  documentsXml, findingViewsText, obligationsText, pasted, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
+  documentsXml, findingViewsText, lensRetryText, obligationsText, pasted, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
 import type { LensKind } from '../../holistic/types.ts';
 import { LENS_SCHEMA, MAX_LENS_FINDINGS, MAX_PREMISES } from '../schemas.ts';
 
@@ -67,7 +70,7 @@ Each finding has: severity; obligation, the I-n id it concerns or null; visionCl
 const LENS_BRIEFS: { readonly [K in LensKind]: string } = {
   invariants: `Invariants. For each obligation, and each system property the contracts and the architecture doc state: does it still hold on the audited tree, and is its witness still meaningful? Look where units meet: an interface one unit changed and another relies on, shared state, ordering, error paths, configuration read in two places. A broken must-hold obligation or system property is P1; a property that holds only by accident, or a witness that no longer reaches the behaviour, is P2. Name the obligation when one is broken.`,
   drift: `Drift. Compare what is in force: the rulings, the contracts, the architecture doc, the obligations and the vision, and the code the audited range changed against each of them. Where does one contradict another? One finding per contradiction, naming both sides by path, C-nn or I-n and quoting the words in conflict. Code or a contract that now contradicts a contract, a ruling or the architecture doc is P2; documents that disagree while the code is right are P3. A ruling that deliberately deviates from a document and says so is not drift.`,
-  vacuity: `Vacuity. For the tests the audited range added or changed, and for every obligation's witness tests: would the obvious mutant pass? A test that asserts an outcome without asserting the path was reached, asserts on a mock of the code under test, or would pass with the behaviour removed is vacuous. Every vacuity finding carries a mutant: patch is a unified diff against the audited tree (paths relative to the repository root, applicable with git apply) that breaks the behaviour while the test stays green, and lane is the lane whose tests should catch it. The executor applies it and runs the lane; a mutant the lane kills dismisses the finding, so write the smallest change you expect to survive. You do not run it. A vacuous witness of an obligation is P2; any other vacuous test is P3.`,
+  vacuity: `Vacuity. For the tests the audited range added or changed, and for every obligation's witness tests: would the obvious mutant pass? A test that asserts an outcome without asserting the path was reached, asserts on a mock of the code under test, or would pass with the behaviour removed is vacuous. Every vacuity finding carries a mutant that breaks the behaviour while the test stays green: edits, one or more exact replacements, each a path relative to the repository root, old, text copied exactly from that file at the audited SHA (whitespace included) with enough lines that it occurs exactly once there, and new, what replaces it; and lane, the lane whose tests should catch it. Edits to one file apply in order, each to the file as the earlier ones left it. The executor makes the patch from the edits, applies it and runs the lane; a mutant whose old text is not found exactly once is refused; a mutant the lane kills dismisses the finding, so write the smallest change you expect to survive. You do not run it. A vacuous witness of an obligation is P2; any other vacuous test is P3.`,
   vision: `Vision. Does the product serve the vision? Read the product as it stands on the audited tree against each active clause. Is anything faithful to the letter of its spec and obligations but wrong for the vision? Is a clause this arc advances served by nothing the product does? Does a choice foreclose a horizon clause? Where did the build meet a situation the vision does not anticipate? Every finding cites at least one active V-n, and its severity is P2 or P3, never P1: this lens reports, the checkpoint steers. obligation is null unless one obligation is the subject.`,
 };
 
@@ -79,7 +82,7 @@ function owners(i: LensInputs): string {
 export const PROMPT: PromptModule<'lens'> = {
   system,
   schema: LENS_SCHEMA,
-  fields: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
+  fields: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly', 'retry'],
   render: (i) => `<vision>
 ${visionText(i.vision)}
 </vision>
@@ -118,7 +121,7 @@ ${owners(i)}
 ${findingViewsText(i.priorFindings)}
 </prior_findings>
 
-<checkout>${i.checkout} (your working directory, at ${i.range.to})</checkout>${specsOnlyText(i.specsOnly)}
+<checkout>${i.checkout} (your working directory, at ${i.range.to})</checkout>${specsOnlyText(i.specsOnly)}${lensRetryText(i.retry)}
 
 Audit the tree at ${i.range.to} through the ${i.lens} lens, against the vision first, then return your report.`,
 };

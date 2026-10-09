@@ -13,6 +13,9 @@
 // --index`) when it applies; verify reads the worktree back and requires exactly that state: HEAD detached at `at`, and
 // the index tree the patched tree with the files matching it (applied), or a clean checkout of `at` (inapplicable). The
 // worktree is the caller's to remove (`worktree.remove`, citing the lane's evidence), as a verification checkout is.
+//
+// M4b (paid run 3): a vacuity lens writes its mutant as exact replacements (`MutantEdit`), and `editsPatch` has git write
+// the patch from them against the audited tree, so a finding's kept patch is never hand-written.
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,10 +24,11 @@ import type { IntentOf, OpOutcome } from '../core/events.ts';
 import type { MutantOf } from '../core/events.ts';
 import { type Sha, type Sha256Hex, sha } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { SchemaError } from '../core/validate.ts';
+import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
 import { inputPath } from '../input/inforce.ts';
 import { checkPatch } from './patchcheck.ts';
-import { GitError, catFileType, gitRun, readTree, revParse, statusPorcelainV2Z, symbolicHead, worktreeAdd, worktreeList, writeTreeFromIndex } from './git.ts';
+import { GitError, catFileType, git, gitRun, readTree, revParse, statusPorcelainV2Z, symbolicHead, worktreeAdd, worktreeList, writeTreeFromIndex } from './git.ts';
 
 /** Where a mutant patch is kept: `inputs/<sha256>.patch` (a finding's, named by its `finding-opened`; a smoke's, by its intent). */
 export const MUTANT_PATCH_INPUT = 'patch';
@@ -66,6 +70,62 @@ export function patchedTree(repo: AbsPath, at: Sha, patch: AbsPath): PatchedTree
       return { kind: 'inapplicable', detail: `the patch does not apply to ${at} (git apply exited ${error.code}${error.stderr.trim() === '' ? '' : `: ${error.stderr.trim()}`})` };
     }
     return { kind: 'applied', tree: writeTreeFromIndex(repo, index) };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * One exact replacement of a vacuity lens's mutant (M4b; replaces the hand-written unified diff, whose hunk counts a
+ * model miscounts: paid M4b run 3, audit-4): in `path` (relative to the repository root), the one occurrence of `old`
+ * becomes `new` (which may be empty).
+ */
+export type MutantEdit = Readonly<{ path: string; old: string; new: string }>;
+
+/** A mutant's edits as a patch git wrote against `at`, or why they cannot be made there. */
+export type EditsPatch = Readonly<{ kind: 'patch'; patch: string }> | Readonly<{ kind: 'refused'; reason: string }>;
+
+/**
+ * The unified diff `edits` make of `at`, written by git (`diff --full-index` between `at`'s tree and the edited one,
+ * built through a private index), so it always parses and applies to `at`. Edits apply in order, each to the file as
+ * the earlier ones left it; one is refused when its path names no file at `at`, its `old` occurs there other than
+ * exactly once (or is empty), or it changes nothing. Writes only objects to the store.
+ */
+export function editsPatch(repo: AbsPath, at: Sha, edits: readonly MutantEdit[]): EditsPatch {
+  const files = new Map<RepoPath, Readonly<{ mode: string; text: string }>>();
+  for (const [i, e] of edits.entries()) {
+    const where = `edit ${i + 1} (${e.path})`;
+    let path: RepoPath;
+    try {
+      path = repoPath(e.path);
+    } catch (error) {
+      if (!(error instanceof SchemaError)) throw error;
+      return { kind: 'refused', reason: `${where}: the path is not relative to the repository root` };
+    }
+    let file = files.get(path);
+    if (file === undefined) {
+      const entry = git(repo, ['ls-tree', '-z', at, '--', path]).split('\0').filter((s) => s !== '');
+      const m = entry.length === 1 ? /^(100644|100755) blob ([0-9a-f]{40})\t/.exec(entry[0]!) : null;
+      if (m === null) return { kind: 'refused', reason: `${where}: no regular file at that path in ${at}` };
+      file = { mode: m[1]!, text: git(repo, ['cat-file', 'blob', m[2]!]) };
+    }
+    if (e.old === '') return { kind: 'refused', reason: `${where}: old is empty` };
+    const count = file.text.split(e.old).length - 1;
+    if (count !== 1) return { kind: 'refused', reason: `${where}: old occurs ${count} times in the file at ${at}, not exactly once` };
+    if (e.old === e.new) return { kind: 'refused', reason: `${where}: new equals old, so it changes nothing` };
+    files.set(path, { mode: file.mode, text: file.text.replace(e.old, () => e.new) });
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'roadmap-mutant-'));
+  try {
+    const index = absPath(join(dir, 'index'));
+    const tree = revParse(repo, `${at}^{tree}`);
+    readTree(repo, tree, index);
+    for (const [path, { mode, text }] of files) {
+      const blob = git(repo, ['hash-object', '-w', '--stdin'], { input: text }).trim();
+      git(repo, ['update-index', '--cacheinfo', `${mode},${blob},${path}`], { indexFile: index });
+    }
+    const patch = git(repo, ['diff', '--no-renames', '--full-index', '--no-ext-diff', '--no-textconv', tree, writeTreeFromIndex(repo, index)]);
+    return { kind: 'patch', patch };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

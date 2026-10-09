@@ -384,8 +384,9 @@ them acts (§2.8).
 - **Change-sensitive drift (A-M4-27).** A bundle revision that changes only plan units and their specs drifts
   `specsOnly`: the vision lens alone, over the spec deltas; code lenses keep their watermarks. Within one audit, a
   lens draft whose (repo evidence paths, obligation, cause) equals a finding the audit already opened merges into it,
-  its rationale kept (`finding-corroborated`). A vacuity finding's mutant patch is syntax-checked at admission; a
-  corrupt patch refuses the draft with git's reason.
+  its rationale kept (`finding-corroborated`). A vacuity finding's mutant is exact replacements the executor has git
+  turn into a patch against the audited tree at admission; one that cannot be made refuses the draft, recorded with
+  the reason, and the lens is asked once more with it; a lens is covered only when its report is admitted whole.
 
 ### 2.6 Ruling record
 
