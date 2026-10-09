@@ -72,7 +72,7 @@ import { planBatchFf, planFf } from '../git/ff.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { revParse } from '../git/git.ts';
 import { snapshotRequestOf } from '../git/snapshot.ts';
-import { unitTransientRules } from '../git/transient.ts';
+import { type TransientViolation, unitTransientRules } from '../git/transient.ts';
 import { classifyMergein } from '../git/mergein.ts';
 import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { type FindingBlock, p1Blocking, p1Obligations as activeP1Obligations, repairedObligations as repairedBy } from '../holistic/findings.ts';
@@ -157,7 +157,7 @@ function candidateRequest(ctx: StageContext, unit: PlanUnit, attempt: number): C
   return {
     arc: ctx.plan().arc, unit: unit.id, integration: branchRef(ctx.plan().integrationBranch), unitCommit: unitTip(ctx, unit.id),
     worktree: candidateWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, attempt),
-    rules: unitTransientRules(dispatchOf(ctx.journal.view, unit.id), [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort()),
+    rules: unitTransientRules(dispatchOf(ctx.journal.view, unit.id), spec),
     identity: executorIdentity(),
     message: `roadmap ${ctx.plan().arc}: candidate of unit ${unit.id}\n`,
   };
@@ -724,6 +724,20 @@ export function latestCandidate(ctx: StageContext, unit: UnitId): IntentOf<'cand
 }
 
 /**
+ * The fix round's directives for a transient refusal. A path a lane's `evidenceGlobs` entry matches is named with the
+ * lane and the entry: it may be the unit's own work under a spec that mislabels it as lane output (M4b run 3), which
+ * the builder must keep and report, never delete. Every other path is removed or reported as a scope growth.
+ */
+export function transientDirectives(violations: readonly TransientViolation[]): readonly string[] {
+  const declared = violations.flatMap((v) => (v.rule === 'lane-evidence' ? [v] : []));
+  const other = violations.filter((v) => v.rule !== 'lane-evidence');
+  return [
+    ...(other.length === 0 ? [] : [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, say so in your report as a scope growth instead of keeping it.`]),
+    ...(declared.length === 0 ? [] : [`The candidate merge was refused: these paths match a lane's declared evidenceGlobs, which name the files that lane's run writes (its outputs) and never reach integration: ${declared.map((v) => `${v.path} (lane ${v.lane}, entry \`${v.glob}\`)`).join(', ')}. Remove from the branch only a path that is lane output. A path that is the unit's own work (its source or tests) is not: keep it, change nothing for it, and say in your report that lane ${[...new Set(declared.map((v) => v.lane))].join(', ')}'s evidenceGlobs cover the unit's work, so the spec's entry needs correcting by the architect.`]),
+  ];
+}
+
+/**
  * The executor's directive for the fix round after a refused candidate: what the transient check (or the
  * prefix guard) refuses at the current tip, re-derived from git, since the refusal is a pure function of
  * the tip and the unit commit.
@@ -732,7 +746,7 @@ export function candidateRefusalFix(ctx: StageContext, unit: PlanUnit): FixRound
   const decision = planCandidate(ctx.repo, candidateRequest(ctx, unit, 0));
   switch (decision.kind) {
     case 'transient-violation':
-      return { failingEvidenceDirs: [], directives: [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${decision.violations.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, say so in your report as a scope growth instead of keeping it.`] };
+      return { failingEvidenceDirs: [], directives: transientDirectives(decision.violations) };
     case 'prefix-collision':
       return { failingEvidenceDirs: [], directives: [`The candidate merge was refused: these new paths collide, ignoring case, with existing ones: ${decision.collisions.map((c) => `${c.path} with ${c.existing}`).join(', ')}. Rename them.`] };
     case 'conflict':

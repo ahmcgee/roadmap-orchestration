@@ -464,6 +464,21 @@ describe('startup.plan-in-force', () => {
     assert.equal(appliedFacts(added).rev, 1);
   });
 
+  it('plan-change-refused: a fresh arc whose lane evidenceGlobs cover a unit\'s own scope is refused, the lane and the entry named (M4b run 3)', T, async () => {
+    const s = setup();
+    const plan = { ...s.plan, units: [{ ...(s.plan['units'] as Raw[])[0]!, scope: ['src/cli.js'] }] };
+    const spec = { ...s.spec, scope: ['src/cli.js'] };
+    write({ ...s, plan, spec: { ...spec, lanes: [{ ...lane(), evidenceGlobs: ['src/**/*.js', 'out/**'], state: 'active' }] } });
+    const refused = await start(input(s));
+    assert.ok(refused.kind === 'refused' && refused.rejections.length === 1 && refused.rejections[0]?.kind === 'plan-change-refused', JSON.stringify(refused));
+    assert.equal(refused.rejections[0].reasons.length, 1);
+    assert.match(refused.rejections[0].reasons[0]!, /^unit u1 lane unit: evidenceGlobs entry `src\/\*\*\/\*\.js` covers `src\/cli\.js` of the unit's scope\./);
+    assert.equal(appliedFacts(s).rev, null, 'no revision recorded');
+
+    write({ ...s, plan, spec: { ...spec, lanes: [{ ...lane(), evidenceGlobs: ['out/**'], state: 'active' }] } });
+    assert.equal((await start(input(s))).kind, 'passed', 'outputs outside the scope pass');
+  });
+
   it('plan-change-refused: a start whose files drop a started unit and move the worktree root is refused with every reason (78); the plan in force stays', T, async () => {
     const s = setup();
     assert.equal((await start(input(s))).kind, 'passed');

@@ -323,7 +323,7 @@ run again, and takes its first view of the units as the baseline (no unit wake f
 | `plan-invalid{problem}` | schema, unknown spec path, integration branch missing or in `roadmap/<arc>/`, baseline not an ancestor, unknown resource or cite, a Phase-0 entry naming something absent | fix the input the problem names |
 | `spec-lane-unrunnable` | a lane, probe or teardown command cannot run here | fix the spec or the host |
 | `unsupported-routing` | a seat's class binds an unsupported triple | fix the routing layer it names |
-| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses | undo that edit |
+| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses; also (a fresh start, or any revision touching the unit) a lane's `evidenceGlobs` entry covering its unit's scope (named with lane and entry) | undo that edit; narrow the entry to the lane's outputs |
 | `backend-smoke` | a backend's smoke failed | fix that backend's auth or sandbox |
 | `undispositioned-residue` | a residue from earlier work | `roadmap sweep`, or answer its needs-user |
 | `previous-arc-unreconciled`, `recovery-holder-dead`, `owner-mismatch`, `log-corrupt`, `containment-mode-changed` | host-level | read `status` and the needs-user; never clear host files by hand |

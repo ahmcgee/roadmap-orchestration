@@ -656,7 +656,16 @@ removes one; a plan-check redirect citing no plan contract or no ledger ruling i
 one whose patched spec adds a `spec-census-mismatch` (`specCensusMismatches`): it is not applied. Scope and resources
 are not patchable in M1.
 
-**Lane evidence** (`src/pipeline/lanes.ts`, `src/git/ignored.ts`). Each lane of a series has a dir `<series
+**Lane evidence** (`src/pipeline/lanes.ts`, `src/git/ignored.ts`). A lane's `evidenceGlobs` name the files its run
+writes (its outputs: logs, reports, coverage), never the unit's source or tests: salvage never commits a match and the
+transient check refuses one at the candidate. So the classifier, for every unit a revision adds or whose entry or spec
+it changes (every `apply`, `start`, flow apply and checkpoint bundle), a fresh start, for every unit, and a plan-check
+redirect's patch (malformed, the retry told why, as the census gate), refuse an entry that covers a pattern of the unit's scope (the plan
+entry's and the spec's): a literal scope path it matches, or the identical pattern (`evidenceScopeConflicts`,
+src/spec/spec.ts; `plan-change-refused`, one reason per lane, entry and scope pattern). A wildcard scope pattern an
+entry only overlaps (`src/**` and `src/**/*.log`) is a carve-out and allowed. A spec already in force is never refused
+for it (an older release's arc): only an edit touching its unit, which an `evidenceGlobs` edit at the current rev fixes.
+Each lane of a series has a dir `<series
 root>/<lane id>/`: `output` (its stdout and stderr), `tree` (its declared `evidenceGlobs` in the checkout, when it
 declares any), `ignored` (below) and `ignored.json`. After the lane's snapshots the executor lists the checkout's
 untracked ignored files one by one (`git ls-files --others --ignored --exclude-standard`) and keeps those whose
@@ -746,6 +755,7 @@ The rules (`PlanChange` names what each accepted change is):
 | An undispatched unit | any plan field and its spec, now | `unit-changed`, `spec{edit: undispatched}` |
 | A dispatched unit's plan entry | `spec` path, `risk`, `scope`, `resources` and a new `after`: refused; dropping an `after`: now | `unit-changed` |
 | A dispatched unit's spec | lane `evidenceGlobs`/`evidenceExcludes` only, at its rev: in force at once; rev + 1 with scope and resources unchanged: pending until it re-opens (in flight: at its next boundary whose next stage is plan-check, lanes, gate or a fresh or fix build, via `reopened`; parked at plan-check or gate: by `resume <unit>`); the recorded spec again: a pending revision withdrawn; anything else, and any edit of a merged, approved or publishing, stopped, or otherwise parked unit: refused. A revision at or below a recorded rev that the executor's own `spec.patch` set (the implementer's decisions appended at evidence, which can land while the revision is unapplied, A12) is refused naming that revision, where its bytes are kept, and the rev to set on top of it (lead ruling: no auto-rebase) | `spec{edit: evidence \| revision \| withdrawn, specRev, specSha256}` |
+| Lane evidence (M4b run 3) | any proposer (an apply, a start, a flow apply, a checkpoint bundle); a unit added, or whose entry or spec changes: no lane's `evidenceGlobs` entry covers a pattern of its scope ("Lane evidence", `evidenceScopeConflicts`); a fresh start checks every unit; a spec in force untouched by the revision is never refused | (a refusal only) |
 | Routing | re-resolved; unsupported seats refused; a newly seated backend smoked; a moved implementer seat then parks its unit `routing-changed` at its next dispatch (the mid-unit routing ruling) | `routing{routingRev}` |
 | Resource declaration | add: now; change or remove: refused while the resource is held (not free, or a transition open) or an undisposed residue names it | `resource{resource, edit: added \| changed \| removed}` |
 | Suite lanes | now (the next candidate runs them); refused while a candidate op is open or a unit is active past a candidate attempt | `suite` |
@@ -1582,7 +1592,10 @@ residues, the snapshot closure):
 7. **The transient check (G17, H15)**: `candidateRequest` builds `TransientRules` from the unit's latest dispatch
    record (`unitTransientRules`): `m3` refuses any in-tree `.roadmap/` path (`roadmap-dir`) and any path no pattern of
    the pinned scope matches (`out-of-scope`; `matchesPattern`, src/core/values.ts, as salvage matches); run-state, evidence and executor-file
-   rules apply too (M4a X0 deleted dev.5's rules: ROADMAP_ALLOWLIST, no scope check). A docs publication's diff may hold only the files it writes, matched exactly
+   rules apply too (M4a X0 deleted dev.5's rules: ROADMAP_ALLOWLIST, no scope check). A path a lane's `evidenceGlobs`
+   entry matches is `lane-evidence` and names the lane and the entry (top-level `evidence/` stays `evidence`); the fix
+   round's directive (`transientDirectives`) names them too and tells the builder to keep a path that is its own work
+   and report the mislabelled entry, never delete it (M4b run 3). Violations are not persisted. A docs publication's diff may hold only the files it writes, matched exactly
    (`docsTransientViolations`, rule `not-docs`).
 8. **Job-owned residues (G4, H4)**: a job holder reserves through a request but never takes `integration-slot`; a
    docs holder takes the slot alone. A job's teardowns, probes and lanes carry the owner label `<arc>/job/<job>`

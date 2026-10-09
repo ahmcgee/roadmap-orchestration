@@ -408,7 +408,10 @@ rejected. An edit you never apply has no effect, even after a restart.
 
 ## Lanes, witnesses and clocks
 
-- Declare `evidenceGlobs` for everything a lane script writes as evidence. Undeclared ignored output is captured
+- Declare `evidenceGlobs` for everything a lane script writes as evidence: its outputs (logs, reports, coverage),
+  never the files it reads or tests. A match is never committed and refuses the candidate, so an entry covering
+  the unit's own source or tests leaves it unmergeable; `start` and `apply` refuse an entry that matches a literal
+  scope path or equals a scope pattern. Paths a lane reads go in its `inputs`. Undeclared ignored output is captured
   only when the lane fails, capped. Add `evidenceExcludes` for anything that must never leave the checkout.
 - A lane asserts its required failure inside the script (or by `expectedExit`) and prints the failing step and
   reason on stderr before a non-zero exit: the fix round starts from stderr.

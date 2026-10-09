@@ -1,6 +1,6 @@
-// M4a rev 3 step N3, E: the plan-check shape by builder class and the in-session assessment (and, run 10 C, the census
-// gate on a redirect's patch), through the unit driver in a corpus arc (real processes, real git, fake backends;
-// test/fixtures/checks-common.ts). Named tests: plancheck.*,
+// M4a rev 3 step N3, E: the plan-check shape by builder class and the in-session assessment (and the gates on a
+// redirect's patch: run 10 C's census, M4b run 3's lane evidence), through the unit driver in a corpus arc (real
+// processes, real git, fake backends; test/fixtures/checks-common.ts). Named tests: plancheck.*,
 // build.assess-*, and the crash rows "Plan-check acceptance patch", "Plan-check in-session" and "Build assess" (labels
 // plancheck.after-witness-patch, plancheck.after-pin-in-session, build.after-assess).
 import assert from 'node:assert/strict';
@@ -147,6 +147,23 @@ describe('plan-check shape (E)', () => {
     const reason = 'unit u1\'s acceptance clause A9 names T-2, which the census puts out of slice: cite only in-slice rules';
     const a = await checksArc({
       steps: [planCheckStep({ decision: 'redirect', patch: [clause('A second berth booking is refused (T-2).')] }), planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] })],
+    });
+    const r = contextFor(a.d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+      assert.deepEqual(outcomes(a.d), ['plan-check:malformed', 'plan-check:approve']);
+      assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.rev, 1, 'nothing patched');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // M4b run 3: the same gate holds a patch to the lane-evidence rule (`evidenceScopeConflicts`).
+  test('plancheck.evidence-covers-scope-refused: a redirect adding a lane whose evidenceGlobs cover the unit\'s scope is malformed, not applied; the retry is told why', T, async () => {
+    const reason = 'unit u1 lane logs: evidenceGlobs entry `test/**` covers `test/**` of the unit\'s scope';
+    const lane = { id: 'logs', argv: ['node', '-e', '0'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: ['test/**'], evidenceExcludes: [] };
+    const a = await checksArc({
+      steps: [planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'lanes', item: lane }] }), planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] })],
     });
     const r = contextFor(a.d);
     try {

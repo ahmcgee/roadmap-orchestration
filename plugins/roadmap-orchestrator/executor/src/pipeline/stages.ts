@@ -118,7 +118,7 @@ import { type Reservation, type StageHolder, cleanup, fastLanes, heldReservation
 import { knownDefectActive } from '../schedule/ready.ts';
 import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 import { renderSpec } from '../spec/render.ts';
-import { bytesSha256 } from '../spec/spec.ts';
+import { bytesSha256, evidenceScopeConflicts } from '../spec/spec.ts';
 import { type Ruling, parseRulings } from '../spec/rulings.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../spec/patch.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -664,7 +664,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       vision: visionInput(ctx),
       // E (R59): an efficient builder's check under `by-builder` maps acceptance clauses to witness items.
       acceptance: shape === 'acceptance' ? acceptanceOf(ctx, now.spec) : null,
-      priorInvalid: planCheckPriorInvalid(ctx, unit.id, now.spec),
+      priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
     return { checkouts, rendered, target };
@@ -709,10 +709,28 @@ function censusRefusal(ctx: StageContext, before: SpecM1, after: SpecM1): string
 }
 
 /**
- * The census refusal of the unit's latest plan-check answer (`censusRefusal`), for the retry to correct: its redirect
+ * M4b run 3: a redirect's patch adds no lane `evidenceGlobs` entry covering the unit's scope, by the one predicate the
+ * classifier and a fresh start run (src/spec/spec.ts `evidenceScopeConflicts`). The conflicts `after` adds over
+ * `before` (a spec in force that already breaks it is never refused for it); null when it adds none.
+ */
+function evidenceRefusal(unit: PlanUnit, before: SpecM1, after: SpecM1): string | null {
+  const had = new Set(evidenceScopeConflicts(unit.id, [...unit.scope, ...before.scope], before));
+  const added = evidenceScopeConflicts(unit.id, [...unit.scope, ...after.scope], after).filter((r) => !had.has(r));
+  return added.length === 0 ? null : added.join('; ');
+}
+
+/** Why a redirect's patched spec `after` is not applied (`censusRefusal`, `evidenceRefusal`); null when it is. */
+function patchRefusal(ctx: StageContext, unit: PlanUnit, before: SpecM1, after: SpecM1): string | null {
+  const why = [censusRefusal(ctx, before, after), evidenceRefusal(unit, before, after)].filter((r) => r !== null);
+  return why.length === 0 ? null : why.join('; ');
+}
+
+/**
+ * The refusal of the unit's latest plan-check answer (`patchRefusal`), for the retry to correct: its redirect
  * patch re-applied to the spec it judged, still in force (a refused patch leaves the rev); null otherwise.
  */
-function planCheckPriorInvalid(ctx: StageContext, unit: UnitId, spec: SpecM1): string | null {
+function planCheckPriorInvalid(ctx: StageContext, planUnit: PlanUnit, spec: SpecM1): string | null {
+  const unit = planUnit.id;
   const spawn = judgmentSpawns(ctx, unit, 'planCheck').at(-1);
   if (spawn === undefined || spawn.parent.type !== 'stage') return null;
   const out = judgmentOutput(ctx, spawn, validatePlanCheckOutput);
@@ -726,7 +744,7 @@ function planCheckPriorInvalid(ctx: StageContext, unit: UnitId, spec: SpecM1): s
     if (error instanceof SpecPatchOpError) return null;
     throw error;
   }
-  return censusRefusal(ctx, spec, after);
+  return patchRefusal(ctx, planUnit, spec, after);
 }
 
 /**
@@ -795,8 +813,9 @@ export async function planCheckRead(
       if (error instanceof SpecPatchOpError || error instanceof SpecPatchStaleError) return done(record(ctx, parent, 'malformed'));
       throw error;
     }
-    // Run 10 (C): a patch citing an out-of-slice rule is not applied; the retry is told why (`planCheckPriorInvalid`).
-    if (censusRefusal(ctx, spec, after) !== null) return done(record(ctx, parent, 'malformed'));
+    // Run 10 (C): a patch citing an out-of-slice rule, or (M4b run 3) declaring the unit's own paths lane evidence, is not
+    // applied; the retry is told why (`planCheckPriorInvalid`).
+    if (patchRefusal(ctx, unit, spec, after) !== null) return done(record(ctx, parent, 'malformed'));
   }
   if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx, pinned, out.risk, { rev: specRev, sha256: seenSha256 });
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.

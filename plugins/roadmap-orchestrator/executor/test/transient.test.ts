@@ -1,11 +1,13 @@
 // The transient check, the diff base and the prefix-collision guard (src/git/transient.ts), through
 // planCandidate on real git: the plan's merge.transient-refusal and merge.prefix-collision, M3's H15 rules
-// (pinned-scope enforcement) and the G17 docs check.
+// (pinned-scope enforcement), the G17 docs check, and the fix directive of a refusal (M4b run 3).
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
+import { laneId } from '../src/core/ids.ts';
 import { repoPath, repoPattern } from '../src/core/values.ts';
 import { planCandidate } from '../src/git/candidate.ts';
+import { transientDirectives } from '../src/pipeline/integrate.ts';
 import { type TransientRules, diffBase, docsTransientViolations, transientViolations, unitDiffPaths } from '../src/git/transient.ts';
 import { absPath } from '../src/core/values.ts';
 import { type Scene, candidateRequest, commitOn, scene, sharedBase } from './fixtures/git8b-common.ts';
@@ -24,7 +26,6 @@ describe('transient check', () => {
     const refused = [
       ['.roadmap/state.json', 'roadmap-dir'],
       ['evidence/lane-1/stdout.txt', 'evidence'],
-      ['out/lanes/unit.txt', 'evidence'],
     ] as const;
     for (const [path, rule] of refused) {
       const unit = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n', [path]: 'transient\n' }, `unit touching ${path}\n`);
@@ -34,12 +35,21 @@ describe('transient check', () => {
       assert.deepEqual(decision.violations, [{ path, rule }]);
       assert.equal(git(s.repo, 'for-each-ref', 'refs/roadmap-run'), '', 'no candidate ref written');
     }
+    // A declared lane evidenceGlobs match names the lane and the entry.
+    const declared = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n', 'out/lanes/unit.txt': 'transient\n' }, 'unit touching lane evidence\n');
+    const refusal = planCandidate(s.repo, candidateRequest(worktree(s), declared));
+    assert.equal(refusal.kind, 'transient-violation');
+    if (refusal.kind === 'transient-violation') {
+      assert.deepEqual(refusal.violations, [{ path: 'out/lanes/unit.txt', rule: 'lane-evidence', lane: 'unit', glob: 'out/lanes' }]);
+    }
     const ok = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n' }, 'unit in its scope\n');
     assert.equal(planCandidate(s.repo, candidateRequest(worktree(s), ok)).kind, 'merge');
   });
 
   it('refuses every transient rule and passes product paths', () => {
-    const rules: TransientRules = { evidenceGlobs: [repoPattern('out/lanes'), repoPattern('**/*.lane.log')], scope: [repoPattern('**')] };
+    const rules: TransientRules = {
+      evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }, { lane: laneId('logs'), glob: repoPattern('**/*.lane.log') }], scope: [repoPattern('**')],
+    };
     const paths = [
       '.roadmap/config.json', '.roadmap/constraints.md', '.roadmap/contracts/api/v1.md', '.roadmap/debt.md', '.roadmap/invariants.md',
       '.roadmap/notes.md', '.roadmap/runtime/x', '.roadmap-runtime/arc/events.jsonl', 'a/__preview/x.png', 'a/__codex/log',
@@ -61,16 +71,16 @@ describe('transient check', () => {
       { path: 'inv/12-1/result.json', rule: 'executor-file' },
       { path: 'inv/12-1/stdout', rule: 'executor-file' },
       { path: 'lib/roadmap-runtime/y', rule: 'run-state' },
-      { path: 'out/lanes/a/b', rule: 'evidence' },
+      { path: 'out/lanes/a/b', rule: 'lane-evidence', lane: 'unit', glob: 'out/lanes' },
       { path: 'src/events.jsonl', rule: 'executor-file' },
       { path: 'src/events.torn.0.abcd1234', rule: 'executor-file' },
-      { path: 'src/x.lane.log', rule: 'evidence' },
+      { path: 'src/x.lane.log', rule: 'lane-evidence', lane: 'logs', glob: '**/*.lane.log' },
     ]);
   });
 
   it('m3 rules: the pinned scope passes, a path outside it and every .roadmap/ path are refused', () => {
     const s = scene(base, 'clean');
-    const rules: TransientRules = { evidenceGlobs: [repoPattern('out/lanes')], scope: [repoPattern('src'), repoPattern('docs/**/*.md')] };
+    const rules: TransientRules = { evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }], scope: [repoPattern('src'), repoPattern('docs/**/*.md')] };
     const inScope = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n', 'docs/guide/x.md': '# x\n' }, 'unit in scope\n');
     assert.equal(planCandidate(s.repo, { ...candidateRequest(worktree(s), inScope), rules }).kind, 'merge');
 
@@ -100,6 +110,19 @@ describe('transient check', () => {
       { path: '.roadmap/contracts/x.md', rule: 'roadmap-dir' },
       { path: 'lib/y.ts', rule: 'out-of-scope' },
     ]);
+  });
+
+  it('the fix directive names the lane and the entry of a declared-evidence path, and never tells the builder to delete its own work (M4b run 3)', () => {
+    const directives = transientDirectives([
+      { path: repoPath('lib/y.ts'), rule: 'out-of-scope' },
+      { path: repoPath('src/cli.js'), rule: 'lane-evidence', lane: laneId('confirm-order'), glob: repoPattern('src/**/*.js') },
+    ]);
+    assert.equal(directives.length, 2);
+    assert.match(directives[0]!, /: lib\/y\.ts \(out-of-scope\)\. Remove them from the branch;/);
+    assert.doesNotMatch(directives[0]!, /src\/cli\.js/);
+    assert.match(directives[1]!, /src\/cli\.js \(lane confirm-order, entry `src\/\*\*\/\*\.js`\)/);
+    assert.match(directives[1]!, /A path that is the unit's own work \(its source or tests\) is not: keep it/);
+    assert.equal(transientDirectives([{ path: repoPath('evidence/x'), rule: 'evidence' }]).length, 1);
   });
 
   it('the docs check: a docs diff is confined to its rendered .roadmap/ files and contract ops\' paths', () => {
