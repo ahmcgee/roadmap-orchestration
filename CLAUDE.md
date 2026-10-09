@@ -18,7 +18,7 @@ inside the skill address agents running an arc with it; they do not bind you her
 A change is not done until the ladder passes, in order (from `executor/`):
 
 1. `npm run typecheck`
-2. `npm test` (`node --test test/*.test.ts`, then `test/serial/*.test.ts` alone, one file at a time: the tests needing a calm host, the upgrade test and the m4a fake sessions)
+2. `npm test` (`node --test --test-concurrency=8 test/*.test.ts`: eight files at a time, since the heavy files fan out real processes and the default (cores − 1) starved the crash matrices past their caps; then `test/serial/*.test.ts` alone, one file at a time: the tests needing a calm host, the upgrade test and the m4a fake sessions)
 3. `node evals/probe.ts`: real CLIs, pennies
 4. The paid fixture (`evals/m1/`): once per merged batch, never per worktree agent
 

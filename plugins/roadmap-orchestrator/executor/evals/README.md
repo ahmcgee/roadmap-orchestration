@@ -3,7 +3,7 @@
 A change is not done until the ladder passes, in order, from `executor/`:
 
 1. `npm run typecheck`: `tsc --noEmit` over `src/`, `test/` and `evals/`.
-2. `npm test`: `node --test test/*.test.ts`, then `test/serial/*.test.ts` alone, one file at a time
+2. `npm test`: `node --test --test-concurrency=8 test/*.test.ts` (eight files at a time: the default starved the crash matrices), then `test/serial/*.test.ts` alone, one file at a time
    (`--test-concurrency=1`): the serial tier holds the tests that need a calm host, the upgrade test (its dev.5 park
    premise) and the M4a fake sessions (timing-bound against a 30-minute fake session deadline). Pure-module and
    integrated tests, fake backends only. The main tier
