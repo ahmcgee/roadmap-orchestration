@@ -351,9 +351,9 @@ node evals/m4a/adjudicate.ts /var/tmp/m4a
   and reports to the owner.
 
 Cost and time: one long root-agent session (Opus high) with about 8 Phase-0 subagents per arc; per arc a pack review
-(frontier), about 2 to 3 units at plan-check, build and gate, the vision lens of each audit and 2 to 3 checkpoints
-(summit); about 5 owner-simulator calls (frontier medium). About 35 executor upper-tier calls over the two arcs,
-subscription-billed; expect 3 to 5 hours. The adjudication is one Opus xhigh session, about 30 to 60 minutes.
+(frontier), the units at plan-check, build and gate (arc 1 about 8: guard, confirm and the six read-outs; arc 2 about 3),
+the vision lens of each audit and its checkpoint (summit; arc 1 about 5 of each); about 5 owner-simulator calls
+(frontier medium). About 60 executor upper-tier calls over the two arcs, subscription-billed; expect 4 to 6 hours. The adjudication is one Opus xhigh session, about 30 to 60 minutes.
 
 `--fake story` and `--fake vision-silent` (setup with `--vision-silent`) run the same driver with the scripted root
 agent (`fake-root.ts`), which follows the skill and replays the golden Phase-0 outputs (`golden.ts`: the curated
@@ -371,7 +371,7 @@ one between-arc commit, the forge flips to PUBLIC + ALL mid-arc (the checkpoint'
 admission is held and the checkpoint waits uncaptured until the owner restores the policy and the root agent acks);
 the next checkpoint admits `fits` as the arc's opportunity (V-7) and converts an over-budget day view into an amendment;
 the root agent pauses notice in a hung lane and resumes it (one operator-log entry), and the resumed attempt reuses the
-first lane's pass; `nextStart` refuses `limit`, and arc 3, whose Phase 0 applies the converted amendment as T-19, is refused
+first lane's pass; `nextStart` refuses `limit`, and arc 3, whose Phase 0 applies the converted amendment as T-25, is refused
 `chain-invalid{limit}` at `phase0 check` and at `start`; stop `k-limit`, every criterion passing. The story waits on
 events, never on time: arc 2's first audit waits at a fake-backend barrier until the root agent has had the run's
 `blocked` wake, and the root agent's in-turn supervision waits on `status` states. `vision-silent`: after arc 1 no
@@ -404,20 +404,32 @@ the soak rule (`issue-declined`). Four criteria (15 → 19) read the frozen M4b 
 the seed argv and every in-force argv of the plant lane, about 6 + 1 minutes on the paid host. Fail-fast: the driver
 ends the run `fail-fast` once arc 1's first plan in force has no suite lane whose argv carries `--test-concurrency=1` and
 `test/unit/*.test.js` as elements of their own (`plantLaneOf`; `npm test` or `sh -c` hides the argv from an in-place
-edit, RC-4). The paid session cap is 420 minutes (360 before M4b): each serial suite run costs about 6 minutes until the
-flow change applies, the proof about 7, and the soak arc lane a minute per run; the lane stall watchdog (10 minutes
+edit, RC-4), or has fewer than six units (`MIN_ARC1_UNITS`: a conclusive verdict reads three suite runs before the flow
+change and three after it, one per integration).
+
+Arc 1's size. The trigger that starts the first flow run needs three merged units and a unit still to flow (OI-1), and
+the verdict needs three suite runs on each side of the applied change within the arc, so arc 1 needs at least six
+integrations and, since a unit or two may integrate while the run is decided and its proof runs (new candidates wait
+only once the proposal is accepted), about eight. The bookings page therefore asks, inside the evening-tide slice (V-4,
+free berths also V-2), for six read-outs, each one function in a module of its own with its own test file and no
+shared edit surface (golden.ts `READOUTS`, T-17..T-22): the quay sheet, free berths, the window note, a vessel's
+schedule, the booking slip and the next window. With guard and confirm that is eight units, which the fake plans too.
+
+The paid session cap is 420 minutes (360 before M4b): each serial suite run costs about 6 minutes until the flow change
+applies (about 3 to 5 of them in arc 1), the proof about 7, and the soak arc lane a minute per run; the lane stall watchdog (10 minutes
 without output, CPU or a process start) never fires on a serial run, which prints as each file ends.
 
 The fake story works the loop in arc 1 (`setup --fake-pace` sets the pace to 50 ms a tick, so the suite takes seconds;
 nothing else differs): the root agent starts arc 1 behind `run-only guard confirm quay-list`; on the `blocked` wake it requests two flow
 runs in its turn (the second is the cooldown's one bypass, RC-5), accepts the bait (the witness-lane fake
 `journeys/replay.js` at six files a time: its proof is `changed`, refused) and the plant lane at six files a time
-(`preserved`, applied), then lifts the limit, so the story-only `free-berths`, `window-note` and `berth-depth` are the
-verdict window's three suite runs (a verdict reads three a side; confirm's smoke fix round stays before it, so the rework
-guard holds) and the verdict at completion is `improved`. Arc 2 carries arc 1's suite lanes and requests one
-flow run at its start, whose cooldown covers the arc; it rejects that run's build-class step on the item's wake.
-`vision-silent` is unchanged (its arc 1 has no flow run and no extra unit). The
-flow calls are fake judgment steps keyed by job id (`flow-<n>`), checked by the frozen FLOW_SCHEMA reader.
+(`preserved`, applied), then lifts the limit, so the other five read-outs are the verdict window's suite runs (a
+verdict reads three a side; confirm's smoke fix round stays before it, so the rework guard holds) and the verdict at
+completion is `improved`. Arc 2 carries arc 1's suite lanes and requests one flow run at its start, whose cooldown
+covers the arc; it rejects that run's build-class step on the item's wake. `vision-silent` plans the same eight arc-1
+units behind the same limit; on the `blocked` wake it waits for the third merge's constraint-shift run, whose fake
+answer is noAction, then lifts the limit. The flow calls are fake judgment steps keyed by job id (`flow-<n>`), checked
+by the frozen FLOW_SCHEMA reader.
 
 `NOT EXERCISED` by the paid run (each has a fake integrated test): other-repo and checkout corpus sources,
 `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n, the

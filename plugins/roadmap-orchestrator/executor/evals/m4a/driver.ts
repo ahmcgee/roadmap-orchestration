@@ -62,9 +62,10 @@
 //
 // Fail-fast (M4b, plan "Fixture … the two plants"): plant S is in play only when arc 1's first plan in force has a suite
 // lane whose argv carries `--test-concurrency=1` and `test/unit/*.test.js` as elements (`plantLaneOf`; an `npm test` or a
-// `sh -c` lane cannot be edited in place, RC-4). The driver checks it from the live run dirs every owner poll and after
-// every turn; once arc 1 has a plan in force without it, it kills the turn and ends the run `fail-fast` (the run would
-// cost hours and grade nothing of M4b). The owner simulator declines dropping the soak test (plant G) from the key.
+// `sh -c` lane cannot be edited in place, RC-4), and that plan has at least MIN_ARC1_UNITS units (a conclusive verdict
+// reads MIN_VERDICT_SAMPLES suite runs before the flow change and as many after it, one per integration). The driver
+// checks it from the live run dirs every owner poll and after every turn; once arc 1 has a plan in force failing either,
+// it kills the turn and ends the run `fail-fast` (the run would cost hours and grade nothing of M4b). The owner simulator declines dropping the soak test (plant G) from the key.
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
@@ -81,6 +82,7 @@ import { readJournal } from '../../src/core/log.ts';
 import type { LaneDef } from '../../src/core/records.ts';
 import { PLAN_INPUT, keptInput } from '../../src/input/inforce.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
+import { MIN_VERDICT_SAMPLES } from '../../src/flow/types.ts';
 import { ActionableFilter, HEARTBEAT_MIN } from '../../src/watch.ts';
 import { absPath, type AbsPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
@@ -394,7 +396,7 @@ export type Devices = {
 
 /**
  * `timeout`: the session cap passed between turns; `turn-timeout`: a turn was killed at its cap (never `session-failed`);
- * `fail-fast`: arc 1's first plan in force has no plant lane (M4b), so the turn was killed.
+ * `fail-fast`: arc 1's first plan in force has no plant lane or too few units (M4b), so the turn was killed.
  */
 export type EndedBy = 'stopped' | 'timeout' | 'turn-timeout' | 'stalled' | 'session-failed' | 'fail-fast';
 
@@ -601,7 +603,7 @@ export function prepareFake(l: Layout, script: FakeScript): void {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The fail-fast (M4b plant S)
+// The fail-fast (M4b plant S, arc 1's unit floor)
 
 /**
  * Plant S's suite lane of `plan`: the first suite lane whose argv holds `--test-concurrency=1` and `test/unit/*.test.js`
@@ -611,13 +613,30 @@ export function plantLaneOf(plan: PlanM1): LaneDef | null {
   return plan.suite.lanes.find((x) => x.argv.includes(PLANT.serial) && x.argv.includes(PLANT.selector)) ?? null;
 }
 
-/** The plant's state: arc 1 has no plan in force yet; its first plan carries the plant lane; or it does not (fail fast). */
+/** The fewest units arc 1's first plan may have: a verdict's suite runs before the flow change and after it, one per integration. */
+export const MIN_ARC1_UNITS = 2 * MIN_VERDICT_SAMPLES;
+
+/**
+ * The plant's state: arc 1 has no plan in force yet; its first plan carries the plant lane and enough units; or it lacks
+ * the plant lane, or has too few units (either fails fast).
+ */
 export type PlantCheck =
   | Readonly<{ kind: 'pending' }>
-  | Readonly<{ kind: 'in-play'; arc: string; lane: string }>
-  | Readonly<{ kind: 'absent'; arc: string; lanes: readonly Readonly<{ id: string; argv: readonly string[] }>[] }>;
+  | Readonly<{ kind: 'in-play'; arc: string; lane: string; units: number }>
+  | Readonly<{ kind: 'absent'; arc: string; lanes: readonly Readonly<{ id: string; argv: readonly string[] }>[] }>
+  | Readonly<{ kind: 'too-few-units'; arc: string; units: readonly string[] }>;
+export type PlantFailure = Extract<PlantCheck, { kind: 'absent' | 'too-few-units' }>;
+export const plantFails = (c: PlantCheck): c is PlantFailure => c.kind === 'absent' || c.kind === 'too-few-units';
 
-/** Arc 1's first plan in force (the unchained arc's first `plan-applied`, kept in its run dir) against `plantLaneOf`. */
+/** Arc `arc`'s first plan in force against the plant lane and the unit floor. */
+export function firstPlanCheck(arc: string, plan: PlanM1): Exclude<PlantCheck, { kind: 'pending' }> {
+  const lane = plantLaneOf(plan);
+  if (lane === null) return { kind: 'absent', arc, lanes: plan.suite.lanes.map((x) => ({ id: x.id, argv: x.argv })) };
+  if (plan.units.length < MIN_ARC1_UNITS) return { kind: 'too-few-units', arc, units: plan.units.map((u) => u.id) };
+  return { kind: 'in-play', arc, lane: lane.id, units: plan.units.length };
+}
+
+/** Arc 1's first plan in force (the unchained arc's first `plan-applied`, kept in its run dir) against `firstPlanCheck`. */
 export function plantCheck(product: AbsPath): PlantCheck {
   for (const a of runDirs(product)) {
     if (!existsSync(join(a.dir, 'events.jsonl'))) continue;
@@ -627,15 +646,18 @@ export function plantCheck(product: AbsPath): PlantCheck {
     if (bytes === null) throw new Error(`${a.arc}: its first plan-applied names ${first.fact.planSha256}.${PLAN_INPUT}, which its run dir does not keep`);
     const plan = parsePlan(JSON.parse(bytes.toString('utf8')));
     if (plan.chain !== undefined) continue;
-    const lane = plantLaneOf(plan);
-    return lane === null ? { kind: 'absent', arc: a.arc, lanes: plan.suite.lanes.map((x) => ({ id: x.id, argv: x.argv })) } : { kind: 'in-play', arc: a.arc, lane: lane.id };
+    return firstPlanCheck(a.arc, plan);
   }
   return { kind: 'pending' };
 }
 
 /** The fail-fast's failure text. */
-export const plantAbsent = (c: Extract<PlantCheck, { kind: 'absent' }>): string =>
-  `fail-fast: arc ${c.arc}'s first plan in force has no suite lane whose argv carries ${PLANT.serial} over ${PLANT.selector} (suite lanes ${JSON.stringify(c.lanes)}): plant S is not in play`;
+export function failFastText(c: PlantFailure): string {
+  if (c.kind === 'absent') {
+    return `fail-fast: arc ${c.arc}'s first plan in force has no suite lane whose argv carries ${PLANT.serial} over ${PLANT.selector} (suite lanes ${JSON.stringify(c.lanes)}): plant S is not in play`;
+  }
+  return `fail-fast: arc ${c.arc}'s first plan in force has ${c.units.length} units (${c.units.join(', ')}), fewer than ${MIN_ARC1_UNITS}: too few suite runs for a conclusive flow verdict (${MIN_VERDICT_SAMPLES} before the change and ${MIN_VERDICT_SAMPLES} after)`;
+}
 
 // ---------------------------------------------------------------------------------------------------
 // The end of the run: release the host, then the forensics
@@ -745,7 +767,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
   let released: readonly Released[] = [];
   const sessionEnd = new Map<string, number>();
   const product = absPath(l.product);
-  // The fail-fast (M4b plant S): checked until arc 1's first plan in force is known, then never again.
+  // The fail-fast (M4b plant S and arc 1's unit floor): checked until arc 1's first plan in force is known, then never again.
   const plant: { now: PlantCheck } = { now: { kind: 'pending' } };
   const checkPlant = (): void => {
     if (plant.now.kind === 'pending') plant.now = plantCheck(product);
@@ -755,7 +777,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
       const t0 = Date.now();
       const abort = new AbortController();
       // The owner answers from the brief while the turn runs (one poll at a time, none queued; a failure fails the session
-      // after the turn); each poll also runs the fail-fast, which kills the turn when the plant is absent.
+      // after the turn); each poll also runs the fail-fast, which kills the turn when the plant is absent or arc 1 too small.
       let polling: Promise<void> = Promise.resolve();
       let pollFailure: unknown = null;
       let inFlight = false;
@@ -764,7 +786,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
         inFlight = true;
         polling = answerFromBrief(ownerCtx, memory, owner, n).then(() => {
           checkPlant();
-          if (plant.now.kind === 'absent') abort.abort();
+          if (plantFails(plant.now)) abort.abort();
         }).catch((error: unknown) => void (pollFailure = error)).finally(() => void (inFlight = false));
       }, ANSWER_POLL_MS[mode.kind]);
       const r = await runTurn(l, mode, env, n, session, prompt, Math.min(deadline, t0 + limits.turnMs), abort.signal).finally(() => clearInterval(poller));
@@ -773,9 +795,9 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
       if (pollFailure !== null) throw pollFailure;
       session = r.session;
       checkPlant();
-      if (plant.now.kind === 'absent') {
+      if (plantFails(plant.now)) {
         endedBy = 'fail-fast';
-        failure = plantAbsent(plant.now);
+        failure = failFastText(plant.now);
         break;
       }
       if (r.isolation !== null) {

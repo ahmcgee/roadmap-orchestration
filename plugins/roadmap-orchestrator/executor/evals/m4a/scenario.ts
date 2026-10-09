@@ -13,7 +13,8 @@
 //           leaves the test (the behaviour predates the unit), then the gate approves with the survivor in its checks
 //           and a note (gate-note debt). audit-1's vision lens opens a P3 with no obligation; ckpt-1 defers it
 //           (finding-deferred debt), proposes an amendment (T-11: confirm cancellations by text) and takes in both
-//           issues (#1 none, #2 an amendment). Then the final audit and its checkpoint, no-op.
+//           issues (#1 none, #2 an amendment). Then the six read-outs (one module each: plan-check, build, gate), with
+//           audit-2..audit-5 and their checkpoints, no-op, the last the final one.
 //   arc 2   review-1 waits at the `policy-flip` barrier until the driver has flipped the forge to PUBLIC + ALL (the
 //           mid-arc flip, OR-L6); then cutoff builds; audit-1 waits at the `blocked-seen` barrier until the root agent
 //           has had the run's blocked wake (notice behind the run-only limit), so its checkpoint capture's blocking
@@ -23,16 +24,17 @@
 //           every unit; then notice builds (the root agent pauses it in its hung `slow` lane and resumes it), audit-3
 //           and ckpt-3, fits builds after notice, audit-4 (cadence and final) and ckpt-4.
 //
-// M4b (the flow loop; `story` only, so `vision-silent` is unchanged): every checkpoint also takes in issue #4 (drop the
-// soak test: none, T-16). Arc 1 adds `quay-list`, `free-berths`, `window-note` and `berth-depth` after confirm, and two
-// flow runs the root agent requests while run-only holds every unit after quay-list (the second the cooldown's one bypass,
-// RC-5; three suite runs before the change, confirm's smoke fix round among them, outside the rework guard's window):
-// flow-1 proposes the
-// bait, the witness-lane fake `replay` at `--test-concurrency=6` (accepted; its proof is `changed`); flow-2 the plant lane
-// `suite` at six files a time (accepted; proof `preserved`, applied, then free-berths, window-note and berth-depth are
-// its verdict window's three suite runs; the publications owe audit-3, ckpt-3, audit-4 and ckpt-4). Arc 2 carries arc 1's suite lanes; the
-// root agent requests one flow run right after the start (flow-1: a build-class step it rejects on its item's wake), so
-// its cooldown covers the arc. The flow calls are judgment steps keyed by job id (`flow-<n>`), each answer checked by the frozen reader (FLOW_SCHEMA).
+// M4b (the flow loop): every checkpoint also takes in issue #4 (drop the soak test: none, T-16). Arc 1, in both scripts,
+// has the six read-outs after confirm (golden.ts `READOUTS`, one unit each), and run-only holds every unit after
+// quay-list until the flow loop has run (three suite runs before the change, confirm's smoke fix round among them,
+// outside the rework guard's window). `story`: two flow runs the root agent requests (the second the cooldown's one
+// bypass, RC-5): flow-1 proposes the bait, the witness-lane fake `replay` at `--test-concurrency=6` (accepted; its proof
+// is `changed`); flow-2 the plant lane `suite` at six files a time (accepted; proof `preserved`, applied, then the other
+// five read-outs are its verdict window's suite runs). `vision-silent`: the third merge's constraint-shift run, flow-1,
+// answers noAction. Arc 1's eight publications owe audit-1..audit-5, each with its checkpoint. Arc 2 carries arc 1's
+// suite lanes; the root agent requests one flow run right after the start (flow-1: a build-class step it rejects on its
+// item's wake), so its cooldown covers the arc. The flow calls are judgment steps keyed by job id (`flow-<n>`), each
+// answer checked by the frozen reader (FLOW_SCHEMA).
 import type { JsonValue } from '../../src/core/json.ts';
 import { ASSESSED_DIRECTIVE } from '../../src/prompts/directives.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
@@ -40,7 +42,7 @@ import { validateFlowOutput } from '../../src/prompts/schemas.ts';
 import { admitSpecWire, checkpointAnswer, checkpointStep, intakeOutcome, lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
 import type { ClaudeAct, Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
-import { FILES, LANES, OPPORTUNITY, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
+import { FILES, LANES, OPPORTUNITY, READOUTS, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
 import type { FakeScript } from './fake-root.ts';
 import { PLANT } from './layout.ts';
 import { join } from 'node:path';
@@ -66,7 +68,7 @@ const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({
 export const GATE_NOTE = 'The confirmation text signs off as "Tidewater" where the harbour\'s own name would read better to a skipper.';
 /** The lens P3 ckpt-1 defers: banked as `finding-deferred` debt, which arc 2 promotes to `notice`. */
 export const DEFERRED_CLAIM = '`cancel` leaves the skipper nothing to keep: unlike a booking, a cancellation sends no text.';
-/** ckpt-1's proposed amendment (source checkpoint), applied in arc 2 as T-18. */
+/** ckpt-1's proposed amendment (source checkpoint), applied in arc 2 as T-24. */
 export const CHECKPOINT_AMENDMENT = { rules: ['T-11'], proposal: 'Add a rule: a cancellation is confirmed to the skipper by text message, as a booking is.', why: 'V-5 asks that a cancellation be as clear to the skipper as a booking; only bookings are confirmed today.' } as const;
 /** ckpt-1's intake amendment of issue #2 (source issue), deferred in arc 2. */
 export const ISSUE_AMENDMENT = { rules: ['T-5'], proposal: 'Windows list the high-water height from the printed table beside each time.' } as const;
@@ -89,13 +91,10 @@ const M1_UNITS_1: Readonly<Record<string, readonly M1Step[]>> = {
   ],
 };
 
-/** Story only (golden.ts `storyOnly`): arc 1's units admitted after the flow revision. */
-const M1_STORY_1: Readonly<Record<string, readonly M1Step[]>> = {
-  'quay-list': [planCheck('The spec adds the quay sheet line; one new module.'), build('quay-list: the quay sheet line of a booking', 'quay-list'), gate('A1 holds.')],
-  'free-berths': [planCheck('The spec lists the berths free for a window; one new module over the ledger.'), build('free-berths: the berths free for a window', 'free-berths'), gate('A1 holds.')],
-  'window-note': [planCheck('The spec adds the one-line note of a window; one new module.'), build('window-note: the one-line note of a tide window', 'window-note'), gate('A1 holds.')],
-  'berth-depth': [planCheck('The spec adds the depth line of a berth; one new module.'), build('berth-depth: the depth line of a berth', 'berth-depth'), gate('A1 holds.')],
-};
+/** Arc 1's read-outs (golden.ts `READOUTS`): one new module each, plan-checked, built and gated. */
+const M1_READOUTS: Readonly<Record<string, readonly M1Step[]>> = Object.fromEntries(READOUTS.map((r) => [r.unit, [
+  planCheck(`The spec adds ${r.module} and its test, one new module (${r.rule}).`), build(`${r.unit}: ${r.text}`, r.unit), gate('A1 holds.'),
+]]));
 
 const IMPLEMENTER = ['-p', '--permission-mode', 'bypassPermissions'];
 const report = (summary: string): ClaudeAct => ({ type: 'emit', value: { summary, changedPaths: [], lanesRun: [], blockers: [], experiments: [] } });
@@ -122,8 +121,8 @@ const CONFIRM: readonly Step[] = ([
 ] satisfies Step[]).map((s): Step => ({ ...s, unit: 'confirm' }));
 
 const UNITS_2: Readonly<Record<string, readonly M1Step[]>> = {
-  cutoff: [planCheck('The spec closes cancellations 48 hours before the window opens (T-17).'), build('cutoff: cancellations close 48 hours before the window', 'cutoff'), gate('A1, A2 and A3 hold.')],
-  notice: [planCheck('The spec texts the skipper on a cancellation (T-18).'), build('notice: text the skipper when a booking is cancelled', 'notice'), gate('A1, A2 and A3 hold.')],
+  cutoff: [planCheck('The spec closes cancellations 48 hours before the window opens (T-23).'), build('cutoff: cancellations close 48 hours before the window', 'cutoff'), gate('A1, A2 and A3 hold.')],
+  notice: [planCheck('The spec texts the skipper on a cancellation (T-24).'), build('notice: text the skipper when a booking is cancelled', 'notice'), gate('A1, A2 and A3 hold.')],
   fits: [planCheck('The spec lists the berths a draught fits (V-7), within the register.'), build('fits: the berths a draught fits', 'fits'), gate('A1 holds.')],
 };
 
@@ -161,6 +160,10 @@ const JOBS_1: readonly Step[] = [
   })),
   lensStep('audit-2', 'vision'),
   checkpointStep('ckpt-2', NO_OP_1),
+  // The read-outs' publications owe three more cadence audits, the last the final one.
+  lensStep('audit-3', 'vision'), checkpointStep('ckpt-3', NO_OP_1),
+  lensStep('audit-4', 'vision'), checkpointStep('ckpt-4', NO_OP_1),
+  lensStep('audit-5', 'vision'), checkpointStep('ckpt-5', NO_OP_1),
 ];
 
 const NO_OP_2 = checkpointAnswer({ decision: 'no-op', issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1') });
@@ -191,7 +194,7 @@ const JOBS_2: readonly Step[] = [
 ];
 
 // ---------------------------------------------------------------------------------------------------
-// The flow runs (M4b, story only)
+// The flow runs (M4b)
 
 /** A flow call of job `job` (a `flow-n`) answers `answer`, checked by the frozen reader so the fake never emits what the executor could not be given. */
 function flowStep(job: string, answer: JsonValue): Step {
@@ -252,6 +255,14 @@ export const FLOW_2 = {
   },
 } as const;
 
+/** `vision-silent`'s one flow run (arc 1's third merge, constraint-shift): nothing to change. */
+export const VISION_SILENT_FLOW: JsonValue = {
+  constraint: { station: SLOT, agree: true, reason: 'the integration slot is the largest station' },
+  diagnosis: 'three merges are too few to tell the slot\'s suite time from noise.',
+  proposal: null,
+  noAction: 'Three merges so far: wait for more before changing the suite gate.',
+};
+
 /** The fake backend steps of arc `n` (1 or 2) under `profile` for `script`: the start's smoke, the units' calls, the jobs'. */
 export function arcSteps(n: 1 | 2, profile: ProfileName, script: FakeScript): readonly Step[] {
   const smoke = fakeSteps({ steps: [] }, profile);
@@ -259,9 +270,6 @@ export function arcSteps(n: 1 | 2, profile: ProfileName, script: FakeScript): re
     Object.entries(units).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
   const story = script === 'story';
   if (n === 2) return [...smoke, ...m1(UNITS_2), ...JOBS_2, ...(story ? [flowStep(FLOW_2.buildClass.job, FLOW_2.buildClass.answer)] : [])];
-  const flow = Object.values(FLOW_1).map((f) => flowStep(f.job, f.answer));
-  // The story's four extra publications owe two more cadence audits (audit-3 on free-berths' head, audit-4 on
-  // berth-depth's, the final one), each with its checkpoint.
-  const extraJobs = [lensStep('audit-3', 'vision'), checkpointStep('ckpt-3', NO_OP_1), lensStep('audit-4', 'vision'), checkpointStep('ckpt-4', NO_OP_1)];
-  return [...smoke, ...m1(M1_UNITS_1), ...(story ? m1(M1_STORY_1) : []), ...CONFIRM, ...JOBS_1, ...(story ? [...flow, ...extraJobs] : [])];
+  const flow = story ? Object.values(FLOW_1).map((f) => flowStep(f.job, f.answer)) : [flowStep('flow-1', VISION_SILENT_FLOW)];
+  return [...smoke, ...m1(M1_UNITS_1), ...m1(M1_READOUTS), ...CONFIRM, ...JOBS_1, ...flow];
 }

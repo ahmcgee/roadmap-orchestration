@@ -23,16 +23,18 @@
 //                    ack, wait in turn (status) for the bundle's drift checkpoint, lift run-only, wait for notice's
 //                    hung `slow` lane and pause notice; `run: held` (with the bundle's divergence digest): resume
 //                    notice and log the intervention (OP-1); after arc 2, `nextStart` refuses `limit`: the fixture
-//                    still composes arc 3 (applying arc 2's converted admit as T-19) and shows `phase0 check` and
+//                    still composes arc 3 (applying arc 2's converted admit as T-25) and shows `phase0 check` and
 //                    `start` refuse it `chain-invalid{limit}`, then stops `k-limit`
 //     vision-silent  after arc 1, a draft of arc 2 whose `phase0 check` reports no slice candidate: stops `vision-silent`
 //   any other wake (a unit merged while the run runs: its timing is the backends') needs nothing: "Nothing for me"
 //
-// M4b (story only; vision-silent is unchanged): arc 1 starts behind `run-only guard confirm quay-list`, so on its
-// `run: blocked` wake (the three merged, everything else held) the root agent works the flow loop in its turn (`flowLoop`): two `flow request`s (the
-// second the cooldown's one bypass), each run's proposal accepted (the replay bait, its proof `changed`; the plant lane at
-// six files a time, proof `preserved`, applied), then `run-only --clear`, so free-berths, window-note and berth-depth
-// are the revision's verdict window; at arc 1's completion it reads the verdict. Arc 2's plan carries arc 1's suite lanes as they
+// M4b: in both scripts arc 1 (guard, confirm and the six read-outs) starts behind `run-only guard confirm quay-list`, so
+// on its `run: blocked` wake (the three merged, everything else held) the root agent works the flow loop in its turn.
+// `story` (`flowLoop`): two `flow request`s (the second the cooldown's one bypass), each run's proposal accepted (the
+// replay bait, its proof `changed`; the plant lane at six files a time, proof `preserved`, applied), then `run-only
+// --clear`, so the other five read-outs are the revision's verdict window; at arc 1's completion it reads the verdict.
+// `vision-silent` (`flowNoAction`): it waits for the third merge's constraint-shift run to end with no proposal, then
+// lifts the limit. Arc 2's plan carries arc 1's suite lanes as they
 // ended; the root agent requests one flow run right after arc 2's start and rejects its build-class proposal on the
 // item's wake. The scripted root agent waits on the journal's frozen flow facts (`untilFact`).
 //
@@ -290,10 +292,10 @@ function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline
   const ref = readArcRef(absPath(l.product), arcId(previous.arc));
   if (ref === null) throw new Error(`no ref for ${previous.arc}`);
   const amendments = amendmentsOf(ref).map((a) => {
-    // Arc 2 applies arc 1's checkpoint amendment as T-18; arc 3 applies arc 2's converted day-view admit as T-19.
+    // Arc 2 applies arc 1's checkpoint amendment as T-24; arc 3 applies arc 2's converted day-view admit as T-25.
     const fromCheckpoint = n === 2 && a.fact.source.type === 'checkpoint' && a.fact.proposal === CHECKPOINT_AMENDMENT.proposal;
     const fromAdmit = n === 3 && a.fact.source.type === 'admit';
-    if (fromCheckpoint || fromAdmit) return { id: a.id, disposition: { type: 'applied', rules: [fromCheckpoint ? 'T-18' : 'T-19'] } };
+    if (fromCheckpoint || fromAdmit) return { id: a.id, disposition: { type: 'applied', rules: [fromCheckpoint ? 'T-24' : 'T-25'] } };
     return { id: a.id, disposition: { type: 'deferred', reason: 'the high-water heights wait for the visiting-yacht scene (V-7)' } };
   });
   const debtMd = c.t.git('show', `${baseline}:.roadmap/debt.md`);
@@ -315,7 +317,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
   const pinOut = JSON.parse(c.t.roadmap(['corpus', 'pin', '--repo', l.product, '--commit', baseline, '--baseline', baseline, '--out', join(inputs, 'corpus.json')])) as { pin: Pin };
   const captured = JSON.parse(c.t.roadmap(['issues', '--repo', l.product, '--out', join(inputs, 'issues.json')])) as { sha256: string };
   const capture = JSON.parse(readFileSync(join(inputs, 'issues.json'), 'utf8')) as { issues: readonly { id: string }[] };
-  const units = opts.draft === undefined ? unitsOf(n, c.state.script) : UNITS.filter((u) => u.id === 'dayview');
+  const units = opts.draft === undefined ? unitsOf(n) : UNITS.filter((u) => u.id === 'dayview');
   const obligationsN: ArcNo = opts.draft === undefined ? n : 1;
   const obligations = obligationsOf(obligationsN, pinOut.pin);
   if (opts.draft !== undefined) {
@@ -346,7 +348,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
   const slice = opts.draft === 'vision-silent' ? { advances: ['V-4'], why: 'a draft: nothing left to advance' } : SLICES[n];
   writeFile(join(inputs, 'phase0.json'), json({
     schema: 'roadmap/phase0-m4',
-    curation: n === 1 ? ARC1_CURATION : [{ tier: 'structural', what: n === 2 ? 'applied arc-1/M-1 as T-18; T-17 replaces T-9 per the owner\'s answer to P-1' : 'added the harbour master\'s day view as T-19', files: n === 2 ? ['0030_Bookings.md', '0040_Notifications.md'] : ['0060_Operations.md'], rules: n === 2 ? ['T-17', 'T-18'] : ['T-19'] }],
+    curation: n === 1 ? ARC1_CURATION : [{ tier: 'structural', what: n === 2 ? 'applied arc-1/M-1 as T-24; T-23 replaces T-9 per the owner\'s answer to P-1' : 'added the harbour master\'s day view as T-25', files: n === 2 ? ['0030_Bookings.md', '0040_Notifications.md'] : ['0060_Operations.md'], rules: n === 2 ? ['T-23', 'T-24'] : ['T-25'] }],
     corpusDivergences: n === 1 ? [{ tier: 'semantic', what: 'removed the busy-week override that let the harbour master double-book a berth: V-2 says never', preimage, cites: ['V-2'], rules: ['T-7'] }] : [],
     questions: opts.draft === 'vision-silent' ? [{ ...ARC1_QUESTION, state: { type: 'open' } }] : [question],
     debt, amendments,
@@ -417,7 +419,7 @@ function bootstrapArc1(c: Ctx, k: string): ArcState {
   writeCorpus(c, 1);
   cpSync(join(FILES, 'golden', 'journeys'), join(l.product, 'journeys'), { recursive: true });
   c.t.git('add', '--all');
-  c.t.git('commit', '--quiet', '-m', 'bootstrap: K, the curated corpus (rules T-1..T-16) and the journeys');
+  c.t.git('commit', '--quiet', '-m', 'bootstrap: K, the curated corpus (rules T-1..T-22) and the journeys');
   const a = composeArc(c, 1, c.t.git('rev-parse', 'HEAD'));
   phase0Check(c, a);
   return a;
@@ -437,11 +439,9 @@ function bootstrap(c: Ctx, answer: string): string {
   if (k === undefined) throw new Error(`the owner's answer names no K: ${answer}`);
   const a = bootstrapArc1(c, k);
   c.state.arcs.push(a);
-  if (c.state.script === 'story') {
-    // M4b: three units run before the flow loop decides (`flowLoop`), three after it: a verdict needs three a side.
-    mkdirSync(join(layout(c.dir).product, '.git', 'roadmap-runtime', a.arc), { recursive: true });
-    c.t.roadmap(['run-only', 'guard', 'confirm', 'quay-list', '--repo', layout(c.dir).product, '--arc', a.arc]);
-  }
+  // M4b: three units run before the flow loop decides (`flowLoop`, `flowNoAction`), five after it: a verdict needs three a side.
+  mkdirSync(join(layout(c.dir).product, '.git', 'roadmap-runtime', a.arc), { recursive: true });
+  c.t.roadmap(['run-only', 'guard', 'confirm', 'quay-list', '--repo', layout(c.dir).product, '--arc', a.arc]);
   start(c, a);
   c.state.phase = 'running';
   return RUNNING(a);
@@ -476,7 +476,7 @@ function onWake(c: Ctx, prompt: string): string {
       c.state.packFixed = true;
       return `The pack review's blocking finding on guard was right: guard's spec now says a refused booking writes nothing (rev 2), applied; the changed pack is reviewed again. ${RUNNING(current)}`;
     }
-    if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && c.state.script === 'story' && !c.state.flowDone) return flowLoop(c, current);
+    if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && !c.state.flowDone) return c.state.script === 'story' ? flowLoop(c, current) : flowNoAction(c, current);
     if (w.event === 'units' && w.run === 'blocked' && current.n === 2 && !c.state.blockedSeen) {
       // cutoff merged and notice waits behind the run-only limit, as intended: nothing to do. The fixture's audit of
       // cutoff waits for this wake (scenario.ts BLOCKED_SEEN_BARRIER), so its checkpoint's item is a wake of its own
@@ -510,14 +510,13 @@ function onWake(c: Ctx, prompt: string): string {
 /**
  * M4b, story arc 1's blocked wake: guard, confirm and quay-list merged and run-only holds the rest. Two flow runs on request (the second the
  * cooldown's one bypass, RC-5), each proposal accepted as `FLOW_1` scripts it, each step waiting on the journal's flow
- * facts: the bait's proof is `changed` (refused), the plant lane's `preserved` (applied). Then the limit goes, so
- * free-berths, window-note and berth-depth are admitted after the revision.
+ * facts: the bait's proof is `changed` (refused), the plant lane's `preserved` (applied). Then the limit goes, so the
+ * other five read-outs are admitted after the revision.
  */
 function flowLoop(c: Ctx, a: ArcState): string {
   const l = layout(c.dir);
   const at = ['--repo', l.product, '--arc', a.arc];
-  const s = JSON.parse(c.t.roadmap(['status', ...at])) as Status;
-  if (unitOf(s, 'quay-list').state !== 'merged' || unitOf(s, 'free-berths').state !== 'awaiting-admission') throw new Error(`blocked, but not with quay-list merged and free-berths behind run-only: ${JSON.stringify(s.units)}`);
+  assertHeldAfterQuay(c, a);
   const done: string[] = [];
   for (const f of [FLOW_1.bait, FLOW_1.shard]) {
     c.t.roadmap(['flow', 'request', '--reason', f.request, ...at]);
@@ -531,6 +530,25 @@ function flowLoop(c: Ctx, a: ArcState): string {
   c.t.roadmap(['run-only', '--clear', ...at]);
   c.state.flowDone = true;
   return `guard, confirm and quay-list merged; the flow loop decided while the rest waited: ${done.join('; ')}. I lifted the run-only limit. ${RUNNING(a)}`;
+}
+
+/** The blocked wake's premise: quay-list merged, the next read-out behind run-only. */
+function assertHeldAfterQuay(c: Ctx, a: ArcState): void {
+  const s = JSON.parse(c.t.roadmap(['status', '--repo', layout(c.dir).product, '--arc', a.arc])) as Status;
+  if (unitOf(s, 'quay-list').state !== 'merged' || unitOf(s, 'free-berths').state !== 'awaiting-admission') throw new Error(`blocked, but not with quay-list merged and free-berths behind run-only: ${JSON.stringify(s.units)}`);
+}
+
+/**
+ * M4b, vision-silent arc 1's blocked wake: the third merge's constraint-shift run (flow-1) starts once no holistic job
+ * runs, whatever the timing (the held units keep work remaining); it answers noAction, and the root agent lifts the limit.
+ */
+function flowNoAction(c: Ctx, a: ArcState): string {
+  assertHeldAfterQuay(c, a);
+  const ended = c.t.untilFact(a.arc, 'flow-1 ended', (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === 'flow-1'));
+  if (ended.outcome !== 'done' || ended.proposal !== null) throw new Error(`vision-silent: flow-1 should end done with no proposal: ${JSON.stringify(ended)}`);
+  c.t.roadmap(['run-only', '--clear', '--repo', layout(c.dir).product, '--arc', a.arc]);
+  c.state.flowDone = true;
+  return `guard, confirm and quay-list merged; the flow run found nothing to change yet. I lifted the run-only limit. ${RUNNING(a)}`;
 }
 
 /** The proposal flow run `job` of arc `a` ended with (waiting on the journal); fails loud on any other end. */
@@ -623,7 +641,7 @@ function arc2(c: Ctx, reply: string): string {
   const after = (JSON.parse(c.t.roadmap(['chain', 'status', '--repo', l.product])) as { answers: readonly unknown[] }).answers;
   if (after.length !== 0) throw new Error(`story: arc 2 applies P-1, so chain status should list no answer: ${JSON.stringify(after)}`);
   c.state.phase = 'running';
-  return `P-1 answered (48 hours): T-17 replaces T-9 in the between-arc commit, and arc-1/M-1 is applied as T-18. Arc 2 advances V-5. ${RUNNING(a)}`;
+  return `P-1 answered (48 hours): T-23 replaces T-9 in the between-arc commit, and arc-1/M-1 is applied as T-24. Arc 2 advances V-5. ${RUNNING(a)}`;
 }
 
 /** One operator-log entry (SKILL.md "Supervising the executor"), appended to `<repo>/../roadmap-inputs/skill-feedback.md`. */
