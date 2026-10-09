@@ -1,3 +1,4 @@
+// (Serial tier: timing-bound, so it runs alone, one file at a time.)
 // The M4a paid fixture (evals/m4a/{setup,driver,check}.ts) validated end to end without paying: the session is the
 // scripted root agent (evals/m4a/fake-root.ts) replaying the golden Phase-0 outputs through the staged plugin's real
 // CLI, against the fake backends (evals/m4a/scenario.ts) and the fake gh over a local bare origin; real processes,
@@ -21,42 +22,42 @@ import { cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, test } from 'node:test';
-import { type ArcRef, amendmentsOf } from '../src/chain.ts';
-import { captureIssues } from '../src/commands/issues.ts';
-import type { Event, Fact, Parent } from '../src/core/events.ts';
-import { arcId } from '../src/core/ids.ts';
-import { readJournal } from '../src/core/log.ts';
-import { absPath } from '../src/core/values.ts';
-import { parseDebtBlock } from '../src/docs/debt.ts';
-import { readStore, writeStore } from './fakes/gh-store.ts';
-import { verdictProblems, stageTree } from '../evals/m4a/adjudicate.ts';
+import { type ArcRef, amendmentsOf } from '../../src/chain.ts';
+import { captureIssues } from '../../src/commands/issues.ts';
+import type { Event, Fact, Parent } from '../../src/core/events.ts';
+import { arcId } from '../../src/core/ids.ts';
+import { readJournal } from '../../src/core/log.ts';
+import { absPath } from '../../src/core/values.ts';
+import { parseDebtBlock } from '../../src/docs/debt.ts';
+import { readStore, writeStore } from '../fakes/gh-store.ts';
+import { verdictProblems, stageTree } from '../../evals/m4a/adjudicate.ts';
 import {
   type CheckResult, CRITERIA, type FlowArc, LEVERS, arcView, chainOf, flowArcOf, flowConstraintVerdict, flowLoopVerdict, flowShardVerdict, parseOperatorLog,
   rulerArgvs, rulerRecordProblems, triplesProblems,
-} from '../evals/m4a/check.ts';
+} from '../../evals/m4a/check.ts';
 import {
   MIN_ARC1_UNITS, type OwnerCtx, type Report, SPEND_APPROVED, type Turn, codeAnswer, failFastText, firstPlanCheck, ghOnPath, launchEnv, numberedQuestions, openBriefQuestions,
   plantCheck, plantLaneOf, prepareFake, spendHold, stagePlugin,
-} from '../evals/m4a/driver.ts';
-import type { BriefPayload } from '../src/phase0/types.ts';
-import { itemKey } from '../src/watch.ts';
-import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
-import { FILES, LANES, READOUTS, REPLAY_LANE, SHARD, SLOW_LANE, SUITE_LANE, corpusFor, rawCorpus, unitsOf } from '../evals/m4a/golden.ts';
-import { DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from '../evals/m4a/scenario.ts';
-import { CLOCK_FILE, FAKE_TICK_MS, PAID_TICK } from '../evals/m4a/setup.ts';
-import { collectWitness, witnessEnv } from '../src/holistic/witness.ts';
-import { parseObligations } from '../src/holistic/types.ts';
-import type { PlanM1 } from '../src/input/plan.ts';
-import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../evals/m4a/key.ts';
-import { INJECTION_MARKER, PLANT, SEED_SUITE_ARGV, layout } from '../evals/m4a/layout.ts';
-import { ANSWER_KEY, needles, toolTraffic } from '../evals/m4a/transcript.ts';
-import { type Exit, runUntilExit } from './helpers/proc.ts';
-import { type RunScope, assertNoSurvivors, teardown, track } from './helpers/reap.ts';
-import { tmpDir } from './helpers/repo.ts';
+} from '../../evals/m4a/driver.ts';
+import type { BriefPayload } from '../../src/phase0/types.ts';
+import { itemKey } from '../../src/watch.ts';
+import { fakeArc, fakeHostDir, prepareArc1 } from '../../evals/m4a/fake-root.ts';
+import { FILES, LANES, READOUTS, REPLAY_LANE, SHARD, SLOW_LANE, SUITE_LANE, corpusFor, rawCorpus, unitsOf } from '../../evals/m4a/golden.ts';
+import { DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from '../../evals/m4a/scenario.ts';
+import { CLOCK_FILE, FAKE_TICK_MS, PAID_TICK } from '../../evals/m4a/setup.ts';
+import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
+import { parseObligations } from '../../src/holistic/types.ts';
+import type { PlanM1 } from '../../src/input/plan.ts';
+import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../../evals/m4a/key.ts';
+import { INJECTION_MARKER, PLANT, SEED_SUITE_ARGV, layout } from '../../evals/m4a/layout.ts';
+import { ANSWER_KEY, needles, toolTraffic } from '../../evals/m4a/transcript.ts';
+import { type Exit, runUntilExit } from '../helpers/proc.ts';
+import { type RunScope, assertNoSurvivors, teardown, track } from '../helpers/reap.ts';
+import { tmpDir } from '../helpers/repo.ts';
 
 after(assertNoSurvivors);
 
-const EVALS = fileURLToPath(new URL('../evals/m4a/', import.meta.url));
+const EVALS = fileURLToPath(new URL('../../evals/m4a/', import.meta.url));
 /** The driver's fake session timeout is 30 min; the test allows it that and a margin. */
 const RUN_MS = 35 * 60_000;
 const T = { timeout: 2 * RUN_MS };
@@ -661,7 +662,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
 });
 
 test('skill.operator-log-format: reference.md\'s operator-log example parses with check.ts\'s parser, every lever in the closed list', () => {
-  const ref = readFileSync(fileURLToPath(new URL('../../skills/orchestrate/reference.md', import.meta.url)), 'utf8');
+  const ref = readFileSync(fileURLToPath(new URL('../../../skills/orchestrate/reference.md', import.meta.url)), 'utf8');
   const section = ref.slice(ref.indexOf('\n## The operator log\n'));
   const block = /```operator-log\n([\s\S]*?)\n```/.exec(section);
   assert.ok(block !== null, 'an operator-log fenced block under "The operator log"');

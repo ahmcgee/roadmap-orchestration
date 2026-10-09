@@ -3,9 +3,12 @@
 A change is not done until the ladder passes, in order, from `executor/`:
 
 1. `npm run typecheck`: `tsc --noEmit` over `src/`, `test/` and `evals/`.
-2. `npm test`: `node --test test/*.test.ts`, then `test/serial/*.test.ts` alone (the upgrade test's dev.5 park premise needs a calm host), pure-module and integrated tests, fake backends only. This tier
-   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts`, `test/evals-m3.test.ts` and `test/evals-m4a.test.ts`,
-   which run the M1, M2, M3 and M4a fixtures below end to end against the fakes, and `test/serial/upgrade.test.ts`, which starts the M1 fixture on
+2. `npm test`: `node --test test/*.test.ts`, then `test/serial/*.test.ts` alone, one file at a time
+   (`--test-concurrency=1`): the serial tier holds the tests that need a calm host, the upgrade test (its dev.5 park
+   premise) and the M4a fake sessions (timing-bound against a 30-minute fake session deadline). Pure-module and
+   integrated tests, fake backends only. The main tier
+   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts` and `test/evals-m3.test.ts`, and the serial tier
+   `test/serial/evals-m4a.test.ts`, which run the M1, M2, M3 and M4a fixtures below end to end against the fakes, and `test/serial/upgrade.test.ts`, which starts the M1 fixture on
    the previous release's executor (`PREVIOUS_RELEASE`, extracted with `git archive`), stops, parks or crashes it
    mid-arc and finishes it on HEAD.
 3. `node evals/probe.ts`: the targeted probe against the real, authenticated CLIs.
@@ -378,7 +381,7 @@ first lane's pass; `nextStart` refuses `limit`, and arc 3, whose Phase 0 applies
 `chain-invalid{limit}` at `phase0 check` and at `start`; stop `k-limit`, every criterion passing. The story waits on
 events, never on time: arc 2's first audit waits at a fake-backend barrier until the root agent has had the run's
 `blocked` wake, and the root agent's in-turn supervision waits on `status` states. `vision-silent`: after arc 1 no
-slice candidate is left; stop `vision-silent`. `test/evals-m4a.test.ts` runs both side by side and also covers setup
+slice candidate is left; stop `vision-silent`. `test/serial/evals-m4a.test.ts` runs both side by side and also covers setup
 validity, the check's defect oracle (each defect fails on its own mutation), the adjudicator's tree, a start refused
 `issue-policy-untrusted` under PUBLIC + ALL, and that reference.md's operator-log example parses.
 
