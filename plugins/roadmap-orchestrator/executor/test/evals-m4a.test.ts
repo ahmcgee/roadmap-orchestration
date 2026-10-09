@@ -6,9 +6,9 @@
 // survivor, the cutoff question, arc 2 with the mid-arc policy flip, an opportunity admit and a converted one, a pause in
 // a hung lane and the lane reuse after it, arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice
 // candidate, stop vision-silent). The story synchronises on events, never on time, so its turns are the same every run.
-// M4b's plants (S: the serial suite gate; G: the soak run and the issue to drop it) are in the product and the golden
-// outputs; the story works the flow loop (arc 1: a `changed` bait proof, a `preserved` shard and its verdict; arc 2: a
-// reject).
+// M4b's plants (S: the stale serial run of the suite gate; G: the soak run and the issue to drop it) are in the product
+// and the golden outputs; the story works the flow loop (arc 1: a `changed` bait proof, a `preserved` shard and its
+// verdict; arc 2: a reject).
 // Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.intake-filtering, evals-m4a.pack-review-hold,
 // evals-m4a.amendments-debt, evals-m4a.policy-flip, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
 // evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.witness-missing,
@@ -158,7 +158,7 @@ test('evals-m4a.setup-valid: the messy corpus hides its defects, the key\'s span
   const replays = readdirSync(join(FILES, 'product', 'test', 'unit')).filter((f) => f.endsWith('.test.js') && readFileSync(join(FILES, 'product', 'test', 'unit', f), 'utf8').includes("from './clock.js'"));
   assert.equal(replays.length, 6, `six replay files of about a minute (${replays.join(', ')})`);
   assert.ok(replays.includes('soak.test.js'), 'one of them is the soak run (plant G)');
-  assert.equal(JSON.parse(readFileSync(join(l.product, 'package.json'), 'utf8')).scripts.test, `node --test ${PLANT.serial} '${PLANT.selector}'`, 'the suite gate is the serial command (plant S)');
+  assert.equal(JSON.parse(readFileSync(join(l.product, 'package.json'), 'utf8')).scripts.test, `node --test ${PLANT.serial} '${PLANT.selector}'`, 'npm test runs the suite serially (plant S)');
 
   // The raw corpus: numbered docs, two same-named sub-folders, five ADRs, the vision; about 700 lines; no ids, no rules.
   const raw = rawCorpus();
@@ -466,6 +466,9 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(defectVerdicts(key, forbidden).filter((v) => !v.pass).map((v) => v.id), []);
     const permitted = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, rule('T-91', 'In a busy week the harbour master may override a clash.')] } }, 2: a2 };
     assert.deepEqual(defectVerdicts(key, permitted).filter((v) => !v.pass).map((v) => v.id), ['D3']);
+    // S: the gate's rule states what passes; a rule pinning the serial flag in its place (paid M4b run 2's T-103) is no gate rule.
+    const pinnedFlag = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules.filter((r) => r.id !== 'T-15'), rule('T-90', "No change is copied to the kiosk until npm test, run exactly as node --test --test-concurrency=1 'test/unit/*.test.js', has passed.")] } }, 2: a2 };
+    assert.deepEqual(defectVerdicts(key, pinnedFlag).filter((v) => !v.pass).map((v) => v.id), ['S']);
     // D2 and D7 do not own deduplication (D1 does): a claim split into two rules passes when each holds; D2 fails if any split half is must-hold.
     const split = (v: ArcView, id: string, copy: string, text: string): ArcView => ({
       ...v, pin: { ...v.pin, rules: [...v.pin.rules, { ...v.pin.rules[0]!, id: copy as never, text }] },

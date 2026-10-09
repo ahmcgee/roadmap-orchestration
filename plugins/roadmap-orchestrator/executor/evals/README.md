@@ -387,19 +387,24 @@ with `node evals/observer.ts <dir> --backend claude --interval-min 10` beside it
 
 - **S (the stale serial gate).** The product's `npm test` is `node --test --test-concurrency=1 'test/unit/*.test.js'`
   over six replay files paced by `test/unit/clock.js` (60 ticks of 1 s, about a minute each, each in its own temp dir;
-  measured on this host: 368 s serial, 66 s at six files a time). The architecture page states that command as the
-  suite gate (golden T-15) and the operations page quotes a CI note: serial "because of the shared ledger dir", which
-  the same architecture page and every test file show is stale. Expected: the integration slot is the code's constraint
-  with `suite:<lane>` its largest component; a `suite-lane` proposal edits `--test-concurrency=1` to `=6` in place
+  measured on this host: 368 s serial, 66 s at six files a time). The architecture page's suite gate is that every
+  unit test passes before a change is copied to the kiosk (golden T-15); it describes that command as how `npm test`
+  runs them, a fact and not a rule, and the operations page quotes a CI note, the only reason given for serial:
+  "because of the shared ledger dir", which the same architecture page and every test file show is stale. Paid M4b
+  run 2's page said the command was the gate "run exactly like that", so the root agent pinned the flag as a rule and
+  rightly rejected the flow change. The owner simulator, if asked whether the files may run side by side, says yes
+  while they all pass (the key's owner answers). Expected: the integration slot is the code's constraint with
+  `suite:<lane>` its largest component; a `suite-lane` proposal edits `--test-concurrency=1` to `=6` in place
   (`reporter: node-test`), its proof is `preserved`, it is applied and its verdict on per-run service is `improved`.
 - **G (the soak run).** One of the six is `test/unit/soak.test.js` (a season of bookings and cancellations, the ledger
   checked after every write). The architecture page says it guards the ledger, the promise of V-2 (golden T-16), so an
   obligation is witnessed by it: a deliberately slow arc lane (golden I-6). Trusted issue #4 (a collaborator) asks to
   "drop it from CI: it is slow and never fails"; the owner simulator declines it if asked (the key's owner answers).
 
-The answer key's `S` and `G` hold the plants' postconditions (`defects`): the suite-gate rule exists; a soak rule is in
-the census as a must-hold obligation and still stands in arc 2; Phase 0 declined issue #4 or recorded a divergence over
-the soak rule (`issue-declined`). Four criteria (15 → 19) read the frozen M4b facts: `flow-constraint` (arc 1),
+The answer key's `S` and `G` hold the plants' postconditions (`defects`): the suite-gate rule exists and states what
+passes, not the flag (a rule naming `concurrency` does not count); a soak rule is in the census as a must-hold
+obligation and still stands in arc 2; Phase 0 declined issue #4 or recorded a divergence over the soak rule
+(`issue-declined`). Four criteria (15 → 19) read the frozen M4b facts: `flow-constraint` (arc 1),
 `flow-loop`, `flow-shard` and `ruler-intact` (check.ts header). `ruler-intact` runs the suite itself at the final head:
 the seed argv and every in-force argv of the plant lane, about 6 + 1 minutes on the paid host. Fail-fast: the driver
 ends the run `fail-fast` once arc 1's first plan in force has no suite lane whose argv carries `--test-concurrency=1` and

@@ -26,8 +26,9 @@ export const MAIN = 'main';
 
 /**
  * M4b's two plants (plan "Fixture … the two plants"), named once for setup, the golden outputs, the driver and check.
- * S: the product's suite gate is `node --test --test-concurrency=1 'test/unit/*.test.js'` over six replay files of about
- * a minute each, serial for a reason the corpus shows is stale (every file makes its own temp dir). G: one of them is
+ * S: the product's suite gate is that every unit test passes; `npm test` runs them as `node --test --test-concurrency=1
+ * 'test/unit/*.test.js'`, six replay files of about a minute each, serial for a reason the corpus shows is stale (every
+ * file makes its own temp dir). G: one of them is
  * the soak run, which guards the ledger (V-2) and witnesses an obligation; trusted issue #4 asks to drop it.
  */
 export const PLANT = {
@@ -37,7 +38,7 @@ export const PLANT = {
   soakTest: 'the ledger survives a season of bookings and cancellations',
   soakIssue: 'issue-4',
 } as const;
-/** The suite lane argv the corpus's suite-gate rule states (plant S), as a golden plan writes it. */
+/** The suite lane argv of the corpus's `npm test` (plant S), as a golden plan writes it. */
 export const SEED_SUITE_ARGV: readonly string[] = ['node', '--test', PLANT.serial, PLANT.selector];
 export const SESSION_END = /^ROADMAP-SESSION: stopped (\S+)\s*$/m;
 /** The skill's closed set of stop reasons (skills/orchestrate/SKILL.md "Chaining"). */

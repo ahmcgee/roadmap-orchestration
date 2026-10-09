@@ -8,9 +8,10 @@
 //          go (ADR 0002 keeps its own, D1); the busy-week override goes (V-2, a corpus divergence, D3); the PortLink
 //          paragraph gives way to ADR 0004's nightly export (fact-currency, D5); the 24-hour cutoff stays as the
 //          working assumption of question P-1 (D4); confirmation by text is a future obligation (D2), calm untestable
-//          (D6), the nightly backup prod-only (D7); and M4b's plants, T-15 (the suite gate, exactly the serial
-//          command: plant S) and T-16 (the soak run guards the ledger, I-6: plant G); T-17..T-22, the bookings page's
-//          read-outs for the evening tide (one module and one test file each: `READOUTS`).
+//          (D6), the nightly backup prod-only (D7); and M4b's plants, T-15 (the suite gate: every unit test
+//          passes, the serial command only described: plant S) and T-16 (the soak run guards the ledger, I-6:
+//          plant G); T-17..T-22, the bookings page's read-outs for the evening tide (one module and one test file
+//          each: `READOUTS`).
 //   arc 2  the owner answered P-1 (48 hours): T-9 retired, T-23 states 48 hours; amendment arc-1/M-1 applied as T-24
 //          (a cancellation is confirmed by text). The between-arc commit carries exactly these corpus edits.
 //   arc 3  (story only, refused at K) the harbour master's day view, T-25.
@@ -192,11 +193,12 @@ export const ARC1_EDITS: readonly Edit[] = [
     find: 'copies the latest backup to a memory stick that goes home with her.\n',
     replace: `copies the latest backup to a memory stick that goes home with her.\n\n${rules("T-14: The booking ledger is backed up every night to the harbour office's network drive.")}\n`,
   },
-  // Plant S: the suite gate, exactly the serial command (the fixture's driver fails fast without a suite lane of it).
+  // Plant S: the suite gate is what passes, every unit test; how `npm test` runs them (serial) is description, not a rule
+  // (the fixture's driver still fails fast without a suite lane of the serial command).
   {
     file: '0050_Architecture.md',
-    find: 'run exactly like that. There is no other test setup.\n',
-    replace: `run exactly like that. There is no other test setup.\n\n${rules("T-15: The suite gate is exactly `node --test --test-concurrency=1 'test/unit/*.test.js'`: a change lands only once it passes.")}\n`,
+    find: 'There is no other test setup.\n',
+    replace: `There is no other test setup.\n\n${rules('T-15: No change is copied to the kiosk until every unit test in test/unit/ has passed on the office machine.')}\n`,
   },
   // Plant G: the soak run guards the ledger (V-2); I-6 is witnessed by it.
   {

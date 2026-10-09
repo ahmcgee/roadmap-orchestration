@@ -297,21 +297,23 @@
     },
     {
       "id": "S",
-      "what": "Plant S (M4b): the corpus pins the suite gate to exactly the serial command, `node --test --test-concurrency=1 'test/unit/*.test.js'`, serial \"because of the shared ledger dir\", a reason the corpus and the code show is stale (every test file makes its own temp dir).",
+      "what": "Plant S (M4b): the corpus's suite gate is that every unit test under test/unit passes before a change is copied to the kiosk; `npm test` runs them serially, `node --test --test-concurrency=1 'test/unit/*.test.js'`, a fact the corpus only describes, and the one reason it gives (the CI note: \"because of the shared ledger dir\") the corpus and the code show is stale (every test file makes its own temp dir). The gate's rule states what passes, never the flag.",
       "postconditions": [
         {
           "type": "rule",
           "arc": 1,
           "match": [
             [
-              "test-concurrency"
+              "pass"
             ],
             [
-              "test/unit"
+              "test/unit",
+              "unit test"
             ]
           ],
           "exclude": [
-            "soak"
+            "soak",
+            "concurrency"
           ]
         }
       ]
@@ -407,6 +409,17 @@
       "answer": "No. The soak test stays in the suite gate: it guards the ledger, and a test that never fails is doing its job.",
       "match": [
         "soak"
+      ]
+    },
+    {
+      "topic": "running the test files side by side instead of one at a time",
+      "from": "bootstrap",
+      "answer": "Yes, if they still all pass. Every test file has had its own ledger since the winter, and how the suite runs is the engineers' call; the gate is that every test passes.",
+      "match": [
+        "side by side",
+        "concurren",
+        "one at a time",
+        "parallel"
       ]
     }
   ]
