@@ -404,6 +404,9 @@ rejected. An edit you never apply has no effect, even after a restart.
   only when the lane fails, capped. Add `evidenceExcludes` for anything that must never leave the checkout.
 - A lane asserts its required failure inside the script (or by `expectedExit`) and prints the failing step and
   reason on stderr before a non-zero exit: the fix round starts from stderr.
+- A suite lane's argv runs the test runner itself, each flag its own element (`["node", "--test",
+  "--test-concurrency=4", "test/**/*.test.js"]`), never a wrapper such as `npm test` or `sh -c`: the flow loop tunes
+  the runner's flags in place in the argv, and a wrapper hides them. Resolve the package script to the command it runs.
 - A spec lane may declare `inputs`, the repo patterns it reads: a fast lane's pass is then reused on a later commit
   that touched none of them. Suite and arc lanes never declare it.
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs. Mutation smoke reverts a
