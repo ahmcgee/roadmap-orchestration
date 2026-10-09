@@ -26,7 +26,8 @@
 //
 // Outcomes are written through the park table (`record`, src/park/table.ts `stageOutcomeFact`): a retryable
 // park carries its targets (the call's backend, the host, each instance a cleanup failed), a repeat park is
-// operator with an `env-blocked` item, and a hold carries its backend-park cause (G5).
+// operator with an `env-blocked` item, and a hold carries its backend-park cause (G5) or, M4b rev 3 (RC-11), its
+// `host-pressure` cause: a call or lane its watchdog ended under host pressure, or a red lane under it (starved.ts).
 //
 //   plan-check  fresh judgment session (never a resume) → approve | redirect (spec.patch, rev+1) |
 //               infeasible | escalate; a redirect may neither lower the risk floor nor widen the unit's
@@ -132,6 +133,7 @@ import {
   seriesEntry, specSeriesRoot,
 } from './lanes.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
+import { pressureCause, seriesRuling } from './starved.ts';
 import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
 import {
   type DecidedRound, type RoundCall, type RoundInput, callRound, decidedRound, escalateImplementer, freshSession, invocationSession, laneFixRound, prepareRound,
@@ -1283,7 +1285,9 @@ function knownDefectHit(ctx: StageContext, unit: PlanUnit, spec: SpecM1, ledger:
 }
 
 /** What a lanes attempt records beyond the series' own outcome: the D1 and D2 checks', or a known defect's. */
-type LanesVerdict = Readonly<{ kind: StageOutcomeKind<'lanes'>; detail?: StageOutcomeDetail; needsUser?: NeedsUserContent; failed?: readonly ResourceInstance[] }>;
+type LanesVerdict = Readonly<{
+  kind: StageOutcomeKind<'lanes'>; detail?: StageOutcomeDetail; needsUser?: NeedsUserContent; failed?: readonly ResourceInstance[]; cause?: HoldCause;
+}>;
 
 /**
  * The checks after a green certified spec series in a corpus arc (LR-h): witness presence (D1), then mutation smoke (D2).
@@ -1349,6 +1353,10 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     : end.kind === 'occupied' ? { kind: 'occupied', needsUser: end.needsUser }
     : end.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: end.failed }
     : { kind: end.kind };
+  // M4b rev 3 (RC-11): a lane its watchdog ended under host pressure is starved, and a red one under it reruns once: a
+  // hold with cause `host-pressure`, uncharged (starved.ts), before any other reading of the red.
+  const cause = pressureCause(seriesRuling(ctx.runDir, ctx.journal.view.unit(unit.id), end));
+  if (cause !== null) verdict = { kind: 'interrupted', cause };
   // F4: a red lane whose output names a known defect is that defect (uncharged), not a red series.
   if (verdict.kind === 'red') {
     const hit = knownDefectHit(ctx, unit, spec, series.ledger);
@@ -1363,5 +1371,5 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (series.tree !== null && keep === null) await removeVerificationTree(ctx, series.tree, parent);
   const fix = kind === 'red' || (kind === 'not-certified' && series.dirty.length > 0) ? laneFixRound(series.ledger, series.dirty, salvaged) : null;
   const facts = failedFacts(verdict.failed ?? []);
-  return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, undefined, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
+  return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

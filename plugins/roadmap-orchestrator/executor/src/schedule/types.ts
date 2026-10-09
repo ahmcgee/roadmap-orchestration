@@ -3,10 +3,11 @@
 // implemented by later steps against these signatures. The records they read and write (facts, holders,
 // `ProbeTarget`) live in src/core/events.ts.
 import type { BackendParkClass, Holder, OutcomeStage, ProbeTarget } from '../core/events.ts';
-import type { CommandId, FindingId, KnownDefectId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
+import type { CommandId, FindingId, InvocationId, KnownDefectId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, LaneTier, NeedsUserReason } from '../core/records.ts';
 import type { PlanM1, PlanUnit, UnitOrigin, UnitPriority } from '../input/plan.ts';
+import type { PressureNow } from '../host/pressure.ts';
 import type { Backend } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -133,11 +134,19 @@ export type AdmissionConstraint =
    * M4a rev 3 (F4, R49): a plan known defect holds the unit's `prepare` while `knownDefectActive` holds (until its
    * fixer's lineage merges); the fixer's own lineage is never held.
    */
-  | Readonly<{ type: 'known-defect'; id: KnownDefectId; fixUnit: UnitId }>;
+  | Readonly<{ type: 'known-defect'; id: KnownDefectId; fixUnit: UnitId }>
+  /**
+   * M4b rev 3 (RC-11): the unit's run `inv` was starved, or red under pressure with its rerun pending (`UnitState.pressureHold`):
+   * its re-run waits until a tick since the hold shows avg60 below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass.
+   */
+  | Readonly<{ type: 'host-pressure'; inv: InvocationId }>;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
 
-/** What admission reads besides the log: the open blocking items, pending mutations' scopes, tripped breakers. */
+/**
+ * What admission reads besides the log: the open blocking items, pending mutations' scopes, tripped breakers, and (M4b rev
+ * 3) the host's pressure now, which a host-pressure hold's release reads.
+ */
 export type AdmitInput = Readonly<{
   view: JournalView;
   plan: PlanM1;
@@ -146,6 +155,7 @@ export type AdmitInput = Readonly<{
   blocking: readonly Readonly<{ id: NeedsUserId; reason: NeedsUserReason; subject: 'unit' | 'arc' | 'host'; unit: UnitId | null }>[];
   drains: readonly Readonly<{ command: CommandId; scope: CommandScope }>[];
   tripped: readonly ProbeTarget[];
+  pressure: PressureNow;
 }>;
 
 /** Re-checked at every admission boundary, for new and running tasks alike (F13); src/schedule/ready.ts, step 2. */

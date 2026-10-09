@@ -114,3 +114,60 @@ export class PressureTicks {
     return [...this.#ticks];
   }
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Charging (RC-11, step H2): pure over a run's end, its interval pressure and the unit's pressure holds
+
+/** How long a host-pressure hold waits at most for the tick avg60 to fall below `PRESSURE_SATURATED`. */
+export const STARVED_HOLD_MS = 30 * 60_000;
+
+/**
+ * How a run ended, as the charging rules read it: killed by its runner's `deadline` or `stall` watchdog (its exit
+ * cause), red on its own (a lane that failed), or anything else (a pass, a signal, a lost runner).
+ */
+export const PRESSURE_RUN_ENDS = ['deadline', 'stall', 'red', 'other'] as const;
+export type PressureRunEnd = (typeof PRESSURE_RUN_ENDS)[number];
+export type PressureRun = Readonly<{ inv: InvocationId; end: PressureRunEnd; pressure: number | null }>;
+
+/**
+ * A unit's host-pressure holds as the fold derives them: how many it has had (`STARVED_MAX` bounds them), and whether
+ * the attempt being read is the rerun after one (its latest hold was host-pressure, with no decision since).
+ */
+export type PressureHolds = Readonly<{ count: number; rerun: boolean }>;
+
+/**
+ * What a stage records for its runs. `starved`: a run its deadline or stall watchdog ended at or above
+ * `PRESSURE_SATURATED` (no verdict, uncharged, held). `red-rerun`: a red run at or above it, not itself the rerun after
+ * a hold (held, then rerun once; only the rerun's verdict counts). `counts`: today's handling: no PSI (null pressure), a
+ * clear host, a rerun's red, or a unit with `STARVED_MAX` holds behind it.
+ */
+export type PressureRuling = Starved | Readonly<{ kind: 'red-rerun'; inv: InvocationId; pressure: number }> | Readonly<{ kind: 'counts' }>;
+
+/** The ruling over `runs` (a lane record's counted run first, then the run attached to it; a call's single run). */
+export function pressureRuling(runs: readonly PressureRun[], holds: PressureHolds): PressureRuling {
+  if (holds.count >= STARVED_MAX) return { kind: 'counts' };
+  const hot = runs.filter((r): r is PressureRun & Readonly<{ pressure: number }> => r.pressure !== null && r.pressure >= PRESSURE_SATURATED);
+  const starved = hot.find((r) => r.end === 'deadline' || r.end === 'stall');
+  if (starved !== undefined) return { kind: 'starved', inv: starved.inv, pressure: starved.pressure };
+  const red = hot.find((r) => r.end === 'red');
+  if (red !== undefined && !holds.rerun) return { kind: 'red-rerun', inv: red.inv, pressure: red.pressure };
+  return { kind: 'counts' };
+}
+
+/** What a hold's release reads: the scheduler's tick history and the wall time now (ms since the epoch). */
+export type PressureNow = Readonly<{ ticks: readonly PressureTick[]; nowMs: number }>;
+
+/** `now` from one PSI reading (a process without the scheduler's history: status). */
+export function pressureNowOf(sample: PressureSample | 'unavailable', nowMs: number): PressureNow {
+  return { ticks: sample === 'unavailable' ? [] : [{ atMs: nowMs, avg60: sample.avg60 }], nowMs };
+}
+
+/**
+ * Whether a host-pressure hold recorded at `heldAtMs` still holds: under `STARVED_HOLD_MS` old, and no tick taken since
+ * it shows avg60 below `PRESSURE_SATURATED` (the latest such tick decides; none yet, as right after a restart, waits).
+ */
+export function pressureHoldWaits(heldAtMs: number, now: PressureNow): boolean {
+  if (now.nowMs - heldAtMs >= STARVED_HOLD_MS) return false;
+  const latest = now.ticks.findLast((t) => t.atMs >= heldAtMs);
+  return latest === undefined || latest.avg60 >= PRESSURE_SATURATED;
+}

@@ -3186,8 +3186,28 @@ runner) records null. The scheduler reads PSI once per loop iteration into `Pres
 | `FLOW_TRIGGERS` | `+ host-pressure`, after `yellow-worsening` | the tick avg60 ≥ `PRESSURE_SATURATED` sustained ≥ 10 min while units are in flight (H1) |
 | `FLOW_DROP_REASONS` | `+ direction`, after `elevate-early` | an increase at `host:cpu` (only decreases or `host` advice) |
 | `FlowMetric` | `+ pressure{}` | RC-12: a lever at `host:cpu` is measured by the interval pressure of the units admitted after; lead stays a guard (H1 samples it; until then the verdict sampler refuses it) |
-| `HoldCause` | `+ host-pressure{inv}` | RC-11: a unit whose run `inv` was starved, or red under pressure with its rerun pending, held until the tick avg60 < `PRESSURE_SATURATED` or 30 min pass (H2) |
-| `Starved` (src/host/pressure.ts) | `{kind: starved, inv, pressure}` | RC-11: a lane run or stage invocation ended by `deadline` or `stall` with interval pressure ≥ `PRESSURE_SATURATED`: no product verdict, not chargeable, no fix round; after `STARVED_MAX` starved runs of one unit, today's handling (H2) |
+| `HoldCause` | `+ host-pressure{inv}` | RC-11: a unit whose run `inv` was starved, or red under pressure with its rerun pending, held until a tick since the hold shows avg60 < `PRESSURE_SATURATED` or 30 min pass (H2; see "Charging") |
+| `Starved` (src/host/pressure.ts) | `{kind: starved, inv, pressure}` | RC-11: a lane run or stage invocation ended by `deadline` or `stall` with interval pressure ≥ `PRESSURE_SATURATED`: no product verdict, not chargeable, no fix round; after `STARVED_MAX` host-pressure holds of one unit, today's handling (H2) |
+| `AdmissionConstraint` (src/schedule/types.ts) | `+ host-pressure{inv}` | H2: the re-run of a unit with a pending host-pressure hold waits (status's station: `host`) |
+| `AdmitInput` | `+ pressure: {ticks, nowMs}` (`PressureNow`) | H2: the scheduler's `PressureTicks` and the wall time; status reads one PSI sample as its tick (`pressureNowOf`) |
 | `FlowPressureStatus` (src/flow/types.ts) | `{now: {avg10, avg60} \| null, threshold, available}` | `status.flow.pressure` (H1 wires it) |
+
+**Charging (step H2, RC-11).** No new record: the hold is the stage's `interrupted` outcome, class `hold`, with cause
+`host-pressure{inv}`, so no counter moves and no retry is spent. `pressureRuling` (src/host/pressure.ts, pure) reads the
+runs that ended an attempt without a pass as `PressureRun{inv, end: deadline | stall | red | other, pressure}`
+(src/pipeline/starved.ts reads the end from exit.json's cause and the pressure from the spawn's done record): a run at or
+above `PRESSURE_SATURATED` ended by `deadline` or `stall` is `starved`; else a `red` one is `red-rerun` unless the attempt
+is itself the rerun after a host-pressure hold; null pressure, a clear host, or `STARVED_MAX` holds behind the unit
+(starved and red reruns counted alike) is `counts`, today's handling. It is read for a unit's backend calls that end
+`process-fault` (`verdictOf`, plan-check, build, gate; a job's call never), and for the red or blocked lane of a spec
+series (lanes) or a suite series (candidate, on the candidate and on the tip alone): the lane record's counted run, then
+its diagnostic rerun; a host-signature rerun's voided first run is not read. The D1/D2 checks' lanes and journey lanes
+keep today's handling. The fold derives `UnitState.pressureHold{inv, at}` (the latest host-pressure hold, until an
+outcome decides; a pause hold since keeps it; reopen, steer and merge-in clear it) and `pressureHolds` (a count); a
+host-pressure hold leaves the unit `active`, and admission waits under `host-pressure{inv}` while `pressureHoldWaits`:
+under `STARVED_HOLD_MS` (30 min) since the hold and no tick taken since it with avg60 < `PRESSURE_SATURATED` (none yet,
+as after a restart, waits). A held build re-runs as the `continue` round of the session its deadline cut off, as after a
+pause. Recovery: nothing beyond the hold fact is journaled, so no new crash row; a crash before it re-runs the attempt as
+any crash does, and the hold's release is derived from the log, the ticks and the clock.
 
 **Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8.

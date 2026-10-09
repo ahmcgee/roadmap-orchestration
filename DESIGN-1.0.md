@@ -1238,8 +1238,10 @@ ladder with its own runnable fixture:
     over the constraint window, the code constraint is `host:cpu`, ahead of the wait and service rules. RC-11: a lane run
     or stage invocation ended by `deadline` or `stall` under saturation is `starved` (no product verdict, not chargeable,
     no fix round), and a red lane run under saturation reruns once with only the rerun's verdict counting (its first red
-    still counts as a first-run red); such a unit is held (`host-pressure`) until the tick avg60 falls below 0.25 or 30
-    min pass, and after 3 starved runs it falls back to the handling without pressure. RC-12: a lever at `host:cpu` only
+    still counts as a first-run red); such a unit is held (`host-pressure`, an admission hold: the unit stays active)
+    until a scheduler tick since the hold shows avg60 below 0.25 or 30 min pass, and after 3 such holds (starved runs and
+    red reruns alike) it falls back to the handling without pressure. The rule reads a unit's backend calls and its spec
+    and suite lane series; the D1/D2 checks' lanes, journey lanes and jobs' calls keep the handling without pressure. RC-12: a lever at `host:cpu` only
     decreases (concurrency, a pool, a suite lane's cpu or `--test-concurrency`) or gives `host` advice, an increase is
     dropped (`direction`); its step is subordinate and its verdict metric the interval pressure of the units admitted
     after, lead a guard.

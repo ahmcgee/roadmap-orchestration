@@ -64,7 +64,7 @@ test('cmd.run-only: limits admission to the units named, checked at admission, t
   try {
     const admit = admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx));
     const constraints = (unit: typeof U1) =>
-      admit({ view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage: 'plan-check', blocking: [], drains: [], tripped: [] });
+      admit({ view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage: 'plan-check', blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } });
 
     const outside = await command(r, { type: 'run-only', units: [U1, unitId('u9')] });
     assert.deepEqual(outside.outcome, { kind: 'rejected', reason: 'unit u9 is not in the plan in force' });

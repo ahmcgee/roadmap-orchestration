@@ -186,7 +186,7 @@ describe('P1 blocking and repair (G10, R6, R7)', () => {
     const r = contextFor(d);
     try {
       const admit = (unit: string) => admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx))({
-        view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage: 'candidate', blocking: [], drains: [], tripped: [],
+        view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage: 'candidate', blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
       });
       await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
       assert.deepEqual(admit('u1'), { kind: 'wait', constraints: [{ type: 'finding-blocked', finding: 'F-1', obligation: 'I-1' }] }, 'held at admission');

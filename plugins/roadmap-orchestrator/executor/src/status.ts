@@ -166,6 +166,7 @@ import {
   type RoutingTable,
 } from './routing/types.ts';
 import { readClaim } from './host/lock.ts';
+import { pressureNowOf, readPressure } from './host/pressure.ts';
 import { isAlive } from './host/liveness.ts';
 import { readOwner } from './host/owner.ts';
 import { revParse } from './git/git.ts';
@@ -739,6 +740,7 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   if (next?.kind === 'admission' && routing !== null) {
     const a = admitter(routing, x.spec)({
       view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view),
+      pressure: pressureNowOf(readPressure(), Date.now()),
     });
     if (a.kind === 'wait') {
       const state = a.constraints.some((c) => c.type === 'paused') ? 'held' : 'awaiting-admission';
@@ -986,7 +988,7 @@ function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec'> | null {
     case 'awaiting-admission': {
       const types = new Set((w?.admission ?? []).map((c) => c.type));
       if (types.has('paused') || types.has('blocking-item') || types.has('run-only')) return 'supervision';
-      if (types.has('backend-parked') || types.has('breaker')) return 'host';
+      if (types.has('backend-parked') || types.has('breaker') || types.has('host-pressure')) return 'host';
       // A known defect waits on its fixer unit (F4).
       if (types.has('known-defect')) return 'waiting-dep';
       return 'code';
