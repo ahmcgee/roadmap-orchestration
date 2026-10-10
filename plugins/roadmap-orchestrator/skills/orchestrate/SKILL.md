@@ -418,6 +418,9 @@ rejected. An edit you never apply has no effect, even after a restart.
 - A suite lane's argv runs the test runner itself, each flag its own element (`["node", "--test",
   "--test-concurrency=4", "test/**/*.test.js"]`), never a wrapper such as `npm test` or `sh -c`: the flow loop tunes
   the runner's flags in place in the argv, and a wrapper hides them. Resolve the package script to the command it runs.
+  Copy its flags exactly as the project runs them today, even where the corpus says a faster setting is now safe:
+  changing how the gate runs is the flow loop's lever, which proves the same tests still pass and measures the
+  change. Retuning a flag while authoring skips that proof.
 - A spec lane may declare `inputs`, the repo patterns it reads: a fast lane's pass is then reused on a later commit
   that touched none of them. Suite and arc lanes never declare it.
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs. Mutation smoke reverts a
