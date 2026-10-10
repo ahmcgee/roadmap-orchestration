@@ -118,5 +118,5 @@ export function readCodex(stdout: string, lastMessage: string | null): BackendRe
     : usageProblem !== null || usage === null
       ? { kind: 'unavailable', reason: usageProblem ?? 'absent' }
       : { kind: 'known', tokens: usage };
-  return { sessionId, output, usage: usageOut, backendErrors: errors, stopReason: null, reads: null };
+  return { sessionId, output, usage: usageOut, backendErrors: errors, stopReason: null, access: null };
 }

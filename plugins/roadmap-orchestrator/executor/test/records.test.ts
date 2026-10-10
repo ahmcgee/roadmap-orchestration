@@ -13,7 +13,7 @@ const T1 = '2026-09-25T12:00:01.000Z';
 const bind = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' };
 
 /** Fields read with a default when absent (upgrade scaffolding): the missing-field sweep skips them. */
-const UPGRADE_DEFAULTED: { readonly [N in RunnerFileName]?: readonly string[] } = { 'launch.json': ['stallMs'] };
+const UPGRADE_DEFAULTED: { readonly [N in RunnerFileName]?: readonly string[] } = { 'launch.json': ['stallMs'], 'reads.json': ['denied'] };
 
 const RUNNER_SAMPLES: { readonly [N in RunnerFileName]: Record<string, unknown> } = {
   'launch.json': {
@@ -28,7 +28,10 @@ const RUNNER_SAMPLES: { readonly [N in RunnerFileName]: Record<string, unknown> 
     ...bind, type: 'backend', role: 'gate', routingRev: '0123456789abcdef', session: UUID,
     outcome: { kind: 'success', value: { decision: 'approve' } }, usage: { kind: 'unavailable', reason: 'absent' }, backendErrors: [],
   },
-  'reads.json': { ...bind, reads: [{ tool: 'Read', path: '/w/a.ts' }, { tool: 'Grep', pattern: 'TODO', path: null }, { tool: 'Glob', pattern: '*.md', path: '/w/docs' }] },
+  'reads.json': {
+    ...bind, reads: [{ tool: 'Read', path: '/w/a.ts' }, { tool: 'Grep', pattern: 'TODO', path: null }, { tool: 'Glob', pattern: '*.md', path: '/w/docs' }],
+    denied: [{ tool: 'Glob', pattern: '**/*', path: '/run/evidence/u1' }],
+  },
 };
 
 function exit(child: ExitFile['child'], cause: ExitFile['cause'] = 'exited'): ExitFile {

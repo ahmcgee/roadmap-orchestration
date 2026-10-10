@@ -498,15 +498,23 @@ export function classifyCommand(exit: ExitFile, cancel: CancelFile | null, expec
 export type ToolRead =
   | Readonly<{ tool: 'Read'; path: string }>
   | Readonly<{ tool: 'Grep' | 'Glob'; pattern: string; path: string | null }>;
-/** What a Claude session read, in call order, from its stream-json stdout. Audit only: nothing binds it. */
-export type ReadsFile = InvocationBinding & Readonly<{ reads: readonly ToolRead[] }>;
+/**
+ * What a Claude session read, in call order, from its stream-json stdout, and the reads the CLI refused (`denied`:
+ * the result event's `permission_denials` of Read, Grep and Glob, a path outside the cwd and every `--add-dir`). A
+ * gate's approval binds `denied`: an approve from a session refused a read is not an approval (`read-denied`,
+ * src/pipeline/gate.ts). `denied` is absent from a reads.json an executor before it wrote (`readsDeniedOf`).
+ */
+export type ReadsFile = InvocationBinding & Readonly<{ reads: readonly ToolRead[]; denied?: readonly ToolRead[] }>;
 
 const toolRead: Read<ToolRead> = tagged('tool', {
   Read: object((f): ToolRead => ({ tool: f.get('tool', literal('Read')), path: f.get('path', str) })),
   Grep: object((f): ToolRead => ({ tool: f.get('tool', literal('Grep')), pattern: f.get('pattern', str), path: f.get('path', nullable(str)) })),
   Glob: object((f): ToolRead => ({ tool: f.get('tool', literal('Glob')), pattern: f.get('pattern', str), path: f.get('path', nullable(str)) })),
 });
-export const readsFile: Read<ReadsFile> = object((f) => ({ ...binding(f), reads: f.get('reads', arrayOf(toolRead)) }));
+export const readsFile: Read<ReadsFile> = object((f) => {
+  const denied = f.optional('denied', arrayOf(toolRead));
+  return { ...binding(f), reads: f.get('reads', arrayOf(toolRead)), ...(denied === undefined ? {} : { denied }) };
+});
 
 export const RUNNER_FILES = ['launch.json', 'runner.json', 'cancel.json', 'exit.json', 'result.json', 'reads.json'] as const;
 export type RunnerFileName = (typeof RUNNER_FILES)[number];
@@ -1385,6 +1393,8 @@ export const NEEDS_USER_REASONS = [
   // proposal's `worse` verdict (with its preimage, RC-6); a flow run without a valid answer after its retry; a ruler path
   // changed by the root agent's `apply` after the first admission (G11).
   'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
+  // Paid M4b run 5, blocking: a gate's approve after the CLI refused one of its reads, again after its retry.
+  'read-denied',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

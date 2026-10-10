@@ -3,7 +3,7 @@
 // a revise round's directives and their re-check with the round handoff, the fingerprint's cited-only set, and
 // the empty-diff refusal. M3 step A3: gate.inputs-not-in-ff-window (the capture under the revision fence),
 // gate.obligations-selected, plan-check.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
-// gate.approval-captured-fingerprint, gate.partial-supersession-regates.
+// gate.approval-captured-fingerprint, gate.partial-supersession-regates. Paid M4b run 5: gate.read-denied, gate.read-denied-again.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -18,6 +18,7 @@ import { rulingId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
 import { git } from './helpers/repo.ts';
 import { type CallRecord, readCalls } from './helpers/scenario.ts';
@@ -160,6 +161,47 @@ test('gate.empty-diff: a unit whose branch adds nothing is refused at the gate w
     assert.equal(again.kind, 'parked');
     assert.ok(again.kind === 'parked');
     assert.equal(again.needsUser.reason, 'empty-diff');
+  } finally {
+    r.journal.close();
+  }
+});
+
+// Paid M4b run 5: a gate Globbed the evidence root above its --add-dirs, was refused, and approved on the ledger alone.
+const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globEvidenceParent' }]);
+
+test('gate.read-denied: an approve from a session the CLI refused a read is no approval; a fresh gate, uncharged, approves', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), deniedGate(), gateStep({ decision: 'approve' })] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:')), ['gate:read-denied', 'gate:approve']);
+    const gates = readCalls(d.scenarioPath).filter(isGate);
+    assert.equal(gates.length, 2);
+    const denied = gates[0]!;
+    const firstDir = denied.argv[denied.argv.indexOf('--add-dir') + 1]!;
+    // The refusal is on record in the refused call's reads.json.
+    const inv = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'meter' && e.fact.subject.type === 'seat' && e.fact.subject.role === 'gate' ? [e.fact.inv] : []))[0]!;
+    const reads = JSON.parse(readFileSync(join(invocationDir(absPath(d.runDir), inv), 'reads.json'), 'utf8')) as { denied: unknown[] };
+    assert.deepEqual(reads.denied, [{ tool: 'Glob', pattern: '**/*', path: dirname(dirname(firstDir)) }]);
+    const approvals = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'approval' ? [e.fact.attempt] : []));
+    assert.equal(approvals.length, 1, 'only the second gate approved');
+    const u = r.journal.view.unit(U1).counters;
+    assert.equal(u.chargeableFailures, 0);
+    assert.equal(u.retries.gate, 1);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('gate.read-denied-again: refused again after its retry, the unit parks (env) for the operator', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), deniedGate(), deniedGate()] });
+  const r = contextFor(d);
+  try {
+    const result = await runUnit(r.ctx, r.unit('u1'), live());
+    assert.ok(result.kind === 'parked');
+    assert.equal(result.needsUser.reason, 'read-denied');
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:')), ['gate:read-denied', 'gate:read-denied']);
+    assert.equal(r.journal.view.unit(U1).approval, null);
   } finally {
     r.journal.close();
   }

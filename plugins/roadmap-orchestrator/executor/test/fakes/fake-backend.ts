@@ -134,9 +134,32 @@ function template(name: 'claude-judgment' | 'claude-api-error'): Record<string, 
   return capturedEvent(name, 'result');
 }
 
+/** Set once the init event is printed: a stream prints it once, first. */
+let initPrinted = false;
+
 /** The init event every stream-json run prints first. */
 function claudeInit(session: string): void {
+  if (initPrinted) return;
+  initPrinted = true;
   out(`${JSON.stringify({ ...capturedEvent('claude-judgment', 'system'), session_id: session })}\n`);
+}
+
+/** The tool calls the fake CLI refused this run: the result's `permission_denials`. */
+const denials: object[] = [];
+
+/** The CLI's read rule: a path inside the cwd or an `--add-dir` is readable, any other is refused. */
+function readable(call: Call, path: string): boolean {
+  const roots = [call.cwd, ...call.argv.flatMap((t, i) => (call.argv[i - 1] === '--add-dir' ? [t] : []))];
+  return roots.some((root) => path === root || path.startsWith(`${root}/`));
+}
+
+/** A Glob of `**\/*` in `path`: its tool_use event, refused (a denial on the result) when `path` is not readable. */
+function claudeGlob(call: Call, session: string, path: string): void {
+  claudeInit(session);
+  const input = { pattern: '**/*', path };
+  const id = `toolu_fake_${denials.length}`;
+  out(`${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Glob', input }] }, session_id: session })}\n`);
+  if (!readable(call, path)) denials.push({ tool_name: 'Glob', tool_use_id: id, tool_input: input });
 }
 
 function claudeSession(argv: readonly string[]): string {
@@ -146,7 +169,7 @@ function claudeSession(argv: readonly string[]): string {
 }
 
 function claudeResult(session: string, fields: Readonly<Record<string, unknown>>, drop: readonly string[] = []): void {
-  const r: Record<string, unknown> = { ...template('claude-judgment'), session_id: session, ...fields };
+  const r: Record<string, unknown> = { ...template('claude-judgment'), session_id: session, permission_denials: denials, ...fields };
   for (const k of drop) delete r[k];
   claudeInit(session);
   out(`${JSON.stringify(r)}\n`);
@@ -198,6 +221,12 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'refusal':
       claudeResult(session(), { result: "I can't help with that.", stop_reason: 'refusal' }, ['structured_output']);
       return;
+    case 'globEvidenceParent': {
+      const first = flagValue(call.argv, '--add-dir');
+      if (first === undefined) throw new Error('fake claude: globEvidenceParent needs an --add-dir in argv');
+      claudeGlob(call, session(), dirname(dirname(first)));
+      return;
+    }
     case 'exitZeroNoop':
       process.exit(0);
     case 'commit':

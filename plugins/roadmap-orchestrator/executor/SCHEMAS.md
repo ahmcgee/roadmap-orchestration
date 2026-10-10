@@ -184,6 +184,8 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | Lens answer `mutant` (paid M4b run 3) | `{lane, edits: [{path, old, new}]}` (non-empty) in place of `{patch, lane}`: the prompt and `LENS_SCHEMA` cut over | a recorded lens call's `{patch, lane}` reads as written (`kind: patch`, `lensPatchMutantDefault`, warned once; scaffolding) and is syntax-checked at admission as before |
 | Kill and cancel reasons (paid M4b run 3) | `+ supersede` (`KILL_REASONS`, `CANCEL_REASONS`; a backend call's `cancelled{reason}`, `BACKEND_CANCEL_REASONS`): a checkpoint call a revision superseded | none: dev.7 records never hold it |
 | `RevisionSource`, `HoldCause`, spawn subject, `CommandBody`, `JobId`, `NeedsUserReason`, facts, `.roadmap/config.json` | "M4b" | none |
+| reads.json (paid M4b run 5) | `+ denied?: ToolRead[]` (every reads.json since) | absent: none refused (`readsDeniedOf`, warned once; scaffolding): a gate call an earlier executor closed is judged as before |
+| `stage-outcome` gate, `NeedsUserReason` (paid M4b run 5) | `+ read-denied` | none: dev.7 records never hold it |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
@@ -582,11 +584,19 @@ cancel.json or null):
 `verdictOf` (`src/pipeline/dispatch.ts`) reads a backend call's interruption from `outcome: cancelled` alone.
 
 **`reads.json`** (`ReadsFile` / `readsFile`, written by the adapter beside `result.json` for every Claude call,
-write-once by the same rule and before it): `{v, arc, op, inv, reads: ToolRead[]}`, `ToolRead =
-Read{path} | Grep{pattern, path|null} | Glob{pattern, path|null}`, the session's read-only tool calls in call
+write-once by the same rule and before it): `{v, arc, op, inv, reads: ToolRead[], denied: ToolRead[]}`, `ToolRead =
+Read{path} | Grep{pattern, path|null} | Glob{pattern, path|null}`. `reads`: the session's read-only tool calls in call
 order, from the tool_use blocks of its stream-json stdout (`path: null`: the session's cwd). A call whose
-required argument is not a string is left out (the CLI refuses it unrun). Audit only: the approval fingerprint
-does not bind it.
+required argument is not a string is left out (the CLI refuses it unrun). `denied` (paid M4b run 5): the Read, Grep
+and Glob entries of the result event's `permission_denials` (`[{tool_name, tool_use_id, tool_input}]`, on every
+result the CLI prints; a result without it is malformed output), in order: the calls the CLI refused, a path outside
+the cwd and every `--add-dir`; none for a stream without a result. The approval fingerprint does not bind either, but
+the gate does: an `approve` from a session with any `denied` read records the gate outcome `read-denied`, not an
+approval (one uncharged retry, then an `env` park with reason `read-denied`), so no approval rests on evidence the
+session was refused. Run 5's gate Globbed `evidence/<unit>`, the parent of its `--add-dir` evidence dirs, was refused,
+and approved on the ledger's exit codes alone; the gate prompts now name the readable dirs exactly (listed and below,
+never above). A reads.json without `denied` (an earlier executor's) reads as written and as none refused
+(`readsDeniedOf`, src/core/upgrade.ts, warned once; scaffolding).
 
 **Claude stdout** is `--output-format stream-json --verbose` JSONL (`src/backends/argv.ts`): the reader takes
 the last `type: "result"` event, the object `--output-format json` prints alone. Both CLIs' JSONL is read by
