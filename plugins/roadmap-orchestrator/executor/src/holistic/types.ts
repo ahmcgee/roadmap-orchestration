@@ -421,6 +421,12 @@ export function laneRevMatches(recorded: LaneRev, lane: LaneDef | ArcLaneDef): b
 /** An obligation is exempt while waived, deferred or retired (only a disposition ruling exempts one). */
 export const isExempt = (o: ObligationDef): boolean => o.state.type === 'waived' || o.state.type === 'deferred' || o.state.type === 'retired';
 
+/**
+ * Whether `o` must hold: declared `must-hold`, or a `future` one in `latched` (the fold's `obligation-latched` facts, or
+ * the subset the question reads: as of an audit's capture, or in a unit's tree). The one effective-activation test.
+ */
+export const isMustHold = (o: ObligationDef, latched: ReadonlySet<ObligationId>): boolean => o.activation === 'must-hold' || latched.has(o.id);
+
 /** Vision coverage (A1's `visionCoverage`; `status.vision.coverage`, every lens and checkpoint prompt). */
 export type VisionCoverage = Readonly<{
   /** Active clauses the arc advances (`holistic.advances`) that no active obligation serves: a real gap. */
@@ -503,6 +509,8 @@ export type ImpactInput = Readonly<{
   changedPaths: readonly RepoPath[];
   /** A revision publication's obligations added, split or re-witnessed (G12); empty for a unit candidate. */
   revised: readonly ObligationId[];
+  /** The future obligations latched so far (the fold's `obligation-latched`): must-hold, so an unmapped path selects them. */
+  latched: ReadonlySet<ObligationId>;
 }>;
 /** The selected obligations, ascending, split closure applied (H14: a selected child selects its parent and back). */
 export type SelectObligations = (input: ImpactInput) => readonly ObligationId[];

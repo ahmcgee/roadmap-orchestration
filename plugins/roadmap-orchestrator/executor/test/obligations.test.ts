@@ -188,7 +188,7 @@ describe('impact selection', () => {
     ob('I-4', { statement: 'Parse errors name the line.', docRef: { path: 'docs/parse.md', anchor: '#errors', quotedText: 'line' }, witness: { lane: 'journey', testIds: ['parse'] } }),
   ], [{ pattern: 'src/format.js', obligations: ['I-3'] }, { pattern: 'src/report', obligations: ['I-1'] }, { pattern: 'src/**', obligations: ['I-4'] }]);
   const select = (over: Partial<Parameters<typeof selectObligations>[0]> = {}): readonly ObligationId[] => selectObligations({
-    obligations: O, units: [{ unit: unitId('tidy'), declared: [], repairs: [] }], closure: [], changedPaths: [], revised: [], ...over,
+    obligations: O, units: [{ unit: unitId('tidy'), declared: [], repairs: [] }], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
   });
   const ids = (...xs: string[]): ObligationId[] => xs.map((x) => obligationId(x));
 
@@ -216,6 +216,11 @@ describe('impact selection', () => {
     assert.deepEqual(select({ changedPaths: [repoPath('README.md')] }), ids('I-2', 'I-3', 'I-4'));
   });
 
+  it('impact.unmapped-selects-latched: a future obligation latched by its publication is must-hold, so a later unit\'s unmapped path selects it', () => {
+    // I-1 is future, delivered by `report`; once `report` publishes it latches. `tidy` then changes an unmapped path.
+    assert.deepEqual(select({ changedPaths: [repoPath('README.md')], latched: new Set(ids('I-1')) }), ids('I-1', 'I-2', 'I-3', 'I-4'));
+  });
+
   it('impact.split-closure: a selected child selects its parent, and a selected parent its children, transitively (H14)', () => {
     const S = file([
       ob('I-1', { witness: null, proofJudgment: null, state: { type: 'split', children: ['I-2', 'I-3'] } }),
@@ -225,7 +230,7 @@ describe('impact selection', () => {
       ob('I-5'),
     ], [{ pattern: 'src/a.js', obligations: ['I-4'] }, { pattern: 'src/b.js', obligations: ['I-5'] }]);
     const pick = (over: Partial<Parameters<typeof selectObligations>[0]>): readonly ObligationId[] => selectObligations({
-      obligations: S, units: [], closure: [], changedPaths: [], revised: [], ...over,
+      obligations: S, units: [], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
     });
     assert.deepEqual(pick({ changedPaths: [repoPath('src/a.js')] }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ revised: ids('I-1') }), ids('I-1', 'I-2', 'I-3', 'I-4'));

@@ -6,7 +6,7 @@ import { type TestRef, testRefKey } from '../core/events.ts';
 import { type LaneId, type ObligationId, type Sha, type UnitId, type WitnessItemId, compareIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type SpecM1, specObligations, specRepairs, specWitnesses } from '../core/records.ts';
-import { type ObligationDef, type Obligations, type WitnessRecord, isExempt } from './types.ts';
+import { type ObligationDef, type Obligations, type WitnessRecord, isExempt, isMustHold } from './types.ts';
 
 /** Why a test id is required: a target the unit delivers or repairs, or a must-hold it declares and must keep (preservation). */
 export type WitnessRole = 'target' | 'preservation';
@@ -76,23 +76,23 @@ export function requiredWitnesses(view: JournalView, obligations: Obligations, u
     if (o === undefined) throw new Error(`unit ${unit}: its spec repairs ${ref}, which the obligations in force do not hold`);
     if (binding(o)) targets.add(o.id);
   }
-  const latchedBy = new Map(view.holistic().latched.map((l) => [l.obligation, l.unit]));
-  const latchedInTree = (id: ObligationId): boolean => {
-    const by = latchedBy.get(id);
-    if (by === undefined) return false;
+  const declared = specObligations(spec);
+  // The declared obligations latched by a publication whose merge `at` contains.
+  const latchedInTree = new Set(view.holistic().latched.filter(({ obligation: id, unit: by }) => {
+    if (!declared.includes(id)) return false;
     const merge = merges.get(by);
     if (merge === undefined) throw new Error(`obligation ${id} is latched by ${by}, which has no published merge`);
     return at.isAncestor(merge);
-  };
+  }).map((l) => l.obligation));
   const rows: RequiredWitness[] = [];
   for (const id of targets) rows.push(...obligationRows(byId.get(id) as ObligationDef, 'target'));
   for (const w of specWitnesses(spec)) {
     if (w.state === 'active') rows.push({ lane: w.lane, testId: w.testId, source: { type: 'witness-item', id: w.id }, role: 'target' });
   }
-  for (const id of specObligations(spec)) {
+  for (const id of declared) {
     const o = byId.get(id);
     if (o === undefined) throw new Error(`unit ${unit}: its spec declares ${id}, which the obligations in force do not hold`);
-    if (targets.has(id) || !binding(o) || !(o.activation === 'must-hold' || latchedInTree(id))) continue;
+    if (targets.has(id) || !binding(o) || !isMustHold(o, latchedInTree)) continue;
     rows.push(...obligationRows(o, 'preservation'));
   }
   return [...new Map(rows.map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));

@@ -24,7 +24,7 @@ import type { NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, branchRef } from '../core/values.ts';
 import { revParse } from '../git/git.ts';
 import { verdictOf } from '../holistic/observe.ts';
-import { type Obligations, type WitnessRecord, isExempt, witnessRecord } from '../holistic/types.ts';
+import { type Obligations, type WitnessRecord, isExempt, isMustHold, witnessRecord } from '../holistic/types.ts';
 import type { PlanM1 } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
@@ -73,7 +73,7 @@ export function baselineProblems(obligations: Obligations, records: ReadonlyMap<
     const record = records.get(o.witness.lane);
     if (record === undefined) throw new Error(`baseline: obligation ${o.id}'s lane ${o.witness.lane} was not witnessed`);
     const verdict = verdictOf(record, o.witness);
-    const mustHold = o.activation === 'must-hold' || latched.has(o.id);
+    const mustHold = isMustHold(o, latched);
     if (mustHold && verdict !== 'held') out.push({ obligation: o.id, kind: 'not-held', verdict });
     if (!mustHold && verdict === 'held') out.push({ obligation: o.id, kind: 'vacuous', verdict });
   }

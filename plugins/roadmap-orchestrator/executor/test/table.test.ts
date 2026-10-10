@@ -1,12 +1,15 @@
 // The transition table over an obligations file (src/holistic/table.ts `obligationEffects`), exhaustively:
 // every witnessed obligation's case (activation, latch, completion, verdict, selection), every exempt state, split
 // parents over every pair of child situations (H14) and a nested split; plus `completes`, `latches` and the brake.
-// The case table itself is `table.total` in test/m3-schemas.test.ts.
+// The case table itself is `table.total` in test/m3-schemas.test.ts. `gradeTree` (src/pipeline/integrate.ts): a red
+// lane witnessing only measured obligations is never unexplained.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type ObligationId, type UnitId, obligationId, unitId } from '../src/core/ids.ts';
+import { type ObligationId, type UnitId, laneId, obligationId, unitId } from '../src/core/ids.ts';
 import { type ObligationEffect, brakesOn, completes, latches, obligationEffects } from '../src/holistic/table.ts';
-import { type ObligationDef, OBSERVATION_VERDICTS, type ObservationVerdict, parseObligations } from '../src/holistic/types.ts';
+import { type ObligationDef, OBSERVATION_VERDICTS, type ObservationVerdict, parseObligations, witnessRecord } from '../src/holistic/types.ts';
+import { type Claims, gradeTree } from '../src/pipeline/integrate.ts';
+import type { JourneyRun } from '../src/pipeline/lanes.ts';
 
 const LANE_REV = '0123456789abcdef';
 type Raw = Record<string, unknown>;
@@ -131,5 +134,43 @@ describe('table.effects: the table over an obligations file', () => {
     assert.equal(brakesOn(effects, ids('I-1', 'I-4')), false);
     assert.equal(brakesOn(effects, ids('I-2')), true, 'a selected red brakes');
     assert.throws(() => brakesOn(effects, ids('I-9')), /I-9/);
+  });
+});
+
+describe('gradeTree: measured lanes', () => {
+  const lane = (id: string): Raw => ({ id, argv: ['node', '--test', `test/${id}.test.js`], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' });
+  const witnessed = (id: string, lid: string): Raw => ({ witness: { lane: lid, testIds: [id] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: lid, testIds: [id] } } });
+  // I-1 must-hold on `journey`; I-2 future on `clash`, delivered by a sibling unit not yet published (paid M4b run 5).
+  const obligations = parseObligations({
+    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { paths: [] }, lanes: [lane('journey'), lane('clash')],
+    obligations: [raw('I-1', witnessed('I-1', 'journey')), raw('I-2', { ...witnessed('I-2', 'clash'), activation: 'future', deliveredBy: ['clash-refusal'] })],
+  });
+  const record = (lid: string, malformed: boolean, testId: string): ReturnType<typeof witnessRecord> => witnessRecord({
+    v: 1, lane: lid, laneRev: LANE_REV, envId: '0123456789abcdef', treeSha: 'a'.repeat(40), inv: 'arc/1#1', runner: 'node-test', purpose: 'witness', malformed,
+    records: malformed ? [] : [{ testId, selected: 1, outcome: 'pass' }],
+  }, 'record');
+  const run = (lid: string, malformed: boolean, testId: string): JourneyRun => ({
+    lane: laneId(lid), inv: null, verdict: malformed ? 'fail' : 'pass', flaky: false, dir: null, record: record(lid, malformed, testId),
+  });
+  // The clash lane's witness file does not exist yet: `Could not find`, a malformed record, a red lane.
+  const runs = [run('journey', false, 'I-1'), run('clash', true, 'I-2')];
+  const claims = (latched: ReadonlySet<ObligationId>, completing: ReadonlySet<ObligationId> = new Set()): Claims => ({
+    obligations, selected: ids('I-1', 'I-2'), completing, repairs: new Set(), latched, lanes: obligations.lanes,
+  });
+
+  it('a red lane witnessing only a future obligation not latched is measured: neither red nor unexplained', () => {
+    const g = gradeTree(claims(new Set()), runs, new Set(), new Set(), new Set());
+    assert.equal(g.effects.get(obligationId('I-2')), 'measured');
+    assert.deepEqual([g.red, g.unexplained], [[], []]);
+  });
+
+  it('once latched, the same lane is must-hold: red for the brake and unexplained', () => {
+    const g = gradeTree(claims(ids('I-2')), runs, new Set(), new Set(), new Set());
+    assert.deepEqual([g.red, g.unexplained], [['I-2'], ['clash']]);
+  });
+
+  it('completed by this candidate, its malformed witness is red through its effect', () => {
+    const g = gradeTree(claims(new Set(), ids('I-2')), runs, ids('I-2'), new Set(), new Set());
+    assert.deepEqual(g.red, ['I-2']);
   });
 });

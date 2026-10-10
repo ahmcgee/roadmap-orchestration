@@ -158,6 +158,7 @@ export function selected(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha)
     closure: dependencyClosure(ctx, unit).flatMap((u) => specObligations(loadUnitSpec(ctx, u).spec)),
     changedPaths: unitDiffPaths(ctx.repo, tip, head),
     revised: [],
+    latched: new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)),
   });
   return ids.map((id) => obligations.obligations.find((o) => o.id === id)!);
 }

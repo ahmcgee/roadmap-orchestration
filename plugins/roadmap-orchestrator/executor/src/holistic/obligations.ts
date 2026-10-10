@@ -29,7 +29,7 @@ import type { LaneId, ObligationId, RulingId, UnitId, VisionClauseId } from '../
 import { canonicalJson } from '../core/json.ts';
 import { type CorpusPin, activeRules } from '../corpus/types.ts';
 import {
-  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, laneRevMatches, laneRevOf, obligationSource,
+  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, isMustHold, laneRevMatches, laneRevOf, obligationSource,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
@@ -226,7 +226,7 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
 
   function split(p: ObligationDef, o: ObligationDef, children: readonly ObligationId[]): void {
     const kids: ObligationDef[] = [];
-    const mustHold = p.activation === 'must-hold' || ctx.latched.has(p.id);
+    const mustHold = isMustHold(p, ctx.latched);
     for (const c of children) {
       const child = after.get(c)!;
       if (!isNew(c)) {

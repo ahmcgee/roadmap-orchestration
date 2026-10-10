@@ -82,7 +82,7 @@ import { coverageBase, lensCoverage } from './coverage.ts';
 import { type FindingDraft, admitMutant, corroborateFinding, crossKey, openFinding, witnessFindingDraft } from './findings.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import {
-  FINDING_MOVES, LENS_KINDS, type MutantRef, type FindingEvidence, type FindingLens, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, isExempt, parseObligations, parseVision,
+  FINDING_MOVES, LENS_KINDS, type MutantRef, type FindingEvidence, type FindingLens, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, isExempt, isMustHold, parseObligations, parseVision,
 } from './types.ts';
 
 /** What an audit needs: a stage context (processes, resources, routing), the arbiter's first-served waits, a clock. */
@@ -405,7 +405,7 @@ function witnessDrafts(ctx: StageContext, s: Started, r: Recorded, records: Read
   const latched = new Set(ctx.journal.view.holistic().latched.filter((l) => l.seq <= s.highWater).map((l) => l.obligation));
   return r.obligations.obligations.flatMap((o): FindingDraft[] => {
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) return [];
-    if (o.activation !== 'must-hold' && !latched.has(o.id)) return [];
+    if (!isMustHold(o, latched)) return [];
     const record = records.get(o.witness.lane);
     if (record === undefined) throw new Error(`${s.job}: obligation ${o.id}'s lane ${o.witness.lane} has no record on ${s.integrationSha}`);
     if (witnessVerdict(record, o.witness) !== 'not-held') return [];
