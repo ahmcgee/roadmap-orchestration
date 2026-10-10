@@ -375,7 +375,8 @@ counts as acked) and the check-in, one final message, asks the cutoff question a
 resume (arc 2's Phase 0); arc 2 chains on arc 1 through
 one between-arc commit, the forge flips to PUBLIC + ALL mid-arc (the checkpoint's capture raises the blocking item,
 admission is held and the checkpoint waits uncaptured until the owner restores the policy and the root agent acks);
-the next checkpoint admits `fits` as the arc's opportunity (V-7) and converts an over-budget day view into an amendment;
+the next checkpoint admits `fits` as the arc's opportunity (V-7) with its witness (a split of I-4 whose child I-14, the
+draught rule, fits delivers on the berths journey) and converts an over-budget day view into an amendment;
 the root agent pauses notice in a hung lane and resumes it (one operator-log entry), and the resumed attempt reuses the
 first lane's pass; `nextStart` refuses `limit`, and arc 3, whose Phase 0 applies the converted amendment as T-25, is refused
 `chain-invalid{limit}` at `phase0 check` and at `start`; stop `k-limit`, every criterion passing. The story waits on

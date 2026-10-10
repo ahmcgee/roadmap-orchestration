@@ -42,7 +42,7 @@ import {
 import type { BriefPayload } from '../../src/phase0/types.ts';
 import { itemKey } from '../../src/watch.ts';
 import { fakeArc, fakeHostDir, prepareArc1 } from '../../evals/m4a/fake-root.ts';
-import { FILES, LANES, READOUTS, REPLAY_LANE, SHARD, SLOW_LANE, SUITE_LANE, corpusFor, rawCorpus, unitsOf } from '../../evals/m4a/golden.ts';
+import { FILES, FITS_WITNESS, LANES, READOUTS, REPLAY_LANE, SHARD, SLOW_LANE, SUITE_LANE, corpusFor, rawCorpus, unitsOf } from '../../evals/m4a/golden.ts';
 import { DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from '../../evals/m4a/scenario.ts';
 import { CLOCK_FILE, FAKE_TICK_MS, PAID_TICK } from '../../evals/m4a/setup.ts';
 import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
@@ -592,7 +592,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(confirm.find((o) => o.outcome === 'smoke-survived')!.detail, { kind: 'smoke-survived', obligations: [], testIds: [tides] });
   });
 
-  test('evals-m4a.opportunity: arc 2\'s checkpoint admits fits as the opportunity O-1 (V-7 joins advances) and converts the over-budget day view into an amendment, which arc 3 applies as T-25', () => {
+  test('evals-m4a.opportunity: arc 2\'s checkpoint admits fits as the opportunity O-1 with its witness (V-7 joins advances) and converts the over-budget day view into an amendment, which arc 3 applies as T-25', () => {
     const bundle = factsOf(arc2, 'plan-applied').find((p) => p.source?.type === 'bundle');
     assert.ok(bundle !== undefined && bundle.source?.type === 'bundle');
     assert.deepEqual(bundle.source.admits, [{ index: 0, unit: 'fits', class: { type: 'opportunity', id: 'O-1', clauses: ['V-7'] } }]);
@@ -603,6 +603,17 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(named(outcomesOf(arc2, 'dayview')), [], 'the converted unit never ran');
     const two = chainOf(absPath(layout(story.dir).product)).two!;
     assert.deepEqual(two.plan.holistic?.advances, ['V-5', 'V-7'], 'the opportunity\'s clause joined the slice in force');
+    // Its witness (OR-A1 as tightened after paid M4b runs 3 and 5): I-4 split into its restatement and the draught child
+    // fits delivers on the berths journey; the census moved T-4 to it, and it latched when fits published.
+    const obligations = arcView(two).obligations;
+    const byId = (id: string) => obligations.obligations.find((o) => o.id === id);
+    assert.deepEqual(byId(FITS_WITNESS.parent)?.state, { type: 'split', children: [FITS_WITNESS.restated, FITS_WITNESS.child.id] });
+    assert.deepEqual(
+      [byId(FITS_WITNESS.child.id)?.witness, byId(FITS_WITNESS.child.id)?.deliveredBy, byId(FITS_WITNESS.child.id)?.serves],
+      [{ lane: 'berths', testIds: [FITS_WITNESS.child.test] }, ['fits'], ['V-5', 'V-7']],
+    );
+    assert.deepEqual(obligations.census?.find((e) => e.rule === FITS_WITNESS.child.rule)?.state, { type: 'obligation', id: FITS_WITNESS.child.id });
+    assert.ok(factsOf(arc2, 'obligation-latched').some((f) => f.obligation === FITS_WITNESS.child.id), 'fits\' publication latched its witness');
     // The bundle's drift audit and its checkpoint ran before notice was admitted (the root agent waited on them).
     const drift = factsOf(arc2, 'checkpoint-inputs').find((f) => f.job === DRIFT_CHECKPOINT)!;
     assert.ok(factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice').every((d) => d.seq > drift.seq));

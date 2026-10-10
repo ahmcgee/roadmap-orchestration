@@ -713,13 +713,16 @@ Issue mode). Brakes in code:
 owner-selected slice `S` (`advances` less the arc's opportunity clauses): **repair** (it restores an obligation or
 behaviour that does not hold; its refs are valid: an unheld non-exempt obligation or a captured active finding),
 **oversight** (a gap within `S`'s clauses), **opportunity** (it advances clauses outside `S`, honestly cited; they join
-`advances` and the brief; the budget is one per arc) or it converts. A clause counts as touched by an admit through
+`advances` and the brief; the budget is one per arc; owner ruling 2026-10-10, after paid M4b runs 3 and 5: an
+opportunity is admitted only with its witness, an obligation of the same bundle that its unit delivers serving one of
+its clauses on an arc lane in force, else it converts `unwitnessed`, since arc lanes are the owner's and a clause no
+lane can witness only sinks later checkpoints) or it converts. A clause counts as touched by an admit through
 its cites, the obligations its unit delivers, and what it repairs (a mixed finding keeps its out-of-slice clauses);
 obligations an impact mapping merely relates never count. A repair whose attributed units (by finding source and lens
 range, or an obligation's held-to-not-held window) lie wholly in one opportunity's lineage is that opportunity's
 follow-up; an opportunity carries one, and the next converts with a debt item naming it. Ambiguous attribution never
-grants a follow-up. Repair and oversight are always admitted; an unrelated admit, an opportunity over budget and an
-overrun convert: the op is dropped and recorded as a corpus amendment, unless another op or an issue disposition names
+grants a follow-up. Repair and oversight are always admitted; an unrelated admit, an opportunity over budget or without its witness and
+an overrun convert: the op is dropped and recorded as a corpus amendment, unless another op or an issue disposition names
 it, which makes the bundle invalid. The classification is persisted in the decision record before any settlement and
 never recomputed. A bundle may add to `advances` exactly its opportunities' clauses; nothing else of `advances` moves
 but by `apply`. `status` and the brief show admits, opportunities and a drift indicator.

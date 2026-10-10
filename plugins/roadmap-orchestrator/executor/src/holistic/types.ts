@@ -848,7 +848,7 @@ export type AdmitClass =
   | Readonly<{ type: 'opportunity'; id: OpportunityId; clauses: readonly VisionClauseId[] }>;
 /** An admit of a bundle as its decision record keeps it: the op's index in the checkpoint answer, its unit, its class. */
 export type ClassifiedAdmit = Readonly<{ index: number; unit: UnitId; class: AdmitClass }>;
-export const CONVERSION_REASONS = ['unrelated', 'over-budget', 'follow-up-overrun'] as const;
+export const CONVERSION_REASONS = ['unrelated', 'over-budget', 'unwitnessed', 'follow-up-overrun'] as const;
 export type ConversionReason = (typeof CONVERSION_REASONS)[number];
 /**
  * An admit code dropped from a bundle (R35): it becomes a corpus amendment (and, for `follow-up-overrun`, a debt item

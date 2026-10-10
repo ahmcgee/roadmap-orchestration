@@ -918,7 +918,8 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     for (const needle of [/# Admits in a corpus arc/, /Code classifies every admit after you decide/, /you do not label it/, /- repair: /, /- oversight: /, /- opportunity: /,
       /budget of one opportunity/, /at most one follow-up/, /Honest citation: an admit that targets an out-of-slice rule cites the clause outside the slice that the rule advances/,
       /targets lists the corpus rules \(T-n\) the unit adds or changes behaviour for/, /A finding's vision clauses are context, not scope/, /Every target must be an active rule of the pin/,
-      /code drops an admit that touches no clause, an opportunity over the budget, and a second follow-up/, /corpus amendment for the owner's next Phase 0/,
+      /code drops an admit that touches no clause, an opportunity over the budget, an opportunity without its witness, and a second follow-up/,
+      /An opportunity is admitted only together with its witness: in the same bundle, an obligation split/, /corpus amendment for the owner's next Phase 0/,
       /banks a debt item naming the opportunity/, /the whole bundle is invalid instead/, /repair ref to an obligation that holds, an exempt obligation, or a finding no longer active/]) {
       assert.match(sys, needle);
     }

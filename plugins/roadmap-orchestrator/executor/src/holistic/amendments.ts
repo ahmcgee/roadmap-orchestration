@@ -43,6 +43,7 @@ export function checkpointAmendments(job: JobId, output: CheckpointOutput): read
 const CONVERSION_WHY: Readonly<Record<Conversion['reason'], string>> = {
   unrelated: 'it serves no clause the arc touches',
   'over-budget': "it advances clauses outside the owner-selected slice, and the arc's opportunity budget is spent",
+  unwitnessed: "it advances clauses outside the owner-selected slice, and no obligation of its bundle, delivered by it, serves them on an arc lane in force (an arc lane is the owner's to add)",
   'follow-up-overrun': 'it is a further repair of an opportunity that already had its one follow-up (LR-k)',
 };
 
