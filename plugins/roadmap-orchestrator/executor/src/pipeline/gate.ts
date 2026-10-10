@@ -11,7 +11,8 @@
 // and the premise files whose blobs changed since (items 25, 29). The session reads the green verification
 // checkout, read-only, and the rulings ledger's directory.
 //
-// Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
+// Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome; an approve from a session
+// the CLI refused a read is `read-denied` instead, an uncharged retry: paid M4b run 5) · revise
 // (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
 // before any call (park) · refusal, malformed and faults as at plan-check.
 //
@@ -67,7 +68,8 @@ import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { NeedsUserContent } from '../core/records.ts';
+import type { NeedsUserContent, ToolRead } from '../core/records.ts';
+import { readsDeniedOf } from '../core/upgrade.ts';
 import {
   type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, cancelledNow, dispatchOf, isCancelled, judgmentDeadlineMs,
   judgmentDispatch, unitBranch, verdictOf, verificationWorktree,
@@ -350,11 +352,23 @@ export async function gateRead(
     bankGateNotes(ctx, unit.id, parent.attempt, out.findings);
     return done(record(ctx, parent, 'approve'), approved.fingerprint);
   }
+  if (refusedReads(called).length > 0) return done(record(ctx, parent, 'read-denied'));
   const head = unitTip(ctx, unit.id);
   if (head !== fingerprint.unitCommit) throw new Error(`gate of ${unit.id}: the unit branch moved from ${fingerprint.unitCommit} to ${head} during the gate`);
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint });
   bankGateNotes(ctx, unit.id, parent.attempt, out.findings);
   return done(record(ctx, parent, 'approve'), fingerprint);
+}
+
+/**
+ * The reads the CLI refused the gate's session (reads.json `denied`; paid M4b run 5): an approve after one may rest on
+ * evidence the session never opened, so it is no approval (`read-denied`). A judgment runs on Claude only, and the
+ * adapter writes a Claude call's reads.json before its result.json, so a missing one is a loud error.
+ */
+function refusedReads(called: BackendCallOutcome): readonly ToolRead[] {
+  const reads = runnerFiles(called.invDir, called.inv).read('reads.json');
+  if (reads === null) throw new Error(`${called.inv}: a gate call's result without its reads.json`);
+  return readsDeniedOf(reads);
 }
 
 /**

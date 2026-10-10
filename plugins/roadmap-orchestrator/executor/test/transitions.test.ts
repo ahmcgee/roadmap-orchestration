@@ -177,6 +177,9 @@ const ROWS: readonly Row[] = [
   ['gate', 'interrupted', {}, 'hold', 'hold', {}],
   // Run 11 round 3: no green verification checkout of the head: the lanes run again, uncharged.
   ['gate', 'unverified', {}, 'lanes', 'advance', {}],
+  // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park.
+  ['gate', 'read-denied', {}, 'gate@med', 'retry', { 'retries.gate': 1 }],
+  ['gate', 'read-denied', { counters: { 'retries.gate': 1 } }, 'park:read-denied', 'park', {}],
   // candidate (integration slot)
   ['candidate', 'green', {}, 'ff', 'advance', {}],
   ['candidate', 'transient-violation', {}, 'build/fix@med', 'trigger', { chargeableFailures: 1 }],
@@ -229,7 +232,7 @@ describe('transitions', () => {
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
       'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
-      'gate process-fault': 'retryable', 'gate routing-changed': 'env',
+      'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
     };
