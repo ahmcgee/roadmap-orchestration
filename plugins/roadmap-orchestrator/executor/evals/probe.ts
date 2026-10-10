@@ -445,7 +445,7 @@ async function main(): Promise<void> {
   const checkpointInputs: CheckpointInputs = {
     vision: MINI_VISION, trigger: { type: 'audit', job: jobId('audit', 1) }, priorRejected: [], refused: [], head: HEAD,
     plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
-    coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
+    coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.', issues: { type: 'captured', issues: [] },
     manifest: [], specs: [], nextRulingId: rulingId('C-1'), closeout: null, issuesUnchangedSince: null,
   };

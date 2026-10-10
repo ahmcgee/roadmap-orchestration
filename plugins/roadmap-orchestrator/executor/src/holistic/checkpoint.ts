@@ -93,14 +93,15 @@ import { candidateRedCause } from '../pipeline/unit.ts';
 import { architecture, docAt, inMs, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
 import { type CheckpointInputs, type CheckpointSpec, type FindingView, type ManifestEntry, type ManifestKind, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
-import { type CheckpointOutput, validateCheckpointOutput } from '../prompts/schemas.ts';
+import { type CheckpointIds, type CheckpointOutput, checkpointSchemaFor, validateCheckpointOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { entryOf, isFree, resourceTable } from '../resources/reserve.ts';
 import { renderSpec } from '../spec/render.ts';
 import { nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, rewitnessP1s, withCpu } from './audit.ts';
-import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, activate, effectiveOps, raiseOnce, settleDecided, vectorAt } from './bundle.ts';
+import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, activate, effectiveOps, raiseOnce, recordedAdmits, settleDecided, vectorAt } from './bundle.ts';
+import { opportunityClauses } from './admits.ts';
 import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
@@ -591,7 +592,7 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     // A closeout (H5) repeats neither the findings nor the specs the no-op it follows weighed.
     findings: closeout === null ? findingViews(ctx, s.findings) : [],
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, s.headSha),
-    coverage: visionCoverage(r.vision, advancesOf(r.plan), r.obligations, sidecars.map((x) => ({ id: x.id, cites: x.cites }))),
+    coverage: visionCoverage(r.vision, advancesOf(r.plan), r.obligations, sidecars.map((x) => ({ id: x.id, cites: x.cites })), opportunityClauses(recordedAdmits(ctx.journal.view))),
     divergences: uncoveredDivergences(ctx.journal.view).map((d) => ({ id: d.id, type: d.type, what: d.what })),
     contracts: r.plan.contracts.map((c) => docAt(ctx, s.headSha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
@@ -670,6 +671,20 @@ async function supersedable<T>(ctx: CheckpointContext, s: Captured, call: () => 
   }
 }
 
+/**
+ * The closed id sets the call's schema enumerates (paid M4b run 5, ckpt-4), from the captured obligations: the arc lanes a
+ * split child's witness may name, the active obligations a split may name as its parent, every obligation a dispose may
+ * name. Null outside a holistic arc with obligations (any id; the bundle's validation refuses an unknown one).
+ */
+export function checkpointIdsOf(obligations: Obligations | null): CheckpointIds | null {
+  if (obligations === null) return null;
+  return {
+    arcLanes: obligations.lanes.map((l) => l.id),
+    splittable: obligations.obligations.filter((o) => o.state.type === 'active').map((o) => o.id),
+    obligations: obligations.obligations.map((o) => o.id),
+  };
+}
+
 /** Reads a call: an output, a failure (an invalid decision), or an interruption (its park or usage-limit item written). */
 function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome): Asked {
   const v = verdictOf(ctx, jobParent(job), called);
@@ -713,7 +728,8 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     const inputs = checkpointInputs(ctx, s, r);
     const rendered = prompt.render(inputs);
     const called = await withCpu(ctx, s.job, () => supersedable(ctx, s, () => callArcRole(ctx, {
-      job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
+      job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered, schema: checkpointSchemaFor(checkpointIdsOf(r.obligations)), cwd: checkout,
+      evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
       deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
     })));
     await removeCheckout(ctx, s.job, checkout);

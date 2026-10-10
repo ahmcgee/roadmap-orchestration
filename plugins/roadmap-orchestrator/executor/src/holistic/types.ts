@@ -429,8 +429,13 @@ export const isMustHold = (o: ObligationDef, latched: ReadonlySet<ObligationId>)
 
 /** Vision coverage (A1's `visionCoverage`; `status.vision.coverage`, every lens and checkpoint prompt). */
 export type VisionCoverage = Readonly<{
-  /** Active clauses the arc advances (`holistic.advances`) that no active obligation serves: a real gap. */
+  /** Active clauses the arc advances (`holistic.advances`) that no active obligation serves, an opportunity's excepted: a real gap. */
   unservedAdvanced: readonly VisionClauseId[];
+  /**
+   * An opportunity's clauses (OR-A1: they joined `advances`) that no active obligation serves (paid M4b runs 3 and 5). Not a
+   * gap the arc must close: serving one may need an arc lane, which is the owner's to add; status and the brief show it.
+   */
+  unservedOpportunity: readonly VisionClauseId[];
   /** Active clauses outside `holistic.advances`: the horizon beyond this arc, expected and never a gap. */
   horizon: readonly VisionClauseId[];
   /** Active obligations serving no clause. */
