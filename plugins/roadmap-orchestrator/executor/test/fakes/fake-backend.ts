@@ -221,9 +221,9 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'refusal':
       claudeResult(session(), { result: "I can't help with that.", stop_reason: 'refusal' }, ['structured_output']);
       return;
-    case 'globEvidenceParent': {
+    case 'globAboveAddDir': {
       const first = flagValue(call.argv, '--add-dir');
-      if (first === undefined) throw new Error('fake claude: globEvidenceParent needs an --add-dir in argv');
+      if (first === undefined) throw new Error('fake claude: globAboveAddDir needs an --add-dir in argv');
       claudeGlob(call, session(), dirname(dirname(first)));
       return;
     }

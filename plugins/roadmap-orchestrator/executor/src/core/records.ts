@@ -501,8 +501,8 @@ export type ToolRead =
 /**
  * What a Claude session read, in call order, from its stream-json stdout, and the reads the CLI refused (`denied`:
  * the result event's `permission_denials` of Read, Grep and Glob, a path outside the cwd and every `--add-dir`). A
- * gate's approval binds `denied`: an approve from a session refused a read is not an approval (`read-denied`,
- * src/pipeline/gate.ts). `denied` is absent from a reads.json an executor before it wrote (`readsDeniedOf`).
+ * gate's or plan-check's approve binds `denied`: one from a session refused a read is not an approval (`read-denied`,
+ * `readRefused`, src/pipeline/stages.ts). `denied` is absent from a reads.json an executor before it wrote (`readsDeniedOf`).
  */
 export type ReadsFile = InvocationBinding & Readonly<{ reads: readonly ToolRead[]; denied?: readonly ToolRead[] }>;
 
@@ -1393,7 +1393,7 @@ export const NEEDS_USER_REASONS = [
   // proposal's `worse` verdict (with its preimage, RC-6); a flow run without a valid answer after its retry; a ruler path
   // changed by the root agent's `apply` after the first admission (G11).
   'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
-  // Paid M4b run 5, blocking: a gate's approve after the CLI refused one of its reads, again after its retry.
+  // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
   'read-denied',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */

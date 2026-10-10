@@ -151,6 +151,11 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **Checkpoint reads refused** (paid M4b run 5): the checkpoint call inv 2174 was refused reads of the runtime's
+  `inputs/*.plan.json` (outside its `--add-dir`s) and still answered `bundle`. The gate and plan-check void an approve
+  after a refused read (`readRefused`, src/pipeline/stages.ts); the checkpoint does not yet. Trigger: a checkpoint
+  decision that rests on a refused read, or a second run whose checkpoint reads.json shows `denied`; then decide whether
+  to add the readable dirs it reached for, or to void its answer the same way.
 - **`nextStart` reads K at the chain head's baseline** (paid run 12 fix): a K the owner commits after that baseline is
   seen only by the next start itself (the live file at `start`), not by `chain status`. Trigger: a session stopping
   `k-limit` while the owner's newer committed K would allow the start.

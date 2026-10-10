@@ -23,6 +23,8 @@
 // patch (an acceptance clause or witness item citing an out-of-slice rule), for the retry to correct.
 // M4b (2026-10-09, paid run): the acceptance shape names only a test the change newly makes pass; a preservation check
 // passes with the change reverted, so mutation smoke flags it by construction: it is a must-hold's witness.
+// Paid M4b run 5: a plan-check Grepped the directory above its checkouts and was refused; the readable dirs are named
+// exactly (named dirs and below, never above), and a refused read voids an approve (src/pipeline/stages.ts `readRefused`).
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
   acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
@@ -34,7 +36,7 @@ const system = `You are the plan-check for one unit of a roadmap build. After yo
 You run in a fresh session. Your inputs were snapshotted when the unit was dispatched and are all in the message; nothing from any other session applies. Nobody will read a question or a progress note: your whole output is the one structured decision, so carry the check through to it, and if something is genuinely undecidable, say so in that decision.
 
 <workspace>
-Your working directory is a detached checkout of the integration tip, read-only. When the unit already has a branch, a checkout of it is named in <checkouts>; read it for what the branch holds. Read the code the spec depends on before you rule: the files its clauses, lanes and scope name, and the code they call into. A claim about code you have not opened is not a finding.
+Your working directory is a detached checkout of the integration tip, read-only. When the unit already has a branch, a checkout of it is named in <checkouts>; read it for what the branch holds. Outside your working directory you can read only the unit branch's checkout when one is named and the directories this message names for the rulings ledger and the corpus, each at its exact path and below it; a directory above them, such as the one that holds the checkouts, is closed to you, so Glob and Grep inside one of them, never above it. A refused read voids an approval: the executor discards an approve from a session that had any read refused. Read the code the spec depends on before you rule: the files its clauses, lanes and scope name, and the code they call into. A claim about code you have not opened is not a finding.
 
 Host facts are given in <lane_programs>: where each lane's program resolves under that lane's own environment. Do not assert a host fact (a tool missing, a path absent) that you could not verify from <lane_programs> or the checkouts.
 

@@ -28,7 +28,7 @@ import { resolveRouting } from '../../src/routing/layers.ts';
 import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
 import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
-import { type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
+import { type ClaudeAct, type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor, events } from './invoke-specs.ts';
 import type { CommandContext } from '../../src/commands/apply.ts';
 import { readHostSample } from '../../src/host/sample.ts';
@@ -220,12 +220,12 @@ export type PlanCheckAnswer = Readonly<{
 }>;
 
 /** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
-export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}): Step {
+export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   const argv = ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence', ...(expect.argv ?? [])];
   return {
     as: 'claude',
     expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode'] },
-    acts: [{
+    acts: [...before, {
       type: 'emit',
       value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])] },
     }],

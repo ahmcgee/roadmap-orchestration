@@ -79,6 +79,7 @@ import {
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type ApprovalFingerprint, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specWitnesses } from '../core/records.ts';
+import { readsDeniedOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
@@ -748,6 +749,18 @@ function planCheckPriorInvalid(ctx: StageContext, planUnit: PlanUnit, spec: Spec
 }
 
 /**
+ * Whether the CLI refused any read of a judgment's session (reads.json `denied`; paid M4b run 5): an approve after one
+ * may rest on evidence the session never opened, so a gate or plan-check records `read-denied` in its place (one
+ * uncharged retry, then an `env` park). A judgment runs on Claude only, and the adapter writes a Claude call's reads.json
+ * before its result.json, so a missing one is a loud error.
+ */
+export function readRefused(called: BackendCallOutcome): boolean {
+  const reads = runnerFiles(called.invDir, called.inv).read('reads.json');
+  if (reads === null) throw new Error(`${called.inv}: a judgment call's result without its reads.json`);
+  return readsDeniedOf(reads).length > 0;
+}
+
+/**
  * Records a plan-check attempt from its call: the live one, or one recovery closed after a crash (consumed
  * by the driver, never asked again). Re-entrant: a spec patch or risk raise this attempt already made is
  * found in the log and not made twice, and the judgment is read against the spec revision it saw.
@@ -791,6 +804,8 @@ export async function planCheckRead(
       return done(record(ctx, parent, 'malformed'));
     }
   }
+  // Paid M4b run 5: an approve from a session the CLI refused a read is no approval; nothing of it is recorded.
+  if (out.decision === 'approve' && readRefused(called)) return done(record(ctx, parent, 'read-denied'));
   // R17: each vision conflict opens a P3 finding for the checkpoint (a re-read merges into it), whatever the decision; it
   // is never a redirect by itself. A conflict citing no active clause of the vision in force (or with no vision) is an
   // unusable judgment.
