@@ -1,7 +1,7 @@
 // M4a rev 3 step N2 (B, C, H4, H5): a checkpoint's admit classes, conversions, busy deferral, evidence per test, ruling
 // stamps and ids, split census moves, input manifest, embedded specs, closeout and issue reuse, over real corpus arcs (real
 // git, real processes, the fake claude answering lens and checkpoint calls by job, the fake gh as the forge). Named tests:
-// bundle.decision-persists-conversions, bundle.opportunity-joins-advances, bundle.all-converted-no-op,
+// bundle.decision-persists-conversions, bundle.opportunity-joins-advances (with its clause unserved apart), bundle.all-converted-no-op,
 // bundle.follow-up-overrun-converts-with-debt, bundle.admit-targets-checked,
 // bundle.recovery-no-reclassify, admits.architecture-doc-arc-unclassified, bundle.evidence-head-superset-accepted,
 // bundle.evidence-equal-results-new-inv, bundle.evidence-outcome-changed-rejected, bundle.evidence-test-removed-rejected,
@@ -12,14 +12,16 @@
 // checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
 // checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
 // bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.refused-carried-across-triggers (paid M4a
-// run 12), checkpoint.final-always-full, intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists.
+// run 12), checkpoint.final-always-full, intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists,
+// checkpoint.schema-closed-ids (paid M4b run 5).
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import type { EnvId, InvocationId, LaneId, LaneRev, Sha, Sha256Hex } from '../src/core/ids.ts';
+import { type EnvId, type InvocationId, type LaneId, type LaneRev, type Sha, type Sha256Hex, arcId } from '../src/core/ids.ts';
+import { status } from '../src/status.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { evidenceDiffers, numericId, numericRulingIds } from '../src/holistic/bundle.ts';
@@ -116,6 +118,9 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
       assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
       assert.deepEqual(bundleSources(x.r), [{ type: 'bundle', job: 'ckpt-1', admits: [{ index: 0, unit: 'more', class: { type: 'opportunity', id: 'O-1', clauses: ['V-3'] } }], conversions: [] }]);
       assert.deepEqual(planInForce(x.r).holistic?.advances, ['V-1', 'V-3']);
+      // Paid M4b runs 3 and 5: the opportunity's clause no obligation serves is shown apart, never as a gap to close.
+      const coverage = status(x.r.ctx.runDir, arcId(x.r.d.arc), x.r.ctx.hostDir).vision?.coverage;
+      assert.deepEqual([coverage?.unservedAdvanced, coverage?.unservedOpportunity], [[], ['V-3']]);
     } finally {
       x.r.journal.close();
     }
@@ -385,6 +390,30 @@ describe('rulings and split census (C2–C4)', () => {
       const out = await run(x);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
       assert.match(out.decision.detail, /child I-2 is anchored at T-3, whose census state is untestable: anchor the child at its parent's rule T-1, or admit it as an opportunity/);
+    } finally {
+      x.r.journal.close();
+    }
+  });
+  test('checkpoint.schema-closed-ids (paid M4b run 5, ckpt-4): the call\'s schema enumerates the arc lanes and obligations, so a split child on a lane that is no arc lane is a schema violation of the answer, never a bundle', T, async () => {
+    const op = splitTo('T-2') as { children: Json[] } & Json;
+    const draught = { ...op, children: [{ ...op.children[0]!, witness: { lane: 'w-draught', testIds: ['t1'] } }] } as JsonValue;
+    const x = await arc([]);
+    try {
+      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [draught] }))]);
+      const out = await run(x);
+      const argv = callOf(x, 'ckpt-1').argv;
+      const schema = JSON.parse(argv[argv.indexOf('--json-schema') + 1]!) as Json;
+      const ops = ((schema['properties'] as Json)['ops'] as Json)['items'] as { anyOf: Json[] };
+      const variant = (name: string) => ops.anyOf.find((v) => ((v['properties'] as Json)['op'] as { enum: string[] }).enum[0] === name)!['properties'] as Json;
+      const split = variant('obligation-split');
+      const child = ((split['children'] as Json)['items'] as Json)['properties'] as Json;
+      const lanes = revisionInForce(x.r.ctx.runDir, requirePlanInForce(x.r.ctx.runDir, x.r.journal.view)).obligations!.value.lanes.map((l) => l.id);
+      assert.deepEqual(((child['witness'] as Json)['properties'] as Json)['lane'], { type: 'string', enum: lanes }, 'the witness lane: one of the arc lanes');
+      assert.deepEqual(split['obligation'], { type: 'string', enum: ['I-1'] }, 'the split parent: an active obligation');
+      assert.deepEqual(variant('obligation-dispose')['obligation'], { type: 'string', enum: ['I-1'] });
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
+      assert.match(out.decision.detail, /^malformed: .*schema violation at \$\.ops\[0\]: matches no anyOf branch, got {"op":"obligation-split"/, 'the adapter refused the answer against the call\'s own schema');
+      assert.equal(x.r.journal.view.planApplied()!.rev, 1);
     } finally {
       x.r.journal.close();
     }

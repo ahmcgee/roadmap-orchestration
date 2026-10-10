@@ -530,9 +530,9 @@ const ISSUE_FINDING_SEVERITIES = ['P2', 'P3'] as const;
 const opSchema = (op: BundleOpKind, fields: { readonly [key: string]: Schema }): Schema =>
   sObj({ op: sEnum([op]), ...fields, cites: S_IDS, evidence: sArr(S_STR) });
 const S_DOC_REF = sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR });
-/** A split child (M4a): exactly one of `docRef` and `rule` is non-null. */
-const S_SPLIT_CHILD = sObj({
-  id: S_STR, statement: S_STR, docRef: sNullable(S_DOC_REF), rule: sNullable(S_STR), witness: sObj({ lane: S_STR, testIds: S_IDS }), activation: sEnum(ACTIVATIONS),
+/** A split child (M4a): exactly one of `docRef` and `rule` is non-null; its witness lane one of `arcLanes`. */
+const sSplitChild = (arcLanes: Schema): Schema => sObj({
+  id: S_STR, statement: S_STR, docRef: sNullable(S_DOC_REF), rule: sNullable(S_STR), witness: sObj({ lane: arcLanes, testIds: S_IDS }), activation: sEnum(ACTIVATIONS),
   deliveredBy: S_IDS,
 });
 
@@ -558,43 +558,62 @@ const S_ADMIT_SPEC = sObj({
   repairs: S_IDS,
 });
 
-export const CHECKPOINT_SCHEMA: Schema = sObj({
-  decision: sEnum(CHECKPOINT_DECISIONS),
-  reasons: sArr(S_STR),
-  ops: sArr({
-    anyOf: [
-      opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
-      opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
-      opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR) }),
-      opSchema('cut', { unit: S_STR, reason: S_STR }),
-      opSchema('route', { unit: S_STR, seats: sArr(sObj({ role: sEnum(ROLES), tier: sEnum([...JUDGMENT_SEATS, 'arc']), class: sEnum(MODEL_CLASSES) })) }),
-      opSchema('limits', { unit: sNullable(S_STR), limits: sArr(sObj({ field: sEnum(LIMIT_FIELDS), value: S_INT })) }),
-      opSchema('obligation-split', { obligation: S_STR, children: sArr(S_SPLIT_CHILD) }),
-      opSchema('obligation-dispose', { obligation: S_STR, disposition: sEnum(OBLIGATION_DISPOSITIONS), ruling: S_STR }),
-      opSchema('invalidate-approval', { unit: S_STR }),
-      opSchema('rule', { ruling: S_STR }),
-      opSchema('request', { class: sEnum(OWNER_ONLY_CLASSES), summary: S_STR }),
-    ],
-  }),
-  rulings: sArr(S_STR),
-  findingDispositions: sArr(sObj({ finding: S_STR, disposition: sEnum(FINDING_DISPOSITIONS), reason: S_STR })),
-  interpretations: sArr(sObj({ clauses: S_IDS, situation: S_STR, reading: S_STR })),
-  cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
-  premises: S_PREMISES,
-  corpusAmendments: sArr(sObj({ rules: S_IDS, proposal: S_STR, why: S_STR })),
-  // A checkpoint acts on an issue only through its own ops (H17): the schema offers `acted{on: ops}` alone.
-  issueIntake: sArr(sObj({
-    issue: S_STR,
-    outcome: {
+/**
+ * The closed id sets a checkpoint call knows when it is made (paid M4b run 5, ckpt-4: a split child named a witness lane
+ * that is no arc lane, and the decision was refused only after the whole call): the arc lanes, the active obligations a
+ * split may name as its parent, and every obligation in force a dispose may name, all from the captured obligations.
+ * Unit ids are not closed: a later op may name a unit an earlier admit of the same bundle adds.
+ */
+export type CheckpointIds = Readonly<{ arcLanes: readonly LaneId[]; splittable: readonly ObligationId[]; obligations: readonly ObligationId[] }>;
+/** An id field: an enum of `ids`, or any string when the set is unknown or empty (the bundle's validation then refuses it). */
+const sIdOf = (ids: readonly string[] | undefined): Schema => (ids === undefined || ids.length === 0 ? S_STR : sEnum(ids));
+
+/**
+ * The checkpoint answer's schema; `ids` the call's closed id sets (null: any id). Each checkpoint call writes its own
+ * (src/holistic/checkpoint.ts `checkpointIdsOf`), so the structured output cannot name an unknown arc lane or obligation;
+ * the bundle's validation (src/holistic/bundle.ts) stays the backstop.
+ */
+export function checkpointSchemaFor(ids: CheckpointIds | null): Schema {
+  return sObj({
+    decision: sEnum(CHECKPOINT_DECISIONS),
+    reasons: sArr(S_STR),
+    ops: sArr({
       anyOf: [
-        sObj({ type: sEnum(['finding']), severity: sEnum(ISSUE_FINDING_SEVERITIES), claim: S_STR, cause: S_STR }),
-        sObj({ type: sEnum(['amendment']), rules: S_IDS, proposal: S_STR }),
-        sObj({ type: sEnum(['acted']), on: sObj({ type: sEnum(['ops']), indexes: sArr(S_INT) }) }),
-        sObj({ type: sEnum(['none']), reason: S_STR }),
+        opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
+        opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
+        opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR) }),
+        opSchema('cut', { unit: S_STR, reason: S_STR }),
+        opSchema('route', { unit: S_STR, seats: sArr(sObj({ role: sEnum(ROLES), tier: sEnum([...JUDGMENT_SEATS, 'arc']), class: sEnum(MODEL_CLASSES) })) }),
+        opSchema('limits', { unit: sNullable(S_STR), limits: sArr(sObj({ field: sEnum(LIMIT_FIELDS), value: S_INT })) }),
+        opSchema('obligation-split', { obligation: sIdOf(ids?.splittable), children: sArr(sSplitChild(sIdOf(ids?.arcLanes))) }),
+        opSchema('obligation-dispose', { obligation: sIdOf(ids?.obligations), disposition: sEnum(OBLIGATION_DISPOSITIONS), ruling: S_STR }),
+        opSchema('invalidate-approval', { unit: S_STR }),
+        opSchema('rule', { ruling: S_STR }),
+        opSchema('request', { class: sEnum(OWNER_ONLY_CLASSES), summary: S_STR }),
       ],
-    },
-  })),
-});
+    }),
+    rulings: sArr(S_STR),
+    findingDispositions: sArr(sObj({ finding: S_STR, disposition: sEnum(FINDING_DISPOSITIONS), reason: S_STR })),
+    interpretations: sArr(sObj({ clauses: S_IDS, situation: S_STR, reading: S_STR })),
+    cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
+    premises: S_PREMISES,
+    corpusAmendments: sArr(sObj({ rules: S_IDS, proposal: S_STR, why: S_STR })),
+    // A checkpoint acts on an issue only through its own ops (H17): the schema offers `acted{on: ops}` alone.
+    issueIntake: sArr(sObj({
+      issue: S_STR,
+      outcome: {
+        anyOf: [
+          sObj({ type: sEnum(['finding']), severity: sEnum(ISSUE_FINDING_SEVERITIES), claim: S_STR, cause: S_STR }),
+          sObj({ type: sEnum(['amendment']), rules: S_IDS, proposal: S_STR }),
+          sObj({ type: sEnum(['acted']), on: sObj({ type: sEnum(['ops']), indexes: sArr(S_INT) }) }),
+          sObj({ type: sEnum(['none']), reason: S_STR }),
+        ],
+      },
+    })),
+  });
+}
+/** The checkpoint schema its prompt module carries: any id. Each call writes its own, `checkpointSchemaFor(<its ids>)`. */
+export const CHECKPOINT_SCHEMA: Schema = checkpointSchemaFor(null);
 
 const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 const splitChild: Read<SplitChild> = object((g) => {

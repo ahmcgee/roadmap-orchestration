@@ -193,7 +193,9 @@ $0.30), so the wakes are few by design.
   out-of-slice clause it touches; one that does not is refused as dishonest. An arc gets one opportunity, and an
   opportunity one follow-up repair of its own code. An admit serving no touched clause (`unrelated`), a second
   opportunity (`over-budget`) or a second follow-up (`follow-up-overrun`, which also banks a debt item naming the
-  opportunity) is dropped from the bundle and becomes a corpus amendment for the next Phase 0. A checkpoint whose
+  opportunity) is dropped from the bundle and becomes a corpus amendment for the next Phase 0. An opportunity's clause
+  no obligation serves shows apart (`status.vision.coverage.unservedOpportunity`): the checkpoint never builds toward
+  the arc lane that would witness it, since arc lanes are yours to add between arcs. A checkpoint whose
   bundle touches a unit mid-attempt waits for that stage boundary (`status.checkpointWaits`).
 - **Amendments** (`status.amendments`) accumulate; you disposition them at the next Phase 0. They and every other
   mid-arc learning wait for the corpus window between arcs; only an owner's answer edits the corpus mid-arc. Note

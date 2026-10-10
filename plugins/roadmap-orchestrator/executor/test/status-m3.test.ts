@@ -139,7 +139,7 @@ describe('status M3', () => {
       assert.deepEqual([s.waived, s.deferred], [[{ obligation: 'I-5', ruling: 'C-1' }], []]);
       assert.deepEqual(s.vision, {
         rev: 1, confirmation: null, clauses: VISION.clauses, questions: [], advances: ['V-1', 'V-2'],
-        coverage: { unservedAdvanced: ['V-2'], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
+        coverage: { unservedAdvanced: ['V-2'], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
       });
       noModelIds(s);
 

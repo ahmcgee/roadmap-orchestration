@@ -824,6 +824,7 @@ export function coverageText(c: VisionCoverage): string {
   const withdrawn = c.withdrawnCited.map((w) => `${w.clause} (cited by ${w.citedBy.join(', ')})`);
   return [
     `Advanced clauses no active obligation serves: ${c.unservedAdvanced.join(', ') || 'none'}`,
+    `Opportunity clauses no active obligation serves (not a gap to close: see the opportunity rules): ${c.unservedOpportunity.join(', ') || 'none'}`,
     `Horizon clauses (beyond this arc, not a gap): ${c.horizon.join(', ') || 'none'}`,
     `Active obligations serving no clause: ${c.obligationsServingNone.join(', ') || 'none'}`,
     `Withdrawn clauses still cited: ${withdrawn.join('; ') || 'none'}`,

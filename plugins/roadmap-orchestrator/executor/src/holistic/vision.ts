@@ -62,13 +62,13 @@ export function advancesReasons(vision: Vision, advances: readonly VisionClauseI
 }
 
 /**
- * Vision coverage: the advanced active clauses no non-exempt obligation serves, the horizon (active clauses outside
- * `advances`), non-exempt obligations serving no active clause, and every withdrawn clause still cited, with its
- * citers (obligation, ruling and divergence ids) ascending.
+ * Vision coverage: the advanced active clauses no non-exempt obligation serves (an opportunity's, of `opportunity`, apart
+ * from the rest), the horizon (active clauses outside `advances`), non-exempt obligations serving no active clause, and
+ * every withdrawn clause still cited, with its citers (obligation, ruling and divergence ids) ascending.
  */
 export function visionCoverage(
   vision: Vision, advances: readonly VisionClauseId[], obligations: Obligations | null,
-  citers: readonly Readonly<{ id: NumberedId; cites: readonly VisionClauseId[] }>[],
+  citers: readonly Readonly<{ id: NumberedId; cites: readonly VisionClauseId[] }>[], opportunity: readonly VisionClauseId[],
 ): VisionCoverage {
   const active = new Set(vision.clauses.filter((c) => c.state === 'active').map((c) => c.id));
   const all = obligations?.obligations ?? [];
@@ -79,7 +79,8 @@ export function visionCoverage(
     return citedBy.length === 0 ? [] : [{ clause: c.id, citedBy: canonicalIds(citedBy) }];
   });
   return {
-    unservedAdvanced: [...active].filter((c) => advances.includes(c) && !served.has(c)).sort(compareIds),
+    unservedAdvanced: [...active].filter((c) => advances.includes(c) && !served.has(c) && !opportunity.includes(c)).sort(compareIds),
+    unservedOpportunity: [...active].filter((c) => advances.includes(c) && !served.has(c) && opportunity.includes(c)).sort(compareIds),
     horizon: [...active].filter((c) => !advances.includes(c)).sort(compareIds),
     obligationsServingNone: live.filter((o) => !o.serves.some((c) => active.has(c))).map((o): ObligationId => o.id).sort(compareIds),
     withdrawnCited: withdrawnCited.sort((a, b) => compareIds(a.clause, b.clause)),

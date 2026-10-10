@@ -12,6 +12,7 @@ import { type ClassifyContext, classifyObligations } from '../src/holistic/oblig
 import { rederive } from '../src/holistic/rederive.ts';
 import { type Obligations, type RulingSidecar, type Vision, laneRevOf, parseObligations, parseRulingSidecar, parseVision } from '../src/holistic/types.ts';
 import { advancesReasons, citeReasons, visionCoverage, visionEditReasons } from '../src/holistic/vision.ts';
+import { coverageText } from '../src/prompts/inputs.ts';
 
 const LANE = {
   id: 'journey', argv: ['node', '--test', 'journey.test.js'], cwd: 'test', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
@@ -278,14 +279,24 @@ describe('the vision record', () => {
   it('vision.coverage: advanced clauses unserved, the horizon, obligations serving no active clause, withdrawn clauses still cited', () => {
     const o = file([...BASE, ob('I-4', { serves: ['V-4'] }), ob('I-5', { serves: ['V-3'], state: { type: 'waived', ruling: 'C-1' } })]);
     const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
-    assert.deepEqual(visionCoverage(VISION, advances, o, [{ id: rulingId('C-2'), cites: [visionClauseId('V-4')] }, { id: divergenceId('D-1'), cites: [visionClauseId('V-2')] }]), {
+    const citers = [{ id: rulingId('C-2'), cites: [visionClauseId('V-4')] }, { id: divergenceId('D-1'), cites: [visionClauseId('V-2')] }];
+    assert.deepEqual(visionCoverage(VISION, advances, o, citers, []), {
       unservedAdvanced: ['V-3', 'V-5'],
+      unservedOpportunity: [],
       horizon: ['V-1'],
       obligationsServingNone: ['I-4'],
       withdrawnCited: [{ clause: 'V-4', citedBy: ['C-2', 'I-4'] }],
     });
     const all = ['V-1', 'V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
-    assert.deepEqual(visionCoverage(VISION, all, null, []), { unservedAdvanced: ['V-1', 'V-2', 'V-3', 'V-5'], horizon: [], obligationsServingNone: [], withdrawnCited: [] });
+    assert.deepEqual(visionCoverage(VISION, all, null, [], []), { unservedAdvanced: ['V-1', 'V-2', 'V-3', 'V-5'], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] });
+  });
+
+  it('vision.coverage-opportunity: an opportunity\'s unserved clause is listed apart, never as an advanced gap (paid M4b runs 3 and 5)', () => {
+    const o = file([...BASE, ob('I-4', { serves: ['V-4'] })]);
+    const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
+    const c = visionCoverage(VISION, advances, o, [], [visionClauseId('V-5'), visionClauseId('V-2')]);
+    assert.deepEqual([c.unservedAdvanced, c.unservedOpportunity], [['V-3'], ['V-5']], 'V-2 is served; V-5 is the opportunity\'s and unserved');
+    assert.match(coverageText(c), /^Advanced clauses no active obligation serves: V-3\nOpportunity clauses no active obligation serves \(not a gap to close: see the opportunity rules\): V-5$/m);
   });
 
   it('vision.advances: every id an active clause of the vision, one a world clause', () => {

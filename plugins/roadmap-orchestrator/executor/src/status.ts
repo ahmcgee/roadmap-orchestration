@@ -58,8 +58,8 @@
 //                 executor recorded for it (`recordedLaneEnv`), so status never shows true what completion counts unmet
 //   waived/deferred  exempt obligations with the ruling that exempted each
 //   vision        the vision in force (clauses, questions), the plan's slice of it (`advances`) and its coverage
-//                 (A1 `visionCoverage`: advanced clauses unserved, the horizon, obligations serving none, withdrawn
-//                 clauses still cited; citers: the sidecars in force and the divergences)
+//                 (A1 `visionCoverage`: advanced clauses unserved, an opportunity's unserved clauses apart, the horizon,
+//                 obligations serving none, withdrawn clauses still cited; citers: the sidecars in force and the divergences)
 //   divergences   every divergence no acknowledged digest covers (H11), with what differed, the clauses cited,
 //                 evidence, its bundle and its compensation hint (H13)
 //   decisionsSince  what was decided since the architect last acknowledged a divergence digest (the whole arc
@@ -133,7 +133,7 @@ import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUs
 import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
-import { findingAttribution } from './holistic/admits.ts';
+import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
 import { bundleClassesOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
 import { type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
@@ -1160,7 +1160,7 @@ function exemptBy(obligations: Obligations | null, type: 'waived' | 'deferred'):
     .sort((a, b) => compareIds(a.obligation, b.obligation));
 }
 
-function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[], fold: HolisticFold): VisionView | null {
+function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[], fold: HolisticFold, opportunity: readonly VisionClauseId[]): VisionView | null {
   if (revision.vision === null) return null;
   const v = revision.vision.value;
   const citers = [
@@ -1172,7 +1172,7 @@ function visionOf(revision: RevisionInForce, advances: readonly VisionClauseId[]
     clauses: v.clauses.map((c) => ({ id: c.id, kind: c.kind, text: c.text, rank: c.rank, state: c.state })),
     questions: v.questions,
     advances,
-    coverage: visionCoverage(v, advances, revision.obligations?.value ?? null, citers),
+    coverage: visionCoverage(v, advances, revision.obligations?.value ?? null, citers, opportunity),
   };
 }
 
@@ -1666,7 +1666,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     notYetTrue: t.notYetTrue,
     waived: exemptBy(obligations, 'waived'),
     deferred: exemptBy(obligations, 'deferred'),
-    vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold),
+    vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold, opportunityClauses(recordedAdmits(view))),
     divergences: divergencesOf(view),
     decisionsSince: decisionsAfter(view, events, digestAckedAt(view, acks), runDirDecisions(runDir, arc)),
     convergence: on === null ? null : convergenceOf(runDir, view, on.plan),

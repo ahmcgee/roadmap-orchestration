@@ -1246,9 +1246,11 @@ vision.md's bytes), stored as an unverified string: the executor never reads vis
 architect `apply` (source `command`) changes it (A14); an edit keeps every clause and question id, a withdrawn clause
 withdrawn and a closed question closed, each as it was (`visionEditReasons`). A new bundle, ruling or obligation may
 not cite a withdrawn clause (A1 refuses it); existing citations stay and are reported. Coverage
-(`visionCoverage(vision, advances, obligations, citers)`) is `VisionCoverage{unservedAdvanced (active clauses in
-advances no non-exempt obligation serves: a gap), horizon (active clauses outside advances: expected, never a gap),
-obligationsServingNone, withdrawnCited[{clause, citedBy}]}`.
+(`visionCoverage(vision, advances, obligations, citers, opportunity)`) is `VisionCoverage{unservedAdvanced (active
+clauses in advances no non-exempt obligation serves, the recorded opportunities' clauses excepted: a gap),
+unservedOpportunity (those of `opportunity`, the recorded opportunities' clauses, that no such obligation serves: shown,
+never a gap the arc must close; paid M4b runs 3 and 5), horizon (active clauses outside advances: expected, never a
+gap), obligationsServingNone, withdrawnCited[{clause, citedBy}]}`. `status.vision.coverage` carries it (additive key).
 
 **Obligations** (`roadmap/obligations-m3`, `plan.holistic.obligations`; `parseObligations`). `{schema, cutLine,
 lanes: ArcLaneDef[], obligations: ObligationDef[], mapping: {paths: [{pattern: RepoPattern, obligations: I-n[]
@@ -2227,7 +2229,7 @@ ran the holistic layer before it: no defaulting and no `SCHEMA_VERSION` bump):
    so the slice always matches the vision the inputs recorded; status the plan in force.
 4. **Rendering** (`visionText`): world clauses first, then the others in file order; `This arc advances: …`, `Horizon
    (active, beyond this arc): …`, then the open questions with the clauses they bear on and their working assumptions
-   (closed ones omitted). `coverageText` reports advanced-unserved and horizon on separate lines. The lens, checkpoint
+   (closed ones omitted). `coverageText` reports advanced-unserved, opportunity-unserved and horizon on separate lines. The lens, checkpoint
    and plan-check preambles say: world clauses are the target world and the rest its facets; push toward the slice and
    never foreclose a horizon clause (a choice that does conflicts with the vision); an open question's assumption is
    provisional (act on it, prefer the reversible choice); for the checkpoint, an act costly to undo if it proves false
@@ -2735,7 +2737,12 @@ cwd (relative to the worktree), env: {set, pass}, reporter, required: string[] (
 `buildSchemaFor(lanes | null)` (the per-call schema: `lanesRun[].lane` an enum of the spec's fast lanes when it has any;
 `experiments`) and `buildOutputFor(lanes | null)` (the validator, a lane outside `lanes` refused). `BUILD_SCHEMA` is `buildSchemaFor(null)`,
 the role's one schema as its prompt modules carry it (N3 deleted the pre-N3 literal); each call writes its own over
-`buildLaneIds(spec)` (src/pipeline/stages.ts). `PackReviewOutput + dispositions: PackDisposition[]` (N5: `{job: review-n,
+`buildLaneIds(spec)` (src/pipeline/stages.ts). `checkpointSchemaFor(ids | null)` likewise (paid M4b run 5): `ids =
+CheckpointIds{arcLanes, splittable, obligations}` (`checkpointIdsOf(obligations)` over the captured obligations, null
+without them) make a split child's `witness.lane` an enum of the arc lanes, a split's `obligation` one of the active
+obligations and a dispose's `obligation` one of the obligations in force (an empty set stays any string); unit ids stay
+open (a later op may name a unit an earlier admit of the bundle adds). `CHECKPOINT_SCHEMA` is `checkpointSchemaFor(null)`;
+the answer's reader and the bundle's validation are unchanged and stay the backstop. `PackReviewOutput + dispositions: PackDisposition[]` (N5: `{job: review-n,
 index, disposition: resolved | still-open | withdrawn}`, `PACK_DISPOSITIONS`; empty on a full review). Checkpoint `admit`
 op `+ targets: T-n[]` (N2, LR-m; `CHECKPOINT_SCHEMA` requires it; a recorded answer without it reads `[]` through
 `admitTargetsDefault`, src/core/upgrade.ts, scaffolding with a logged warning). `PLAN_ASSESSMENT_SCHEMA` / `validatePlanAssessment`:

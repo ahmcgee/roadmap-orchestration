@@ -15,7 +15,11 @@ import { ARC as LOG_ARC, H as LOG_H, PROVENANCE, appliedFields, chain } from './
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
 import { parseFlowInputs, parseFlowSeries, parseHostGivens } from '../src/flow/types.ts';
-import { FLOW_SCHEMA, validateFlowOutput } from '../src/prompts/schemas.ts';
+import { CHECKPOINT_SCHEMA, FLOW_SCHEMA, checkpointSchemaFor, validateFlowOutput } from '../src/prompts/schemas.ts';
+import { schemaViolation } from '../src/backends/adapter.ts';
+import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
+import type { Obligations } from '../src/holistic/types.ts';
+import { checkpointAnswer } from './helpers/holistic.ts';
 import { arcStack, parseRepoConfig, resolveRouting, routingRevOf, seatsInForce } from '../src/routing/layers.ts';
 import { routingProvenance } from '../src/routing/types.ts';
 import { spawnPressureOf, startPressureOf } from '../src/core/upgrade.ts';
@@ -290,5 +294,41 @@ describe('m4b fold: the role set is fixed at revision 1', () => {
     assert.equal(fold([applied(1, null), applied(2, null)]).planApplied()?.routingProvenance.arcRoles, undefined);
     assert.throws(() => fold([applied(1, null), applied(2, 'm4b')]), /arcRoles m4b; revision 1 fixed none/);
     assert.throws(() => fold([applied(1, 'm4b'), applied(2, null)]), /arcRoles none; revision 1 fixed m4b/);
+  });
+});
+
+describe('m4b: the checkpoint schema closes the ids its call knows (paid M4b run 5, ckpt-4)', () => {
+  const child = (lane: string) => ({
+    id: 'I-9', statement: 's', docRef: null, rule: 'T-1', witness: { lane, testIds: ['t'] }, activation: 'future', deliveredBy: [],
+  });
+  const split = (obligation: string, lane: string) => checkpointAnswer({
+    decision: 'bundle', ops: [{ op: 'obligation-split', obligation, children: [child(lane)], cites: ['V-1'], evidence: ['e'] }],
+  });
+  const dispose = (obligation: string) => checkpointAnswer({
+    decision: 'bundle', ops: [{ op: 'obligation-dispose', obligation, disposition: 'waived', ruling: 'C-2', cites: ['V-1'], evidence: ['e'] }],
+  });
+  const obligations = {
+    lanes: [{ id: 'w-clash' }, { id: 'w-free' }],
+    obligations: [{ id: 'I-1', state: { type: 'active' } }, { id: 'I-2', state: { type: 'split', children: ['I-3'] } }, { id: 'I-3', state: { type: 'active' } }],
+  } as unknown as Obligations;
+
+  it('checkpointIdsOf: the arc lanes, the active obligations a split may name, every obligation a dispose may name; none outside an arc with obligations', () => {
+    assert.deepEqual(checkpointIdsOf(obligations), { arcLanes: ['w-clash', 'w-free'], splittable: ['I-1', 'I-3'], obligations: ['I-1', 'I-2', 'I-3'] });
+    assert.equal(checkpointIdsOf(null), null);
+  });
+
+  it('an unknown witness lane, a split of an obligation not active, a dispose of one not in force: schema violations; the known ones conform', () => {
+    const schema = checkpointSchemaFor(checkpointIdsOf(obligations));
+    assert.equal(schemaViolation(schema, split('I-1', 'w-clash')), null);
+    assert.match(schemaViolation(schema, split('I-1', 'w-draught')) ?? '', /ops\[0\]/, 'run 5 ckpt-4: w-draught is no arc lane');
+    assert.match(schemaViolation(schema, split('I-2', 'w-clash')) ?? '', /ops\[0\]/, 'I-2 is split already');
+    assert.equal(schemaViolation(schema, dispose('I-2')), null);
+    assert.match(schemaViolation(schema, dispose('I-7')) ?? '', /ops\[0\]/);
+  });
+
+  it('no ids known (null, or an empty set): any id, the prompt module\'s schema; the bundle\'s validation refuses an unknown one', () => {
+    assert.deepEqual(checkpointSchemaFor(null), CHECKPOINT_SCHEMA);
+    assert.equal(schemaViolation(CHECKPOINT_SCHEMA, split('I-1', 'w-draught')), null);
+    assert.equal(schemaViolation(checkpointSchemaFor({ arcLanes: [], splittable: [], obligations: [] }), split('I-1', 'w-draught')), null);
   });
 });
