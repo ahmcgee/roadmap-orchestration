@@ -54,8 +54,10 @@
 //      contradicts still rejects `evidence`). Only a fresh read can judge a new plan or vision: a revision that changes
 //      either supersedes the job at once (`supersededBy`): its call in flight is cancelled (`proc.kill{supersede}`,
 //      `supersedable`), or not made, and the job decides `rejected{stale}`, so the trigger is captured again on the new
-//      revision. Neither spends the trigger's one invalid retry. Other revisions (a spec patch, a ruling) leave the call
-//      running; the activation's staleness checks what the bundle touches.
+//      revision. A finding closed under the call (paid M4b run 5) is stale only where the decision rests on it; its
+//      disposition alone is moot (src/holistic/bundle.ts `restsOn`). No drift path spends the trigger's one invalid
+//      retry. Other revisions (a spec patch, a ruling) leave the call running; the activation's staleness checks what the
+//      bundle touches.
 //   5. The activation (src/holistic/bundle.ts): `plan-applied{source: bundle{job}}` or `bundle-decided`; then (an
 //      applied or no-op decision) its amendments and issue outcomes (src/holistic/{amendments,intake}.ts).
 //

@@ -15,7 +15,8 @@
 //      (src/holistic/checkpoint.ts), and it never counts toward `secondInvalid`.
 //   1. Staleness (H3). The artifacts the ops touch, compared with the vector the checkpoint captured: the plan's bytes,
 //      each patched or re-entered unit's spec rev (and whether it merged since the capture: its spec is fixed now, so stale, not invalid), the obligations, the ledger, the contracts a landing ruling names;
-//      and the vision, always. A finding a disposition names that is no longer active is stale too. Any → `rejected
+//      and the vision, always. A finding the checkpoint was shown that closed since is stale when the decision rests on
+//      it (cited, or named by an op or ruling); a disposition of it alone is moot and settles as nothing. Any → `rejected
 //      {stale}`, and the trigger is due again (the whole bundle re-evaluated by a fresh checkpoint).
 //   2. Validation. Cites: every op's and interpretation's clauses active in the vision in force (H16: a withdrawn clause
 //      is never newly cited); the observations and findings it cites were in its inputs. Finding dispositions
@@ -731,12 +732,27 @@ function staleness(ctx: CheckpointContext, a: Activation, p: Proposal, now: Revi
     const tip = rulingContextAt(readerOf(ctx), integrationHead(ctx));
     for (const path of [...p.touched.contracts].sort()) if (then.blobAt(path) !== tip.blobAt(path)) out.push(`contract ${path} changed since the checkpoint read it`);
   }
-  const fold = ctx.journal.view.holistic();
-  for (const d of a.output.findingDispositions) {
-    const f = fold.findings.find((x) => x.id === d.finding);
-    if (f !== undefined && a.captured.findings.includes(d.finding) && !isActive(f)) out.push(`finding ${d.finding} is ${f.state} since the checkpoint read it`);
+  // Paid M4b run 5 (ckpt-2): a finding the checkpoint was shown that closed since (a publication resolved it) leaves its
+  // disposition moot, settled as nothing (`settleDecided` rules active findings only); only a decision resting on it is stale.
+  for (const f of closedSince(ctx, a)) {
+    if (restsOn(a.output, f.id)) out.push(`finding ${f.id} is ${f.state} since the checkpoint read it, and the decision rests on it`);
   }
   return out;
+}
+
+/** The findings `a`'s checkpoint was shown that are no longer active, by id. */
+function closedSince(ctx: CheckpointContext, a: Activation): readonly Readonly<{ id: FindingId; state: string }>[] {
+  return ctx.journal.view.holistic().findings.filter((f) => a.captured.findings.includes(f.id) && !isActive(f)).map((f) => ({ id: f.id, state: f.state }));
+}
+
+/**
+ * Whether the decision rests on finding `id`: its cites name it, or an op names it anywhere (its evidence, an admitted
+ * spec's repairs, a ruling's text). A disposition alone is not resting on it.
+ */
+export function restsOn(output: CheckpointOutput, id: FindingId): boolean {
+  if (output.cites.findings.includes(id)) return true;
+  const token = new RegExp(`(^|[^A-Za-z0-9-])${id}(?![0-9])`);
+  return [...output.ops.map((op) => canonicalJson(op)), ...output.rulings].some((text) => token.test(text));
 }
 
 /** Why the output's cites and finding dispositions are invalid, or empty (H16: active clauses only). */

@@ -222,6 +222,12 @@ function openVisionFinding(r: ArcRun, job: string, cause: string): string {
   });
   return id;
 }
+/** `id` resolved by u1's publication, as the executor moves it (`syncFindings`: owned, fixed on branch, resolved). */
+function resolveMidCall(r: ArcRun, id: string): void {
+  for (const to of [{ state: 'owned', unit: 'u1' }, { state: 'fixed-on-branch', unit: 'u1' }, { state: 'resolved' }]) {
+    r.journal.fact({ kind: 'finding-transition', id: id as never, to: to as never });
+  }
+}
 /** A bundle answer of `ops` (a no-op when empty), optionally citing observations, dismissing findings, with one interpretation. */
 function bundle(ops: readonly JsonValue[], extra: Readonly<{ observations?: readonly JsonValue[]; dispose?: readonly string[]; interpretations?: boolean }> = {}): JsonValue {
   const a = checkpointAnswer({
@@ -242,6 +248,55 @@ const ruleOp = (id: string): JsonValue => ({ op: 'rule', ruling: id, cites: ['V-
 const requirePlan = (r: ArcRun) => JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${r.journal.view.planApplied()!.planSha256}.plan.json`), 'utf8')) as { units: { id: string; origin?: string }[] };
 
 describe('the activation checks', () => {
+  test('bundle.finding-closed-moot (paid M4b run 5, ckpt-2): a finding a publication resolves during the call leaves its disposition moot; the bundle applies, the finding stays resolved', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const finding = openVisionFinding(r, 'audit-1', 'helpers round');
+      const answer = bundle([VALID_OP]) as Record<string, JsonValue>;
+      appendSteps(d, [checkpointStep('ckpt-1', { ...answer, findingDispositions: [{ finding, disposition: 'dismissed', reason: 'owned by u1, which is about to publish' }] }, [barrier])]);
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      resolveMidCall(r, finding);
+      release(d.scenarioDir, 'ckpt');
+      const out = await running;
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      assert.equal(factsOfKind(r, 'checkpoint-inputs')[0]!.findings.includes(finding as never), true, 'the checkpoint was shown it');
+      assert.equal(r.journal.view.holistic().findings.find((f) => f.id === finding)!.state, 'resolved', 'the moot disposition settled as nothing');
+      assert.deepEqual(checkpointCalls(r), ['ckpt-1']);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.finding-closed-rests-on-stale: a decision whose op names a finding resolved during the call is stale; the next job reads why', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const finding = openVisionFinding(r, 'audit-1', 'helpers round');
+      appendSteps(d, [
+        checkpointStep('ckpt-1', bundle([limitsOp('retries', 2, [`${finding} needs a second try`])]), [barrier]), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
+      ]);
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      resolveMidCall(r, finding);
+      release(d.scenarioDir, 'ckpt');
+      const first = await running;
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'stale', JSON.stringify(first));
+      assert.equal(first.decision.detail, `finding ${finding} is resolved since the checkpoint read it, and the decision rests on it`);
+      assert.equal(planLimits(r), null);
+      const second = await runCheckpoint(ctx);
+      assert.ok(second.kind === 'decided' && second.decision.kind === 'no-op', JSON.stringify(second));
+      assert.match(readCalls(d.scenarioPath).find((c) => c.unit === 'ckpt-2')!.stdin, /- ckpt-1, rejected as stale: finding F-\d+ is resolved since the checkpoint read it/);
+    } finally {
+      r.journal.close();
+    }
+  });
+
   test('bundle.evidence-drift-witnessed (paid M4b run 3, ckpt-4): the head moves under the call to a tree no lane ran on; the cited lane is witnessed there before the activation, which applies the same decision with no second call', T, async () => {
     const d = checkpointArc(visionLenses('audit-1'));
     const r = contextFor(d);
