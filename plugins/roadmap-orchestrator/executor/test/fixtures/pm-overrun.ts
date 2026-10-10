@@ -1,4 +1,4 @@
-// The admit-conversions crash row's story (M4a rev 3 ADMIT_CONVERSIONS, LR-k; test/pipeline-matrix.test.ts): a corpus arc
+// The admit-conversions crash row's story (M4a rev 3 ADMIT_CONVERSIONS, LR-k; test/serial/pipeline-matrix.test.ts): a corpus arc
 // whose vision has two world clauses outside the slice (advances = [V-1]); `ckpt-1` admits `opp`, honest work on V-3, as
 // opportunity O-1; `opp` runs to its merge; audit-2's vision lens finds F-1 on its code; `ckpt-2` admits `fix1` repairing
 // F-1, O-1's one follow-up; audit-3 completes; `ckpt-3` admits `fix2` repairing F-1 again, which code converts

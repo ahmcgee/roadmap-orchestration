@@ -249,7 +249,7 @@ const LABEL_BOUNDARY: ReadonlyMap<string, Boundary> = new Map([
 ]);
 
 /**
- * A concurrent job row's cells (M3 B8; test/concurrent-matrix.test.ts, test/fixtures/cm-holistic.ts): `labels`, each at
+ * A concurrent job row's cells (M3 B8; test/serial/concurrent-matrix.test.ts, test/fixtures/cm-holistic.ts): `labels`, each at
  * the first occurrence the recording attributes to the stepping job (`sampleJob`), by boundary; `recovery` per
  * boundary, plus the peers' oracle. A boundary none of them falls on is the job's `none` reason.
  */
@@ -287,7 +287,7 @@ export const CONCURRENT_EXCLUDED_LABELS: Readonly<Record<string, string>> = {
 };
 
 /**
- * A concurrent row's cells (test/concurrent-matrix.test.ts, plan F20, G8): the whole-pipeline labels the stepping
+ * A concurrent row's cells (test/serial/concurrent-matrix.test.ts, plan F20, G8): the whole-pipeline labels the stepping
  * unit A reaches, each crashed at A's own occurrences (the selector names A; occurrence 1, and 2 where A repeats
  * the label, as the whole-pipeline rows sample), while the peer B holds `peer`. The recovery of each cell is A's
  * whole-pipeline trace plus the peer's oracle. Not here, as in the whole-pipeline rows: runner.* (per-process
@@ -567,7 +567,7 @@ export const MATRIX: readonly Row[] = [
       },
       B5: {
         status: 'excluded',
-        why: 'crashed as the resource.transition reserve/run/clean/release row\'s B5 cell (resource.after-done) in its failed-cleanup scenario (test/resource-recover.test.ts): the fail done is written, and the failed resource stays cleanup-failed through recovery, never released',
+        why: 'crashed as the resource.transition reserve/run/clean/release row\'s B5 cell (resource.after-done) in its failed-cleanup scenario (test/serial/resource-recover.test.ts): the fail done is written, and the failed resource stays cleanup-failed through recovery, never released',
       },
     },
   },
@@ -577,7 +577,7 @@ export const MATRIX: readonly Row[] = [
     // both; `fail` (queue's teardown fails) records queue cleanup-failed with its residue, then releases
     // db. Recovery is the resources phase alone (recoverReservations), which settles the spawns it needs.
     row: RESERVE_CYCLE,
-    test: 'test/resource-recover.test.ts',
+    test: 'test/serial/resource-recover.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: {
@@ -604,7 +604,7 @@ export const MATRIX: readonly Row[] = [
     // the recorded teardown → the residue's cleaned disposition → release (F2). Every occurrence of every label is
     // crashed; recovery is the resources phase, then the park's next probe (retryReclaim) runs again.
     row: RETRY_RECLAIM,
-    test: 'test/pool-crash.test.ts',
+    test: 'test/serial/pool-crash.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: {
@@ -680,7 +680,7 @@ export const MATRIX: readonly Row[] = [
     // and the smoke's shell command), each ending in its `probe` fact. Recovery is `recover`, then the next
     // probe of whatever is still due. A resource target's spawn and reclaim order are the retry reclaim row.
     row: PROBE_JOB,
-    test: 'test/probe-crash.test.ts',
+    test: 'test/serial/probe-crash.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: {
@@ -1018,7 +1018,7 @@ export const MATRIX: readonly Row[] = [
     // work salvage commits, through `roadmap start`. Each cell SIGKILLs the executor at its label; the
     // supervisor restarts it; the oracle (test/oracle.ts) compares the end with the uncrashed run.
     row: PIPELINE_STRAIGHT,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: pipelineCells(COMPLETE_LABELS, PIPELINE_RECOVERY),
   },
   {
@@ -1026,7 +1026,7 @@ export const MATRIX: readonly Row[] = [
     // under it, conflict → merge-in → resolve, red candidate → fix → fresh gate. Two units, because three
     // chargeable failures in one unit park it.
     row: PIPELINE_BUMPY,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: pipelineCells(MERGEIN_LABELS, PIPELINE_RECOVERY),
   },
   {
@@ -1039,7 +1039,7 @@ export const MATRIX: readonly Row[] = [
     // records after the first job. Each cell asserts the op the crash hit (the log at the crash holds the recording's
     // records up to it), then the whole-pipeline oracle plus the holistic record counts of the uncrashed run.
     row: PIPELINE_HOLISTIC,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'crash', labels: HOLISTIC_LABELS.B1, recovery: HOLISTIC_RECOVERY.B1 },
       B2: { status: 'crash', labels: HOLISTIC_LABELS.B2, recovery: HOLISTIC_RECOVERY.B2 },
@@ -1053,32 +1053,32 @@ export const MATRIX: readonly Row[] = [
   // B's oracle.
   {
     row: CONCURRENT_BUILD,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: concurrentCells('its build runner adopted (or re-adapted once it exited) and consumed once, never dispatched again; each unit\'s workload intervals disjoint'),
   },
   {
     row: CONCURRENT_JUDGMENT,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: concurrentCells('its gate runner adopted and consumed once against its recorded judgment-inputs: the approval binds the recorded head and the contracts at the recorded tip'),
   },
   {
     row: CONCURRENT_LANE,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: concurrentCells('its lane adopted; the lanes reservation it held cleaned by a teardown bound to estate#1 as the lane was (A took estate#2); no instance ever had two owners'),
   },
   {
     row: CONCURRENT_TEARDOWN,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: concurrentCells('its teardown adopted and run to its end (passed, never killed)'),
   },
   {
     row: CONCURRENT_PUBLICATION,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: concurrentCells('safety only: one publication holder at a time, and each grant of the slot after a release goes to the best-ranked unit that was waiting for it; no claim that the order is the uncrashed one'),
   },
   {
     row: CONCURRENT_RESIDUE,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: concurrentCells('the respawn is not refused by its own residue; the park\'s outstanding targets and its nextProbeAt are unchanged (no probe of it before that time but the resume\'s)'),
   },
   // The concurrent job rows (M3 B8; test/fixtures/cm-holistic.ts): the jobs scenario (two units pinned in live builds
@@ -1088,7 +1088,7 @@ export const MATRIX: readonly Row[] = [
   // state at the crash, then the end.
   {
     row: CONCURRENT_AUDIT,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: jobCells([...LOG_APPENDS, 'audit.after-started', 'audit.after-lens', 'audit.before-ended', 'audit.after-ended', 'issues.after-keep', ...JOB_OPS], {
       B1: 'audit-started or audit-ended lost (a torn line discarded once): the audit captures again from the same state, or ends again, once',
       B2: 'the audit\'s open op closed by its reconciler (a spawn lost, the rest redone or reconciled), or audit-started durable with nothing run: the job resumes as audit-1 from its recorded inputs, its lens asked once',
@@ -1099,7 +1099,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     row: CONCURRENT_BUNDLE,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: jobCells([...LOG_APPENDS, 'checkpoint.after-inputs', 'checkpoint.after-call', 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'bundle.after-applied', ...JOB_OPS], {
       B1: 'checkpoint-inputs lost: captured again once; the bundle\'s plan-applied or divergence lost inside its revision.commit: the revision finished from its kept payload (reconciled)',
       B2: 'the checkpoint\'s open op closed by its reconciler, or checkpoint-inputs durable with nothing asked, or the bundle\'s revision.commit open: the job resumes as ckpt-1, asks once, and the revision is finished from its payload (reconciled) or aborted and activated again; one plan-applied{bundle}',
@@ -1110,7 +1110,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     row: CONCURRENT_BATCH,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: jobCells([
       'resource.after-intent', 'resource.after-done', 'candidate.act-start', 'candidate.after-commit-tree', 'candidate.act-end', 'batch.after-candidate',
       ...JOB_OPS.filter((l) => !l.startsWith('resource.')), 'evidence.after-partial-copy', ...LOG_APPENDS, 'ff.act-start', 'ff.act-end', 'snapshot.act-start',
@@ -1127,7 +1127,7 @@ export const MATRIX: readonly Row[] = [
     // The jobs scenario's units approve with a note each (the corpus arc banks it as `debt-banked`, src/pipeline/gate.ts
     // `bankGateNotes`); a crash at each unit's `debt.after-approval` while the other unit and the stepping jobs go on.
     row: CONCURRENT_DEBT,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 covers a torn or short one' },
       B2: { status: 'excluded', why: 'no intent: the banked facts are written from the gate call\'s recorded result' },
@@ -1142,7 +1142,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     row: CONCURRENT_PREEMPT,
-    test: 'test/concurrent-matrix.test.ts',
+    test: 'test/serial/concurrent-matrix.test.ts',
     cells: jobCells([
       'kill.after-intent', 'kill.after-cancel', 'kill.after-quiesced', 'kill.after-done', 'resource.after-intent', 'resource.after-done', 'docs.act-start',
       'docs.after-commit-tree', 'docs.act-end', 'worktree.create.act-start', 'worktree.add.inside', 'spawn.after-intent', 'launch.after-launch-json',
@@ -1160,7 +1160,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     row: PIPELINE_RUNNER_DEATH,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: { status: 'excluded', why: 'no runner exists before the act; the executor crash there is the whole-pipeline rows\' spawn.after-intent cells' },
@@ -1175,7 +1175,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     row: PIPELINE_SUPERVISOR_DEATH,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: 'the supervisor journals nothing; the supervisor/host row crashes its own points' },
       B2: { status: 'excluded', why: 'before its executor is handshaken a dead supervisor is the supervisor/host row\'s B2 and B3 cells (sup.after-claim, sup.after-spawn, sup.after-owner-publish)' },
@@ -1190,7 +1190,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     row: PIPELINE_HOST_DEATH,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: { status: 'excluded', why: 'a host death before the build\'s runner starts leaves no survivor: the whole-pipeline rows\' spawn.after-intent cells' },
@@ -1207,7 +1207,7 @@ export const MATRIX: readonly Row[] = [
     // pm-common.ts MALFORMED: the gate's first answer is not JSON; its uncharged retry approves. Each cell's
     // occurrence is the malformed gate's own (its index among the run's invocations, or among its stages).
     row: ADVERSARIAL_MALFORMED,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: {
@@ -1231,7 +1231,7 @@ export const MATRIX: readonly Row[] = [
   {
     // pm-common.ts CANCEL: `pause u1` mid-build, the executor killed inside the proc.kill{pause}, then `resume u1`.
     row: ADVERSARIAL_CANCEL,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: {
@@ -1260,7 +1260,7 @@ export const MATRIX: readonly Row[] = [
     // B2: pm-common.ts STALE, integration moved while the crashed executor is down. B5: STALE_LANE, integration
     // moved by someone else while the candidate's suite runs, so the live ff finds the tip stale.
     row: ADVERSARIAL_STALE,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: {
@@ -1282,7 +1282,7 @@ export const MATRIX: readonly Row[] = [
   },
   {
     row: ADVERSARIAL_CLEANUP_FAILED,
-    test: 'test/residue.test.ts, test/resource-recover.test.ts',
+    test: 'test/residue.test.ts, test/serial/resource-recover.test.ts',
     cells: coveredBy('crashed by the resource.transition fail + residue row (residue before and after the host append) and the reserve/run/clean/release row\'s failed-cleanup scenario: residues once per resource, never released'),
   },
   {
@@ -1835,9 +1835,9 @@ export const MATRIX: readonly Row[] = [
   {
     // Before a corpus arc's build call (src/pipeline/witnesscheck.ts `witnessLaneFiles`): each required fast lane's file,
     // published write-once; the unit driver crashed in a child that a restart resumes (test/checks.test.ts), and the
-    // holistic whole-pipeline row's u1 (test/pipeline-matrix.test.ts).
+    // holistic whole-pipeline row's u1 (test/serial/pipeline-matrix.test.ts).
     row: WITNESS_FILES,
-    test: 'test/checks.test.ts, test/pipeline-matrix.test.ts',
+    test: 'test/checks.test.ts, test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: 'each lane file is one exclusive publish (by link): whole or absent, never torn' },
       B2: {
@@ -1852,9 +1852,9 @@ export const MATRIX: readonly Row[] = [
   },
   {
     // D1 (src/pipeline/witnesscheck.ts `witnessPresence`): the unit's required arc lanes run once at the salvage SHA as a
-    // journey series in its own checkout (test/checks.test.ts; the holistic row's u1 in test/pipeline-matrix.test.ts).
+    // journey series in its own checkout (test/checks.test.ts; the holistic row's u1 in test/serial/pipeline-matrix.test.ts).
     row: WITNESS_CHECK,
-    test: 'test/checks.test.ts, test/pipeline-matrix.test.ts',
+    test: 'test/checks.test.ts, test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: { status: 'excluded', why: 'the series\' ops (checkout, reservation, lane spawn, evidence) are the worktree, resource and proc.spawn rows\'; the holistic row crashes them in a unit\'s arc lane' },
@@ -1870,9 +1870,9 @@ export const MATRIX: readonly Row[] = [
   {
     // D2 (src/pipeline/smoke.ts `mutationSmoke`): the production diff reverted on a mutant checkout, the target lanes run on
     // it, the verdict recorded as `smoke-ran` keyed by (diff, witness defs, env); crashed through the unit driver
-    // (test/checks.test.ts: killed, green) and in the holistic row's u1 with its mutant.apply (test/pipeline-matrix.test.ts).
+    // (test/checks.test.ts: killed, green) and in the holistic row's u1 with its mutant.apply (test/serial/pipeline-matrix.test.ts).
     row: MUTATION_SMOKE,
-    test: 'test/checks.test.ts, test/pipeline-matrix.test.ts',
+    test: 'test/checks.test.ts, test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: 'smoke-ran is one journal append; journal.append B1 and the holistic row\'s log-append cells cover a torn one' },
       B2: {
@@ -1917,7 +1917,7 @@ export const MATRIX: readonly Row[] = [
   {
     // E, by-builder, a frontier builder: no plan-check call (test/plancheck-shape.test.ts; the holistic row's u1).
     row: PLANCHECK_IN_SESSION,
-    test: 'test/plancheck-shape.test.ts, test/pipeline-matrix.test.ts',
+    test: 'test/plancheck-shape.test.ts, test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: 'the pin is one dispatch fact: journal.append B1 covers a torn one' },
       B2: { status: 'excluded', why: 'no intent: the decision is the routing\'s and the plan\'s, and nothing is called' },
@@ -1934,7 +1934,7 @@ export const MATRIX: readonly Row[] = [
     // E (Q18): the fresh build of an in-session unit makes the assessment call, then resumes that session to implement
     // (test/plancheck-shape.test.ts; the holistic row's u1).
     row: BUILD_ASSESS,
-    test: 'test/plancheck-shape.test.ts, test/pipeline-matrix.test.ts',
+    test: 'test/plancheck-shape.test.ts, test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: EXCLUDED_B1 },
       B2: { status: 'excluded', why: 'the assessment and the implementing call are proc.spawn ops: the proc.spawn rows and the whole-pipeline rows crash them' },
@@ -1967,9 +1967,9 @@ export const MATRIX: readonly Row[] = [
   {
     // B (src/holistic/bundle.ts `settleConversions`): after a decision record holding conversions, each conversion's amendment
     // and a follow-up overrun's debt item, idempotent by source. Crashed in the holistic row (ckpt-2's unrelated admit) and in
-    // test/pipeline-matrix.test.ts's overrun story (test/fixtures/pm-overrun.ts: ckpt-3's follow-up overrun of O-1).
+    // test/serial/pipeline-matrix.test.ts's overrun story (test/fixtures/pm-overrun.ts: ckpt-3's follow-up overrun of O-1).
     row: ADMIT_CONVERSIONS,
-    test: 'test/pipeline-matrix.test.ts',
+    test: 'test/serial/pipeline-matrix.test.ts',
     cells: {
       B1: { status: 'excluded', why: 'each fact is one journal append; journal.append B1 and the holistic row\'s log-append cells cover a torn one' },
       B2: { status: 'excluded', why: 'no intent: the settlement is written from the decision record, which the bundle and revision rows crash' },

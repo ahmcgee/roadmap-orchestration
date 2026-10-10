@@ -3,9 +3,14 @@
 A change is not done until the ladder passes, in order, from `executor/`:
 
 1. `npm run typecheck`: `tsc --noEmit` over `src/`, `test/` and `evals/`.
-2. `npm test`: `node --test --test-concurrency=8 test/*.test.ts` (eight files at a time: the default starved the crash matrices), then `test/serial/*.test.ts` alone, one file at a time
-   (`--test-concurrency=1`): the serial tier holds the tests that need a calm host, the upgrade test (its dev.5 park
-   premise) and the M4a fake sessions (timing-bound against a 30-minute fake session deadline). Pure-module and
+2. `npm test`: `node --test --test-concurrency=8 test/*.test.ts` (eight files at a time, each about one runnable
+   process wide on average), then `test/serial/*.test.ts` alone, one file at a time (`--test-concurrency=1`). The serial tier
+   holds the files that fan out across the host: the two crash matrices (as many cells at once as `FANOUT`,
+   test/helpers/fanout.ts: three quarters of the cpus) and the crash files at eight cells (`pool-crash`,
+   `probe-crash`, `resource-recover`). It also holds the files that need a calm host: the upgrade test (its dev.5 park
+   premise) and the M4a fake sessions (timing-bound against a 30-minute fake session deadline). And it holds
+   `pressure`, whose burners saturate the host on purpose. Either tier keeps the host's runnable load within its cpus;
+   a file that runs eight or more cells of real processes at once belongs in the serial tier. Pure-module and
    integrated tests, fake backends only. The main tier
    includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts` and `test/evals-m3.test.ts`, and the serial tier
    `test/serial/evals-m4a.test.ts`, which run the M1, M2, M3 and M4a fixtures below end to end against the fakes, and `test/serial/upgrade.test.ts`, which starts the M1 fixture on

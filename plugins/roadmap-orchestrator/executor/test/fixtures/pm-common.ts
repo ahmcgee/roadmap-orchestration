@@ -1,4 +1,4 @@
-// The whole-pipeline crash matrix's scenarios and driver (test/pipeline-matrix.test.ts): exec-common arcs
+// The whole-pipeline crash matrix's scenarios and driver (test/serial/pipeline-matrix.test.ts): exec-common arcs
 // run by the real supervised `roadmap start`, with a watcher beside the run that plays the test's part.
 //
 // A scenario is its arc (units, lanes, resources), its backend steps after the startup smoke, and hooks the

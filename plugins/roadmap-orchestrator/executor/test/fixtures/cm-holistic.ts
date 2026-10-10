@@ -1,4 +1,4 @@
-// The concurrent crash matrix's M3 scenarios (test/concurrent-matrix.test.ts; M3 B8): an arc's job steps while its units
+// The concurrent crash matrix's M3 scenarios (test/serial/concurrent-matrix.test.ts; M3 B8): an arc's job steps while its units
 // are in flight, run by the real supervised `roadmap start` through the whole-pipeline harness (pm-common.ts), keyed
 // per unit and per job. The jobs and batch arcs are holistic on a corpus target (corpus-target.ts, M4a D0), each with its
 // pack review (`review-1`, no finding) before the first admission. A job's crash points pass no unit: a cell selects the occurrence the recording attributes to

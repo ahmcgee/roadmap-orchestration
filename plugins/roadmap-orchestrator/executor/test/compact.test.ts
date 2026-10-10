@@ -188,7 +188,7 @@ async function poolOk(mode: string, r: ResRun): Promise<string> {
   return exit.stdout.trim();
 }
 
-/** The retry scenario of pool-crash.test.ts, its run dir under `root`, killed at `retry.after-disposition` (or run through). */
+/** The retry scenario of serial/pool-crash.test.ts, its run dir under `root`, killed at `retry.after-disposition` (or run through). */
 async function retryRun(root: string, host: string, crash: boolean): Promise<ResRun> {
   const base = newRun();
   const r: ResRun = { ...base, hostDir: host, runDir: join(root, base.arc) };

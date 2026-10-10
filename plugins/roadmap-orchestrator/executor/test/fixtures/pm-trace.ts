@@ -1,5 +1,5 @@
 // The recovery trace each executor crash point allows (test/oracle.ts `Trace`), shared by the whole-pipeline
-// matrix (test/pipeline-matrix.test.ts) and the concurrent one (test/concurrent-matrix.test.ts).
+// matrix (test/serial/pipeline-matrix.test.ts) and the concurrent one (test/serial/concurrent-matrix.test.ts).
 import type { Event } from '../../src/core/events.ts';
 import { type Trace, UNCRASHED } from '../oracle.ts';
 

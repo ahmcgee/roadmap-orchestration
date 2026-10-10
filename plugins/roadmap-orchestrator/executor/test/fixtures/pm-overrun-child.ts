@@ -1,4 +1,4 @@
-// Crash child of the admit-conversions row (test/pipeline-matrix.test.ts, pm-overrun.ts): argv <ArcDescriptor json>.
+// Crash child of the admit-conversions row (test/serial/pipeline-matrix.test.ts, pm-overrun.ts): argv <ArcDescriptor json>.
 // Reopens the story's corpus arc, recovers what a crash left open, and runs its next checkpoint once under the plan in
 // force (the fake gh first on PATH from the parent's env); the crash trigger in ROADMAP_TEST_CRASH kills it at the row's
 // label. Prints the checkpoint's outcome.

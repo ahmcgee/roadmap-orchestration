@@ -26,47 +26,42 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type TestContext, after, test } from 'node:test';
-import type { Event, Fact, IntentOf } from '../src/core/events.ts';
-import { arcId, invocationId } from '../src/core/ids.ts';
-import { canonicalJson } from '../src/core/json.ts';
-import { absPath } from '../src/core/values.ts';
-import type { ExitReason } from '../src/executor.ts';
-import { EXIT_REASON_FILE } from '../src/executor.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
+import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
+import { arcId, invocationId } from '../../src/core/ids.ts';
+import { canonicalJson } from '../../src/core/json.ts';
+import { absPath } from '../../src/core/values.ts';
+import type { ExitReason } from '../../src/executor.ts';
+import { EXIT_REASON_FILE } from '../../src/executor.ts';
+import { assertFired, writeTrigger } from '../helpers/crash.ts';
+import { git, tmpDir } from '../helpers/repo.ts';
+import { readCalls } from '../helpers/scenario.ts';
+import { type Owner, assertNoSurvivors } from '../helpers/reap.ts';
 import {
   ADMIT_CONVERSIONS, ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_HOLISTIC, PIPELINE_HOST_DEATH,
   PIPELINE_RUNNER_DEATH, PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells,
-} from './matrix.ts';
-import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf } from './oracle.ts';
-import { LABEL_TRACE, NONE, R, appendTrace, inRevisionAt } from './fixtures/pm-trace.ts';
-import { type ExecRun, SMOKE_DEFAULT, hostFile, journalOf } from './fixtures/exec-common.ts';
+} from '../matrix.ts';
+import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf } from '../oracle.ts';
+import { LABEL_TRACE, NONE, R, appendTrace, inRevisionAt } from '../fixtures/pm-trace.ts';
+import { type ExecRun, SMOKE_DEFAULT, hostFile, journalOf } from '../fixtures/exec-common.ts';
 import {
   HOLISTIC, HOLISTIC_OUTCOMES, type Sampled, capturesInsideRevisions, describeRecord, holisticProduct, holisticRecords, sampleHolistic,
-} from './fixtures/pm-holistic.ts';
-import { type LogSnapshot, readJournal } from '../src/core/log.ts';
+} from '../fixtures/pm-holistic.ts';
+import { type LogSnapshot, readJournal } from '../../src/core/log.ts';
 import {
   BUMPY, BUMPY_OUTCOMES, CANCEL, CANCEL_OUTCOMES, type Hook, MALFORMED, MALFORMED_OUTCOMES, type Recorded, STALE, STALE_LANE, STALE_OUTCOMES, STRAIGHT,
   STRAIGHT_OUTCOMES, type Scenario, blockedAt, buildRunner, callsMatchSteps, finalReason, layout, moveIntegration, readRecord, release, supervisedRun,
-} from './fixtures/pm-common.ts';
-import { gone, kill, ownerOf, startCli, startLine, startedGenerations, stateOf, supervisorOf } from './fixtures/sup-common.ts';
-import { planCheckStep } from './fixtures/stage-common.ts';
-import { MUL, codexStep, contextFor, gateStep } from './fixtures/unit-common.ts';
-import { checkpointCalls, overrunArc } from './fixtures/pm-overrun.ts';
-import { forgeEnv } from './fixtures/corpus-holistic.ts';
-import { runFixture } from './helpers/proc.ts';
+} from '../fixtures/pm-common.ts';
+import { gone, kill, ownerOf, startCli, startLine, startedGenerations, stateOf, supervisorOf } from '../fixtures/sup-common.ts';
+import { planCheckStep } from '../fixtures/stage-common.ts';
+import { MUL, codexStep, contextFor, gateStep } from '../fixtures/unit-common.ts';
+import { checkpointCalls, overrunArc } from '../fixtures/pm-overrun.ts';
+import { forgeEnv } from '../fixtures/corpus-holistic.ts';
+import { FANOUT } from '../helpers/fanout.ts';
+import { runFixture } from '../helpers/proc.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);
 
-/**
- * Supervised runs at once: each is a handful of short-lived processes, often waiting on polls and the
- * supervisor's backoff. At 10 the host sat at about two-thirds busy with the matrix alone; at 16 it is
- * CPU-bound, alone and in the full suite, and the matrix is the suite's longest file.
- */
-const CONCURRENCY = 16;
 const CELL = { timeout: 360_000 };
 const WAIT_MS = 120_000;
 
@@ -325,7 +320,7 @@ async function hostDeath(t: Owner, ref: Reference): Promise<void> {
 
 // ---------------------------------------------------------------------------------------------------
 
-test('whole-pipeline crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60_000 }, async (t) => {
+test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 }, async (t) => {
   const started = Date.now();
   const [straight, bumpy, malformed, cancel, staleLane, holistic] = await Promise.all([
     reference(t, 'straight', STRAIGHT, STRAIGHT_OUTCOMES),

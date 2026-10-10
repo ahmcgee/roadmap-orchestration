@@ -46,45 +46,44 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type TestContext, after, test } from 'node:test';
-import { type Event, type IntentOf, type Parent, parseEventLine, prevHash, recordUnit } from '../src/core/events.ts';
-import { INTEGRATION_SLOT, arcId, invocationId, parseInvocationId, unitId } from '../src/core/ids.ts';
-import type { JournalView } from '../src/core/interfaces.ts';
-import type { LogSnapshot } from '../src/core/log.ts';
-import { Fold } from '../src/core/state.ts';
-import { absPath } from '../src/core/values.ts';
-import type { ExitReason } from '../src/executor.ts';
-import { ownArcResidue, readResidues, undispositioned } from '../src/host/residues.ts';
-import { requirePlanInForce } from '../src/input/inforce.ts';
-import { invocationDir } from '../src/pipeline/invoke.ts';
-import { resourceTable } from '../src/resources/reserve.ts';
-import { runnerFiles } from '../src/runner/files.ts';
-import { nextStage, rankOf } from '../src/schedule/ready.ts';
-import { compareRank } from '../src/schedule/types.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { instanceDir, maxConcurrentOwners } from './helpers/estate.ts';
-import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
+import { type Event, type IntentOf, type Parent, parseEventLine, prevHash, recordUnit } from '../../src/core/events.ts';
+import { INTEGRATION_SLOT, arcId, invocationId, parseInvocationId, unitId } from '../../src/core/ids.ts';
+import type { JournalView } from '../../src/core/interfaces.ts';
+import type { LogSnapshot } from '../../src/core/log.ts';
+import { Fold } from '../../src/core/state.ts';
+import { absPath } from '../../src/core/values.ts';
+import type { ExitReason } from '../../src/executor.ts';
+import { ownArcResidue, readResidues, undispositioned } from '../../src/host/residues.ts';
+import { requirePlanInForce } from '../../src/input/inforce.ts';
+import { invocationDir } from '../../src/pipeline/invoke.ts';
+import { resourceTable } from '../../src/resources/reserve.ts';
+import { runnerFiles } from '../../src/runner/files.ts';
+import { nextStage, rankOf } from '../../src/schedule/ready.ts';
+import { compareRank } from '../../src/schedule/types.ts';
+import { assertFired, writeTrigger } from '../helpers/crash.ts';
+import { instanceDir, maxConcurrentOwners } from '../helpers/estate.ts';
+import { FANOUT } from '../helpers/fanout.ts';
+import { type Owner, assertNoSurvivors } from '../helpers/reap.ts';
+import { git, tmpDir } from '../helpers/repo.ts';
+import { readCalls } from '../helpers/scenario.ts';
 import {
   type Boundary, CONCURRENT_AUDIT, CONCURRENT_BUILD, CONCURRENT_BUNDLE, CONCURRENT_EXCLUDED_LABELS, CONCURRENT_JUDGMENT, CONCURRENT_LANE, CONCURRENT_PREEMPT,
   CONCURRENT_BATCH, CONCURRENT_DEBT, CONCURRENT_PUBLICATION, CONCURRENT_RESIDUE, CONCURRENT_TEARDOWN, crashCells,
-} from './matrix.ts';
+} from '../matrix.ts';
 import {
   type Trace, UNCRASHED, assertOracle, needsUserExactly, noModelIds, oracleRun, outcomesOf, productTree, provenance, publicationsPerUnit, recoveryTrace,
   snapshotVerifies, unitStates, usagePerInvocation,
-} from './oracle.ts';
-import { HOLISTIC_PEERS, type HolisticPeer, type JobRow, STEPPING, layoutHolisticConcurrent, sampleJob } from './fixtures/cm-holistic.ts';
-import { type Sampled, capturesInsideRevisions, describeRecord, holisticProduct, holisticRecords, ownerOf } from './fixtures/pm-holistic.ts';
-import { A, B, C, type Concurrent, type Peer, PEERS, layoutConcurrent } from './fixtures/cm-common.ts';
-import { type ExecRun, journalOf } from './fixtures/exec-common.ts';
-import { type Hook, type Laid, callsMatchSteps, finalReason, supervisedRun } from './fixtures/pm-common.ts';
-import { BATCH_TRACE, LABEL_TRACE, appendTrace, inRevisionAt } from './fixtures/pm-trace.ts';
-import { startCli, startLine, startedGenerations, stateOf } from './fixtures/sup-common.ts';
+} from '../oracle.ts';
+import { HOLISTIC_PEERS, type HolisticPeer, type JobRow, STEPPING, layoutHolisticConcurrent, sampleJob } from '../fixtures/cm-holistic.ts';
+import { type Sampled, capturesInsideRevisions, describeRecord, holisticProduct, holisticRecords, ownerOf } from '../fixtures/pm-holistic.ts';
+import { A, B, C, type Concurrent, type Peer, PEERS, layoutConcurrent } from '../fixtures/cm-common.ts';
+import { type ExecRun, journalOf } from '../fixtures/exec-common.ts';
+import { type Hook, type Laid, callsMatchSteps, finalReason, supervisedRun } from '../fixtures/pm-common.ts';
+import { BATCH_TRACE, LABEL_TRACE, appendTrace, inRevisionAt } from '../fixtures/pm-trace.ts';
+import { startCli, startLine, startedGenerations, stateOf } from '../fixtures/sup-common.ts';
 
 after(assertNoSurvivors);
 
-/** Supervised runs at once, as the whole-pipeline matrix runs them. */
-const CONCURRENCY = 16;
 const CELL = { timeout: 360_000 };
 
 const ROWS: Readonly<Record<Peer, string>> = {
@@ -549,7 +548,7 @@ function cellsOf(ref: Reference): readonly CellSpec[] {
   });
 }
 
-test('concurrent crash matrix', { concurrency: CONCURRENCY, timeout: 45 * 60_000 }, async (t) => {
+test('concurrent crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 }, async (t) => {
   const started = Date.now();
   const [refs, jobRefs] = await Promise.all([Promise.all(PEERS.map((peer) => reference(t, peer))), Promise.all(HOLISTIC_PEERS.map((peer) => jobReference(t, peer)))]);
 

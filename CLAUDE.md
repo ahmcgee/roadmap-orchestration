@@ -18,7 +18,12 @@ inside the skill address agents running an arc with it; they do not bind you her
 A change is not done until the ladder passes, in order (from `executor/`):
 
 1. `npm run typecheck`
-2. `npm test` (`node --test --test-concurrency=8 test/*.test.ts`: eight files at a time, since the heavy files fan out real processes and the default (cores − 1) starved the crash matrices past their caps; then `test/serial/*.test.ts` alone, one file at a time: the tests needing a calm host, the upgrade test and the m4a fake sessions)
+2. `npm test` (`node --test --test-concurrency=8 test/*.test.ts`: eight files at a time, each about one runnable
+   process wide on average; then `test/serial/*.test.ts` alone, one file at a time: the files that fan out across the host (the
+   crash matrices, sized by `FANOUT` in `test/helpers/fanout.ts`, and the pool, probe and resource crash files), the
+   tests needing a calm host (the upgrade test, the m4a fake sessions) and `pressure`, which saturates the host on
+   purpose). Both tiers keep runnable load within the host's cpus: a saturated host fails timing-bound tests, so a
+   file that runs eight or more cells of real processes at once goes in the serial tier, never the parallel one.
 3. `node evals/probe.ts`: real CLIs, pennies
 4. The paid fixture (`evals/m1/`): once per merged batch, never per worktree agent
 

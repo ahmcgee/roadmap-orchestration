@@ -1214,7 +1214,7 @@ done's or abort's op's; a fact's own `unit`, a usage fact's invocation's op's); 
 resource transition, retry or residue its holder's; a git, spec or needs-user op its intent's stage parent;
 `unit.after-stage` its unit. Process- and arc-level labels (runner, supervisor, host, recovery, probe, command,
 plan apply, log open, `kill.after-cancel`) pass none. The concurrent crash matrix crashes by unit
-(`test/concurrent-matrix.test.ts`).
+(`test/serial/concurrent-matrix.test.ts`).
 
 ## M3: the holistic layer (frozen in M3 step 0a)
 
