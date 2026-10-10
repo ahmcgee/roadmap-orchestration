@@ -601,9 +601,15 @@ async function main(): Promise<void> {
   // (2) The acceptance-shape plan-check: PLAN_CHECK_ACCEPTANCE_SCHEMA, witness items through the patch channel.
   await rev3('m4a3.plan-check-acceptance', async () => {
     // The tip predates the unit (no convert.ts), so the acceptance is behaviour the change newly makes pass: witness items are owed.
+    // A unit the witnesses can land in: its scope holds a test file, the arc lane runs on node, and no clause pulls against
+    // the vision (the m3 spec's A2 is the vision-conflict plant, a reason to escalate instead).
     const accDir = dir(join(root, 'm4a3-acceptance'));
     const accInputs: PlanCheckInputs = {
-      ...planCheckInputs, checkouts: { tip: { path: accDir, at: TREE }, branch: null }, acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [laneId('unit')] },
+      ...planCheckInputs,
+      spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit(100) returns 212.\n\n## Lanes\n- unit: `node --test convert.test.ts`' },
+      scope: [repoPattern('convert.ts'), repoPattern('convert.test.ts')],
+      lanePrograms: [{ lane: laneId('unit'), argv0: 'node', resolved: { kind: 'program', realpath: absPath(process.execPath) } }],
+      checkouts: { tip: { path: accDir, at: TREE }, branch: null }, acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [laneId('unit')] },
     };
     const call = { ...seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm4a3-plan-check-acceptance', accDir, accInputs), schema: PLAN_CHECK_ACCEPTANCE_SCHEMA };
     await backend(ctx, 'm4a3.plan-check-acceptance', call, (v) => {
