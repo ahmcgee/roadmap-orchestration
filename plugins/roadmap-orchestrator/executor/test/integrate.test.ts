@@ -31,6 +31,7 @@ test('merge.base-red: the suite is red on the candidate and on T alone; the unit
     assert.equal(result.needsUser.reason, 'base-red');
     assert.deepEqual(result.needsUser.subject, { type: 'arc' }, 'a broken base halts merges, not just this unit');
     assert.equal(result.needsUser.blocking, true);
+    assert.match(result.needsUser.summary, new RegExp(`alone, without unit u1: lane suite red\\. The base is broken`), 'the item names the suite lane red on T alone');
     assert.equal(outcomes(d).at(-1), 'candidate:base-red');
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0, 'base-red is uncharged');
     assert.equal(git(d.repo, 'rev-parse', 'main'), tip, 'integration never moved');

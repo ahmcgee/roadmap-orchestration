@@ -1791,12 +1791,18 @@ supersede the A4 items they name):
    declared repair held (its witness `held` on the candidate, whatever its activation; a split parent's, every non-exempt
    child's; not the effect, which for a held future child is `latch` or `measured`), and no lane failure left. A failing
    test of a future (not latched) or exempt obligation is never graded; one of an unselected must-hold obligation over
-   which an active P1 is open is a background failure; any other failing test (or a red lane with none) is unexplained.
-   Not clean → the same lanes on the tip alone: a blocking failure (a brake red, a repair not held, an unexplained lane,
-   a changed checkout) the tip reproduces → `base-red`, else `red`
+   which an active P1 is open is a background failure; any other failing test is unexplained, and so is a red lane with
+   none that is graded on the tree: it witnesses an obligation whose effect there is neither `measured` nor `exempt`. A red
+   lane witnessing only measured or exempt obligations (a future one another unit delivers, its test file not yet on the
+   tree) is never graded (paid m4b run 5). Not clean → the same lanes on the tip alone: a blocking failure (a brake red, a
+   repair not held, an unexplained lane, a changed checkout) the tip reproduces → `base-red`, else `red`
    (charged; `candidateBrakeFix` names the red obligations in the fix round). A repaired obligation's red is never the
    base's. Background failures only: the tip failing exactly those tests per lane → green (known regression); failing
-   none → `red`; else `base-red`.
+   none → `red`; else `base-red`. A `base-red` names what the tip alone reproduced (`BaseRed{lanes, obligations,
+   changedCheckout}`, never empty): its summary reads `On <branch> at <tip> alone, without unit <u>: lane(s) … red;
+   obligation(s) … not held; its lanes changed the checkout.`, each part present only when non-empty, an obligation's
+   witness lane among the lanes. The red-suite path's item names the suite lane red on T alone (a series stops at the
+   first) and a dirtied checkout; a batch's names the same for its job.
 4. **G11's suite-lane half is unreachable**: the frozen plan's suite lanes carry no `reporter`, so the known-regression
    exception applies to arc-lane witnesses only.
 5. **Latching** (`latchPublished`): after a unit's `ff{published}` (and a batch's), before the snapshot, each future

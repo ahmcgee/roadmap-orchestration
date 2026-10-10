@@ -9,8 +9,12 @@ import { WITNESS_OUTCOMES, type WitnessOutcome, type WitnessTest } from '../../s
 
 export const WITNESS_LANE = fileURLToPath(new URL('../fakes/witness-lane.ts', import.meta.url));
 
-/** One tree's script: the outcome per test id (an id absent here is not reported), or a garbled report. */
-export type TreePlan = Readonly<{ outcomes: Readonly<Record<string, WitnessOutcome>>; malformed?: true }>;
+/**
+ * One tree's script: the outcome per test id (an id absent here is not reported), or a garbled report. `absent`: the
+ * lanes (by the id their argv names) whose test file this tree lacks: each reports nothing and exits 1, as `node --test`
+ * given a missing file does.
+ */
+export type TreePlan = Readonly<{ outcomes: Readonly<Record<string, WitnessOutcome>>; malformed?: true; absent?: readonly string[] }>;
 /** Tree id (or `*`, the fallback for a tree with no entry of its own) → its script. */
 export type WitnessControl = Readonly<{ trees: Readonly<Record<string, TreePlan>> }>;
 
@@ -29,13 +33,15 @@ const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
 
 /**
  * The argv of a `node-test` lane, or of a `jsonl` lane: an executable shell wrapper written into `dir`
- * that execs the fake with the control file's absolute path embedded (as the backend shims do).
+ * that execs the fake with the control file's absolute path embedded (as the backend shims do). `lane`: the id the
+ * fake knows itself by (`TreePlan.absent`).
  */
-export function witnessLaneArgv(reporter: 'node-test' | 'jsonl', dir: string, controlFile: string): readonly string[] {
-  if (reporter === 'node-test') return [process.execPath, WITNESS_LANE, 'node-test', controlFile];
+export function witnessLaneArgv(reporter: 'node-test' | 'jsonl', dir: string, controlFile: string, lane?: string): readonly string[] {
+  const named = lane === undefined ? [] : [lane];
+  if (reporter === 'node-test') return [process.execPath, WITNESS_LANE, 'node-test', controlFile, ...named];
   const wrapper = join(dir, 'jsonl-lane.sh');
   if (!existsSync(wrapper)) {
-    writeFileSync(wrapper, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(WITNESS_LANE)} jsonl ${quote(controlFile)}\n`, { flag: 'wx' });
+    writeFileSync(wrapper, `#!/bin/sh\nexec ${[process.execPath, WITNESS_LANE, 'jsonl', controlFile, ...named].map(quote).join(' ')}\n`, { flag: 'wx' });
     chmodSync(wrapper, 0o755);
   }
   return [wrapper];

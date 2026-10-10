@@ -1,6 +1,6 @@
 // M3 step B2: journey lanes in a unit's candidate and the held-claims brake (src/pipeline/integrate.ts, lanes.ts), over
 // real arcs (real git, real processes, fake backends, fake witness lanes scripted per tree). Named tests:
-// brake.must-hold-red, brake.base-red, brake.future-measured (future activation, the latch), brake.split-repair, brake.known-regression-
+// brake.must-hold-red, brake.base-red, brake.future-measured (future activation, the latch), brake.absent-future-witness, brake.split-repair, brake.known-regression-
 // test-level (G11), brake.unmapped-paths, fingerprint.obligation-revs, witness records and lane reuse, and the crash
 // cells of the matrix row LATCH (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
@@ -36,6 +36,8 @@ const journeys = (r: ArcRun): readonly IntentOf<'proc.spawn'>[] => r.journal.vie
 const journeyLanes = (r: ArcRun): readonly string[] => journeys(r).map((i) => (i.expect.subject.purpose === 'journey' ? `${i.expect.subject.lane}@${i.expect.subject.at.slice(0, 7)}` : ''));
 const witnessedFor = (r: ArcRun) => facts(r).flatMap((f) => (f.kind === 'witnessed' ? [f] : []));
 const latched = (r: ArcRun) => facts(r).flatMap((f) => (f.kind === 'obligation-latched' ? [[f.obligation, f.unit]] : []));
+/** The needs-user items raised so far. */
+const raised = (r: ArcRun): readonly string[] => r.journal.view.opsOf('needsuser.raise').map((i) => i.expect.id);
 const steps = [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
 /** Every in-scope path maps to I-1 (the spec must then declare it). */
 const MAPPED = [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }] as const;
@@ -84,9 +86,12 @@ describe('the held-claims brake', () => {
     const r = contextFor(d);
     try {
       await approveThenScript(r, control, { t1: 'fail' });
-      await step(r.ctx, r.unit('u1'));
+      const parked = await runUnit(r.ctx, r.unit('u1'), admitAll);
       assert.equal(outcomes(d).at(-1), 'candidate:base-red', outcomes(d).join(' '));
       assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
+      assert.ok(parked.kind === 'parked');
+      assert.equal(parked.needsUser.reason, 'base-red');
+      assert.match(parked.needsUser.summary, /alone, without unit u1: lane journey red; obligation I-1 not held\. The base is broken/, 'the item names what was red on the tip alone');
     } finally {
       r.journal.close();
     }
@@ -130,6 +135,39 @@ describe('future obligations', () => {
       scriptTree(control, tipTree(d), { outcomes: { t1: 'pass', t2: 'pass' } });
       await stepUntil(r, 'u3', (f) => f.stage === 'candidate');
       assert.equal(outcomes(d, 'u3').at(-1), 'candidate:red', outcomes(d, 'u3').join(' '));
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('a sibling\'s future witness absent', () => {
+  test('brake.absent-future-witness: a candidate selecting a future obligation another unit delivers, whose witness test file neither the candidate nor the tip has yet, is not base-red: that lane is red on both but measured, never graded; the candidate is green and latches what it completes (paid m4b run 5)', T, async () => {
+    // As run 5's booking-texts: its approval selected clash-refusal's future I-11..13 (lane w-clash, test file not yet
+    // on the base) beside its own future ones (w-outbox, its file added by the unit). Before the fix w-clash, red with
+    // no record on the candidate and on the tip alike, was an unexplained lane the tip reproduced: a blocking base-red.
+    const { d, control } = holisticArc({
+      steps: unitSteps('u1', moduleFiles('mul', '*')),
+      units: [{ id: 'u1', obligations: ['I-1', 'I-2', 'I-3'] }, { id: 'u2' }],
+      lanes: ['journey', 'w-other'],
+      obligations: [
+        { id: 'I-1', testIds: ['t1'] },
+        { id: 'I-2', activation: 'future', deliveredBy: ['u1'], testIds: ['t2'] },
+        { id: 'I-3', activation: 'future', deliveredBy: ['u2'], testIds: ['t3'], lane: 'w-other' },
+      ],
+      mapping: MAPPED.map((m) => ({ ...m, obligations: ['I-1', 'I-2', 'I-3'] })),
+      trees: { '*': { outcomes: { t1: 'pass' }, absent: ['w-other'] } },
+    });
+    const r = contextFor(d);
+    try {
+      await approveThenScript(r, control, { t1: 'pass', t2: 'pass' });
+      const tree = candidateTree(d, 'u1');
+      scriptTree(control, tree, { outcomes: { t1: 'pass', t2: 'pass' }, absent: ['w-other'] });
+      assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
+      assert.ok(outcomes(d).includes('candidate:green'), outcomes(d).join(' '));
+      assert.deepEqual(raised(r), [], 'no needs-user item');
+      assert.deepEqual(latched(r), [['I-2', 'u1']]);
+      assert.ok(journeyLanes(r).some((l) => l.startsWith('w-other@')), 'the absent witness lane did run on the candidate');
     } finally {
       r.journal.close();
     }
