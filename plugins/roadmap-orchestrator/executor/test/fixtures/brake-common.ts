@@ -65,7 +65,7 @@ export type HolisticArc = Readonly<{ d: ArcDescriptor; control: string }>;
 /** An arc lane over the control file, as the obligations file holds it. */
 function arcLane(id: string, control: string, extra: Json = {}): Json {
   return {
-    id, argv: witnessLaneArgv('jsonl', tmpDir(`witness-lane-${id}`), control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast',
+    id, argv: witnessLaneArgv('jsonl', tmpDir(`witness-lane-${id}`), control, id), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast',
     resources: [], evidenceGlobs: [], reporter: 'jsonl', ...extra,
   };
 }
