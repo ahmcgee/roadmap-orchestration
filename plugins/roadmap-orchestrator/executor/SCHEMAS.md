@@ -138,7 +138,7 @@ warning per process each, BACKLOG "Scaffolding to delete", dev.6 layer), the res
 | `apply` command body (`commands/incoming/<id>.json`; I2, step N3) | `+ rulings?: [{path: AbsPath, sha256}]` (`HashedFile`, non-empty, in the order given): the `--ruling` sidecars, landed with the edits as one revision | none (absent: a plain apply; lasting); bytes and `commandSha256` never rewritten |
 | `RevisionSource.bundle` (`revision.commit` expect, `plan-applied` source, revision payload) | `+ admits?: ClassifiedAdmit[]`, `+ conversions?: Conversion[]` (both or neither; each ascending by op index, no index in both) | absent: `unclassified`, never counted against a budget or a follow-up (`bundleClassesOf`; also every `architecture-doc` arc's, LR-h) |
 | `bundle-decided.outcome` | `rejected.reason + busy` with `units: [{unit, stage, attempt}]` (exactly on `busy`, non-empty); `no-op + conversions?` (non-empty) | none; no conversions |
-| `corpus-amendment.source` | `+ admit{job, index, reason: unrelated \| over-budget \| follow-up-overrun}` | none |
+| `corpus-amendment.source` | `+ admit{job, index, reason: unrelated \| over-budget \| unwitnessed \| follow-up-overrun}` (`unwitnessed`: owner ruling 2026-10-10, additive) | none |
 | `debt-banked` | `DebtSource + admit{job, index}`; `BankReason + opportunity-overrun`; `+ opportunity?: O-n` (exactly on `opportunity-overrun`, whose source is exactly `admit`) | none |
 | `FindingSource.stage` | `stage: plan-check \| build` (the in-session assessment's vision conflicts open P3 `plan-check`-lens findings) | none |
 | `AuditTrigger.drift` | `+ specsOnly?: UnitId[]` (ascending, non-empty) | absent: a full drift (lasting) |
@@ -2649,8 +2649,12 @@ staleness (`classifyObligations`) uses it.
 **Admit classes** (OR-A1, LR-k; `src/holistic/types.ts`; N2 classifies): `AdmitClass = repair{refs: RepairRef[]
 (non-empty, unique), followUp: O-n | null} | oversight{clauses: V-n[]} | opportunity{id: O-n, clauses: V-n[]}`
 (`unrelated` is never a class, only a conversion reason); `ClassifiedAdmit = {index (the op's in the answer), unit,
-class}`; `Conversion = {index, unit, reason: unrelated | over-budget | follow-up-overrun, opportunity: O-n | null}`
+class}`; `Conversion = {index, unit, reason: unrelated | over-budget | unwitnessed | follow-up-overrun, opportunity: O-n | null}`
 (`opportunity` non-null exactly for `follow-up-overrun`); `OPPORTUNITY_BUDGET` 1, `OPPORTUNITY_FOLLOW_UPS` 1.
+`unwitnessed` (owner ruling 2026-10-10, after paid M4b runs 3 and 5): opportunity work with the budget left converts
+unless a non-exempt obligation after the bundle's ops (in practice a split child of the same bundle) is delivered by
+its unit and serves a clause of its Out; that child's witness lane is an arc lane in force (the split's validation and
+the per-call schema). The budget is checked first: an over-budget opportunity converts `over-budget`.
 Classification is persisted in the decision record before settlement and never recomputed (Q4): an applied bundle's
 `RevisionSource.bundle{job, admits, conversions}`, an all-converted bundle's `bundle-decided{no-op, conversions}`. The
 debt a conversion's settlement banks names its unit through `conversionsOf(view, job)` (src/pipeline/publish.ts).

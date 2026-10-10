@@ -1,7 +1,7 @@
 // M4a rev 3 step N2 (B, C, H4, H5): a checkpoint's admit classes, conversions, busy deferral, evidence per test, ruling
 // stamps and ids, split census moves, input manifest, embedded specs, closeout and issue reuse, over real corpus arcs (real
 // git, real processes, the fake claude answering lens and checkpoint calls by job, the fake gh as the forge). Named tests:
-// bundle.decision-persists-conversions, bundle.opportunity-joins-advances (with its clause unserved apart), bundle.all-converted-no-op,
+// bundle.decision-persists-conversions, bundle.opportunity-joins-advances, bundle.opportunity-unwitnessed-converts, bundle.all-converted-no-op,
 // bundle.follow-up-overrun-converts-with-debt, bundle.admit-targets-checked,
 // bundle.recovery-no-reclassify, admits.architecture-doc-arc-unclassified, bundle.evidence-head-superset-accepted,
 // bundle.evidence-equal-results-new-inv, bundle.evidence-outcome-changed-rejected, bundle.evidence-test-removed-rejected,
@@ -40,7 +40,7 @@ import { VALID_OP, checkpointAnswer, checkpointStep, intakeOutcome, lensStep } f
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
-import { admitOp, applyPlanEdit, checkpointArc, checkpointContext, completedAudit, factsOfKind, visionLenses } from './fixtures/checkpoint-common.ts';
+import { admitOp, applyPlanEdit, checkpointArc, checkpointContext, completedAudit, factsOfKind, visionLenses, witnessSplit } from './fixtures/checkpoint-common.ts';
 import { type CorpusHolisticArc, corpusHolisticArc, forgeEnv } from './fixtures/corpus-holistic.ts';
 import { VISION_PATH } from './fixtures/corpus-unit.ts';
 import { followContext, stepTo, unitOf } from './fixtures/route-common.ts';
@@ -110,17 +110,34 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
     }
   });
 
-  test('bundle.opportunity-joins-advances: honest work outside the slice is opportunity O-1; its clause joins holistic.advances in the same revision', T, async () => {
+  test('bundle.opportunity-joins-advances: honest work outside the slice, with its witness, is opportunity O-1; its clause joins holistic.advances in the same revision', T, async () => {
     const x = await arc([]);
     try {
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitCiting(x, 'more', ['V-1', 'V-3'])] }))]);
+      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitCiting(x, 'more', ['V-1', 'V-3']), witnessSplit('more', 'V-3')] }))]);
       const out = await run(x);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
       assert.deepEqual(bundleSources(x.r), [{ type: 'bundle', job: 'ckpt-1', admits: [{ index: 0, unit: 'more', class: { type: 'opportunity', id: 'O-1', clauses: ['V-3'] } }], conversions: [] }]);
       assert.deepEqual(planInForce(x.r).holistic?.advances, ['V-1', 'V-3']);
-      // Paid M4b runs 3 and 5: the opportunity's clause no obligation serves is shown apart, never as a gap to close.
       const coverage = status(x.r.ctx.runDir, arcId(x.r.d.arc), x.r.ctx.hostDir).vision?.coverage;
-      assert.deepEqual([coverage?.unservedAdvanced, coverage?.unservedOpportunity], [[], ['V-3']]);
+      assert.deepEqual([coverage?.unservedAdvanced, coverage?.unservedOpportunity], [[], []], 'its witness I-3 serves V-3');
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('bundle.opportunity-unwitnessed-converts (paid M4b runs 3 and 5): an opportunity with no obligation its unit delivers converts unwitnessed, spends no budget, and the rest applies', T, async () => {
+    const x = await arc([]);
+    try {
+      appendSteps(x.a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [VALID_OP, admitCiting(x, 'more', ['V-1', 'V-3'])] }))]);
+      const out = await run(x);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      assert.deepEqual(bundleSources(x.r), [{ type: 'bundle', job: 'ckpt-1', admits: [], conversions: [{ index: 1, unit: 'more', reason: 'unwitnessed', opportunity: null }] }]);
+      assert.ok(!planInForce(x.r).units.some((u) => u.id === 'more'), 'the converted admit is dropped');
+      assert.deepEqual(planInForce(x.r).holistic?.advances, ['V-1'], 'its clause joins nothing');
+      assert.equal(planInForce(x.r).limits?.convergenceK, 3, 'the rest applies');
+      const [m] = factsOfKind(x.r, 'corpus-amendment').filter((f) => f.source.type === 'admit');
+      assert.deepEqual(m?.source, { type: 'admit', job: 'ckpt-1', index: 1, reason: 'unwitnessed' });
+      assert.match(m!.why, /no obligation of its bundle, delivered by it, serves them on an arc lane in force/);
     } finally {
       x.r.journal.close();
     }
@@ -131,8 +148,8 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
     try {
       const withTargets = (cites: readonly string[]): JsonValue => ({ ...(admitCiting(x, 'more', cites) as Json), targets: ['T-2'] } as JsonValue);
       appendSteps(x.a.d, [
-        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1'])] })),
-        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1', 'V-3'])] })),
+        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1']), witnessSplit('more', 'V-3')] })),
+        checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1', 'V-3']), witnessSplit('more', 'V-3')] })),
       ]);
       const first = await run(x);
       assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'invalid', JSON.stringify(first));
@@ -165,7 +182,7 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
     // O-1 takes the budget (V-3); the V-4 admit converts over-budget. After the crash the owner adds V-4 to the slice:
     // classified again, that admit would be an oversight and convert nothing.
     const a = await corpusHolisticArc([lensStep('audit-1', 'vision')], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
-    appendSteps(a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'more', ['V-1', 'V-3']), admitStep(a, 'glance', ['V-4'])] }))]);
+    appendSteps(a.d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'more', ['V-1', 'V-3']), admitStep(a, 'glance', ['V-4']), witnessSplit('more', 'V-3')] }))]);
     {
       const r = contextFor(a.d);
       const { ctx } = checkpointContext(r);
@@ -180,11 +197,14 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
     const { ctx, w } = checkpointContext(r);
     try {
       assert.deepEqual(factsOfKind(r, 'corpus-amendment'), [], 'killed before settlement');
-      const plan = JSON.parse(readFileSync(a.d.planPath, 'utf8')) as Json & { units: Json[]; holistic: { advances: string[] } };
+      const plan = JSON.parse(readFileSync(a.d.planPath, 'utf8')) as Json & { units: Json[]; holistic: { advances: string[]; obligations: string } };
       const inForce = planInForce(r);
       // The owner widens the slice: the plan in force (with the opportunity's V-3) plus V-4.
       writeFileSync(a.d.planPath, JSON.stringify({ ...plan, units: inForce.units, holistic: { ...plan.holistic, advances: ['V-1', 'V-3', 'V-4'] } }));
       for (const u of inForce.units) if (u.id !== 'u1') writeFileSync(join(a.planDir, `${u.id}.json`), readFileSync(join(r.ctx.runDir, 'inputs', `${requireSpecSha(r, u.id)}.spec.json`)));
+      // ...and keeps the obligations in force (the opportunity's witness split).
+      const obligationsSha = factsOfKind(r, 'plan-applied').at(-1)!.obligationsSha256!;
+      writeFileSync(join(a.planDir, plan.holistic.obligations), readFileSync(join(r.ctx.runDir, 'inputs', `${obligationsSha}.obligations.json`)));
       const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(a.d, r.journal.view.planApplied()!.rev)));
       assert.equal(applied.kind, 'applied', JSON.stringify(applied));
       await recover({ stage: ctx, commands: w.commands });
@@ -202,7 +222,7 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
     };
     const a = await corpusHolisticArc([lensStep('audit-1', 'vision')], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
     appendSteps(a.d, [
-      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'opp', ['V-1', 'V-3'])] })),
+      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'opp', ['V-1', 'V-3']), witnessSplit('opp', 'V-3')] })),
       planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
       lensStep('audit-2', 'vision', [{ severity: 'P2', visionClauses: ['V-3'], claim: 'mul frees no berth', cause: 'mul: no pool', evidence: [{ path: 'src/mul.js', line: 1 }] }]),
       checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [repairOf(a, 'fix1')] })),

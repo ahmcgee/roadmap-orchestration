@@ -192,7 +192,8 @@ $0.30), so the wakes are few by design.
   `opportunity` (it advances a clause outside the slice; its clauses join `advances`). An admit must cite every
   out-of-slice clause it touches; one that does not is refused as dishonest. An arc gets one opportunity, and an
   opportunity one follow-up repair of its own code. An admit serving no touched clause (`unrelated`), a second
-  opportunity (`over-budget`) or a second follow-up (`follow-up-overrun`, which also banks a debt item naming the
+  opportunity (`over-budget`), an opportunity without its witness (`unwitnessed`: no obligation of the bundle that
+  its unit delivers on an arc lane in force) or a second follow-up (`follow-up-overrun`, which also banks a debt item naming the
   opportunity) is dropped from the bundle and becomes a corpus amendment for the next Phase 0. An opportunity's clause
   no obligation serves shows apart (`status.vision.coverage.unservedOpportunity`): the checkpoint never builds toward
   the arc lane that would witness it, since arc lanes are yours to add between arcs. A checkpoint whose

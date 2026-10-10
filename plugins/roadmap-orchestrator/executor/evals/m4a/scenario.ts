@@ -19,8 +19,9 @@
 //           mid-arc flip, OR-L6); then cutoff builds; audit-1 waits at the `blocked-seen` barrier until the root agent
 //           has had the run's blocked wake (notice behind the run-only limit), so its checkpoint capture's blocking
 //           item is always a wake of its own; once the owner restored the policy and the root agent acked, ckpt-1
-//           takes in both issues and admits `fits` (the opportunity O-1, V-7) and a day view (V-6, over the budget:
-//           converted into an amendment); the bundle's drift audit-2 and ckpt-2 run while the run-only limit still holds
+//           takes in both issues and admits `fits` (the opportunity O-1, V-7, with its witness: I-4 split into I-13 and
+//           fits' I-14 on the berths journey, golden.ts `FITS_WITNESS`) and a day view (V-6, over the budget: converted
+//           into an amendment); the bundle's drift audit-2 and ckpt-2 run while the run-only limit still holds
 //           every unit; then notice builds (the root agent pauses it in its hung `slow` lane and resumes it), audit-3
 //           and ckpt-3, fits builds after notice, audit-4 (cadence and final) and ckpt-4.
 //
@@ -42,7 +43,7 @@ import { validateFlowOutput } from '../../src/prompts/schemas.ts';
 import { admitSpecWire, checkpointAnswer, checkpointStep, intakeOutcome, lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
 import type { ClaudeAct, Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
-import { FILES, LANES, OPPORTUNITY, READOUTS, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
+import { FILES, FITS_WITNESS, LANES, OBLIGATIONS, OPPORTUNITY, READOUTS, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
 import type { FakeScript } from './fake-root.ts';
 import { PLANT } from './layout.ts';
 import { join } from 'node:path';
@@ -168,13 +169,27 @@ const JOBS_1: readonly Step[] = [
 
 const NO_OP_2 = checkpointAnswer({ decision: 'no-op', issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1') });
 
-/** A checkpoint `admit` of golden.ts's `OPPORTUNITY[id]`: no targeted rule, citing the one clause it advances. */
+/** A checkpoint `admit` of golden.ts's `OPPORTUNITY[id]`: its targets, citing the one clause it advances. */
 function admitOp(id: keyof typeof OPPORTUNITY): JsonValue {
   const o = OPPORTUNITY[id];
   const spec = specOf({ id: o.unit.id, scope: o.unit.scope, unitLane: o.unitLane, acceptance: o.acceptance });
   return {
-    op: 'admit', unit: { ...o.unit, scope: [...o.unit.scope], after: [...o.unit.after] }, spec: admitSpecWire(spec), targets: [],
+    op: 'admit', unit: { ...o.unit, scope: [...o.unit.scope], after: [...o.unit.after] }, spec: admitSpecWire(spec), targets: [...o.targets],
     cites: [...o.cites], evidence: [o.why],
+  };
+}
+
+/** fits' witness (golden.ts `FITS_WITNESS`): I-4 split into its restatement and the draught child fits delivers. */
+function fitsWitnessOp(): JsonValue {
+  const w = FITS_WITNESS;
+  const parent = OBLIGATIONS.find((o) => o.id === w.parent)!;
+  const test = LANES.find((x) => x.id === parent.lane)!.test;
+  return {
+    op: 'obligation-split', obligation: w.parent, cites: [...w.cites], evidence: [w.why],
+    children: [
+      { id: w.restated, statement: parent.statement, docRef: null, rule: parent.rule, witness: { lane: parent.lane, testIds: [test] }, activation: 'must-hold', deliveredBy: [] },
+      { id: w.child.id, statement: w.child.statement, docRef: null, rule: w.child.rule, witness: { lane: w.child.lane, testIds: [w.child.test] }, activation: 'future', deliveredBy: ['fits'] },
+    ],
   };
 }
 
@@ -182,7 +197,7 @@ const JOBS_2: readonly Step[] = [
   packReviewStep('review-1', [], [{ type: 'barrier', name: POLICY_FLIP_BARRIER, timeoutMs: HOLD_MS }]),
   lensStep('audit-1', 'vision', [], [{ type: 'barrier', name: BLOCKED_SEEN_BARRIER, timeoutMs: HOLD_MS }]),
   checkpointStep('ckpt-1', checkpointAnswer({
-    decision: 'bundle', ops: [admitOp('fits'), admitOp('dayview')],
+    decision: 'bundle', ops: [admitOp('fits'), admitOp('dayview'), fitsWitnessOp()],
     issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1'),
   })),
   lensStep('audit-2', 'vision'),

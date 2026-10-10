@@ -1,5 +1,5 @@
 // Checkpoint admit classes (M4a rev 3, OR-A1, LR-k, LR-m; B "Checkpoint admits"): `classifyAdmits` gives each `admit`
-// op of a bundle its class (repair, oversight, opportunity) or converts it (unrelated, over-budget, follow-up-overrun),
+// op of a bundle its class (repair, oversight, opportunity) or converts it (unrelated, over-budget, unwitnessed, follow-up-overrun),
 // and lists invalid repair refs, unknown targets and dishonest citations as reasons. Pure: it reads an `AdmitWorld` the
 // caller built from the log, the revision in force and git (src/holistic/bundle.ts `admitWorldOf`), and writes nothing.
 // It runs once inside `decide`, under the fence, and its result is persisted in the decision record (Q4): recovery never
@@ -37,8 +37,13 @@
 //   3 lineage O, Out ⊆ OC(O), followUps(O) ≥ 1 → convert follow-up-overrun (LR-k);
 //   4 refs, no opportunity work → repair{null};
 //   5 opportunity work with Out = ∅ (an out-of-slice rule targeted, no clause outside the slice cited) → dishonest-citation;
-//   6 opportunity work, budget left → opportunity{next O-n, Out}; 7 opportunity work → convert over-budget;
-//   8 no refs, In ≠ ∅ → oversight{In}; 9 otherwise → convert unrelated.
+//   6 opportunity work, budget spent → convert over-budget;
+//   7 opportunity work, no witness → convert unwitnessed (paid M4b runs 3 and 5: an opportunity admitted without the
+//     obligation that serves it left its clause unserved in `advances`, and later checkpoints spent themselves building
+//     toward an arc lane only the owner can add). Its witness: an obligation after this bundle's ops, delivered by the
+//     unit, serving a clause of Out; its witness lane is then an arc lane in force (the split's own validation);
+//   8 opportunity work → opportunity{next O-n, Out};
+//   9 no refs, In ≠ ∅ → oversight{In}; 10 otherwise → convert unrelated.
 // Budgets count the arc's recorded admits plus the earlier ones of this bundle; ops classify in index order.
 import {
   type FindingId, type JobId, type ObligationId, type OpportunityId, type RuleId, type UnitId, type VisionClauseId, canonicalIds, opportunityId,
@@ -241,12 +246,13 @@ export function classifyAdmits(w: AdmitWorld, admits: readonly AdmitOp[]): Admit
         reasons.push(`${at}: dishonest-citation: it targets out-of-slice rules ${outOfSlice.join(', ')} and cites no clause outside the owner-selected slice; cite every clause it advances`);
         continue;
       }
-      if (opps.length < OPPORTUNITY_BUDGET) classify({ type: 'opportunity', id: opportunityId(`O-${opps.length + 1}`), clauses: out }); // row 6
-      else convert('over-budget', null); // row 7
+      if (opps.length >= OPPORTUNITY_BUDGET) convert('over-budget', null); // row 6
+      else if (!delivered.some((o) => o.serves.some((c) => out.includes(c)))) convert('unwitnessed', null); // row 7
+      else classify({ type: 'opportunity', id: opportunityId(`O-${opps.length + 1}`), clauses: out }); // row 8
       continue;
     }
-    if (inSlice.length > 0) classify({ type: 'oversight', clauses: inSlice }); // row 8
-    else convert('unrelated', null); // row 9
+    if (inSlice.length > 0) classify({ type: 'oversight', clauses: inSlice }); // row 9
+    else convert('unrelated', null); // row 10
   }
   return { classes, conversions, reasons };
 }

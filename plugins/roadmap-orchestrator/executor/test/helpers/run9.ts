@@ -8,7 +8,9 @@
 // it advances"): the same output with the clauses the targeted out-of-slice rules advance added to the op's cites,
 // classified again. Code holds no rule→clause map, so the replay takes the honest clauses from the records that name
 // them: the out-of-slice world clauses the Phase-0 record's questions bear beside those rules, and those its repaired
-// findings carry (lens context). None found: no retry (the admit stays invalid).
+// findings carry (lens context). None found: no retry (the admit stays invalid). An opportunity is admitted only with its
+// witness (row 7, paid M4b runs 3 and 5), which the recorded bundles never carry: a variant gives an admit `witnesses`,
+// the clauses a future obligation it delivers serves, as the split child its bundle would hold.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FindingId, JobId, ObligationId, RuleId, Sha, UnitId, VisionClauseId } from '../../src/core/ids.ts';
@@ -75,7 +77,19 @@ function worldAt(f: Fixture, c: Ckpt, recorded: readonly RecordedAdmit[]): Admit
  * What a synthetic variant declares for an admit the records hold (LR-m): its `targets` and the cites it would then
  * give; the recorded answers predate `targets` and read as none.
  */
-export type Declared = Readonly<Record<string, Readonly<{ targets: readonly string[]; cites: readonly string[] }>>>;
+export type Declared = Readonly<Record<string, Readonly<{ targets: readonly string[]; cites: readonly string[]; witnesses?: readonly string[] }>>>;
+
+/** `w` with, for each admit `declare` gives `witnesses`, a future obligation `I-w-<unit>` it delivers serving them. */
+function witnessed(w: AdmitWorld, declare: Declared, ops: readonly AdmitOp[]): AdmitWorld {
+  const base = [...w.obligations.values()][0]!.def;
+  const extra = ops.flatMap((o) => {
+    const clauses = declare[o.unit]?.witnesses;
+    if (clauses === undefined) return [];
+    const def = { ...base, id: `I-w-${o.unit}` as ObligationId, serves: clauses as VisionClauseId[], deliveredBy: [o.unit], activation: 'future' as const };
+    return [[def.id, { def, holding: true, history: [] }] as const];
+  });
+  return { ...w, obligations: new Map([...w.obligations, ...extra]) };
+}
 
 /** Every admit of the run-9 bundles, replayed in log order (see the header), with `declare` overriding admits by unit. */
 export function replayRun9(f: Fixture = loadRun9(), declare: Declared = {}): readonly Replayed[] {
@@ -90,7 +104,7 @@ export function replayRun9(f: Fixture = loadRun9(), declare: Declared = {}): rea
       const d = declare[o.unit];
       return d === undefined ? o : { ...o, targets: d.targets as RuleId[], cites: d.cites as VisionClauseId[] };
     });
-    const w = worldAt(f, c, recorded);
+    const w = witnessed(worldAt(f, c, recorded), declare, ops);
     const first = classifyAdmits(w, ops);
     const slice = new Set(f.advances);
     const world = new Set(w.world);

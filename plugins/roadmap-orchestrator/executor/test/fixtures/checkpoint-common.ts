@@ -75,6 +75,19 @@ export async function applyVision(r: ArcRun, w: Wired, clauses: readonly Json[])
 export const limitsOp = (field: string, value: number, evidence: readonly string[] = ['scripted evidence']): JsonValue =>
   ({ op: 'limits', unit: null, limits: [{ field, value }], cites: ['V-1'], evidence: [...evidence] });
 
+/**
+ * An opportunity's witness in a corpus arc (owner ruling 2026-10-10, OR-A1: an opportunity converts `unwitnessed`
+ * without one): I-1 (T-1, held on every tree) split into its restatement I-2 and a future I-3 that `unit` delivers,
+ * serving `clause` (the split cites it), both on the arc lane `journey` in force.
+ */
+export const witnessSplit = (unit: string, clause: string): JsonValue => ({
+  op: 'obligation-split', obligation: 'I-1', cites: ['V-1', clause], evidence: [`${unit} brings its witness`],
+  children: [
+    { id: 'I-2', statement: 'I-1, restated.', docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'] }, activation: 'must-hold', deliveredBy: [] },
+    { id: 'I-3', statement: `${unit} delivers ${clause}.`, docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'] }, activation: 'future', deliveredBy: [unit] },
+  ],
+});
+
 /** An `admit` of `id`: u1's spec file renamed to `id` at rev 1 (in the admit wire form), `lanes` replacing its lanes when given. */
 export function admitOp(d: ArcDescriptor, id: string, lanes?: readonly Json[]): JsonValue {
   const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;

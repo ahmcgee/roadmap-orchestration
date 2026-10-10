@@ -21,7 +21,8 @@
 // the tide table) is must-hold from the start. Their fake builds are files/units/<unit>/ (guard's first,
 // witness-missing attempt files/units/guard-first/); the journeys every witness lane runs are files/golden/journeys/,
 // committed with the bootstrap. Arc 2's checkpoint
-// admits `fits` (files/units/fits/, the opportunity, V-7) and a day view the budget converts (`OPPORTUNITY`).
+// admits `fits` (files/units/fits/, the opportunity, V-7) with its witness, a split of I-4 whose child I-14 (T-4) fits
+// delivers on the berths journey (fits adds the test there), and a day view the budget converts (`OPPORTUNITY`).
 //
 // The M4a rev 3 checks the fake exercises through these inputs: every plan writes `planCheck.shape: by-builder`, so the
 // low-risk units take the efficient acceptance-shape plan-check and `confirm` (high risk, the frontier builder)
@@ -445,13 +446,19 @@ export const DIRECTION = 'Grow tidewater toward the harbour the vision describes
 /**
  * Arc 2's first checkpoint (scenario.ts) admits two units outside the owner's slice (V-5), each citing the one clause it
  * advances (honest citation): `fits` (V-7) is the arc's opportunity O-1, and V-7 joins `advances`; `dayview` (V-6) is
- * over the budget of one, so code converts it into a corpus amendment, which arc 3's Phase 0 applies as T-25.
+ * over the budget of one, so code converts it into a corpus amendment, which arc 3's Phase 0 applies as T-25. `fits`
+ * targets the draught rule T-4 (out of slice) and brings its witness (OR-A1 as tightened after paid M4b runs 3 and 5: an
+ * opportunity with no obligation its unit delivers converts `unwitnessed`): `FITS_WITNESS`.
  */
 export const OPPORTUNITY = {
   fits: {
-    unit: { id: 'fits', risk: 'low', scope: ['src/registers.js', 'test/unit/registers.test.js'], after: ['notice'], origin: 'checkpoint' },
+    unit: { id: 'fits', risk: 'low', scope: ['src/registers.js', 'test/unit/registers.test.js', 'journeys/berths.journey.js'], after: ['notice'], origin: 'checkpoint' },
     unitLane: { id: 'registers-unit', file: 'test/unit/registers.test.js' },
-    acceptance: ['src/registers.js `berthsFor(draught)` lists the berths whose maximum draught takes a vessel of that draught, shallowest first; a draught that is not a positive number is refused.'],
+    acceptance: [
+      'src/registers.js `berthsFor(draught)` lists the berths whose maximum draught takes a vessel of that draught, shallowest first; a draught that is not a positive number is refused.',
+      'The berths journey (journeys/berths.journey.js) gains the test "a visiting yacht is offered only the berths its draught fits", which witnesses I-14.',
+    ],
+    targets: ['T-4'],
     cites: ['V-7'],
     why: 'A visiting yacht finds the berths its draught allows (V-7): one function over the berth register, in reach while cancellations are built.',
   },
@@ -459,9 +466,27 @@ export const OPPORTUNITY = {
     unit: { id: 'dayview', risk: 'low', scope: ['src/cli.js', 'src/dayview.js', 'test/unit/dayview.test.js'], after: [], origin: 'checkpoint' },
     unitLane: { id: 'dayview-unit', file: 'test/unit/dayview.test.js' },
     acceptance: ['`tidewater day <date>` prints the day\'s windows with each berth\'s booking.'],
+    targets: [],
     cites: ['V-6'],
     why: 'The harbour master\'s morning (V-6) needs one view of the day; nothing shows it yet.',
   },
+} as const;
+
+/**
+ * fits' witness, in the same bundle as its admit: I-4 (cutoff's, latched by arc 2's first checkpoint, serving only the
+ * slice's V-5) split into its restatement I-13 (must-hold, T-23, the cutoff journey) and I-14, the draught rule T-4 that
+ * fits delivers (future), on the berths journey in force: the census moves T-4 from out-of-slice to I-14. The split
+ * cites V-5 and V-7, so both children serve the slice and the opportunity's clause, and nothing outside them.
+ */
+export const FITS_WITNESS = {
+  parent: 'I-4',
+  cites: ['V-5', 'V-7'],
+  restated: 'I-13',
+  child: {
+    id: 'I-14', rule: 'T-4', lane: 'berths', test: 'a visiting yacht is offered only the berths its draught fits',
+    statement: 'A vessel is offered only the berths whose maximum draught takes its own draught, shallowest first.',
+  },
+  why: 'fits brings its witness: I-14 holds the draught rule T-4 on the berths journey once fits publishes.',
 } as const;
 
 /** The curation digest and the semantic records of arc 1 (paths under the corpus root). */

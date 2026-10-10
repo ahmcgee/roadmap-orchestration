@@ -1,5 +1,5 @@
 // M4a rev 3 step N2 (B "Checkpoint admits", OR-A1, LR-k, LR-m, R44–R46, R48): the admit classifier
-// (src/holistic/admits.ts) over hand-built worlds, pure. Census: T-1 obligation (in slice), T-2 out-of-slice, T-3 untestable. Named tests: admits.table-row-1..9, admits.table-total, admits.ref-holds-invalid,
+// (src/holistic/admits.ts) over hand-built worlds, pure. Census: T-1 obligation (in slice), T-2 out-of-slice, T-3 untestable. Named tests: admits.table-row-1..10, admits.table-total, admits.ref-holds-invalid,
 // admits.ref-exempt-invalid, admits.ref-resolved-invalid, admits.impact-mapped-not-touched,
 // admits.exempt-delivered-not-touched, admits.finding-clauses-are-context, admits.declared-target-out-of-slice,
 // admits.target-unknown-invalid, admits.split-child-out-of-slice-targets, admits.attr-audit-lens-range,
@@ -35,6 +35,9 @@ function obligation(
   } as unknown as ObligationDef;
 }
 const ob = (def: ObligationDef, holding = false, history: AdmitObligation['history'] = []): AdmitObligation => ({ def, holding, history });
+/** An opportunity's witness (row 7): a future obligation at in-slice T-1 that `unit` delivers, serving `clauses`. */
+const witnessOf = (unit: string, clauses: readonly VisionClauseId[], id = `I-w-${unit}`): AdmitObligation =>
+  ob(obligation(id, clauses, { deliveredBy: [unit], activation: 'future' }), true);
 
 function finding(id: string, clauses: readonly VisionClauseId[], over: Partial<AdmitFinding> = {}): AdmitFinding {
   return {
@@ -97,22 +100,34 @@ describe('admit classes: the decision table (R45)', () => {
     assert.match(out.reasons[0]!, /dishonest-citation: it targets out-of-slice rules T-2 and cites no clause outside the owner-selected slice/);
   });
 
-  test('admits.table-row-6: honest work outside the slice with the budget left → opportunity O-1, its cited clauses joining advances', () => {
-    assert.deepEqual(one(world(), admit('more', v(1, 3), [], 0, ['T-1', 'T-2'])).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-3'] });
-    const out = one(world(), admit('more', v(1, 3)));
+  test('admits.table-row-6: honest work outside the slice with the budget spent → converted over-budget', () => {
+    assert.deepEqual(one(world({ recorded: [opp('opp', v(3))], obligationList: [witnessOf('more', v(4))] }), admit('more', v(4))).conversions, [{ index: 0, unit: 'more', reason: 'over-budget', opportunity: null }]);
+  });
+
+  test('admits.table-row-7: the same with the budget left but no witness → converted unwitnessed (paid M4b runs 3 and 5)', () => {
+    const unwitnessed = [{ index: 0, unit: 'more', reason: 'unwitnessed', opportunity: null }];
+    assert.deepEqual(one(world(), admit('more', v(1, 3))).conversions, unwitnessed, 'no obligation of the bundle is delivered by it');
+    assert.deepEqual(one(world({ obligationList: [witnessOf('more', v(1))] }), admit('more', v(1, 3))).conversions, unwitnessed, 'its obligation serves only the slice');
+    assert.deepEqual(one(world({ obligationList: [witnessOf('other', v(3))] }), admit('more', v(1, 3))).conversions, unwitnessed, 'another unit delivers the one serving V-3');
+    const waived = ob(obligation('I-w', v(3), { deliveredBy: ['more'], activation: 'future', state: { type: 'waived', ruling: 'C-1' } as ObligationDef['state'] }), true);
+    assert.deepEqual(one(world({ obligationList: [waived] }), admit('more', v(1, 3))).conversions, unwitnessed, 'an exempt obligation witnesses nothing');
+  });
+
+  test('admits.table-row-8: honest work outside the slice, the budget left, witnessed → opportunity O-1, its cited clauses joining advances', () => {
+    const w = world({ obligationList: [witnessOf('more', v(3))] });
+    assert.deepEqual(one(w, admit('more', v(1, 3), [], 0, ['T-1', 'T-2'])).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-3'] });
+    const out = one(w, admit('more', v(1, 3)));
     assert.deepEqual(out.classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-3'] });
     assert.deepEqual(opportunityClauses(out.classes), ['V-3']);
+    // One served clause witnesses the opportunity; every clause it cites outside the slice joins advances.
+    assert.deepEqual(one(world({ obligationList: [witnessOf('more', v(4))] }), admit('more', v(3, 4))).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-3', 'V-4'] });
   });
 
-  test('admits.table-row-7: the same with the budget spent → converted over-budget', () => {
-    assert.deepEqual(one(world({ recorded: [opp('opp', v(3))] }), admit('more', v(4))).conversions, [{ index: 0, unit: 'more', reason: 'over-budget', opportunity: null }]);
-  });
-
-  test('admits.table-row-8: no repairs, in-slice clauses only → oversight', () => {
+  test('admits.table-row-9: no repairs, in-slice clauses only → oversight', () => {
     assert.deepEqual(one(world(), admit('gap', v(1, 2))).classes[0]!.class, { type: 'oversight', clauses: ['V-1'] });
   });
 
-  test('admits.table-row-9: no repairs and no world clause touched → converted unrelated', () => {
+  test('admits.table-row-10: no repairs and no world clause touched → converted unrelated', () => {
     assert.deepEqual(one(world(), admit('aside', v(2))).conversions, [{ index: 0, unit: 'aside', reason: 'unrelated', opportunity: null }]);
   });
 
@@ -123,17 +138,20 @@ describe('admit classes: the decision table (R45)', () => {
         for (const lineage of [false, true]) {
           for (const followed of [false, true]) {
             for (const spent of [false, true]) {
-              const recorded = [...(spent || lineage ? [opp('opp', v(3))] : []), ...(followed ? [followUp('fix1', ['F-8'])] : [])];
-              const f = finding('F-1', v(3), { active: ref !== 'invalid', obligation: ref === 'valid-oos-obligation' ? 'I-2' as ObligationId : null });
-              const w = world({ recorded, findingList: [f], obligationList: [ob(obligation('I-2', v(3), { rule: 'T-2' }))], merges: lineage ? [merge('opp', 1)] : [merge('other', 1)] });
-              one(w, admit('x', cites, ref === 'none' ? [] : ['F-1'], 0, targets));
-              n += 1;
+              for (const witnessed of [false, true]) {
+                const recorded = [...(spent || lineage ? [opp('opp', v(3))] : []), ...(followed ? [followUp('fix1', ['F-8'])] : [])];
+                const f = finding('F-1', v(3), { active: ref !== 'invalid', obligation: ref === 'valid-oos-obligation' ? 'I-2' as ObligationId : null });
+                const obligationList = [ob(obligation('I-2', v(3), { rule: 'T-2' })), ...(witnessed ? [witnessOf('x', v(3))] : [])];
+                const w = world({ recorded, findingList: [f], obligationList, merges: lineage ? [merge('opp', 1)] : [merge('other', 1)] });
+                one(w, admit('x', cites, ref === 'none' ? [] : ['F-1'], 0, targets));
+                n += 1;
+              }
             }
           }
         }
       }
     }
-    assert.equal(n, 160);
+    assert.equal(n, 320);
   });
 
   test('admits.opportunity-clause-without-lineage-spends: work on O-1\'s clause V-3 without its lineage spends budget (over-budget), never a free follow-up', () => {
@@ -141,7 +159,7 @@ describe('admit classes: the decision table (R45)', () => {
   });
 
   test('budgets count earlier ops of the same bundle: a second opportunity in one bundle converts over-budget', () => {
-    const out = classifyAdmits(world(), [admit('a', v(3), [], 0), admit('b', v(4), [], 1)]);
+    const out = classifyAdmits(world({ obligationList: [witnessOf('a', v(3)), witnessOf('b', v(4))] }), [admit('a', v(3), [], 0), admit('b', v(4), [], 1)]);
     assert.deepEqual(out.classes.map((c) => c.class.type), ['opportunity']);
     assert.deepEqual(out.conversions.map((c) => [c.unit, c.reason]), [['b', 'over-budget']]);
   });
@@ -196,7 +214,7 @@ describe('admit classes: repair refs and touched clauses (R45, R47)', () => {
   });
 
   test('admits.declared-target-out-of-slice (LR-m): declaring T-2 is opportunity work; declaring T-1 or T-3 is not', () => {
-    assert.deepEqual(one(world(), admit('more', v(1, 4), [], 0, ['T-2'])).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-4'] });
+    assert.deepEqual(one(world({ obligationList: [witnessOf('more', v(4))] }), admit('more', v(1, 4), [], 0, ['T-2'])).classes[0]!.class, { type: 'opportunity', id: 'O-1', clauses: ['V-4'] });
     assert.deepEqual(one(world(), admit('gap', v(1), [], 0, ['T-1', 'T-3'])).classes[0]!.class, { type: 'oversight', clauses: ['V-1'] });
   });
 

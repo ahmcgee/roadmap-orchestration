@@ -13,7 +13,7 @@ import { withForge } from '../helpers/corpusarc.ts';
 import { sampleCorpus } from '../helpers/corpus.ts';
 import { checkpointAnswer, checkpointStep, lensStep } from '../helpers/holistic.ts';
 import { readCalls } from '../helpers/scenario.ts';
-import { admitOp, checkpointContext, completedAudit } from './checkpoint-common.ts';
+import { admitOp, checkpointContext, completedAudit, witnessSplit } from './checkpoint-common.ts';
 import { type CorpusHolisticArc, corpusHolisticArc } from './corpus-holistic.ts';
 import { VISION_PATH } from './corpus-unit.ts';
 import { followContext, unitOf } from './route-common.ts';
@@ -57,7 +57,7 @@ export function overrunContext(r: ArcRun): Readonly<{ ctx: CheckpointContext; w:
 export async function overrunArc(): Promise<CorpusHolisticArc> {
   const a = await corpusHolisticArc([lensStep('audit-1', 'vision')], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
   appendSteps(a.d, [
-    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitCiting(a, 'opp', ['V-1', 'V-3']) as JsonValue] })),
+    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitCiting(a, 'opp', ['V-1', 'V-3']) as JsonValue, witnessSplit('opp', 'V-3')] })),
     planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
     lensStep('audit-2', 'vision', [{ severity: 'P2', visionClauses: ['V-3'], claim: 'mul frees no berth', cause: 'mul: no pool', evidence: [{ path: 'src/mul.js', line: 1 }] }]),
     checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [repairOf(a, 'fix1')] })),
