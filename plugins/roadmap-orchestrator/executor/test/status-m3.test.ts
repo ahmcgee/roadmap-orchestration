@@ -128,9 +128,9 @@ describe('status M3', () => {
       assert.equal(s.holistic, true);
       assert.deepEqual(s.nowTrue, [{ obligation: 'I-1', statement: 'I-1 holds.', activation: 'must-hold', verdict: 'held', evidence: [dir] }]);
       assert.deepEqual(s.notYetTrue, [
-        { obligation: 'I-2', statement: 'I-2 holds.', activation: 'future', verdict: 'not-held', evidence: [dir], blockingUnits: ['u1'], reason: 'code' },
-        { obligation: 'I-3', statement: 'I-3 holds.', activation: 'future', verdict: 'unwitnessed', evidence: [dir], blockingUnits: ['u2', 'u3'], reason: 'waiting-dep' },
-        { obligation: 'I-4', statement: 'I-4 holds.', activation: 'must-hold', verdict: 'not-covered', evidence: [], blockingUnits: [], reason: 'spec' },
+        { obligation: 'I-2', statement: 'I-2 holds.', activation: 'future', verdict: 'not-held', evidence: [dir], blockingUnits: ['u1'], reason: 'code', lastObserved: null },
+        { obligation: 'I-3', statement: 'I-3 holds.', activation: 'future', verdict: 'unwitnessed', evidence: [dir], blockingUnits: ['u2', 'u3'], reason: 'waiting-dep', lastObserved: null },
+        { obligation: 'I-4', statement: 'I-4 holds.', activation: 'must-hold', verdict: 'not-covered', evidence: [], blockingUnits: [], reason: 'witness', lastObserved: null },
       ]);
       assert.deepEqual(s.target, {
         cutLine: 'the helpers ship', nextMilestone: { obligation: 'I-2', statement: 'I-2 holds.', unmerged: ['u1'] }, criticalPath: ['u2', 'u3'],
@@ -148,7 +148,7 @@ describe('status M3', () => {
       r.journal.fact({ kind: 'paused', command: CMD, target: { type: 'unit', unit: U('u2') } });
       s = statusOf(r);
       assert.deepEqual(s.notYetTrue.map((o) => [o.obligation, o.activation, o.blockingUnits, o.reason]), [
-        ['I-2', 'must-hold', [], 'spec'], ['I-3', 'future', ['u2', 'u3'], 'supervision'], ['I-4', 'must-hold', [], 'spec'],
+        ['I-2', 'must-hold', [], 'spec'], ['I-3', 'future', ['u2', 'u3'], 'supervision'], ['I-4', 'must-hold', [], 'witness'],
       ]);
       assert.deepEqual(s.target?.nextMilestone, { obligation: 'I-3', statement: 'I-3 holds.', unmerged: ['u2', 'u3'] });
       assert.equal(s.target?.obligations.latched, 1);
@@ -158,6 +158,45 @@ describe('status M3', () => {
       s = statusOf(r);
       assert.deepEqual(s.nowTrue, []);
       assert.ok(s.notYetTrue.every((o) => o.verdict === 'not-covered' && o.evidence.length === 0));
+      // What the tree before showed stays context, never a verdict: I-1 held there, I-2 and I-3 measured, I-4 never ran.
+      assert.deepEqual(s.notYetTrue.map((o) => [o.obligation, o.lastObserved?.verdict ?? null, o.lastObserved?.treeSha ?? null]), [
+        ['I-1', 'held', tree], ['I-2', 'not-held', tree], ['I-3', 'unwitnessed', tree], ['I-4', null, null],
+      ]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  it('status.latched-after-merges (paid M4b run 5): units latch obligations on their own trees, then a merge witnesses only its own lane; the earlier latches are not covered on the head, waiting on a witness run, each with its last held observation', T, async () => {
+    const { d } = holisticArc({
+      steps: [], units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }], lanes: ['l1', 'l2', 'l3'], mapping: [], trees: {},
+      obligations: [
+        { id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['t1'], lane: 'l1' },
+        { id: 'I-2', activation: 'future', deliveredBy: ['u2'], testIds: ['t2'], lane: 'l2' },
+        { id: 'I-3', activation: 'future', deliveredBy: ['u3'], testIds: ['t3'], lane: 'l3' },
+      ],
+    });
+    const r = contextFor(d);
+    try {
+      const lanes = lanesOf(r);
+      // Each unit publishes, its candidate witnesses its own lane on the published tree, and it latches there.
+      const latches: Record<string, Readonly<{ tree: string; dir: string }>> = {};
+      for (const n of [1, 2, 3]) {
+        publish(r, `u${n}`, { [`src/u${n}.js`]: `export const u${n} = ${n};\n` });
+        const tree = tipTree(d);
+        const dir = witness(r, lanes.get(`l${n}`)!, tree, { [`t${n}`]: 'pass' });
+        r.journal.fact({ kind: 'obligation-latched', obligation: `I-${n}`, unit: U(`u${n}`), treeSha: sha(tree) } as unknown as Fact);
+        latches[`I-${n}`] = { tree, dir };
+      }
+      const s = statusOf(r);
+      assert.equal(s.target?.obligations.latched, 3);
+      // Completion's rule on the head: only I-3, witnessed by the last merge, is true there.
+      assert.deepEqual(s.nowTrue.map((o) => [o.obligation, o.activation, o.verdict]), [['I-3', 'must-hold', 'held']]);
+      assert.deepEqual(s.notYetTrue, ['I-1', 'I-2'].map((id) => ({
+        obligation: id, statement: `${id} holds.`, activation: 'must-hold', verdict: 'not-covered', evidence: [], blockingUnits: [], reason: 'witness',
+        lastObserved: { treeSha: latches[id]!.tree, verdict: 'held', evidence: [latches[id]!.dir] },
+      })));
+      assert.ok(s.completion.unmet.includes('obligations-not-discharged'), JSON.stringify(s.completion.unmet));
     } finally {
       r.journal.close();
     }

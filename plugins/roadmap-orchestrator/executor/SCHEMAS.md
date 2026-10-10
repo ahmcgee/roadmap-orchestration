@@ -2067,8 +2067,13 @@ src/pipeline/dispatch.ts `callArcRole`):
    parent's verdict is its non-exempt children's (held when all hold, else the worst of not-held, partial, unwitnessed,
    not-covered). `activation` is the effective one (latched → must-hold). `blockingUnits`: a pending future obligation's
    unmerged `deliveredBy` (lineage heads); otherwise the owners of its active findings. `reason` is the first of
-   supervision, host, waiting-dep, code over those units' states (`ObligationReason`), `spec` when there are none.
-   `evidence` is the witness record's evidence dir.
+   supervision, host, waiting-dep, code over those units' states (`ObligationReason`); with none, `witness` for a
+   `not-covered` one (its lane has not run on the head: a candidate runs only the lanes its impact selection names, so a
+   latched obligation another unit's merge did not select is not covered on the new head until an audit, checkpoint or
+   close-out runs every lane; paid M4b run 5), else `spec`. `evidence` is the witness record's evidence dir.
+   `lastObserved{treeSha, verdict, evidence}|null` (additive, read-time; a `not-covered` row only, null otherwise): the
+   same rule's leaf on each earlier tree of the head's first-parent history, newest first, the first not `not-covered`.
+   It is context, never a verdict: no truth, count, completion or brief reads it except `census.lastHeld`.
 4. **`target.nextMilestone`** (R13): among non-exempt, non-split, not latched future obligations with an unmerged
    `deliveredBy`, the fewest unmerged (ties: lowest id). **`criticalPath`**: the longest chain of unsettled units over
    effective `after` edges (ties: plan order).
@@ -2566,7 +2571,8 @@ src/commands/{brief,chain,queue}.ts):
    pack review's key binds the arc's routing rev; the baseline job's running is the live scheduler's alone: false);
    `packReview{state, reviews[{job, planRev, key, outcome|null, blocking, notes, needsUser, superseded}]}`, `corpus{pinSha256,
    source{kind, commit, root}, files, rules{active, retired, highWater}, phase0Sha256}`, `census{rules[{rule, state,
-   held|null}], counts, heldPct}` (held: the obligation is in `nowTrue`), `debt{banked, ledger}` (`arcDebtLedger`),
+   held|null}], counts, heldPct, lastHeld}` (held: the obligation is in `nowTrue`; `lastHeld`: the obligation rules held,
+   plus those whose `notYetTrue` row's `lastObserved` is held), `debt{banked, ledger}` (`arcDebtLedger`),
    `issues{lastCapture, intake}` and `chain` (`chain status`'s view of the chain ending at this arc, ref or not, plus
    `position`) are null outside a corpus arc; `amendments` and `timings` are always present. Paid run 12: `chain status`,
    `status.chain` and the brief carry `nextStart` (src/commands/chain.ts `chainQuota`) and read K as `chain.k` of the

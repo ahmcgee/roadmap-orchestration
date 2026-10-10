@@ -230,14 +230,17 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   newest arc carrying the question does not mark it `answered` with that text; a live arc's revision in force counts
   at once). Apply each now.
 - Holistic arcs (`holistic: true`): `target` (cut line, next milestone, critical path, obligation counts),
-  `nowTrue`, `notYetTrue` (with `blockingUnits` and `reason`: `supervision`, `host`, `waiting-dep`, `code`,
-  `spec`), `waived`, `deferred`, `vision` (clauses, questions, `advances`, `coverage`), `divergences`,
+  `nowTrue`, `notYetTrue` (with `blockingUnits`, `reason`: `supervision`, `host`, `waiting-dep`, `code`,
+  `witness` (its lane has not run on the head yet; an audit, checkpoint or close-out runs every lane), `spec`; and
+  `lastObserved{treeSha, verdict, evidence}|null` for a `not-covered` one: its newest observation on an earlier tree
+  of the head's history, context only), `waived`, `deferred`, `vision` (clauses, questions, `advances`, `coverage`), `divergences`,
   `decisionsSince`, `convergence{k, counter, since, open}`, `findings{active, metrics}`, `audit`, `owed`,
   `completion{planRev, head, active, sealed, notSealed, unmet}`, `holds` (arc-wide admission holds: `baseline`,
   `pack-review`, `issue-policy-untrusted`), `amendments[{id, source, rules, proposal, why}]`.
 - Corpus arcs also (null otherwise): `packReview{state: none|running|due|held|clear, reviews[{job, planRev, key,
   outcome, blocking, notes, needsUser, superseded}]}`, `corpus{pinSha256, source{kind, commit, root}, files,
-  rules{active, retired, highWater}, phase0Sha256}`, `census{rules[{rule, state, held}], counts, heldPct}`,
+  rules{active, retired, highWater}, phase0Sha256}`, `census{rules[{rule, state, held}], counts, heldPct, lastHeld}` (`held`/`heldPct` on the head alone,
+  so they drop after a merge until the next all-lanes run; `lastHeld` also counts rules held at their last observation),
   `debt{banked, ledger}`, `issues{lastCapture, intake}`, `chain{arcs, k, unackedStarts, nextStart, position}` (the
   next start after this arc). `status` reads the repo config the arc's revision recorded (routing) and the one committed
   at its baseline (K), never the live `.roadmap/config.json`.
