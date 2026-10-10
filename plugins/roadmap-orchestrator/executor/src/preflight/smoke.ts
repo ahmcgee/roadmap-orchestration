@@ -42,7 +42,7 @@ import { chargeOf, usageFact } from '../pipeline/invoke.ts';
 import { awaitRunner, launchSha256, prepareLaunch, startRunner } from '../runner/launch.ts';
 import type { StartupRejection } from './startup.ts';
 
-/** A smoke call is one trivial turn; a CLI that cannot answer within this is not healthy. */
+/** A smoke call is one trivial turn; a CLI that cannot answer within this is not healthy. The default of `run`; a probe's full judgment call sets its own (`BackendInvocation.deadlineMs`). */
 export const SMOKE_DEADLINE_MS = 180_000;
 const SMOKE_GRACE_MS = 5_000;
 
@@ -128,6 +128,8 @@ export type BackendInvocation = Readonly<{
   schema: JsonValue;
   /** The session's working directory. A resume must run where its session was created. */
   cwd: AbsPath;
+  /** The invocation's deadline; absent: SMOKE_DEADLINE_MS. A probe's full judgment call carries production's judgment deadline. */
+  deadlineMs?: number;
 }>;
 
 export type CommandInvocation = Readonly<{
@@ -152,8 +154,10 @@ type Prepared = Readonly<{
  * One invocation, end to end: the spawn intent (durable before any act), its inputs and launch.json, the
  * runner, the adapter's result.json, for a backend the usage fact, then the done record.
  */
-async function run(ctx: InvocationContext, subject: SmokeSubject, prepare: (invDir: AbsPath) => Prepared): Promise<Invoked<ResultFile>> {
-  const deadlineAt = isoTimeOf(new Date(Date.now() + SMOKE_DEADLINE_MS));
+async function run(
+  ctx: InvocationContext, subject: SmokeSubject, deadlineMs: number, prepare: (invDir: AbsPath) => Prepared,
+): Promise<Invoked<ResultFile>> {
+  const deadlineAt = isoTimeOf(new Date(Date.now() + deadlineMs));
   let planned: Readonly<{ invDir: AbsPath; prepared: Prepared; launch: LaunchFile }> | null = null;
   const { op, inv } = ctx.journal.begin({
     kind: 'proc.spawn',
@@ -228,7 +232,7 @@ export async function invokeBackend(ctx: InvocationContext, b: BackendInvocation
     check: b.check,
     target: { type: 'backend', backend: b.request.triple.backend, ...seatRef(roleOf(b.request), b.tier), routingRev: b.routingRev },
   };
-  const done = await run(ctx, subject, (invDir) => {
+  const done = await run(ctx, subject, b.deadlineMs ?? SMOKE_DEADLINE_MS, (invDir) => {
     const call = backendCall(b, invDir);
     return {
       argv: backendArgv(call),
@@ -244,7 +248,7 @@ export async function invokeBackend(ctx: InvocationContext, b: BackendInvocation
 /** One command through the runner, graded on its exit code; the caller grades its output files. */
 export async function invokeCommand(ctx: InvocationContext, c: CommandInvocation): Promise<Invoked<CommandResult>> {
   const subject: SmokeSubject = { purpose: 'smoke', check: c.check, target: { type: 'command' } };
-  const done = await run(ctx, subject, () => ({
+  const done = await run(ctx, subject, SMOKE_DEADLINE_MS, () => ({
     argv: c.argv,
     cwd: c.cwd,
     terminal: { type: 'command', purpose: c.purpose, expectedExit: c.expectedExit },

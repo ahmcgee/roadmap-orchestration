@@ -108,7 +108,7 @@ import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
 import { captureCheckpointIssues, issueReuse, issuesInputOf } from './intake.ts';
 import { keyOf, reuse } from './observe.ts';
-import { type BusyAttempt, type CheckpointTrigger, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
+import { type ArcLaneDef, type BusyAttempt, type CheckpointTrigger, type ObligationDef, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
 
 export type { CheckpointContext } from './bundle.ts';
@@ -676,7 +676,7 @@ async function supersedable<T>(ctx: CheckpointContext, s: Captured, call: () => 
  * split child's witness may name, the active obligations a split may name as its parent, every obligation a dispose may
  * name. Null outside a holistic arc with obligations (any id; the bundle's validation refuses an unknown one).
  */
-export function checkpointIdsOf(obligations: Obligations | null): CheckpointIds | null {
+export function checkpointIdsOf(obligations: Readonly<{ lanes: readonly Pick<ArcLaneDef, 'id'>[]; obligations: readonly ObligationDef[] }> | null): CheckpointIds | null {
   if (obligations === null) return null;
   return {
     arcLanes: obligations.lanes.map((l) => l.id),

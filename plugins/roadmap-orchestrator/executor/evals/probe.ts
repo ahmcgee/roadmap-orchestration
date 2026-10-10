@@ -26,7 +26,7 @@
 //   m3.lens             lens.arc seat (claude-opus-5-5): the real lens prompt module and LENS_SCHEMA over a tiny
 //                       fixture (2-clause vision, one obligation, a trivial diff), inputs built as production
 //                       does; the adapter must return success and validateLensOutput must accept it
-//   m3.checkpoint       checkpoint.arc seat (claude-fable-5-1): the real checkpoint module and CHECKPOINT_SCHEMA
+//   m3.checkpoint       checkpoint.arc seat (claude-fable-5-1): the real checkpoint module and its per-call closed schema (checkpointSchemaFor)
 //                       over a tiny input set; the output must validate (a no-op is expected)
 //   m3.plan-check       planCheck.med seat with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
 //                       the output must validate and carry a visionConflict array
@@ -80,14 +80,16 @@ import {
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
-import { type BackendResult, STDOUT_FILE, type Usage } from '../src/core/records.ts';
+import { type BackendResult, DEFAULT_BOUNDS, STDOUT_FILE, type Usage } from '../src/core/records.ts';
 import { type AbsPath, absPath, repoPath, repoPattern } from '../src/core/values.ts';
+import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
 import { type ObligationDef, parseObligations } from '../src/holistic/types.ts';
+import { minutesMs } from '../src/pipeline/dispatch.ts';
 import { parsePhase0Record } from '../src/phase0/types.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import type { ArchitectureInput, BuildInputs, CheckpointInputs, LensInputs, ObligationView, PackReviewPromptInputs, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
 import {
-  PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, ROLE_VALIDATORS, type RoleOutputs, buildOutputFor, buildSchemaFor, validatePlanAssessment, validatePlanCheckAcceptanceOutput,
+  PLAN_ASSESSMENT_SCHEMA, checkpointSchemaFor, PLAN_CHECK_ACCEPTANCE_SCHEMA, ROLE_VALIDATORS, type RoleOutputs, buildOutputFor, buildSchemaFor, validatePlanAssessment, validatePlanCheckAcceptanceOutput,
 } from '../src/prompts/schemas.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import {
@@ -232,6 +234,8 @@ const MINI_OBLIGATIONS: readonly ObligationView[] = [{
   obligation: MINI_OBLIGATION, exempt: false, latched: false,
   observation: { key: { treeSha: TREE, lane: laneId('unit'), laneRev: laneRev('0123456789abcdef'), envId: envId('fedcba9876543210') }, verdict: 'held' },
 }];
+/** The fixture's arc lanes (the obligations file's `lanes`): the ids a checkpoint's schema closes. */
+const MINI_ARC_LANES = [{ id: laneId('unit') }] as const;
 const MINI_ARCH: ArchitectureInput = { kind: 'full', doc: { path: repoPath('docs/arch.md'), text: '# Architecture\n\nOne module, convert.ts, exports toFahrenheit and toCelsius.' } };
 const MINI_INDEX = { contracts: [], rulings: [], ledger: absPath('/nonexistent/rulings.md') } as const;
 const MINI_DIFF = `diff --git a/convert.ts b/convert.ts
@@ -256,7 +260,8 @@ function validates<R extends Role>(name: string, role: R, check: (out: RoleOutpu
 }
 
 /**
- * One judgment call through the real prompt module for `role`, on the triple of that role's own seat. The smoke
+ * One judgment call through the real prompt module for `role`, on the triple of that role's own seat, with production's judgment
+ * deadline (`judgmentDeadlineMin`; a summit checkpoint takes minutes) where the smoke checks keep SMOKE_DEADLINE_MS. The smoke
  * harness (smoke.ts CallRequest) labels judgment calls with a unit judgment role and seat only, and the judgment
  * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
  */
@@ -267,8 +272,13 @@ function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview' |
   const triple = atSeat(resolved.table, { role, tier: seat } as SeatRef);
   if (triple.backend !== 'claude') throw new Error(`${role}.${seat} resolves to ${triple.backend}; the probe drives the Claude seats`);
   const prompt = promptFor(role, triple.model);
+  // Production's own schema for the call's inputs: a checkpoint closes the arc lane and obligation ids (src/holistic/checkpoint.ts).
+  const schema = role === 'checkpoint'
+    ? checkpointSchemaFor(checkpointIdsOf({ lanes: MINI_ARC_LANES, obligations: (inputs as CheckpointInputs).obligations.map((v) => v.obligation) }))
+    : prompt.schema;
   return {
-    check, routingRev: resolved.rev, tier: stand.tier, system: prompt.system, rendered: prompt.render(inputs), schema: prompt.schema, cwd,
+    check, routingRev: resolved.rev, tier: stand.tier, system: prompt.system, rendered: prompt.render(inputs), schema, cwd,
+    deadlineMs: minutesMs(DEFAULT_BOUNDS.judgmentDeadlineMin),
     request: { kind: 'claude-judgment', role: stand.role, triple, session: freshJudgmentSession(), evidenceDirs: [] },
   };
 }
