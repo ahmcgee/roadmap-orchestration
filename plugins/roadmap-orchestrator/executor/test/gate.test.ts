@@ -3,7 +3,8 @@
 // a revise round's directives and their re-check with the round handoff, the fingerprint's cited-only set, and
 // the empty-diff refusal. M3 step A3: gate.inputs-not-in-ff-window (the capture under the revision fence),
 // gate.obligations-selected, plan-check.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
-// gate.approval-captured-fingerprint, gate.partial-supersession-regates. Paid M4b run 5: gate.read-denied, gate.read-denied-again.
+// gate.approval-captured-fingerprint, gate.partial-supersession-regates. Paid M4b run 5: gate.read-denied, gate.read-denied-again,
+// plan-check.read-denied, plan-check.read-denied-again.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -167,7 +168,7 @@ test('gate.empty-diff: a unit whose branch adds nothing is refused at the gate w
 });
 
 // Paid M4b run 5: a gate Globbed the evidence root above its --add-dirs, was refused, and approved on the ledger alone.
-const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globEvidenceParent' }]);
+const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
 
 test('gate.read-denied: an approve from a session the CLI refused a read is no approval; a fresh gate, uncharged, approves', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), deniedGate(), gateStep({ decision: 'approve' })] });
@@ -202,6 +203,36 @@ test('gate.read-denied-again: refused again after its retry, the unit parks (env
     assert.equal(result.needsUser.reason, 'read-denied');
     assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:')), ['gate:read-denied', 'gate:read-denied']);
     assert.equal(r.journal.view.unit(U1).approval, null);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('plan-check.read-denied: an approve from a plan-check session the CLI refused a read is no approval; a fresh check approves, uncharged', T, async () => {
+  const deniedCheck = planCheckStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
+  const d = setupArc({ steps: [deniedCheck, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check:')), ['plan-check:read-denied', 'plan-check:approve']);
+    const u = r.journal.view.unit(U1).counters;
+    assert.equal(u.chargeableFailures, 0);
+    assert.equal(u.retries['plan-check'], 1);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('plan-check.read-denied-again: refused again after its retry, the unit parks (env) before any build', T, async () => {
+  const deniedCheck = () => planCheckStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
+  const d = setupArc({ steps: [deniedCheck(), deniedCheck()] });
+  const r = contextFor(d);
+  try {
+    const result = await runUnit(r.ctx, r.unit('u1'), live());
+    assert.ok(result.kind === 'parked');
+    assert.equal(result.needsUser.reason, 'read-denied');
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check:')), ['plan-check:read-denied', 'plan-check:read-denied']);
+    assert.ok(!outcomes(d).some((o) => o.startsWith('build:')), 'no build ran');
   } finally {
     r.journal.close();
   }

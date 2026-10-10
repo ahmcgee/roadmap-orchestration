@@ -172,6 +172,8 @@ export const TABLE: Table = {
     // M4a rev 3 (E, R55): a frontier or summit builder under `by-builder` makes no plan-check call; its fresh build
     // assesses in session first.
     'in-session': go(build('fresh')),
+    // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate.
+    'read-denied': retry('read-denied', 'env'),
   },
   build: {
     success: go(at('quiesce')),

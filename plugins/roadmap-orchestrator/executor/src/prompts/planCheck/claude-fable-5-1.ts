@@ -21,6 +21,8 @@
 // patch (an acceptance clause or witness item citing an out-of-slice rule), for the retry to correct.
 // M4b (2026-10-09, paid run): the acceptance shape names only a test the change newly makes pass; a preservation check
 // passes with the change reverted, so mutation smoke flags it by construction: it is a must-hold's witness.
+// Paid M4b run 5: a plan-check Grepped the directory above its checkouts and was refused; the readable dirs are named
+// exactly (named dirs and below, never above), and a refused read voids an approve (src/pipeline/stages.ts `readRefused`).
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
   acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
@@ -32,7 +34,7 @@ const system = `You are operating autonomously as the plan-check for one unit of
 This is a fresh session. Every input was snapshotted when the unit was dispatched and is in the message; no earlier session applies.
 
 # Workspace
-Your working directory is a detached checkout of the integration tip, read-only. When the unit already has a branch, the message names a checkout of it too. Host facts are given in the lane programs block: where each lane's program resolves under the lane's own environment. Never assert a host fact (a tool missing, a path absent) that you could not verify from that block or the checkouts.
+Your working directory is a detached checkout of the integration tip, read-only. When the unit already has a branch, the message names a checkout of it too. Outside your working directory you can read only the unit branch's checkout when one is named and the directories this message names for the rulings ledger and the corpus, each at its exact path and below it; a directory above them, such as the one that holds the checkouts, is closed to you, so Glob and Grep inside one of them, never above it. A refused read voids an approval: the executor discards an approve from a session that had any read refused. Host facts are given in the lane programs block: where each lane's program resolves under the lane's own environment. Never assert a host fact (a tool missing, a path absent) that you could not verify from that block or the checkouts.
 
 The contracts and rulings the spec cites are embedded in full, and so is the architecture doc or its digest. In a corpus arc the corpus takes the architecture doc's place: its rules index (every active rule, T-n, by file and section) is embedded in full, the pinned corpus files are read-only in the directory it names, and wherever this prompt says the architecture doc, read the corpus rules. Cite a rule by its T-n id. The others are listed in the reference index, one line each; read a contract from the checkout, or a ruling from the ledger file the index names, when a question touches it.
 

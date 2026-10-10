@@ -68,8 +68,7 @@ import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { NeedsUserContent, ToolRead } from '../core/records.ts';
-import { readsDeniedOf } from '../core/upgrade.ts';
+import type { NeedsUserContent } from '../core/records.ts';
 import {
   type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, cancelledNow, dispatchOf, isCancelled, judgmentDeadlineMs,
   judgmentDispatch, unitBranch, verdictOf, verificationWorktree,
@@ -81,7 +80,7 @@ import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  writeJudgmentInputs,
+  readRefused, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -352,23 +351,12 @@ export async function gateRead(
     bankGateNotes(ctx, unit.id, parent.attempt, out.findings);
     return done(record(ctx, parent, 'approve'), approved.fingerprint);
   }
-  if (refusedReads(called).length > 0) return done(record(ctx, parent, 'read-denied'));
+  if (readRefused(called)) return done(record(ctx, parent, 'read-denied'));
   const head = unitTip(ctx, unit.id);
   if (head !== fingerprint.unitCommit) throw new Error(`gate of ${unit.id}: the unit branch moved from ${fingerprint.unitCommit} to ${head} during the gate`);
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint });
   bankGateNotes(ctx, unit.id, parent.attempt, out.findings);
   return done(record(ctx, parent, 'approve'), fingerprint);
-}
-
-/**
- * The reads the CLI refused the gate's session (reads.json `denied`; paid M4b run 5): an approve after one may rest on
- * evidence the session never opened, so it is no approval (`read-denied`). A judgment runs on Claude only, and the
- * adapter writes a Claude call's reads.json before its result.json, so a missing one is a loud error.
- */
-function refusedReads(called: BackendCallOutcome): readonly ToolRead[] {
-  const reads = runnerFiles(called.invDir, called.inv).read('reads.json');
-  if (reads === null) throw new Error(`${called.inv}: a gate call's result without its reads.json`);
-  return readsDeniedOf(reads);
 }
 
 /**
