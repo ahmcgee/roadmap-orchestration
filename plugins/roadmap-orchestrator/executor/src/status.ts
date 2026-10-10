@@ -52,7 +52,8 @@
 //                 unmerged `deliveredBy`), the critical path (the longest `after` chain of unsettled units), counts
 //   nowTrue       each non-exempt obligation whose witness holds on the integration head's tree; `notYetTrue` the
 //                 rest, with its verdict (or `not-covered`), the units it waits on and why (see `ObligationReason`)
-//                 and the witness evidence dirs. The observation read is completion's (the scheduler's
+//                 and the witness evidence dirs; a `not-covered` one also its `lastObserved` on an earlier tree of the
+//                 head's first-parent history (context only). The observation read is completion's (the scheduler's
 //                 `dischargingObservation`): on the head's tree, the lane at its current rev, in the environment the
 //                 executor recorded for it (`recordedLaneEnv`), so status never shows true what completion counts unmet
 //   waived/deferred  exempt obligations with the ruling that exempted each
@@ -77,7 +78,8 @@
 //                 through its read-only contexts with the routing in force; empty outside a holistic arc
 //   packReview    the pack reviews (key, end, findings by severity, item, superseded) and what they ask now
 //   corpus        the pin in force: its sha, source, file and rule counts, and the Phase-0 record's sha
-//   census        each pinned rule's state, whether its obligation is now true (`nowTrue`), the counts and % held
+//   census        each pinned rule's state, whether its obligation is now true (`nowTrue`), the counts and % held, and
+//                 `lastHeld` (also counting a not-covered obligation whose `lastObserved` is held)
 //   amendments    the corpus amendments (every arc; empty outside a corpus arc)
 //   debt          what this arc banked and its ledger now (`arcDebtLedger`)
 //   issues        the latest checkpoint capture and the checkpoints' intake outcomes
@@ -115,7 +117,7 @@ import { readJson } from './core/fsx.ts';
 import {
   type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev, type ProposalId,
   type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type InvocationId, type KnownDefectId, type LaneId,
-  type OpportunityId, canonicalIds, commandId, compareResourceUnits, cpuToken, invocationId, parseJobId, parseOpId, compareIds,
+  type OpportunityId, canonicalIds, commandId, compareResourceUnits, cpuToken, invocationId, parseJobId, parseOpId, compareIds, sha,
 } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
@@ -168,7 +170,7 @@ import {
 import { readClaim } from './host/lock.ts';
 import { isAlive } from './host/liveness.ts';
 import { readOwner } from './host/owner.ts';
-import { revParse } from './git/git.ts';
+import { git, revParse } from './git/git.ts';
 import { type FlowStatus, flowStatus } from './flow/track.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { coverageBase, coverageOf } from './holistic/coverage.ts';
@@ -332,7 +334,7 @@ export type HostView = Readonly<{
  * contingent edges), `code` (a unit runs, is ready or waits for admission); `spec` when no unit of the plan delivers
  * or repairs it.
  */
-export const OBLIGATION_REASONS = ['supervision', 'host', 'waiting-dep', 'code', 'spec'] as const;
+export const OBLIGATION_REASONS = ['supervision', 'host', 'waiting-dep', 'code', 'witness', 'spec'] as const;
 export type ObligationReason = (typeof OBLIGATION_REASONS)[number];
 
 /** An obligation on the integration head: its witness verdict there (`not-covered`: no observation), and the evidence dirs of the records read. */
@@ -345,7 +347,17 @@ export type ObligationTruth = Readonly<{
   verdict: ObservationVerdict | 'not-covered';
   evidence: readonly AbsPath[];
 }>;
-export type ObligationPending = ObligationTruth & Readonly<{ blockingUnits: readonly UnitId[]; reason: ObligationReason }>;
+/** An observation of an obligation's witness on an earlier tree of the head's first-parent history. */
+export type LastObservation = Readonly<{ treeSha: Sha; verdict: ObservationVerdict; evidence: readonly AbsPath[] }>;
+export type ObligationPending = ObligationTruth & Readonly<{
+  blockingUnits: readonly UnitId[];
+  reason: ObligationReason;
+  /**
+   * Only for `not-covered` on the head: the newest observation under the same rule on an earlier tree of the head's
+   * first-parent history (null when there is none). Context, never a verdict: it counts toward nothing.
+   */
+  lastObserved: LastObservation | null;
+}>;
 
 export type TargetView = Readonly<{
   cutLine: string;
@@ -969,7 +981,7 @@ function ackSeqs(events: readonly Event[]): ReadonlyMap<NeedsUserId, number> {
 }
 
 /** What one unit's state says about an obligation waiting on it (see `ObligationReason`); null for a settled unit. */
-function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec'> | null {
+function unitReason(l: UnitCore): Exclude<ObligationReason, 'spec' | 'witness'> | null {
   const w = l.waitingFor;
   switch (l.state) {
     case 'merged':
@@ -1047,14 +1059,30 @@ export function obligationLeaves(view: JournalView, obligations: Obligations, st
 
 /** Each non-exempt obligation on the integration head's tree: now true, or not yet with what it waits on. */
 function truths(
-  runDir: AbsPath, view: JournalView, lines: readonly UnitCore[], obligations: Obligations, tree: Sha,
+  runDir: AbsPath, view: JournalView, lines: readonly UnitCore[], obligations: Obligations, repo: AbsPath, head: Sha,
 ): Readonly<{ nowTrue: readonly ObligationTruth[]; notYetTrue: readonly ObligationPending[] }> {
   const latched = new Set(view.holistic().latched.map((l) => l.obligation));
   const byUnit = new Map(lines.map((l) => [l.unit, l]));
-  const leafOf = obligationLeaves(view, obligations, observations({ journal: { view }, runDir }), tree);
+  const store = observations({ journal: { view }, runDir });
+  // The head's tree first, then each earlier tree of its first-parent history, newest first (a tree once).
+  const trees = [...new Set(git(repo, ['log', '--first-parent', '--format=%T', head]).split('\n').filter((t) => t !== '').map((t) => sha(t)))];
+  const leaves = new Map<Sha, ReturnType<typeof obligationLeaves>>();
+  const leafOn = (tree: Sha, o: ObligationDef): ObligationLeaf => {
+    let at = leaves.get(tree);
+    if (at === undefined) leaves.set(tree, at = obligationLeaves(view, obligations, store, tree));
+    return at(o);
+  };
+  const evidenceOf = (l: ObligationLeaf): readonly AbsPath[] => l.witnessed.map((w) => witnessDir(runDir, w));
+  const lastObserved = (o: ObligationDef): LastObservation | null => {
+    for (const tree of trees.slice(1)) {
+      const l = leafOn(tree, o);
+      if (l.verdict !== 'not-covered') return { treeSha: tree, verdict: l.verdict, evidence: evidenceOf(l) };
+    }
+    return null;
+  };
   const leaf = (o: ObligationDef): Readonly<{ verdict: ObligationTruth['verdict']; evidence: readonly AbsPath[]; units: readonly UnitId[] }> => {
-    const l = leafOf(o);
-    return { verdict: l.verdict, evidence: l.witnessed.map((w) => witnessDir(runDir, w)), units: l.units };
+    const l = leafOn(trees[0]!, o);
+    return { verdict: l.verdict, evidence: evidenceOf(l), units: l.units };
   };
 
   const nowTrue: ObligationTruth[] = [];
@@ -1075,8 +1103,9 @@ function truths(
       if (line === undefined) throw new Error(`obligation ${o.id} waits on unit ${u}, which the plan in force does not have`);
       return unitReason(line);
     }));
-    const reason = l.units.length === 0 ? 'spec' : OBLIGATION_REASONS.find((r) => reasons.has(r as never)) ?? 'code';
-    notYetTrue.push({ ...truth, blockingUnits: l.units, reason });
+    // Nothing to wait on: a witness run on the head when its lane has not run there, else a spec (a repair to plan).
+    const reason = l.units.length > 0 ? OBLIGATION_REASONS.find((r) => reasons.has(r as never)) ?? 'code' : l.verdict === 'not-covered' ? 'witness' : 'spec';
+    notYetTrue.push({ ...truth, blockingUnits: l.units, reason, lastObserved: l.verdict === 'not-covered' ? lastObserved(o) : null });
   }
   return { nowTrue, notYetTrue };
 }
@@ -1387,6 +1416,11 @@ export type CensusView = Readonly<{
   counts: CensusCounts;
   /** 100 × held / obligationRules, rounded down; null without an obligation-state rule. */
   heldPct: number | null;
+  /**
+   * The obligation-state rules held on the head, plus those not covered there whose `lastObserved` is held: what the
+   * head would hold if no merge since broke it. Context only: `heldPct`, the brief and completion read `held`.
+   */
+  lastHeld: number;
 }>;
 
 export type AmendmentLine = Readonly<{ id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string }>;
@@ -1457,13 +1491,14 @@ function corpusOf(c: CorpusInForce): CorpusView {
   };
 }
 
-function censusOf(obligations: Obligations, nowTrue: readonly ObligationTruth[]): CensusView | null {
+function censusOf(obligations: Obligations, t: ReturnType<typeof truths>): CensusView | null {
   if (obligations.census === undefined) return null;
-  const held = new Set(nowTrue.map((t) => t.obligation));
+  const held = new Set(t.nowTrue.map((o) => o.obligation));
+  const lastHeld = new Set([...held, ...t.notYetTrue.filter((o) => o.lastObserved?.verdict === 'held').map((o) => o.obligation)]);
   const counts = censusCounts(obligations.census, (id) => held.has(id));
   return {
     rules: obligations.census.map((c) => ({ rule: c.rule, state: c.state, held: c.state.type === 'obligation' ? held.has(c.state.id) : null })),
-    counts, heldPct: heldPct(counts),
+    counts, heldPct: heldPct(counts), lastHeld: censusCounts(obligations.census, (id) => lastHeld.has(id)).held,
   };
 }
 
@@ -1593,7 +1628,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const head = on === null ? null : revParse(on.repo, branchRef(on.plan.integrationBranch));
   const obligations = revision?.obligations?.value ?? null;
   const t = on === null || head === null || obligations === null ? { nowTrue: [], notYetTrue: [] }
-    : truths(runDir, view, d.units, obligations, revParse(on.repo, `${head}^{tree}`));
+    : truths(runDir, view, d.units, obligations, on.repo, head);
   const audit = on === null || head === null ? null : auditOf(runDir, view, events, on.plan, head, now);
   const owed = needsUser.filter((n) => n.reason === 'audit-owed').map((n) => n.id);
   // M4a: the scheduler's holds and the pack review read through the read-only contexts, with the routing in force (the
@@ -1645,7 +1680,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     holds: h === null ? [] : arcHolds(h, d.blocking, false),
     packReview: h === null || corpus === null ? null : packReviewOf(h.checkpoint),
     corpus: corpus === null ? null : corpusOf(corpus),
-    census: corpus === null || obligations === null ? null : censusOf(obligations, t.nowTrue),
+    census: corpus === null || obligations === null ? null : censusOf(obligations, t),
     amendments: fold.amendments.map((a) => ({ id: a.id, source: a.source, rules: a.rules, proposal: a.proposal, why: a.why })),
     debt: corpus === null || reader === null ? null : debtOf(view, arcDebtLedger(reader)!),
     issues: corpus === null ? null : issuesOf(view),
