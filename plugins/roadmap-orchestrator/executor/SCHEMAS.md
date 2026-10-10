@@ -2034,8 +2034,13 @@ src/pipeline/dispatch.ts `callArcRole`):
     in flight is cancelled (`proc.kill{reason: supersede}`, polled every `SUPERSEDE_POLL_MS`, 1 s; outcome
     `cancelled{supersede}`), a call not yet made is not made, and the job decides `rejected{stale}` with the activation's
     staleness wording, so the trigger is captured again on the new revision. A crash after the cancel resumes into the
-    same decision once the cancel is done (the recorded cancelled call is skipped; `supersededBy` still holds). Neither path spends the
-    trigger's one invalid retry. Other revisions (a spec patch, a ruling) leave the call running; the activation's
+    same decision once the cancel is done (the recorded cancelled call is skipped; `supersededBy` still holds). Finding
+    drift (paid M4b run 5, ckpt-2: a publication resolved F-3, F-6 and F-9 mid-call): a finding the checkpoint was shown
+    that closed since (resolved, or ruled) is stale only when the decision rests on it (`restsOn`: its `cites.findings`
+    name it, or an op or ruling text names the id); a disposition of it alone is moot and settles as nothing
+    (`settleDecided` rules active findings only), and the rest of the bundle activates under every other check. Stale
+    detail: `finding <F-n> is <state> since the checkpoint read it, and the decision rests on it`. No drift path spends
+    the trigger's one invalid retry. Other revisions (a spec patch, a ruling) leave the call running; the activation's
     staleness checks what the bundle touches.
 11. **Interrupted calls.** A call cancelled or failed with a backend-park class leaves the job running; a later run asks
     again as the next attempt (the meter's attempt), skipped while the seat's backend is parked or the arc paused.
