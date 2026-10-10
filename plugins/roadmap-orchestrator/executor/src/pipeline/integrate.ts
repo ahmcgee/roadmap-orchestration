@@ -78,7 +78,7 @@ import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { type FindingBlock, p1Blocking, p1Obligations as activeP1Obligations, repairedObligations as repairedBy } from '../holistic/findings.ts';
 import { keyOf, observedVerdict, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ObligationEffect, completes, latches, obligationEffects } from '../holistic/table.ts';
-import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt } from '../holistic/types.ts';
+import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt, isMustHold } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { reentryRecommendation } from '../needsuser.ts';
@@ -345,7 +345,7 @@ export function claimsOf(
   const latched = latchedSet(view);
   const published = new Set(view.publications().map((p) => p.unit));
   const chosen = new Set(selected);
-  const completing = new Set(obligations.obligations.filter((o) => o.activation === 'future' && !latched.has(o.id) && !isExempt(o) && completes(o, published, units)).map((o) => o.id));
+  const completing = new Set(obligations.obligations.filter((o) => !isMustHold(o, latched) && !isExempt(o) && completes(o, published, units)).map((o) => o.id));
   const needed = new Set(obligations.obligations.flatMap((o) => (chosen.has(o.id) && !isExempt(o) && o.witness !== null ? [o.witness.lane] : [])));
   return { obligations, selected: chosen, completing, repairs, latched, lanes: obligations.lanes.filter((l) => needed.has(l.id)) };
 }
@@ -391,7 +391,7 @@ export function gradeTree(
     return rec === undefined ? null : verdictOf(rec, w);
   };
   const effects = obligationEffects({ obligations: defs, selected: claims.selected, latched: claims.latched, completing, verdict });
-  const mustHold = (o: ObligationDef): boolean => o.activation === 'must-hold' || claims.latched.has(o.id);
+  const mustHold = (o: ObligationDef): boolean => isMustHold(o, claims.latched);
   const red = new Set([...claims.selected].filter((id) => effects.get(id) === 'red'));
   const byId = new Map(defs.map((d) => [d.id, d]));
   // A repair holds when its witness shows held on this tree, whatever its activation: a split parent's when every
@@ -416,7 +416,12 @@ export function gradeTree(
     if (r.record === null) continue;
     const failing = r.record.records.filter((t) => t.outcome === 'fail').map((t) => t.testId);
     if (r.record.malformed || failing.length === 0) {
-      if (journeyRed(r)) unexplained.add(r.lane);
+      // A lane witnessing only measured obligations (future, not latched, or exempt) is never graded, however it
+      // ended: its witness file may not exist until the delivering unit lands (paid M4b run 5: a sibling's future lane
+      // on a candidate and its tip, `Could not find`, read as base-red). A completing one's red is its effect's.
+      const owners = defs.filter((o) => o.witness !== null && o.witness.lane === r.lane);
+      const measuredOnly = owners.length > 0 && owners.every((o) => isExempt(o) || !mustHold(o));
+      if (journeyRed(r) && !measuredOnly) unexplained.add(r.lane);
       continue;
     }
     for (const t of failing) {
@@ -595,7 +600,7 @@ export function latchPublished(
   const view = ctx.journal.view;
   const latched = latchedSet(view);
   const published = new Set(view.publications().map((p) => p.unit));
-  const completing = new Set(obligations.obligations.filter((o) => o.activation === 'future' && !latched.has(o.id) && !isExempt(o) && completes(o, published, units)).map((o) => o.id));
+  const completing = new Set(obligations.obligations.filter((o) => !isMustHold(o, latched) && !isExempt(o) && completes(o, published, units)).map((o) => o.id));
   if (completing.size === 0) return;
   const tree = revParse(ctx.repo, `${commit}^{tree}`);
   const store = observations(ctx);

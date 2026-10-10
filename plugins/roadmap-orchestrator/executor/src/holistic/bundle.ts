@@ -108,7 +108,7 @@ import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
 import { type Observation, keyOf, observedVerdict, reuse } from './observe.ts';
 import {
   type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
-  type RulingSidecar, isExempt, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar,
+  type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
@@ -917,10 +917,11 @@ export function admitWorldOf(
   const store = observations(ctx);
   const lanes = new Map((obligations?.lanes ?? []).map((l) => [l.id, l]));
   const trees = [...positions].map(([sha, position]) => ({ position, tree: revParse(ctx.repo, `${sha}^{tree}`) }));
+  const latched = new Set(fold.latched.map((l) => l.obligation));
   const world = new Map(defs.map((o) => {
     const v = views.get(o.id)!;
     const held = v.observation?.verdict === 'held';
-    const holding = o.activation === 'must-hold' ? held : !(v.latched && !held);
+    const holding = !isMustHold(o, latched) || held;
     const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
     const history = lane === undefined || o.witness === null ? [] : trees.flatMap(({ position, tree }) => {
       const verdict = observedVerdict(store, keyOf(tree, lane, laneEnvId(ctx, lane)), o.witness!);

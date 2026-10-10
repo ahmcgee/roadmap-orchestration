@@ -328,8 +328,10 @@ export const revisedObligations = (changes: readonly PlanChange[]): readonly Obl
   changes.flatMap((c) => (c.type === 'obligation' && (c.edit === 'added' || c.edit === 'split' || c.edit === 'witness') ? [c.id] : []));
 
 /** The docs candidate's selection: its contract ops' paths (never the rendered `.roadmap/` files) and the revised obligations. */
-export function docsSelection(obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[]): readonly ObligationId[] {
-  return selectObligations({ obligations, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes) });
+export function docsSelection(
+  obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>,
+): readonly ObligationId[] {
+  return selectObligations({ obligations, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes), latched });
 }
 
 /** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order. */
@@ -376,7 +378,7 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
   if (violations.length > 0) return refuse(`its commit touches paths it does not publish: ${violations.map((v) => `${v.path} (${v.rule})`).join(', ')}`);
 
   const obligations = revisionObligations(ctx.runDir, payload);
-  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes));
+  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation))));
   const lanes = [...plan.suite.lanes.map(suiteJourneyLane), ...(obligations === null ? [] : witnessLanes(obligations, selected).map(arcJourneyLane))];
   const series = await runJourneySeries(
     ctx, { type: 'job', job: pub, acquireFirst: ctx.arbiter.acquireFirst }, lanes, docsWorktreeRequest(commit),

@@ -37,7 +37,7 @@
 // fact from when this process first saw it (a fact older than the process from the process's start), so a restart
 // delays a wall-clock trigger, never fires one early.
 import type { AuditTrigger } from './types.ts';
-import { type LensKind, isExempt, LENS_KINDS } from './types.ts';
+import { type LensKind, isExempt, isMustHold, LENS_KINDS } from './types.ts';
 import type { Parent, PlanChange } from '../core/events.ts';
 import { type ObligationId, type Sha, type UnitId, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -189,7 +189,7 @@ function unwitnessedBy(ctx: StageContext, h: PublishedHead): readonly Obligation
       if (unit === undefined) throw new Error(`publication ${h.op} names unit ${id}, which the plan in force does not have`);
       for (const o of selected(ctx, unit, h.old, h.head)) {
         if (o.state.type === 'split' || o.witness === null) continue;
-        if (isExempt(o) || (o.activation === 'future' && !latched.has(o.id))) picked.set(o.id, o);
+        if (isExempt(o) || !isMustHold(o, latched)) picked.set(o.id, o);
       }
     }
     out = observedViews(ctx, obligations, [...picked.values()], h.head)

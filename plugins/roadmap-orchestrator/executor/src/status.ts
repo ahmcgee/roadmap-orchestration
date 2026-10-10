@@ -180,7 +180,7 @@ import { type FindingMetric, findingMetrics, isActive } from './holistic/finding
 import { type Observation, type ObservationStore, type WitnessedEntry, verdictOf } from './holistic/observe.ts';
 import {
   type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind,
-  type ArcLaneDef, type CensusEntry, type CensusState, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt,
+  type ArcLaneDef, type CensusEntry, type CensusState, type ObligationDef, type Obligations, type ObservationVerdict, type Vision, type VisionClauseKind, type VisionCoverage, type VisionQuestion, isExempt, isMustHold,
   type AdmitClass, type BusyAttempt, type Conversion, observationKeyText, parseRulingSidecar,
 } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
@@ -1046,7 +1046,7 @@ export function obligationLeaves(view: JournalView, obligations: Obligations, st
     if (o.witness === null) throw new Error(`obligation ${o.id} has no witness and is not a split parent`);
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const future = o.activation === 'future' && !latched.has(o.id);
+    const future = !isMustHold(o, latched);
     const units = future ? unmergedOf(view, o.deliveredBy) : unmergedOf(view, owners(o.id));
     const found = onTree(lane);
     if (found === null) return { verdict: 'not-covered', witnessed: [], units };
@@ -1091,7 +1091,7 @@ function truths(
     if (isExempt(o)) continue;
     const l = leaf(o);
     const truth: ObligationTruth = {
-      obligation: o.id, statement: o.statement, activation: o.activation === 'future' && !latched.has(o.id) ? 'future' : 'must-hold', verdict: l.verdict,
+      obligation: o.id, statement: o.statement, activation: isMustHold(o, latched) ? 'must-hold' : 'future', verdict: l.verdict,
       evidence: l.evidence,
     };
     if (l.verdict === 'held') {
@@ -1140,7 +1140,7 @@ function targetOf(view: JournalView, plan: PlanM1, obligations: Obligations, t: 
   const latched = new Set(view.holistic().latched.map((l) => l.obligation));
   const count = (type: ObligationDef['state']['type']): number => obligations.obligations.filter((o) => o.state.type === type).length;
   const pending = obligations.obligations
-    .filter((o) => !isExempt(o) && o.state.type !== 'split' && o.activation === 'future' && !latched.has(o.id))
+    .filter((o) => !isExempt(o) && o.state.type !== 'split' && !isMustHold(o, latched))
     .map((o) => ({ obligation: o.id, statement: o.statement, unmerged: unmergedOf(view, o.deliveredBy) }))
     .filter((m) => m.unmerged.length > 0)
     .sort((a, b) => a.unmerged.length - b.unmerged.length || compareIds(a.obligation, b.obligation));

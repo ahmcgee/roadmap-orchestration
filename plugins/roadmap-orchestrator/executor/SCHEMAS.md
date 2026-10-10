@@ -1263,8 +1263,11 @@ the effective activation (a latched future obligation is must-hold). `brakes(eff
 
 **Impact selection** (signature frozen for A1's `src/holistic/impact.ts`, read by A3's fingerprint and B2's
 candidate): `SelectObligations(ImpactInput{obligations, units[{unit, declared, repairs}], closure, changedPaths,
-revised}) → ObligationId[]` (ascending, split closure applied both ways, H14; `revised`: a revision publication's
-added, split or re-witnessed obligations, G12).
+revised, latched}) → ObligationId[]` (ascending, split closure applied both ways, H14; `revised`: a revision publication's
+added, split or re-witnessed obligations, G12; `latched`: the fold's `obligation-latched` obligations). Every
+"is it must-hold" decision (impact, required witnesses, completion, the table, baseline, audits, status, cadence,
+split checks, admit classification) reads one predicate, `isMustHold(o, latched)` (src/holistic/types.ts): declared
+`must-hold`, or a `future` one in the latched set the question reads.
 
 **Witness records** (`witness.json` in the lane execution's evidence dir, `witnessDir` in src/git/snapshot.ts, see "Choices made in M3 B2"; `witnessRecord`). `{v, lane, laneRev, envId,
 treeSha, inv, runner: Reporter, purpose: witness|mutant, records: [{testId, selected: nat, outcome:
@@ -1474,7 +1477,7 @@ src/docs/contracts.ts, src/spec/rulings.ts, src/holistic/{obligations,impact,red
 6. **A file a witness lane runs** (`selectObligations`): an argv entry of the lane joined to its `cwd` and normalised
    (posix), compared with the changed path. A changed path also selects through the obligation's contracts, its
    docRef's document and every mapping pattern it matches (`matchesPattern`, src/core/values.ts: a glob, or a
-   directory prefix); a path no pattern matches selects every must-hold obligation.
+   directory prefix); a path no pattern matches selects every must-hold obligation, a latched future one included.
 
 **Choices made in M3 A2** (the revisioned-input core):
 
@@ -1791,7 +1794,9 @@ supersede the A4 items they name):
    declared repair held (its witness `held` on the candidate, whatever its activation; a split parent's, every non-exempt
    child's; not the effect, which for a held future child is `latch` or `measured`), and no lane failure left. A failing
    test of a future (not latched) or exempt obligation is never graded; one of an unselected must-hold obligation over
-   which an active P1 is open is a background failure; any other failing test (or a red lane with none) is unexplained.
+   which an active P1 is open is a background failure; any other failing test (or a red lane with none) is unexplained,
+   except that a red lane with no failing test (a malformed record: its witness file not yet landed) witnessing only
+   future (not latched) or exempt obligations is measured, never unexplained (paid M4b run 5).
    Not clean → the same lanes on the tip alone: a blocking failure (a brake red, a repair not held, an unexplained lane,
    a changed checkout) the tip reproduces → `base-red`, else `red`
    (charged; `candidateBrakeFix` names the red obligations in the fix round). A repaired obligation's red is never the

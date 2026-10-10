@@ -5,14 +5,14 @@
 //     touches no document path), a file its witness lane
 //     runs (an argv entry resolved against the lane's cwd), or a mapping pattern naming it;
 //   - the future obligations its units deliver;
-//   - every must-hold obligation when a changed path matches no mapping pattern;
+//   - every must-hold obligation (`isMustHold`: a latched future one included) when a changed path matches no mapping pattern;
 //   - a revision publication's added, split or re-witnessed obligations (G12);
 // then the split closure (H14), to a fixed point: a selected child selects its parent, a selected parent its
 // children. An id the obligations file does not hold is a caller bug and throws.
 import { posix } from 'node:path';
 import { type ObligationId, canonicalIds } from '../core/ids.ts';
 import { type RepoPath, matchesPattern } from '../core/values.ts';
-import { type ArcLaneDef, type ImpactInput, type ObligationDef, type SelectObligations, obligationSource } from './types.ts';
+import { type ArcLaneDef, type ImpactInput, type ObligationDef, type SelectObligations, isMustHold, obligationSource } from './types.ts';
 
 /** Whether `path` is a file `lane` runs: one of its argv entries, resolved against its cwd. */
 const runsFile = (lane: ArcLaneDef, path: RepoPath): boolean => lane.argv.some((a) => posix.normalize(posix.join(lane.cwd, a)) === path);
@@ -41,7 +41,7 @@ export const selectObligations: SelectObligations = (input: ImpactInput) => {
     for (const o of all.values()) {
       const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
       if (o.contracts.includes(path) || anchoredAt(o, path) || (lane !== undefined && runsFile(lane, path))) picked.add(o.id);
-      if (mapped.length === 0 && o.activation === 'must-hold') picked.add(o.id);
+      if (mapped.length === 0 && isMustHold(o, input.latched)) picked.add(o.id);
     }
   }
   for (const o of all.values()) if (o.activation === 'future' && o.deliveredBy.some((u) => units.includes(u))) picked.add(o.id);

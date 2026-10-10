@@ -17,7 +17,7 @@
 // hash match); `not-held`, `partial`, `unwitnessed`, skip, zero-selected, stale or missing are "otherwise". A latched
 // future obligation is must-hold from its latch on (the caller passes its effective activation).
 import { type ObligationId, type UnitId, canonicalIds } from '../core/ids.ts';
-import { type ObligationDef, type ObservationVerdict, type WitnessRef, isExempt } from './types.ts';
+import { type ObligationDef, type ObservationVerdict, type WitnessRef, isExempt, isMustHold } from './types.ts';
 
 export const OBLIGATION_EFFECTS = ['measured', 'latch', 'red', 'discharged', 'exempt'] as const;
 export type ObligationEffect = (typeof OBLIGATION_EFFECTS)[number];
@@ -96,7 +96,7 @@ export function obligationEffects(input: EffectsInput): ReadonlyMap<ObligationId
     if (o.state.type === 'split') return { type: 'split', children: o.state.children.map((c) => ({ effect: effectOf(c), selected: input.selected.has(c) })) };
     if (o.witness === null) throw new Error(`obligation ${o.id} is active with no witness`);
     const verdict = input.verdict(o, o.witness);
-    if (o.activation === 'must-hold' || input.latched.has(o.id)) return { type: 'must-hold', verdict };
+    if (isMustHold(o, input.latched)) return { type: 'must-hold', verdict };
     return { type: 'future', completing: input.completing.has(o.id), verdict };
   };
   for (const o of input.obligations) effectOf(o.id);
