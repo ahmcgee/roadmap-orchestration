@@ -186,6 +186,8 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | `RevisionSource`, `HoldCause`, spawn subject, `CommandBody`, `JobId`, `NeedsUserReason`, facts, `.roadmap/config.json` | "M4b" | none |
 | reads.json (paid M4b run 5) | `+ denied?: ToolRead[]` (every reads.json since) | absent: none refused (`readsDeniedOf`, warned once; scaffolding): a gate call an earlier executor closed is judged as before |
 | `stage-outcome` gate and plan-check, `NeedsUserReason` (paid M4b run 5) | `+ read-denied` | none: dev.7 records never hold it |
+| `spec.json` witness item, `SpecPatchOp` witness item (paid M4b run 6) | `+ obligation?: ObligationId`: the delivered obligation whose witness the item restates (its lane and one of its test ids, exactly) | absent: no obligation's witness (lasting) |
+| Plan-check acceptance answer (paid M4b run 6) | witness item `+ obligation: ObligationId \| null` (`PLAN_CHECK_ACCEPTANCE_SCHEMA` requires it; null is spec.json's absent) | a recorded answer without it reads as null (lasting, no warning: the same meaning) |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
@@ -2752,7 +2754,7 @@ op `+ targets: T-n[]` (N2, LR-m; `CHECKPOINT_SCHEMA` requires it; a recorded ans
 `admitTargetsDefault`, src/core/upgrade.ts, scaffolding with a logged warning). `PLAN_ASSESSMENT_SCHEMA` / `validatePlanAssessment`:
 `{planAssessment: {feasible, riskFloor, visionConflict[], premises, notes}}`. `PLAN_CHECK_ACCEPTANCE_SCHEMA` /
 `validatePlanCheckAcceptanceOutput`: a plan-check answer whose redirect ops are `add`/`replace` in `witnesses` or `facts`,
-or `cite` (anything else is a SchemaError: `malformed`).
+or `cite` (anything else is a SchemaError: `malformed`); a witness item carries `obligation: I-n | null` (paid M4b run 6).
 
 **Prompt inputs** (`src/prompts/inputs.ts`; N4 wrote their text, each rendered only when it carries something):
 `GateInputs + checks: GateChecks = {witnesses: {required, missing, failed} | null, smoke: {killed,
@@ -2912,7 +2914,12 @@ sections and marks converted amendments.
 13. **Plan-check shape and the in-session assessment (N3, E, R40, R55, R59; src/pipeline/stages.ts).** `planCheckShape`:
     `uniform` unless `by-builder` in a corpus arc with arc lanes; then `build.<floor>`'s class decides (`efficient` →
     `acceptance`, else `in-session`, recorded without a call). An acceptance call writes `PLAN_CHECK_ACCEPTANCE_SCHEMA`;
-    its witness items must name arc lanes. The fresh build after `in-session` first calls a read-only session answering
+    its witness items must name arc lanes. Its prompt lists the witnesses of the obligations the unit delivers at the tip
+    (`PlanCheckAcceptance.delivered`: `requiredAt`'s target obligation rows); a witness item the patch adds or changes
+    that names an `obligation` must name a delivered one and that witness's lane and one of its test ids exactly, else
+    the patch is refused like a census or evidence refusal (`witnessReuseRefusal` in `patchRefusal`: `malformed`, the
+    retry told why; paid M4b run 6). A `witnesses-missing` fix round lists every required test id after the missing and
+    failing ones, so a rename that trades one id for another is visible to the builder. The fresh build after `in-session` first calls a read-only session answering
     `PLAN_ASSESSMENT_SCHEMA`: a changed tree, a conflict citing an inactive vision clause, or a floor below the pin is
     `malformed` (its retry assesses again); conflicts open P3 findings `source: stage{build}`; `feasible: false` is
     `infeasible{notes}`; a higher floor raises the unit's risk, and is `risk-raised` when the new seat binds another

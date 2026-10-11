@@ -125,7 +125,10 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         patchedRev: specRev(2), changedPremiseFiles: ['src/b/x.ts'],
       },
       vision: vision(2, 'VISION-B'),
-      acceptance: { nextWitnessId: witnessItemId('W-3'), arcLanes: [laneId('journey'), laneId('e2e')] },
+      acceptance: {
+        nextWitnessId: witnessItemId('W-3'), arcLanes: [laneId('journey'), laneId('e2e')],
+        delivered: [{ obligation: obligationId('I-7'), statement: 'A cancelled booking frees its berth.', lane: laneId('journey'), testIds: ['cancel > frees the berth'] }],
+      },
       priorInvalid: 'PRIOR-INVALID-B',
     },
   ],
@@ -862,19 +865,33 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       for (const needle of [/<acceptance_shape>/, /may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted/,
         /a new item takes the next free id, W-3, and further new items the ids after it in order, written without leading zeros/,
         /lane: one of the arc lanes: journey, e2e/, /testId: the test's exact id/, /" > "/, /skeleton/, /real entry point/,
-        /sends the unit back while one is missing or failing/, /Name only a test the change newly makes pass/, /belongs to a must-hold obligation's witness/]) {
+        /sends the unit back while one is missing or failing/, /Name only a test the change newly makes pass/, /belongs to a must-hold obligation's witness/,
+        // Paid M4b run 6: the delivered obligations' witness ids, which an item restating one reuses exactly.
+        /- I-7: A cancelled booking frees its berth\.\n  lane journey, test "cancel > frees the berth"/,
+        /sets obligation to that obligation's id and copies its lane and one of its test ids exactly; the executor refuses an item whose lane or test id differs/,
+        /Never name a new test for behaviour one of these tests already proves/, /or a witness test of an obligation above/]) {
         assert.match(text, needle, `planCheck/${model}: ${needle}`);
       }
       namesEvery(mod.system + text, requiredKeys(PLAN_CHECK_ACCEPTANCE_SCHEMA, [], ['patch'], ['patch', 'item']), `planCheck acceptance/${model}`);
-      const noLanes = mod.render({ ...SAMPLES.planCheck[1], acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [] } });
+      const noLanes = mod.render({ ...SAMPLES.planCheck[1], acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [], delivered: [] } });
       assert.match(noLanes, /this arc declares no arc lanes/);
+      assert.match(noLanes, /This unit delivers no obligation with a witness, so obligation is null on every item\./);
     }
     const answer = {
       ...(OUTPUTS.planCheck as Record<string, unknown>),
-      patch: [{ op: 'add', section: 'witnesses', item: { id: 'W-3', lane: 'journey', testId: 'export > writes the header', clause: 'A1', skeleton: 'Runs the export command on a fixture register and asserts the header row.' } }],
+      patch: [
+        { op: 'add', section: 'witnesses', item: { id: 'W-3', lane: 'journey', testId: 'export > writes the header', clause: 'A1', skeleton: 'Runs the export command on a fixture register and asserts the header row.', obligation: null } },
+        { op: 'add', section: 'witnesses', item: { id: 'W-4', lane: 'journey', testId: 'cancel > frees the berth', clause: 'A2', skeleton: 'Cancels a booking and books its berth again.', obligation: 'I-7' } },
+      ],
     };
     assert.ok(conforms(PLAN_CHECK_ACCEPTANCE_SCHEMA, answer));
-    validatePlanCheckAcceptanceOutput(answer);
+    // The wire's null obligation is spec.json's absent; a named one is kept.
+    const ops = validatePlanCheckAcceptanceOutput(answer).patch ?? [];
+    assert.deepEqual(ops.map((op) => (op.op === 'add' && op.section === 'witnesses' ? op.item.obligation ?? null : 'other')), [null, 'I-7']);
+    assert.ok(ops[0]!.op === 'add' && !('obligation' in ops[0]!.item));
+    // An answer recorded before the field reads as one naming no obligation.
+    const { obligation: _, ...older } = answer.patch[0]!.item;
+    assert.ok(validatePlanCheckAcceptanceOutput({ ...answer, patch: [{ ...answer.patch[0]!, item: older }] }).patch !== null);
   });
 
   it('plan-check: the failure matrix before a transaction ordering, earlier repairs carried in; clock and entry-point defects (F03, D3)', () => {
@@ -967,10 +984,17 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       { lane: laneId('journey'), testId: 'c', source: { type: 'obligation' as const, id: obligationId('I-4') }, role: 'preservation' as const },
     ];
     const d = witnessFixDirectives([{ lane: laneId('journey'), testId: 'a > b' }], [{ lane: laneId('journey'), testId: 'c' }], required);
-    assert.equal(d.length, 3);
+    assert.equal(d.length, 4);
     assert.match(d[0]!, /the gate is not called until every one does/);
     assert.match(d[1]!, /^Missing: test "a > b" on lane journey, which witnesses I-3 \(what this unit delivers or repairs\) and W-2 \(what this unit delivers or repairs\)\. No test with exactly this id ran/);
     assert.match(d[2]!, /^Failing: test "c" on lane journey, which witnesses I-4 \(a must-hold this unit keeps\)\. .*never weaken, skip or rename the test/);
+    // Paid M4b run 6: every required id, each once with all its sources, so a fix round cannot trade one for another.
+    assert.equal(d[3], [
+      'Every required witness test, which must all exist and pass together under exactly these ids:',
+      '- test "a > b" on lane journey, which witnesses I-3 (what this unit delivers or repairs) and W-2 (what this unit delivers or repairs)',
+      '- test "c" on lane journey, which witnesses I-4 (a must-hold this unit keeps)',
+      'Never rename a test that has one of these ids to give it another: the id it had then goes missing. When two ids name the same behaviour, keep a test under each.',
+    ].join('\n'));
     assert.throws(() => witnessFixDirectives([], [], required), /names a missing or failing test/);
     assert.throws(() => witnessFixDirectives([{ lane: laneId('journey'), testId: 'z' }], [], required), /not a required witness/);
     const s = smokeFixDirectives([{ lane: laneId('journey'), testId: 'a > b' }], required);

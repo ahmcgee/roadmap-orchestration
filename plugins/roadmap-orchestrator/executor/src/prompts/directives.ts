@@ -10,7 +10,7 @@
 //   STEER_DIRECTIVE       the architect's steer brief follows
 //   ASSESSED_DIRECTIVE    the implementing invocation after an in-session assessment (E)
 //   stalledLaneDirective, flakyLaneDirective, dirtyLanesDirective, movedHeadDirective   a failing or uncertified series
-//   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series
+//   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series, then every required id
 //   smokeFixDirectives    D2: target witness tests that still pass with the unit's production change reverted
 //   repeatRedDirective    F2: a red lane that repeated its previous red exactly, so the executor did not rerun it
 import type { TestRef } from '../core/events.ts';
@@ -45,13 +45,18 @@ function sourced(ref: TestRef, required: readonly RequiredWitness[]): string {
   return `test "${ref.testId}" on lane ${ref.lane}, which witnesses ${what.join(' and ')}`;
 }
 
-/** D1: one directive per missing or failing required witness test, after the one that says what the check was. */
+/**
+ * D1: one directive per missing or failing required witness test, after the one that says what the check was; then (paid
+ * M4b run 6) every required test, so a fix that renames one test to satisfy an id cannot pass unseen as breaking another.
+ */
 export function witnessFixDirectives(missing: readonly TestRef[], failed: readonly TestRef[], required: readonly RequiredWitness[]): readonly string[] {
   if (missing.length === 0 && failed.length === 0) throw new Error('witnessFixDirectives: a witness fix round names a missing or failing test');
+  const every = [...new Map(required.map((r) => [`${r.lane}\u0000${r.testId}`, { lane: r.lane, testId: r.testId }])).values()];
   return [
     'Before the gate, the executor ran the arc\'s witness lanes on your commit and looked for every required witness test by its exact id. These did not pass; the gate is not called until every one does. Use the witness check commands in this message to confirm each fix before you finish.',
     ...missing.map((r) => `Missing: ${sourced(r, required)}. No test with exactly this id ran: it is absent, skipped, selected by no test run, or its record is malformed. Write it under exactly this id, or give that id to the test that proves this behaviour, so the lane runs it and it passes.`),
     ...failed.map((r) => `Failing: ${sourced(r, required)}. Make the behaviour it checks hold; never weaken, skip or rename the test to get green.`),
+    `Every required witness test, which must all exist and pass together under exactly these ids:\n${every.map((r) => `- ${sourced(r, required)}`).join('\n')}\nNever rename a test that has one of these ids to give it another: the id it had then goes missing. When two ids name the same behaviour, keep a test under each.`,
   ];
 }
 

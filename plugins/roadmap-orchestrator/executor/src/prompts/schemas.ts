@@ -146,13 +146,22 @@ function laneFromWire(value: unknown, path: string): unknown {
   return { ...v, env: { ...v.env, set: Object.fromEntries(pairs.map((p) => [p.name, p.value])) } };
 }
 
-/** The wire form of one op: a lane item's env.set arrives as [{name, value}]. */
+/** A witness item's wire form: `obligation: null` (the acceptance schema's "no obligation's witness") is spec.json's absent. */
+function witnessFromWire(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || !('obligation' in value) || value.obligation !== null) return value;
+  const { obligation: _, ...rest } = value;
+  return rest;
+}
+
+/** The wire form of one op: a lane item's env.set arrives as [{name, value}], a witness item's obligation may be null. */
 const wireOp: Read<SpecPatchOp> = (value, path) => {
   const f = new Fields(value, path);
   const op = f.get('op', oneOf(['add', 'replace', 'strike', 'defer', 'cite'] as const));
   if (op === 'strike' || op === 'defer' || op === 'cite') return specPatchOp(value, path);
-  if (f.get('section', oneOf(SPEC_SECTIONS)) !== 'lanes') return specPatchOp(value, path);
+  const section = f.get('section', oneOf(SPEC_SECTIONS));
   const v = value as { readonly item: unknown };
+  if (section === 'witnesses') return specPatchOp({ ...v, item: witnessFromWire(v.item) }, path);
+  if (section !== 'lanes') return specPatchOp(value, path);
   return specPatchOp({ ...v, item: laneFromWire(v.item, `${path}.item`) }, path);
 };
 
@@ -180,8 +189,9 @@ export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
 
 // M4a rev 3 (E, R59): the acceptance-shape plan-check of an efficient builder under `by-builder`. Its redirect may only add
 // or replace witness items and facts, and cite; witness items enter the spec through this one patch channel, their ids
-// the next free `W-n` the prompt states (the patch engine refuses a reused id: `id-reused`).
-const S_WITNESS_ITEM = sObj({ id: S_STR, lane: S_STR, testId: S_STR, clause: S_STR, skeleton: S_STR });
+// the next free `W-n` the prompt states (the patch engine refuses a reused id: `id-reused`). `obligation` (paid M4b run 6):
+// the delivered obligation whose witness the item restates, or null; a recorded answer without it reads as null.
+const S_WITNESS_ITEM = sObj({ id: S_STR, lane: S_STR, testId: S_STR, clause: S_STR, skeleton: S_STR, obligation: sNullable(S_STR) });
 export const PLAN_CHECK_ACCEPTANCE_SCHEMA: Schema = sObj({
   decision: sEnum(PLAN_CHECK_DECISIONS),
   reasons: sArr(S_STR),
