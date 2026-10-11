@@ -1,0 +1,270 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1675" viewBox="0 0 1100 1675" role="img" aria-labelledby="title desc">
+<title id="title">How a roadmap-orchestrator arc runs</title>
+<desc id="desc">A swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session, running the orchestrate and vision skills) and the executor (a detached Node process that runs unattended and calls models for judgment). It runs in four phases: a one-time bootstrap where you write the target state and confirm the vision; Phase 0 each arc, where the architect plans the arc and starts the executor; the unattended run, where the executor builds, tests, reviews and merges units in parallel while the architect adjudicates what it hands over; and completion, where the architect checks in with you, opens a stacked PR and either chains into the next arc or stops.</desc>
+<style>
+svg { 
+  --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --line:#8c959f;
+  --ow:#b45309; --ow-fill:#fff7ed; --ow-lane:#fffaf3;
+  --ar:#4338ca; --ar-fill:#eef2ff; --ar-lane:#f7f8ff;
+  --ex:#047857; --ex-fill:#ecfdf5; --ex-lane:#f5fcf8; --step:#ffffff;
+  --chip:#7c3aed; --chip-fg:#ffffff; --note:#f6f8fa; }
+@media (prefers-color-scheme: dark) { svg { 
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --line:#6e7681;
+  --ow:#f59e0b; --ow-fill:#2b1d0a; --ow-lane:#17130c;
+  --ar:#a5b4fc; --ar-fill:#1e1b4b; --ar-lane:#12122a;
+  --ex:#34d399; --ex-fill:#0b2a1f; --ex-lane:#0c1a15; --step:#0d1117;
+  --chip:#a78bfa; --chip-fg:#0d1117; --note:#161b22; } }
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, "DejaVu Sans", sans-serif; fill: var(--fg); }
+.mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12px; }
+.bg { fill: var(--bg); }
+.h1 { font-size: 22px; font-weight: 700; }
+.sub, .lg, .ls { font-size: 13px; fill: var(--muted); }
+.lt { font-size: 15px; font-weight: 700; }
+.lt.ow { fill: var(--ow); } .lt.ar { fill: var(--ar); } .lt.ex { fill: var(--ex); }
+.lane.ow { fill: var(--ow-lane); } .lane.ar { fill: var(--ar-lane); } .lane.ex { fill: var(--ex-lane); }
+.box rect { stroke-width: 1.5; }
+.box.ow rect { fill: var(--ow-fill); stroke: var(--ow); }
+.box.ar rect { fill: var(--ar-fill); stroke: var(--ar); }
+.box.ex rect { fill: var(--ex-fill); stroke: var(--ex); }
+.box.step rect { fill: var(--step); stroke: var(--ex); stroke-width: 1; }
+.box.note rect { fill: var(--note); stroke: var(--line); stroke-dasharray: 4 3; }
+.box.note .t { fill: var(--muted); }
+.t { font-size: 14px; font-weight: 600; }
+.t.ex { fill: var(--ex); }
+.b { font-size: 13px; }
+.chip, .box rect.chip { fill: var(--chip); stroke: none; }
+.chipt { font-size: 11px; font-weight: 600; fill: var(--chip-fg); }
+.arr { fill: none; stroke: var(--line); stroke-width: 1.6; }
+.arr.dash { stroke-dasharray: 5 4; }
+#ah path { fill: var(--line); }
+.al { font-size: 12px; fill: var(--muted); font-style: italic; }
+.band { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 4; }
+.bandpill { fill: var(--fg); }
+.bandt { font-size: 12px; font-weight: 700; fill: var(--bg); letter-spacing: 0.06em; }
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<rect class="bg" width="1100" height="1675"/>
+<text class="h1" x="24" y="40">How a roadmap-orchestrator arc runs</text>
+<text class="sub" x="24" y="64">Who does what, top to bottom. Steps 2–4 repeat for each arc.</text>
+<g class="box ow"><rect x="24" y="84" width="16" height="16" rx="4"/></g>
+<text class="lg" x="48" y="97">You</text>
+<g class="box ar"><rect x="95.3" y="84" width="16" height="16" rx="4"/></g>
+<text class="lg" x="119.3" y="97">Architect (AI)</text>
+<g class="box ex"><rect x="244.7" y="84" width="16" height="16" rx="4"/></g>
+<text class="lg" x="268.7" y="97">Executor (code)</text>
+<rect class="chip" x="401.2" y="83" width="58" height="18" rx="9"/><text class="chipt" x="430.2" y="96" text-anchor="middle">model</text>
+<text class="lg" x="467.2" y="97">the executor calls a model</text>
+<rect class="lane ow" x="16" y="118" width="288" height="1547" rx="12"/>
+<text class="lt ow" x="28" y="142">You</text>
+<text class="ls" x="28" y="160">the owner</text>
+<rect class="lane ar" x="332" y="118" width="356" height="1547" rx="12"/>
+<text class="lt ar" x="344" y="142">Architect</text>
+<text class="ls" x="344" y="160">Claude in your session</text>
+<rect class="lane ex" x="716" y="118" width="368" height="1547" rx="12"/>
+<text class="lt ex" x="728" y="142">Executor</text>
+<text class="ls" x="728" y="160">detached, unattended</text>
+<line class="band" x1="16" y1="186" x2="1084" y2="186"/>
+<rect class="bandpill" x="16" y="174" width="260.79999999999995" height="24" rx="12"/>
+<text class="bandt" x="30" y="190.5">1  ONCE PER REPO: BOOTSTRAP</text>
+<g class="box ow">
+<rect x="24" y="214" width="272" height="57" rx="8"/>
+<text class="t" x="36" y="239">Write the target state</text>
+<text class="b" x="36" y="258">then run <tspan class="mono">/orchestrate</tspan></text>
+</g>
+<g class="box ar">
+<rect x="340" y="214" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="239">Set up the repo</text>
+<text class="b" x="352" y="258">issue policy, corpus guide</text>
+</g>
+<path class="arr" d="M296 242.5 H338" marker-end="url(#ah)"/>
+<g class="box ar">
+<rect x="340" y="289" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="314">Distil the vision</text>
+<text class="b" x="352" y="333">vision skill: dialogue, playback</text>
+</g>
+<path class="arr" d="M510 271 V287" marker-end="url(#ah)"/>
+<g class="box ow">
+<rect x="24" y="368" width="272" height="57" rx="8"/>
+<text class="t" x="36" y="393">Confirm the vision</text>
+<text class="b" x="36" y="412">set K, pick the first slice</text>
+</g>
+<path class="arr" d="M340 334 H318 V384 H298" marker-end="url(#ah)"/>
+<g class="box ar">
+<rect x="340" y="368" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="393">Commit <tspan class="mono">.roadmap/</tspan></text>
+<text class="b" x="352" y="412">the bootstrap commit</text>
+</g>
+<path class="arr" d="M296 411 H338" marker-end="url(#ah)"/>
+<line class="band" x1="16" y1="465" x2="1084" y2="465"/>
+<rect class="bandpill" x="16" y="453" width="196.39999999999998" height="24" rx="12"/>
+<text class="bandt" x="30" y="469.5">2  EACH ARC: PHASE 0</text>
+<g class="box ar">
+<rect x="340" y="493" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="518">Plan the arc</text>
+<text class="b" x="352" y="537">corpus → rules → obligations → specs</text>
+</g>
+<g class="box ar">
+<rect x="340" y="568" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="593">Check, then start</text>
+<text class="b" x="352" y="612"><tspan class="mono">roadmap phase0 check</tspan>, <tspan class="mono">roadmap start</tspan></text>
+</g>
+<path class="arr" d="M510 550 V566" marker-end="url(#ah)"/>
+<g class="box ex">
+<rect x="724" y="568" width="352" height="57" rx="8"/>
+<text class="t" x="736" y="593">Validate and launch</text>
+<text class="b" x="736" y="612">smoke backends, take host lock</text>
+</g>
+<path class="arr" d="M680 596.5 H722" marker-end="url(#ah)"/>
+<line class="band" x1="16" y1="665" x2="1084" y2="665"/>
+<rect class="bandpill" x="16" y="653" width="251.6" height="24" rx="12"/>
+<text class="bandt" x="30" y="669.5">3  THE ARC RUNS UNATTENDED</text>
+<g class="box ex">
+<rect x="724" y="693" width="328" height="40" rx="8"/>
+<text class="t" x="736" y="718">Pack review</text>
+<rect class="chip" x="986" y="701" width="58" height="18" rx="9"/>
+<text class="chipt" x="1015" y="714" text-anchor="middle">model</text>
+</g>
+<g class="box ex"><rect x="724" y="753" width="328" height="252" rx="8"/></g>
+<text class="t ex" x="736" y="777">Each unit, in parallel</text>
+<g class="box step"><rect x="740" y="791" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="811">Plan-check</text>
+<rect class="chip" x="906" y="797" width="58" height="18" rx="9"/><text class="chipt" x="935" y="810" text-anchor="middle">model</text>
+<g class="box step"><rect x="740" y="833" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="853">Build in a worktree</text>
+<rect class="chip" x="906" y="839" width="58" height="18" rx="9"/><text class="chipt" x="935" y="852" text-anchor="middle">model</text>
+<path class="arr" d="M780 821 V831" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="875" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="895">Lanes: tests, witnesses</text>
+<path class="arr" d="M780 863 V873" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="917" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="937">Gate</text>
+<rect class="chip" x="906" y="923" width="58" height="18" rx="9"/><text class="chipt" x="935" y="936" text-anchor="middle">model</text>
+<path class="arr" d="M780 905 V915" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="959" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="979">Publish to the arc branch</text>
+<path class="arr" d="M780 947 V957" marker-end="url(#ah)"/>
+<line class="arr" x1="970" y1="890" x2="988" y2="890"/>
+<line class="arr" x1="970" y1="932" x2="988" y2="932"/>
+<path class="arr" d="M988 932 V848 H972" marker-end="url(#ah)"/>
+<text class="al" x="993" y="887">fix</text>
+<text class="al" x="993" y="901">round</text>
+<path class="arr" d="M764 733 V751" marker-end="url(#ah)"/>
+<g class="box ex">
+<rect x="724" y="1031" width="328" height="57" rx="8"/>
+<text class="t" x="736" y="1056">Lens audit</text>
+<rect class="chip" x="986" y="1039" width="58" height="18" rx="9"/>
+<text class="chipt" x="1015" y="1052" text-anchor="middle">model</text>
+<text class="b" x="736" y="1075">every N merges</text>
+</g>
+<path class="arr" d="M764 1005 V1029" marker-end="url(#ah)"/>
+<g class="box ex">
+<rect x="724" y="1106" width="328" height="57" rx="8"/>
+<text class="t" x="736" y="1131">Checkpoint</text>
+<rect class="chip" x="986" y="1114" width="58" height="18" rx="9"/>
+<text class="chipt" x="1015" y="1127" text-anchor="middle">model</text>
+<text class="b" x="736" y="1150">rules toward the vision</text>
+</g>
+<path class="arr" d="M764 1088 V1104" marker-end="url(#ah)"/>
+<path class="arr" d="M1052 1134.5 H1064 V773 H1054" marker-end="url(#ah)"/>
+<text class="al" x="1068" y="953.75" text-anchor="middle" transform="rotate(-90 1068 953.75)" dy="-6">admit · respec · cut</text>
+<g class="box ex"><rect x="724" y="1189" width="328" height="252" rx="8"/></g>
+<text class="t ex" x="736" y="1213">Flow loop</text>
+<g class="box step"><rect x="740" y="1227" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1247">Time every station</text>
+<g class="box step"><rect x="740" y="1269" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1289">Chart lead time</text>
+<path class="arr" d="M780 1257 V1267" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="1311" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1331">Name the constraint</text>
+<path class="arr" d="M780 1299 V1309" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="1353" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1373">Propose one lever</text>
+<rect class="chip" x="906" y="1359" width="58" height="18" rx="9"/><text class="chipt" x="935" y="1372" text-anchor="middle">model</text>
+<path class="arr" d="M780 1341 V1351" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="1395" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1415">Prove, apply, judge</text>
+<path class="arr" d="M780 1383 V1393" marker-end="url(#ah)"/>
+<line class="arr" x1="970" y1="1410" x2="988" y2="1410"/>
+<path class="arr" d="M988 1410 V1242 H972" marker-end="url(#ah)"/>
+<text class="al" x="993" y="1323">next</text>
+<text class="al" x="993" y="1337">run</text>
+<g class="box ar">
+<rect x="340" y="693" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="718">Wait for a wake</text>
+<text class="b" x="352" y="737"><tspan class="mono">roadmap watch --actionable</tspan></text>
+</g>
+<g class="box ar">
+<rect x="340" y="828" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="853">Handle parked units</text>
+<text class="b" x="352" y="872"><tspan class="mono">apply</tspan> · <tspan class="mono">steer</tspan> · <tspan class="mono">resume</tspan></text>
+</g>
+<path class="arr" d="M510 750 V826" marker-end="url(#ah)"/>
+<path class="arr dash" d="M724 842 H682" marker-end="url(#ah)"/>
+<text class="al" x="685" y="837" text-anchor="start">parks</text>
+<path class="arr" d="M680 873 H722" marker-end="url(#ah)"/>
+<text class="al" x="685" y="887" text-anchor="start">apply</text>
+<g class="box ar">
+<rect x="340" y="1106" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="1131">Review divergences</text>
+<text class="b" x="352" y="1150"><tspan class="mono">reverse</tspan> one it read wrong</text>
+</g>
+<path class="arr dash" d="M724 1134.5 H682" marker-end="url(#ah)"/>
+<g class="box ar">
+<rect x="340" y="1352" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="1377">Decide flow proposals</text>
+<text class="b" x="352" y="1396"><tspan class="mono">flow accept</tspan> · <tspan class="mono">flow reject</tspan></text>
+</g>
+<path class="arr dash" d="M724 1368 H682" marker-end="url(#ah)"/>
+<text class="al" x="685" y="1363" text-anchor="start">ask</text>
+<path class="arr" d="M680 1410 H722" marker-end="url(#ah)"/>
+<text class="al" x="685" y="1424" text-anchor="start">decide</text>
+<g class="box note">
+<rect x="24" y="693" width="272" height="40" rx="8"/>
+<text class="t" x="36" y="718">Away</text>
+</g>
+<g class="box ow">
+<rect x="24" y="828" width="272" height="57" rx="8"/>
+<text class="t" x="36" y="853">Answer a question</text>
+<text class="b" x="36" y="872">any time</text>
+</g>
+<path class="arr dash" d="M296 856.5 H338" marker-end="url(#ah)"/>
+<g class="box ow">
+<rect x="24" y="1106" width="272" height="57" rx="8"/>
+<text class="t" x="36" y="1131">Approve</text>
+<text class="b" x="36" y="1150">owner-only acts, &gt;$10, legal</text>
+</g>
+<path class="arr dash" d="M340 1134.5 H298" marker-end="url(#ah)"/>
+<line class="band" x1="16" y1="1481" x2="1084" y2="1481"/>
+<rect class="bandpill" x="16" y="1469" width="352.79999999999995" height="24" rx="12"/>
+<text class="bandt" x="30" y="1485.5">4  ARC COMPLETE: CHECK IN, THEN CHAIN</text>
+<g class="box ex">
+<rect x="724" y="1509" width="352" height="57" rx="8"/>
+<text class="t" x="736" y="1534">Arc complete</text>
+<text class="b" x="736" y="1553">opens a stacked PR</text>
+</g>
+<g class="box ar">
+<rect x="340" y="1509" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="1534">Check in</text>
+<text class="b" x="352" y="1553"><tspan class="mono">roadmap brief</tspan> + questions</text>
+</g>
+<path class="arr dash" d="M724 1537.5 H682" marker-end="url(#ah)"/>
+<text class="al" x="690" y="1531.5" text-anchor="start">wake</text>
+<g class="box ow">
+<rect x="24" y="1509" width="272" height="57" rx="8"/>
+<text class="t" x="36" y="1534">Read and acknowledge</text>
+<text class="b" x="36" y="1553">answer what only you can</text>
+</g>
+<path class="arr dash" d="M340 1537.5 H298" marker-end="url(#ah)"/>
+<g class="box ar">
+<rect x="340" y="1588" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="1613">Next arc, or stop</text>
+<text class="b" x="352" y="1632">↺ next arc: back to 2</text>
+</g>
+<path class="arr" d="M510 1566 V1586" marker-end="url(#ah)"/>
+<g class="box ow">
+<rect x="24" y="1588" width="272" height="40" rx="8"/>
+<text class="t" x="36" y="1613">Merge the stacked PRs</text>
+</g>
+<path class="arr" d="M340 1616.5 H298" marker-end="url(#ah)"/>
+<text class="al" x="332" y="1610.5" text-anchor="end">stop</text>
+</svg>
