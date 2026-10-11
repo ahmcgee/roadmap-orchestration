@@ -50,7 +50,7 @@
 // snapshot chain completes first and the docs publication waits for its release.
 //
 // Eligibility (G10): an active P1 finding over an obligation the unit's approval selects (its fingerprint's
-// `obligationRevs`), which its spec does not repair, blocks publication (`findingBlocking`). Re-checked under the slot
+// `obligationRevs`, plus any its approved commit selects at the tip now), which its spec does not repair, blocks publication (`findingBlocking`). Re-checked under the slot
 // before a candidate records green (-> `finding-blocked`, uncharged), immediately before the unit's `ff` intent (the
 // frozen `ff` vocabulary has no `finding-blocked`: -> `cas-stale`, whose fresh candidate records it), and in recovery's
 // `ff` redo (`unitRedo`: a blocked unit's CAS is not redone).
@@ -99,7 +99,7 @@ import {
 } from './lanes.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
-import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, latestMergein, loadUnitSpec, record, start } from './stages.ts';
+import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
@@ -743,16 +743,20 @@ function preemptible(ctx: StageContext, unit: UnitId, parent: StageParent): Pree
 // Eligibility (G10)
 
 /**
- * The first active P1 finding (by id) over an obligation the unit's approval selects that its spec does not repair
- * (a finding repair repairs its obligation), or null (G10): src/holistic/findings.ts `p1Blocking` over the fold's
- * findings, read at this moment (so a P1 opened while the candidate ran blocks its ff).
+ * The first active P1 finding (by id) over an obligation the unit's approval selects, or its approved commit selects at
+ * the integration tip now (one a sibling's publication added, which does not void the approval: `fingerprintHolds`),
+ * that its spec does not repair (a finding repair repairs its obligation), or null (G10): src/holistic/findings.ts
+ * `p1Blocking` over the fold's findings, read at this moment (so a P1 opened while the candidate ran blocks its ff).
  */
 export function findingBlocking(ctx: StageContext, unit: PlanUnit): FindingBlock | null {
   const approval = ctx.journal.view.unit(unit.id).approval;
   if (approval === null) throw new Error(`unit ${unit.id}: eligibility is checked only for an approved unit`);
-  const selected = new Set(obligationRevsOf(approval.fingerprint).map((r) => r.id));
-  if (selected.size === 0) return null;
-  return p1Blocking(ctx.journal.view.holistic().findings, selected, repairedObligations(ctx, unit));
+  const chosen = new Set([
+    ...obligationRevsOf(approval.fingerprint).map((r) => r.id),
+    ...selected(ctx, unit, integrationTip(ctx), approval.fingerprint.unitCommit).map((o) => o.id),
+  ]);
+  if (chosen.size === 0) return null;
+  return p1Blocking(ctx.journal.view.holistic().findings, chosen, repairedObligations(ctx, unit));
 }
 
 /** The re-check recovery's `ff` redo takes (ops.ts `integrationFfOp`): the approval at the tip now, and eligibility. */

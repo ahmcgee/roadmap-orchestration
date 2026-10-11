@@ -918,7 +918,8 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
   sha of a corpus arc; `obligationRevs` covers the
   selected, non-exempt obligations at the gated tip); any change invalidates the
   gate and the unit re-enters at the earliest invalidated stage. A moved tip means a fresh candidate, not a new
-  gate.
+  gate: an obligation selected only at the later tip was not judged, so the candidate's lanes witness it and the
+  approval stands, while a judged obligation's rev change, exemption or deselection re-gates.
 - **Merge** (candidate-first): in the integration slot a candidate worktree makes a `--no-ff` merge onto the
   current tip, held on the named ref `refs/roadmap-run/<arc>/candidate/<unit>`. The **transient check** (code)
   runs first (G17, H15): a unit (`transientRules: 'm3'` in its dispatch record) may touch only its pinned scope and

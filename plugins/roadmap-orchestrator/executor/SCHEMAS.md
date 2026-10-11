@@ -614,7 +614,11 @@ contracts, the architecture doc and its digest when the plan names one, at the g
 id; the selected, non-exempt obligations at the gated tip; absent exactly when there are none, non-empty when
 present, so a fingerprint with none has the M2 shape; `obligationRevsOf`)}`. Recorded with the
 approval as an `approval` fact. Recomputed at the tip being published onto before `integration.ff`; any mismatch
-re-gates. A cited ruling that is withdrawn leaves the set, which changes the fingerprint; M1's ledger has no other
+re-gates (`fingerprintHolds`), except that `obligationRevs` binds the obligations the gate judged: each must still be
+selected, non-exempt and at its judged rev at the new tip, while one selected there only now (a sibling's publication
+latched it, a mapping edit widened the selection) is not one the gate judged, does not void the approval, and is
+witnessed by the candidate's lanes and counted by eligibility (G10) like any selected obligation (paid M4b run 6: a
+queued approval re-gated on every sibling merge). A cited ruling that is withdrawn leaves the set, which changes the fingerprint; M1's ledger has no other
 supersede, so there every active ruling is at rev 1. M3 (Checkpoint A): a ruling's rev is `effectiveRulingRevs` over
 the sidecars in force (1 plus, per partial superseder, its own rev plus 1 once it is no longer active), and the
 approval records the fingerprint captured with the gate's `judgment-inputs`, never one taken when the call is read. An uncited contract is outside the
@@ -1602,7 +1606,8 @@ residues, the snapshot closure):
    attempt that is running or starts later is killed `proc.kill{reason: preempt}`; the stage records `preempted`
    (uncharged) and releases the slot. `sched.json`'s queue lists unit waiters only (B7 adds `jobQueue`).
 5. **Eligibility (G10)** is `findingBlocking` (src/pipeline/integrate.ts), read from the fold's findings: an active
-   (open, owned or fixed-on-branch) P1 over an obligation of the approval's `obligationRevs` that the unit's spec does
+   (open, owned or fixed-on-branch) P1 over an obligation of the approval's `obligationRevs`, or one the approved commit
+   selects at the integration tip now (a joiner, "Approval fingerprint and dispatch record"), that the unit's spec does
    not repair (a finding repair repairs its obligation). Checked before a candidate records green (→
    `finding-blocked`), immediately before a unit `ff` intent (the frozen ff vocabulary has no `finding-blocked`: →
    `cas-stale`, whose fresh candidate records it), and by recovery before redoing a unit CAS (`unitRedo`). The
