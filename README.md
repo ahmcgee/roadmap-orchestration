@@ -30,17 +30,14 @@ The binding design is [`DESIGN-1.0.md`](DESIGN-1.0.md). The 0.x design record is
 /plugin install roadmap-orchestrator@roadmap-orchestration
 ```
 
-Then, in the repo you want to build in, distil the vision the arc steers by:
+Then, in the repo you want to build in, run:
 
 ```
-/roadmap-orchestrator:vision
+/roadmap-orchestrator:orchestrate
 ```
 
-and run the arc:
-
-```
-/roadmap-orchestrator:orchestrate <roadmap files...> --until "<milestone>"
-```
+The first run bootstraps the repo and distils the vision with you (it runs the `vision` skill itself). Run
+`/roadmap-orchestrator:vision` on its own later, between arcs, to recalibrate the vision.
 
 For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 
@@ -54,10 +51,11 @@ detached Node process that owns every process, git operation and lock, and calls
 diagram) only where a judgment is needed.
 
 **1. Bootstrap, once per repo.** You write the target state: detailed documents of what the product must become,
-the corpus. `/roadmap-orchestrator:vision` distils your vision in dialogue, one question at a time, and plays back
-the decisions it would make on your behalf. You confirm it explicitly, set K (how many arcs may run past your last
-acknowledged check-in) and pick the first slice of the vision to build. The architect compiles
-`.roadmap/vision.json`, writes the corpus guide, checks the repo's issue policy and commits `.roadmap/`.
+the corpus. Then you run `/roadmap-orchestrator:orchestrate`. The architect checks the repo's issue policy and
+writes the corpus guide, then runs the `vision` skill: it distils your vision in dialogue, one question at a time,
+and plays back the decisions it would make on your behalf. You confirm it explicitly, set K (how many arcs may run
+past your last acknowledged check-in) and pick the first slice of the vision to build. The architect compiles
+`.roadmap/vision.json` and commits `.roadmap/`.
 
 **2. Phase 0, each arc.** The architect plans the arc in session, fanning the reading out to subagents. Every
 normative claim in the corpus becomes one rule (`T-n`); the corpus is pinned; each rule the slice needs becomes a
