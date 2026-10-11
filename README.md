@@ -67,18 +67,32 @@ backend and takes the host lock.
 **3. The run, unattended for days.** A pack review reads the whole plan before any unit is admitted. Units then
 run in parallel across the DAG under resource locks: plan-check, a build in the unit's own git worktree, the
 lanes (tests, required witnesses, mutation smoke), a fresh-context gate, and publication to the arc branch. A red
-lane or gate sends the unit back to its build for a fix round. Every few merges the checkpoint audits the arc
-against the vision, admits repair or opportunity units and records each divergence; the flow loop names the
-bottleneck and proposes at most one change to how the arc runs. A crashed executor is restarted by its
-supervisor and recovers from its write-ahead log.
+lane or gate sends the unit back to its build for a fix round. A crashed executor is restarted by its supervisor
+and recovers from its write-ahead log.
 
 The architect waits on `roadmap watch --actionable`, which wakes it only on key events (a new needs-user item, a
-merge, a park, completion, your answer) and a 30-minute heartbeat. It adjudicates what the executor hands over
-(parked units, pack-review findings, checkpoint bundle requests, flow proposals) and steers only through the
-executor's commands: `apply` a revised plan, re-enter or `steer` a unit, `reverse` a divergence, `pause`, `stop`.
-You can answer an open question at any time with `roadmap answer <P-n> --text "…"`, and it applies at once. You
-are always asked first about anything irreversible, anything costing over $10, or anything with legal
-ramifications.
+merge, a park, completion, your answer) and a 30-minute heartbeat. It never runs a backend or touches the
+executor's state; it acts only through the executor's commands. A parked unit gets a revised spec (`apply`, then
+`resume`), a re-entry under a new id, or a `steer`. You can answer an open question at any time with
+`roadmap answer <P-n> --text "…"`, and it applies at once.
+
+**The checkpoint steers toward the vision.** Lens audits run every N merges, on a wall-clock timer and after a
+plan change: four model lenses look for broken invariants, drift from the target, vacuous tests and anything that
+fails the vision. After every audit, and on a park that is a design problem, the checkpoint rules. It may admit a
+unit (a repair, an oversight within the slice, or one opportunity per arc that advances a clause outside it),
+respec, re-enter or cut a unit, or amend an obligation, each act citing the vision clauses it serves. Code
+validates the bundle and applies it, so its acts go straight back into the run without waiting for anyone. Every
+departure from the target is recorded as a divergence, which the architect reviews and can `reverse`. An act only
+you may approve becomes an `owner-request`; you are always asked first about anything irreversible, anything
+costing over $10, or anything with legal ramifications. What the checkpoint learns about the corpus becomes an
+amendment for the next Phase 0.
+
+**The flow loop tunes how the arc runs, never what it measures.** On its own triggers (a lead time outside the
+control chart's limits, a shift in the bottleneck, every 10 merges) a flow role names the constraint and proposes
+at most one change to a lever such as concurrency or a test runner's flags. Code drops a proposal that fails its
+checks, and the architect accepts or rejects the rest. Code applies an accepted change and judges it on the
+chart; one found worse comes back to the architect to revert. Tests, witnesses and judgment are the ruler and are
+never levers. Advice only you can act on, like more cores, reaches you at the next check-in.
 
 **4. Completion and chaining.** An arc is complete when every unit is merged, every obligation holds on the head
 and the checkpoint has nothing left to change. `roadmap pr` pushes the arc branch and opens its PR, stacked on the
