@@ -87,12 +87,32 @@ you may approve becomes an `owner-request`; you are always asked first about any
 costing over $10, or anything with legal ramifications. What the checkpoint learns about the corpus becomes an
 amendment for the next Phase 0.
 
-**The flow loop tunes how the arc runs, never what it measures.** On its own triggers (a lead time outside the
-control chart's limits, a shift in the bottleneck, every 10 merges) a flow role names the constraint and proposes
-at most one change to a lever such as concurrency or a test runner's flags. Code drops a proposal that fails its
-checks, and the architect accepts or rejects the rest. Code applies an accepted change and judges it on the
-chart; one found worse comes back to the architect to revert. Tests, witnesses and judgment are the ruler and are
-never levers. Advice only you can act on, like more cores, reaches you at the next check-in.
+**The flow loop tunes how the arc runs, never what it measures.** It borrows from the Theory of Constraints (where
+to act) and statistical process control (when to act). Code does the diagnosis; a model only proposes.
+
+- **Time every station.** Each merged unit's lead time is cut into stations: the service time of each stage
+  (plan-check, build, lanes, gate, …) and the wait in front of it, the integration slot (candidate, suite lanes, arc
+  lanes, fast-forward), and time held. Code also measures cpu wait for every process tree it launches.
+- **Chart lead time.** Lead times go on a control chart (XmR, log scale) whose limits come from earlier arcs on the
+  same host, or else from this arc's first five merges. Only a special cause starts a run: a merge or a still-running
+  unit above the upper limit, or a worsening trend. Ordinary variation starts nothing. A constraint shift, a closed
+  verdict and every 10 merges start one too, with a two-hour cooldown.
+- **Name the constraint.** Over the last ten merges, the constraint is the station with the largest mean wait in
+  front of it when that wait is at least 10 % of lead time, else the station with the largest mean service time.
+  When the host's cpu is saturated (work running at under half speed), the constraint is `host:cpu` ahead of both
+  rules, because a starved cpu inflates every station.
+- **Propose one lever.** A model in the flow role reads the measurements, may dispute code's constraint with a
+  reason, and proposes at most one change aimed at it: concurrency, a resource pool, a suite lane's test-runner
+  flags, sequencing, or the build seat's model class. Code drops a proposal that aims elsewhere, uses a lever you
+  declared a given, repeats a rejected one, or (at `host:cpu`) would add load. The architect accepts or rejects
+  the rest.
+- **Prove, apply, judge.** A suite-lane change is proved first: both argvs run on the same commit and must select
+  and pass exactly the same tests. The change then applies, and a verdict compares the next five samples against
+  the five before: improved, no effect, or worse. Guards (lead, rework, first-run reds) override, so a breach is
+  worse; a worse verdict comes back to the architect to revert.
+
+Tests, witnesses, arc lanes, judgment seats, lenses and the vision are the ruler and are never levers. Advice only
+you can act on, like more cores, reaches you at the next check-in.
 
 **4. Completion and chaining.** An arc is complete when every unit is merged, every obligation holds on the head
 and the checkpoint has nothing left to change. `roadmap pr` pushes the arc branch and opens its PR, stacked on the
