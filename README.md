@@ -48,9 +48,48 @@ For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 
 ![Swimlane flowchart: what you do, what the architect (Claude in your session) does, and what the executor runs unattended, across bootstrap, Phase 0, the run and completion](docs/flow.svg)
 
-You write the target state and confirm the vision once. From then on the architect plans each arc, the executor
-builds, tests, reviews and merges units on its own, and the architect handles what the executor hands back. You
-hear from it at each arc's check-in, answer what only you can decide, and merge the stacked PRs.
+Three parties take part. **You** own the target and the vision. The **architect** is Claude in your session,
+running the `vision` and `orchestrate` skills: it does the judgment code cannot do. The **executor** is a
+detached Node process that owns every process, git operation and lock, and calls models (marked `model` in the
+diagram) only where a judgment is needed.
+
+**1. Bootstrap, once per repo.** You write the target state: detailed documents of what the product must become,
+the corpus. `/roadmap-orchestrator:vision` distils your vision in dialogue, one question at a time, and plays back
+the decisions it would make on your behalf. You confirm it explicitly, set K (how many arcs may run past your last
+acknowledged check-in) and pick the first slice of the vision to build. The architect compiles
+`.roadmap/vision.json`, writes the corpus guide, checks the repo's issue policy and commits `.roadmap/`.
+
+**2. Phase 0, each arc.** The architect plans the arc in session, fanning the reading out to subagents. Every
+normative claim in the corpus becomes one rule (`T-n`); the corpus is pinned; each rule the slice needs becomes a
+testable obligation with its witness tests. Questions the vision cannot settle are ranked (`P-n`), each with the
+working assumption the arc acts on meanwhile, so nothing waits on you. Then the plan and one spec per unit,
+`roadmap phase0 check` until it is clean, and `roadmap start`. The executor refuses bad inputs, smokes each model
+backend and takes the host lock.
+
+**3. The run, unattended for days.** A pack review reads the whole plan before any unit is admitted. Units then
+run in parallel across the DAG under resource locks: plan-check, a build in the unit's own git worktree, the
+lanes (tests, required witnesses, mutation smoke), a fresh-context gate, and publication to the arc branch. A red
+lane or gate sends the unit back to its build for a fix round. Every few merges the checkpoint audits the arc
+against the vision, admits repair or opportunity units and records each divergence; the flow loop names the
+bottleneck and proposes at most one change to how the arc runs. A crashed executor is restarted by its
+supervisor and recovers from its write-ahead log.
+
+The architect waits on `roadmap watch --actionable`, which wakes it only on key events (a new needs-user item, a
+merge, a park, completion, your answer) and a 30-minute heartbeat. It adjudicates what the executor hands over
+(parked units, pack-review findings, checkpoint bundle requests, flow proposals) and steers only through the
+executor's commands: `apply` a revised plan, re-enter or `steer` a unit, `reverse` a divergence, `pause`, `stop`.
+You can answer an open question at any time with `roadmap answer <P-n> --text "…"`, and it applies at once. You
+are always asked first about anything irreversible, anything costing over $10, or anything with legal
+ramifications.
+
+**4. Completion and chaining.** An arc is complete when every unit is merged, every obligation holds on the head
+and the checkpoint has nothing left to change. `roadmap pr` pushes the arc branch and opens its PR, stacked on the
+previous arc's. The architect checks in with `roadmap brief`, a short preface and numbered questions, each with
+the assumption it acts on if you have no view. It does not wait for your answers: it chains into the next arc's
+Phase 0 with a slice chosen from the census, up to K arcs past your last acknowledged brief. It stops at K, when
+the vision has nothing left to advance, or when you tell it to. Acknowledging a brief frees the K budget; you can
+recalibrate the vision between arcs; and you merge the stacked PRs in order, first into `main`, each with a merge
+commit.
 
 ## Layout
 
