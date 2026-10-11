@@ -609,7 +609,7 @@ async function main(): Promise<void> {
       spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit(100) returns 212.\n\n## Lanes\n- unit: `node --test convert.test.ts`' },
       scope: [repoPattern('convert.ts'), repoPattern('convert.test.ts')],
       lanePrograms: [{ lane: laneId('unit'), argv0: 'node', resolved: { kind: 'program', realpath: absPath(process.execPath) } }],
-      checkouts: { tip: { path: accDir, at: TREE }, branch: null }, acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [laneId('unit')] },
+      checkouts: { tip: { path: accDir, at: TREE }, branch: null }, acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [laneId('unit')], delivered: [] },
     };
     const call = { ...seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm4a3-plan-check-acceptance', accDir, accInputs), schema: PLAN_CHECK_ACCEPTANCE_SCHEMA };
     await backend(ctx, 'm4a3.plan-check-acceptance', call, (v) => {

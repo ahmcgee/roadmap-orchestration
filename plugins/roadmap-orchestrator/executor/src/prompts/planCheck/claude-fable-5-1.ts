@@ -23,6 +23,8 @@
 // passes with the change reverted, so mutation smoke flags it by construction: it is a must-hold's witness.
 // Paid M4b run 5: a plan-check Grepped the directory above its checkouts and was refused; the readable dirs are named
 // exactly (named dirs and below, never above), and a refused read voids an approve (src/pipeline/stages.ts `readRefused`).
+// Paid M4b run 6: the acceptance shape lists the delivered obligations' witness test ids; an item restating one names it
+// as its obligation and reuses its exact id (refused otherwise), so the build never holds two names for one test.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
   acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,

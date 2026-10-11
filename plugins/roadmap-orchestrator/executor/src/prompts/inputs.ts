@@ -7,7 +7,7 @@
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
-import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
+import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
@@ -152,9 +152,12 @@ export type PlanCheckInputs = Readonly<{
 
 /**
  * What the acceptance shape needs beyond the uniform check: the spec's next free witness item id (R59: ids are
- * consecutive from it) and the arc lanes a witness item may name (the obligations file's lanes).
+ * consecutive from it), the arc lanes a witness item may name (the obligations file's lanes), and (paid M4b run 6) the
+ * witnesses of the obligations the unit delivers, already required by their exact ids, which an item restating one reuses.
  */
-export type PlanCheckAcceptance = Readonly<{ nextWitnessId: WitnessItemId; arcLanes: readonly LaneId[] }>;
+export type PlanCheckAcceptance = Readonly<{ nextWitnessId: WitnessItemId; arcLanes: readonly LaneId[]; delivered: readonly DeliveredWitness[] }>;
+/** One obligation the unit delivers or repairs, with its witness's lane and test ids (each required of the unit). */
+export type DeliveredWitness = Readonly<{ obligation: ObligationId; statement: string; lane: LaneId; testIds: readonly string[] }>;
 
 export type BuildInputs = Readonly<{
   spec: RenderedSpec;
@@ -599,6 +602,11 @@ Your previous answer on this unit redirected with a patch the executor refused, 
 export function acceptanceShapeText(a: PlanCheckAcceptance | null): string {
   if (a === null) return '';
   const lanes = a.arcLanes.length === 0 ? '(none: this arc declares no arc lanes, so no witness item can be written; say so in notes)' : a.arcLanes.join(', ');
+  const delivered = a.delivered.length === 0
+    ? 'This unit delivers no obligation with a witness, so obligation is null on every item.'
+    : `The obligations this unit delivers already name their witness tests, and the executor requires each of them by its exact id:
+${a.delivered.map((d) => `- ${d.obligation}: ${d.statement}\n  lane ${d.lane}, ${d.testIds.length === 1 ? 'test' : 'tests'} ${d.testIds.map((t) => JSON.stringify(t)).join(', ')}`).join('\n')}
+A clause one of these tests proves needs no second test. A witness item for such a clause sets obligation to that obligation's id and copies its lane and one of its test ids exactly; the executor refuses an item whose lane or test id differs. Never name a new test for behaviour one of these tests already proves: the build would then have to keep two names for one test, and renaming one to satisfy the other breaks the first.`;
   return `
 
 <acceptance_shape>
@@ -606,15 +614,18 @@ This check runs in the acceptance shape: an efficient model builds this unit, an
 
 In this shape a redirect may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted. A defect you would fix in another section goes in notes for the build and the gate, or, when it leaves the spec unbuildable, is an escalation.
 
-A witness item is {id, lane, testId, clause, skeleton}:
+${delivered}
+
+A witness item is {id, lane, testId, clause, skeleton, obligation}:
 - id: a new item takes the next free id, ${a.nextWitnessId}, and further new items the ids after it in order, written without leading zeros; replace names a witness id the spec already holds.
 - lane: one of the arc lanes: ${lanes}.
 - testId: the test's exact id as that lane's reporter gives it (for node --test, the suite and test names joined by " > ").
   Name only a test the change newly makes pass. A check that existing behaviour is preserved passes with the change reverted, so mutation smoke reports it against the unit; it is not a witness item but belongs to a must-hold obligation's witness.
 - clause: the id of the acceptance clause it witnesses.
 - skeleton: the test's shape in one or two plain sentences: the entry point it drives, the fixture it injects, what it asserts. A negative witness drives the real entry point with an injected fixture, never a helper.
+- obligation: the id of the obligation above whose witness test this item names, or null when none of their tests proves the clause.
 
-Approve when every acceptance clause that admits a test already has an active witness item that would fail without the behaviour.
+Approve when every acceptance clause that admits a test already has an active witness item, or a witness test of an obligation above, that would fail without the behaviour.
 </acceptance_shape>`;
 }
 

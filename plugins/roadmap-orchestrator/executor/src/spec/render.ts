@@ -41,7 +41,7 @@ function lane(l: LaneDef & Readonly<{ state: ItemState }>): string {
 
 function witness(w: WitnessItemDef & Readonly<{ state: ItemState }>): string {
   return [
-    `- ${code(w.id)} [${w.state}] lane ${code(w.lane)} test ${code(w.testId)} witnesses ${code(w.clause)}`,
+    `- ${code(w.id)} [${w.state}] lane ${code(w.lane)} test ${code(w.testId)} witnesses ${code(w.clause)}${w.obligation === undefined ? '' : ` (the witness of ${w.obligation})`}`,
     `  - skeleton: ${w.skeleton.split('\n').join('\n    ')}`,
   ].join('\n');
 }

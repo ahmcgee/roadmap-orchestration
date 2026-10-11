@@ -74,7 +74,7 @@ import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence, holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type ImplementerSessionId, type InvocationId, witnessItemIdOf, witnessItemSeq, type JudgmentSessionId, type LaneId, type ResourceInstance, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
+  type ImplementerSessionId, type InvocationId, type ObligationId, compareIds, witnessItemIdOf, witnessItemSeq, type JudgmentSessionId, type LaneId, type ResourceInstance, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -100,7 +100,7 @@ import { specCensusMismatches } from '../holistic/rederive.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, BuildAssess, Checkout, CorpusInput, DocText, FastLane, GateTargetInput, PlanCheckAcceptance, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex,
+  ArchitectureInput, BuildAssess, Checkout, CorpusInput, DeliveredWitness, DocText, FastLane, GateTargetInput, PlanCheckAcceptance, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex,
   RulingText,
   TargetInput, VisionInput,
 } from '../prompts/inputs.ts';
@@ -610,11 +610,32 @@ export function planCheckShape(ctx: StageContext, unit: UnitId): PlanCheckShape 
   return builder === 'efficient' ? 'acceptance' : 'in-session';
 }
 
-/** The acceptance shape's inputs (R59): the spec's next free witness item id and the arc lanes an item may name. */
-function acceptanceOf(ctx: StageContext, spec: SpecM1): PlanCheckAcceptance {
+/** The arc lanes in force, ascending: the lanes a witness item may name. */
+const arcLanesOf = (ctx: StageContext): readonly LaneId[] => [...(holisticInForce(ctx).obligations?.lanes.map((l) => l.id) ?? [])].sort();
+
+/**
+ * Paid M4b run 6: the witnesses of the obligations `unit` delivers or repairs at `tip` (`requiredAt`'s target obligation
+ * rows), one entry per obligation, ascending by id. Each test id is already required of the unit by its exact id.
+ */
+function deliveredWitnesses(ctx: StageContext, unit: PlanUnit, tip: Sha): readonly DeliveredWitness[] {
+  const byId = new Map((holisticInForce(ctx).obligations?.obligations ?? []).map((o) => [o.id, o]));
+  const out = new Map<ObligationId, DeliveredWitness>();
+  for (const r of requiredAt(ctx, unit, tip)) {
+    if (r.role !== 'target' || r.source.type !== 'obligation') continue;
+    const o = byId.get(r.source.id);
+    if (o === undefined) throw new Error(`unit ${unit.id}: a required witness names ${r.source.id}, which the obligations in force do not hold`);
+    out.set(o.id, { obligation: o.id, statement: o.statement, lane: r.lane, testIds: [...(out.get(o.id)?.testIds ?? []), r.testId] });
+  }
+  return [...out.values()].sort((a, b) => compareIds(a.obligation, b.obligation));
+}
+
+/**
+ * The acceptance shape's inputs (R59): the spec's next free witness item id, the arc lanes an item may name, and the
+ * witnesses of the obligations the unit delivers at `tip`.
+ */
+function acceptanceOf(ctx: StageContext, unit: PlanUnit, spec: SpecM1, tip: Sha): PlanCheckAcceptance {
   const seqs = specWitnesses(spec).map((w) => witnessItemSeq(w.id));
-  const lanes = holisticInForce(ctx).obligations?.lanes.map((l) => l.id) ?? [];
-  return { nextWitnessId: witnessItemIdOf(Math.max(0, ...seqs) + 1), arcLanes: [...lanes].sort() };
+  return { nextWitnessId: witnessItemIdOf(Math.max(0, ...seqs) + 1), arcLanes: arcLanesOf(ctx), delivered: deliveredWitnesses(ctx, unit, tip) };
 }
 
 /** The schema file an acceptance-shape plan-check's launch names. */
@@ -664,7 +685,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       // R17: the vision in force, read-only context (the module marks it non-directive).
       vision: visionInput(ctx),
       // E (R59): an efficient builder's check under `by-builder` maps acceptance clauses to witness items.
-      acceptance: shape === 'acceptance' ? acceptanceOf(ctx, now.spec) : null,
+      acceptance: shape === 'acceptance' ? acceptanceOf(ctx, unit, now.spec, checkouts.tip.at) : null,
       priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
@@ -720,9 +741,32 @@ function evidenceRefusal(unit: PlanUnit, before: SpecM1, after: SpecM1): string 
   return added.length === 0 ? null : added.join('; ');
 }
 
-/** Why a redirect's patched spec `after` is not applied (`censusRefusal`, `evidenceRefusal`); null when it is. */
-function patchRefusal(ctx: StageContext, unit: PlanUnit, before: SpecM1, after: SpecM1): string | null {
-  const why = [censusRefusal(ctx, before, after), evidenceRefusal(unit, before, after)].filter((r) => r !== null);
+/**
+ * Paid M4b run 6: each witness item `after` adds or changes that names an obligation (`WitnessItemDef.obligation`) names
+ * one the unit delivers at `tip` (`deliveredWitnesses`), and that obligation witness's lane and one of its test ids
+ * exactly: the build then holds one required name per test, never two to rename between. Null when it does.
+ */
+function witnessReuseRefusal(ctx: StageContext, unit: PlanUnit, before: SpecM1, after: SpecM1, tip: Sha): string | null {
+  const had = new Set(specWitnesses(before).map((w) => canonicalJson(w)));
+  const linked = specWitnesses(after).filter((w) => w.state === 'active' && w.obligation !== undefined && !had.has(canonicalJson(w)));
+  if (linked.length === 0) return null;
+  const delivered = deliveredWitnesses(ctx, unit, tip);
+  const tests = (d: DeliveredWitness): string => `lane ${d.lane}, test ${d.testIds.map((t) => JSON.stringify(t)).join(' or ')}`;
+  const why = linked.flatMap((w) => {
+    const d = delivered.find((x) => x.obligation === w.obligation);
+    if (d === undefined) {
+      const named = delivered.length === 0 ? 'this unit delivers none, so set it to null' : `set it to null or to one of ${delivered.map((x) => x.obligation).join(', ')}`;
+      return [`witness item ${w.id} names obligation ${w.obligation}, which is not an obligation this unit delivers with a witness: ${named}`];
+    }
+    if (w.lane === d.lane && d.testIds.includes(w.testId)) return [];
+    return [`witness item ${w.id} names ${d.obligation}'s witness, so it takes that witness's exact lane and test id (${tests(d)}), not lane ${w.lane}, test ${JSON.stringify(w.testId)}`];
+  });
+  return why.length === 0 ? null : why.join('; ');
+}
+
+/** Why a redirect's patched spec `after` is not applied (`censusRefusal`, `evidenceRefusal`, `witnessReuseRefusal`); null when it is. */
+function patchRefusal(ctx: StageContext, unit: PlanUnit, before: SpecM1, after: SpecM1, tip: Sha): string | null {
+  const why = [censusRefusal(ctx, before, after), evidenceRefusal(unit, before, after), witnessReuseRefusal(ctx, unit, before, after, tip)].filter((r) => r !== null);
   return why.length === 0 ? null : why.join('; ');
 }
 
@@ -736,7 +780,8 @@ function planCheckPriorInvalid(ctx: StageContext, planUnit: PlanUnit, spec: Spec
   if (spawn === undefined || spawn.parent.type !== 'stage') return null;
   const out = judgmentOutput(ctx, spawn, validatePlanCheckOutput);
   if (out === null || out.patch === null) return null;
-  if (ctx.journal.view.judgmentInputs(unit, 'plan-check', spawn.parent.attempt)?.specRev !== spec.rev) return null;
+  const inputs = ctx.journal.view.judgmentInputs(unit, 'plan-check', spawn.parent.attempt);
+  if (inputs === null || inputs.specRev !== spec.rev) return null;
   const by = { role: 'planCheck', routingRev: dispatchOf(ctx.journal.view, unit).routingRev, inv: invocationId(spawn.op, spawn.ordinal) } as const;
   let after: SpecM1;
   try {
@@ -745,7 +790,7 @@ function planCheckPriorInvalid(ctx: StageContext, planUnit: PlanUnit, spec: Spec
     if (error instanceof SpecPatchOpError) return null;
     throw error;
   }
-  return patchRefusal(ctx, planUnit, spec, after);
+  return patchRefusal(ctx, planUnit, spec, after, inputs.tip);
 }
 
 /**
@@ -799,7 +844,7 @@ export async function planCheckRead(
     throw error;
   }
   if (acceptance) {
-    const lanes = new Set(acceptanceOf(ctx, spec).arcLanes);
+    const lanes = new Set(arcLanesOf(ctx));
     if ((out.patch ?? []).some((op) => (op.op === 'add' || op.op === 'replace') && op.section === 'witnesses' && !lanes.has(op.item.lane))) {
       return done(record(ctx, parent, 'malformed'));
     }
@@ -828,9 +873,10 @@ export async function planCheckRead(
       if (error instanceof SpecPatchOpError || error instanceof SpecPatchStaleError) return done(record(ctx, parent, 'malformed'));
       throw error;
     }
-    // Run 10 (C): a patch citing an out-of-slice rule, or (M4b run 3) declaring the unit's own paths lane evidence, is not
-    // applied; the retry is told why (`planCheckPriorInvalid`).
-    if (patchRefusal(ctx, unit, spec, after) !== null) return done(record(ctx, parent, 'malformed'));
+    // Run 10 (C): a patch citing an out-of-slice rule, (M4b run 3) declaring the unit's own paths lane evidence, or (M4b
+    // run 6) restating a delivered obligation's witness under another id, is not applied; the retry is told why
+    // (`planCheckPriorInvalid`).
+    if (patchRefusal(ctx, unit, spec, after, captured.tip) !== null) return done(record(ctx, parent, 'malformed'));
   }
   if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx, pinned, out.risk, { rev: specRev, sha256: seenSha256 });
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.

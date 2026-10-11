@@ -854,8 +854,11 @@ export type SpecM1 = Readonly<{
 /**
  * A witness item (M4a rev 3): test `testId` of arc lane `lane` witnesses acceptance clause `clause`; `skeleton` is the
  * test's shape as the spec states it. D1 requires its active items (`requiredWitnesses`, src/holistic/required.ts).
+ * `obligation` (paid M4b run 6): the obligation the unit delivers whose witness already proves the clause; the item then
+ * names that witness's lane and one of its test ids exactly (a plan-check redirect is refused otherwise), so the build
+ * never holds two required names for one test. Absent: no obligation's witness proves it (lasting).
  */
-export type WitnessItemDef = Readonly<{ id: WitnessItemId; lane: LaneId; testId: string; clause: ClauseId; skeleton: string }>;
+export type WitnessItemDef = Readonly<{ id: WitnessItemId; lane: LaneId; testId: string; clause: ClauseId; skeleton: string; obligation?: ObligationId }>;
 
 /** What a repair names: a finding (`F-<n>`) or an obligation (`I-<n>`). */
 export type RepairRef = FindingId | ObligationId;
@@ -887,9 +890,10 @@ function noteFields(f: Fields): NoteDef {
   return { id: f.get('id', cid), text: f.get('text', str) };
 }
 function witnessItemFields(f: Fields): WitnessItemDef {
+  const obligation = f.optional('obligation', (v, p) => obligationId(v, p));
   return {
     id: f.get('id', (v, p) => witnessItemId(v, p)), lane: f.get('lane', (v, p) => laneId(v, p)), testId: f.get('testId', str), clause: f.get('clause', cid),
-    skeleton: f.get('skeleton', str),
+    skeleton: f.get('skeleton', str), ...(obligation === undefined ? {} : { obligation }),
   };
 }
 function stated<T>(fields: (f: Fields) => T): Read<Stated<T>> {
