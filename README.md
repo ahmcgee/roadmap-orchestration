@@ -44,6 +44,14 @@ and run the arc:
 
 For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 
+## How an arc runs
+
+![Swimlane flowchart: what you do, what the architect (Claude in your session) does, and what the executor runs unattended, across bootstrap, Phase 0, the run and completion](docs/flow.svg)
+
+You write the target state and confirm the vision once. From then on the architect plans each arc, the executor
+builds, tests, reviews and merges units on its own, and the architect handles what the executor hands back. You
+hear from it at each arc's check-in, answer what only you can decide, and merge the stacked PRs.
+
 ## Layout
 
 ```
@@ -53,6 +61,7 @@ plugins/roadmap-orchestrator/
   executor/                         # the 1.0 executor (TypeScript on Node 24)
   skills/orchestrate/               # SKILL.md (M1 stub), RATIONALE-1.0.md, templates/
   skills/vision/                    # SKILL.md: distil and calibrate the arc's vision in dialogue
+docs/flow.svg                       # how an arc runs: who does what
 DESIGN-1.0.md                       # binding 1.0 design brief
 ```
 
