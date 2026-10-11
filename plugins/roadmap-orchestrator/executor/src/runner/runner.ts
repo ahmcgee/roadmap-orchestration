@@ -3,8 +3,14 @@
 // quiescence on its own, so a dead executor cannot leave a workload past its deadline:
 //
 //   verify session leader → umask 022 → runner.json (child: null) → spawn workload → runner.json (child)
-//   → wait for child exit | deadlineAt | stall | cancel.json → wait until the workload is empty (killing it
-//   on deadline, stall or cancel, also while waiting for descendants) → exit.json → exit 0.
+//   → wait for child exit | deadlineAt | stall | cancel.json | reported → wait until the workload is empty (killing
+//   it on deadline, stall, cancel or reported, also while waiting for descendants) → exit.json → exit 0.
+//
+// Reported (src/runner/report.ts): a backend whose schema declares `final` ends with its final report, not with its
+// process. Once the latest report on its output is schema-valid and `final: true`, and the workload is still running
+// REPORT_GRACE_MS later (a pending wake-up or monitor keeps the CLI alive, or descendants outlive it), the runner kills
+// it with cause `reported` and the adapter reads that report. An interim report (`final: false`, a turn ended to wait)
+// never ends anything; waiting is unrestricted until the final report, and the deadline stays the backstop.
 //
 // Cpu wait (M4b rev 3): at every poll the runner reads the schedstat of every thread of the workload
 // (src/host/pressure.ts `WorkloadCpu`: the members when the stall watchdog or the descendants' wait scans
@@ -32,6 +38,7 @@ import { type ChildEnd, type ExitCause, type ExitFile, type KillReason, type Pro
 import { type IsoTime, absPath, isoTimeOf } from '../core/values.ts';
 import { WorkloadCpu, pressureAvailability } from '../host/pressure.ts';
 import { runnerFiles } from './files.ts';
+import { REPORT_GRACE_MS, reportWatch } from './report.ts';
 
 /** cancel.json is polled at this interval while the child runs. */
 const CANCEL_POLL_MS = 500;
@@ -81,6 +88,19 @@ export async function runnerMain(): Promise<void> {
     return t - mark.since >= launch.stallMs;
   };
 
+  const report = reportWatch(launch.terminal);
+  let reportedSince: number | null = null;
+  /** The latest report has been final for REPORT_GRACE_MS (a newer interim report restarts the count). */
+  const reported = (): boolean => {
+    if (report === null) return false;
+    if (!report()) {
+      reportedSince = null;
+      return false;
+    }
+    reportedSince ??= Date.now();
+    return Date.now() - reportedSince >= REPORT_GRACE_MS;
+  };
+
   const cpu = pressureAvailability() === 'available' ? new WorkloadCpu() : null;
   /**
    * One poll. The membership scan runs when the stall watchdog needs it or once the child has exited (descendants
@@ -93,6 +113,7 @@ export async function runnerMain(): Promise<void> {
     const cancel = files.read('cancel.json');
     if (cancel !== null) return cancel.reason === 'recovery' ? { cause: 'recovery-kill', reason: 'recovery' } : { cause: 'cancel', reason: cancel.reason };
     if (Date.now() >= deadline) return { cause: 'deadline', reason: 'deadline' };
+    if (reported()) return { cause: 'reported', reason: 'reported' };
     return members !== null && stalled(members) ? { cause: 'stall', reason: 'stall' } : null;
   };
 

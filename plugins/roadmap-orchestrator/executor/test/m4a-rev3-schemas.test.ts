@@ -316,7 +316,7 @@ describe('m4a-rev3 apply body (I2, step N3)', () => {
 
 describe('m4a-rev3 role schemas', () => {
   it('the build answer: experiments, and a per-call lane enum', () => {
-    const answer = { summary: 's', changedPaths: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }] };
+    const answer = { summary: 's', changedPaths: [], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [{ name: 'probe', argv: ['node', 'x.js'], exit: 1 }], final: true };
     assert.deepEqual(validateBuildOutput(answer).experiments, answer.experiments);
     assert.throws(() => buildOutputFor([laneId('lint')])(answer, 'build'), /one of lint/);
     assert.equal(buildOutputFor([laneId('unit')])(answer, 'build').lanesRun[0]!.lane, 'unit');

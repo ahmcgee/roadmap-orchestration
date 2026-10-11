@@ -335,7 +335,7 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
       ...of('u1', [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/one.js': 'export const one = 1;\n' }), gateStep({ decision: 'approve' })]),
       ...of('u2', [
         planCheckStep({ decision: 'approve', risk: 'high' }),
-        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [] } }] },
+        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true } }] },
         gateStep({ decision: 'approve' }),
       ]),
       { as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'emit', value: OK }] },

@@ -259,6 +259,8 @@ None.
   `cpu` reads null); the three fields then become required.
 - `readsDeniedOf` (src/core/upgrade.ts), once no gate call an executor before paid M4b run 5's fix closed is unconsumed: a
   reads.json without `denied` reads as none refused. With it, `denied` becomes required.
+- `buildFinalDefault` (src/core/upgrade.ts), once no build an executor before the report rule (2026-10-11) launched is
+  unconsumed: a build answer without `final` reads as final. With it, `final` becomes required in `buildOutputFor`.
 - `lensPatchMutantDefault` (src/core/upgrade.ts) and `LensMutant`'s `kind: patch` arm with `admitMutant`'s `checkPatch`
   branch, once no audit an executor before paid M4b run 3's fix started is running: a recorded lens answer's mutant
   `{patch, lane}` (a hand-written diff) reads as written. With it, a lens mutant is edits only.

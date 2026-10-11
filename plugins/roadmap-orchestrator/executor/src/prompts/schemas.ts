@@ -27,7 +27,7 @@ import {
   type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, lensPatchMutantDefault } from '../core/upgrade.ts';
+import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, lensPatchMutantDefault } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
@@ -249,7 +249,20 @@ export type BuildOutput = Readonly<{
   blockers: readonly string[];
   /** M4a rev 3 (I3): every other command it ran (never a fast lane); a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
   experiments: readonly Experiment[];
+  /**
+   * The report is the final one. A Claude session that ends a turn to wait (a wake-up, a monitor) must still answer the
+   * schema, and answers `final: false`; its runner ends the session a grace after the final report (src/runner/report.ts).
+   * The reader admits `true` only: a session that ended on an interim answer has not reported. Absent on an answer an
+   * earlier executor recorded (`buildFinalDefault`).
+   */
+  final: true;
 }>;
+
+/** The build answer's `final` (src/runner/report.ts): described in the schema, which the model reads at a forced turn end. */
+const S_FINAL: Schema = {
+  type: 'boolean',
+  description: 'true in your final report. false only when you end a turn to wait for something you started (a wake-up, a monitor, a background command) and will report again when it completes.',
+};
 
 /** The build answer's schema; `lanes` (M4a rev 3, I3) the spec's fast lane ids, which `lanesRun[].lane` then enumerates. */
 export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
@@ -259,6 +272,7 @@ export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
     lanesRun: sArr(sObj({ lane: lanes === null || lanes.length === 0 ? S_STR : sEnum(lanes), exit: S_INT })),
     blockers: sArr(S_STR),
     experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
+    final: S_FINAL,
   });
 }
 /**
@@ -275,6 +289,7 @@ const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), 
 export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutput> {
   return object((f) => {
     const experiments = f.optional('experiments', arrayOf(experiment));
+    const final = f.optional('final', literal(true));
     return {
       summary: f.get('summary', str),
       changedPaths: f.get('changedPaths', arrayOf(str)),
@@ -284,6 +299,7 @@ export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutpu
       })))),
       blockers: f.get('blockers', arrayOf(str)),
       experiments: experiments ?? buildExperimentsDefault(),
+      final: final ?? buildFinalDefault(),
     };
   });
 }
