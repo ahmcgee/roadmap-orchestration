@@ -92,7 +92,9 @@ runs under a small **runner** that owns the child, writes stdout/stderr to files
 and hosts the adapter, so the executor can die and reattach. The adapter, never the model, validates the
 native terminal result (`codex -o`; the `result` event of `claude -p --output-format stream-json`, whose
 tool calls also give the session's reads, `reads.json`). The runner waits for the workload to be
-empty (killing at the deadline), writes `exit.json`, and only then runs the adapter, which is pure over files and
+empty (killing at the deadline, or, for a build, a short grace after its final report: a build answer says `final:
+true`, an answer given only to wait for something it started says `final: false`, and waiting is unrestricted until the
+final report), writes `exit.json`, and only then runs the adapter, which is pure over files and
 so re-runnable, and atomically writes an invocation-bound `result.json`: `outcome: success | refusal | malformed | process-fault | cancelled` (a pause or stop) and, separately, `usage: known |
 unavailable{reason}`; missing usage never invalidates a judgment or triggers a rerun. The adapter never runs
 before quiescence, for backends, lanes, probes and teardown alike: containment empty is the precondition for

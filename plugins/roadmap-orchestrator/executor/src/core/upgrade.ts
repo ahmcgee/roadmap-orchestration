@@ -177,3 +177,11 @@ export function readsDeniedOf(reads: ReadsFile): readonly ToolRead[] {
   warnDefaulted('reads.denied', 'a reads.json without denied (written before paid M4b run 5); read as none refused');
   return [];
 }
+
+// The build answer's `final` (src/runner/report.ts): a build an earlier executor launched answered a schema without it.
+
+/** A build answer without `final` (launched before the report rule): its session ended by itself, so it was final. */
+export function buildFinalDefault(): true {
+  warnDefaulted('build.final', 'a build answer without final (launched before the report rule); read as final');
+  return true;
+}

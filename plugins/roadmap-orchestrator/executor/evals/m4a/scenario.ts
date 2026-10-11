@@ -98,7 +98,7 @@ const M1_READOUTS: Readonly<Record<string, readonly M1Step[]>> = Object.fromEntr
 ]]));
 
 const IMPLEMENTER = ['-p', '--permission-mode', 'bypassPermissions'];
-const report = (summary: string): ClaudeAct => ({ type: 'emit', value: { summary, changedPaths: [], lanesRun: [], blockers: [], experiments: [] } });
+const report = (summary: string): ClaudeAct => ({ type: 'emit', value: { summary, changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true } });
 const confirmGate = fakeSteps({ steps: [gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{ severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null }])] }, 'default').at(-1)!;
 
 /**

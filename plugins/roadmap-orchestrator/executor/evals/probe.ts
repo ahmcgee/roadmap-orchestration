@@ -48,6 +48,10 @@
 //                       reporter: exit 0 when both required ids pass, 78 listing the missing id when one is absent
 //   m4a3.sonnet-build   claude-sonnet-5-5 medium build through the real build prompt and buildSchemaFor (`experiments`): the
 //                       answer validates (buildOutputFor), the fast lane is reported, the file exists
+//   m4b.build-wait-report  (M4b, the report rule) claude-sonnet-5-5 low build through the real build prompt and buildSchemaFor,
+//                       told to start a 20 s command with Monitor and end its turn to wait: stdout must hold an interim
+//                       `final: false` result, then the final `final: true` one; the answer must validate with ready.txt and
+//                       hello.txt written, and the invocation end as `exited` or `reported`
 //   m4b.flow            (M4b) flow.arc (frontier, the default table with the m4b role set): the real flow prompt module over a
 //                       small synthetic FlowInputs (the integration slot the constraint, its suite lane serial); the answer
 //                       must validate (ROLE_VALIDATORS.flow); the detail names the proposal and code's argv-shape verdict on it
@@ -691,6 +695,39 @@ async function main(): Promise<void> {
         return false;
       }
     });
+  });
+
+  // M4b (the report rule, src/runner/report.ts): a Claude build told to wait on something slow it starts, by ending a turn,
+  // then report. Every turn end under --json-schema answers the schema, so the wait leaves an interim `final: false` result;
+  // the final report must follow it, and the invocation must end by itself or as `reported`, never on the interim answer.
+  await rev3('m4b.build-wait-report', async () => {
+    const worktree = gitRepo(join(root, 'wait-b-repo'), { 'README.md': 'fixture\n' });
+    const evidenceDir = dir(join(root, 'wait-b-evidence'));
+    const prompt = promptFor('build', SONNET.model);
+    const lanes = [UNIT];
+    const waitSpec = `${buildSpec}\n\n## Notes\n- Before writing hello.txt, wait for a slow dependency: start \`sh -c 'sleep 20 && echo ready > ready.txt'\` in the repository root with the Monitor tool, then end your turn without another tool call to wait for it. When it has completed and ready.txt exists, write hello.txt, run the fast lane and report.`;
+    const inputs = buildInputs(worktree, evidenceDir, null);
+    const done = await backend(ctx, 'm4b.build-wait-report', {
+      check: 'm4b-build-wait-report', routingRev: rev, tier: 'low', system: prompt.system, schema: buildSchemaFor(lanes), cwd: worktree,
+      rendered: prompt.render({ ...inputs, spec: { ...inputs.spec, markdown: waitSpec } }),
+      request: { kind: 'claude-build', triple: { ...SONNET, effort: 'low' }, session: freshClaudeImplementerSession(), evidenceDirs: [evidenceDir] },
+    }, (v) => {
+      try {
+        const out = buildOutputFor(lanes)(v, 'build');
+        const waited = existsSync(join(worktree, 'ready.txt'));
+        const wrote = existsSync(join(worktree, 'hello.txt'));
+        report(waited && wrote, 'm4b.build-wait-report.answer', `final=${out.final} ready.txt=${waited} hello.txt=${wrote} blockers=${JSON.stringify(out.blockers)}`);
+        return true;
+      } catch (e) {
+        report(false, 'm4b.build-wait-report.validate', e instanceof Error ? e.message : String(e));
+        return false;
+      }
+    });
+    const finals = readFileSync(join(done.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((e) => e['type'] === 'result').map((e) => (e['structured_output'] as { final?: unknown } | undefined)?.final ?? null);
+    report(finals.length >= 2 && finals.slice(0, -1).includes(false) && finals.at(-1) === true, 'm4b.build-wait-report.interim',
+      `result finals in order=${JSON.stringify(finals)} (an interim false, then the final true)`);
+    report(done.exit.cause === 'exited' || done.exit.cause === 'reported', 'm4b.build-wait-report.ended', `cause=${done.exit.cause} child=${JSON.stringify(done.exit.child)}`);
   });
 
   // M4b: the flow role on its own seat (flow.arc, the m4b role set in force), over a small synthetic FlowInputs.

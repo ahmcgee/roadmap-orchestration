@@ -8,6 +8,9 @@
 // text, and is not read. On an API failure the CLI prints the same object with `is_error: true`,
 // `result` = the CLI's error text and exits 1 (captured: an unknown model, api_error_status 404).
 //
+// A session that ends a turn while something it started is pending (a Monitor) runs on and prints a `result` per turn
+// (`result_index` 0, 1, ...; Claude Code 2.1.288), each with `structured_output`, since `--json-schema` forces one at
+// every turn end; the build answer's `final` tells the interim ones from the report (src/runner/report.ts).
 // The last `result` event is the reading; a stream without one (the CLI died or was killed first) has no
 // output and usage `no-result`. The `assistant` events' tool_use blocks of Read, Grep and Glob are the
 // session's reads (reads.json). The result's `permission_denials` (`[{tool_name, tool_use_id, tool_input}]`,

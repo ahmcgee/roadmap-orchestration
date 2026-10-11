@@ -35,8 +35,9 @@ export const procIdentity: Read<ProcIdentity> = object((f) => ({ pid: f.get('pid
 /**
  * `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. `supersede` (paid M4b run 3):
  * a revision changed the plan or vision an in-flight checkpoint call was captured on (src/holistic/checkpoint.ts).
+ * `reported`: the runner ends what a build left pending `REPORT_GRACE_MS` after its final report (src/runner/report.ts).
  */
-export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt', 'supersede'] as const;
+export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt', 'supersede', 'reported'] as const;
 export type KillReason = (typeof KILL_REASONS)[number];
 export const killReason: Read<KillReason> = oneOf(KILL_REASONS);
 
@@ -251,8 +252,13 @@ export type ChildEnd =
   | Readonly<{ type: 'exited'; code: number }>
   | Readonly<{ type: 'signalled'; signal: string }>
   | Readonly<{ type: 'spawn-failed'; error: string }>;
-/** `exited` = the child ended on its own; the others name why the runner killed the workload. */
-export type ExitCause = 'exited' | 'deadline' | 'stall' | 'cancel' | 'recovery-kill';
+/**
+ * `exited` = the child ended on its own; the others name why the runner killed the workload. `reported`: a backend's
+ * final, schema-valid report was on its output for `REPORT_GRACE_MS` while the workload still ran (a pending wake-up,
+ * monitor or background process; src/runner/report.ts): the report, not the kill, decides the outcome.
+ */
+export const EXIT_CAUSES = ['exited', 'deadline', 'stall', 'cancel', 'recovery-kill', 'reported'] as const;
+export type ExitCause = (typeof EXIT_CAUSES)[number];
 
 /**
  * A workload's cpu time as its runner observed it (M4b rev 3, src/host/pressure.ts `WorkloadCpu`): `wallMs` from spawn to
@@ -285,7 +291,7 @@ export const exitFile: Read<ExitFile> = object((f) => {
   let out: ExitFile = {
     ...binding(f),
     child: f.get('child', childEnd),
-    cause: f.get('cause', oneOf(['exited', 'deadline', 'stall', 'cancel', 'recovery-kill'] as const)),
+    cause: f.get('cause', oneOf(EXIT_CAUSES)),
     endedAt: f.get('endedAt', time),
     quiescedAt: f.get('quiescedAt', time),
   };
@@ -448,6 +454,8 @@ function processFault(exit: ExitFile): string | null {
 /**
  * The result.json precedence rule for backends, pure over the terminal files:
  * 1. cause cancel → cancelled{cancel.json's reason: pause|stop}, whatever the output (cancel.json must say so);
+ * 1a. cause reported → success with schema-valid output, whatever the child's end (the runner killed what the final
+ *    report left pending); otherwise malformed (the output changed after the runner read it as final);
  * 2. cause deadline/stall/recovery-kill, a signal, or a failed spawn → process-fault, whatever the output;
  * 3. non-zero exit with schema-valid output → malformed; non-zero exit without it → process-fault;
  * 4. exit 0 without schema-valid output → malformed;
@@ -459,6 +467,9 @@ export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, outp
       throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause, stop or supersede (a backend call is never preempted)`);
     }
     return { kind: 'cancelled', reason: cancel.reason };
+  }
+  if (exit.cause === 'reported') {
+    return schemaValid ? { kind: 'success', value: output as JsonValue } : { kind: 'malformed', detail: 'ended as reported, but the output is not schema-valid' };
   }
   const fault = processFault(exit);
   if (fault !== null) return { kind: 'process-fault', detail: fault };
@@ -484,6 +495,7 @@ export function classifyCommand(exit: ExitFile, cancel: CancelFile | null, expec
     }
     return { exitCode, verdict: 'cancelled', reason: cancel.reason };
   }
+  if (exit.cause === 'reported') throw new Error(`${exit.inv}: exit cause reported for a command (only a backend reports)`);
   if (exit.cause === 'stall') return { exitCode, verdict: 'stall' };
   if (processFault(exit) !== null) return { exitCode, verdict: 'process-fault' };
   return { exitCode, verdict: exitCode === expectedExit ? 'pass' : 'fail' };

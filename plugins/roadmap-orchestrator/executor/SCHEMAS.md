@@ -188,6 +188,7 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | `stage-outcome` gate and plan-check, `NeedsUserReason` (paid M4b run 5) | `+ read-denied` | none: dev.7 records never hold it |
 | `spec.json` witness item, `SpecPatchOp` witness item (paid M4b run 6) | `+ obligation?: ObligationId`: the delivered obligation whose witness the item restates (its lane and one of its test ids, exactly) | absent: no obligation's witness (lasting) |
 | Plan-check acceptance answer (paid M4b run 6) | witness item `+ obligation: ObligationId \| null` (`PLAN_CHECK_ACCEPTANCE_SCHEMA` requires it; null is spec.json's absent) | a recorded answer without it reads as null (lasting, no warning: the same meaning) |
+| Build answer, exit.json, kill reasons (the report rule, 2026-10-11) | `buildSchemaFor` `+ final: boolean` (required; the reader admits `true` only); exit cause `+ reported`, `KILL_REASONS + reported` (src/runner/report.ts) | a build answer without `final` reads as final (`buildFinalDefault`, warned once; scaffolding): its schema had none, so its runner never watched it and it ended with its session; dev.7 exit.json never holds `reported` |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
@@ -551,9 +552,18 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 | `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; required), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
 | `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only) |
-| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill, endedAt ≤ quiescedAt` |
+| `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below) |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
+
+**The report rule** (`src/runner/report.ts`, 2026-10-11). A backend terminal whose schema declares a top-level boolean
+`final` (the build answer) ends with its final report, not with its process. The runner watches `outputPath` (Claude:
+the stdout stream, its latest `result` event's `structured_output`; Codex: the `-o` file); once the latest report is
+schema-valid with `final: true` and the workload still runs `REPORT_GRACE_MS` (30 s) later (the CLI kept alive by a
+pending wake-up or monitor, or descendants outliving it), it kills the workload with cause `reported`. A newer report
+that is not final withdraws the count. An interim answer (`final: false`: Claude's `--json-schema` forces a
+StructuredOutput call at every turn end, so a turn ended to wait answers the schema too) never ends anything; the
+deadline stays the backstop. Every other schema (judgments, the assessment, the smoke) is never watched.
 
 `terminal` = `backend{purpose: backend|smoke, role, routingRev, schemaPath, outputPath, session}` \|
 `command{purpose: lane|teardown|probe|smoke, expectedExit}`. Sessions: a judgment role takes only
@@ -578,6 +588,8 @@ cancel.json or null):
 
 1. cause `cancel` → `cancelled{reason}` (cancel.json's `pause | stop`, or `supersede` for a backend; any other cancel.json is a loud error),
    whatever the output: an interruption, not a failure of the call;
+1a. cause `reported` → `success{value}` with schema-valid output, whatever the child's end (the runner killed what the
+   final report left pending); `malformed` otherwise;
 2. cause `deadline | stall | recovery-kill`, a signal, or a failed spawn → `process-fault`, whatever the output;
 3. non-zero exit with schema-valid output → `malformed`; non-zero exit without it → `process-fault`;
 4. exit 0 without schema-valid output → `malformed`;
@@ -2744,7 +2756,9 @@ cwd (relative to the worktree), env: {set, pass}, reporter, required: string[] (
 --numstat -` parses without applying; a patch git cannot parse is `corrupt` with git's stderr (an inapplicable one is
 `ok` here).
 
-**Role schemas** (`src/prompts/schemas.ts`). `BuildOutput + experiments: [{name, argv (non-empty), exit}]`;
+**Role schemas** (`src/prompts/schemas.ts`). `BuildOutput + experiments: [{name, argv (non-empty), exit}], + final: true`
+(the report rule: the schema's `final` is a boolean, the reader admits only `true`, so a session that ended on an interim
+answer is a malformed build and its resume quotes why);
 `buildSchemaFor(lanes | null)` (the per-call schema: `lanesRun[].lane` an enum of the spec's fast lanes when it has any;
 `experiments`) and `buildOutputFor(lanes | null)` (the validator, a lane outside `lanes` refused). `BUILD_SCHEMA` is `buildSchemaFor(null)`,
 the role's one schema as its prompt modules carry it (N3 deleted the pre-N3 literal); each call writes its own over
