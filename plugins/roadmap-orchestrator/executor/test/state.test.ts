@@ -80,7 +80,7 @@ describe('fold derives', () => {
     ]));
     assert.deepEqual(state.units, [{
       unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null, interrupted: null,
-      spec: { rev: 1, sha256: H }, reopened: null, pendingRevision: null, redirectBase: 0,
+      pressureHold: null, pressureHolds: 0, spec: { rev: 1, sha256: H }, reopened: null, pendingRevision: null, redirectBase: 0,
       park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null, bounds: DEFAULT_BOUNDS, entry: null, steering: null,
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {

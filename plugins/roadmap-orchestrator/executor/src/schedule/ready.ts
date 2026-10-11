@@ -17,12 +17,17 @@
 // entry is in the plan in force (same id and content), its fixer's lineage head is not merged, and the unit is outside
 // the fixer's lineage. A unit whose decided outcome is lanes `known-defect{id}` waits at `prepare` under
 // `known-defect{id, fixUnit}` while the plan's entry of that id is active for it; a removed entry releases it.
+//
+// M4b rev 3 (RC-11): a unit whose run was starved, or red under host pressure with its rerun pending, stays active and
+// re-runs its held stage once admitted; admission holds it under `host-pressure{inv}` until a scheduler tick since the
+// hold shows the host's cpu wait over a minute below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass (`pressureHoldWaits`, src/host/pressure.ts).
 import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarget } from '../core/events.ts';
 import type { ObligationId, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
 import { p1Blocking } from '../holistic/findings.ts';
+import { pressureHoldWaits } from '../host/pressure.ts';
 import { canonicalJson } from '../core/json.ts';
 import { lineageMembers } from '../input/envelope.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, knownDefectsOf, priorityOf } from '../input/plan.ts';
@@ -122,10 +127,11 @@ function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlySet<Obli
  * drain and run-only hold per unit; a parked backend (any class) and a tripped breaker only for the stages
  * that need them; `base-red` and an active P1 over a selected obligation (M3, G10; `specOf` names the unit's repairs)
  * for candidates; a known defect active for the unit (M4a rev 3, F4) for its `prepare` after a lanes `known-defect`;
- * recovery-required, log-corrupt, the supervisor crash limit and host items for every stage (A17).
+ * recovery-required, log-corrupt, the supervisor crash limit and host items for every stage (A17); M4b rev 3 (RC-11): a
+ * host-pressure hold (`UnitState.pressureHold`) until `pressureHoldWaits` releases it.
  */
 export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFactsOf): Admit {
-  return ({ view, plan, unit, stage, blocking, drains, tripped }: AdmitInput): Admission => {
+  return ({ view, plan, unit, stage, blocking, drains, tripped, pressure }: AdmitInput): Admission => {
     const c: AdmissionConstraint[] = [];
     const control = view.control();
     if (control.pausedAll) c.push({ type: 'paused', scope: 'arc' });
@@ -145,6 +151,8 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
       const hold = knownDefectHold(view, plan, unit.id);
       if (hold !== null) c.push(hold);
     }
+    const starved = view.unit(unit.id).pressureHold;
+    if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
     for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
     return c.length === 0 ? { kind: 'admit' } : { kind: 'wait', constraints: c };
   };

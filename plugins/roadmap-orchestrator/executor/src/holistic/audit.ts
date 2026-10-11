@@ -23,24 +23,30 @@
 //      the prior findings with their states, the contracts and rulings in force, the target (a corpus arc's materialised
 //      pin readable beside the checkout, `targetDirs`). A resumed job consumes a call it
 //      already made (`recordedArcCall`) and asks again only for one lost. Each report's findings are opened at once.
+//      A report with a draft refused at admission (below) asks that lens once more (M4b, paid run 3), as a later
+//      attempt, its prompt naming each refused draft with the reason (`LensInputs.retry`); the lens counts as reported
+//      only when the retry's report is admitted whole.
 //   5. The lens checkout removed, citing an evidence snapshot of it; then `audit-ended{covered, findings, suppressed,
-//      outcome}`: `completed` when every lens reported, else `abandoned` (a lens failed, or its backend parked:
-//      the rest are not asked). Coverage (coverage.ts) is only the lenses that reported, each from its watermark at
-//      the capture to the audited SHA, never beyond it: a merge that landed meanwhile stays outstanding.
+//      outcome, refused}`: `completed` when every lens reported, else `abandoned` (a lens failed, a draft was refused
+//      again, or its backend parked: the rest are not asked). Coverage (coverage.ts) is only the lenses that reported,
+//      each from its watermark at the capture to the audited SHA, never beyond it: a merge that landed meanwhile stays
+//      outstanding.
 //   6. The race (§2.5): when the integration head moved past the audited SHA, the P1s this audit cited are
 //      re-witnessed on the current head (`rewitnessP1s`, their obligations' lanes under the same job), so the
 //      checkpoint reads their observation there. The checkpoint (B6) calls it again before its own capture.
 //
 // Findings go through the one store (src/holistic/findings.ts `openFinding`: merge into an active key, suppress a
-// dismissed one unless a cited blob changed); code's P1s are `witnessFindingDraft`s. A vacuity mutant's patch is checked
-// at admission and kept by `admitMutant` (H6): a corrupt one refuses its draft, nothing opened, git's stderr reported.
+// dismissed one unless a cited blob changed); code's P1s are `witnessFindingDraft`s. A vacuity mutant is made a patch
+// against the audited tree at admission and kept by `admitMutant` (H6; M4b: from the lens's exact edits, which git turns
+// into the patch): one that cannot be made, or names no arc lane, refuses its draft, nothing opened, the reason recorded
+// in `audit-ended.refused` (and written to the executor's stderr).
 // Within one audit, a lens draft whose cross-lens key (`crossKey`: repo evidence paths, obligation, cause) names a finding
 // another lens opened or merged in this audit corroborates it (`finding-corroborated`, H7, R62) instead of opening a
 // second. The ids opened, merged or corroborated and the suppressed count become `audit-ended{findings, suppressed}`.
 // A specs-only drift audit (every trigger `drift{specsOnly}`, H2) runs the vision lens alone with `LensInputs.specsOnly`.
 // `gateHadPassed`: a unit had published before the audit started (the defect passed some gate).
 import { basename, isAbsolute, join, relative } from 'node:path';
-import type { AuditInputs, Parent } from '../core/events.ts';
+import type { AuditInputs, LensRefusal, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { crashPoint } from '../core/crash.ts';
@@ -59,10 +65,10 @@ import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
   type BackendCallOutcome, type JobParent, type StageContext, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, unitBranch, verdictOf,
 } from '../pipeline/dispatch.ts';
-import { type JourneyEnd, arcJourneyLane, dirtyPaths, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
+import { type JourneyEnd, arcJourneyLane, dirtyPaths, jobSeriesCheckout, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { promptFor } from '../prompts/index.ts';
-import { type FindingView, type LensInputs, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
+import { type FindingView, type LensInputs, type LensRetry, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
 import { renderSpec } from '../spec/render.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { type LensFinding, type LensOutput, validateLensOutput } from '../prompts/schemas.ts';
@@ -76,7 +82,7 @@ import { coverageBase, lensCoverage } from './coverage.ts';
 import { type FindingDraft, admitMutant, corroborateFinding, crossKey, openFinding, witnessFindingDraft } from './findings.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import {
-  FINDING_MOVES, LENS_KINDS, type FindingEvidence, type FindingLens, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, isExempt, parseObligations, parseVision,
+  FINDING_MOVES, LENS_KINDS, type MutantRef, type FindingEvidence, type FindingLens, type LensKind, type ObservationVerdict, type Obligations, type Vision, type WitnessRecord, isExempt, isMustHold, parseObligations, parseVision,
 } from './types.ts';
 
 /** What an audit needs: a stage context (processes, resources, routing), the arbiter's first-served waits, a clock. */
@@ -94,8 +100,8 @@ export type AuditOutcome =
   | Readonly<{ kind: 'incomplete'; job: JobId; end: JourneyEnd }>
   | Readonly<{
     kind: 'ended'; job: JobId; outcome: 'completed' | 'abandoned'; covered: readonly LensKind[]; findings: readonly FindingId[]; suppressed: number;
-    /** H6: the drafts refused at admission (a corrupt mutant patch), with git's stderr; also written to the executor's stderr. */
-    refused: readonly RefusedDraft[];
+    /** H6, M4b: the drafts refused at admission (a mutant that could not be made, or on no arc lane), as `audit-ended.refused` records them. */
+    refused: readonly LensRefusal[];
     rewitnessed: readonly Rewitnessed[];
   }>;
 
@@ -105,9 +111,12 @@ type Started = AuditState['started'];
 const NEVER = new AbortController().signal;
 const jobParent = (job: JobId): JobParent => ({ type: 'job', job });
 
-/** Where an audit's checkouts go: the lanes' series, the lenses', a re-witness series (each basename starts with the job id). */
-const checkoutOf = (ctx: StageContext, job: JobId, what: 'lanes' | 'lenses' | 'rewitness'): AbsPath =>
-  absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.${what}`));
+/**
+ * Where an audit's lenses' checkout goes (its basename starts with the job id). Its journey series (the lanes', a
+ * re-witness) each take their own (`jobSeriesCheckout`: `<job>.lanes-<k>`, `<job>.rewitness-<k>`).
+ */
+const lensesCheckout = (ctx: StageContext, job: JobId): AbsPath =>
+  absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.lenses`));
 
 // ---------------------------------------------------------------------------------------------------
 // Findings
@@ -116,7 +125,7 @@ const checkoutOf = (ctx: StageContext, job: JobId, what: 'lanes' | 'lenses' | 'r
  * The findings an audit opened or merged, how many it suppressed (src/holistic/findings.ts `openFinding`), the drafts it
  * refused, and (H7, R62) the finding each cross-lens key names in this audit.
  */
-type Tally = { ids: Set<FindingId>; suppressed: number; refused: RefusedDraft[]; cross: Map<Sha256Hex, Readonly<{ id: FindingId; lens: FindingLens }>> };
+type Tally = { ids: Set<FindingId>; suppressed: number; refused: LensRefusal[]; cross: Map<Sha256Hex, Readonly<{ id: FindingId; lens: FindingLens }>> };
 
 const isLensKind = (l: FindingLens): l is LensKind => (LENS_KINDS as readonly FindingLens[]).includes(l);
 
@@ -249,7 +258,7 @@ function findingViews(findings: readonly FindingState[], ids: readonly FindingId
 }
 
 /** A lens's inputs from the recorded ones: the vision first, then the tree at the audited SHA and the range it covers. */
-function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, from: Sha, checkout: AbsPath): LensInputs {
+function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, from: Sha, checkout: AbsPath, retry: LensRetry | null): LensInputs {
   const sha = s.integrationSha;
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
   const diff = (a: Sha, b: Sha): string => (a === b ? '' : git(ctx.repo, ['diff', '--no-color', '--no-renames', a, b]));
@@ -267,6 +276,7 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
     checkout,
     // M4a rev 3 (H2, R61): an audit every trigger of which is a specs-only drift reads those units' specs.
     specsOnly: changedSpecs(ctx, s),
+    retry,
   };
 }
 
@@ -290,14 +300,12 @@ function blobAt(ctx: StageContext, sha: Sha, checkout: AbsPath, path: string): F
   return { path: blob === null ? path : rel, blob };
 }
 
-/** A lens draft refused at admission (H6): its vacuity mutant's patch is corrupt; nothing is opened. */
-export type RefusedDraft = Readonly<{ lens: LensKind; claim: string; stderr: string }>;
-
 /**
  * A lens's finding as a draft: its obligation and clauses kept only when they exist; a vision finding at most P2; a
- * vacuity mutant on an arc lane kept once its patch parses (H6), else the draft is refused with git's stderr.
+ * vacuity mutant made a patch against the audited tree and kept (H6, `admitMutant`), else the draft is refused with
+ * why: a mutant on no arc lane, or one that cannot be made there. An edit's path under the checkout is made relative.
  */
-function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f: LensFinding, checkout: AbsPath, gateHadPassed: boolean): FindingDraft | RefusedDraft {
+function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f: LensFinding, checkout: AbsPath, gateHadPassed: boolean): FindingDraft | Readonly<{ refused: string }> {
   const obligationIds = new Set(r.obligations?.obligations.map((o) => o.id) ?? []);
   const clauseIds = new Set(r.vision.clauses.map((c) => c.id));
   const laneIds = new Set<LaneId>(r.obligations?.lanes.map((l) => l.id) ?? []);
@@ -305,9 +313,14 @@ function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f
     const b = blobAt(ctx, s.integrationSha, checkout, e.path);
     return [b.path, b] as const;
   })).values()];
-  const admitted = lens === 'vacuity' && f.mutant !== null && laneIds.has(f.mutant.lane) ? admitMutant(ctx.repo, ctx.runDir, f.mutant.patch, f.mutant.lane) : null;
-  if (admitted?.kind === 'corrupt') return { lens, claim: f.claim, stderr: admitted.stderr };
-  const mutant = admitted === null ? null : admitted.mutant;
+  let mutant: MutantRef | null = null;
+  if (lens === 'vacuity' && f.mutant !== null) {
+    if (!laneIds.has(f.mutant.lane)) return { refused: `its mutant's lane ${f.mutant.lane} is not an arc lane (${[...laneIds].join(', ') || 'none'})` };
+    const m = f.mutant.kind === 'edits' ? { ...f.mutant, edits: f.mutant.edits.map((e) => ({ ...e, path: isAbsolute(e.path) ? relative(checkout, e.path) : e.path })) } : f.mutant;
+    const admitted = admitMutant(ctx.repo, ctx.runDir, s.integrationSha, m);
+    if (admitted.kind === 'refused') return { refused: `its mutant cannot be made: ${admitted.reason}` };
+    mutant = admitted.mutant;
+  }
   return {
     lens,
     severity: lens === 'vision' && f.severity === 'P1' ? 'P2' : f.severity,
@@ -392,7 +405,7 @@ function witnessDrafts(ctx: StageContext, s: Started, r: Recorded, records: Read
   const latched = new Set(ctx.journal.view.holistic().latched.filter((l) => l.seq <= s.highWater).map((l) => l.obligation));
   return r.obligations.obligations.flatMap((o): FindingDraft[] => {
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) return [];
-    if (o.activation !== 'must-hold' && !latched.has(o.id)) return [];
+    if (!isMustHold(o, latched)) return [];
     const record = records.get(o.witness.lane);
     if (record === undefined) throw new Error(`${s.job}: obligation ${o.id}'s lane ${o.witness.lane} has no record on ${s.integrationSha}`);
     if (witnessVerdict(record, o.witness) !== 'not-held') return [];
@@ -429,7 +442,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   // 2–3: the arc lanes on the audited SHA, then code's P1s.
   if (r.obligations !== null && r.obligations.lanes.length > 0) {
     const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, r.obligations.lanes.map(arcJourneyLane), {
-      path: checkoutOf(ctx, job, 'lanes'), checkout: { type: 'detached', at: s.integrationSha },
+      path: jobSeriesCheckout(ctx, job, 'lanes'), checkout: { type: 'detached', at: s.integrationSha },
     }, { reuse: true, stop: () => false });
     if (series.end.kind !== 'ran') return { kind: 'incomplete', job, end: series.end };
     const records = new Map(series.runs.flatMap((x) => (x.record === null ? [] : [[x.lane, x.record] as const])));
@@ -439,43 +452,65 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   // 4: the lenses, serially, the vision first.
   const base = coverageBase(ctx, s.integrationSha, s.seq);
   if (base === null) throw new Error(`${job}: no vision revision before its start`);
-  const checkout = checkoutOf(ctx, job, 'lenses');
+  const checkout = lensesCheckout(ctx, job);
   const { triple } = arcSeat(ctx, 'lens');
   const prompt = promptFor('lens', triple.model);
   let made = false;
   const covered: LensKind[] = [];
   let outcome: 'completed' | 'abandoned' = 'completed';
   const order = runOrder(s.lenses);
-  for (const [i, lens] of order.entries()) {
-    const attempt = i + 1;
-    const from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
+  /** One call of `lens` as `attempt`: the recorded one consumed, else asked (lazily making the checkout). */
+  const ask = async (lens: LensKind, attempt: number, from: Sha, retry: LensRetry | null): Promise<LensRead> => {
     let called = recordedArcCall(ctx, job, 'lens', attempt);
     if (called === null || called.kind === 'lost') {
       if (!made) {
         await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, { path: checkout, checkout: { type: 'detached', at: s.integrationSha } });
         made = true;
       }
-      const inputs = lensInputs(ctx, s, r, lens, from, checkout);
+      const inputs = lensInputs(ctx, s, r, lens, from, checkout, retry);
       const rendered = prompt.render(inputs);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
         job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
       }));
     }
-    const read = readLens(ctx, job, called);
+    return readLens(ctx, job, called);
+  };
+  /** Admits a report's drafts (each finding opened at once); returns the refused ones, recorded in the tally. */
+  const admitReport = (lens: LensKind, attempt: number, output: LensOutput): readonly LensRefusal[] => {
+    const refused: LensRefusal[] = [];
+    for (const f of output.findings) {
+      const d = lensDraft(ctx, s, r, lens, f, checkout, gateHadPassed);
+      if ('refused' in d) {
+        refused.push({ lens, attempt, claim: f.claim, cause: f.cause, reason: d.refused });
+        process.stderr.write(`roadmap: ${job}: a ${lens} finding (call ${attempt}) was refused, ${d.refused}\n`);
+      } else {
+        admit(ctx, t, d);
+      }
+    }
+    t.refused.push(...refused);
+    return refused;
+  };
+  // A lens whose report had a draft refused is asked once more, told why (M4b, paid run 3); its retries number after
+  // every lens's first call, in order, so a resumed audit finds each recorded call again.
+  let retries = 0;
+  for (const [i, lens] of order.entries()) {
+    const from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
+    let read = await ask(lens, i + 1, from, null);
+    if (read.kind === 'reported') {
+      const refused = admitReport(lens, i + 1, read.output);
+      if (refused.length > 0) {
+        const attempt = order.length + ++retries;
+        const recorded = read.output.findings.filter((f) => !refused.some((x) => x.claim === f.claim && x.cause === f.cause)).map((f) => ({ claim: f.claim, cause: f.cause }));
+        const again = await ask(lens, attempt, from, { refused, recorded });
+        // Covered only once a report is admitted whole: a draft refused again leaves the lens uncovered.
+        read = again.kind === 'reported' && admitReport(lens, attempt, again.output).length > 0 ? { kind: 'failed', detail: 'a draft was refused again' } : again;
+      }
+    }
     if (read.kind !== 'reported') {
       outcome = 'abandoned';
       if (read.kind === 'parked') break;
       continue;
-    }
-    for (const f of read.output.findings) {
-      const d = lensDraft(ctx, s, r, lens, f, checkout, gateHadPassed);
-      if ('stderr' in d) {
-        t.refused.push(d);
-        process.stderr.write(`roadmap: ${job}: a ${lens} finding was refused, its mutant patch is corrupt: ${d.stderr}\n`);
-      } else {
-        admit(ctx, t, d);
-      }
     }
     covered.push(lens);
     crashPoint('audit.after-lens');
@@ -489,7 +524,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     return from === s.integrationSha ? [] : [{ lens, from, to: s.integrationSha }];
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
   const findings = canonicalIds(t.ids);
-  ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome });
+  ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome, refused: t.refused });
   crashPoint('audit.after-ended');
   if (outcome === 'abandoned') {
     const c = cadence(ctx, ctx.clock);
@@ -525,7 +560,7 @@ export async function rewitnessP1s(ctx: AuditContext, job: JobId): Promise<reado
   const laneIds = new Set(defs.map((d) => d.o.witness!.lane));
   await removeJobCheckouts(ctx, job);
   const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, obligations.lanes.filter((l) => laneIds.has(l.id)).map(arcJourneyLane), {
-    path: checkoutOf(ctx, job, 'rewitness'), checkout: { type: 'detached', at: head },
+    path: jobSeriesCheckout(ctx, job, 'rewitness'), checkout: { type: 'detached', at: head },
   }, { reuse: true, stop: () => false });
   const records = new Map(series.runs.flatMap((x) => (x.record === null ? [] : [[x.lane, x.record] as const])));
   return defs.map(({ finding, o }) => {

@@ -59,6 +59,15 @@
 // repair batch (`publishBatch`, B2) and the close-out publication each run as a job of their own. Jobs and units
 // share the arbiter and `@cpu` (the jobs' waits are served first, `acquireFirst`).
 //
+// The flow track (M4b, src/flow/track.ts; every arc whose revisions carry the `m4b` role set, holistic or not): each
+// run raises the ruler changes, applies an accepted proposal pending its apply and proves one pending its proof, writes
+// the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a
+// holistic job runs, and no holistic job starts while it runs. While a proposal is pending its apply, new candidates
+// wait (`flowApply`). Right before `arc-completed`, the verdicts the completion closes and the compact flow series.
+// M4b rev 3: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
+// a restart starts it fresh), which admission reads to release a host-pressure hold (`AdmitInput.pressure`,
+// src/schedule/ready.ts) and a flow run's inputs bind as the host's cpu wait now (`FlowTrackInput.hostPressure`).
+//
 // The scheduler's holds (on top of admission's, src/schedule/ready.ts):
 //   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
 //       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;
@@ -113,6 +122,8 @@ import { type AuditContext, auditPending, raiseAuditOwed, runAudit } from '../ho
 import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.ts';
 import { type CheckpointContext, type DesignParkRoute, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
+import { beforeCompletion, flowApplyHeld, flowOn, runFlowTrack } from '../flow/track.ts';
+import { PressureTicks, hostPressure, readHostCpu } from '../host/pressure.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
@@ -240,10 +251,10 @@ type Task = {
   waiting: Waiting | null;
 };
 
-/** Invocation purposes a pause kills among a paused unit's spawns. */
+/** Invocation purposes a pause kills among a paused unit's spawns (and, under `pause --all`, a flow proof's runs: M4b). */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
-/** Invocation purposes a stop kills (lens and checkpoint calls included; never a docs publication's lanes). */
-const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend'];
+/** Invocation purposes a stop kills (lens, checkpoint and flow calls and flow proofs included; never a docs publication's lanes). */
+const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof'];
 
 /** A holistic job that made no progress is asked again only this long after. */
 export const HOLISTIC_RETRY_MS = 5 * POLL_MS;
@@ -308,7 +319,7 @@ export function holisticContexts(
   const audit: AuditContext = { ...x.stage, acquireFirst: x.arbiter.acquireFirst, clock };
   return {
     audit,
-    checkpoint: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs },
+    checkpoint: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs, laneEnv: x.stage.hostEnv },
     docs: { ...x.stage, planFile: x.commands.planFile, arbiter: x.arbiter },
     laneEnv: (lane) => laneEnvId(x.stage, lane),
   };
@@ -712,7 +723,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const unbatched = new Map<UnitId, string>();
   /** Members a published batch retired: their retire runs in a task of their own. */
   const retiring = new Set<UnitId>();
+  /** While the flow job (the flow track's judgment) runs: no holistic job starts (one judgment job at a time). */
+  let flowJudging = false;
   let lastTick = 0;
+  const pressure = new PressureTicks();
 
   let wakeup: (() => void) | null = null;
   const kick = (): void => wakeup?.();
@@ -810,8 +824,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The scheduler's holds: arc-wide (the baseline, the pack review, an untrusted issue policy) and repair batches (R7)
 
-  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId> }>;
-  const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean => holds.arc || (stage === 'candidate' && holds.batch.has(unit));
+  /** `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. */
+  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean }>;
+  const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean =>
+    holds.arc || (stage === 'candidate' && (holds.batch.has(unit) || holds.flowApply));
 
   const approvalKey = (unit: UnitId): string => canonicalJson(view().unit(unit).approval);
 
@@ -859,6 +875,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   const admissionInput = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>) => ({
     view: view(), plan: plan(), blocking, drains: mutations.map((m) => ({ command: m.command.id, scope: m.scope })), tripped: trippedTargets(view()),
+    pressure: { ticks: pressure.ticks(), nowMs: Date.now() },
   });
 
   const admitWaiting = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>, holds: Holds): void => {
@@ -943,7 +960,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     }
     const paused = (unit: UnitId): boolean => c.pausedAll || c.pausedUnits.includes(unit);
     for (const task of tasks.values()) if (paused(task.unit) && !task.abort.signal.aborted) task.abort.abort('pause');
-    killLive('pause', (intent) => intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit));
+    killLive('pause', (intent) => (intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit))
+      || (c.pausedAll && intent.expect.subject.purpose === 'proof'));
   };
 
   /** The probe targets a mutation probes or smokes through the prober (`resume <u>` of a retryable park, `resume --backend`). */
@@ -1033,7 +1051,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** The one holistic job (baseline, checkpoint, audit), the batch and the close-out, each started when due. */
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
     if (!holistic()) return;
-    if (due('holistic')) {
+    if (due('holistic') && !flowJudging) {
       const job = baselineOwed(x.stage);
       if (packReviewPending(h.checkpoint)) {
         trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.checkpoint)).kind === 'ended' ? PROGRESS : WAIT));
@@ -1063,6 +1081,21 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         return settled.progress ? PROGRESS : WAIT;
       });
     }
+  };
+
+  /**
+   * M4b: the flow track (src/flow/track.ts) on every arc with the loop on, outside the holistic guard: the ruler check,
+   * an accepted proposal's apply and proof, the verdicts due, then the flow job, which waits while a holistic job runs.
+   */
+  const startFlow = (): void => {
+    if (!flowOn(view()) || !due('flow')) return;
+    trackRetrying('flow', 'flow', async () => ((await runFlowTrack(h.checkpoint, {
+      holisticRunning: () => [...jobs.keys()].some((k) => k.startsWith('holistic:')),
+      judging: (on) => {
+        flowJudging = on;
+      },
+      hostPressure: () => hostPressure(pressure.ticks(), 0),
+    })) === 'progress' ? PROGRESS : WAIT));
   };
 
   /** A8: the close-out publication (or, with nothing to change, every arc lane on the head), as a job. */
@@ -1117,6 +1150,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     const settling = view().holistic().on && blockers.every((b) => (CLOSE_OUT_BLOCKERS as readonly string[]).includes(b));
     if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.checkpoint)) return null;
     if (blockers.length === 0) {
+      // M4b: the verdicts the completion closes and the compact flow series, right before `arc-completed`.
+      if (view().holistic().completion?.active !== true) beforeCompletion(h.checkpoint);
       completeArc(x.stage);
       if (view().holistic().completion !== null) await terminalSnapshot(x.stage);
       return { kind: 'complete', units: summary() };
@@ -1160,6 +1195,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   for (;;) {
     if (failures.length > 0) throw failures[0];
+    pressure.record(readHostCpu());
     const arc = view().arc;
     /** The pending mutations' scopes, for sched.json: none while stopping (nothing will apply). */
     let drains: SchedFile['drains'] = [];
@@ -1196,8 +1232,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       raiseHolistic();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
-      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held };
+      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()) };
       startHolistic(holds, batch);
+      startFlow();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {
         const end = await ended(blocking);
         if (end !== null) return end;

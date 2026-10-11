@@ -437,20 +437,25 @@ describe('M3 file records', () => {
 
 describe('M3 judgment outputs', () => {
   const lens = {
-    findings: [{ severity: 'P2', obligation: null, visionClauses: ['V-1'], claim: 'c', cause: 'k', evidence: [{ path: 'src/a.js', line: 2 }], mutant: { patch: '--- a\n+++ b\n', lane: 'journey' } }],
+    findings: [{ severity: 'P2', obligation: null, visionClauses: ['V-1'], claim: 'c', cause: 'k', evidence: [{ path: 'src/a.js', line: 2 }], mutant: { lane: 'journey', edits: [{ path: 'src/a.js', old: 'a', new: '' }] } }],
     reasons: ['r'], premises: [],
   };
   const op = { op: 'admit', unit: { id: 'r1', risk: 'med', scope: ['src/format.js'], after: [], origin: 'repair' }, spec: '{}', cites: ['V-2'], evidence: ['F-1'] };
   const ckpt = {
     decision: 'bundle', reasons: ['F-1'], ops: [op], rulings: [], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r' }],
     interpretations: [{ clauses: ['V-1'], situation: 's', reading: 'r' }], cites: { vision: ['V-2'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }], findings: ['F-1'] },
-    premises: [],
+    premises: [], corpusAmendments: [], issueIntake: [],
   };
 
   it('lens: severities P1-P3, obligation ids, unique clauses', () => {
     validateLensOutput(lens);
     assert.throws(() => validateLensOutput({ ...lens, findings: [{ ...lens.findings[0], severity: 'blocking' }] }), /severity/);
     assert.throws(() => validateLensOutput({ ...lens, findings: [{ ...lens.findings[0], visionClauses: ['V-1', 'V-1'] }] }), /visionClauses/);
+    // M4b: a mutant is edits (non-empty); a lens answer recorded before M4b reads its unified diff as written.
+    assert.deepEqual(validateLensOutput(lens).findings[0]!.mutant, { kind: 'edits', lane: 'journey', edits: [{ path: 'src/a.js', old: 'a', new: '' }] });
+    assert.throws(() => validateLensOutput({ ...lens, findings: [{ ...lens.findings[0], mutant: { lane: 'journey', edits: [] } }] }), /edits/);
+    const legacy = { ...lens, findings: [{ ...lens.findings[0], mutant: { patch: '--- a\n+++ b\n', lane: 'journey' } }] };
+    assert.deepEqual(validateLensOutput(legacy).findings[0]!.mutant, { kind: 'patch', lane: 'journey', patch: '--- a\n+++ b\n' });
   });
 
   it('checkpoint: every op cites active-looking clauses and evidence; ops exactly on a bundle; owner-only acts only as a request (A16)', () => {
@@ -470,7 +475,7 @@ describe('M3 judgment outputs', () => {
       { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 2 }] },
       {
         op: 'obligation-split', obligation: 'I-2',
-        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, witness: { lane: 'journey', testIds: ['t'] }, activation: 'must-hold', deliveredBy: [] }],
+        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'] }, activation: 'must-hold', deliveredBy: [] }],
       },
       { op: 'obligation-dispose', obligation: 'I-3', disposition: 'deferred', ruling: 'C-9' },
       { op: 'invalidate-approval', unit: 'u1' },

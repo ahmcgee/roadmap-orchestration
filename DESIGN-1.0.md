@@ -92,7 +92,9 @@ runs under a small **runner** that owns the child, writes stdout/stderr to files
 and hosts the adapter, so the executor can die and reattach. The adapter, never the model, validates the
 native terminal result (`codex -o`; the `result` event of `claude -p --output-format stream-json`, whose
 tool calls also give the session's reads, `reads.json`). The runner waits for the workload to be
-empty (killing at the deadline), writes `exit.json`, and only then runs the adapter, which is pure over files and
+empty (killing at the deadline, or, for a build, a short grace after its final report: a build answer says `final:
+true`, an answer given only to wait for something it started says `final: false`, and waiting is unrestricted until the
+final report), writes `exit.json`, and only then runs the adapter, which is pure over files and
 so re-runnable, and atomically writes an invocation-bound `result.json`: `outcome: success | refusal | malformed | process-fault | cancelled` (a pause or stop) and, separately, `usage: known |
 unavailable{reason}`; missing usage never invalidates a judgment or triggers a rerun. The adapter never runs
 before quiescence, for backends, lanes, probes and teardown alike: containment empty is the precondition for
@@ -384,8 +386,9 @@ them acts (§2.8).
 - **Change-sensitive drift (A-M4-27).** A bundle revision that changes only plan units and their specs drifts
   `specsOnly`: the vision lens alone, over the spec deltas; code lenses keep their watermarks. Within one audit, a
   lens draft whose (repo evidence paths, obligation, cause) equals a finding the audit already opened merges into it,
-  its rationale kept (`finding-corroborated`). A vacuity finding's mutant patch is syntax-checked at admission; a
-  corrupt patch refuses the draft with git's reason.
+  its rationale kept (`finding-corroborated`). A vacuity finding's mutant is exact replacements the executor has git
+  turn into a patch against the audited tree at admission; one that cannot be made refuses the draft, recorded with
+  the reason, and the lens is asked once more with it; a lens is covered only when its report is admitted whole.
 
 ### 2.6 Ruling record
 
@@ -712,13 +715,16 @@ Issue mode). Brakes in code:
 owner-selected slice `S` (`advances` less the arc's opportunity clauses): **repair** (it restores an obligation or
 behaviour that does not hold; its refs are valid: an unheld non-exempt obligation or a captured active finding),
 **oversight** (a gap within `S`'s clauses), **opportunity** (it advances clauses outside `S`, honestly cited; they join
-`advances` and the brief; the budget is one per arc) or it converts. A clause counts as touched by an admit through
+`advances` and the brief; the budget is one per arc; owner ruling 2026-10-10, after paid M4b runs 3 and 5: an
+opportunity is admitted only with its witness, an obligation of the same bundle that its unit delivers serving one of
+its clauses on an arc lane in force, else it converts `unwitnessed`, since arc lanes are the owner's and a clause no
+lane can witness only sinks later checkpoints) or it converts. A clause counts as touched by an admit through
 its cites, the obligations its unit delivers, and what it repairs (a mixed finding keeps its out-of-slice clauses);
 obligations an impact mapping merely relates never count. A repair whose attributed units (by finding source and lens
 range, or an obligation's held-to-not-held window) lie wholly in one opportunity's lineage is that opportunity's
 follow-up; an opportunity carries one, and the next converts with a debt item naming it. Ambiguous attribution never
-grants a follow-up. Repair and oversight are always admitted; an unrelated admit, an opportunity over budget and an
-overrun convert: the op is dropped and recorded as a corpus amendment, unless another op or an issue disposition names
+grants a follow-up. Repair and oversight are always admitted; an unrelated admit, an opportunity over budget or without its witness and
+an overrun convert: the op is dropped and recorded as a corpus amendment, unless another op or an issue disposition names
 it, which makes the bundle invalid. The classification is persisted in the decision record before any settlement and
 never recomputed. A bundle may add to `advances` exactly its opportunities' clauses; nothing else of `advances` moves
 but by `apply`. `status` and the brief show admits, opportunities and a drift indicator.
@@ -914,7 +920,8 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
   sha of a corpus arc; `obligationRevs` covers the
   selected, non-exempt obligations at the gated tip); any change invalidates the
   gate and the unit re-enters at the earliest invalidated stage. A moved tip means a fresh candidate, not a new
-  gate.
+  gate: an obligation selected only at the later tip was not judged, so the candidate's lanes witness it and the
+  approval stands, while a judged obligation's rev change, exemption or deselection re-gates.
 - **Merge** (candidate-first): in the integration slot a candidate worktree makes a `--no-ff` merge onto the
   current tip, held on the named ref `refs/roadmap-run/<arc>/candidate/<unit>`. The **transient check** (code)
   runs first (G17, H15): a unit (`transientRules: 'm3'` in its dispatch record) may touch only its pinned scope and
@@ -1185,10 +1192,11 @@ ladder with its own runnable fixture:
   `docRef` obligations, no census and an unverified vision, under the new class catalogue, and keeps its target
   variant. That defaulting (the vacuous census, the unverified `vision.md#` reference, checkpoint answers without
   the M4a fields, the dev.6 seat decoder and routing-rev alias, the holistic `architecture-doc` variant) is
-  scaffolding, deleted once no dev.6 arc is in flight. Every pre-dev.6 layer (dev.1, dev.3, dev.4 and dev.5,
-  including the legacy serial frontier, dev.5 transient rules and dev.5 routing reconstruction) was deleted in M4a
-  step X0 with the tests that existed only for it (owner ruling OR-L4); an older in-flight arc finishes on its own
-  release.
+  scaffolding, deleted once no dev.6 arc is in flight (1.0.0-dev.8 no longer adopts dev.6 arcs: M4b step 0a deleted
+  the checkpoint-answer defaults and the rev alias; the rest goes with the variant's test migration). Every pre-dev.6
+  layer (dev.1, dev.3, dev.4 and dev.5, including the legacy serial frontier, dev.5 transient rules and dev.5 routing
+  reconstruction) was deleted in M4a step X0 with the tests that existed only for it (owner ruling OR-L4); an older
+  in-flight arc finishes on its own release.
 - **M4b Flow** (seeded from M4a arcs' refs, LR-c). The flow loop, SPC, the flow role, givens, proposals and
   verdicts, the ruler fence, test-set-preserving lane edits, and the two plants. Agreed in the 2026-10-03 design
   grilling (OR-Q1–Q7, Q17, Q21):
@@ -1215,3 +1223,41 @@ ladder with its own runnable fixture:
     Paired guard metrics are never folded into T. Build-seat effort is a flow lever. A lane argv edit is allowed
     only when code proves it test-set-preserving (witness reporter ids on the same SHA).
   - **Acceptance:** the `evals/m4a` fixture plus two plants: a shardable inefficient lane, and Goodhart bait.
+  - **Readings** (plan `/claude-state/plans/m4b-flow.md` rev 2, the lead's, reported to the owner and vetoable).
+    RC-1: checkpoint triggering is ruler (the holistic authority); judgment cost is diagnosed, never tuned. RC-2: T is
+    two numbers, never a weighted sum: `tAdvances` (obligations first held this arc per hour, serving an `advances`
+    clause) and `tOther` (`tUnits` for a non-holistic arc); I is admitted-not-merged plus ready queued, OE executor spend
+    per hour. RC-3: lane-argv levers are suite lanes only (spec lanes are the planner's, arc lanes ruler). RC-4: a
+    suite-lane proof runs both argvs with the lane's exact env and the action's reporter at the integration head in clean
+    checkouts, journalling no `witnessed`; preserved iff the `(testId, selected, outcome)` multisets are equal and the old
+    one is non-empty with a pass, and the new argv differs from the old only in one allowlisted flag's value
+    (`--test-concurrency=<n>`, edited in place: Node 24.21 ignores a flag appended after the selector). RC-5: `flow request`
+    bypasses the cooldown at most once per window; nothing bypasses it automatically. RC-6: no revert command; a `worse`
+    verdict raises `flow-worse` with the preimage and the root agent reverts by `apply`. RC-7: no rope (WIP) lever; the
+    rope is diagnosed only. RC-8: build-seat effort is the build seat's class, moved one class step and never below the
+    tier's built-in class (effort lives in the class binding; a plan cannot rebind a class). RC-9: a rejection is
+    remembered by `(station, lever, target)`, never by the value; a `worse` verdict adds its key, a `red` proof does not.
+  - **Host pressure is a constraint** (owner ruling 2026-10-09, plan rev 3): cpu saturation that degrades every pipeline
+    is optimized like a serial suite. Code measures cpu wait (Linux schedstat `run_delay`: time runnable but waiting for
+    a cpu) over each launch's own process tree and over the host per scheduler tick, the flow role may name the internal
+    station `host:cpu`, the levers subordinate to it, and no unit is charged for a starved host; a host without schedstat
+    records `unavailable` once and every pressure rule is off. PSI is not read: on a many-cpu host `some` is high
+    whenever any task waits, and it did not separate a healthy busy host from a starving one. RC-10: a launch's pressure
+    is its own wait / max(wall, run + wait) (none under 5 s of wall: that reading is its start-up); saturated is at
+    least 0.5 (the work ran at under half speed); at or above it as the mean over the constraint window, the code
+    constraint is `host:cpu`, ahead of the wait and service rules. RC-11: a lane run or stage invocation ended by
+    `deadline` or `stall` whose own pressure is saturated is `starved` (no product verdict, not chargeable, no fix
+    round), and a red lane run whose own pressure is saturated reruns once with only the rerun's verdict counting (its
+    first red still counts as a first-run red); such a unit is held (`host-pressure`, an admission hold: the unit stays
+    active) until a minute of scheduler ticks since the hold shows the host's cpu wait below 0.5 or 30 min pass, and
+    after 3 such holds (starved runs and red reruns alike) it falls back to the handling without pressure; a hold
+    since the last flow run triggers one (`host-pressure`). The rule reads a unit's backend calls and its spec and
+    suite lane series; the D1/D2 checks' lanes, journey lanes and jobs' calls keep the handling without pressure.
+    RC-12: a lever at `host:cpu` only decreases (concurrency, a pool, a suite lane's cpu or `--test-concurrency`) or
+    gives `host` advice, an increase is dropped (`direction`); its step is subordinate and its verdict metric the
+    pressure of the units admitted after, lead a guard.
+  - **The flow seat is on every arc.** `flow` is in force in every arc scope an M4b executor starts (frontier, seat
+    `arc`), holistic or not, so a binding of its class with no flow prompt (Sonnet, or a Codex model) refuses
+    `unsupported-routing` for a non-holistic start too. An arc 1.0.0-dev.7 started records no role set and keeps the dev.7
+    roles: no flow seat, its routing revs unchanged, the flow loop off (scaffolding, deleted once no dev.7 arc is in
+    flight). Version 1.0.0-dev.8 adopts dev.7 arcs only.

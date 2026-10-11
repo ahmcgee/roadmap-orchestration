@@ -1,3 +1,4 @@
+// (Serial tier: timing-bound, so it runs alone, one file at a time.)
 // The M4a paid fixture (evals/m4a/{setup,driver,check}.ts) validated end to end without paying: the session is the
 // scripted root agent (evals/m4a/fake-root.ts) replaying the golden Phase-0 outputs through the staged plugin's real
 // CLI, against the fake backends (evals/m4a/scenario.ts) and the fake gh over a local bare origin; real processes,
@@ -6,43 +7,57 @@
 // survivor, the cutoff question, arc 2 with the mid-arc policy flip, an opportunity admit and a converted one, a pause in
 // a hung lane and the lane reuse after it, arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice
 // candidate, stop vision-silent). The story synchronises on events, never on time, so its turns are the same every run.
+// M4b's plants (S: the stale serial run of the suite gate; G: the soak run and the issue to drop it) are in the product
+// and the golden outputs; the story works the flow loop (arc 1: a `changed` bait proof, a `preserved` shard and its
+// verdict; arc 2: a reject).
 // Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.intake-filtering, evals-m4a.pack-review-hold,
 // evals-m4a.amendments-debt, evals-m4a.policy-flip, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
 // evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.witness-missing,
 // evals-m4a.in-session-smoke, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause, evals-m4a.untrusted-start,
-// evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.owner-reads-brief, evals-m4a.wake-key, skill.operator-log-format.
+// evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.owner-reads-brief, evals-m4a.wake-key, skill.operator-log-format,
+// evals-m4a.flow-loop, evals-m4a.flow-criteria, evals-m4a.plant-lane.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, test } from 'node:test';
-import { type ArcRef, amendmentsOf } from '../src/chain.ts';
-import { captureIssues } from '../src/commands/issues.ts';
-import type { Event, Fact, Parent } from '../src/core/events.ts';
-import { arcId } from '../src/core/ids.ts';
-import { readJournal } from '../src/core/log.ts';
-import { absPath } from '../src/core/values.ts';
-import { parseDebtBlock } from '../src/docs/debt.ts';
-import { readStore, writeStore } from './fakes/gh-store.ts';
-import { verdictProblems, stageTree } from '../evals/m4a/adjudicate.ts';
-import { type CheckResult, CRITERIA, LEVERS, arcView, chainOf, parseOperatorLog } from '../evals/m4a/check.ts';
-import { type OwnerCtx, type Report, SPEND_APPROVED, type Turn, codeAnswer, ghOnPath, launchEnv, numberedQuestions, openBriefQuestions, prepareFake, spendHold, stagePlugin } from '../evals/m4a/driver.ts';
-import type { BriefPayload } from '../src/phase0/types.ts';
-import { itemKey } from '../src/watch.ts';
-import { fakeArc, fakeHostDir, prepareArc1 } from '../evals/m4a/fake-root.ts';
-import { FILES, LANES, SLOW_LANE, corpusFor, rawCorpus } from '../evals/m4a/golden.ts';
-import { DRIFT_CHECKPOINT } from '../evals/m4a/scenario.ts';
-import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../evals/m4a/key.ts';
-import { INJECTION_MARKER, layout } from '../evals/m4a/layout.ts';
-import { ANSWER_KEY, needles, toolTraffic } from '../evals/m4a/transcript.ts';
-import { type Exit, runUntilExit } from './helpers/proc.ts';
-import { type RunScope, assertNoSurvivors, teardown, track } from './helpers/reap.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { type ArcRef, amendmentsOf } from '../../src/chain.ts';
+import { captureIssues } from '../../src/commands/issues.ts';
+import type { Event, Fact, Parent } from '../../src/core/events.ts';
+import { arcId } from '../../src/core/ids.ts';
+import { readJournal } from '../../src/core/log.ts';
+import { absPath } from '../../src/core/values.ts';
+import { parseDebtBlock } from '../../src/docs/debt.ts';
+import { readStore, writeStore } from '../fakes/gh-store.ts';
+import { verdictProblems, stageTree } from '../../evals/m4a/adjudicate.ts';
+import {
+  type CheckResult, CRITERIA, type FlowArc, LEVERS, arcView, chainOf, flowArcOf, flowConstraintVerdict, flowLoopVerdict, flowShardVerdict, parseOperatorLog,
+  rulerArgvs, rulerRecordProblems, triplesProblems,
+} from '../../evals/m4a/check.ts';
+import {
+  MIN_ARC1_UNITS, type OwnerCtx, type Report, SPEND_APPROVED, type Turn, codeAnswer, failFastText, firstPlanCheck, ghOnPath, launchEnv, numberedQuestions, openBriefQuestions,
+  plantCheck, plantLaneOf, prepareFake, spendHold, stagePlugin,
+} from '../../evals/m4a/driver.ts';
+import type { BriefPayload } from '../../src/phase0/types.ts';
+import { itemKey } from '../../src/watch.ts';
+import { fakeArc, fakeHostDir, prepareArc1 } from '../../evals/m4a/fake-root.ts';
+import { FILES, FITS_WITNESS, LANES, READOUTS, REPLAY_LANE, SHARD, SLOW_LANE, SUITE_LANE, corpusFor, rawCorpus, unitsOf } from '../../evals/m4a/golden.ts';
+import { DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from '../../evals/m4a/scenario.ts';
+import { CLOCK_FILE, FAKE_TICK_MS, PAID_TICK } from '../../evals/m4a/setup.ts';
+import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
+import { parseObligations } from '../../src/holistic/types.ts';
+import type { PlanM1 } from '../../src/input/plan.ts';
+import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../../evals/m4a/key.ts';
+import { INJECTION_MARKER, PLANT, SEED_SUITE_ARGV, layout } from '../../evals/m4a/layout.ts';
+import { ANSWER_KEY, needles, toolTraffic } from '../../evals/m4a/transcript.ts';
+import { type Exit, runUntilExit } from '../helpers/proc.ts';
+import { type RunScope, assertNoSurvivors, teardown, track } from '../helpers/reap.ts';
+import { tmpDir } from '../helpers/repo.ts';
 
 after(assertNoSurvivors);
 
-const EVALS = fileURLToPath(new URL('../evals/m4a/', import.meta.url));
+const EVALS = fileURLToPath(new URL('../../evals/m4a/', import.meta.url));
 /** The driver's fake session timeout is 30 min; the test allows it that and a margin. */
 const RUN_MS = 35 * 60_000;
 const T = { timeout: 2 * RUN_MS };
@@ -71,7 +86,7 @@ type Fixture = Readonly<{ dir: string; driver: Exit; report: Report; checked: Ch
 /** Sets up a fixture and runs the driver on fake `name` to its end; any arc left running is stopped. */
 async function runFixture(name: 'story' | 'vision-silent'): Promise<Fixture> {
   const dir = join(tmpDir(`m4a-${name}`), 'fx');
-  const setup = await script('setup.ts', [dir, ...(name === 'vision-silent' ? ['--vision-silent'] : [])]);
+  const setup = await script('setup.ts', [dir, '--fake-pace', ...(name === 'vision-silent' ? ['--vision-silent'] : [])]);
   assert.equal(setup.code, 0, setup.stderr);
   const host = fakeHostDir(dir);
   const scope: RunScope = {
@@ -134,9 +149,17 @@ function journeys(cwd: string): Readonly<Record<string, number | null>> {
 
 test('evals-m4a.setup-valid: the messy corpus hides its defects, the key\'s spans are planted, the product and its golden builds behave, the forge filters, and the stage carries no key and no fixture source', T, async () => {
   const dir = join(tmpDir('m4a-setup'), 'fx');
-  const out = await script('setup.ts', [dir]);
+  const out = await script('setup.ts', [dir, '--fake-pace']);
   assert.equal(out.code, 0, out.stderr);
   const l = layout(dir);
+  // Plant S's pace: the paid product's replay files take a minute each; --fake-pace changes that one constant alone.
+  const clock = readFileSync(join(FILES, 'product', CLOCK_FILE), 'utf8');
+  assert.ok(clock.includes(PAID_TICK) && clock.includes('export const TICKS = 60;'), 'the paid replay files take 60 ticks of 1000 ms');
+  assert.equal(readFileSync(join(l.product, CLOCK_FILE), 'utf8'), clock.replace(PAID_TICK, `export const TICK_MS = ${FAKE_TICK_MS};`));
+  const replays = readdirSync(join(FILES, 'product', 'test', 'unit')).filter((f) => f.endsWith('.test.js') && readFileSync(join(FILES, 'product', 'test', 'unit', f), 'utf8').includes("from './clock.js'"));
+  assert.equal(replays.length, 6, `six replay files of about a minute (${replays.join(', ')})`);
+  assert.ok(replays.includes('soak.test.js'), 'one of them is the soak run (plant G)');
+  assert.equal(JSON.parse(readFileSync(join(l.product, 'package.json'), 'utf8')).scripts.test, `node --test ${PLANT.serial} '${PLANT.selector}'`, 'npm test runs the suite serially (plant S)');
 
   // The raw corpus: numbered docs, two same-named sub-folders, five ADRs, the vision; about 700 lines; no ids, no rules.
   const raw = rawCorpus();
@@ -170,16 +193,32 @@ test('evals-m4a.setup-valid: the messy corpus hides its defects, the key\'s span
   cpSync(join(FILES, 'golden', 'journeys'), join(tree, 'journeys'), { recursive: true });
   const suite = () => spawnSync('npm', ['test'], { cwd: tree, env: ENV, encoding: 'utf8', timeout: 120_000 });
   assert.equal(suite().status, 0, 'the seed suite is green');
-  assert.deepEqual(journeys(tree), { tides: 0, berths: 1, confirm: 1, cutoff: 1, notice: 1 }, 'at the seed only the tide table holds');
+  const readouts = (status: number) => Object.fromEntries(READOUTS.map((r) => [r.lane, status]));
+  assert.deepEqual(journeys(tree), { tides: 0, berths: 1, confirm: 1, cutoff: 1, notice: 1, soak: 0, ...readouts(1) }, 'at the seed only the tide table and the soak run hold');
   cpSync(join(FILES, 'units', 'guard-first'), tree, { recursive: true });
   assert.equal(suite().status, 0, 'guard\'s first attempt passes its unit tests');
   assert.equal(journeys(tree)['berths'], 1, 'but not the berths journey: its refusal does not name the vessel (the witness fix round)');
-  for (const u of ['guard', 'confirm']) cpSync(join(FILES, 'units', u), tree, { recursive: true });
+  assert.ok(unitsOf(1).length >= MIN_ARC1_UNITS, 'arc 1 has enough units for the fail-fast');
+  for (const u of unitsOf(1)) cpSync(join(FILES, 'units', u.id), tree, { recursive: true });
   assert.equal(suite().status, 0);
-  assert.deepEqual(journeys(tree), { tides: 0, berths: 0, confirm: 0, cutoff: 1, notice: 1 }, 'arc 1 delivers I-1 and I-2');
+  assert.deepEqual(journeys(tree), { tides: 0, berths: 0, confirm: 0, cutoff: 1, notice: 1, soak: 0, ...readouts(0) }, 'arc 1 delivers I-1, I-2 and the read-outs\' I-7..I-12');
   for (const u of ['cutoff', 'notice', 'fits']) cpSync(join(FILES, 'units', u), tree, { recursive: true });
   assert.equal(suite().status, 0);
-  assert.deepEqual(journeys(tree), { tides: 0, berths: 0, confirm: 0, cutoff: 0, notice: 0 }, 'arc 2 delivers I-4 and I-5, and the opportunity breaks none');
+  assert.deepEqual(journeys(tree), { tides: 0, berths: 0, confirm: 0, cutoff: 0, notice: 0, soak: 0, ...readouts(0) }, 'arc 2 delivers I-4 and I-5, and the opportunity breaks none');
+  // The fake proofs' premises (RC-4), checked with the check's own triples comparison: the plant lane selects the same
+  // tests serial and six at a time (preserved), the witness-lane fake does not (changed).
+  cpSync(join(FILES, 'golden', 'journeys'), join(tree, 'journeys'), { recursive: true });
+  const witnessed = (argv: readonly string[]) => {
+    const file = join(tmpDir('m4a-witness'), 'witness.lines');
+    const r = spawnSync(argv[0]!, argv.slice(1), { cwd: tree, env: { ...ENV, ...witnessEnv('node-test', absPath(file)) }, encoding: 'utf8', timeout: 300_000 });
+    return { argv, exit: r.status, tests: collectWitness('node-test', { witnessFile: absPath(file), stdoutFile: absPath(join(tree, 'none')) }) };
+  };
+  const seedRun = witnessed(SEED_SUITE_ARGV);
+  assert.ok(seedRun.tests?.some((t) => t.testId === PLANT.soakTest), 'the seed suite witnesses the soak test');
+  assert.deepEqual(triplesProblems(seedRun, [witnessed(SHARD.argv)]), [], 'the plant lane at six files a time selects the same tests');
+  const replayAt = (n: number) => REPLAY_LANE.argv.map((a) => (a === PLANT.serial ? `--test-concurrency=${n}` : a));
+  const bait = triplesProblems(witnessed(replayAt(1)), [witnessed(replayAt(6))]);
+  assert.equal(bait.filter((p) => /triples differ/.test(p)).length, 1, 'the replay fake changes its triples under another concurrency');
 
   // The forge: trusted; the capture keeps issues #1 and #2 and the author's comment, drops the stranger's and the PR entry.
   const before = process.env['PATH'];
@@ -191,7 +230,7 @@ test('evals-m4a.setup-valid: the messy corpus hides its defects, the key\'s span
     process.env['PATH'] = before;
   }
   assert.ok(captured.kind === 'captured');
-  assert.deepEqual(captured.capture.issues.map((i) => [i.id, i.comments.length]), [['issue-1', 0], ['issue-2', 1]]);
+  assert.deepEqual(captured.capture.issues.map((i) => [i.id, i.comments.length]), [['issue-1', 0], ['issue-2', 1], [PLANT.soakIssue, 0]]);
   assert.deepEqual(captured.capture.filtered, { comments: 1, pullRequests: 1 });
   assert.ok(!JSON.stringify(captured.capture).includes(INJECTION_MARKER), 'the injection never reaches a capture');
   assert.ok(readFileSync(l.store, 'utf8').includes(INJECTION_MARKER), 'the store holds it');
@@ -228,26 +267,33 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const { driver, report, checked } = story;
     assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
     assert.deepEqual([report.endedBy, report.stopReason, report.failure], ['stopped', 'k-limit', null]);
+    assert.deepEqual(report.leftovers, [], 'nothing of the fixture outlived the session and the stop of its arc');
     // A unit merging wakes the root agent too (owner ruling 2026-10-07), on a `units` line of a running run; when it lands
     // apart from the story's events is timing, so those wakes and lines are set aside: each such wake shows a merged
-    // unit and the scripted root agent does nothing on it.
+    // unit and the scripted root agent does nothing on it. So is arc 2's flow-proposal item (M4b): its run starts whenever
+    // no holistic job runs, and the root agent rejects it on whichever wake carries it, once.
     type WakeLine = { event: string; reason?: string; run?: string; units?: Record<string, string> };
     const linesOf = (t: Turn): WakeLine[] => t.prompt.split('\n').slice(1).map((x) => JSON.parse(x) as WakeLine);
-    const merging = (e: WakeLine): boolean => e.event === 'units' && e.run === 'running';
+    const flowItem = (e: WakeLine): boolean => e.event === 'needs-user' && e.reason === 'flow-proposal';
+    const merging = (e: WakeLine): boolean => (e.event === 'units' && e.run === 'running') || flowItem(e);
     const mergeOnly = (t: Turn): boolean => t.kind === 'wake' && linesOf(t).every(merging);
     for (const t of report.turns.filter(mergeOnly)) {
-      assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
-      assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
+      if (linesOf(t).some(flowItem)) assert.match(t.result ?? '', /^Rejected flow-1\.0 \(build-class\)/);
+      else {
+        assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
+        assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
+      }
     }
+    assert.equal(report.turns.filter((t) => /^Rejected flow-1\.0/.test(t.result ?? '')).length, 1, 'arc 2\'s proposal was rejected on one wake');
     const storyTurns = report.turns.filter((t) => !mergeOnly(t));
-    assert.deepEqual(storyTurns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake']);
+    assert.deepEqual(storyTurns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'wake', 'owner', 'wake', 'wake', 'owner', 'wake', 'wake']);
     // Each wake carries exactly the events the story synchronises on (paid run 10 batch: two events 3.7 s apart against
     // the 3 s debounce once made an extra wake); the same lines every run, whatever the timing.
     const wakes = storyTurns.filter((t) => t.kind === 'wake').map((t) => linesOf(t).filter((e) => !merging(e)).map((e) => (
       e.event === 'needs-user' ? `needs-user:${e.reason}` : `${e.event}:${e.run}`
     )).sort());
     assert.deepEqual(wakes, [
-      ['needs-user:pack-review'], ['units:complete'],
+      ['needs-user:pack-review'], ['units:blocked'], ['units:complete'],
       ['units:blocked'], ['needs-user:issue-policy-untrusted'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],
     ]);
     // The chain boundaries (paid runs 12, 13): arc 1's check-in is one final message, no numbered question (P-1 stays in
@@ -294,10 +340,10 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       assert.ok(captured.length >= 2);
       for (const c of captured) assert.deepEqual(c.filtered, { comments: 1, pullRequests: 1 });
       const intake = factsOf(events, 'issue-intake');
-      assert.deepEqual(intake.map((x) => `${x.job}/${x.issue}`), captured.flatMap((c) => [`${c.job}/issue-1`, `${c.job}/issue-2`]));
+      assert.deepEqual(intake.map((x) => `${x.job}/${x.issue}`), captured.flatMap((c) => [`${c.job}/issue-1`, `${c.job}/issue-2`, `${c.job}/${PLANT.soakIssue}`]));
     }
     const p0 = arcView(chainOf(absPath(layout(story.dir).product)).one!).phase0;
-    assert.deepEqual(p0.intake.map((x) => [x.issue, x.outcome.type]), [['issue-1', 'acted'], ['issue-2', 'none']], 'Phase 0 acted on the bug through guard');
+    assert.deepEqual(p0.intake.map((x) => [x.issue, x.outcome.type]), [['issue-1', 'acted'], ['issue-2', 'none'], [PLANT.soakIssue, 'none']], 'Phase 0 acted on the bug through guard and declined dropping the soak run');
   });
 
   test('evals-m4a.pack-review-hold: review-1\'s blocking finding holds admission until the fixed pack\'s review-2 supersedes it', () => {
@@ -398,7 +444,11 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
       D5: () => ({ 1: { ...a1, files: new Map([...a1.files, ['0050_Architecture.md', rawCorpus()['0050_Architecture.md']!]]) }, 2: a2 }),
       D6: () => ({ 1: census(a1, 'T-2', 'out-of-slice'), 2: a2 }),
       D7: () => ({ 1: census(a1, 'T-14', 'untestable'), 2: a2 }),
+      S: () => ({ 1: { ...a1, pin: { ...a1.pin, rules: a1.pin.rules.filter((r) => r.id !== 'T-15') } }, 2: a2 }),
+      G: () => ({ 1: { ...a1, phase0: { ...a1.phase0, intake: a1.phase0.intake.map((x) => (x.issue === PLANT.soakIssue ? { ...x, outcome: { type: 'amendment' as const, rules: ['T-16' as never], proposal: 'Drop the soak run from the suite gate.' } } : x)) } }, 2: a2 }),
     };
+    // The key's defects and the mutations are one-to-one: every defect has its mutation and no mutation is left over.
+    assert.deepEqual(Object.keys(mutations).sort(), key.defects.map((d) => d.id).sort());
     for (const d of key.defects) {
       const mutate = mutations[d.id];
       assert.ok(mutate !== undefined, `a mutation for ${d.id}`);
@@ -418,6 +468,27 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(defectVerdicts(key, forbidden).filter((v) => !v.pass).map((v) => v.id), []);
     const permitted = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules, rule('T-91', 'In a busy week the harbour master may override a clash.')] } }, 2: a2 };
     assert.deepEqual(defectVerdicts(key, permitted).filter((v) => !v.pass).map((v) => v.id), ['D3']);
+    // D3: the clash rule restated as a refusal over whole stays (paid M4b run 2's T-158, after P-7) is a correct resolution;
+    // with the never-rule gone and no restatement, or a refusal the harbour master may override, D3 fails.
+    const neverRule = (v: ArcView) => v.pin.rules.filter((r) => !matches([['never'], ['two vessels']], r.text));
+    const stays = rule('T-89', 'A booking is refused when its stay shares a tide window with the stay of another booking of the same berth.');
+    const restated = { 1: { ...a1, pin: { ...a1.pin, rules: [...neverRule(a1), stays] }, phase0: { ...a1.phase0, corpusDivergences: a1.phase0.corpusDivergences.map((d) => (d.cites.includes('V-2' as never) ? { ...d, rules: [stays.id] } : d)) } }, 2: a2 };
+    assert.deepEqual(defectVerdicts(key, restated).filter((v) => !v.pass).map((v) => v.id), []);
+    assert.deepEqual(defectVerdicts(key, { 1: { ...a1, pin: { ...a1.pin, rules: neverRule(a1) } }, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), ['D3']);
+    const overridable = rule('T-88', 'A booking of the same berth for a shared tide window is refused unless the harbour master overrides the clash.');
+    assert.deepEqual(defectVerdicts(key, { 1: { ...restated[1], pin: { ...a1.pin, rules: [...neverRule(a1), overridable] } }, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), ['D3']);
+    // G keys on the soak lane witnessing a must-hold obligation, whatever the census says of the soak rules (paid M4b run 2
+    // censused them prod-only and untestable, and no obligation was witnessed by the soak run): a soak lane witnessing
+    // only a future obligation, or no lane running the soak file, fails G alone.
+    assert.deepEqual(defectVerdicts(key, { 1: census(a1, 'T-16', 'prod-only'), 2: a2 }).filter((v) => !v.pass).map((v) => v.id), []);
+    const soakLane = a1.obligations.lanes.find((x) => x.argv.some((arg) => arg.includes(PLANT.soakFile)))!;
+    const futureSoak = { ...a1, obligations: { ...a1.obligations, obligations: a1.obligations.obligations.map((o) => (o.witness?.lane === soakLane.id ? { ...o, activation: 'future' as const, deliveredBy: ['guard' as never] } : o)) } };
+    assert.deepEqual(defectVerdicts(key, { 1: futureSoak, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), ['G']);
+    const noSoakLane = { ...a1, obligations: { ...a1.obligations, lanes: a1.obligations.lanes.map((x) => (x.id === soakLane.id ? { ...x, argv: ['node', '--test', 'test/unit/ledger.test.js'] } : x)) } };
+    assert.deepEqual(defectVerdicts(key, { 1: noSoakLane, 2: a2 }).filter((v) => !v.pass).map((v) => v.id), ['G']);
+    // S: the gate's rule states what passes; a rule pinning the serial flag in its place (paid M4b run 2's T-103) is no gate rule.
+    const pinnedFlag = { 1: { ...a1, pin: { ...a1.pin, rules: [...a1.pin.rules.filter((r) => r.id !== 'T-15'), rule('T-90', "No change is copied to the kiosk until npm test, run exactly as node --test --test-concurrency=1 'test/unit/*.test.js', has passed.")] } }, 2: a2 };
+    assert.deepEqual(defectVerdicts(key, pinnedFlag).filter((v) => !v.pass).map((v) => v.id), ['S']);
     // D2 and D7 do not own deduplication (D1 does): a claim split into two rules passes when each holds; D2 fails if any split half is must-hold.
     const split = (v: ArcView, id: string, copy: string, text: string): ArcView => ({
       ...v, pin: { ...v.pin, rules: [...v.pin.rules, { ...v.pin.rules[0]!, id: copy as never, text }] },
@@ -473,10 +544,16 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
     assert.deepEqual([report.endedBy, report.stopReason], ['stopped', 'vision-silent']);
     assertEveryStepPlayed(silent.dir, [1]);
+    const silentArc1 = journal(silent.dir, 1);
+    assert.deepEqual(factsOf(silentArc1, 'flow-ended').map((f) => [f.job, f.outcome, f.proposal]), [['flow-1', 'done', null]], 'one flow run, the third merge\'s, with no proposal');
+    const held = factsOf(silentArc1, 'dispatch').filter((d) => d.record.unit === 'free-berths');
+    assert.ok(held.length > 0 && held.every((d) => d.seq > factsOf(silentArc1, 'flow-ended')[0]!.seq), 'the read-outs after quay-list waited for it');
     const chain = chainOf(absPath(layout(silent.dir).product));
     assert.equal(chain.arcs.length, 1);
     const pass = checked.result.criteria.filter((c) => c.pass).map((c) => c.name);
-    assert.deepEqual(pass, ['isolation', 'intake-filtered', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile'], 'the paid run\'s criteria that need a second arc or the k-limit stop fail here');
+    // M4b: arc 1's constraint-shift run (noAction) names the slot and its suite component, so flow-constraint holds; the
+    // loop and the shard need a decided proposal and a verdict. M4b rev 3: its lane runs carry pressure (pressure-recorded).
+    assert.deepEqual(pass, ['isolation', 'intake-filtered', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'flow-constraint', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop or a decided flow proposal fail here');
     assert.match(checked.result.criteria.find((c) => c.name === 'stopped-at-k')!.detail, /vision-silent/);
   });
 
@@ -515,7 +592,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(confirm.find((o) => o.outcome === 'smoke-survived')!.detail, { kind: 'smoke-survived', obligations: [], testIds: [tides] });
   });
 
-  test('evals-m4a.opportunity: arc 2\'s checkpoint admits fits as the opportunity O-1 (V-7 joins advances) and converts the over-budget day view into an amendment, which arc 3 applies as T-17', () => {
+  test('evals-m4a.opportunity: arc 2\'s checkpoint admits fits as the opportunity O-1 with its witness (V-7 joins advances) and converts the over-budget day view into an amendment, which arc 3 applies as T-25', () => {
     const bundle = factsOf(arc2, 'plan-applied').find((p) => p.source?.type === 'bundle');
     assert.ok(bundle !== undefined && bundle.source?.type === 'bundle');
     assert.deepEqual(bundle.source.admits, [{ index: 0, unit: 'fits', class: { type: 'opportunity', id: 'O-1', clauses: ['V-7'] } }]);
@@ -526,12 +603,23 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(named(outcomesOf(arc2, 'dayview')), [], 'the converted unit never ran');
     const two = chainOf(absPath(layout(story.dir).product)).two!;
     assert.deepEqual(two.plan.holistic?.advances, ['V-5', 'V-7'], 'the opportunity\'s clause joined the slice in force');
+    // Its witness (OR-A1 as tightened after paid M4b runs 3 and 5): I-4 split into its restatement and the draught child
+    // fits delivers on the berths journey; the census moved T-4 to it, and it latched when fits published.
+    const obligations = arcView(two).obligations;
+    const byId = (id: string) => obligations.obligations.find((o) => o.id === id);
+    assert.deepEqual(byId(FITS_WITNESS.parent)?.state, { type: 'split', children: [FITS_WITNESS.restated, FITS_WITNESS.child.id] });
+    assert.deepEqual(
+      [byId(FITS_WITNESS.child.id)?.witness, byId(FITS_WITNESS.child.id)?.deliveredBy, byId(FITS_WITNESS.child.id)?.serves],
+      [{ lane: 'berths', testIds: [FITS_WITNESS.child.test] }, ['fits'], ['V-5', 'V-7']],
+    );
+    assert.deepEqual(obligations.census?.find((e) => e.rule === FITS_WITNESS.child.rule)?.state, { type: 'obligation', id: FITS_WITNESS.child.id });
+    assert.ok(factsOf(arc2, 'obligation-latched').some((f) => f.obligation === FITS_WITNESS.child.id), 'fits\' publication latched its witness');
     // The bundle's drift audit and its checkpoint ran before notice was admitted (the root agent waited on them).
     const drift = factsOf(arc2, 'checkpoint-inputs').find((f) => f.job === DRIFT_CHECKPOINT)!;
     assert.ok(factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice').every((d) => d.seq > drift.seq));
     const arc3 = JSON.parse(readFileSync(join(layout(story.dir).inputs, fakeArc(story.dir, 3), 'phase0.json'), 'utf8')) as { amendments: { id: string; disposition: unknown }[] };
     assert.equal(amendmentsOf(two).length, 1);
-    assert.deepEqual(arc3.amendments, amendmentsOf(two).map((a) => ({ id: a.id, disposition: { type: 'applied', rules: ['T-17'] } })), 'arc 2\'s one amendment, the converted admit');
+    assert.deepEqual(arc3.amendments, amendmentsOf(two).map((a) => ({ id: a.id, disposition: { type: 'applied', rules: ['T-25'] } })), 'arc 2\'s one amendment, the converted admit');
   });
 
   test('evals-m4a.lane-reuse-after-pause: the root agent pauses notice in its hung slow lane and resumes it; the resumed attempt reuses the unit lane\'s pass and logs one intervention', () => {
@@ -549,10 +637,43 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const log = parseOperatorLog(readFileSync(join(layout(story.dir).inputs, 'skill-feedback.md'), 'utf8'));
     assert.deepEqual(log, { n: 1, byLever: { pause: 1 }, malformed: [] });
   });
+
+  test('evals-m4a.flow-loop: arc 1 proves a bait changed and applies the plant lane at six files a time with an improved verdict; arc 2 carries it and rejects a build-class step', () => {
+    const product = absPath(layout(story.dir).product);
+    assert.deepEqual(plantCheck(product), { kind: 'in-play', arc: fakeArc(story.dir, 1), lane: SUITE_LANE, units: unitsOf(1).length }, 'the fail-fast found plant S in play');
+    const { one, two } = chainOf(product);
+    const a1 = flowArcOf(one!);
+    const facts = <K extends Fact['kind']>(a: FlowArc, kind: K) => a.facts.flatMap((x) => (x.fact.kind === kind ? [x.fact as Extract<Fact, { kind: K }>] : []));
+    // flow-1 is the request's or, when the third merge's first constraint label got there first, constraint-shift's (the
+    // request then goes to flow-2); flow-2 is always the cooldown's one requested bypass.
+    const started = facts(a1, 'flow-started');
+    assert.deepEqual(started.map((f) => f.job), ['flow-1', 'flow-2']);
+    assert.ok(started[0]!.triggers.every((x) => x === 'requested' || x === 'constraint-shift'), JSON.stringify(started[0]!.triggers));
+    assert.ok(started[1]!.triggers.includes('requested'), JSON.stringify(started[1]!.triggers));
+    assert.deepEqual(facts(a1, 'flow-ended').map((f) => [f.proposal?.id, f.proposal?.action.lever, f.proposal?.target]), [
+      ['flow-1.0', 'suite-lane', `suite:${REPLAY_LANE.id}`], ['flow-2.0', 'suite-lane', `suite:${SUITE_LANE}`],
+    ]);
+    assert.deepEqual(facts(a1, 'flow-decided').map((d) => [d.proposal, d.decision, d.reason]), [['flow-1.0', 'accepted', FLOW_1.bait.reason], ['flow-2.0', 'accepted', FLOW_1.shard.reason]]);
+    assert.deepEqual(facts(a1, 'flow-proof').map((p) => [p.proposal, p.outcome]), [['flow-1.0', 'changed'], ['flow-2.0', 'preserved']]);
+    const [applied, ...more] = facts(a1, 'flow-applied');
+    assert.ok(applied !== undefined && more.length === 0 && applied.proposal === 'flow-2.0', 'only the preserved change was applied');
+    const revision = a1.revisions.find((r) => r.rev === (applied.revision as number))!;
+    assert.deepEqual(revision.plan.suite.lanes.find((x) => x.id === SUITE_LANE)?.argv, SHARD.argv);
+    assert.deepEqual(factsOf(arc1, 'plan-applied').find((p) => p.rev === applied.revision)?.source, { type: 'flow', proposal: 'flow-2.0' });
+    const [v] = facts(a1, 'flow-verdict');
+    assert.deepEqual([v?.proposal, v?.metric, v?.verdict], ['flow-2.0', { type: 'suite-run', lane: SUITE_LANE }, 'improved']);
+    assert.ok((v?.after.samples.length ?? 0) >= 3, 'the read-outs after quay-list ran the suite after the change');
+    // Arc 2 carries the change; its one requested run's build-class step is rejected with a reason.
+    assert.deepEqual(two!.plan.suite.lanes.find((x) => x.id === SUITE_LANE)?.argv, SHARD.argv);
+    const a2 = flowArcOf(two!);
+    assert.deepEqual(facts(a2, 'flow-ended').map((f) => [f.job, f.outcome, f.proposal?.action.lever]), [['flow-1', 'done', 'build-class']]);
+    assert.deepEqual(facts(a2, 'flow-decided').map((d) => [d.proposal, d.decision, d.reason]), [['flow-1.0', 'rejected', FLOW_2.buildClass.reason]]);
+    for (const name of ['flow-constraint', 'flow-loop', 'flow-shard', 'ruler-intact']) assert.ok(story.checked.result.criteria.find((c) => c.name === name)?.pass, name);
+  });
 });
 
 test('skill.operator-log-format: reference.md\'s operator-log example parses with check.ts\'s parser, every lever in the closed list', () => {
-  const ref = readFileSync(fileURLToPath(new URL('../../skills/orchestrate/reference.md', import.meta.url)), 'utf8');
+  const ref = readFileSync(fileURLToPath(new URL('../../../skills/orchestrate/reference.md', import.meta.url)), 'utf8');
   const section = ref.slice(ref.indexOf('\n## The operator log\n'));
   const block = /```operator-log\n([\s\S]*?)\n```/.exec(section);
   assert.ok(block !== null, 'an operator-log fenced block under "The operator log"');
@@ -568,7 +689,7 @@ test('evals-m4a.untrusted-start: under PUBLIC + ALL, phase0 check and start refu
   assert.equal(out.code, 0, out.stderr);
   const l = layout(dir);
   stagePlugin(l);
-  prepareFake(l);
+  prepareFake(l, 'story');
   const pathBefore = process.env['PATH'];
   process.env['PATH'] = launchEnv(l, process.env)['PATH'];
   let plan: string;
@@ -640,4 +761,95 @@ test('evals-m4a.owner-reads-brief (paid run 13): open questions are those no arc
 
 test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id reused by the next arc still wakes the session', () => {
   assert.notEqual(itemKey('no-double-promise', 'nu-31'), itemKey('berth-that-fits', 'nu-31'));
+});
+
+// ---------------------------------------------------------------------------------------------------
+// M4b: the flow criteria and the fail-fast on synthetic records (no run needed)
+
+const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const planOf = (argv: readonly string[], units = MIN_ARC1_UNITS): PlanM1 => ({
+  suite: { lanes: [lane(SUITE_LANE, argv), lane(REPLAY_LANE.id, REPLAY_LANE.argv)] }, units: Array.from({ length: units }, (_, i) => ({ id: `u${i + 1}` })),
+}) as unknown as PlanM1;
+const obligationsOf = (soakArgv: readonly string[]) => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane('soak', soakArgv), reporter: 'node-test' }], obligations: [], mapping: { paths: [] } });
+const SHA = 'a'.repeat(64);
+const SHARD_PROPOSAL = { id: 'flow-2.0', target: `suite:${SUITE_LANE}`, action: { lever: 'suite-lane', lane: SUITE_LANE, argv: [...SHARD.argv], reporter: 'node-test', cpu: SHARD.cpu }, rationale: 'r', risks: 'r' };
+const PREIMAGE = { lever: 'suite-lane', lane: SUITE_LANE, argv: [...SEED_SUITE_ARGV], cpu: null };
+type Synthetic = Readonly<{ component?: string; reason?: string; proof?: string; verdict?: string; soakArgv?: readonly string[]; finalArgv?: readonly string[] }>;
+
+/** One arc whose flow-2 changes the plant lane (`SHARD`) as the story's does; each option mutates one record. */
+function syntheticArc(o: Synthetic = {}): FlowArc {
+  const facts: unknown[] = [
+    { kind: 'flow-started', job: 'flow-2', triggers: ['requested'], inputsSha256: SHA },
+    { kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: SHARD_PROPOSAL, dropped: null, constraint: { code: { station: 'slot:integration', internal: false, component: o.component ?? `suite:${SUITE_LANE}` }, judged: { station: 'slot:integration', agree: true, reason: 'r' } } },
+    { kind: 'flow-decided', proposal: 'flow-2.0', command: 'cmd-1', decision: 'accepted', reason: o.reason ?? 'the serial flag is stale' },
+    { kind: 'flow-proof', proposal: 'flow-2.0', job: 'proof-1', treeSha: '0'.repeat(40), oldSha256: SHA, newSha256: SHA, outcome: o.proof ?? 'preserved', minutes: { old: 6, new: 1 }, breaksStandIn: false },
+    { kind: 'flow-applied', proposal: 'flow-2.0', revision: 2, preimage: PREIMAGE },
+    { kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'suite-run', lane: SUITE_LANE }, before: { samples: [6], centre: 6, mrBar: 0 }, after: { samples: [1, 1, 1] }, guards: [], verdict: o.verdict ?? 'improved', preimage: PREIMAGE },
+  ];
+  const soak = ['node', '--test', PLANT.soakFile];
+  return {
+    arc: 'm4a-synthetic-1',
+    facts: facts.map((fact, i) => ({ seq: i + 10, fact: fact as Fact })),
+    revisions: [
+      { rev: 1, plan: planOf(SEED_SUITE_ARGV), obligations: obligationsOf(soak) },
+      { rev: 2, plan: planOf(o.finalArgv ?? SHARD.argv), obligations: obligationsOf(o.soakArgv ?? soak) },
+    ],
+  };
+}
+
+test('evals-m4a.flow-criteria: flow-constraint, flow-loop, flow-shard and ruler-intact pass on the story\'s records and fail on each one mutated', () => {
+  const good = syntheticArc();
+  assert.equal(flowConstraintVerdict(good).pass, true);
+  assert.equal(flowLoopVerdict([good]).pass, true);
+  assert.equal(flowShardVerdict([good]).pass, true, flowShardVerdict([good]).detail);
+  assert.deepEqual(rulerRecordProblems([good]), []);
+  assert.deepEqual(flowLoopVerdict([]).pass, false, 'no run at all');
+
+  assert.match(flowConstraintVerdict(syntheticArc({ component: 'ff' })).detail, /no run named the slot with a suite component/);
+  assert.match(flowLoopVerdict([syntheticArc({ reason: '  ' })]).detail, /no proposal decided with a reason/);
+  const inconclusive = syntheticArc({ verdict: 'inconclusive' });
+  assert.match(flowLoopVerdict([inconclusive]).detail, /no conclusive verdict/);
+  assert.equal(flowShardVerdict([inconclusive]).pass, false);
+  assert.equal(flowShardVerdict([syntheticArc({ verdict: 'no-effect' })]).pass, false, 'conclusive but not improved');
+  const changed = syntheticArc({ proof: 'changed' });
+  assert.equal(flowShardVerdict([changed]).pass, false);
+  assert.deepEqual(rulerRecordProblems([changed]), ['m4a-synthetic-1: flow-2.0 changed suite\'s argv without a preserved proof']);
+  const slowerSoak = rulerRecordProblems([syntheticArc({ soakArgv: ['node', '--test', '--test-concurrency=2', PLANT.soakFile] })]);
+  assert.equal(slowerSoak.length, 1);
+  assert.match(slowerSoak[0]!, /rev 2: the soak lane soak has laneRev/);
+
+  // The argvs the check runs: the seed and each arc's last plant lane, once each.
+  const argvs = rulerArgvs([good, syntheticArc()]);
+  assert.ok(!('problem' in argvs));
+  assert.deepEqual([argvs.lane.argv, argvs.inForce.map((x) => x.argv)], [SEED_SUITE_ARGV, [SHARD.argv]]);
+  const npm = { ...good, revisions: [{ rev: 1, plan: { suite: { lanes: [lane('suite', ['npm', 'test'])] } } as unknown as PlanM1, obligations: null }] };
+  assert.match((rulerArgvs([npm]) as { problem: string }).problem, /first plan has no plant lane/);
+
+  // The triples: equal multisets with the soak id pass; a dropped test, a changed selection, a red run or a seed without the soak id fail.
+  const t = (testId: string, selected = 1, outcome: 'pass' | 'fail' | 'skip' = 'pass') => ({ testId, selected, outcome });
+  const seed = { argv: SEED_SUITE_ARGV, exit: 0, tests: [t(PLANT.soakTest), t('kiosk')] };
+  assert.deepEqual(triplesProblems(seed, [{ argv: SHARD.argv, exit: 0, tests: [t('kiosk'), t(PLANT.soakTest)] }]), []);
+  assert.equal(triplesProblems(seed, [{ argv: SHARD.argv, exit: 0, tests: [t('kiosk')] }]).length, 2, 'the soak test dropped: triples differ and the soak id is gone');
+  assert.equal(triplesProblems(seed, [{ argv: SHARD.argv, exit: 0, tests: [t(PLANT.soakTest, 2), t('kiosk')] }]).length, 2, 'the soak test selected twice');
+  assert.match(triplesProblems(seed, [{ argv: SHARD.argv, exit: 1, tests: seed.tests }])[0]!, /exited 1/);
+  assert.match(triplesProblems({ ...seed, tests: [t('kiosk')] }, [])[0]!, /does not select/);
+  assert.match(triplesProblems({ ...seed, tests: null }, [])[0]!, /malformed/);
+});
+
+test('evals-m4a.plant-lane: the fail-fast finds plant S only in a suite lane whose argv carries the serial flag and the selector as elements of their own', () => {
+  assert.equal(plantLaneOf(planOf(SEED_SUITE_ARGV))?.id, SUITE_LANE);
+  assert.equal(plantLaneOf(planOf(SHARD.argv)), null, 'an arc 1 that began sharded has no plant in play');
+  assert.equal(plantLaneOf({ suite: { lanes: [lane('suite', ['npm', 'test'])] } } as unknown as PlanM1), null, 'npm test hides the argv from an in-place edit (RC-4)');
+  assert.equal(plantLaneOf({ suite: { lanes: [lane('suite', ['sh', '-c', `node --test ${PLANT.serial} '${PLANT.selector}'`])] } } as unknown as PlanM1), null, 'so does a shell');
+  assert.match(failFastText({ kind: 'absent', arc: 'a', lanes: [{ id: 'suite', argv: ['npm', 'test'] }] }), /^fail-fast: arc a's first plan in force has no suite lane whose argv carries --test-concurrency=1 over test\/unit\/\*\.test\.js/);
+});
+
+test('evals-m4a.unit-floor: the fail-fast stops an arc 1 whose first plan has fewer units than a conclusive verdict needs', () => {
+  assert.equal(MIN_ARC1_UNITS, 6, 'three suite runs before the flow change and three after it, one per integration');
+  assert.deepEqual(firstPlanCheck('a', planOf(SEED_SUITE_ARGV)), { kind: 'in-play', arc: 'a', lane: SUITE_LANE, units: MIN_ARC1_UNITS });
+  const small = firstPlanCheck('a', planOf(SEED_SUITE_ARGV, MIN_ARC1_UNITS - 1));
+  assert.deepEqual(small, { kind: 'too-few-units', arc: 'a', units: ['u1', 'u2', 'u3', 'u4', 'u5'] });
+  assert.ok(small.kind === 'too-few-units');
+  assert.match(failFastText(small), /^fail-fast: arc a's first plan in force has 5 units \(u1, u2, u3, u4, u5\), fewer than 6/);
+  assert.equal(firstPlanCheck('a', planOf(['npm', 'test'], 1)).kind, 'absent', 'the plant is checked first');
 });

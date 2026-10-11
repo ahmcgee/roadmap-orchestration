@@ -61,7 +61,7 @@ import {
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { HOST_SIGNATURES_DEV6 } from '../core/upgrade.ts';
+import { HOST_SIGNATURES_DEV6, spawnPressureOf } from '../core/upgrade.ts';
 import { type ObservationStore, type WitnessedEntry, keyOf, observationOf, observationStore, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ArcLaneDef, type ObligationDef, type Obligations, type WitnessRecord, isExempt, laneRevOf } from '../holistic/types.ts';
 import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
@@ -70,7 +70,7 @@ import { candidateLaneDir, jobEvidenceRoot, jobLaneDir, witnessDir } from '../gi
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
 import {
-  type CommandVerdict, type IgnoredCensus, type LaneDef, type RedRev, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
+  type CommandVerdict, type IgnoredCensus, isRed, type LaneDef, type RedRev, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
 } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPattern } from '../core/values.ts';
 import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, pathPattern, patternPath, readManifest } from '../git/evidence.ts';
@@ -110,11 +110,12 @@ export const LANE_GRACE_MS = 5_000;
  * ignored output when it has any. `host`: its host samples (null when none were recorded: a lane an older
  * executor ran, or a crash before the write). `signatures`: the host signatures in a red run's output (empty
  * for any other verdict), by the table its spawn was stamped with (`redRev`; null: an unstamped 1.0.0-dev.6 run,
- * read with `HOST_SIGNATURES_DEV6`).
+ * read with `HOST_SIGNATURES_DEV6`). `pressure` (M4b rev 3): its spawn's pressure (null: lost, no schedstat, under
+ * `PRESSURE_MIN_WALL_MS`, or before rev 3), which the starved classification reads (RC-11).
  */
 export type LaneRun = LaneLedgerEntry & Readonly<{
   inv: InvocationId; at: IsoTime; endedAt: IsoTime; fixDirs: readonly AbsPath[]; host: LaneHost | null; signatures: readonly HostSignatureId[];
-  redRev: RedRev | null;
+  redRev: RedRev | null; pressure: number | null;
 }>;
 
 /** A red run whose output carried a host signature (F3): the signatures, and whether its host samples showed a busy host. */
@@ -298,8 +299,6 @@ function readLaneHost(dir: AbsPath): LaneHost | null {
   return { start: hostSample(start, `${path}.start`), end: hostSample(end, `${path}.end`) };
 }
 
-const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall';
-
 /**
  * A lane run's record, read from its spawn and invocation files: what ran (the definition), how it ended
  * (result.json, or none when lost with its runner), when (a lane's deadline is its start plus
@@ -326,8 +325,14 @@ function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDe
     ignored: readCensus(dir), inv, at, endedAt: files.read('exit.json')?.endedAt ?? at, fixDirs: fixDirsOf(dir, lane),
     host: readLaneHost(dir), signatures: isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)], redRev === null ? HOST_SIGNATURES_DEV6 : HOST_SIGNATURES) : [],
     // A run's own record; a reused lane's ledger entry sets it (`reusedRecord`).
-    reused: null, redRev,
+    reused: null, redRev, pressure: donePressure(ctx.journal.view, intent.op),
   };
+}
+
+/** A closed spawn's pressure (M4b rev 3); null while open, lost or aborted. */
+function donePressure(view: JournalView, op: OpId): number | null {
+  const done = view.doneOf(op);
+  return done !== null && done.kind === 'proc.spawn' && done.outcome.kind === 'result' ? spawnPressureOf(done.outcome) : null;
 }
 
 const evidenceOf = (r: LaneRun): RedEvidence => ({ signatures: r.signatures, host: r.host });
@@ -1050,6 +1055,23 @@ export async function removeJobCheckouts(ctx: ResourceContext, job: JobId): Prom
     }
     await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${job}`, parent, { path: c.expect.path, evidence: capturedEvidence(ctx.journal.view, evidence) });
   }
+}
+
+/** A job's kinds of journey series: the baseline's, an audit's lanes, a re-witness (an audit's or a checkpoint's). */
+export type JobSeriesKind = 'checkout' | 'lanes' | 'rewitness';
+
+/**
+ * The checkout of a job's next journey series of kind `what`: `<worktreeRoot>/<arc>/<job>.<what>-<n>`, n one past the
+ * checkouts of that kind the job has begun. A job may run such a series more than once (resumed after it was cut short,
+ * a baseline re-run on a tip a plan revision left unwitnessed, a re-witness asked again), so each series gets a checkout
+ * of its own: its certificate (one `series-certified` per parent and checkout), its `_dirty-<checkout>` evidence and its
+ * runs' cwd (`certifiedRun`) name that series alone, and `removeJobCheckouts` never mistakes it for an earlier one.
+ */
+export function jobSeriesCheckout(ctx: Pick<ResourceContext, 'journal' | 'plan'>, job: JobId, what: JobSeriesKind): AbsPath {
+  const parent = canonicalJson({ type: 'job', job } satisfies Parent);
+  const stem = `${job}.${what}-`;
+  const begun = ctx.journal.view.opsOf('worktree.create').filter((i) => canonicalJson(i.parent) === parent && basename(i.expect.path).startsWith(stem)).length;
+  return absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${stem}${begun + 1}`));
 }
 
 /** Where a witness run's record is kept: `witness.json` in its execution's dir (what a `witnessed` fact names). */

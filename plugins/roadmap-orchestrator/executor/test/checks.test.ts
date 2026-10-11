@@ -9,11 +9,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact, IntentOf } from '../src/core/events.ts';
-import { arcId } from '../src/core/ids.ts';
+import { arcId, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import { step } from '../src/pipeline/unit.ts';
+import { unitTip } from '../src/pipeline/gate.ts';
 import { verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { removeVerificationTree, seriesTree } from '../src/pipeline/lanes.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -58,6 +59,8 @@ async function lanesOf(opts: ChecksOptions): Promise<Readonly<{ a: ChecksArc; r:
 
 
 const FIX = codexStep([{ type: 'commit', message: 'more tests', files: { 'test/more.test.js': '// more\n' } }], { argv: ['exec', 'resume'] });
+/** A fix round that changes nothing. */
+const NOOP_FIX = codexStep([], { argv: ['exec', 'resume'] });
 
 describe('D1 witness presence', () => {
   test('witnesscheck.missing-fails-fast: a required witness absent on the salvage SHA is witnesses-missing; no gate call; the fix round names the id and what requires it', T, async () => {
@@ -114,6 +117,34 @@ describe('D1 witness presence', () => {
       assert.deepEqual(lanesFacts(alone.a.d).at(-1)!.detail, { kind: 'witnesses-missing', missing: [{ lane: 'journey', testId: 't1' }], failed: [] }, 'u1 completes I-1: a target');
     } finally {
       alone.r.journal.close();
+    }
+  });
+
+  test('witnesscheck.latch-after-cut: an obligation another unit latched after this unit was cut is not required on its tree; its candidate grades it (paid M4b run 3)', T, async () => {
+    // u2 delivers future I-1 and u1 declares it. u1 is cut and built first; u2 then publishes, latching I-1, whose test u1's
+    // tree cannot hold. Before the fix u1's lanes demanded it: witnesses-missing, chargeable, on every rebuild of the same base.
+    const a = await checksArc({
+      steps: [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/u1.js': 'export const u1 = 1;\n' }), planCheckStep({ decision: 'approve' }), mulBuild({ 'src/u2.js': 'export const u2 = 2;\n' }), gateStep({ decision: 'approve' }), gateStep({ decision: 'approve' })],
+      activation: 'future', deliveredBy: ['u2'], more: ['u2'],
+    });
+    const r = contextFor(a.d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'teardown');
+      const u1Tip = unitTip(r.ctx, unitId('u1'));
+      scriptTree(a.control, git(a.d.repo, 'rev-parse', `${u1Tip}^{tree}`), { outcomes: {} });
+      await stepUntil(r, 'u2', (f) => f.stage === 'snapshot');
+      const latch = facts(a.d).find((f) => f.kind === 'obligation-latched');
+      assert.deepEqual(latch === undefined ? null : [latch.obligation, latch.unit], ['I-1', 'u2'], 'u2\'s publication latched I-1');
+      await stepUntil(r, 'u1', (f) => f.stage === 'lanes');
+      const f = lanesFacts(a.d).at(-1)!;
+      assert.deepEqual([f.outcome, f.chargeable], ['green', false], 'u2\'s latch is not in u1\'s tree: nothing required at the lanes stage');
+      assert.deepEqual(journeyRuns(a.d, f.attempt).filter((i) => i.parent.type === 'stage' && i.parent.unit === 'u1'), []);
+      await stepUntil(r, 'u1', (x) => x.stage === 'snapshot');
+      assert.deepEqual(outcomes(a.d), [...PRE_LANES, 'lanes:green', ...MERGED]);
+      const graded = spawns(a.d).filter((i) => i.expect.subject.purpose === 'journey' && i.parent.type === 'stage' && i.parent.unit === 'u1' && i.parent.stage === 'candidate');
+      assert.equal(graded.length, 1, 'the candidate, u1 merged onto the tip holding u2, ran I-1\'s witness lane');
+    } finally {
+      r.journal.close();
     }
   });
 
@@ -229,8 +260,8 @@ describe('D2 mutation smoke', () => {
     }
   });
 
-  test('smoke.survivor-one-round-then-gate / smoke.allowance-reused-same-key: a survivor is one charged fix round; the same production diff reuses the verdict; then the gate decides with it', T, async () => {
-    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), FIX, gateStep({ decision: 'approve' })], null);
+  test('smoke.survivor-one-round-then-gate / smoke.allowance-reused-same-key: a survivor is one charged fix round; an unchanged unit reuses the verdict; then the gate decides with it', T, async () => {
+    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null);
     try {
       const f = lanesFacts(a.d).at(-1)!;
       assert.deepEqual([f.outcome, f.class, f.chargeable], ['smoke-survived', 'smoke', true]);
@@ -248,10 +279,24 @@ describe('D2 mutation smoke', () => {
     }
   });
 
+  test('smoke.tests-only-fix-reruns: a fix round after a survivor that edits only test files changes the key; the mutant runs again', T, async () => {
+    // Paid M4b run (unit confirm-by-text): the key left the tests out, so a tests-only fix reused the stale `survived`.
+    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), FIX, gateStep({ decision: 'approve' })], null);
+    try {
+      assert.equal(lanesFacts(a.d).at(-1)!.outcome, 'smoke-survived');
+      await stepUntil(r, 'u1', (x) => x.stage === 'snapshot');
+      assert.deepEqual(lanesFacts(a.d).map((x) => [x.outcome, x.class]), [['smoke-survived', 'smoke'], ['smoke-survived', 'advance']]);
+      assert.equal(smokeApplies(a.d).length, 2, 'the second attempt ran its own mutant');
+      const [first, second] = smokeRan(a.d);
+      assert.notEqual(first!.key, second!.key);
+    } finally {
+      r.journal.close();
+    }
+  });
+
   test('gate.no-spec-lanes-after-smoke (paid M4a run 11): a unit whose spec declares no lanes, its D1 witness journey and a surviving smoke, one fix round, then the gate finds the last lanes attempt\'s own checkout and the unit merges', T, async () => {
     // Run 11 (witness-hardening, seq 1585-1641): no spec lane ran, so no verification checkout existed; the only checkout of
     // the attempt was D1's witness journey's, removed before its certificate; the gate threw on every restart.
-    const NOOP_FIX = codexStep([], { argv: ['exec', 'resume'] });
     const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null, { noSpecLanes: true });
     try {
       assert.deepEqual(spawns(a.d).filter((i) => i.expect.subject.purpose === 'lane'), [], 'no spec lane exists');

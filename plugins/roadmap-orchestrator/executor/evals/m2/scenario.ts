@@ -2,11 +2,14 @@
 // (`<unit>.json`, evals/m1/scenario.ts: steps by role), since units run in parallel and each unit's calls come
 // in its own order. The driver translates each into the fake backend's steps for the profile (evals/m1's
 // `fakeSteps`), keyed by unit (test/helpers/scenario.ts `Step.unit`), and prepends the unkeyed backend smokes:
-// one for the start and one for the supervisor's respawn after the driver's SIGKILL.
+// one for the start and one for the supervisor's respawn after the driver's SIGKILL. M4b: the third merge (base, left
+// and urgent, `top` still to flow) fires the flow loop's first run (constraint-shift) on the respawned generation; its
+// call, keyed by its job `flow-1`, answers noAction, and the cooldown leaves no second run inside the fake run.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ProfileName } from '../../src/routing/types.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
+import { flowStep } from '../../test/helpers/holistic.ts';
 import { fakeSteps, readScenario } from '../m1/scenario.ts';
 import { type FixtureUnit, REENTRY, UNITS } from './layout.ts';
 
@@ -22,5 +25,5 @@ export function storySteps(dir: string, profile: ProfileName): readonly Step[] {
     if (!existsSync(file)) throw new Error(`story ${dir} has no ${unit}.json`);
     return fakeSteps(readScenario(file), profile).slice(smoke.length).map((s): Step => ({ ...s, unit }));
   });
-  return [...Array.from({ length: SMOKES }, () => smoke).flat(), ...units];
+  return [...Array.from({ length: SMOKES }, () => smoke).flat(), ...units, flowStep('flow-1')];
 }

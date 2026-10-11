@@ -35,8 +35,8 @@ function unitLabels(): ReadonlySet<string> {
   return labels;
 }
 
-/** The test files a row names (`test/<name>.test.ts`, possibly several, each with a note). */
-const testFiles = (row: (typeof MATRIX)[number]): readonly string[] => [...row.test.matchAll(/test\/[\w.-]+\.test\.ts/g)].map((m) => m[0]);
+/** The test files a row names (`test/<name>.test.ts` or `test/serial/<name>.test.ts`, possibly several, each with a note). */
+const testFiles = (row: (typeof MATRIX)[number]): readonly string[] => [...row.test.matchAll(/test\/(?:serial\/)?[\w.-]+\.test\.ts/g)].map((m) => m[0]);
 
 test('matrix.no-pending: every cell is crashed, killed, a fixture, or excluded with a reason', () => {
   const pending = MATRIX.flatMap((r) => cellsOf(r).flatMap(({ boundary, cell }) => (cell.status === 'pending' ? [`${r.row} ${boundary}`] : [])));

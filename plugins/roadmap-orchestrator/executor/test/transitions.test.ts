@@ -104,6 +104,9 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'refusal', { routedUp: ['plan-check'] }, 'park:refusal', 'park', {}],
   ['plan-check', 'malformed', {}, 'plan-check@med', 'retry', { 'retries.plan-check': 1 }],
   ['plan-check', 'malformed', { counters: { 'retries.plan-check': 1 } }, 'park:malformed', 'park', {}],
+  // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park.
+  ['plan-check', 'read-denied', {}, 'plan-check@med', 'retry', { 'retries.plan-check': 1 }],
+  ['plan-check', 'read-denied', { counters: { 'retries.plan-check': 1 } }, 'park:read-denied', 'park', {}],
   ['plan-check', 'process-fault', {}, 'park:process-fault', 'park', {}],
   // A routing change that moved a started implementer's seat (dispatch.ts): park, uncharged, at any dispatching stage.
   ['plan-check', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
@@ -177,6 +180,9 @@ const ROWS: readonly Row[] = [
   ['gate', 'interrupted', {}, 'hold', 'hold', {}],
   // Run 11 round 3: no green verification checkout of the head: the lanes run again, uncharged.
   ['gate', 'unverified', {}, 'lanes', 'advance', {}],
+  // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park.
+  ['gate', 'read-denied', {}, 'gate@med', 'retry', { 'retries.gate': 1 }],
+  ['gate', 'read-denied', { counters: { 'retries.gate': 1 } }, 'park:read-denied', 'park', {}],
   // candidate (integration slot)
   ['candidate', 'green', {}, 'ff', 'advance', {}],
   ['candidate', 'transient-violation', {}, 'build/fix@med', 'trigger', { chargeableFailures: 1 }],
@@ -223,13 +229,13 @@ describe('transitions', () => {
   it('transitions.park-class: every park row has its class (A7); an operator park writes it, a retryable one its stated targets', () => {
     const CLASS: Readonly<Record<string, ParkClass>> = {
       'plan-check redirect': 'design', 'plan-check infeasible': 'design', 'plan-check scope-widened': 'design', 'plan-check refusal': 'design',
-      'plan-check malformed': 'design', 'plan-check process-fault': 'retryable', 'plan-check routing-changed': 'env',
+      'plan-check malformed': 'design', 'plan-check process-fault': 'retryable', 'plan-check routing-changed': 'env', 'plan-check read-denied': 'env',
       'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
       'build occupied': 'env', 'build cleanup-failed': 'retryable',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
       'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
-      'gate process-fault': 'retryable', 'gate routing-changed': 'env',
+      'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
     };

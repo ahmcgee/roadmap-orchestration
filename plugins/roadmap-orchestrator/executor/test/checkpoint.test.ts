@@ -1,7 +1,7 @@
 // M3 step B6: the checkpoint job and its bundles (src/holistic/{checkpoint,bundle,convergence,divergence}.ts), over real
 // arcs: real git, real processes, the fake claude answering lens and checkpoint calls keyed by job, fake witness lanes.
 // Named tests: bundle.stale, bundle.partial (with the retry's prior_attempt), bundle.vision-always-read (H3), bundle.partial (A18's literal partial bundle), bundle.no-op,
-// noop.interpretation-divergence (H12), bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
+// noop.interpretation-divergence (H12), bundle.evidence-drift-witnessed, bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
 // bundle.withdrawn-cite-invalid (H16), bundle.rule-race-stale, bundle.ruling-id-collision-invalid, bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
 // convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13),
 // ckpt.design-park-respec-first (OR-Q1), ckpt.park-cause, bundle.p1-left-to-repair, and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
@@ -125,7 +125,7 @@ describe('the checkpoint and its bundle', () => {
       // The retry read the first attempt's invalid reasons verbatim (paid m3 run 9: ckpt-3 repeated ckpt-2's mistakes).
       const stdin = (job: string) => readCalls(d.scenarioPath).find((c) => c.unit === job)!.stdin;
       assert.doesNotMatch(stdin('ckpt-1'), /<prior_attempt>/);
-      assert.ok(stdin('ckpt-2').includes(`<prior_attempt>\nThe previous checkpoint on this trigger, ckpt-1, decided a bundle the executor rejected as invalid, for these reasons: ${first.decision.detail}\n`), stdin('ckpt-2'));
+      assert.ok(stdin('ckpt-2').includes(`<prior_attempt>\nEarlier checkpoints on this trigger decided what the executor rejected, oldest first:\n- ckpt-1, rejected as invalid, for these reasons: ${first.decision.detail}\n  Correct each reason; do not repeat it.\nThis is the last attempt: a second invalid decision goes to the owner as a request.\n</prior_attempt>`), stdin('ckpt-2'));
       assert.deepEqual(decisions(r), [['ckpt-1', 'rejected:invalid'], ['ckpt-2', 'requested']]);
       assert.equal(r.journal.view.planApplied()!.rev, rev);
       assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
@@ -163,6 +163,35 @@ describe('the checkpoint and its bundle', () => {
     }
   });
 
+  test('checkpoint.superseded-by-plan-revision (paid M4b run 3, ckpt-7): an apply that changes the plan cancels the call in flight, which never finishes; the job decides stale and the re-capture on the new rev reads why', T, async () => {
+    const d = checkpointArc([...visionLenses('audit-1'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [VALID_OP] }), [barrier]), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [VALID_OP] }))]);
+    const r = contextFor(d);
+    const { ctx, w } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      const capturedRev = factsOfKind(r, 'checkpoint-inputs')[0]!.vector.plan;
+      await applyPlanEdit(r, w, (p) => void (p['direction'] = 'Keep it smaller.'));
+      // The barrier is never released: only the cancel ends the call.
+      const first = await running;
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'stale', JSON.stringify(first));
+      assert.equal(first.decision.detail, `the plan changed since plan rev ${capturedRev}`);
+      const kills = r.journal.view.opsOf('proc.kill').filter((k) => k.expect.reason === 'supersede');
+      assert.equal(kills.length, 1, 'the call was cancelled for the revision');
+      assert.ok(r.journal.view.doneOf(kills[0]!.op) !== null);
+      assert.equal(planLimits(r), null);
+      const second = await runCheckpoint(ctx);
+      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
+      assert.notEqual(factsOfKind(r, 'checkpoint-inputs')[1]!.vector.plan, capturedRev, 'captured again on the new rev');
+      const stdin = readCalls(d.scenarioPath).find((c) => c.unit === 'ckpt-2')!.stdin;
+      assert.ok(stdin.includes(`- ckpt-1, rejected as stale: ${first.decision.detail}\n  What it read changed after its capture: decide again from the inputs below.\n</prior_attempt>`), stdin);
+      assert.deepEqual(r.journal.view.openIntents(), []);
+    } finally {
+      r.journal.close();
+    }
+  });
+
   test('bundle.vision-always-read (H3): a vision revision between capture and activation rejects a bundle that touches no vision-derived artifact', T, async () => {
     const d = checkpointArc([...visionLenses('audit-1'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [VALID_OP] }), [barrier])]);
     const r = contextFor(d);
@@ -193,6 +222,12 @@ function openVisionFinding(r: ArcRun, job: string, cause: string): string {
   });
   return id;
 }
+/** `id` resolved by u1's publication, as the executor moves it (`syncFindings`: owned, fixed on branch, resolved). */
+function resolveMidCall(r: ArcRun, id: string): void {
+  for (const to of [{ state: 'owned', unit: 'u1' }, { state: 'fixed-on-branch', unit: 'u1' }, { state: 'resolved' }]) {
+    r.journal.fact({ kind: 'finding-transition', id: id as never, to: to as never });
+  }
+}
 /** A bundle answer of `ops` (a no-op when empty), optionally citing observations, dismissing findings, with one interpretation. */
 function bundle(ops: readonly JsonValue[], extra: Readonly<{ observations?: readonly JsonValue[]; dispose?: readonly string[]; interpretations?: boolean }> = {}): JsonValue {
   const a = checkpointAnswer({
@@ -213,7 +248,56 @@ const ruleOp = (id: string): JsonValue => ({ op: 'rule', ruling: id, cites: ['V-
 const requirePlan = (r: ArcRun) => JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${r.journal.view.planApplied()!.planSha256}.plan.json`), 'utf8')) as { units: { id: string; origin?: string }[] };
 
 describe('the activation checks', () => {
-  test('bundle.evidence-drop: a cited observation with none on the head that moved rejects the bundle on its evidence; its lane is re-witnessed on the head before the re-evaluation, which applies', T, async () => {
+  test('bundle.finding-closed-moot (paid M4b run 5, ckpt-2): a finding a publication resolves during the call leaves its disposition moot; the bundle applies, the finding stays resolved', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const finding = openVisionFinding(r, 'audit-1', 'helpers round');
+      const answer = bundle([VALID_OP]) as Record<string, JsonValue>;
+      appendSteps(d, [checkpointStep('ckpt-1', { ...answer, findingDispositions: [{ finding, disposition: 'dismissed', reason: 'owned by u1, which is about to publish' }] }, [barrier])]);
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      resolveMidCall(r, finding);
+      release(d.scenarioDir, 'ckpt');
+      const out = await running;
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      assert.equal(factsOfKind(r, 'checkpoint-inputs')[0]!.findings.includes(finding as never), true, 'the checkpoint was shown it');
+      assert.equal(r.journal.view.holistic().findings.find((f) => f.id === finding)!.state, 'resolved', 'the moot disposition settled as nothing');
+      assert.deepEqual(checkpointCalls(r), ['ckpt-1']);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.finding-closed-rests-on-stale: a decision whose op names a finding resolved during the call is stale; the next job reads why', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const finding = openVisionFinding(r, 'audit-1', 'helpers round');
+      appendSteps(d, [
+        checkpointStep('ckpt-1', bundle([limitsOp('retries', 2, [`${finding} needs a second try`])]), [barrier]), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
+      ]);
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      resolveMidCall(r, finding);
+      release(d.scenarioDir, 'ckpt');
+      const first = await running;
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'stale', JSON.stringify(first));
+      assert.equal(first.decision.detail, `finding ${finding} is resolved since the checkpoint read it, and the decision rests on it`);
+      assert.equal(planLimits(r), null);
+      const second = await runCheckpoint(ctx);
+      assert.ok(second.kind === 'decided' && second.decision.kind === 'no-op', JSON.stringify(second));
+      assert.match(readCalls(d.scenarioPath).find((c) => c.unit === 'ckpt-2')!.stdin, /- ckpt-1, rejected as stale: finding F-\d+ is resolved since the checkpoint read it/);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.evidence-drift-witnessed (paid M4b run 3, ckpt-4): the head moves under the call to a tree no lane ran on; the cited lane is witnessed there before the activation, which applies the same decision with no second call', T, async () => {
     const d = checkpointArc(visionLenses('audit-1'));
     const r = contextFor(d);
     const { ctx, w } = checkpointContext(r);
@@ -221,7 +305,7 @@ describe('the activation checks', () => {
       await completedAudit(r, ctx);
       const seen = factsOfKind(r, 'witnessed').at(-1)!;
       const key = { treeSha: seen.treeSha, lane: seen.lane, laneRev: seen.laneRev, envId: seen.envId };
-      appendSteps(d, [checkpointStep('ckpt-1', bundle([VALID_OP], { observations: [key] }), [barrier]), checkpointStep('ckpt-2', bundle([VALID_OP]))]);
+      appendSteps(d, [checkpointStep('ckpt-1', bundle([VALID_OP], { observations: [key] }), [barrier])]);
       const running = runCheckpoint(ctx);
       await reached(d.scenarioDir, 'ckpt', 120_000);
       const ruled = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
@@ -230,14 +314,60 @@ describe('the activation checks', () => {
       assert.notEqual(git(d.repo, 'rev-parse', `${head}^{tree}`), seen.treeSha, 'a docs-only publication moved the head to a tree no lane ran on');
       release(d.scenarioDir, 'ckpt');
       const first = await running;
-      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'evidence', JSON.stringify(first));
-      assert.match(first.decision.detail, /has none on the head/);
-      assert.equal(planLimits(r), null);
-      const second = await runCheckpoint(ctx);
-      assert.ok(second.kind === 'decided' && second.decision.kind === 'applied', JSON.stringify(second));
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'applied', JSON.stringify(first));
+      assert.deepEqual(planLimits(r), { convergenceK: 3 });
       const rewitnessed = factsOfKind(r, 'witnessed').find((f) => f.for.type === 'job' && f.for.job === 'ckpt-1');
-      assert.equal(rewitnessed?.treeSha, git(d.repo, 'rev-parse', `${head}^{tree}`), 'the cited lane re-witnessed on the head under the rejected job');
-      assert.deepEqual(factsOfKind(r, 'checkpoint-inputs')[1]!.observations.map((k) => k.treeSha), [rewitnessed!.treeSha], 'the re-evaluation read it');
+      assert.equal(rewitnessed?.treeSha, git(d.repo, 'rev-parse', `${head}^{tree}`), 'the cited lane witnessed on the new head under the deciding job');
+      assert.deepEqual(decisions(r), [], 'no rejection was decided');
+      assert.deepEqual(checkpointCalls(r), ['ckpt-1'], 'one paid call');
+      assert.deepEqual(r.journal.view.openIntents(), []);
+      assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.evidence-drop: a cited observation the moved head contradicts still rejects the bundle on its evidence; each later job of the trigger reads every rejection before it, with its reason and detail (paid M4b run 3)', T, async () => {
+    const { d, control } = auditArc({
+      steps: visionLenses('audit-1'), units: [{ id: 'u1' }], obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } }, mapping: [],
+      audit: { lenses: ['vision'] },
+    });
+    const r = contextFor(d);
+    const { ctx, w } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const seen = factsOfKind(r, 'witnessed').at(-1)!;
+      const key = { treeSha: seen.treeSha, lane: seen.lane, laneRev: seen.laneRev, envId: seen.envId };
+      appendSteps(d, [
+        checkpointStep('ckpt-1', bundle([VALID_OP], { observations: [key] }), [barrier]), checkpointStep('ckpt-2', twoOpBundleSecondInvalid()), checkpointStep('ckpt-3', bundle([VALID_OP])),
+      ]);
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      const ruled = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
+      assert.equal(ruled.kind, 'applied', JSON.stringify(ruled));
+      const head = git(d.repo, 'rev-parse', 'main');
+      const tree = git(d.repo, 'rev-parse', `${head}^{tree}`);
+      scriptTree(control, tree, { outcomes: { t1: 'fail' } });
+      release(d.scenarioDir, 'ckpt');
+      const first = await running;
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'evidence', JSON.stringify(first));
+      assert.match(first.decision.detail, /differs on the head .*: test "t1" was pass, is fail on the head/);
+      assert.equal(planLimits(r), null);
+      assert.equal(factsOfKind(r, 'witnessed').filter((f) => f.for.type === 'job' && f.for.job === 'ckpt-1' && f.treeSha === tree).length, 1, 'witnessed on the head before the activation');
+      // Paid M4b run 3 (ckpt-5 re-ran blind to ckpt-4's evidence rejection): every rejection of the trigger is fed back.
+      const second = await runCheckpoint(ctx);
+      assert.ok(second.kind === 'decided' && second.decision.kind === 'rejected' && second.decision.reason === 'invalid', JSON.stringify(second));
+      assert.equal(factsOfKind(r, 'witnessed').filter((f) => f.for.type === 'job' && f.for.job === 'ckpt-1' && f.treeSha === tree).length, 1, 'the re-witness before the next capture reused it');
+      assert.deepEqual(factsOfKind(r, 'checkpoint-inputs')[1]!.observations.map((k) => k.treeSha), [tree], 'the re-evaluation read the head\'s observation');
+      const third = await runCheckpoint(ctx);
+      assert.ok(third.kind === 'decided' && third.decision.kind === 'applied', JSON.stringify(third));
+      const stdin = (job: string) => readCalls(d.scenarioPath).find((c) => c.unit === job)!.stdin;
+      const header = '<prior_attempt>\nEarlier checkpoints on this trigger decided what the executor rejected, oldest first:\n';
+      const evidenceLine = `- ckpt-1, rejected on its evidence: ${first.decision.detail}\n  The lanes it cited were witnessed again on the head: cite the observations given below, not the ones it cited.`;
+      const invalidLine = `- ckpt-2, rejected as invalid, for these reasons: ${second.decision.detail}\n  Correct each reason; do not repeat it.`;
+      assert.ok(stdin('ckpt-2').includes(`${header}${evidenceLine}\n</prior_attempt>`), stdin('ckpt-2'));
+      assert.ok(stdin('ckpt-3').includes(`${header}${evidenceLine}\n${invalidLine}\nThis is the last attempt: a second invalid decision goes to the owner as a request.\n</prior_attempt>`), stdin('ckpt-3'));
+      assert.doesNotMatch(stdin('ckpt-3'), /<refused_proposals>/, 'the trigger\'s own rejections are not repeated as refused proposals');
     } finally {
       r.journal.close();
     }
@@ -408,6 +538,50 @@ describe('the activation checks', () => {
       assert.equal(kept.consistency.by.role, 'checkpoint');
       assert.deepEqual(factsOfKind(r, 'divergence').map((x) => [x.type, x.from, x.cites, x.compensation.kind]), [['obligation-departed', 'I-1 rev 1', ['V-1'], 'restore-revision']]);
       assert.deepEqual([...itemsOf(r, 'owner-request'), ...itemsOf(r, 'bundle-request')], [], 'nobody was asked');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.lane-unrunnable-invalid (paid M4b run 3, OP-3): an admit whose lane cannot resolve its argv[0] on its own PATH is invalid through the apply core\'s lane row; nothing applies', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      // The program every lane in force runs (so no owner-only lane-program request), on a PATH that does not hold it.
+      const lane = { id: 'u2', argv: ['node', '--test'], cwd: '.', env: { set: { PATH: tmpDir('empty-path') }, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' };
+      appendSteps(d, [checkpointStep('ckpt-1', bundle([admitOp(d, 'u2', [lane])]))]);
+      await completedAudit(r, ctx);
+      const rev = r.journal.view.planApplied()!.rev;
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
+      assert.match(out.decision.detail, /"kind":"spec-lane-unrunnable","lane":"u2","problem":\{"argv0":"node","type":"argv0-unresolvable"\},"unit":"u2"/);
+      assert.equal(r.journal.view.planApplied()!.rev, rev, 'nothing applied');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.ruling-for-admitted-unit (paid M4b run 3, OP-2): a ruling applying to a unit the same bundle admits lands, its docs publication included', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      const ruling = JSON.stringify({
+        schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'u2 keeps the helpers pure.', kind: 'decision', trigger: 'checkpoint',
+        supersedes: [], condition: null, docRefs: [{ path: 'contracts/api.md', anchor: '#api-contract', quotedText: 'returns the sum', relation: 'consistent' }],
+        contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: ['V-1'],
+        evidence: ['the repair needs a rule of its own'], appliesTo: { type: 'units', units: ['u2'] }, lifetime: 'arc', status: 'active',
+      });
+      const ops = [admitOp(d, 'u2'), { op: 'rule', ruling: 'C-2', cites: ['V-1'], evidence: ['the repair needs a rule of its own'] }];
+      appendSteps(d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops, rulings: [ruling] }))]);
+      await completedAudit(r, ctx);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      const applied = r.journal.view.planApplied()!;
+      assert.ok(applied.publication !== undefined, 'published through its docs publication');
+      assert.deepEqual(Object.keys(keptPayload(r.ctx.runDir, applied.payloadSha256!).manifest.rulings.sidecars), ['C-2']);
+      assert.equal(requirePlan(r).units.find((u) => u.id === 'u2')?.origin, 'checkpoint');
     } finally {
       r.journal.close();
     }

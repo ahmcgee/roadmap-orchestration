@@ -17,7 +17,7 @@ import {
   type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId,
 } from './ids.ts';
-import type { ControlState, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
+import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
 import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
@@ -116,6 +116,15 @@ export type UnitState = Readonly<{
    * src/pipeline/rounds.ts); a chain of pauses keeps the latest.
    */
   interrupted: StageOutcomeFact | null;
+  /**
+   * M4b rev 3 (RC-11): the unit's latest host-pressure hold while no later outcome has decided (a pause hold since keeps
+   * it): the run it was held for, and when. Admission holds the stage's re-run until a minute of scheduler ticks since the hold shows the host's cpu wait below `PRESSURE_SATURATED`
+   * or `STARVED_HOLD_MS` pass (src/schedule/ready.ts), and that re-run is the one rerun a red under
+   * pressure gets. A host-pressure hold leaves the unit `active`: it waits on admission, not on a resume. Null otherwise.
+   */
+  pressureHold: Readonly<{ inv: InvocationId; at: IsoTime }> | null;
+  /** M4b rev 3 (RC-11): the unit's host-pressure holds so far; from `STARVED_MAX` on its runs are charged as without pressure. */
+  pressureHolds: number;
   /** The latest gate approval: its attempt and the fingerprint it binds to; null before one. */
   approval: Readonly<{ attempt: number; fingerprint: ApprovalFingerprint }> | null;
   /**
@@ -172,8 +181,8 @@ export type UnitState = Readonly<{
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null, bounds: Bounds = DEFAULT_BOUNDS): UnitState {
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
-    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, approval: null, open: null,
-    counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
+    unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
+    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null,
   };
@@ -553,6 +562,8 @@ export class Fold implements JournalView {
   readonly #intake: IntakeState[] = [];
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
   readonly #captures: IssueCaptureState[] = [];
+  // M4b
+  readonly #flowFacts: FlowFactAt[] = [];
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
   #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
   // M4a rev 3
@@ -826,7 +837,7 @@ export class Fold implements JournalView {
         // M4a rev 3 (F4): a unit that hit a known defect prepares again (its decided outcome is lanes `known-defect`).
         const knownDefect = existing?.state.decided?.stage === 'lanes' && existing.state.decided.outcome === 'known-defect';
         if (f.stage === 'prepare' && (existing?.state.lineage ?? null) === null && !knownDefect) fail(`prepare outcome for ${f.unit}, which re-enters no unit and hit no known defect`);
-        if (f.cause !== undefined && this.#backendParkSeqs.get(f.cause.parkSeq) !== f.cause.backend) {
+        if (f.cause?.type === 'backend' && this.#backendParkSeqs.get(f.cause.parkSeq) !== f.cause.backend) {
           fail(`hold of ${f.unit} ${key} caused by backend ${f.cause.backend}'s park at seq ${f.cause.parkSeq}, which is no park of that backend`);
         }
         const u = this.#unit(f.unit, f.stage);
@@ -844,7 +855,11 @@ export class Fold implements JournalView {
         if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
         else {
           u.beforeDecided = { decided: u.state.decided, interrupted: u.state.interrupted };
-          u.state = { ...u.state, decided: f, interrupted: null };
+          u.state = { ...u.state, decided: f, interrupted: null, pressureHold: null };
+        }
+        // M4b rev 3 (RC-11): a host-pressure hold waits on admission (ready.ts), not on a resume.
+        if (f.cause?.type === 'host-pressure') {
+          u.state = { ...u.state, status: 'active', pressureHold: { inv: f.cause.inv, at: at.at }, pressureHolds: u.state.pressureHolds + 1 };
         }
         if (f.class === 'park') {
           u.state = { ...u.state, park: { seq: at.seq, at: at.at, park: f.park ?? unclassedParkRecord(f), passed: [] } };
@@ -1017,6 +1032,36 @@ export class Fold implements JournalView {
         this.#captures.push({ ...rest, seq: at.seq });
         return;
       }
+      // M4b (SCHEMAS.md "M4b"): the fold sees the jobs the flow facts name and keeps every flow fact (`flowFacts`); a
+      // decision names a surviving proposal once, and only an accepted one is applied, once.
+      case 'flow-started':
+        this.#openJob(f.job, fail);
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'flow-ended':
+      case 'flow-proof':
+        this.#seeJob(f.job);
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'flow-decided': {
+        const proposed = this.#flowFacts.some((x) => x.fact.kind === 'flow-ended' && x.fact.proposal?.id === f.proposal);
+        if (!proposed) fail(`flow-decided of ${f.proposal}, which no flow-ended proposed`);
+        if (this.#flowFacts.some((x) => x.fact.kind === 'flow-decided' && x.fact.proposal === f.proposal)) fail(`a second flow-decided of ${f.proposal}`);
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      case 'flow-applied': {
+        const accepted = this.#flowFacts.some((x) => x.fact.kind === 'flow-decided' && x.fact.proposal === f.proposal && x.fact.decision === 'accepted');
+        if (!accepted) fail(`flow-applied of ${f.proposal}, which was never accepted`);
+        if (this.#flowFacts.some((x) => x.fact.kind === 'flow-applied' && x.fact.proposal === f.proposal)) fail(`a second flow-applied of ${f.proposal}`);
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      case 'flow-series':
+      case 'flow-requested':
+      case 'flow-verdict':
+        this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
       default:
         this.#holisticFact(f, fail, at);
     }
@@ -1181,6 +1226,9 @@ export class Fold implements JournalView {
     if (f.command !== null && this.#appliedBy.has(f.command)) fail(`a second plan-applied fact of command ${f.command}`);
     // Revision 1 comes before anything runs (the reader requires `scheduling: 'dag'` on it, and only there).
     if (f.rev === 1 && this.#dispatches.size > 0) fail('plan-applied rev 1 in a log that already dispatched a unit');
+    // M4b (R5): the arc's role set is fixed at revision 1; every later revision carries it unchanged.
+    const roles = this.#planApplied?.routingProvenance.arcRoles;
+    if (this.#planApplied !== null && roles !== f.routingProvenance.arcRoles) fail(`plan-applied rev ${f.rev} records arcRoles ${f.routingProvenance.arcRoles ?? 'none'}; revision 1 fixed ${roles ?? 'none'}`);
     // M3 (A5): the vision, once in force, stays; a bundle's revision is its checkpoint's decision.
     if (this.#holisticOn && f.visionSha256 === undefined) fail(`plan-applied rev ${f.rev} drops the vision (holistic may be added, never removed)`);
     const bundle = f.source.type === 'bundle' ? this.#checkpoints.get(f.source.job) : undefined;
@@ -1297,7 +1345,7 @@ export class Fold implements JournalView {
       fail(`steered unit ${f.unit}, which is ${s.status}${s.open === null ? '' : ` with ${s.open.stage}#${s.open.attempt} open`}, not parked or preparing`);
     }
     u.state = {
-      ...s, status: 'active', park: null, interrupted: null, approval: null,
+      ...s, status: 'active', park: null, interrupted: null, pressureHold: null, approval: null,
       entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume },
     };
   }
@@ -1313,7 +1361,7 @@ export class Fold implements JournalView {
     const s = u.state;
     if (!(s.status === 'active' || s.status === 'held' || s.status === 'park-pending') || s.open !== null) fail(`merged-in unit ${f.unit}, which is ${s.status}`);
     u.state = {
-      ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, approval: null,
+      ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, pressureHold: null, approval: null,
       entry: { kind: 'merge-in', seq, command: f.command }, steering: null,
     };
   }
@@ -1384,7 +1432,7 @@ export class Fold implements JournalView {
     for (const [id, u] of this.#units) {
       if (u.state.status !== 'held' || this.#pausedUnits.has(id)) continue;
       const cause = u.state.interrupted?.cause;
-      if (cause !== undefined && cause.backend === backend && cause.parkSeq <= seq) u.state = { ...u.state, status: 'active' };
+      if (cause?.type === 'backend' && cause.backend === backend && cause.parkSeq <= seq) u.state = { ...u.state, status: 'active' };
     }
   }
 
@@ -1411,7 +1459,7 @@ export class Fold implements JournalView {
     const spec = u.state.spec;
     if (spec === null || f.specRev !== spec.rev + 1) fail(`reopen of unit ${f.unit} at spec rev ${f.specRev}; its recorded rev is ${spec?.rev ?? 'none'}`);
     u.state = {
-      ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
+      ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
       reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects, pendingRevision: null,
     };
   }
@@ -1624,6 +1672,10 @@ export class Fold implements JournalView {
 
   lastExecutorStarted(): number {
     return this.#executorStarted;
+  }
+
+  flowFacts(): readonly FlowFactAt[] {
+    return this.#flowFacts;
   }
 
   holistic(): HolisticFold {

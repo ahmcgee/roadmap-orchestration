@@ -59,13 +59,13 @@ function defectArc(match: Match, steps: readonly Step[], u1: Partial<UnitSpecJso
 /** The admission the scheduler would give `unit`'s `stage` now (the real admitter over the plan in force). */
 function admission(r: ArcRun, unit: string, stage: 'prepare'): Admission {
   return admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx))({
-    view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage, blocking: [], drains: [], tripped: [],
+    view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
   });
 }
 
 /** A unit driver gate that asks the real admitter at every admission boundary; chains always run. */
 const admitted = (r: ArcRun, unit: string): Gate => (next) => Promise.resolve(next.kind === 'chain' || admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx))({
-  view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage: next.stage, blocking: [], drains: [], tripped: [],
+  view: r.journal.view, plan: r.ctx.plan(), unit: r.unit(unit), stage: next.stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
 }).kind === 'admit');
 
 const outcomeFacts = (d: ArcDescriptor, unit: string): readonly StageOutcomeFact[] =>

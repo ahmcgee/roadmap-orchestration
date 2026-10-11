@@ -1,13 +1,17 @@
-// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"): read-time defaults for records written by the previous
-// release (1.0.0-dev.6, the only one adopted: OR-L4), so HEAD adopts an arc it started. Delete each default (and its
-// BACKLOG entry) once no arc started on that release is in flight. Nothing here rewrites a file.
+// TEMPORARY SCAFFOLDING (SCHEMAS.md "Record evolution"): read-time defaults for records written by an earlier release,
+// so HEAD adopts an arc it started. The previous release is 1.0.0-dev.7 (the only one adopted since 1.0.0-dev.8,
+// OR-L4): its one default is at the end. The 1.0.0-dev.6 defaults above it are no longer adopted (no dev.6 arc was in
+// flight at M4b step 0a); they go with the holistic `architecture-doc` variant (BACKLOG "Scaffolding to delete").
+// Delete each default (and its BACKLOG entry) once no arc started on its release is in flight. Nothing here rewrites a
+// file.
 //
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
-import type { ClassCatalogue } from '../routing/classes.ts';
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId } from './ids.ts';
+import type { PressureAvailability } from '../host/pressure.ts';
+import type { LaunchCpu, ReadsFile, ToolRead } from './records.ts';
 
 const warned = new Set<string>();
 
@@ -33,14 +37,6 @@ export function censusOf(o: Obligations): readonly CensusEntry[] | null {
   return null;
 }
 
-/**
- * A checkpoint answer's `corpusAmendments` and `issueIntake` (M4a): a recorded dev.6 answer (`upgrade.dev6-checkpoint-open`)
- * has neither, read as none. Step B1 makes both required of the model's schema.
- */
-export function checkpointOutputM4Default(key: 'corpusAmendments' | 'issueIntake'): readonly never[] {
-  warnDefaulted(`checkpoint.${key}`, `a checkpoint answer without ${key} (written before 1.0.0-dev.7); read as none`);
-  return [];
-}
 
 /**
  * A checkpoint `admit` op's `targets` (M4a rev 3, LR-m): absent on an answer recorded before it; read as none, so the
@@ -60,11 +56,6 @@ export function admitSpecTextDefault(text: string): string {
   return text;
 }
 
-/** A split child's `rule` (M4a): absent on a recorded dev.6 answer, whose children are docRef-anchored; read as null. */
-export function splitChildRuleDefault(): null {
-  warnDefaulted('checkpoint.splitChild.rule', 'a split child without rule (a checkpoint answer written before 1.0.0-dev.7); read as null');
-  return null;
-}
 
 /**
  * A numbered-id list in plain string order (`["T-10","T-9"]`): how every release before 1.0.0-dev.7 validated and wrote
@@ -75,24 +66,6 @@ export function legacyIdOrder(path: string): void {
   warnDefaulted('ids.string-order', `${path}: a numbered-id list in string order (written before 1.0.0-dev.7); read as written`);
 }
 
-/**
- * The class catalogue 1.0.0-dev.6 bound (frontier Opus 5.5 `high`, summit Fable 5.1 `high`), kept only so `status`
- * can join a dev.6 meter row's recorded `routingRev` (K12, src/status.ts `dev6RevAlias`). OR-L3: nothing routes under
- * it; HEAD binds every revision through `CLASS_CATALOGUE` (src/routing/classes.ts). A dev.6 dispatch record needs no
- * decoder: its `implementerSeatRev` reads back through `seatTripleOf` (src/pipeline/dispatch.ts) like any other.
- */
-export const DEV6_CLASS_CATALOGUE: ClassCatalogue = {
-  default: {
-    efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
-    frontier: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' },
-    summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
-  },
-  'claude-only': {
-    efficient: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
-    frontier: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' },
-    summit: { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' },
-  },
-};
 
 // ---------------------------------------------------------------------------------------------------
 // 1.0.0-dev.6 → M4a rev 3 (still 1.0.0-dev.7, LR-g: no version bump). Byte-preserving as above; SCHEMAS.md "M4a rev 3:
@@ -148,4 +121,67 @@ export function buildExperimentsDefault(): readonly never[] {
 export function bundleClassesOf(source: Extract<RevisionSource, { type: 'bundle' }>): Readonly<{ admits: readonly ClassifiedAdmit[]; conversions: readonly Conversion[] }> | 'unclassified' {
   if (source.admits !== undefined && source.conversions !== undefined) return { admits: source.admits, conversions: source.conversions };
   return 'unclassified';
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.7 → M4b (1.0.0-dev.8). SCHEMAS.md "M4b: upgrade". Delete once no arc started on 1.0.0-dev.7 is in flight
+// (BACKLOG "Scaffolding to delete").
+
+/**
+ * A revision's routing provenance without `arcRoles` (M4b, R5): an arc 1.0.0-dev.7 started, read with the dev.7 role set
+ * (no `flow` seat: its routing revs, seats in force and status tables are dev.7's) and the flow track off (`off-dev7`).
+ */
+export function dev7ArcRolesDefault(): null {
+  warnDefaulted('routing.arcRoles', 'a routing provenance without arcRoles (an arc started on 1.0.0-dev.7): the dev.7 role set, the flow loop off');
+  return null;
+}
+
+// M4b rev 3 (host pressure, still 1.0.0-dev.8): records an earlier executor wrote lack the pressure fields. Byte-preserving:
+// the readers keep them absent, these read them.
+
+/** A spawn's pressure: absent on a spawn an earlier executor closed, read as null (no pressure rule applies). */
+export function spawnPressureOf(outcome: Readonly<{ pressure?: number | null }>): number | null {
+  if (outcome.pressure !== undefined) return outcome.pressure;
+  warnDefaulted('proc.spawn.pressure', 'a spawn result without pressure (closed before M4b rev 3); read as null');
+  return null;
+}
+
+/** A start's schedstat availability: absent on a start before M4b rev 3, read as `unavailable` (its spawns carry no pressure). */
+export function startPressureOf(fact: Readonly<{ pressure?: PressureAvailability }>): PressureAvailability {
+  if (fact.pressure !== undefined) return fact.pressure;
+  warnDefaulted('executor-started.pressure', 'an executor start without pressure (before M4b rev 3); read as unavailable');
+  return 'unavailable';
+}
+
+/** A workload's cpu time: absent from an exit.json an earlier runner wrote, read as null (its launch has no pressure). */
+export function exitCpuOf(exit: Readonly<{ cpu?: LaunchCpu | null }>): LaunchCpu | null {
+  if (exit.cpu !== undefined) return exit.cpu;
+  warnDefaulted('exit.cpu', 'an exit.json without cpu (a runner before M4b rev 3 calibration); its launch has no pressure');
+  return null;
+}
+
+// M4b (paid run 3): a vacuity lens's mutant is exact replacements (`edits`); a lens call an earlier executor recorded asked
+// for a hand-written unified diff. Delete once no audit an earlier executor started is running.
+
+/** A recorded lens answer's mutant `patch` (before M4b's `edits`): read as written, syntax-checked at admission as before. */
+export function lensPatchMutantDefault(patch: string): string {
+  warnDefaulted('lens.mutant.patch', 'a lens answer whose mutant is a unified diff (recorded before M4b edits); read as written');
+  return patch;
+}
+
+// Paid M4b run 5 (a gate approved after the CLI refused its evidence read): reads.json records the refused reads.
+
+/** A reads.json's refused reads: absent from a file an earlier executor wrote, read as none (its call is judged as before). */
+export function readsDeniedOf(reads: ReadsFile): readonly ToolRead[] {
+  if (reads.denied !== undefined) return reads.denied;
+  warnDefaulted('reads.denied', 'a reads.json without denied (written before paid M4b run 5); read as none refused');
+  return [];
+}
+
+// The build answer's `final` (src/runner/report.ts): a build an earlier executor launched answered a schema without it.
+
+/** A build answer without `final` (launched before the report rule): its session ended by itself, so it was final. */
+export function buildFinalDefault(): true {
+  warnDefaulted('build.final', 'a build answer without final (launched before the report rule); read as final');
+  return true;
 }

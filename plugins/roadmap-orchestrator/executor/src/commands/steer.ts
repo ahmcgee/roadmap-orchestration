@@ -109,7 +109,7 @@ async function routeClass(ctx: CommandContext, id: CommandId, unit: UnitId, cls:
   entry.routing = { ...layer, build: { ...layer.build, [tier]: cls } };
   const planBytes = Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8');
   const proposal = { ...current, plan: parsePlan(JSON.parse(planBytes.toString('utf8'))), planBytes };
-  const rctx = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase };
+  const rctx = { runDir: ctx.runDir, view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv };
   const evaluated = evaluateRevision(rctx, proposal, { type: 'apply' });
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons) };
   if (evaluated.kind === 'unchanged') return { kind: 'applied', verified: [`unit ${unit}'s routing is in force already`] };
@@ -133,12 +133,12 @@ async function routeClass(ctx: CommandContext, id: CommandId, unit: UnitId, cls:
 }
 
 /**
- * The class revision's plan bytes written to the live plan file, only while it holds the plan in force before the
+ * A revision's plan bytes (the class revision's; M4b: an applied flow proposal's) written to the live plan file, only while it holds the plan in force before the
  * revision (the `plan-applied` fact preceding `fact` in the log): the architect's file then holds the layer the
  * command put in force. A file already holding them (a run again after a crash past the write) is left as it is; one
  * the architect changed since is left alone.
  */
-function writeBack(ctx: CommandContext, fact: PlanAppliedFact): string {
+export function writeBack(ctx: Pick<CommandContext, 'planFile' | 'runDir' | 'journal'>, fact: PlanAppliedFact): string {
   const file = ctx.planFile;
   const now = existsSync(file) ? fileSha256(file) : null;
   if (now === fact.planSha256) return `plan file ${file} holds plan rev ${fact.rev}`;

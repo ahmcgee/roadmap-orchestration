@@ -12,9 +12,10 @@ import type { ClassTable, JudgmentSeat, ModelClass } from './types.ts';
 const JUDGMENT: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' };
 
 /**
- * The efficient class builds low/med, frontier builds high. The arc roles: the lenses (M3) and the pack review (M4a,
- * OR-Q16) on frontier, the checkpoint (M3) on summit; each is in force only in the arcs its `ArcScope` names
- * (layers.ts: lens and checkpoint in a holistic arc, the pack review in a corpus arc only, LR-0a-1).
+ * The efficient class builds low/med, frontier builds high. The arc roles: the lenses (M3), the pack review (M4a,
+ * OR-Q16) and the flow role (M4b) on frontier, the checkpoint (M3) on summit; each is in force only in the arcs its
+ * `ArcScope` names (layers.ts: lens and checkpoint in a holistic arc, the pack review in a corpus arc only, LR-0a-1; flow
+ * in every arc of the `m4b` role set).
  */
 export const BUILTIN_SEATS: ClassTable = {
   planCheck: JUDGMENT,
@@ -23,4 +24,5 @@ export const BUILTIN_SEATS: ClassTable = {
   lens: { arc: 'frontier' },
   checkpoint: { arc: 'summit' },
   packReview: { arc: 'frontier' },
+  flow: { arc: 'frontier' },
 };

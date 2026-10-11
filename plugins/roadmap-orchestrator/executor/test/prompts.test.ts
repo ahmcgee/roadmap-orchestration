@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId, invocationId, opIdOf, witnessItemId,
+  visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
 } from '../src/core/ids.ts';
+import { isoTime } from '../src/core/values.ts';
 import {
   DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
 } from '../src/holistic/types.ts';
@@ -78,6 +79,32 @@ const findingView = (id: string, claim: string) => ({
   id: findingId(id), lens: 'invariants' as const, severity: 'P1' as const, state: 'open' as const, obligation: obligationId('I-1'), claim, owner: null,
 });
 
+const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
+  const n = k === 'A' ? 1 : 2;
+  const lane = laneId(k === 'A' ? 'unit' : 'all');
+  return {
+    triggers: k === 'A' ? ['floor'] : ['buffer-red', 'requested'],
+    chart: k === 'A' ? null : {
+      centre: 3.2, ucl: 4.1, mrBar: 0.33, seed: { type: 'previous', arcs: [arcId('arc-one')], points: 12 },
+      recent: [{ unit: unitId('u-two'), leadMin: 41, zone: 'yellow' }], inFlight: [{ unit: unitId('u-three'), ageMin: 90, zone: 'red' }],
+    },
+    stations: [{ station: stationId(k === 'A' ? 'stage:build' : 'suite:all'), meanMin: 10 * n, share: 0.2 * n, pressure: k === 'A' ? null : 0.31 }],
+    constraint: k === 'A' ? { station: stationId('stage:build'), internal: false, component: null }
+      : { station: stationId('slot:integration'), internal: true, component: stationId('suite:all') },
+    accounting: { tAdvances: k === 'A' ? null : 0.5, tOther: k === 'A' ? null : 0.25, tUnits: n, wip: n + 1, oeUsdPerHour: 3 * n },
+    levers: [{ lever: 'suite-lane', lane, argv: ['node', '--test', `--test-concurrency=${n}`], cpu: k === 'A' ? null : 4 }],
+    givens: k === 'A' ? [] : [{ scope: 'host', id: givenId('G-1'), lever: 'concurrency', note: 'GIVEN-B', state: 'enforced' }],
+    window: k === 'A' ? null : {
+      proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:all'), metric: { type: 'suite-run', lane }, openedAt: isoTime('2026-10-08T00:00:00.000Z'), samples: 2,
+    },
+    verdicts: k === 'A' ? [] : [{ proposal: proposalId('flow-1.0'), lever: 'suite-lane', target: stationId('suite:all'), verdict: 'improved' }],
+    rejections: k === 'A' ? [] : [{ key: { station: stationId('stage:build'), lever: 'build-class', target: { type: 'tier', tier: 'low' } }, proposal: proposalId('flow-2.0'), cause: 'rejected' }],
+    advances: [{ id: visionClauseId(`V-${n}`), text: `ADVANCES-${k}` }],
+    pressure: k === 'A' ? { now: null, threshold: 0.5, available: false, window: null, cpuInUse: 1, hostCpus: 4 }
+      : { now: 0.41, threshold: 0.5, available: true, window: 0.33, cpuInUse: 7, hostCpus: 8 },
+  };
+};
+
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
     {
@@ -98,7 +125,10 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         patchedRev: specRev(2), changedPremiseFiles: ['src/b/x.ts'],
       },
       vision: vision(2, 'VISION-B'),
-      acceptance: { nextWitnessId: witnessItemId('W-3'), arcLanes: [laneId('journey'), laneId('e2e')] },
+      acceptance: {
+        nextWitnessId: witnessItemId('W-3'), arcLanes: [laneId('journey'), laneId('e2e')],
+        delivered: [{ obligation: obligationId('I-7'), statement: 'A cancelled booking frees its berth.', lane: laneId('journey'), testIds: ['cancel > frees the berth'] }],
+      },
       priorInvalid: 'PRIOR-INVALID-B',
     },
   ],
@@ -150,7 +180,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { from: SHA_A, to: SHA_B, diff: 'RANGE-A' },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null, retry: null,
     },
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: { from: SHA_B, to: SHA_A, diff: 'RANGE-B' },
@@ -158,20 +188,21 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
       specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
+      retry: { refused: [{ claim: 'RETRY-CLAIM-B', cause: 'RETRY-CAUSE-B', reason: 'RETRY-REASON-B' }], recorded: [{ claim: 'RECORDED-CLAIM-B', cause: 'RECORDED-CAUSE-B' }] },
     },
   ],
   checkpoint: [
     {
-      vision: vision(1, 'VISION-A'), trigger: { type: 'audit', job: jobId('audit', 1) }, priorInvalid: null, refused: [], head: SHA_A, plan: 'PLAN-A', findings: [],
-      obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
+      vision: vision(1, 'VISION-A'), trigger: { type: 'audit', job: jobId('audit', 1) }, priorRejected: [], refused: [], head: SHA_A, plan: 'PLAN-A', findings: [],
+      obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
       contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', issues: { type: 'captured', issues: [] },
       manifest: [], specs: [], nextRulingId: rulingId('C-2'), closeout: null, issuesUnchangedSince: null,
     },
     {
       vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40, cause: { stage: 'candidate', attempt: 9, outcome: 'red', reason: 'candidate-red', design: false, detail: ['TRIGGER-B'] } },
-      priorInvalid: { job: jobId('ckpt', 2), reasons: 'PRIOR-B' }, refused: [{ job: jobId('ckpt', 1), outcome: 'owner-request', reasons: 'REFUSED-B' }], head: SHA_B, plan: 'PLAN-B', findings: [findingView('F-2', 'FINDING-B')],
-      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], coverage: { unservedAdvanced: [visionClauseId('V-1')], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
+      priorRejected: [{ job: jobId('ckpt', 2), reason: 'evidence', detail: 'PRIOR-B' }], refused: [{ job: jobId('ckpt', 1), outcome: 'owner-request', reasons: 'REFUSED-B' }], head: SHA_B, plan: 'PLAN-B', findings: [findingView('F-2', 'FINDING-B')],
+      obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], coverage: { unservedAdvanced: [visionClauseId('V-1')], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
       divergences: [{ id: divergenceId('D-1'), type: 'plan-departed', what: 'DIVERGENCE-B' }], contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')],
       index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'), target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') },
       direction: 'DIR-B', issues: { type: 'captured', issues: [capturedIssue(7, 'ISSUE-B')] },
@@ -194,9 +225,19 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
     },
   ],
+  flow: [flowSample('A'), flowSample('B')],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
+  flow: {
+    constraint: { station: 'slot:integration', agree: true, reason: 'the suite lane holds the slot' },
+    diagnosis: 'Units wait for the integration slot; the unit suite lane is most of its service.',
+    proposal: {
+      target: 'suite:unit', action: { lever: 'suite-lane', lane: 'unit', argv: ['node', '--test', '--test-concurrency=6', 'test/*.test.js'], reporter: 'node-test', cpu: null },
+      rationale: 'six isolated files run one at a time', risks: 'shared state between files',
+    },
+    noAction: null,
+  },
   packReview: {
     findings: [{ severity: 'blocking', target: { type: 'census', rule: 'T-1' }, claim: 'T-1 has no census entry', evidence: [{ path: 'obligations.json', line: 1 }] }],
     dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
@@ -212,7 +253,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     ],
   },
   build: {
-    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [],
+    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [], final: true,
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
@@ -236,11 +277,11 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
 };
 
-/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc (every arc role) included. */
+/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc of the m4b role set (every arc role) included. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
   for (const p of PROFILES) {
-    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus' });
+    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
     for (const s of seatsInForce(resolved)) {
       const m = atSeat(resolved.table, s).model;
       seen.set(`${s.role}/${m}`, [s.role, m]);
@@ -576,7 +617,10 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
     assert.equal(briefs.size, LENS_KINDS.length);
     assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vision' }), /P2 or P3, never P1/);
-    assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff against the audited tree/);
+    // M4b: the mutant is exact replacements, never a hand-written diff; a retry names each refused draft and why.
+    assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /edits, one or more exact replacements[\s\S]*occurs exactly once/);
+    assert.doesNotMatch(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff|<previous_report>/);
+    assert.match(mod.render(SAMPLES.lens[1]), /<previous_report>[\s\S]*claim: RETRY-CLAIM-B\n  cause: RETRY-CAUSE-B\n  refused: RETRY-REASON-B[\s\S]*claim: RECORDED-CLAIM-B\n  cause: RECORDED-CAUSE-B[\s\S]*<\/previous_report>/);
   });
 
   it('the lens keeps the anti-spiral rules: the finding bar, prior findings not repeated, no reasoning field, nobody will answer', () => {
@@ -675,7 +719,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.ok(mod.system.includes(`relation one of ${RULE_RELATIONS.map((v) => `"${v}"`).join(', ')}`));
   });
 
-  it('checkpoint schema: corpusAmendments and issueIntake required of the model, acted offers ops only; a dev.6 answer without them reads as none', () => {
+  it('checkpoint schema: corpusAmendments and issueIntake required of the model, acted offers ops only; a dev.6 answer without them is refused', () => {
     const req = (CHECKPOINT_SCHEMA as { required: string[] }).required;
     assert.ok(req.includes('corpusAmendments') && req.includes('issueIntake'));
     const ok = OUTPUTS.checkpoint as Record<string, unknown>;
@@ -690,8 +734,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
       { corpusAmendments: [{ rules: ['C-1'], proposal: 'p', why: 'w' }] },
     ]) assert.throws(() => validateCheckpointOutput({ ...ok, ...bad }), SchemaError, JSON.stringify(bad));
     const { corpusAmendments: _c, issueIntake: _i, ...dev6 } = ok;
-    const old = validateCheckpointOutput(dev6);
-    assert.deepEqual([old.corpusAmendments, old.issueIntake], [[], []]);
+    assert.throws(() => validateCheckpointOutput(dev6), SchemaError, 'a dev.6 answer without amendments and intake is not adopted since 1.0.0-dev.8');
   });
 
   it('the pack review is the ported Phase-0 review brief: read-only, the hunt in order, capped, an empty report legitimate, the architect adjudicates', () => {
@@ -713,6 +756,30 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.match(text, /"why":"WHY-B"/);
     const out = validatePackReviewOutput(OUTPUTS.packReview);
     assert.deepEqual(out.findings[0]?.target, { type: 'census', rule: 'T-1' });
+  });
+
+  it('the flow prompt: the five focusing steps, no tampering, T/I/OE diagnostic only, the ruler out of reach, one proposal, the lever shapes', () => {
+    const fable = PROMPTS.flow['claude-fable-5-1'];
+    assert.ok(fable.type === 'inherits' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/.test(fable.reviewed));
+    const mod = promptFor('flow', 'claude-opus-5-5');
+    for (const needle of [
+      /You change nothing/, /Nobody will answer a question/, /propose at most one change to one lever/,
+      /1\. Identify the constraint[^]*2\. Exploit the constraint[^]*3\. Subordinate everything else[^]*4\. Elevate the constraint only after[^]*5\. Then the constraint moves/,
+      /common-cause variation: noise, not a signal, and a change made to answer it is tampering/, /diagnostics only, never a goal/,
+      /The ruler is out of reach/, /you must not argue around them/, /Prefer exploit and subordinate before elevate/,
+      /may change only the value of one --test-concurrency=<n> element, in place/, /The lane's cpu must cover its concurrency/,
+      /never held, never wait:finding/, /Exactly one of proposal and noAction/,
+    ]) assert.match(mod.system, needle);
+    const a = mod.render(SAMPLES.flow[0]);
+    assert.match(a, /No chart yet/);
+    assert.match(a, /Code's constraint: stage:build \(the largest service\)/);
+    assert.match(a, /suite-lane unit: argv \["node","--test","--test-concurrency=1"\], cpu null \(its tier's default\)/);
+    const b = mod.render(SAMPLES.flow[1]);
+    assert.match(b, /Code's constraint: slot:integration, its largest service component suite:all \(the largest wait in front of it\)/);
+    assert.match(b, /Open: flow-1\.0 \(suite-lane at suite:all\), 2 of 5 samples\. Only host advice or noAction while it is open\./);
+    assert.match(b, /stage:build \/ build-class \/ build tier low: rejected \(flow-2\.0\)/);
+    assert.match(b, /host given G-1 on concurrency: GIVEN-B/);
+    assert.match(b, /Diagnostic only, never a goal\. Obligations first held per hour: 0\.50 serving the advanced clauses/);
   });
 
   it('build/Opus carries the unattended standing instruction (Opus 5.5 guide): nobody answers mid-task; decide, record in decisions.json, keep going', () => {
@@ -798,19 +865,33 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       for (const needle of [/<acceptance_shape>/, /may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted/,
         /a new item takes the next free id, W-3, and further new items the ids after it in order, written without leading zeros/,
         /lane: one of the arc lanes: journey, e2e/, /testId: the test's exact id/, /" > "/, /skeleton/, /real entry point/,
-        /sends the unit back while one is missing or failing/]) {
+        /sends the unit back while one is missing or failing/, /Name only a test the change newly makes pass/, /belongs to a must-hold obligation's witness/,
+        // Paid M4b run 6: the delivered obligations' witness ids, which an item restating one reuses exactly.
+        /- I-7: A cancelled booking frees its berth\.\n  lane journey, test "cancel > frees the berth"/,
+        /sets obligation to that obligation's id and copies its lane and one of its test ids exactly; the executor refuses an item whose lane or test id differs/,
+        /Never name a new test for behaviour one of these tests already proves/, /or a witness test of an obligation above/]) {
         assert.match(text, needle, `planCheck/${model}: ${needle}`);
       }
       namesEvery(mod.system + text, requiredKeys(PLAN_CHECK_ACCEPTANCE_SCHEMA, [], ['patch'], ['patch', 'item']), `planCheck acceptance/${model}`);
-      const noLanes = mod.render({ ...SAMPLES.planCheck[1], acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [] } });
+      const noLanes = mod.render({ ...SAMPLES.planCheck[1], acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [], delivered: [] } });
       assert.match(noLanes, /this arc declares no arc lanes/);
+      assert.match(noLanes, /This unit delivers no obligation with a witness, so obligation is null on every item\./);
     }
     const answer = {
       ...(OUTPUTS.planCheck as Record<string, unknown>),
-      patch: [{ op: 'add', section: 'witnesses', item: { id: 'W-3', lane: 'journey', testId: 'export > writes the header', clause: 'A1', skeleton: 'Runs the export command on a fixture register and asserts the header row.' } }],
+      patch: [
+        { op: 'add', section: 'witnesses', item: { id: 'W-3', lane: 'journey', testId: 'export > writes the header', clause: 'A1', skeleton: 'Runs the export command on a fixture register and asserts the header row.', obligation: null } },
+        { op: 'add', section: 'witnesses', item: { id: 'W-4', lane: 'journey', testId: 'cancel > frees the berth', clause: 'A2', skeleton: 'Cancels a booking and books its berth again.', obligation: 'I-7' } },
+      ],
     };
     assert.ok(conforms(PLAN_CHECK_ACCEPTANCE_SCHEMA, answer));
-    validatePlanCheckAcceptanceOutput(answer);
+    // The wire's null obligation is spec.json's absent; a named one is kept.
+    const ops = validatePlanCheckAcceptanceOutput(answer).patch ?? [];
+    assert.deepEqual(ops.map((op) => (op.op === 'add' && op.section === 'witnesses' ? op.item.obligation ?? null : 'other')), [null, 'I-7']);
+    assert.ok(ops[0]!.op === 'add' && !('obligation' in ops[0]!.item));
+    // An answer recorded before the field reads as one naming no obligation.
+    const { obligation: _, ...older } = answer.patch[0]!.item;
+    assert.ok(validatePlanCheckAcceptanceOutput({ ...answer, patch: [{ ...answer.patch[0]!, item: older }] }).patch !== null);
   });
 
   it('plan-check: the failure matrix before a transaction ordering, earlier repairs carried in; clock and entry-point defects (F03, D3)', () => {
@@ -854,7 +935,8 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     for (const needle of [/# Admits in a corpus arc/, /Code classifies every admit after you decide/, /you do not label it/, /- repair: /, /- oversight: /, /- opportunity: /,
       /budget of one opportunity/, /at most one follow-up/, /Honest citation: an admit that targets an out-of-slice rule cites the clause outside the slice that the rule advances/,
       /targets lists the corpus rules \(T-n\) the unit adds or changes behaviour for/, /A finding's vision clauses are context, not scope/, /Every target must be an active rule of the pin/,
-      /code drops an admit that touches no clause, an opportunity over the budget, and a second follow-up/, /corpus amendment for the owner's next Phase 0/,
+      /code drops an admit that touches no clause, an opportunity over the budget, an opportunity without its witness, and a second follow-up/,
+      /An opportunity is admitted only together with its witness: in the same bundle, an obligation split/, /corpus amendment for the owner's next Phase 0/,
       /banks a debt item naming the opportunity/, /the whole bundle is invalid instead/, /repair ref to an obligation that holds, an exempt obligation, or a finding no longer active/]) {
       assert.match(sys, needle);
     }
@@ -902,10 +984,17 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       { lane: laneId('journey'), testId: 'c', source: { type: 'obligation' as const, id: obligationId('I-4') }, role: 'preservation' as const },
     ];
     const d = witnessFixDirectives([{ lane: laneId('journey'), testId: 'a > b' }], [{ lane: laneId('journey'), testId: 'c' }], required);
-    assert.equal(d.length, 3);
+    assert.equal(d.length, 4);
     assert.match(d[0]!, /the gate is not called until every one does/);
     assert.match(d[1]!, /^Missing: test "a > b" on lane journey, which witnesses I-3 \(what this unit delivers or repairs\) and W-2 \(what this unit delivers or repairs\)\. No test with exactly this id ran/);
     assert.match(d[2]!, /^Failing: test "c" on lane journey, which witnesses I-4 \(a must-hold this unit keeps\)\. .*never weaken, skip or rename the test/);
+    // Paid M4b run 6: every required id, each once with all its sources, so a fix round cannot trade one for another.
+    assert.equal(d[3], [
+      'Every required witness test, which must all exist and pass together under exactly these ids:',
+      '- test "a > b" on lane journey, which witnesses I-3 (what this unit delivers or repairs) and W-2 (what this unit delivers or repairs)',
+      '- test "c" on lane journey, which witnesses I-4 (a must-hold this unit keeps)',
+      'Never rename a test that has one of these ids to give it another: the id it had then goes missing. When two ids name the same behaviour, keep a test under each.',
+    ].join('\n'));
     assert.throws(() => witnessFixDirectives([], [], required), /names a missing or failing test/);
     assert.throws(() => witnessFixDirectives([{ lane: laneId('journey'), testId: 'z' }], [], required), /not a required witness/);
     const s = smokeFixDirectives([{ lane: laneId('journey'), testId: 'a > b' }], required);

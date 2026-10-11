@@ -76,9 +76,9 @@ import { verdictOf } from '../holistic/observe.ts';
 import { brakesOn, obligationEffects } from '../holistic/table.ts';
 import { type ArcLaneDef, type Conversion, type Obligations, type RulingSidecar, isExempt, parseObligations, parseRulingSidecar } from '../holistic/types.ts';
 import {
-  OBLIGATIONS_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
+  OBLIGATIONS_INPUT, PLAN_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
 } from '../input/inforce.ts';
-import { type PlanM1, contractOpDocuments } from '../input/plan.ts';
+import { type PlanM1, contractOpDocuments, parsePlan } from '../input/plan.ts';
 import {
   type DocsHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run,
 } from '../resources/reserve.ts';
@@ -178,10 +178,12 @@ type Reader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPa
 
 /**
  * What `validateRuling` reads (A1) at the integration tip `tip`: the ledger, obligations and vision in force, the
- * tip's documents and blobs, the plan's contracts and architecture doc, its units. The `rule` command validates a
- * sidecar against it, and a docs publication again under the slot.
+ * tip's documents and blobs, the plan's contracts and architecture doc. Not the units: a ruling may apply to a unit
+ * its own revision adds, so each caller names the units of the plan the ruling lands with (paid M4b run 3, OP-2: the
+ * in-force plan's units refused a ruling for a unit the same apply or bundle added, at the docs publication though its
+ * dry run accepted it). The `rule` command validates a sidecar against it, and a docs publication again under the slot.
  */
-export function rulingContextAt(ctx: Reader, tip: Sha): RulingContext {
+export function rulingContextAt(ctx: Reader, tip: Sha): Omit<RulingContext, 'units'> {
   const inForce = requirePlanInForce(ctx.runDir, ctx.journal.view);
   const revision = revisionInForce(ctx.runDir, inForce);
   return {
@@ -195,7 +197,6 @@ export function rulingContextAt(ctx: Reader, tip: Sha): RulingContext {
     documents: contractOpDocuments(inForce.plan),
     obligations: revision.obligations?.value ?? null,
     vision: revision.vision?.value ?? null,
-    units: inForce.plan.units.map((u) => u.id),
     corpus: revision.corpus === null ? null : rulingCorpusOf(revision.corpus),
   };
 }
@@ -293,7 +294,9 @@ function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
   if (canonicalJson(ops) !== canonicalJson(publication.contractOps)) {
     throw new Error(`revision ${payload.rev}: its publication's contract ops are not its new rulings' (${canonicalJson(publication.contractOps)} vs ${canonicalJson(ops)})`);
   }
-  const base = rulingContextAt(ctx, tip);
+  // The rulings land with the revision's own plan: its units are the ones a ruling may apply to.
+  const planBytes = keptOr(ctx.runDir, payload.manifest.planSha256, PLAN_INPUT);
+  const base = { ...rulingContextAt(ctx, tip), units: parsePlan(JSON.parse(planBytes.toString('utf8'))).units.map((u) => u.id) };
   const reasons: string[] = [];
   let ledgerText = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).ledger.bytes.toString('utf8');
   const edited = new Map<RepoPath, string>();
@@ -325,8 +328,10 @@ export const revisedObligations = (changes: readonly PlanChange[]): readonly Obl
   changes.flatMap((c) => (c.type === 'obligation' && (c.edit === 'added' || c.edit === 'split' || c.edit === 'witness') ? [c.id] : []));
 
 /** The docs candidate's selection: its contract ops' paths (never the rendered `.roadmap/` files) and the revised obligations. */
-export function docsSelection(obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[]): readonly ObligationId[] {
-  return selectObligations({ obligations, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes) });
+export function docsSelection(
+  obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>,
+): readonly ObligationId[] {
+  return selectObligations({ obligations, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes), latched });
 }
 
 /** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order. */
@@ -373,7 +378,7 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
   if (violations.length > 0) return refuse(`its commit touches paths it does not publish: ${violations.map((v) => `${v.path} (${v.rule})`).join(', ')}`);
 
   const obligations = revisionObligations(ctx.runDir, payload);
-  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes));
+  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation))));
   const lanes = [...plan.suite.lanes.map(suiteJourneyLane), ...(obligations === null ? [] : witnessLanes(obligations, selected).map(arcJourneyLane))];
   const series = await runJourneySeries(
     ctx, { type: 'job', job: pub, acquireFirst: ctx.arbiter.acquireFirst }, lanes, docsWorktreeRequest(commit),

@@ -11,7 +11,8 @@
 // and the premise files whose blobs changed since (items 25, 29). The session reads the green verification
 // checkout, read-only, and the rulings ledger's directory.
 //
-// Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
+// Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome; an approve from a session
+// the CLI refused a read is `read-denied` instead, an uncharged retry: paid M4b run 5) · revise
 // (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
 // before any call (park) · refusal, malformed and faults as at plan-check.
 //
@@ -22,7 +23,10 @@
 // when none), corpus (M4a, R6) the sha256 of a corpus arc's whole pin in force (absent outside one), so a re-pin
 // re-gates every approval. It is captured with the judgment's other inputs (Checkpoint A), and the approval records exactly that
 // captured fingerprint: what the gate judged, never what moved while it ran. Before `integration.ff` it is recomputed
-// at the tip being published onto; any difference re-gates.
+// at the tip being published onto; any difference re-gates, except that obligationRevs binds the obligations the gate
+// judged (selected at the gated tip, DESIGN-1.0.md §2.8): each must still be selected, non-exempt and at its judged
+// revision, while one a sibling's publication newly selects is witnessed by the candidate's lanes and grades its
+// eligibility (`findingBlocking`, integrate.ts) without voiding the judgment (paid M4b run 6).
 //
 // M4a: a corpus arc's gate reads the rules index and the pinned corpus materialised read-only without the vision
 // document (`gateTarget`, M3 R17), its directory added to the session's readable dirs.
@@ -52,7 +56,7 @@ import type { IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type ObligationRev, specObligations, specRepairs } from '../core/records.ts';
+import { type ApprovalFingerprint, type ObligationRev, obligationRevsOf, specObligations, specRepairs } from '../core/records.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
@@ -79,7 +83,7 @@ import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  writeJudgmentInputs,
+  readRefused, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -157,6 +161,7 @@ export function selected(ctx: StageContext, unit: PlanUnit, tip: Sha, head: Sha)
     closure: dependencyClosure(ctx, unit).flatMap((u) => specObligations(loadUnitSpec(ctx, u).spec)),
     changedPaths: unitDiffPaths(ctx.repo, tip, head),
     revised: [],
+    latched: new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)),
   });
   return ids.map((id) => obligations.obligations.find((o) => o.id === id)!);
 }
@@ -172,10 +177,19 @@ const canonicalFingerprint = (fp: ApprovalFingerprint): ApprovalFingerprint => (
 });
 const sameFingerprint = (a: ApprovalFingerprint, b: ApprovalFingerprint): boolean => canonicalJson(canonicalFingerprint(a)) === canonicalJson(canonicalFingerprint(b));
 
-/** Whether an approval still holds when publishing onto `tip`. */
+/**
+ * Whether an approval still holds when publishing onto `tip`: the fingerprint there equals the approved one, except that
+ * its obligations may be a superset of the judged ones (each judged one at its judged revision). An obligation a
+ * sibling's publication newly selects is not one the gate judged; the candidate's lanes witness it at its own tip.
+ */
 export function fingerprintHolds(ctx: StageContext, unit: PlanUnit, fingerprint: ApprovalFingerprint, tip: Sha): boolean {
-  return sameFingerprint(fingerprintAt(ctx, unit, tip), fingerprint);
+  const now = fingerprintAt(ctx, unit, tip);
+  const current = new Map(obligationRevsOf(now).map((r) => [r.id, r.rev]));
+  const judgedHold = obligationRevsOf(fingerprint).every((r) => current.get(r.id) === r.rev);
+  return judgedHold && sameFingerprint(withoutObligations(now), withoutObligations(fingerprint));
 }
+
+const withoutObligations = ({ obligationRevs: _, ...rest }: ApprovalFingerprint): ApprovalFingerprint => rest;
 
 /** The re-check `integrationFfOp` and its reconciler take: the approval against the integration tip now. */
 export function fingerprintValid(ctx: StageContext, unit: PlanUnit): (fingerprint: ApprovalFingerprint) => boolean {
@@ -350,6 +364,7 @@ export async function gateRead(
     bankGateNotes(ctx, unit.id, parent.attempt, out.findings);
     return done(record(ctx, parent, 'approve'), approved.fingerprint);
   }
+  if (readRefused(called)) return done(record(ctx, parent, 'read-denied'));
   const head = unitTip(ctx, unit.id);
   if (head !== fingerprint.unitCommit) throw new Error(`gate of ${unit.id}: the unit branch moved from ${fingerprint.unitCommit} to ${head} during the gate`);
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint });

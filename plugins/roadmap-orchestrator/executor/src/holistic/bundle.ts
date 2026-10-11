@@ -15,7 +15,8 @@
 //      (src/holistic/checkpoint.ts), and it never counts toward `secondInvalid`.
 //   1. Staleness (H3). The artifacts the ops touch, compared with the vector the checkpoint captured: the plan's bytes,
 //      each patched or re-entered unit's spec rev (and whether it merged since the capture: its spec is fixed now, so stale, not invalid), the obligations, the ledger, the contracts a landing ruling names;
-//      and the vision, always. A finding a disposition names that is no longer active is stale too. Any → `rejected
+//      and the vision, always. A finding the checkpoint was shown that closed since is stale when the decision rests on
+//      it (cited, or named by an op or ruling); a disposition of it alone is moot and settles as nothing. Any → `rejected
 //      {stale}`, and the trigger is due again (the whole bundle re-evaluated by a fresh checkpoint).
 //   2. Validation. Cites: every op's and interpretation's clauses active in the vision in force (H16: a withdrawn clause
 //      is never newly cited); the observations and findings it cites were in its inputs. Finding dispositions
@@ -46,7 +47,8 @@
 //   6. Convergence (src/holistic/convergence.ts): an open brake, or a second material change of one causal identity
 //      (a `convergence-identity` item raised with it) → `bundle-request`. An owner-approved bundle request (`enact`)
 //      skips 4 and 6.
-//   7. All-or-none `evaluateRevision`. A refusal → `rejected{invalid}` as in 2. Nothing changes → `no-op` (step 8).
+//   7. All-or-none `evaluateRevision` (the classifier, then the lane row `spec-lane-unrunnable` over the units the bundle
+//      changes: paid M4b run 3, OP-3). A refusal → `rejected{invalid}` as in 2. Nothing changes → `no-op` (step 8).
 //   8. No-op: `bundle-decided{no-op}` (with its conversions when every admit converted and nothing else changes), then
 //      the divergences of its interpretations (H12), keyed `(job, index)`.
 //   9. Divergences, computed by code from the ops against the revisions in force, plus one per interpretation (H13:
@@ -107,12 +109,15 @@ import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
 import { type Observation, keyOf, observedVerdict, reuse } from './observe.ts';
 import {
   type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
-  type RulingSidecar, isExempt, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar,
+  type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
-/** What a checkpoint needs beyond an audit's context: the revision core's plan file, routing base and docs publisher. */
-export type CheckpointContext = AuditContext & Readonly<{ planFile: AbsPath; routingBase: RoutingBase; docs: DocsPublisher }>;
+/**
+ * What a checkpoint needs beyond an audit's context: the revision core's plan file, routing base, docs publisher and lane
+ * environment (the stage's `hostEnv`, which lanes launch under).
+ */
+export type CheckpointContext = AuditContext & Readonly<{ planFile: AbsPath; routingBase: RoutingBase; docs: DocsPublisher; laneEnv: Readonly<Record<string, string | undefined>> }>;
 
 /** A checkpoint's captured inputs, as the fold has them. */
 export type Captured = CheckpointState['inputs'];
@@ -218,7 +223,8 @@ export function vectorAt(ctx: CheckpointContext, inForce: InForce, revision: Rev
 }
 
 const readerOf = (ctx: CheckpointContext) => ({ journal: ctx.journal, runDir: ctx.runDir, planFile: ctx.planFile, repo: ctx.repo });
-const revisionContext = (ctx: CheckpointContext): RevisionContext => ({ runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase });
+const revisionContext = (ctx: CheckpointContext): RevisionContext =>
+  ({ runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, planFile: ctx.planFile, routingBase: ctx.routingBase, laneEnv: ctx.laneEnv });
 const integrationHead = (ctx: CheckpointContext) => revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
 
 /** The plan's bytes (sha256) at plan rev `rev`, from its revision's payload. */
@@ -603,19 +609,6 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     touched.plan = true;
   }
 
-  // The rulings, each at the tip with the earlier valid ones landed (their contract ops outside the documents are H10's).
-  // An invalid ruling is never folded in: its reasons reject the bundle, and the ledger the next one is checked against
-  // stays one the reader parses (paid M4a run 1: a proposed C-2 the ledger already held, folded, repeated the id and
-  // crashed the executor).
-  const tip = rulingContextAt(readerOf(ctx), integrationHead(ctx));
-  let ledger = revision.ledger.bytes.toString('utf8');
-  for (const s of landing) {
-    const inside = { ...s, contractOps: s.contractOps.filter((o) => documents.has(o.path)) };
-    const why = validateRuling(inside, { ...tip, ledger: parseRulings(ledger, 'the rulings ledger') });
-    reasons.push(...why);
-    if (why.length === 0) ledger = ledgerAfter(ledger, s);
-  }
-
   let parsed: PlanM1 | null = null;
   const planBytes = touched.plan ? jsonBytes(plan) : current.planBytes;
   try {
@@ -623,6 +616,22 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
   } catch (error) {
     if (!(error instanceof SchemaError)) throw error;
     reasons.push(`the plan with the ops applied does not parse: ${error.message}`);
+  }
+
+  // The rulings, each at the tip with the earlier valid ones landed (their contract ops outside the documents are H10's),
+  // applying to the units of the plan with the ops applied (OP-2: a ruling for a unit the bundle admits or re-enters).
+  // An invalid ruling is never folded in: its reasons reject the bundle, and the ledger the next one is checked against
+  // stays one the reader parses (paid M4a run 1: a proposed C-2 the ledger already held, folded, repeated the id and
+  // crashed the executor). A plan that does not parse rejects the bundle already.
+  if (parsed !== null) {
+    const tip = { ...rulingContextAt(readerOf(ctx), integrationHead(ctx)), units: parsed.units.map((u) => u.id) };
+    let ledger = revision.ledger.bytes.toString('utf8');
+    for (const s of landing) {
+      const inside = { ...s, contractOps: s.contractOps.filter((o) => documents.has(o.path)) };
+      const why = validateRuling(inside, { ...tip, ledger: parseRulings(ledger, 'the rulings ledger') });
+      reasons.push(...why);
+      if (why.length === 0) ledger = ledgerAfter(ledger, s);
+    }
   }
   let obligations: InputFile | null = current.obligations;
   let obligationsAfter = obligationsNow;
@@ -723,12 +732,27 @@ function staleness(ctx: CheckpointContext, a: Activation, p: Proposal, now: Revi
     const tip = rulingContextAt(readerOf(ctx), integrationHead(ctx));
     for (const path of [...p.touched.contracts].sort()) if (then.blobAt(path) !== tip.blobAt(path)) out.push(`contract ${path} changed since the checkpoint read it`);
   }
-  const fold = ctx.journal.view.holistic();
-  for (const d of a.output.findingDispositions) {
-    const f = fold.findings.find((x) => x.id === d.finding);
-    if (f !== undefined && a.captured.findings.includes(d.finding) && !isActive(f)) out.push(`finding ${d.finding} is ${f.state} since the checkpoint read it`);
+  // Paid M4b run 5 (ckpt-2): a finding the checkpoint was shown that closed since (a publication resolved it) leaves its
+  // disposition moot, settled as nothing (`settleDecided` rules active findings only); only a decision resting on it is stale.
+  for (const f of closedSince(ctx, a)) {
+    if (restsOn(a.output, f.id)) out.push(`finding ${f.id} is ${f.state} since the checkpoint read it, and the decision rests on it`);
   }
   return out;
+}
+
+/** The findings `a`'s checkpoint was shown that are no longer active, by id. */
+function closedSince(ctx: CheckpointContext, a: Activation): readonly Readonly<{ id: FindingId; state: string }>[] {
+  return ctx.journal.view.holistic().findings.filter((f) => a.captured.findings.includes(f.id) && !isActive(f)).map((f) => ({ id: f.id, state: f.state }));
+}
+
+/**
+ * Whether the decision rests on finding `id`: its cites name it, or an op names it anywhere (its evidence, an admitted
+ * spec's repairs, a ruling's text). A disposition alone is not resting on it.
+ */
+export function restsOn(output: CheckpointOutput, id: FindingId): boolean {
+  if (output.cites.findings.includes(id)) return true;
+  const token = new RegExp(`(^|[^A-Za-z0-9-])${id}(?![0-9])`);
+  return [...output.ops.map((op) => canonicalJson(op)), ...output.rulings].some((text) => token.test(text));
 }
 
 /** Why the output's cites and finding dispositions are invalid, or empty (H16: active clauses only). */
@@ -909,10 +933,11 @@ export function admitWorldOf(
   const store = observations(ctx);
   const lanes = new Map((obligations?.lanes ?? []).map((l) => [l.id, l]));
   const trees = [...positions].map(([sha, position]) => ({ position, tree: revParse(ctx.repo, `${sha}^{tree}`) }));
+  const latched = new Set(fold.latched.map((l) => l.obligation));
   const world = new Map(defs.map((o) => {
     const v = views.get(o.id)!;
     const held = v.observation?.verdict === 'held';
-    const holding = o.activation === 'must-hold' ? held : !(v.latched && !held);
+    const holding = !isMustHold(o, latched) || held;
     const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
     const history = lane === undefined || o.witness === null ? [] : trees.flatMap(({ position, tree }) => {
       const verdict = observedVerdict(store, keyOf(tree, lane, laneEnvId(ctx, lane)), o.witness!);

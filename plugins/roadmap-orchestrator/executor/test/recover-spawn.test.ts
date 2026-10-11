@@ -95,6 +95,7 @@ test('recover.exit-without-result', T, async () => {
   assert.equal(files(r, 1).read('result.json'), null);
   await recover(r.runDir, r.arc);
   assert.deepEqual(spawnDones(r.runDir).map((x) => x.recoveredBy), ['redone']);
+  assert.deepEqual(spawnDones(r.runDir).map((x) => (x.outcome.kind === 'result' ? x.outcome.pressure : undefined)), [null], 'no executor watched the runner: no pressure');
   assert.equal(files(r, 1).read('result.json')?.type, 'backend');
   assert.equal(readCalls(s.path).length, 1, 'the adapter re-ran; the backend did not');
   assertSettled(r, 1);

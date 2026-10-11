@@ -149,19 +149,20 @@ describe('routing', () => {
 
   it('routing.rev-stable: the rev hashes triples: same table, same rev; any seat or binding change, a different rev', () => {
     const t = resolveRouting(base).table;
-    const rev = routingRevOf(t, 'none');
+    const rev = routingRevOf(t, 'none', null);
     assert.match(rev, /^[0-9a-f]{16}$/);
-    assert.equal(routingRevOf(structuredClone(t), 'none'), rev);
+    assert.equal(routingRevOf(structuredClone(t), 'none', null), rev);
     assert.equal(resolveRouting(base).rev, rev);
     // Naming the class a seat already has is no change.
     assert.equal(resolveRouting(arcStack('default', null, layer({ build: { low: 'efficient' } }))).rev, rev);
-    // Every seat is hashed where it is in force: all of them in a corpus arc (the arc seats only in their scope, G20).
-    const seen = new Set([routingRevOf(t, 'corpus')]);
+    // Every seat is hashed where it is in force: all of them in a corpus arc of the m4b role set (the arc seats only in
+    // their scope, G20).
+    const seen = new Set([routingRevOf(t, 'corpus', 'm4b')]);
     for (const s of SEAT_REFS) {
       // A JSON round trip, not structuredClone: the table shares triple objects between seats.
       const changed = JSON.parse(JSON.stringify(t)) as Record<string, Record<Seat, Triple>>;
       changed[s.role]![s.tier] = atSeat(t, s).model === SOL_HIGH.model ? LUNA : SOL_HIGH;
-      const r = routingRevOf(changed as unknown as RoutingTable, 'corpus');
+      const r = routingRevOf(changed as unknown as RoutingTable, 'corpus', 'm4b');
       assert.ok(!seen.has(r), `${s.role}/${s.tier}`);
       seen.add(r);
     }
@@ -184,13 +185,15 @@ describe('routing', () => {
   });
 });
 
+// The M3 and M4a cases below resolve with no role set (null): the dev.7 role set an adopted 1.0.0-dev.7 arc keeps, whose
+// revs, seats in force and checks must not move (M4b, R5). The m4b role set has its own cases.
 describe('routing: the arc seats (M3)', () => {
   it('routing.holistic-filter: the arc seats are in force, checked and hashed only in a holistic arc (G20)', () => {
     // A non-holistic arc resolves as in M2: no arc seat is checked, and the rev hashes the unit roles alone.
     for (const p of PROFILES) {
       const r = resolveRouting(arcStack(p, null, null));
       assert.equal(r.arcScope, 'none');
-      assert.deepEqual(seatsInForce(r).map((s) => s.role).filter((role) => role === 'lens' || role === 'checkpoint' || role === 'packReview'), []);
+      assert.deepEqual(seatsInForce(r).map((s) => s.role).filter((role) => role === 'lens' || role === 'checkpoint' || role === 'packReview' || role === 'flow'), []);
       assert.deepEqual(unsupportedSeats(r, null), [], p);
       const m2Table = { planCheck: r.table.planCheck, build: r.table.build, gate: r.table.gate };
       assert.equal(r.rev, createHash('sha256').update(canonicalJson(m2Table)).digest('hex').slice(0, 16), `${p}: the M2 rev`);
@@ -201,22 +204,22 @@ describe('routing: the arc seats (M3)', () => {
     const base = resolveRouting(arcStack('default', null, null));
     assert.deepEqual([base.classes.lens.arc, base.classes.checkpoint.arc], ['frontier', 'summit']);
     assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [OPUS, OPUS_XHIGH]);
-    // A plan naming a vision puts the M3 arc seats in force: every seat but the pack review's (LR-0a-1) is checked (the
-    // built-in arc seats have prompt modules since B4), and the rev hashes them too.
+    // A plan naming a vision puts the M3 arc seats in force: every seat but the pack review's (LR-0a-1) and, in the dev.7
+    // role set, the flow seat's is checked (the built-in arc seats have prompt modules since B4), and the rev hashes them too.
     const plan = { target: 'architecture-doc', holistic: { vision: planPath('vision.json'), advances: [visionClauseId('V-1')] } } as const;
-    const h = resolveRouting(planStack('default', null, plan));
+    const h = resolveRouting(planStack('default', null, plan, null));
     assert.equal(h.arcScope, 'architecture-doc');
-    assert.equal(seatsInForce(h).length, SEAT_REFS.length - 1);
+    assert.equal(seatsInForce(h).length, SEAT_REFS.length - 2);
     assert.notEqual(h.rev, base.rev);
     assert.deepEqual(unsupportedSeats(h, null), []);
     // A Claude model with no module for an arc role is still refused as no-prompt (Sonnet, efficient under claude-only).
-    const sonnet = resolveRouting(planStack('claude-only', null, { ...plan, routing: layer({ lens: { arc: 'efficient' } }) }));
+    const sonnet = resolveRouting(planStack('claude-only', null, { ...plan, routing: layer({ lens: { arc: 'efficient' } }) }, null));
     assert.deepEqual(unsupportedSeats(sonnet, null), [
       { kind: 'unsupported-routing', role: 'lens', tier: 'arc', layer: 'plan', class: 'efficient', unit: null, why: 'no-prompt' },
     ]);
-    assert.equal(resolveRouting(planStack('default', null, { target: 'architecture-doc' })).rev, base.rev, 'no vision: the M2 stack');
+    assert.equal(resolveRouting(planStack('default', null, { target: 'architecture-doc' }, null)).rev, base.rev, 'no vision: the M2 stack');
     // A plan layer may seat the arc roles; a Codex class there is a Codex judgment.
-    const codex = resolveRouting(planStack('default', null, { ...plan, routing: layer({ checkpoint: { arc: 'efficient' } }) }));
+    const codex = resolveRouting(planStack('default', null, { ...plan, routing: layer({ checkpoint: { arc: 'efficient' } }) }, null));
     assert.deepEqual(unsupportedSeats(codex, null).at(-1), {
       kind: 'unsupported-routing', role: 'checkpoint', tier: 'arc', layer: 'plan', class: 'efficient', unit: null, why: 'codex-judgment',
     });
@@ -229,7 +232,7 @@ describe('routing: M4a (OR-Q17, OR-L3, LR-0a-1)', () => {
   it('routing.catalogue-m4a: frontier is Opus 5.5 medium and summit Opus 5.5 xhigh in both profiles; Fable is reachable only by a repo rebind', () => {
     for (const p of PROFILES) {
       assert.deepEqual([CLASS_CATALOGUE[p].frontier, CLASS_CATALOGUE[p].summit], [OPUS, OPUS_XHIGH], p);
-      const r = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus' });
+      const r = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
       for (const s of SEAT_REFS) assert.notEqual(atSeat(r.table, s).model, 'claude-fable-5-1', `${p} ${s.role}.${s.tier}`);
       assert.deepEqual(unsupportedSeats(r, null), [], `${p}: every seat of a corpus arc has a prompt`);
     }
@@ -244,18 +247,19 @@ describe('routing: M4a (OR-Q17, OR-L3, LR-0a-1)', () => {
   it('routing.packreview-seat: packReview sits on frontier at `arc`; it is in force and hashed only in a corpus arc, so an architecture-doc arc hashes the dev.6 role set', () => {
     assert.deepEqual(BUILTIN_SEATS.packReview, { arc: 'frontier' });
     const vision = { vision: planPath('vision.json'), advances: [visionClauseId('V-1')] };
-    const doc = resolveRouting(planStack('default', null, { target: 'architecture-doc', holistic: vision }));
-    const corpus = resolveRouting(planStack('default', null, { target: 'corpus', holistic: { advances: vision.advances } }));
+    const doc = resolveRouting(planStack('default', null, { target: 'architecture-doc', holistic: vision }, null));
+    const corpus = resolveRouting(planStack('default', null, { target: 'corpus', holistic: { advances: vision.advances } }, null));
     assert.deepEqual([doc.arcScope, corpus.arcScope], ['architecture-doc', 'corpus']);
     assert.deepEqual(corpus.table.packReview.arc, OPUS);
     assert.ok(seatsInForce(corpus).some((s) => s.role === 'packReview'));
     assert.ok(!seatsInForce(doc).some((s) => s.role === 'packReview'));
-    const { packReview: _p, ...dev6Roles } = doc.table;
+    const { packReview: _p, flow: _f, ...dev6Roles } = doc.table;
     assert.equal(doc.rev, hashOf(dev6Roles), 'architecture-doc: unit roles, lens and checkpoint');
-    assert.equal(corpus.rev, hashOf(corpus.table), 'corpus: every role');
+    const { flow: _cf, ...dev7Roles } = corpus.table;
+    assert.equal(corpus.rev, hashOf(dev7Roles), 'corpus: every dev.7 role');
     // A plan layer that moves the packReview seat changes a corpus arc's rev only.
     const moved = layer({ packReview: { arc: 'summit' } });
-    assert.equal(resolveRouting(planStack('default', null, { target: 'architecture-doc', holistic: vision, routing: moved })).rev, doc.rev);
-    assert.notEqual(resolveRouting(planStack('default', null, { target: 'corpus', holistic: { advances: vision.advances }, routing: moved })).rev, corpus.rev);
+    assert.equal(resolveRouting(planStack('default', null, { target: 'architecture-doc', holistic: vision, routing: moved }, null)).rev, doc.rev);
+    assert.notEqual(resolveRouting(planStack('default', null, { target: 'corpus', holistic: { advances: vision.advances }, routing: moved }, null)).rev, corpus.rev);
   });
 });

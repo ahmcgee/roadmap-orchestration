@@ -63,7 +63,7 @@ at triage stay in git history.
 - Code-level enforcement of implementer boundaries beyond the unit policy and containment (H10's stated limit).
   Trigger: an implementer acting outside the sandbox.
 
-### M4a (in progress: plan `/claude-state/plans/m4a-convergence.md`, rev 2.1; 1.0.0-dev.7, branch `feat/m4a-convergence`)
+### M4a (done: plan `/claude-state/plans/m4a-convergence.md`, rev 2.1; 1.0.0-dev.7, merged at b55ad88)
 
 - Scope (LR-a): the pinned corpus as the target (guide, sources, `T-n` rules, pin, census), the vision's in-tree home
   and playback verification, `roadmap phase0 check`, the debt lifecycle, the forge (issue policy, intake, push, stacked
@@ -83,20 +83,41 @@ at triage stay in git history.
   root agent that never ends a turn never got one): `roadmap answer` into a write-once answer log, listed by
   `status`, the brief and `chain status`, an `answer` watch event, and the `answer-unapplied` start row.
 
-### M4b (after M4a)
+### M4b (in progress: plan `/claude-state/plans/m4b-flow.md`, rev 2; 1.0.0-dev.8, branch `feat/m4b-flow`)
 
+- Records frozen in step 0a (SCHEMAS.md "M4b: the flow loop"); step 0a placed placeholder modules at every final path
+  (`src/flow/*`, `src/commands/flow.ts`, the Opus flow prompt) behind `src/core/notyet.ts`, which step C deletes.
 - The flow loop, SPC, the flow role, givens, proposals and verdicts, the ruler fence (judgment-seat effort is part of
   the ruler, OR-Q17), test-set-preserving lane edits, the two plants. Seeded from M4a arcs' refs (LR-c).
 - First observation for the loop (M4a development, 2026-10-03): host contention is the ladder's constraint. The
   concurrent crash matrix takes ~21 min alone and was cancelled by its 45-min parent timeout when worktree agents and
   the probe shared the host (load ~46); per-cell 30 s and 180 s timeouts in `resource-recover` and `res.lock-order`
   tripped the same way. Candidate levers: serialize heavy files against agent work, or shard the matrix.
-- Second observation (paid `evals/m4a` run 15, 2026-10-08, 15/15 pass): executor spend $131 against $50 for run 14.
-  Arc 2 alone ran 14 checkpoint calls ($23.5) and 31 lens calls ($18.3); a further $23.5 sits in 4 cost rows with
-  no arc or role (unexplained: find what writes them). Lens cadence is ruler, so the flow role may only raise it.
+- Second observation (paid M4a fixture run 15, 2026-10-08, 15/15 pass): executor spend $131 against $50 for run 14.
+  Arc 2 alone ran 14 checkpoint calls ($23.5) and 31 lens calls ($18.3). The 4 cost rows with no arc or role ($23.5)
+  are the eval harness's own: three `root` turn rows (the root agent's spend, per transcript turn) and the `totals` row
+  (the harness transcript export: `rootCosts`, `costTotals`, `exportCosts`), not executor spend. Checkpoint triggering and lens
+  cadence are ruler (RC-1), so the flow role diagnoses judgment cost and never tunes it.
 - Answer delivery latency: Claude Code sessions can message each other locally. Once the `roadmap answer` channel
   is proven, measure whether messaging the live root session beats the `watch --actionable` answer wake. A delivery
   layer only; the answer log stays canonical.
+
+### Deferred from M4b (the plan's "Deferred" list)
+
+- Spec-lane levers (RC-3: spec lanes are planner-authored per unit; they often repeat the suite argv).
+- `flow revert` (RC-6: a `worse` verdict raises `flow-worse` with the preimage; the root reverts by `apply`).
+- A rope (WIP) lever (RC-7: drum-buffer-rope's rope is diagnosed only).
+- Judgment-cost levers (RC-1: checkpoint triggering and lens cadence are ruler).
+- Journalled resource waits (the arbiter's waits are in memory; the series reads stage and slot spans only).
+- A cost chart and SPC run rule 4.
+- Ranking pools by utilisation.
+- Feeding `ruler-changed` items into the audit lens inputs (narrowed to the brief and `status.flow`).
+- More than one open verdict window arc-wide.
+- Host-pressure charging (RC-11, H2) for the D1/D2 checks' lanes, journey lanes and jobs' calls: they keep the handling
+  without pressure. Bring in when a paid run shows one of them blocked or red under a saturated host.
+- `status` has no tick history, so it shows a host-pressure hold waiting until its 30-min bound even after the host
+  calmed (the executor releases it on its own ticks). Bring in (the scheduler publishing its host cpu wait in sched.json)
+  when an operator is misled by it.
 
 ### Deferred from M4a
 
@@ -130,6 +151,11 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **Checkpoint reads refused** (paid M4b run 5): the checkpoint call inv 2174 was refused reads of the runtime's
+  `inputs/*.plan.json` (outside its `--add-dir`s) and still answered `bundle`. The gate and plan-check void an approve
+  after a refused read (`readRefused`, src/pipeline/stages.ts); the checkpoint does not yet. Trigger: a checkpoint
+  decision that rests on a refused read, or a second run whose checkpoint reads.json shows `denied`; then decide whether
+  to add the readable dirs it reached for, or to void its answer the same way.
 - **`nextStart` reads K at the chain head's baseline** (paid run 12 fix): a K the owner commits after that baseline is
   seen only by the next start itself (the live file at `start`), not by `chain status`. Trigger: a session stopping
   `k-limit` while the owner's newer committed K would allow the start.
@@ -225,6 +251,25 @@ None.
 
 ## Scaffolding to delete
 
+- The 1.0.0-dev.7 → M4b default in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.7 is in flight:
+  `dev7ArcRolesDefault` and `arcRolesInForce`'s null arm (src/routing/layers.ts): a routing provenance without
+  `arcRoles` reads as the dev.7 role set (no `flow`), the flow loop off (`off-dev7`). With it, `arcRoles` becomes required.
+  The M4b rev 3 defaults go with it: `spawnPressureOf` (a spawn result without `pressure` reads null) and
+  `startPressureOf` (an `executor-started` without `pressure` reads `unavailable`) and `exitCpuOf` (an exit.json without
+  `cpu` reads null); the three fields then become required.
+- `readsDeniedOf` (src/core/upgrade.ts), once no gate call an executor before paid M4b run 5's fix closed is unconsumed: a
+  reads.json without `denied` reads as none refused. With it, `denied` becomes required.
+- `buildFinalDefault` (src/core/upgrade.ts), once no build an executor before the report rule (2026-10-11) launched is
+  unconsumed: a build answer without `final` reads as final. With it, `final` becomes required in `buildOutputFor`.
+- `lensPatchMutantDefault` (src/core/upgrade.ts) and `LensMutant`'s `kind: patch` arm with `admitMutant`'s `checkPatch`
+  branch, once no audit an executor before paid M4b run 3's fix started is running: a recorded lens answer's mutant
+  `{patch, lane}` (a hand-written diff) reads as written. With it, a lens mutant is edits only.
+- The 1.0.0-dev.6 layer below is no longer adopted (1.0.0-dev.8 adopts dev.7 only; no dev.6 arc was in flight at M4b
+  step 0a, which moved `PREVIOUS_RELEASE` to b55ad88 and dropped the dev.6 upgrade cases). Step 0a deleted the
+  self-contained part: `checkpointOutputM4Default`, `splitChildRuleDefault` (a checkpoint answer now needs
+  `corpusAmendments`, `issueIntake` and each split child's `rule`), `DEV6_CLASS_CATALOGUE` and status's `dev6RevAlias`
+  (with `resolveRoutingUnder`). The rest goes in one dedicated step with the corpus migration of the M3 fixtures below.
+
 - Holistic `architecture-doc` arcs (adopted dev.6 arcs only; a fresh one is refused, D0). With them go the
   `architecture-doc` arm of the holistic code paths and the M3 fixtures that put such a plan in force as revision 1
   by `recordPlan` (adopted-arc coverage, lead ruling LR-D0b): `brake-common` (`holisticArc`), `audit-common`,
@@ -232,16 +277,12 @@ None.
   repair, scheduler-m3, publish, gate, revision, snapshot, status-m3, startup-checks). Migrate those tests to corpus
   arcs (`test/fixtures/corpus-target.ts`) when deleting, once no dev.6 arc is in flight.
 
-- The 1.0.0-dev.6 → M4a defaults in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.6 is in flight:
+- The 1.0.0-dev.6 → M4a defaults left in `src/core/upgrade.ts` (no dev.6 arc is adopted since 1.0.0-dev.8):
   - `censusOf`: an obligations file without a census (docRef obligations; census checks vacuous).
-  - `checkpointOutputM4Default`: a checkpoint answer without `corpusAmendments` or `issueIntake`.
-  - `splitChildRuleDefault`: a split child without `rule`.
   - `legacyIdOrder` and `idsAscending`'s `legacyStringOrder` option (with `sortedBy`'s `legacyKey`): a numbered-id list in
     pre-dev.7 string order. Also needs every arc started on feat/m4a-convergence before the fix finished, and the
     repo-authored vision, obligations, ruling and Phase-0 files re-sorted (a string-ordered one is refused once it goes).
     With it goes the dev.7 sentence in `canonicalFingerprint`'s comment (src/pipeline/gate.ts); the set comparison stays.
-  - `DEV6_CLASS_CATALOGUE` (K2, step A2) and status's `dev6RevAlias` (K12, step A2), which joins a dev.6 meter row's
-    recorded `routingRev` through it.
   - M4a rev 3 (step N0): `HOST_SIGNATURES_DEV6` and the classification of unstamped (no `redRev`) lane and journey runs
     by it; `mutantSubjectDefault` and the dev.6 `finding` arms of the mutant spawn subject and `mutant.apply`
     (`Dev6MutantSubject`, `MutantApplyExpect`); `buildExperimentsDefault` (a build answer without `experiments`);

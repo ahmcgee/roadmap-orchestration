@@ -3,7 +3,7 @@
 // reservation cycle's typed handles live beside their one implementation, src/resources/reserve.ts (10).
 // Interfaces only; no behaviour here.
 import type {
-  AbortCode, DoneRecord, Fact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
+  AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
   PlanAppliedFact, RecoveredBy,
 } from './events.ts';
 import type { AmendmentId, ArcId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId } from './ids.ts';
@@ -116,7 +116,11 @@ export interface JournalView {
   lastExecutorStarted(): number;
   /** M3: the holistic layer's fold (findings, audits, checkpoints, divergences, completion, …). */
   holistic(): HolisticFold;
+  /** M4b: every flow fact, in log order, with its seq and time (src/flow/apply.ts derives the decisions' phases from them). */
+  flowFacts(): readonly FlowFactAt[];
 }
+
+export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;
 
 /** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
 export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;

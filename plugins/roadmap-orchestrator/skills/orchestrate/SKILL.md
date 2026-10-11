@@ -130,7 +130,9 @@ Keep the arc's inputs in their own directory outside the product working tree, f
    `rule: {id, textSha256}` from the pin. A second subagent cross-checks the extraction against the rules; you
    settle every disagreement.
 6. **Census.** One entry per active pinned rule: `obligation{id}`, `out-of-slice`, `untestable` or `prod-only`.
-   A claim about something not built yet is a `future` obligation, never `must-hold`.
+   A claim about something not built yet is a `future` obligation, never `must-hold`. What an existing test already
+   checks of a property the code must keep is a `must-hold` obligation witnessed by that test, never `untestable` or
+   `prod-only`.
 7. **Questions.** Rank the semantic questions the vision does not answer. A new `P-n` is 1 + the highest `P-n` in
    any earlier Phase-0 record of the chain; a question carried forward keeps its id and text. An answered one
    moves to `answered{answer, at}` and its rules change to match (an answer that came mid-arc is already applied:
@@ -190,18 +192,58 @@ $0.30), so the wakes are few by design.
   `opportunity` (it advances a clause outside the slice; its clauses join `advances`). An admit must cite every
   out-of-slice clause it touches; one that does not is refused as dishonest. An arc gets one opportunity, and an
   opportunity one follow-up repair of its own code. An admit serving no touched clause (`unrelated`), a second
-  opportunity (`over-budget`) or a second follow-up (`follow-up-overrun`, which also banks a debt item naming the
-  opportunity) is dropped from the bundle and becomes a corpus amendment for the next Phase 0. A checkpoint whose
+  opportunity (`over-budget`), an opportunity without its witness (`unwitnessed`: no obligation of the bundle that
+  its unit delivers on an arc lane in force) or a second follow-up (`follow-up-overrun`, which also banks a debt item naming the
+  opportunity) is dropped from the bundle and becomes a corpus amendment for the next Phase 0. An opportunity's clause
+  no obligation serves shows apart (`status.vision.coverage.unservedOpportunity`): the checkpoint never builds toward
+  the arc lane that would witness it, since arc lanes are yours to add between arcs. A checkpoint whose
   bundle touches a unit mid-attempt waits for that stage boundary (`status.checkpointWaits`).
 - **Amendments** (`status.amendments`) accumulate; you disposition them at the next Phase 0. They and every other
   mid-arc learning wait for the corpus window between arcs; only an owner's answer edits the corpus mid-arc. Note
   each corpus claim a unit's code makes false; the next window fixes it.
-- **Flow.** Watch `status.timings` (per stage: completed attempts, median and maximum) and each running unit's
-  `running.elapsed` against its stage's median. Report a slowdown at the next check-in as an observation with
-  numbers. Never change lanes, judgment seats, obligations or routing to make an arc faster.
+- **Flow.** "The flow loop" below. Report a slowdown it does not explain (`status.timings`, a running unit's
+  `running.elapsed` against its stage's median) at the next check-in as an observation with numbers.
 - **Preview.** The owner may ask to see the product. Run it from a detached checkout you own:
   `git worktree add --detach <dir> <integration branch>`, outside the plan's `worktreeRoot`. A checkout that is not
   detached would put the integration branch in a worktree, which the executor forbids.
+
+## The flow loop
+
+You own the arc's efficiency, charged with convergence, not throughput: a faster arc that converges less is worse.
+The executor runs a flow role on its own triggers (a point outside the lead-time chart's limits, a constraint shift, a
+closed verdict, every 10 merges). It names the constraint and proposes at most one lever change. Code drops a proposal
+that breaks its checks, proves a suite-lane argv change before applying it, applies an accepted one under a fence that
+touches only that lever's plan fields, and judges it on the chart (`status.flow`).
+
+- **`flow-proposal`** (non-blocking, on `watch --actionable`). Read the item and its inputs file, then assess it
+  skeptically:
+  1. Does it touch a measurement: tests, lanes, witnesses, judgment? A change to what is measured is a reject.
+  2. Does its target match the code constraint (`status.flow.constraint` and its component)?
+  3. Is the effect plausible at the target's share of lead time (the station table)? A station at 10 % of lead
+     cannot halve it.
+  4. Which guard could it breach: lead, rework, first-run reds, an obligation, cost per merge?
+
+  Then `roadmap flow accept <proposal> --reason <text>` or `roadmap flow reject …`, the reason one line. The decision
+  acknowledges the item.
+- **A `host:cpu` proposal.** The arc's work waited for a cpu half its time or more (`status.flow.constraint`), and
+  code accepts only a decrease of the arc's own load there, or `host` advice. Accept a decrease when the arc's own
+  load explains the pressure (its `@cpu` tokens near the host's cpus, a suite lane running more files at once than its
+  cpu covers: the inputs file's `pressure`). When the arc holds few tokens and the pressure stays high, another tenant
+  loads the machine: reject a decrease, which would only slow the arc, and pass the `host` advice to the owner or
+  declare a given.
+- **The ruler is never a lever.** Never edit a ruler path to make a number move: obligations and their witness
+  lanes, arc lanes, `holistic.audit`, `holistic.advances`, the vision, judgment-seat routing, risk. An `apply` of
+  yours that touches one after the first admission raises `ruler-changed` (`status.flow`, the brief). Ack it only for
+  a change convergence needed, and say why at the next check-in.
+- **`flow-worse`**: a verdict found an applied change worse. Revert it by `apply` (export, restore the values in the
+  `preimage` of that proposal's `flow-verdict` fact, apply), then ack. No flow run proposes it again.
+- **`flow-host`** is advice for the owner (more cores, a faster disk), never applied: put it in your next check-in
+  preface, then accept or reject it with a reason.
+- **Givens.** When a lever cannot be tuned on this host and that is self-evident, declare it yourself:
+  `roadmap flow given`. When in doubt, ask the owner. Repo givens are the owner's (`flow.givens` in the config).
+- **`flow request`** only on a concrete observation (a unit far past its stage median, a lane at twice its usual
+  time), never to chase a number. T, I and OE (`status.flow.accounting`) are diagnostic: report them, never steer to
+  them. `flow-invalid`: ack it; report it if it repeats.
 
 ## Supervising the executor
 
@@ -218,7 +260,7 @@ answer"), whatever else the wake holds.
 
 **Operate** only through the sanctioned levers: `pause`, `resume`, `resume --backend`, `ack`, `apply` (re-entry,
 priority, known defects and `--ruling` included), `rule`, `steer`, `reverse`, `merge-in`, `audit`,
-`close-admissions`, `stop`, `start`, `resume-arc`, `gc`, `inputs export`. Use them when observation says to; that is
+`close-admissions`, `flow`, `stop`, `start`, `resume-arc`, `gc`, `inputs export`. Use them when observation says to; that is
 the job. Never patch the plugin or the run dir. To recover inputs, `roadmap inputs export` the arc, edit the export,
 then `apply --expect-rev <planRev>` (`reference.md`, "Recovery"); never copy a historical manifest back.
 
@@ -369,20 +411,34 @@ rejected. An edit you never apply has no effect, even after a restart.
 
 ## Lanes, witnesses and clocks
 
-- Declare `evidenceGlobs` for everything a lane script writes as evidence. Undeclared ignored output is captured
+- Declare `evidenceGlobs` for everything a lane script writes as evidence: its outputs (logs, reports, coverage),
+  never the files it reads or tests. A match is never committed and refuses the candidate, so an entry covering
+  the unit's own source or tests leaves it unmergeable; `start` and `apply` refuse an entry that matches a literal
+  scope path or equals a scope pattern. Paths a lane reads go in its `inputs`. Undeclared ignored output is captured
   only when the lane fails, capped. Add `evidenceExcludes` for anything that must never leave the checkout.
 - A lane asserts its required failure inside the script (or by `expectedExit`) and prints the failing step and
   reason on stderr before a non-zero exit: the fix round starts from stderr.
+- A suite lane's argv runs the test runner itself, each flag its own element (`["node", "--test",
+  "--test-concurrency=4", "test/**/*.test.js"]`), never a wrapper such as `npm test` or `sh -c`: the flow loop tunes
+  the runner's flags in place in the argv, and a wrapper hides them. Resolve the package script to the command it runs.
+  Copy its flags exactly as the project runs them today, even where the corpus says a faster setting is now safe:
+  changing how the gate runs is the flow loop's lever, which proves the same tests still pass and measures the
+  change. Retuning a flag while authoring skips that proof.
 - A spec lane may declare `inputs`, the repo patterns it reads: a fast lane's pass is then reused on a later commit
   that touched none of them. Suite and arc lanes never declare it.
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs. Mutation smoke reverts a
   unit's production change (everything outside `testPaths`) and runs its witnesses again; without `testPaths` it
   does not run.
+- A witness lane runs exactly the test files that witness its obligations and names each one in its argv
+  (`["node", "--test", "test/unit/soak.test.js"]`). The whole-suite lane is the suite gate, never an obligation's
+  witness: it hides which test witnesses what, so the flow loop cannot measure or shard one witness, a change to the
+  suite's flags changes every witness's ruler, and impact selection runs the whole suite for any obligation.
 - Before the gate, a corpus arc runs every witness the unit must pass (its delivered and repaired obligations', its
   spec's `witnesses`, its must-hold obligations') by exact test id; a missing or failing one is a fix round. Acceptance
   a witness lane must prove goes in the spec's `witnesses` section: `{id: W-<n>, lane: <arc lane>, testId: <exact
   id>, clause: <the spec's acceptance clause id, e.g. A2>, skeleton: <what the test does>}`. Name only a test the
-  change makes pass: mutation smoke reports a witness that passes with the change reverted.
+  change makes pass: mutation smoke reports a witness that passes with the change reverted. A check that existing
+  behaviour holds is a must-hold obligation's witness, never a spec witness.
 - **Clocks.** A unit whose behaviour depends on the date or time zone pins the product's own clock seam in every test
   it touches, existing ones included, and declares a second fast lane that runs its witnesses with the seam shifted
   far ahead (+400 days) under a non-UTC `TZ`. No real wait in a fast lane: inject the timeout, and check the production
@@ -412,6 +468,7 @@ rejected. An edit you never apply has no effect, even after a restart.
   `invariants.md`, `debt.md`) by hand. Commands are the only write path.
 - Acknowledge a needs-user item you have not read in full, or a brief the owner has not acknowledged.
 - Edit the corpus outside Phase 0, the between-arc commit and an owner's answer.
+- Edit a ruler path to make an arc faster.
 - Change K, merge or push `main`, or merge a PR.
 - Retry a usage-limited backend on a timer, or reroute around it.
 - Write the vision, or adopt a direction the owner has not confirmed.

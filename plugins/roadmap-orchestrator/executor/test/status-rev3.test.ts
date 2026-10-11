@@ -35,7 +35,7 @@ import { sampleCorpus } from './helpers/corpus.ts';
 import { checkpointAnswer, checkpointStep, lensStep } from './helpers/holistic.ts';
 import { tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
-import { admitOp, checkpointContext, completedAudit } from './fixtures/checkpoint-common.ts';
+import { admitOp, checkpointContext, completedAudit, witnessSplit } from './fixtures/checkpoint-common.ts';
 import { type CorpusHolisticArc, corpusHolisticArc } from './fixtures/corpus-holistic.ts';
 import { VISION_PATH } from './fixtures/corpus-unit.ts';
 import { EXEC_TIMEOUT_MS, SMOKE_DEFAULT, cli, setupExec, startExec, statusOf, until } from './fixtures/exec-common.ts';
@@ -184,7 +184,7 @@ test('status.known-defect-holds: a unit that hit K-1 waits at prepare under it (
   });
   const r = contextFor(d);
   const admitted: Gate = (next) => Promise.resolve(next.kind === 'chain' || admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx))({
-    view: r.journal.view, plan: r.ctx.plan(), unit: r.unit('u1'), stage: next.stage, blocking: [], drains: [], tripped: [],
+    view: r.journal.view, plan: r.ctx.plan(), unit: r.unit('u1'), stage: next.stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
   }).kind === 'admit');
   try {
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitted), { kind: 'held', needsUser: null });
@@ -248,7 +248,7 @@ test('status.checkpoint-busy-wait: a checkpoint rejected busy shows "waiting for
 test('status.drift-indicator / brief.admits-and-opportunities: an oversight, an opportunity and a converted admit; a finding outside the slice on the oversight\'s merge is drift, a mixed one is not; the brief carries the admits, the opportunity, the drift and the converted admit under its amendment', T, async () => {
   const a = await corpusHolisticArc([lensStep('audit-1', 'vision')], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
   appendSteps(a.d, [
-    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'over', ['V-1']), admitStep(a, 'opp', ['V-1', 'V-3']), admitStep(a, 'aside', ['V-2'])] })),
+    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'over', ['V-1']), admitStep(a, 'opp', ['V-1', 'V-3']), admitStep(a, 'aside', ['V-2']), witnessSplit('opp', 'V-3')] })),
     planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
     lensStep('audit-2', 'vision', [
       { severity: 'P2', visionClauses: ['V-4'], claim: 'mul shows no day view', cause: 'mul: no day view', evidence: [{ path: 'src/mul.js', line: 1 }] },

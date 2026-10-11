@@ -1,6 +1,6 @@
-// M4a rev 3 step N3, E: the plan-check shape by builder class and the in-session assessment (and, run 10 C, the census
-// gate on a redirect's patch), through the unit driver in a corpus arc (real processes, real git, fake backends;
-// test/fixtures/checks-common.ts). Named tests: plancheck.*,
+// M4a rev 3 step N3, E: the plan-check shape by builder class and the in-session assessment (and the gates on a
+// redirect's patch: run 10 C's census, M4b run 3's lane evidence), through the unit driver in a corpus arc (real
+// processes, real git, fake backends; test/fixtures/checks-common.ts). Named tests: plancheck.*,
 // build.assess-*, and the crash rows "Plan-check acceptance patch", "Plan-check in-session" and "Build assess" (labels
 // plancheck.after-witness-patch, plancheck.after-pin-in-session, build.after-assess).
 import assert from 'node:assert/strict';
@@ -93,7 +93,7 @@ describe('plan-check shape (E)', () => {
   });
 
   test('plancheck.efficient-acceptance-witnesses-patched: an efficient builder\'s check maps clauses to witness items through the patch channel; D1 then requires them', T, async () => {
-    const item = { id: 'W-1', lane: 'journey', testId: 't9', clause: 'A1', skeleton: "test('t9', () => assert.equal(mul(2, 3), 6))" };
+    const item = { id: 'W-1', lane: 'journey', testId: 't9', clause: 'A1', skeleton: "test('t9', () => assert.equal(mul(2, 3), 6))", obligation: null };
     const a = await arc({
       steps: [
         planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'witnesses', item }] }, { stdinContains: ['<acceptance_shape>', 'the next free id, W-1'] }),
@@ -127,13 +127,61 @@ describe('plan-check shape (E)', () => {
   });
 
   test('plancheck.witness-id-reused-malformed: a witness item reusing an id the spec holds is malformed (id-reused)', T, async () => {
-    const item = { id: 'W-1', lane: 'journey', testId: 't9', clause: 'A1', skeleton: 's' };
+    const item = { id: 'W-1', lane: 'journey', testId: 't9', clause: 'A1', skeleton: 's', obligation: null };
     const a = await arc({ steps: [planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'witnesses', item }] }, { stdinContains: ['the next free id, W-2'] })], witnesses: [{ id: 'W-1', testId: 't1' }] });
     const r = under(a, null);
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'plan-check');
       assert.deepEqual(outcomes(a.d), ['plan-check:malformed']);
       assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.rev, 1, 'nothing patched');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // Paid M4b run 6: u1 delivers I-1 (future, delivered by u1), whose witness is journey t1. A witness item naming an
+  // obligation takes that obligation witness's exact lane and test id, so the build never holds two names for one test.
+  const DELIVERS = { activation: 'future', deliveredBy: ['u1'], testIds: ['t1'] } as const;
+  const linked = (id: string, testId: string, obligation: string | null): JsonValue => ({
+    op: 'add', section: 'witnesses', item: { id, lane: 'journey', testId, clause: 'A1', skeleton: `test('${testId}')`, obligation },
+  });
+
+  test('plancheck.witness-reuse-refused: an item naming a delivered obligation under another test id, or an obligation the unit does not deliver, is malformed, not applied; the retry is told why', T, async () => {
+    const reason = 'witness item W-1 names I-1\'s witness, so it takes that witness\'s exact lane and test id (lane journey, test "t1"), not lane journey, test "t9"; '
+      + 'witness item W-2 names obligation I-9, which is not an obligation this unit delivers with a witness: set it to null or to one of I-1';
+    const a = await arc({
+      ...DELIVERS,
+      steps: [
+        planCheckStep({ decision: 'redirect', patch: [linked('W-1', 't9', 'I-1'), linked('W-2', 't8', 'I-9')] }, { stdinContains: ['<acceptance_shape>', '- I-1: ', '  lane journey, test "t1"'] }),
+        planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] }),
+      ],
+    });
+    const r = under(a, null);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+      assert.deepEqual(outcomes(a.d), ['plan-check:malformed', 'plan-check:approve']);
+      assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.rev, 1, 'nothing patched');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('plancheck.witness-reuse-patched: an item reusing a delivered obligation\'s witness id exactly patches, keeps its obligation, and the spec shows it; a null obligation is absent', T, async () => {
+    const a = await arc({
+      ...DELIVERS,
+      steps: [
+        planCheckStep({ decision: 'redirect', patch: [linked('W-1', 't1', 'I-1'), linked('W-2', 't9', null)] }),
+        planCheckStep({ decision: 'approve' }, { stdinContains: ['lane `journey` test `t1` witnesses `A1` (the witness of I-1)', 'lane `journey` test `t9` witnesses `A1`\n'] }),
+      ],
+    });
+    const r = under(a, null);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+      assert.deepEqual(outcomes(a.d), ['plan-check:redirect', 'plan-check:approve']);
+      const spec = loadUnitSpec(r.ctx, r.unit('u1')).spec;
+      assert.equal(spec.rev, 2);
+      assert.deepEqual(spec.witnesses?.map((w) => [w.id, w.testId, w.obligation ?? null]), [['W-1', 't1', 'I-1'], ['W-2', 't9', null]]);
+      assert.ok(!('obligation' in spec.witnesses![1]!), 'spec.json holds no null obligation');
     } finally {
       r.journal.close();
     }
@@ -147,6 +195,23 @@ describe('plan-check shape (E)', () => {
     const reason = 'unit u1\'s acceptance clause A9 names T-2, which the census puts out of slice: cite only in-slice rules';
     const a = await checksArc({
       steps: [planCheckStep({ decision: 'redirect', patch: [clause('A second berth booking is refused (T-2).')] }), planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] })],
+    });
+    const r = contextFor(a.d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+      assert.deepEqual(outcomes(a.d), ['plan-check:malformed', 'plan-check:approve']);
+      assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.rev, 1, 'nothing patched');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // M4b run 3: the same gate holds a patch to the lane-evidence rule (`evidenceScopeConflicts`).
+  test('plancheck.evidence-covers-scope-refused: a redirect adding a lane whose evidenceGlobs cover the unit\'s scope is malformed, not applied; the retry is told why', T, async () => {
+    const reason = 'unit u1 lane logs: evidenceGlobs entry `test/**` covers `test/**` of the unit\'s scope';
+    const lane = { id: 'logs', argv: ['node', '-e', '0'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: ['test/**'], evidenceExcludes: [] };
+    const a = await checksArc({
+      steps: [planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'lanes', item: lane }] }), planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] })],
     });
     const r = contextFor(a.d);
     try {
@@ -276,7 +341,7 @@ describe('crash rows', () => {
   });
 
   test('crash "Plan-check acceptance patch" (plancheck.after-witness-patch): the patch is found, never applied twice', T, async () => {
-    const item = { id: 'W-1', lane: 'journey', testId: 't9', clause: 'A1', skeleton: 's' };
+    const item = { id: 'W-1', lane: 'journey', testId: 't9', clause: 'A1', skeleton: 's', obligation: null };
     const a = await arc({
       steps: [planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'witnesses', item }] }), planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })],
       trees: { '*': { outcomes: { t1: 'pass', t9: 'pass' } } },

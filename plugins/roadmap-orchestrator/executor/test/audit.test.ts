@@ -5,7 +5,7 @@
 // orders), audit.owed, audit.skipped-on-park, audit.starts-in-ff-window (H2), coverage.docs-edge-contiguous (H8), coverage.docs-edge-subsumed,
 // coverage.vision-reset (H3), the crash cells of the matrix row AUDIT_JOB (test/matrix.ts), and M4a rev 3 (N5):
 // cadence.spec-only-bundle-vision-lens-only, cadence.obligation-bundle-full-drift, audit.cross-lens-merge-corroborated,
-// audit.cross-lens-different-cause-separate (with the corrupt-patch refusal at admission).
+// audit.cross-lens-different-cause-separate (with a refused mutant refused again); M4b: audit.refused-mutant-retried.
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -606,7 +606,7 @@ describe(`matrix row ${AUDIT_JOB}`, () => {
 
 // ---------------------------------------------------------------------------------------------------
 // M4a rev 3 (step N5): change-sensitive drift (H2, R61) and cross-lens dedupe within one audit (H7, R62), with a
-// vacuity draft whose mutant patch is corrupt refused at admission (H6).
+// vacuity draft whose mutant cannot be made refused at admission (H6), its lens asked once more (M4b).
 
 const CKPT = jobId('ckpt', 1);
 
@@ -623,7 +623,7 @@ function checkpointInputs(r: ArcRun): void {
 /** Commits the plan files as they stand now as a revision of checkpoint `ckpt-1`'s bundle. */
 async function bundleRevision(r: ArcRun): Promise<void> {
   checkpointInputs(r);
-  const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: { profile: 'default', config: null } } as const;
+  const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, laneEnv: process.env } as const;
   const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [] });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;
@@ -705,12 +705,16 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
     }
   });
 
-  test('audit.cross-lens-different-cause-separate: drafts differing in cause or in repo evidence paths stay separate findings; a vacuity draft whose mutant patch is corrupt is refused at admission with its stderr (findings.corrupt-patch-refused)', T, async () => {
+  test('audit.cross-lens-different-cause-separate: drafts differing in cause or in repo evidence paths stay separate findings; a vacuity draft whose mutant cannot be made is refused at admission, recorded, asked once more, and refused again leaves its lens uncovered (findings.mutant-refused)', T, async () => {
+    // The backend's schema admits edits only (a pre-M4b recorded patch is findings.mutant-refused's).
+    const nofile = { ...SAME, claim: 'corrupt mutant', mutant: { lane: 'journey', edits: [{ path: 'src/none.js', old: 'a', new: 'b' }] } };
+    const absent = { ...SAME, claim: 'corrupt mutant', mutant: { lane: 'journey', edits: [{ path: 'src/add.js', old: 'a * b', new: 'a / b' }] } };
     const { d } = auditArc({
       steps: [
         lensStep('audit-1', 'vision', [{ ...SAME, claim: 'vision' }]),
         lensStep('audit-1', 'invariants', [{ ...SAME, cause: 'mul: overflows past 2^53', claim: 'other cause' }, { ...SAME, evidence: [{ path: 'src/add.js', line: 1 }], claim: 'other path' }]),
-        lensStep('audit-1', 'vacuity', [{ ...SAME, claim: 'corrupt mutant', mutant: { patch: 'this is not a patch\n', lane: 'journey' } }]),
+        lensStep('audit-1', 'vacuity', [nofile]),
+        lensStep('audit-1', 'vacuity', [absent], [], ['<previous_report>', 'claim: corrupt mutant', 'edit 1 (src/none.js): no regular file']),
       ],
       units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: ['invariants', 'vacuity', 'vision'] },
     });
@@ -719,14 +723,50 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
     try {
       requestAudit(r);
       const out = await runAudit(ctx);
-      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.ok(out.kind === 'ended' && out.outcome === 'abandoned', JSON.stringify(out));
+      assert.deepEqual(out.covered, ['invariants', 'vision'], 'a lens whose draft was refused again is not covered');
       const h = r.journal.view.holistic();
       assert.deepEqual(h.findings.map((f) => [f.id, f.lens, f.claim]), [['F-1', 'vision', 'vision'], ['F-2', 'invariants', 'other cause'], ['F-3', 'invariants', 'other path']]);
       assert.deepEqual(h.corroborations, [], 'nothing merged across lenses');
-      assert.equal(out.refused.length, 1, 'the corrupt vacuity draft is refused');
-      assert.deepEqual([out.refused[0]!.lens, out.refused[0]!.claim], ['vacuity', 'corrupt mutant']);
-      assert.match(out.refused[0]!.stderr, /patch/i, 'the stderr is kept');
-      assert.deepEqual(readdirSync(join(r.ctx.runDir, 'inputs')).filter((f) => f.endsWith(`.${MUTANT_PATCH_INPUT}`)), [], 'a corrupt patch is never kept');
+      assert.deepEqual(lensCalls(r).map((c) => c.lens), ['vision', 'invariants', 'vacuity', 'vacuity'], 'the vacuity lens asked once more, no further');
+      const [e] = ended(r);
+      assert.equal(e!.outcome, 'abandoned', 'the audit is owed again');
+      assert.deepEqual(e!.refused?.map((x) => [x.lens, x.attempt, x.claim, x.cause]), [['vacuity', 3, 'corrupt mutant', SAME.cause], ['vacuity', 4, 'corrupt mutant', SAME.cause]], 'each refusal recorded in the log');
+      assert.match(e!.refused![0]!.reason, /^its mutant cannot be made: edit 1 \(src\/none\.js\): no regular file/);
+      assert.match(e!.refused![1]!.reason, /edit 1 \(src\/add\.js\): old occurs 0 times/);
+      assert.deepEqual(out.refused, e!.refused);
+      assert.deepEqual(readdirSync(join(r.ctx.runDir, 'inputs')).filter((f) => f.endsWith(`.${MUTANT_PATCH_INPUT}`)), [], 'a refused mutant is never kept');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('audit.refused-mutant-retried: a vacuity draft whose mutant\'s old text is not in the file is refused, and the lens asked again with why; its corrected report is admitted, the mutant kept as a patch git wrote, and the lens covered', T, async () => {
+    const mutant = (old: string) => ({ lane: 'journey', edits: [{ path: 'src/add.js', old, new: 'a - b' }] });
+    const other = { ...SAME, cause: 'add: sign of zero', claim: 'admitted first time' };
+    const { d } = auditArc({
+      steps: [
+        lensStep('audit-1', 'vacuity', [{ ...SAME, claim: 'add is vacuous', mutant: mutant('a +  b') }, other]),
+        lensStep('audit-1', 'vacuity', [{ ...SAME, claim: 'add is vacuous', mutant: mutant('a + b') }],
+          [], ['<previous_report>', 'claim: add is vacuous', 'old occurs 0 times', `cause: ${other.cause}`]),
+      ],
+      units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: ['vacuity'] },
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      requestAudit(r);
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.deepEqual(out.covered, ['vacuity']);
+      assert.equal(lensCalls(r).length, 2);
+      const h = r.journal.view.holistic();
+      assert.deepEqual(h.findings.map((f) => [f.id, f.claim]), [['F-1', 'admitted first time'], ['F-2', 'add is vacuous']]);
+      const m = h.findings[1]!.mutant;
+      assert.ok(m !== null && m.lane === 'journey');
+      const patch = readFileSync(join(r.ctx.runDir, 'inputs', `${m.patchSha256}.${MUTANT_PATCH_INPUT}`), 'utf8');
+      assert.match(patch, /^diff --git a\/src\/add\.js b\/src\/add\.js\n[\s\S]*-  return a \+ b;\n\+  return a - b;\n }\n$/);
+      assert.deepEqual(ended(r)[0]!.refused?.map((x) => [x.attempt, x.claim]), [[1, 'add is vacuous']]);
     } finally {
       r.journal.close();
     }

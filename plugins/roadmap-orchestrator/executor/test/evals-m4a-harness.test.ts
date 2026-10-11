@@ -1,22 +1,27 @@
 // The M4a fixture's harness (evals/m4a/{driver,check,layout,transcript}.ts), rev 3.1 section A: what the driver and the
 // checker do around the session, tested without paying. The pure parts are tested on constructed inputs; the driver's
-// stop of a held arc on a real host claim; the turn timeout and the report's forensic fields on a real fake-backed run.
-// Named tests: evals-m4a.turn-cap-equals-session, evals-m4a.turn-timeout-distinct, evals-m4a.driver-stops-held-arc,
-// evals-m4a.check-restores-on-throw, evals-m4a.operator-log-metric, evals-m4a.profile-criterion,
+// stop of a held arc on a real host claim; the turn timeout and the report's forensic fields on a real fake-backed run;
+// the cleanup of the fixture's processes on real processes.
+// Named tests: evals-m4a.turn-cap-equals-session, evals-m4a.turn-timeout-distinct, evals-m4a.driver-reaps-fixture,
+// evals-m4a.driver-stops-held-arc,
+// evals-m4a.check-restores-on-throw, evals-m4a.operator-log-metric, evals-m4a.profile-criterion, evals-m4a.pressure-criterion,
 // evals-m4a.watch-absorbs-routine, evals-m4a.terminal-seq-and-post-run, evals-m4a.cost-deltas-and-unknowns.
 import assert from 'node:assert/strict';
+import { spawn as spawnProc } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { after, test } from 'node:test';
 import type { Event } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { type ArcForensics, LIMITS, arcForensics, drive, initialPrompt, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
+import { type ArcForensics, LIMITS, arcForensics, drive, fixtureProcesses, initialPrompt, isWatchTail, killProcs, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
 import { ActionableFilter, HEARTBEAT_MIN } from '../src/watch.ts';
-import { CRITERIA, LEVERS, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, profileVerdict } from '../evals/m4a/check.ts';
+import { CRITERIA, LEVERS, type PressureArc, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, pressureRecordedVerdict, profileVerdict } from '../evals/m4a/check.ts';
+import type { FlowInputs } from '../src/flow/types.ts';
 import { layout } from '../evals/m4a/layout.ts';
 import { costTotals, exportCosts, invocationCosts, rootCosts } from '../evals/m4a/transcript.ts';
 import { fakeArc, fakeHostDir } from '../evals/m4a/fake-root.ts';
@@ -32,7 +37,7 @@ const T = { timeout: 10 * 60_000 };
 
 test('evals-m4a.turn-cap-equals-session: a turn may use the whole session, real and fake; the prompt allows in-turn supervision and fixes the profile', () => {
   for (const mode of ['real', 'fake'] as const) assert.equal(LIMITS[mode].turnMs, LIMITS[mode].sessionMs, `${mode}: the turn cap is the session cap`);
-  assert.equal(LIMITS.real.sessionMs, 360 * 60_000);
+  assert.equal(LIMITS.real.sessionMs, 420 * 60_000);
   const prompt = initialPrompt('claude-only');
   assert.match(prompt, /you may wait on `roadmap watch --actionable`\s+under Monitor or end your turn; both are supported/);
   assert.match(prompt, /Start every arc with `--profile claude-only`; never change it\./);
@@ -128,6 +133,39 @@ test('evals-m4a.profile-criterion: every arc\'s first plan-applied is under the 
   const names = CRITERIA.map(([name]) => name);
   assert.ok(names.includes('profile') && names.includes('host-released'));
   assert.ok(!names.includes('interventions'), 'interventions is a metric, never a criterion');
+});
+
+/** An arc log for `pressure-recorded` from its records (cast, never parsed); its flow runs kept inputs at window pressure `window`. */
+function pressureArc(records: readonly object[], window: number | null = 0.6): PressureArc {
+  // A minute between records: every lane run is long enough to carry a pressure, unless a record gives its own `at`.
+  const events = records.map((r, i) => ({ v: 1, seq: i + 1, prev: null, at: new Date(Date.parse('2026-10-09T10:00:00.000Z') + i * 60_000).toISOString(), arc: 'arc-p', ...r })) as unknown as Event[];
+  return { arc: 'arc-p', events, flowInputs: () => ({ pressure: { now: null, threshold: 0.5, available: true, window, cpuInUse: 2, hostCpus: 8 } }) as unknown as FlowInputs };
+}
+const startRec = (pressure: 'available' | 'unavailable') => ({ type: 'fact', fact: { kind: 'executor-started', generation: 1, pressure } });
+const laneIntent = (op: string, purpose = 'lane') => ({ type: 'intent', kind: 'proc.spawn', op, parent: { type: 'stage' }, expect: { subject: { purpose } } });
+const laneDone = (op: string, pressure: number | null) => ({ type: 'done', kind: 'proc.spawn', op, outcome: { kind: 'result', summary: { type: 'command', verdict: 'pass' }, pressure } });
+const flowRun = (station: string) => [
+  { type: 'fact', fact: { kind: 'flow-started', job: 'flow-1', triggers: ['host-pressure'], inputsSha256: 'a'.repeat(64) } },
+  { type: 'fact', fact: { kind: 'flow-ended', job: 'flow-1', outcome: 'done', proposal: null, dropped: null, constraint: { code: { station, internal: true, component: null }, judged: null } } },
+];
+
+test('evals-m4a.pressure-criterion: long lane runs under a schedstat start carry pressure; host:cpu only at a saturated window; graded', () => {
+  const good = pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', 0.04), laneIntent('o2', 'journey'), laneDone('o2', 0.3), ...flowRun('host:cpu')]);
+  assert.equal(pressureRecordedVerdict([good]).pass, true, pressureRecordedVerdict([good]).detail);
+  // A run whose intent was under an earlier start, a run under a start without schedstat, and a short run record null legitimately.
+  const adopted = pressureArc([
+    startRec('available'), laneIntent('o1'), startRec('available'), laneDone('o1', null), startRec('unavailable'), laneIntent('o2'), laneDone('o2', null),
+    startRec('available'), { ...laneIntent('o3'), at: '2026-10-09T11:00:00.000Z' }, { ...laneDone('o3', null), at: '2026-10-09T11:00:09.000Z' },
+  ]);
+  assert.equal(pressureRecordedVerdict([adopted]).pass, true, pressureRecordedVerdict([adopted]).detail);
+  const missing = pressureRecordedVerdict([pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', null)])]);
+  assert.equal(missing.pass, false);
+  assert.match(missing.detail, /o1's lane run has no pressure/);
+  const calm = pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('host:cpu')], 0.4)]);
+  assert.match(calm.detail, /flow-1 named host:cpu at window pressure 0.4/);
+  assert.equal(pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('slot:integration')], null)]).pass, true, 'no host:cpu: no window read');
+  assert.match(pressureRecordedVerdict([pressureArc([startRec('unavailable')])]).detail, /no executor start recorded schedstat available/);
+  assert.ok(CRITERIA.map(([name]) => name).includes('pressure-recorded'));
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -341,8 +379,9 @@ test('evals-m4a.cost-deltas-and-unknowns: per-invocation rows keep unknowns expl
 
 // ---------------------------------------------------------------------------------------------------
 
-test('evals-m4a.turn-timeout-distinct: a turn killed at its cap ends the run turn-timeout, not session-failed, and the report carries the forensic fields', T, async () => {
-  const dir = join(tmpDir('m4a-timeout'), 'fx');
+/** A fresh fixture driven on the fake story under `limits`; any arc left running is stopped. */
+async function driveTimed(name: string, limits: Readonly<{ sessionMs: number; turnMs: number }>): Promise<Readonly<{ dir: string; report: Awaited<ReturnType<typeof drive>> }>> {
+  const dir = join(tmpDir(name), 'fx');
   const setup = await runUntilExit(process.execPath, [join(EVALS, 'setup.ts'), dir], { env: ENV, timeoutMs: 5 * 60_000 });
   assert.equal(setup.code, 0, setup.stderr);
   const scope: RunScope = {
@@ -355,14 +394,53 @@ test('evals-m4a.turn-timeout-distinct: a turn killed at its cap ends the run tur
     },
   };
   track(scope);
-  const report = await drive(dir, { kind: 'fake', script: 'story' }, { profile: 'default', limits: { sessionMs: 600_000, turnMs: 300 } }).finally(() => teardown(scope));
+  return { dir, report: await drive(dir, { kind: 'fake', script: 'story' }, { profile: 'default', limits }).finally(() => teardown(scope)) };
+}
+
+test('evals-m4a.turn-timeout-distinct: a turn killed at its cap ends the run turn-timeout, not session-failed, and the report carries the forensic fields', T, async () => {
+  const { dir, report } = await driveTimed('m4a-timeout', { sessionMs: 600_000, turnMs: 300 });
   assert.equal(report.endedBy, 'turn-timeout');
   assert.match(report.failure ?? '', /turn 1 was killed at its 300 ms cap/);
   assert.equal(report.turns.length, 1);
   assert.equal(report.profile, 'default');
   assert.deepEqual(report.released, []);
+  assert.deepEqual(report.leftovers, [], 'the killed turn left nothing running');
+  assert.deepEqual(fixtureProcesses(dir), []);
   assert.deepEqual(report.arcs, []);
   assert.deepEqual(report.postRun, []);
   assert.ok(existsSync(layout(dir).costs), 'costs.jsonl is written even for a run that never started an arc');
   assert.ok(existsSync(layout(dir).diagnostics));
+  // The session's deadline falling inside a turn names the session's bound, not the turn's (the suite run on cc939ee:
+  // a fake story slowed to 30 min read "killed at its 1800000 ms cap" for a turn 21 s old).
+  const late = await driveTimed('m4a-deadline', { sessionMs: 1_000, turnMs: 600_000 });
+  assert.equal(late.report.endedBy, 'turn-timeout');
+  assert.match(late.report.failure ?? '', /turn 1 was killed at the session's 1000 ms deadline, \d+ ms into the turn/);
+});
+
+test('evals-m4a.driver-reaps-fixture: the fixture\'s processes are found by cwd or argv, a watch tail is told from an arc\'s process, and both are killed', T, async () => {
+  const dir = join(tmpDir('m4a-reap'), 'fx');
+  const product = join(dir, 'stage', 'product');
+  mkdirSync(product, { recursive: true });
+  // A Monitor's tail as paid M4b run 2 left it (relative argv, cwd the product, a session of its own), an arc process
+  // naming the fixture in its argv, and a watch elsewhere.
+  const start = (args: readonly string[], cwd: string): number => {
+    const child = spawnProc(process.execPath, ['-e', 'setInterval(() => {}, 1_000)', ...args], { cwd, detached: true, stdio: 'ignore' });
+    child.unref();
+    return child.pid!;
+  };
+  const tail = start(['../plugin/executor/bin/roadmap', 'watch', '--actionable'], product);
+  const arc = start(['supervisor.ts', join(dir, 'host', 'roadmap'), '--repo', product], tmpDir('m4a-elsewhere'));
+  const other = start(['../plugin/executor/bin/roadmap', 'watch'], tmpDir('m4a-other'));
+  try {
+    for (let i = 0; i < 50 && fixtureProcesses(dir).length < 2; i++) await sleep(100);
+    const found = fixtureProcesses(dir);
+    assert.deepEqual(found.map((p) => p.pid).sort(), [tail, arc].sort(), 'by cwd and by argv; never a process elsewhere');
+    assert.deepEqual(found.filter((p) => isWatchTail(p.argv)).map((p) => p.pid), [tail], 'the watch tail, not the arc');
+    await killProcs(found);
+    assert.deepEqual(fixtureProcesses(dir), []);
+  } finally {
+    process.kill(other, 'SIGKILL');
+  }
+  for (const argv of [['node', '/x/stage-cli.ts', '/x/plugin', '/x/host', 'watch', '--repo', '/x'], ['sh', '-c', 'roadmap watch --actionable --repo /x'], ['node', '/x/plugin/executor/bin/roadmap', 'watch']]) assert.ok(isWatchTail(argv), argv.join(' '));
+  for (const argv of [['node', '/x/stage-cli.ts', '/x/plugin', '/x/host', 'status'], ['node', 'supervisor.ts', '/x/host/roadmap', '--repo', '/x'], ['node', '/x/bin/roadmap', 'start', '--plan', 'watch.json']]) assert.ok(!isWatchTail(argv), argv.join(' '));
 });

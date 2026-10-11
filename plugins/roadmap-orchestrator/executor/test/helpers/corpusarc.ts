@@ -198,7 +198,7 @@ export function inForce(a: CorpusArc): OpenJournal {
   mkdirSync(runDir, { recursive: true });
   keepCorpusFiles(runDir, rows.opened?.files ?? []);
   const j = openJournal(runDir, a.arc);
-  recordPlan(j, runDir, files, [], { profile: 'default', config: null });
+  recordPlan(j, runDir, files, [], { profile: 'default', config: null, arcRoles: 'm4b' });
   return j;
 }
 

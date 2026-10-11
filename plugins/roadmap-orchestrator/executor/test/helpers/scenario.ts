@@ -48,6 +48,8 @@ export type WorldAct =
   | Readonly<{ type: 'dirty'; files: FileSet }>
   | Readonly<{ type: 'exit'; code: number }>
   | Readonly<{ type: 'hang'; ms: number }>
+  /** A busy loop for `ms`: a cpu-bound hang (M4b rev 3: a call that waits for a cpu, unlike `hang`, which sleeps). */
+  | Readonly<{ type: 'spin'; ms: number }>
   /** A detached (setsid) child that outlives the fake for `lifeMs`; its pid goes to `pidFile`. */
   | Readonly<{ type: 'forkSetsid'; env: 'keepEnv' | 'envClear'; lifeMs: number; pidFile: string }>
   /**
@@ -68,8 +70,13 @@ export type WorldAct =
    */
   | Readonly<{ type: 'writeToPrompt'; pattern: string; file: string; text: string }>;
 
-/** Claude reports a stop reason; Codex has no refusal signal, so a Codex refusal is unrepresentable. */
-export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }>;
+/**
+ * Claude reports a stop reason; Codex has no refusal signal, so a Codex refusal is unrepresentable.
+ * `globAboveAddDir` (paid M4b run 5): a Glob two levels above the call's first `--add-dir` (a gate's: the unit's
+ * evidence root `evidence/<unit>` above `<attempt>-lanes/<lane>`), under the CLI's read rule: a path outside the cwd
+ * and every `--add-dir` is refused, and the result lists it in `permission_denials`.
+ */
+export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }>;
 /**
  * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on
  * stderr, exit 1). `threadStarted`: print the `thread.started` event now, as the real CLI does first, so a

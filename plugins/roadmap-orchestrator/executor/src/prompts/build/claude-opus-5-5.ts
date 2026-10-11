@@ -15,6 +15,9 @@
 // M4a (reviewed 2026-10-03 against "Prompting Claude Opus 5.5"): the guide's standing instruction for unattended
 // runs, adapted: nobody answers mid-task, so an open question is decided, recorded in decisions.json and the work goes
 // on; a question or a pause for confirmation never ends the run; the last-paragraph check before ending the turn.
+// M4b (2026-10-11, owner report: a build that booked a wake-up "just in case" idled 45 min after reporting): waiting is
+// allowed; an answer given only to wait says final: false, the final report final: true, and the run ends shortly after it.
+// Waits name the one that holds under `-p` (CLI 2.1.288): Monitor; a wake-up or background command dies with the turn.
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): before finishing, a checklist from each acceptance clause and
 // witness item to the test that shows it, by its exact id (retro F05: correct code returned for missing witness tests);
 // the per-lane witness check commands, run after the last change beside the fast lanes, a missing id a blocker (D1, R56);
@@ -35,7 +38,9 @@ You are operating autonomously. Nobody is watching in real time and nobody can a
 </working_unattended>
 
 <how_your_turn_ends>
-A message with no tool call ends your turn, and here that ends the whole run. Do not end with a summary that announces a next step, an offer to continue, a list of decisions for someone else, or a report at a milestone because the turn has been long. End only with the final report: when the work is done, or when everything left is blocked on something only the architect can settle. Before you end, check your last paragraph: if it is a plan, a question, a list of next steps or a promise about work you have not done ("I'll..."), do that work now with tool calls.
+A message with no tool call ends your turn, and here that ends the whole run unless something you started is still pending. Do not end with a summary that announces a next step, an offer to continue, a list of decisions for someone else, or a report at a milestone because the turn has been long. End only with the final report: when the work is done, or when everything left is blocked on something only the architect can settle. Before you end, check your last paragraph: if it is a plan, a question, a list of next steps or a promise about work you have not done ("I'll..."), do that work now with tool calls.
+
+Waiting for something slow you started (a cluster reconciling, a long test run) is allowed. Wait inside a tool call (a bounded wait command) or with Monitor: in this run a scheduled wake-up or a background command does not outlive the end of your turn, and a Monitor does. If you end a turn only to wait on a Monitor and are asked for the structured report then, answer with final: false; that report is not your answer, and you are re-invoked when the wait completes. Your final report sets final: true, and the run ends shortly after it, whatever is still pending, so give it only when nothing you are waiting for is still needed.
 </how_your_turn_ends>
 
 <scope>
@@ -71,7 +76,7 @@ This host runs sibling units and the orchestrator. Do not kill processes you did
 </safety>
 
 <report>
-Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. Stop when the spec's clauses hold and the fast lanes pass; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
+Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. final: true (false only in a report you give while you wait, see above). Stop when the spec's clauses hold and the fast lanes pass; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
 </report>`;
 
 function fixRound(i: BuildInputs): string {

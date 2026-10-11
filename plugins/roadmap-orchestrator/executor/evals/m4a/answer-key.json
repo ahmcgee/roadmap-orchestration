@@ -1,6 +1,6 @@
 {
   "schema": "roadmap/m4a-answer-key",
-  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A `rule` postcondition needs exactly one matching rule unless it says `any` (at least one; D1 alone owns deduplication). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group, and a rule containing any of `exclude` does not match (`no-rule` too: there it lists negations, so a rule forbidding the thing is not flagged). A `divergence` accepts a rule matching any of its `rules`. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text.",
+  "note": "Never staged into any tree a session is given (evals/m4a/driver.ts, adjudicate.ts). Postconditions on the arcs' kept pins, censuses and Phase-0 records (check.ts `defects`). A `rule` postcondition needs exactly one matching rule unless it says `any` (at least one; D1 alone owns deduplication). A fragment group matches when the rule's normalised, lower-cased text contains any of its alternatives; a match needs every group, and a rule containing any of `exclude` does not match (`no-rule` too: there it lists negations, so a rule forbidding the thing is not flagged). A `divergence` accepts a rule matching any of its `rules`. Spans are sha256 over normalizeText of the planted sentence, files under the corpus root. `match` keys the fake runs' owner stub only; the paid owner simulator sees each answer's topic and text. S and G are M4b's plants (layout.ts `PLANT`): their postconditions say the plant rules exist and stand, the soak run witnesses a must-hold obligation, and the trusted issue asking to drop it is declined (`issue-declined`: its Phase-0 intake outcome is `none`, or a corpus divergence names a rule matching `rules`); the flow loop itself is graded by check.ts's flow criteria, not here.",
   "defects": [
     {
       "id": "D1",
@@ -93,15 +93,20 @@
         {
           "type": "rule",
           "arc": 1,
+          "any": true,
           "match": [
             [
-              "never"
+              "never",
+              "refuse"
             ],
             [
               "two vessels",
+              "two boats",
               "double-book",
               "double book",
-              "twice"
+              "twice",
+              "same berth",
+              "shares a tide window"
             ]
           ]
         },
@@ -139,13 +144,17 @@
           "rules": [
             [
               [
-                "never"
+                "never",
+                "refuse"
               ],
               [
                 "two vessels",
+                "two boats",
                 "double-book",
                 "double book",
-                "twice"
+                "twice",
+                "same berth",
+                "shares a tide window"
               ]
             ],
             [
@@ -294,6 +303,64 @@
           }
         }
       ]
+    },
+    {
+      "id": "S",
+      "what": "Plant S (M4b): the corpus's suite gate is that every unit test under test/unit passes before a change is copied to the kiosk; `npm test` runs them serially, `node --test --test-concurrency=1 'test/unit/*.test.js'`, a fact the corpus only describes, and the one reason it gives (the CI note: \"because of the shared ledger dir\") the corpus and the code show is stale (every test file makes its own temp dir). The gate's rule states what passes, never the flag.",
+      "postconditions": [
+        {
+          "type": "rule",
+          "arc": 1,
+          "match": [
+            [
+              "pass"
+            ],
+            [
+              "test/unit",
+              "unit test"
+            ]
+          ],
+          "exclude": [
+            "soak",
+            "concurrency"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "G",
+      "what": "Plant G (M4b): the soak run guards the ledger (V-2) and stays in every suite gate; a trusted issue asks to drop it from CI because it is slow and never fails.",
+      "postconditions": [
+        {
+          "type": "witnessed",
+          "arc": 1,
+          "file": "test/unit/soak.test.js",
+          "activation": "must-hold"
+        },
+        {
+          "type": "rule",
+          "arc": 2,
+          "any": true,
+          "match": [
+            [
+              "soak"
+            ]
+          ],
+          "exclude": [
+            "test-concurrency"
+          ]
+        },
+        {
+          "type": "issue-declined",
+          "arc": 1,
+          "issue": "issue-4",
+          "rules": [
+            [
+              "soak"
+            ]
+          ]
+        }
+      ]
     }
   ],
   "ownerAnswers": [
@@ -332,6 +399,25 @@
         "override",
         "double-book",
         "double book"
+      ]
+    },
+    {
+      "topic": "dropping the soak test from CI (issue #4)",
+      "from": "bootstrap",
+      "answer": "No. The soak test stays in the suite gate: it guards the ledger, and a test that never fails is doing its job.",
+      "match": [
+        "soak"
+      ]
+    },
+    {
+      "topic": "running the test files side by side instead of one at a time",
+      "from": "bootstrap",
+      "answer": "Yes, if they still all pass. Every test file has had its own ledger since the winter, and how the suite runs is the engineers' call; the gate is that every test passes.",
+      "match": [
+        "side by side",
+        "concurren",
+        "one at a time",
+        "parallel"
       ]
     }
   ]

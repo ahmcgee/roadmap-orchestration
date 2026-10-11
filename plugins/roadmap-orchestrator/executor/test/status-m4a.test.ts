@@ -20,7 +20,7 @@ import { withForge } from './helpers/corpusarc.ts';
 import { tipTree } from './fixtures/brake-common.ts';
 import { corpusHolisticArc } from './fixtures/corpus-holistic.ts';
 import { type ArcRun, contextFor } from './fixtures/unit-common.ts';
-import { git } from './helpers/repo.ts';
+import { commitAll, git, writeFiles } from './helpers/repo.ts';
 
 const T = { timeout: 60_000 };
 
@@ -59,7 +59,7 @@ describe('status M4a', () => {
       const others = a.pin.rules.filter((x) => x.id !== 'T-1').map((x) => ({ rule: x.id, state: { type: 'out-of-slice' }, held: null }));
       assert.deepEqual(s.census, {
         rules: [{ rule: 'T-1', state: { type: 'obligation', id: 'I-1' }, held: false }, ...others],
-        counts: { held: 0, obligationRules: 1, outOfSlice: others.length, untestable: 0, prodOnly: 0 }, heldPct: 0,
+        counts: { held: 0, obligationRules: 1, outOfSlice: others.length, untestable: 0, prodOnly: 0 }, heldPct: 0, lastHeld: 0,
       });
       // Before the first admission a pack review is due and holds every admission (K14, H9), with the baseline owed.
       assert.deepEqual(s.packReview, { state: 'due', reviews: [] });
@@ -113,6 +113,13 @@ describe('status M4a', () => {
         banked: [{ id: 'B-1', bankReason: 'gate-note', what, seq: s.debt?.banked[0]?.seq }],
         ledger: [{ id: 'B-1', state: 'open', originArc: r.d.arc, what }],
       });
+
+      // A merge moves the head and nothing witnesses the journey there: T-1 is not held on the head (heldPct reads the
+      // head alone), and `lastHeld` counts it from its observation on the tree before (paid M4b run 5).
+      writeFiles(a.d.repo, { 'src/moved.js': 'export const moved = 1;\n' });
+      commitAll(a.d.repo, 'move the head');
+      s = await withForge(a.forge, () => statusOf(r));
+      assert.deepEqual([s.census?.rules[0]?.held, s.census?.counts.held, s.census?.heldPct, s.census?.lastHeld], [false, 0, 0, 1]);
     } finally {
       r.journal.close();
     }

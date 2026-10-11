@@ -80,7 +80,7 @@ export function readScenario(path: string): M1Scenario {
 }
 
 /** The report every fake build ends with (the build role's output schema). */
-const BUILD_REPORT: JsonValue = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [] };
+const BUILD_REPORT: JsonValue = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true };
 const SMOKE_OK: JsonValue = { ok: true };
 
 /** A judgment call: read-only tools, a fresh session id, never a resume or a permission mode. */

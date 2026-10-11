@@ -17,7 +17,7 @@ import { canonicalJson } from '../src/core/json.ts';
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import { approvalFingerprint, needsUserRecord, NEEDS_USER_REASONS, revisionInputs } from '../src/core/records.ts';
-import { censusOf, checkpointOutputM4Default } from '../src/core/upgrade.ts';
+import { censusOf } from '../src/core/upgrade.ts';
 import { Fields, SchemaError } from '../src/core/validate.ts';
 import { absPath, isoTime, repoPath } from '../src/core/values.ts';
 import { parseCorpusGuide, parseCorpusPin, parseRulesRegistry } from '../src/corpus/types.ts';
@@ -474,6 +474,10 @@ describe('startup rows, brief and ack', () => {
         admits: [{ job: 'ckpt-2', index: 1, unit: 'u2', class: 'opportunity', clauses: ['V-2'], followUp: 'O-1' }],
         opportunities: [{ id: 'O-1', clauses: ['V-2'], units: ['u2'], followUps: 1, spentUsd: 1.5, overrun: [] }],
         drift: [{ unit: 'u3', job: 'ckpt-2', findings: [{ id: 'F-2', clauses: ['V-1'] }] }],
+        flow: {
+          constraint: 'slot:integration (suite:unit)', accounting: 'T 1 units/h; I 2; OE $3/h', verdicts: ['flow-1.0: improved'], rulerChanges: [], hostAdvice: [],
+          dropped: ['flow-2.0 (arc-1): capacity.cpu to 6'],
+        },
       }],
     };
     same(parseBriefPayload, { ...payload, answers: [] });
@@ -497,18 +501,19 @@ describe('upgrade.defaults-dev6', () => {
     assert.deepEqual(censusOf(parseObligations(obligationsFile([], []))), []);
   });
 
-  it('a recorded dev.6 checkpoint answer reads with no amendments, no intake, and docRef split children', () => {
-    const child = { id: 'I-5', statement: 's', docRef: { path: 'docs/arch.md', anchor: '#a', quotedText: 'q' }, witness, activation: 'must-hold', deliveredBy: [] };
+  it('a checkpoint answer carries amendments, intake and each split child\'s rule (a dev.6 answer\'s shape is not adopted since 1.0.0-dev.8)', () => {
+    const child = { id: 'I-5', statement: 's', docRef: { path: 'docs/arch.md', anchor: '#a', quotedText: 'q' }, rule: null, witness, activation: 'must-hold', deliveredBy: [] };
     const answer = {
       decision: 'bundle', reasons: ['r'], ops: [{ op: 'obligation-split', obligation: 'I-1', children: [child], cites: ['V-1'], evidence: ['F-1'] }],
       rulings: [], findingDispositions: [], interpretations: [], cites: { vision: ['V-1'], observations: [], findings: [] }, premises: [],
+      corpusAmendments: [], issueIntake: [],
     };
-    const out = validateCheckpointOutput(answer);
-    assert.deepEqual(out.corpusAmendments, []);
-    assert.deepEqual(out.issueIntake, []);
-    const op = out.ops[0]!;
+    const op = validateCheckpointOutput(answer).ops[0]!;
     assert.ok(op.op === 'obligation-split' && op.children[0]!.rule === null);
-    assert.deepEqual(checkpointOutputM4Default('issueIntake'), []);
+    const { corpusAmendments: _c, ...noAmendments } = answer;
+    const { issueIntake: _i, ...noIntake } = answer;
+    const { rule: _r, ...noRule } = child;
+    for (const dev6 of [noAmendments, noIntake, { ...answer, ops: [{ ...answer.ops[0], children: [noRule] }] }]) assert.throws(() => validateCheckpointOutput(dev6), SchemaError);
     // M4a's own: a rule-anchored child, amendments and intake.
     const m4 = validateCheckpointOutput({
       ...answer, ops: [{ ...answer.ops[0], children: [{ ...child, docRef: null, rule: 'T-2' }] }],

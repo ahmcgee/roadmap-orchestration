@@ -1,4 +1,4 @@
-// Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`), as strict JSON Schemas (every key required, no additional
+// Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`, M4b `flow`), as strict JSON Schemas (every key required, no additional
 // properties: what `codex exec --output-schema` demands and `claude -p --json-schema` accepts) plus the
 // hand-written validators the adapter runs on the backend's terminal output. The schema is the model's
 // contract; the validator is the executor's, and also enforces the cross-field rules a schema cannot
@@ -14,6 +14,7 @@ import {
   answerIds, findingId, issueId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
+import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
 import type { JsonValue } from '../core/json.ts';
 import { BOUND_FIELDS, type Bounds, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecPatchOp, specM1, specPatchOp } from '../core/records.ts';
 import {
@@ -26,7 +27,8 @@ import {
   type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, checkpointOutputM4Default, splitChildRuleDefault } from '../core/upgrade.ts';
+import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, lensPatchMutantDefault } from '../core/upgrade.ts';
+import type { MutantEdit } from '../git/mutant.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
   JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
@@ -144,13 +146,22 @@ function laneFromWire(value: unknown, path: string): unknown {
   return { ...v, env: { ...v.env, set: Object.fromEntries(pairs.map((p) => [p.name, p.value])) } };
 }
 
-/** The wire form of one op: a lane item's env.set arrives as [{name, value}]. */
+/** A witness item's wire form: `obligation: null` (the acceptance schema's "no obligation's witness") is spec.json's absent. */
+function witnessFromWire(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || !('obligation' in value) || value.obligation !== null) return value;
+  const { obligation: _, ...rest } = value;
+  return rest;
+}
+
+/** The wire form of one op: a lane item's env.set arrives as [{name, value}], a witness item's obligation may be null. */
 const wireOp: Read<SpecPatchOp> = (value, path) => {
   const f = new Fields(value, path);
   const op = f.get('op', oneOf(['add', 'replace', 'strike', 'defer', 'cite'] as const));
   if (op === 'strike' || op === 'defer' || op === 'cite') return specPatchOp(value, path);
-  if (f.get('section', oneOf(SPEC_SECTIONS)) !== 'lanes') return specPatchOp(value, path);
+  const section = f.get('section', oneOf(SPEC_SECTIONS));
   const v = value as { readonly item: unknown };
+  if (section === 'witnesses') return specPatchOp({ ...v, item: witnessFromWire(v.item) }, path);
+  if (section !== 'lanes') return specPatchOp(value, path);
   return specPatchOp({ ...v, item: laneFromWire(v.item, `${path}.item`) }, path);
 };
 
@@ -178,8 +189,9 @@ export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
 
 // M4a rev 3 (E, R59): the acceptance-shape plan-check of an efficient builder under `by-builder`. Its redirect may only add
 // or replace witness items and facts, and cite; witness items enter the spec through this one patch channel, their ids
-// the next free `W-n` the prompt states (the patch engine refuses a reused id: `id-reused`).
-const S_WITNESS_ITEM = sObj({ id: S_STR, lane: S_STR, testId: S_STR, clause: S_STR, skeleton: S_STR });
+// the next free `W-n` the prompt states (the patch engine refuses a reused id: `id-reused`). `obligation` (paid M4b run 6):
+// the delivered obligation whose witness the item restates, or null; a recorded answer without it reads as null.
+const S_WITNESS_ITEM = sObj({ id: S_STR, lane: S_STR, testId: S_STR, clause: S_STR, skeleton: S_STR, obligation: sNullable(S_STR) });
 export const PLAN_CHECK_ACCEPTANCE_SCHEMA: Schema = sObj({
   decision: sEnum(PLAN_CHECK_DECISIONS),
   reasons: sArr(S_STR),
@@ -247,7 +259,20 @@ export type BuildOutput = Readonly<{
   blockers: readonly string[];
   /** M4a rev 3 (I3): every other command it ran (never a fast lane); a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
   experiments: readonly Experiment[];
+  /**
+   * The report is the final one. A Claude session that ends a turn to wait (a wake-up, a monitor) must still answer the
+   * schema, and answers `final: false`; its runner ends the session a grace after the final report (src/runner/report.ts).
+   * The reader admits `true` only: a session that ended on an interim answer has not reported. Absent on an answer an
+   * earlier executor recorded (`buildFinalDefault`).
+   */
+  final: true;
 }>;
+
+/** The build answer's `final` (src/runner/report.ts): described in the schema, which the model reads at a forced turn end. */
+const S_FINAL: Schema = {
+  type: 'boolean',
+  description: 'true in your final report. false only when you end a turn to wait for something you started (a wake-up, a monitor, a background command) and will report again when it completes.',
+};
 
 /** The build answer's schema; `lanes` (M4a rev 3, I3) the spec's fast lane ids, which `lanesRun[].lane` then enumerates. */
 export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
@@ -257,6 +282,7 @@ export function buildSchemaFor(lanes: readonly LaneId[] | null): Schema {
     lanesRun: sArr(sObj({ lane: lanes === null || lanes.length === 0 ? S_STR : sEnum(lanes), exit: S_INT })),
     blockers: sArr(S_STR),
     experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
+    final: S_FINAL,
   });
 }
 /**
@@ -273,6 +299,7 @@ const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), 
 export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutput> {
   return object((f) => {
     const experiments = f.optional('experiments', arrayOf(experiment));
+    const final = f.optional('final', literal(true));
     return {
       summary: f.get('summary', str),
       changedPaths: f.get('changedPaths', arrayOf(str)),
@@ -282,6 +309,7 @@ export function buildOutputFor(lanes: readonly LaneId[] | null): Read<BuildOutpu
       })))),
       blockers: f.get('blockers', arrayOf(str)),
       experiments: experiments ?? buildExperimentsDefault(),
+      final: final ?? buildFinalDefault(),
     };
   });
 }
@@ -387,7 +415,16 @@ const lineEvidence = arrayOf(object((g) => ({ path: g.get('path', str), line: g.
 // ---------------------------------------------------------------------------------------------------
 // lens (M3, §2.5): one lens kind per call; findings only, the checkpoint acts.
 
-/** A lens's finding. `cause` feeds the dedupe key (`findingKey`); a vacuity finding carries its mutant (a unified diff). */
+/**
+ * A vacuity finding's mutant: its exact replacements (`MutantEdit`), from which the executor has git write the patch
+ * (`editsPatch`), or, read from a lens call an earlier executor recorded, the hand-written unified diff it asked for then
+ * (`kind: patch`, `lensPatchMutantDefault`).
+ */
+export type LensMutant =
+  | Readonly<{ kind: 'edits'; lane: LaneId; edits: readonly MutantEdit[] }>
+  | Readonly<{ kind: 'patch'; lane: LaneId; patch: string }>;
+
+/** A lens's finding. `cause` feeds the dedupe key (`findingKey`); a vacuity finding carries its mutant. */
 export type LensFinding = Readonly<{
   severity: FindingSeverity;
   obligation: ObligationId | null;
@@ -395,7 +432,7 @@ export type LensFinding = Readonly<{
   claim: string;
   cause: string;
   evidence: readonly Readonly<{ path: string; line: number }>[];
-  mutant: Readonly<{ patch: string; lane: LaneId }> | null;
+  mutant: LensMutant | null;
 }>;
 export type LensOutput = Readonly<{ findings: readonly LensFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
 /** The finding cap the lens prompt states (anti-spiral: it bounds reporting, never reading). Not enforced. */
@@ -409,10 +446,17 @@ export const LENS_SCHEMA: Schema = sObj({
     claim: S_STR,
     cause: S_STR,
     evidence: S_EVIDENCE_LINES,
-    mutant: sNullable(sObj({ patch: S_STR, lane: S_STR })),
+    mutant: sNullable(sObj({ lane: S_STR, edits: sArr(sObj({ path: S_STR, old: S_STR, new: S_STR })) })),
   })),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
+});
+
+const lensMutant: Read<LensMutant> = object((h) => {
+  const lane = h.get('lane', (v, p): LaneId => laneId(v, p));
+  const edits = h.optional('edits', arrayOf(object((e): MutantEdit => ({ path: e.get('path', text), old: e.get('old', text), new: e.get('new', text) })), { nonEmpty: true }));
+  if (edits !== undefined) return { kind: 'edits', lane, edits };
+  return { kind: 'patch', lane, patch: lensPatchMutantDefault(h.get('patch', str)) };
 });
 
 export const lensOutput: Read<LensOutput> = object((f) => ({
@@ -423,7 +467,7 @@ export const lensOutput: Read<LensOutput> = object((f) => ({
     claim: g.get('claim', str),
     cause: g.get('cause', str),
     evidence: g.get('evidence', lineEvidence),
-    mutant: g.get('mutant', nullable(object((h) => ({ patch: h.get('patch', str), lane: h.get('lane', (v, p): LaneId => laneId(v, p)) })))),
+    mutant: g.get('mutant', nullable(lensMutant)),
   })))),
   reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
   premises: f.get('premises', arrayOf(premise)),
@@ -512,9 +556,9 @@ const ISSUE_FINDING_SEVERITIES = ['P2', 'P3'] as const;
 const opSchema = (op: BundleOpKind, fields: { readonly [key: string]: Schema }): Schema =>
   sObj({ op: sEnum([op]), ...fields, cites: S_IDS, evidence: sArr(S_STR) });
 const S_DOC_REF = sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR });
-/** A split child (M4a): exactly one of `docRef` and `rule` is non-null. */
-const S_SPLIT_CHILD = sObj({
-  id: S_STR, statement: S_STR, docRef: sNullable(S_DOC_REF), rule: sNullable(S_STR), witness: sObj({ lane: S_STR, testIds: S_IDS }), activation: sEnum(ACTIVATIONS),
+/** A split child (M4a): exactly one of `docRef` and `rule` is non-null; its witness lane one of `arcLanes`. */
+const sSplitChild = (arcLanes: Schema): Schema => sObj({
+  id: S_STR, statement: S_STR, docRef: sNullable(S_DOC_REF), rule: sNullable(S_STR), witness: sObj({ lane: arcLanes, testIds: S_IDS }), activation: sEnum(ACTIVATIONS),
   deliveredBy: S_IDS,
 });
 
@@ -540,54 +584,71 @@ const S_ADMIT_SPEC = sObj({
   repairs: S_IDS,
 });
 
-export const CHECKPOINT_SCHEMA: Schema = sObj({
-  decision: sEnum(CHECKPOINT_DECISIONS),
-  reasons: sArr(S_STR),
-  ops: sArr({
-    anyOf: [
-      opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
-      opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
-      opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR) }),
-      opSchema('cut', { unit: S_STR, reason: S_STR }),
-      opSchema('route', { unit: S_STR, seats: sArr(sObj({ role: sEnum(ROLES), tier: sEnum([...JUDGMENT_SEATS, 'arc']), class: sEnum(MODEL_CLASSES) })) }),
-      opSchema('limits', { unit: sNullable(S_STR), limits: sArr(sObj({ field: sEnum(LIMIT_FIELDS), value: S_INT })) }),
-      opSchema('obligation-split', { obligation: S_STR, children: sArr(S_SPLIT_CHILD) }),
-      opSchema('obligation-dispose', { obligation: S_STR, disposition: sEnum(OBLIGATION_DISPOSITIONS), ruling: S_STR }),
-      opSchema('invalidate-approval', { unit: S_STR }),
-      opSchema('rule', { ruling: S_STR }),
-      opSchema('request', { class: sEnum(OWNER_ONLY_CLASSES), summary: S_STR }),
-    ],
-  }),
-  rulings: sArr(S_STR),
-  findingDispositions: sArr(sObj({ finding: S_STR, disposition: sEnum(FINDING_DISPOSITIONS), reason: S_STR })),
-  interpretations: sArr(sObj({ clauses: S_IDS, situation: S_STR, reading: S_STR })),
-  cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
-  premises: S_PREMISES,
-  corpusAmendments: sArr(sObj({ rules: S_IDS, proposal: S_STR, why: S_STR })),
-  // A checkpoint acts on an issue only through its own ops (H17): the schema offers `acted{on: ops}` alone.
-  issueIntake: sArr(sObj({
-    issue: S_STR,
-    outcome: {
+/**
+ * The closed id sets a checkpoint call knows when it is made (paid M4b run 5, ckpt-4: a split child named a witness lane
+ * that is no arc lane, and the decision was refused only after the whole call): the arc lanes, the active obligations a
+ * split may name as its parent, and every obligation in force a dispose may name, all from the captured obligations.
+ * Unit ids are not closed: a later op may name a unit an earlier admit of the same bundle adds.
+ */
+export type CheckpointIds = Readonly<{ arcLanes: readonly LaneId[]; splittable: readonly ObligationId[]; obligations: readonly ObligationId[] }>;
+/** An id field: an enum of `ids`, or any string when the set is unknown or empty (the bundle's validation then refuses it). */
+const sIdOf = (ids: readonly string[] | undefined): Schema => (ids === undefined || ids.length === 0 ? S_STR : sEnum(ids));
+
+/**
+ * The checkpoint answer's schema; `ids` the call's closed id sets (null: any id). Each checkpoint call writes its own
+ * (src/holistic/checkpoint.ts `checkpointIdsOf`), so the structured output cannot name an unknown arc lane or obligation;
+ * the bundle's validation (src/holistic/bundle.ts) stays the backstop.
+ */
+export function checkpointSchemaFor(ids: CheckpointIds | null): Schema {
+  return sObj({
+    decision: sEnum(CHECKPOINT_DECISIONS),
+    reasons: sArr(S_STR),
+    ops: sArr({
       anyOf: [
-        sObj({ type: sEnum(['finding']), severity: sEnum(ISSUE_FINDING_SEVERITIES), claim: S_STR, cause: S_STR }),
-        sObj({ type: sEnum(['amendment']), rules: S_IDS, proposal: S_STR }),
-        sObj({ type: sEnum(['acted']), on: sObj({ type: sEnum(['ops']), indexes: sArr(S_INT) }) }),
-        sObj({ type: sEnum(['none']), reason: S_STR }),
+        opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
+        opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
+        opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR) }),
+        opSchema('cut', { unit: S_STR, reason: S_STR }),
+        opSchema('route', { unit: S_STR, seats: sArr(sObj({ role: sEnum(ROLES), tier: sEnum([...JUDGMENT_SEATS, 'arc']), class: sEnum(MODEL_CLASSES) })) }),
+        opSchema('limits', { unit: sNullable(S_STR), limits: sArr(sObj({ field: sEnum(LIMIT_FIELDS), value: S_INT })) }),
+        opSchema('obligation-split', { obligation: sIdOf(ids?.splittable), children: sArr(sSplitChild(sIdOf(ids?.arcLanes))) }),
+        opSchema('obligation-dispose', { obligation: sIdOf(ids?.obligations), disposition: sEnum(OBLIGATION_DISPOSITIONS), ruling: S_STR }),
+        opSchema('invalidate-approval', { unit: S_STR }),
+        opSchema('rule', { ruling: S_STR }),
+        opSchema('request', { class: sEnum(OWNER_ONLY_CLASSES), summary: S_STR }),
       ],
-    },
-  })),
-});
+    }),
+    rulings: sArr(S_STR),
+    findingDispositions: sArr(sObj({ finding: S_STR, disposition: sEnum(FINDING_DISPOSITIONS), reason: S_STR })),
+    interpretations: sArr(sObj({ clauses: S_IDS, situation: S_STR, reading: S_STR })),
+    cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
+    premises: S_PREMISES,
+    corpusAmendments: sArr(sObj({ rules: S_IDS, proposal: S_STR, why: S_STR })),
+    // A checkpoint acts on an issue only through its own ops (H17): the schema offers `acted{on: ops}` alone.
+    issueIntake: sArr(sObj({
+      issue: S_STR,
+      outcome: {
+        anyOf: [
+          sObj({ type: sEnum(['finding']), severity: sEnum(ISSUE_FINDING_SEVERITIES), claim: S_STR, cause: S_STR }),
+          sObj({ type: sEnum(['amendment']), rules: S_IDS, proposal: S_STR }),
+          sObj({ type: sEnum(['acted']), on: sObj({ type: sEnum(['ops']), indexes: sArr(S_INT) }) }),
+          sObj({ type: sEnum(['none']), reason: S_STR }),
+        ],
+      },
+    })),
+  });
+}
+/** The checkpoint schema its prompt module carries: any id. Each call writes its own, `checkpointSchemaFor(<its ids>)`. */
+export const CHECKPOINT_SCHEMA: Schema = checkpointSchemaFor(null);
 
 const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 const splitChild: Read<SplitChild> = object((g) => {
   const docRef = g.get('docRef', nullable(object((h) => ({ path: h.get('path', (v, p) => repoPath(v, p)), anchor: h.get('anchor', str), quotedText: h.get('quotedText', str) }))));
-  const rule = g.optional('rule', nullable((v, p) => ruleId(v, p)));
   const out: SplitChild = {
     id: g.get('id', oid),
     statement: g.get('statement', str),
     docRef,
-    // A dev.6 checkpoint's recorded answer has no `rule` (read as null, scaffolding).
-    rule: rule === undefined ? splitChildRuleDefault() : rule,
+    rule: g.get('rule', nullable((v, p) => ruleId(v, p))),
     witness: g.get('witness', object((h) => ({ lane: h.get('lane', (v, p): LaneId => laneId(v, p)), testIds: h.get('testIds', uniqueIds(str, { nonEmpty: true })) }))),
     activation: g.get('activation', oneOf(ACTIVATIONS)),
     deliveredBy: g.get('deliveredBy', answerSet(unitR, (u) => u, (a, b) => (a < b ? -1 : a > b ? 1 : 0))),
@@ -716,9 +777,8 @@ export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
       findings: g.get('findings', answerIds((v, p): FindingId => findingId(v, p))),
     }))),
     premises: f.get('premises', arrayOf(premise)),
-    // M4a: required of the model (CHECKPOINT_SCHEMA); absent only on a dev.6 checkpoint's recorded answer (read as none, scaffolding).
-    corpusAmendments: f.optional('corpusAmendments', arrayOf(corpusAmendmentProposal)) ?? checkpointOutputM4Default('corpusAmendments'),
-    issueIntake: f.optional('issueIntake', issueIntakeEntries) ?? checkpointOutputM4Default('issueIntake'),
+    corpusAmendments: f.get('corpusAmendments', arrayOf(corpusAmendmentProposal)),
+    issueIntake: f.get('issueIntake', issueIntakeEntries),
   };
   if ((out.decision === 'no-op') !== (out.ops.length === 0)) throw new SchemaError(`${f.path}.ops`, out.decision === 'no-op' ? 'no ops on a no-op' : 'at least one op in a bundle', out.ops);
   if (out.decision === 'no-op' && out.rulings.length > 0) throw new SchemaError(`${f.path}.rulings`, 'no rulings on a no-op', out.rulings);
@@ -774,6 +834,36 @@ export function validatePackReviewOutput(value: unknown): PackReviewOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// flow (M4b): the constraint as the role reads it (it may dispute code's), a diagnosis, and exactly one of a proposal and
+// why no action. The model writes no proposal id (code assigns `<job>.0`); a suite lane's unused `argv`, `reporter` or
+// `cpu` is null. The reader is src/flow/types.ts `flowOutput`; code's checks after it are src/flow/levers.ts's.
+
+export const FLOW_SCHEMA: Schema = sObj({
+  constraint: sObj({ station: S_STR, agree: S_BOOL, reason: S_STR }),
+  diagnosis: S_STR,
+  proposal: sNullable(sObj({
+    target: S_STR,
+    action: {
+      anyOf: [
+        sObj({ lever: sEnum(['concurrency']), cpu: S_INT }),
+        sObj({ lever: sEnum(['resource-pool']), resource: S_STR, size: S_INT }),
+        sObj({ lever: sEnum(['suite-lane']), lane: S_STR, argv: sNullable(sArr(S_STR)), reporter: sNullable(sEnum(FLOW_REPORTERS)), cpu: sNullable(S_INT) }),
+        sObj({ lever: sEnum(['sequence']), unit: S_STR, priority: sEnum(['high']) }),
+        sObj({ lever: sEnum(['build-class']), tier: sEnum(RISK_TIERS), class: sEnum(MODEL_CLASSES) }),
+        sObj({ lever: sEnum(['host']), note: S_STR }),
+      ],
+    },
+    rationale: S_STR,
+    risks: S_STR,
+  })),
+  noAction: sNullable(S_STR),
+});
+
+export function validateFlowOutput(value: unknown): FlowOutput {
+  return flowOutput(value, 'flow');
+}
+
+// ---------------------------------------------------------------------------------------------------
 
 export type RoleOutputs = {
   readonly planCheck: PlanCheckOutput;
@@ -782,9 +872,10 @@ export type RoleOutputs = {
   readonly lens: LensOutput;
   readonly checkpoint: CheckpointOutput;
   readonly packReview: PackReviewOutput;
+  readonly flow: FlowOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
-  planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA,
+  planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
   planCheck: validatePlanCheckOutput,
@@ -793,4 +884,5 @@ export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOu
   lens: validateLensOutput,
   checkpoint: validateCheckpointOutput,
   packReview: validatePackReviewOutput,
+  flow: validateFlowOutput,
 };

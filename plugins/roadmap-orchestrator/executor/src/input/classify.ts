@@ -20,6 +20,10 @@
 //                               it, a unit parked at a judgment stage by `resume <unit>`); taking a pending
 //                               revision back (`withdrawn`); anything else, and any edit of a merged,
 //                               approved, publishing, stopped or finally parked unit: refused
+//   lane evidence (run 3 of M4b) a unit added or whose entry or spec changes: no lane's `evidenceGlobs` entry covers
+//                               a pattern of its scope (a literal path it names, or the same pattern;
+//                               src/spec/spec.ts `evidenceScopeConflicts`, also run at a fresh start). A spec in force
+//                               is never refused for it: only the edit that touches the unit
 //   cut (M2)                    refused on a merged or superseded unit and on one in a task (active past its
 //                               first dispatch and not paused, or with an attempt a crash cut short); a cut is
 //                               final; every unit that runs `after` a cut unit is cut too or drops the edge
@@ -124,7 +128,7 @@ import { readJournal } from '../core/log.ts';
 import { effectiveGraph, findCycle } from '../schedule/graph.ts';
 import type { CommandScope, ScopeOf } from '../schedule/types.ts';
 import { type Ruling, ledgerAfter, parseRulings, sidecarsAfter } from '../spec/rulings.ts';
-import { SpecFileError, bytesSha256, parseSpec } from '../spec/spec.ts';
+import { SpecFileError, bytesSha256, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import {
   type InForce, type InputFile, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
   readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, unitRouting,
@@ -944,7 +948,8 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
 }
 
 /**
- * The spec rows of every unit the revision adds or whose spec or entry it changes: its declared obligations exist and
+ * The spec rows of every unit the revision adds or whose spec or entry it changes: no lane's `evidenceGlobs` entry
+ * covers a pattern of its scope (src/spec/spec.ts `evidenceScopeConflicts`); its declared obligations exist and
  * cover every non-exempt obligation of a mapping pattern that may overlap its scope (prefix-conservative); a `repair`
  * unit declares repairs, each an obligation or a finding of the arc.
  */
@@ -955,6 +960,7 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
   for (const unit of input.next.plan.units) {
     const spec = specs.get(unit.id);
     if (!touched.has(unit.id) || spec === undefined) continue;
+    reasons.push(...evidenceScopeConflicts(unit.id, [...unit.scope, ...spec.scope], spec));
     const declared = specObligations(spec);
     const byId = new Map((obligations?.obligations ?? []).map((o) => [o.id, o]));
     const unknown = declared.filter((id) => !byId.has(id));
@@ -1043,19 +1049,45 @@ const unitsScope = (units: Iterable<UnitId>): CommandScope => {
 };
 
 /**
+ * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, capacity and the other
+ * plan-wide fields, the suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin). The flow
+ * series (src/flow/series.ts) reads an applied command revision's drain from it.
+ */
+export function drainsArc(c: PlanChange): boolean {
+  switch (c.type) {
+    case 'routing':
+    case 'limits':
+      return c.unit === undefined || c.unit === null;
+    case 'resource':
+    case 'suite':
+    case 'plan-field':
+    case 'obligation':
+    case 'mapping':
+    case 'vision':
+    case 'holistic':
+    case 'advances':
+    case 'corpus':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
  * The scope of an accepted apply's changes: routing, resource and pool, capacity and the other plan-wide
  * fields, and suite edits → the arc; unit and spec edits, cuts and re-entries → those units (a re-entry's old
  * unit too); an order change → the units whose relative order moved.
  */
 export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: PlanM1): CommandScope {
+  if (changes.some(drainsArc)) return ARC;
   const units = new Set<UnitId>();
   for (const c of changes) {
     switch (c.type) {
       case 'routing':
       case 'limits':
-        if (c.unit === undefined || c.unit === null) return ARC;
-        units.add(c.unit);
+        if (c.unit !== undefined && c.unit !== null) units.add(c.unit);
         break;
+      // The arc-wide changes returned the arc above.
       case 'resource':
       case 'suite':
       case 'plan-field':
@@ -1065,7 +1097,7 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'holistic':
       case 'advances':
       case 'corpus':
-        return ARC;
+        break;
       // A Phase-0 record edit changes only the required-review key: nothing running is touched. M4a rev 3: a priority,
       // known-defect or plan-check-shape edit drains nothing either (admission and rank read the plan in force).
       case 'phase0':
@@ -1210,7 +1242,7 @@ export type ScopeContext = Readonly<{
 
 /**
  * A12's `ScopeOf`, bound to what an apply's classification reads: `resume` (all) → the arc; `resume <u>` →
- * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` → none; `apply` → its changes' scope
+ * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` and (M4b) `flow-decide` and `flow-request` → none; `apply` → its changes' scope
  * (`changesScope`) over the files as they are, its `--ruling` records landed; none when it would be rejected (a ruling
  * record that no longer reads included) or change nothing (it then
  * touches nothing); the arc when the files no longer hash to its manifest (they may be restored before it
@@ -1227,6 +1259,8 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'rule':
       case 'audit':
       case 'close-admissions':
+      case 'flow-decide':
+      case 'flow-request':
         return NONE;
       // M3 (plan "Commands"): `reverse` restores revisions of any artifact; `steer` and `merge-in` touch their unit.
       case 'reverse':

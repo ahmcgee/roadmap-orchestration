@@ -6,7 +6,7 @@ import { type TestRef, testRefKey } from '../core/events.ts';
 import { type LaneId, type ObligationId, type Sha, type UnitId, type WitnessItemId, compareIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type SpecM1, specObligations, specRepairs, specWitnesses } from '../core/records.ts';
-import { type ObligationDef, type Obligations, type WitnessRecord, isExempt } from './types.ts';
+import { type ObligationDef, type Obligations, type WitnessRecord, isExempt, isMustHold } from './types.ts';
 
 /** Why a test id is required: a target the unit delivers or repairs, or a must-hold it declares and must keep (preservation). */
 export type WitnessRole = 'target' | 'preservation';
@@ -55,7 +55,10 @@ function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
  *     other deliverer's published merge is an ancestor of `at`); of each binding obligation its spec repairs; and the
  *     spec's active witness items;
  *   - preservation: the witnesses of each binding obligation its spec declares that is must-hold (by activation, or a
- *     future one latched by a publication) and is not already a target.
+ *     future one latched by a publication whose merge is an ancestor of `at`) and is not already a target.
+ * A latch whose publication `at` does not contain binds nothing here: the unit's tree was cut before the witness test
+ * landed, so it cannot hold it (paid M4b run 3). The candidate, the unit merged onto the current tip, grades it as a
+ * must-hold (DESIGN-1.0.md §2.8 Witnesses: unit-branch success never certifies an integrated claim).
  */
 export function requiredWitnesses(view: JournalView, obligations: Obligations, unit: UnitId, spec: SpecM1, at: WitnessTree): readonly RequiredWitness[] {
   const byId = new Map(obligations.obligations.map((o) => [o.id, o]));
@@ -73,16 +76,23 @@ export function requiredWitnesses(view: JournalView, obligations: Obligations, u
     if (o === undefined) throw new Error(`unit ${unit}: its spec repairs ${ref}, which the obligations in force do not hold`);
     if (binding(o)) targets.add(o.id);
   }
-  const latched = new Set(view.holistic().latched.map((l) => l.obligation));
+  const declared = specObligations(spec);
+  // The declared obligations latched by a publication whose merge `at` contains.
+  const latchedInTree = new Set(view.holistic().latched.filter(({ obligation: id, unit: by }) => {
+    if (!declared.includes(id)) return false;
+    const merge = merges.get(by);
+    if (merge === undefined) throw new Error(`obligation ${id} is latched by ${by}, which has no published merge`);
+    return at.isAncestor(merge);
+  }).map((l) => l.obligation));
   const rows: RequiredWitness[] = [];
   for (const id of targets) rows.push(...obligationRows(byId.get(id) as ObligationDef, 'target'));
   for (const w of specWitnesses(spec)) {
     if (w.state === 'active') rows.push({ lane: w.lane, testId: w.testId, source: { type: 'witness-item', id: w.id }, role: 'target' });
   }
-  for (const id of specObligations(spec)) {
+  for (const id of declared) {
     const o = byId.get(id);
     if (o === undefined) throw new Error(`unit ${unit}: its spec declares ${id}, which the obligations in force do not hold`);
-    if (targets.has(id) || !binding(o) || !(o.activation === 'must-hold' || latched.has(id))) continue;
+    if (targets.has(id) || !binding(o) || !isMustHold(o, latchedInTree)) continue;
     rows.push(...obligationRows(o, 'preservation'));
   }
   return [...new Map(rows.map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));

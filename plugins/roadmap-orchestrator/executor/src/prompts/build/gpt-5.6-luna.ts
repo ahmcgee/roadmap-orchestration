@@ -60,7 +60,7 @@ Use the shell with an explicit working directory for every command, rg for searc
 - A witness check that still reports a missing or failing id is a blocker.
 
 # Output
-Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete; empty when complete. Decisions go in ${DECISIONS_FILE}, not in this object.`;
+Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete; empty when complete. final: true. Decisions go in ${DECISIONS_FILE}, not in this object.`;
 
 function fixRound(i: BuildInputs): string {
   if (i.fixRound === null) return '';

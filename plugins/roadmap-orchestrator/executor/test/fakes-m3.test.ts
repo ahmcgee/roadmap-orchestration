@@ -29,7 +29,7 @@ describe('fakes.lens', () => {
       lensStep('audit-1', 'drift', []),
       lensStep('audit-1', 'vision', [{ severity: 'P3', claim: 'second vision call' }]),
       lensStep('audit-2', 'vision', [{ severity: 'P1', obligation: 'I-1', claim: 'other job' }]),
-      lensStep(undefined, 'vacuity', [{ mutant: { patch: '--- a\n+++ b\n', lane: 'unit' } }]),
+      lensStep(undefined, 'vacuity', [{ mutant: { lane: 'unit', edits: [{ path: 'src/a.js', old: 'a', new: 'b' }] } }]),
     ];
     const s = writeScenario(tmpDir('scenario'), steps);
     const claims = (job: string, lens: string): string[] =>

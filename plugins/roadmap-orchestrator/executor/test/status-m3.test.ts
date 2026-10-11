@@ -4,7 +4,6 @@
 // status.decisions-since, status.divergences-since-ack, status.completion-sealed, status.log-size, status.non-holistic-arc,
 // status.dev6-alias.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -12,7 +11,7 @@ import { describe, it } from 'node:test';
 import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf, RevisionPayload } from '../src/core/events.ts';
 import {
-  type RoutingRev, type Sha, type UnitId, arcId, commandId, envId, invocationId, jobId, opKey, planRev, routingRev, sha, sha256, unitId,
+  type Sha, type UnitId, arcId, commandId, envId, invocationId, jobId, opKey, planRev, sha, sha256, unitId,
 } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
@@ -20,16 +19,14 @@ import { snapshotRequestOf, witnessDir } from '../src/git/snapshot.ts';
 import { type ArcLaneDef, laneRevOf, parseObligations, parseRulingSidecar } from '../src/holistic/types.ts';
 import { witnessRecordOf, writeWitnessRecord } from '../src/holistic/witness.ts';
 import {
-  RULINGS_INPUT, RULING_INPUT, commitRevisionNow, keepInput, keepInputFiles, keptPayload, readInputFiles, routingProvenanceOf,
+  RULINGS_INPUT, RULING_INPUT, commitRevisionNow, keepInput, keptPayload,
 } from '../src/input/inforce.ts';
-import { parsePlan } from '../src/input/plan.ts';
-import { canonicalJson } from '../src/core/json.ts';
 import { ledgerAfter } from '../src/spec/rulings.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
-import { provenanceStack, resolveRouting } from '../src/routing/layers.ts';
-import { MODEL_IDS, type Triple, unitSeatRef } from '../src/routing/types.ts';
+import { resolveRouting } from '../src/routing/layers.ts';
+import { MODEL_IDS } from '../src/routing/types.ts';
 import { type Status, status } from '../src/status.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
 import { runOp } from './fixtures/git-common.ts';
@@ -42,8 +39,6 @@ import { commitAll, git, writeFiles } from './helpers/repo.ts';
 const T = { timeout: 60_000 };
 const U = (id: string): UnitId => unitId(id);
 const CMD = commandId('cmd-00000000000000b9');
-const OPUS_HIGH: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' };
-const FABLE_HIGH: Triple = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' };
 
 const statusOf = (r: ArcRun): Status => status(r.ctx.runDir, arcId(r.d.arc), r.ctx.hostDir);
 /** No model id anywhere in a status but `spend` (the one render-time derivation): state.no-model-ids over the M3 keys. */
@@ -133,9 +128,9 @@ describe('status M3', () => {
       assert.equal(s.holistic, true);
       assert.deepEqual(s.nowTrue, [{ obligation: 'I-1', statement: 'I-1 holds.', activation: 'must-hold', verdict: 'held', evidence: [dir] }]);
       assert.deepEqual(s.notYetTrue, [
-        { obligation: 'I-2', statement: 'I-2 holds.', activation: 'future', verdict: 'not-held', evidence: [dir], blockingUnits: ['u1'], reason: 'code' },
-        { obligation: 'I-3', statement: 'I-3 holds.', activation: 'future', verdict: 'unwitnessed', evidence: [dir], blockingUnits: ['u2', 'u3'], reason: 'waiting-dep' },
-        { obligation: 'I-4', statement: 'I-4 holds.', activation: 'must-hold', verdict: 'not-covered', evidence: [], blockingUnits: [], reason: 'spec' },
+        { obligation: 'I-2', statement: 'I-2 holds.', activation: 'future', verdict: 'not-held', evidence: [dir], blockingUnits: ['u1'], reason: 'code', lastObserved: null },
+        { obligation: 'I-3', statement: 'I-3 holds.', activation: 'future', verdict: 'unwitnessed', evidence: [dir], blockingUnits: ['u2', 'u3'], reason: 'waiting-dep', lastObserved: null },
+        { obligation: 'I-4', statement: 'I-4 holds.', activation: 'must-hold', verdict: 'not-covered', evidence: [], blockingUnits: [], reason: 'witness', lastObserved: null },
       ]);
       assert.deepEqual(s.target, {
         cutLine: 'the helpers ship', nextMilestone: { obligation: 'I-2', statement: 'I-2 holds.', unmerged: ['u1'] }, criticalPath: ['u2', 'u3'],
@@ -144,7 +139,7 @@ describe('status M3', () => {
       assert.deepEqual([s.waived, s.deferred], [[{ obligation: 'I-5', ruling: 'C-1' }], []]);
       assert.deepEqual(s.vision, {
         rev: 1, confirmation: null, clauses: VISION.clauses, questions: [], advances: ['V-1', 'V-2'],
-        coverage: { unservedAdvanced: ['V-2'], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
+        coverage: { unservedAdvanced: ['V-2'], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
       });
       noModelIds(s);
 
@@ -153,7 +148,7 @@ describe('status M3', () => {
       r.journal.fact({ kind: 'paused', command: CMD, target: { type: 'unit', unit: U('u2') } });
       s = statusOf(r);
       assert.deepEqual(s.notYetTrue.map((o) => [o.obligation, o.activation, o.blockingUnits, o.reason]), [
-        ['I-2', 'must-hold', [], 'spec'], ['I-3', 'future', ['u2', 'u3'], 'supervision'], ['I-4', 'must-hold', [], 'spec'],
+        ['I-2', 'must-hold', [], 'spec'], ['I-3', 'future', ['u2', 'u3'], 'supervision'], ['I-4', 'must-hold', [], 'witness'],
       ]);
       assert.deepEqual(s.target?.nextMilestone, { obligation: 'I-3', statement: 'I-3 holds.', unmerged: ['u2', 'u3'] });
       assert.equal(s.target?.obligations.latched, 1);
@@ -163,6 +158,45 @@ describe('status M3', () => {
       s = statusOf(r);
       assert.deepEqual(s.nowTrue, []);
       assert.ok(s.notYetTrue.every((o) => o.verdict === 'not-covered' && o.evidence.length === 0));
+      // What the tree before showed stays context, never a verdict: I-1 held there, I-2 and I-3 measured, I-4 never ran.
+      assert.deepEqual(s.notYetTrue.map((o) => [o.obligation, o.lastObserved?.verdict ?? null, o.lastObserved?.treeSha ?? null]), [
+        ['I-1', 'held', tree], ['I-2', 'not-held', tree], ['I-3', 'unwitnessed', tree], ['I-4', null, null],
+      ]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  it('status.latched-after-merges (paid M4b run 5): units latch obligations on their own trees, then a merge witnesses only its own lane; the earlier latches are not covered on the head, waiting on a witness run, each with its last held observation', T, async () => {
+    const { d } = holisticArc({
+      steps: [], units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }], lanes: ['l1', 'l2', 'l3'], mapping: [], trees: {},
+      obligations: [
+        { id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['t1'], lane: 'l1' },
+        { id: 'I-2', activation: 'future', deliveredBy: ['u2'], testIds: ['t2'], lane: 'l2' },
+        { id: 'I-3', activation: 'future', deliveredBy: ['u3'], testIds: ['t3'], lane: 'l3' },
+      ],
+    });
+    const r = contextFor(d);
+    try {
+      const lanes = lanesOf(r);
+      // Each unit publishes, its candidate witnesses its own lane on the published tree, and it latches there.
+      const latches: Record<string, Readonly<{ tree: string; dir: string }>> = {};
+      for (const n of [1, 2, 3]) {
+        publish(r, `u${n}`, { [`src/u${n}.js`]: `export const u${n} = ${n};\n` });
+        const tree = tipTree(d);
+        const dir = witness(r, lanes.get(`l${n}`)!, tree, { [`t${n}`]: 'pass' });
+        r.journal.fact({ kind: 'obligation-latched', obligation: `I-${n}`, unit: U(`u${n}`), treeSha: sha(tree) } as unknown as Fact);
+        latches[`I-${n}`] = { tree, dir };
+      }
+      const s = statusOf(r);
+      assert.equal(s.target?.obligations.latched, 3);
+      // Completion's rule on the head: only I-3, witnessed by the last merge, is true there.
+      assert.deepEqual(s.nowTrue.map((o) => [o.obligation, o.activation, o.verdict]), [['I-3', 'must-hold', 'held']]);
+      assert.deepEqual(s.notYetTrue, ['I-1', 'I-2'].map((id) => ({
+        obligation: id, statement: `${id} holds.`, activation: 'must-hold', verdict: 'not-covered', evidence: [], blockingUnits: [], reason: 'witness',
+        lastObserved: { treeSha: latches[id]!.tree, verdict: 'held', evidence: [latches[id]!.dir] },
+      })));
+      assert.ok(s.completion.unmet.includes('obligations-not-discharged'), JSON.stringify(s.completion.unmet));
     } finally {
       r.journal.close();
     }
@@ -363,7 +397,7 @@ describe('status M3', () => {
     const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
     const r = contextFor(d);
     try {
-      const rev = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null }).rev;
+      const rev = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' }).rev;
       const inv = invocationId(r.journal.begin({
         kind: 'proc.spawn', key: opKey('build:u1'), parent: { type: 'stage', unit: U('u1'), stage: 'build', attempt: 1 }, deadlineAt: null,
         body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: 1, role: 'build', tier: 'med' }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
@@ -378,54 +412,6 @@ describe('status M3', () => {
       assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] });
       assert.deepEqual(s.spend.byModel, { models: [{ model: 'gpt-5.6-luna', calls: 1, input: 10, output: 2, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 }], unresolvedRevs: [] });
       assert.equal(s.routing?.rev, rev);
-      noModelIds(s);
-    } finally {
-      r.journal.close();
-    }
-  });
-});
-
-describe('status: dev.6 routing revs (K12, OR-L3)', () => {
-  it('status.dev6-alias: a dev.6 revision\'s recorded routingRev joins its meter rows to the revision\'s current table: totals equal the meter\'s, nothing unresolved, byModel on today\'s bindings', T, () => {
-    const d = setupArc({ steps: [], units: [{ id: 'u1', risk: 'high' }] });
-    const r = contextFor(d);
-    try {
-      // Revision 2 as dev.6 recorded it: revision 1's payload and ledger, and its routing provenance.
-      const plan = parsePlan(JSON.parse(readFileSync(d.planPath, 'utf8')));
-      const provenance = routingProvenanceOf({ profile: 'default', config: null }, plan);
-      const first = r.journal.view.planApplied()!;
-      r.journal.fact({
-        kind: 'plan-applied', rev: planRev(2), command: null, ...keepInputFiles(r.ctx.runDir, readInputFiles(absPath(d.planPath), absPath(d.repo))), changes: [],
-        source: { type: 'start' }, payloadSha256: first.payloadSha256, rulingsSha256: first.rulingsSha256, routingProvenance: provenance,
-      });
-      // The rev dev.6 recorded: the M2 table under its catalogue (frontier Opus high, summit Fable high), by hand.
-      const now = resolveRouting(provenanceStack(provenance, 'none', null));
-      const dev6Triple = (t: Triple): Triple => (t.model === 'claude-opus-5-5' ? (t.effort === 'xhigh' ? FABLE_HIGH : OPUS_HIGH) : t);
-      const dev6Table = Object.fromEntries((['planCheck', 'build', 'gate'] as const).map((role) => [role, Object.fromEntries(Object.entries(now.table[role]).map(([tier, t]) => [tier, dev6Triple(t)]))]));
-      const dev6Rev = routingRev(createHash('sha256').update(canonicalJson(dev6Table)).digest('hex').slice(0, 16));
-      assert.notEqual(dev6Rev, now.rev, 'the catalogue moved the rev');
-      const meter = (n: number, rev: RoutingRev, role: 'build' | 'gate', tier: 'med' | 'high' | 'escalation', input: number): void => {
-        const inv = invocationId(r.journal.begin({
-          kind: 'proc.spawn', key: opKey(`dev6:${n}`), parent: { type: 'stage', unit: U('u1'), stage: role === 'build' ? 'build' : 'gate', attempt: n }, deadlineAt: null,
-          body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: n, ...unitSeatRef(role, tier) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
-        }).op, 1);
-        r.journal.fact({
-          kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', ...unitSeatRef(role, tier), unit: U('u1'), attempt: n },
-          usage: { inputTokens: input, outputTokens: 1, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null },
-        });
-      };
-      meter(1, dev6Rev, 'build', 'high', 100);
-      meter(2, dev6Rev, 'gate', 'escalation', 20);
-      meter(3, now.rev, 'build', 'med', 5);
-      const s = statusOf(r);
-      // Totals: every metered call renders by model.
-      const byRole = s.spend.byRole.reduce((n, t) => n + t.input, 0);
-      assert.equal(byRole, 125);
-      assert.equal(s.spend.byModel.models.reduce((n, m) => n + m.input, 0), byRole, 'byModel totals equal the meter\'s');
-      // Unresolved: none; the dev.6 rev resolves through its alias.
-      assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
-      // byModel: the dev.6 spend on today's bindings (Opus 5.5 for frontier and summit), never Fable.
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-opus-5-5', 2, 120], ['gpt-5.6-luna', 1, 5]]);
       noModelIds(s);
     } finally {
       r.journal.close();

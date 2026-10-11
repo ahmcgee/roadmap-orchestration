@@ -31,6 +31,12 @@ export const CONVERGENCE_K = 1;
 export const MONEY_LANE = 'money';
 /** The fake checkpoint call of the first checkpoint waits here until the driver's stale `apply` is applied. */
 export const FAKE_CKPT_HOLD = 'ckpt-1.hold';
+/**
+ * M4b: the fake repair build of branches R and L waits here until the driver saw the flow run end (`flow-ended`): with the
+ * repair held, the arc has three merges and a unit still to flow, so the flow loop's first run (constraint-shift) is called
+ * exactly once, whatever the host's timing.
+ */
+export const FAKE_FLOW_HOLD = 'flow.hold';
 
 export type Layout = Readonly<{
   dir: string;

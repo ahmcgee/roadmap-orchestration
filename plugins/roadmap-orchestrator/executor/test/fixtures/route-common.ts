@@ -21,7 +21,7 @@ import { serialRuntime } from './stage-common.ts';
 import { type ArcDescriptor, type ArcRun, applyBody, commandContextFor } from './unit-common.ts';
 
 export type Json = Record<string, unknown>;
-export const BASE: RoutingBase = { profile: 'default', config: null };
+export const BASE: RoutingBase = { profile: 'default', config: null, arcRoles: 'm4b' };
 
 const readJson = (path: string): Json => JSON.parse(readFileSync(path, 'utf8')) as Json;
 export const planDirOf = (d: ArcDescriptor): string => join(d.planPath, '..');

@@ -1,4 +1,4 @@
-// A one-shot pin for the concurrent crash matrix (test/concurrent-matrix.test.ts): the workload a peer unit is
+// A one-shot pin for the concurrent crash matrix (test/serial/concurrent-matrix.test.ts): the workload a peer unit is
 // pinned in while the stepping unit walks its pipeline. argv: <barrierDir> <name> [<stateDir> <pool>].
 //
 // The first run parks at file barrier `name` (test/helpers/barrier.ts), printing progress, until the test

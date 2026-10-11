@@ -12,8 +12,10 @@
 //              (Q25). Else the reverse patch `git diff -R --no-renames --full-index base salvaged -- <prod>`, kept as
 //              `inputs/<sha256>.patch`. A patch git cannot parse (`corrupt`) or that does not apply at `salvaged` makes every
 //              target inconclusive.
-//   allowance  (Q17) key = sha256 of {the patch's sha256, each target lane's rev, env id and target test ids}. A
-//              `smoke-ran` of the unit with the same key is reused: its verdict is this attempt's, nothing runs. Executions
+//   allowance  (Q17) key = sha256 of {the patch's sha256, each target lane's rev, env id, target test ids and the test
+//              files its `testPaths` match at `salvaged` (path, mode and blob of each)}. A `smoke-ran` of the unit with the
+//              same key is reused: its verdict is this attempt's, nothing runs; a fix that edits only tests changes the key
+//              and the mutant runs again. A key recorded by an older release never matches: that smoke runs once more. Executions
 //              per unit (its smoke `mutant.apply` intents: blocked runs and crash retries count) are capped by the pinned
 //              `smokeRuns`; past it `notRun{allowance}`.
 //   run        `mutant.apply{of: smoke{unit, attempt}}` at `salvaged` in `smokeWorktree`, then each target lane (ascending)
@@ -38,7 +40,7 @@ import { type LaneId, type ObligationId, type ResourceInstance, type Sha, type S
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 import { type RepoPath, matchesPattern, repoPath } from '../core/values.ts';
-import { gitRun } from '../git/git.ts';
+import { gitRun, lsTree } from '../git/git.ts';
 import { MUTANT_PATCH_INPUT, mutantPatchPath, patchedTree } from '../git/mutant.ts';
 import { smokeLaneDir } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
@@ -106,9 +108,16 @@ function reversePatch(ctx: StageContext, plan: SmokePlan, salvaged: Sha): Buffer
   return Buffer.from(gitRun(ctx.repo, ['diff', '-R', '--no-renames', '--full-index', plan.base, salvaged, '--', ...literal(plan.prod)]).stdout, 'utf8');
 }
 
-/** The allowance key (Q17): the patch, each target lane's rev and environment, and the target test ids. */
-function smokeKey(ctx: StageContext, plan: SmokePlan, patchSha256: Sha256Hex): Sha256Hex {
-  const lanes = plan.lanes.map((l) => ({ lane: l.id, laneRev: laneRevOf(l), envId: laneEnvId(ctx, l), testIds: plan.refs.filter((r) => r.lane === l.id).map((r) => r.testId) }));
+/**
+ * The allowance key (Q17): the patch, and each target lane's rev, environment, target test ids and test files at
+ * `salvaged` (the content the mutant runs: a test-only fix changes the key).
+ */
+function smokeKey(ctx: StageContext, plan: SmokePlan, salvaged: Sha, patchSha256: Sha256Hex): Sha256Hex {
+  const tree = lsTree(ctx.repo, salvaged);
+  const lanes = plan.lanes.map((l) => ({
+    lane: l.id, laneRev: laneRevOf(l), envId: laneEnvId(ctx, l), testIds: plan.refs.filter((r) => r.lane === l.id).map((r) => r.testId),
+    tests: tree.filter((e) => (l.testPaths ?? []).some((t) => matchesPattern(e.path, t))).map((e) => [e.path, e.mode, e.object]),
+  }));
   return sha256Hex(canonicalJson({ patch: patchSha256, lanes })) as Sha256Hex;
 }
 
@@ -170,7 +179,7 @@ export async function mutationSmoke(ctx: StageContext, unit: PlanUnit, parent: S
   const patch = reversePatch(ctx, plan, salvaged);
   const patchSha256 = keepInput(ctx.runDir, patch, MUTANT_PATCH_INPUT);
   crashPoint('smoke.after-patch-kept', unit.id);
-  const key = smokeKey(ctx, plan, patchSha256);
+  const key = smokeKey(ctx, plan, salvaged, patchSha256);
   const earlier = view.holistic().smokeRuns.filter((r) => r.unit === unit.id && r.key === key).at(-1);
   if (earlier !== undefined) return ran(ctx, unit, parent, key, earlier.verdict, plan.targets);
   if (executions(ctx, unit) >= view.unit(unit.id).bounds.smokeRuns) return { kind: 'not-run', reason: 'allowance' };

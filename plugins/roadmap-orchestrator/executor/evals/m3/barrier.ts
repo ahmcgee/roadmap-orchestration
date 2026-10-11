@@ -1,6 +1,6 @@
 // The M3 fixture's money-lane barrier (branch R only): `node barrier.ts <barrierDir> <timeoutMs> -- <cmd> [args...]`
 // runs `cmd` after waiting, but waits only when the I-2 regression is on the tree an audit runs the lane on: the lane's
-// working directory is an audit's lane checkout (`<worktreeRoot>/<arc>/audit-<n>.lanes`) and `node src/cli.js format
+// working directory is an audit's lane checkout (`<worktreeRoot>/<arc>/audit-<n>.lanes-<k>`) and `node src/cli.js format
 // 0.125` there does not print `0.12`. So it holds the first audit that sees tidy's regression (branch R: A1 on S), and
 // passes straight through everywhere else: the baseline, a candidate, a re-witness, an audit of a tree without the
 // regression (branch P never regresses), and every run after the driver released it. Waiting, it writes
@@ -29,7 +29,7 @@ function regressed(): boolean {
   return r.stdout !== '0.12\n';
 }
 
-const job = /^(audit-[0-9]+)\.lanes$/.exec(basename(process.cwd()))?.[1];
+const job = /^(audit-[0-9]+)\.lanes-[0-9]+$/.exec(basename(process.cwd()))?.[1];
 const base = join(dir, 'money');
 if (job !== undefined && !existsSync(`${base}.release`) && regressed()) {
   writeFileSync(`${base}.reached`, `${job}\n`);

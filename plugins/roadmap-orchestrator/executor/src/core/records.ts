@@ -3,11 +3,11 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
-  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ResourceInstance,
+  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ProposalId, type ResourceInstance,
   type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, type WitnessItemId, arcId, clauseId,
   commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
   obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
-  witnessItemId,
+  witnessItemId, proposalId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -32,13 +32,17 @@ import {
 export type ProcIdentity = Readonly<{ pid: number; start: number }>;
 export const procIdentity: Read<ProcIdentity> = object((f) => ({ pid: f.get('pid', positive), start: f.get('start', nat) }));
 
-/** `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. */
-export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt'] as const;
+/**
+ * `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. `supersede` (paid M4b run 3):
+ * a revision changed the plan or vision an in-flight checkpoint call was captured on (src/holistic/checkpoint.ts).
+ * `reported`: the runner ends what a build left pending `REPORT_GRACE_MS` after its final report (src/runner/report.ts).
+ */
+export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt', 'supersede', 'reported'] as const;
 export type KillReason = (typeof KILL_REASONS)[number];
 export const killReason: Read<KillReason> = oneOf(KILL_REASONS);
 
 /** What the executor writes into cancel.json. `deadline` and `stall` are the runner's own; `external-unknown` kills are not invocation cancels. */
-export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt'] as const;
+export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt', 'supersede'] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 /** The cancel reasons that end a workload with exit cause `cancel` (the runner turns `recovery` into `recovery-kill`). */
 export const INTERRUPT_REASONS = ['pause', 'stop'] as const;
@@ -46,6 +50,9 @@ export type InterruptReason = (typeof INTERRUPT_REASONS)[number];
 /** A command (a lane) may also be cancelled by a preempting docs publication (M3, A7); a backend call never is. */
 export const LANE_INTERRUPT_REASONS = [...INTERRUPT_REASONS, 'preempt'] as const;
 export type LaneInterruptReason = (typeof LANE_INTERRUPT_REASONS)[number];
+/** A backend call may also be cancelled because a revision superseded the checkpoint inputs it runs on; a lane never is. */
+export const BACKEND_CANCEL_REASONS = [...INTERRUPT_REASONS, 'supersede'] as const;
+export type BackendCancelReason = (typeof BACKEND_CANCEL_REASONS)[number];
 
 export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
 export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
@@ -245,11 +252,27 @@ export type ChildEnd =
   | Readonly<{ type: 'exited'; code: number }>
   | Readonly<{ type: 'signalled'; signal: string }>
   | Readonly<{ type: 'spawn-failed'; error: string }>;
-/** `exited` = the child ended on its own; the others name why the runner killed the workload. */
-export type ExitCause = 'exited' | 'deadline' | 'stall' | 'cancel' | 'recovery-kill';
+/**
+ * `exited` = the child ended on its own; the others name why the runner killed the workload. `reported`: a backend's
+ * final, schema-valid report was on its output for `REPORT_GRACE_MS` while the workload still ran (a pending wake-up,
+ * monitor or background process; src/runner/report.ts): the report, not the kill, decides the outcome.
+ */
+export const EXIT_CAUSES = ['exited', 'deadline', 'stall', 'cancel', 'recovery-kill', 'reported'] as const;
+export type ExitCause = (typeof EXIT_CAUSES)[number];
 
-/** exit.json: written by the runner after the workload is empty, before the adapter runs. */
-export type ExitFile = InvocationBinding & Readonly<{ child: ChildEnd; cause: ExitCause; endedAt: IsoTime; quiescedAt: IsoTime }>;
+/**
+ * A workload's cpu time as its runner observed it (M4b rev 3, src/host/pressure.ts `WorkloadCpu`): `wallMs` from spawn to
+ * quiescence, `runMs` on a cpu and `waitMs` runnable but waiting for one, summed over every thread of every member.
+ */
+export type LaunchCpu = Readonly<{ wallMs: number; runMs: number; waitMs: number }>;
+const launchCpu: Read<LaunchCpu> = object((f) => ({ wallMs: f.get('wallMs', nat), runMs: f.get('runMs', nat), waitMs: f.get('waitMs', nat) }));
+
+/**
+ * exit.json: written by the runner after the workload is empty, before the adapter runs. `cpu` (M4b rev 3, additive):
+ * the workload's cpu time, null on a host without schedstat; absent from an earlier runner's file, read as null
+ * (`exitCpuOf`, src/core/upgrade.ts).
+ */
+export type ExitFile = InvocationBinding & Readonly<{ child: ChildEnd; cause: ExitCause; endedAt: IsoTime; quiescedAt: IsoTime; cpu?: LaunchCpu | null }>;
 
 const childEnd: Read<ChildEnd> = tagged('type', {
   exited: object((f): ChildEnd => ({ type: f.get('type', literal('exited')), code: f.get('code', exitCode) })),
@@ -265,13 +288,15 @@ const childEnd: Read<ChildEnd> = tagged('type', {
 });
 
 export const exitFile: Read<ExitFile> = object((f) => {
-  const out: ExitFile = {
+  let out: ExitFile = {
     ...binding(f),
     child: f.get('child', childEnd),
-    cause: f.get('cause', oneOf(['exited', 'deadline', 'stall', 'cancel', 'recovery-kill'] as const)),
+    cause: f.get('cause', oneOf(EXIT_CAUSES)),
     endedAt: f.get('endedAt', time),
     quiescedAt: f.get('quiescedAt', time),
   };
+  const cpu = f.optional('cpu', nullable(launchCpu));
+  if (cpu !== undefined) out = { ...out, cpu };
   if (out.child.type === 'spawn-failed' && out.cause !== 'exited') throw new SchemaError(`${f.path}.cause`, '"exited" for a child that never spawned', out.cause);
   if (out.quiescedAt < out.endedAt) throw new SchemaError(`${f.path}.quiescedAt`, `not before endedAt ${out.endedAt}`, out.quiescedAt);
   return out;
@@ -324,10 +349,11 @@ export type BackendOutcome =
   | Readonly<{ kind: 'malformed'; detail: string }>
   | Readonly<{ kind: 'process-fault'; detail: string }>
   /**
-   * The executor cancelled the workload for a pause or stop (exit cause `cancel`); `reason` is cancel.json's.
-   * Not a failure of the call. A recovery cancel ends as cause `recovery-kill`, a process fault.
+   * The executor cancelled the workload for a pause, a stop or (a checkpoint call) a superseding revision (exit cause
+   * `cancel`); `reason` is cancel.json's. Not a failure of the call. A recovery cancel ends as cause `recovery-kill`, a
+   * process fault.
    */
-  | Readonly<{ kind: 'cancelled'; reason: InterruptReason }>;
+  | Readonly<{ kind: 'cancelled'; reason: BackendCancelReason }>;
 export type BackendOutcomeKind = BackendOutcome['kind'];
 /** What the precedence rule alone decides; refusal is the adapter's reading of a backend stop reason. */
 export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
@@ -339,6 +365,8 @@ export type TerminalOutcome = Exclude<BackendOutcome, { kind: 'refusal' }>;
  */
 export const COMMAND_VERDICTS = ['pass', 'fail', 'stall', 'process-fault', 'cancelled'] as const;
 export type CommandVerdict = (typeof COMMAND_VERDICTS)[number];
+/** A red run: it failed or stalled. */
+export const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' || verdict === 'stall';
 /** How a command ended: its exit code (null when the child never exited with one) and verdict. */
 export type CommandEnd = Readonly<{ exitCode: number | null }> & (
   | Readonly<{ verdict: Exclude<CommandVerdict, 'cancelled'> }>
@@ -371,7 +399,7 @@ const backendOutcome: Read<BackendOutcome> = tagged('kind', {
   refusal: object((f): BackendOutcome => ({ kind: f.get('kind', literal('refusal')), stopReason: f.get('stopReason', str) })),
   malformed: object((f): BackendOutcome => ({ kind: f.get('kind', literal('malformed')), detail: f.get('detail', str) })),
   'process-fault': object((f): BackendOutcome => ({ kind: f.get('kind', literal('process-fault')), detail: f.get('detail', str) })),
-  cancelled: object((f): BackendOutcome => ({ kind: f.get('kind', literal('cancelled')), reason: f.get('reason', oneOf(INTERRUPT_REASONS)) })),
+  cancelled: object((f): BackendOutcome => ({ kind: f.get('kind', literal('cancelled')), reason: f.get('reason', oneOf(BACKEND_CANCEL_REASONS)) })),
 });
 
 const backendError: Read<BackendError> = object((f) => ({
@@ -426,6 +454,8 @@ function processFault(exit: ExitFile): string | null {
 /**
  * The result.json precedence rule for backends, pure over the terminal files:
  * 1. cause cancel → cancelled{cancel.json's reason: pause|stop}, whatever the output (cancel.json must say so);
+ * 1a. cause reported → success with schema-valid output, whatever the child's end (the runner killed what the final
+ *    report left pending); otherwise malformed (the output changed after the runner read it as final);
  * 2. cause deadline/stall/recovery-kill, a signal, or a failed spawn → process-fault, whatever the output;
  * 3. non-zero exit with schema-valid output → malformed; non-zero exit without it → process-fault;
  * 4. exit 0 without schema-valid output → malformed;
@@ -434,9 +464,12 @@ function processFault(exit: ExitFile): string | null {
 export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, output: unknown, schemaValid: boolean): TerminalOutcome {
   if (exit.cause === 'cancel') {
     if (cancel === null || cancel.reason === 'recovery' || cancel.reason === 'preempt') {
-      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop (a backend call is never preempted)`);
+      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause, stop or supersede (a backend call is never preempted)`);
     }
     return { kind: 'cancelled', reason: cancel.reason };
+  }
+  if (exit.cause === 'reported') {
+    return schemaValid ? { kind: 'success', value: output as JsonValue } : { kind: 'malformed', detail: 'ended as reported, but the output is not schema-valid' };
   }
   const fault = processFault(exit);
   if (fault !== null) return { kind: 'process-fault', detail: fault };
@@ -457,9 +490,12 @@ export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, outp
 export function classifyCommand(exit: ExitFile, cancel: CancelFile | null, expectedExit: number): CommandEnd {
   const exitCode = exit.child.type === 'exited' ? exit.child.code : null;
   if (exit.cause === 'cancel') {
-    if (cancel === null || cancel.reason === 'recovery') throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause or stop`);
+    if (cancel === null || cancel.reason === 'recovery' || cancel.reason === 'supersede') {
+      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause, stop or preempt (a command is never superseded)`);
+    }
     return { exitCode, verdict: 'cancelled', reason: cancel.reason };
   }
+  if (exit.cause === 'reported') throw new Error(`${exit.inv}: exit cause reported for a command (only a backend reports)`);
   if (exit.cause === 'stall') return { exitCode, verdict: 'stall' };
   if (processFault(exit) !== null) return { exitCode, verdict: 'process-fault' };
   return { exitCode, verdict: exitCode === expectedExit ? 'pass' : 'fail' };
@@ -474,15 +510,23 @@ export function classifyCommand(exit: ExitFile, cancel: CancelFile | null, expec
 export type ToolRead =
   | Readonly<{ tool: 'Read'; path: string }>
   | Readonly<{ tool: 'Grep' | 'Glob'; pattern: string; path: string | null }>;
-/** What a Claude session read, in call order, from its stream-json stdout. Audit only: nothing binds it. */
-export type ReadsFile = InvocationBinding & Readonly<{ reads: readonly ToolRead[] }>;
+/**
+ * What a Claude session read, in call order, from its stream-json stdout, and the reads the CLI refused (`denied`:
+ * the result event's `permission_denials` of Read, Grep and Glob, a path outside the cwd and every `--add-dir`). A
+ * gate's or plan-check's approve binds `denied`: one from a session refused a read is not an approval (`read-denied`,
+ * `readRefused`, src/pipeline/stages.ts). `denied` is absent from a reads.json an executor before it wrote (`readsDeniedOf`).
+ */
+export type ReadsFile = InvocationBinding & Readonly<{ reads: readonly ToolRead[]; denied?: readonly ToolRead[] }>;
 
 const toolRead: Read<ToolRead> = tagged('tool', {
   Read: object((f): ToolRead => ({ tool: f.get('tool', literal('Read')), path: f.get('path', str) })),
   Grep: object((f): ToolRead => ({ tool: f.get('tool', literal('Grep')), pattern: f.get('pattern', str), path: f.get('path', nullable(str)) })),
   Glob: object((f): ToolRead => ({ tool: f.get('tool', literal('Glob')), pattern: f.get('pattern', str), path: f.get('path', nullable(str)) })),
 });
-export const readsFile: Read<ReadsFile> = object((f) => ({ ...binding(f), reads: f.get('reads', arrayOf(toolRead)) }));
+export const readsFile: Read<ReadsFile> = object((f) => {
+  const denied = f.optional('denied', arrayOf(toolRead));
+  return { ...binding(f), reads: f.get('reads', arrayOf(toolRead)), ...(denied === undefined ? {} : { denied }) };
+});
 
 export const RUNNER_FILES = ['launch.json', 'runner.json', 'cancel.json', 'exit.json', 'result.json', 'reads.json'] as const;
 export type RunnerFileName = (typeof RUNNER_FILES)[number];
@@ -822,8 +866,11 @@ export type SpecM1 = Readonly<{
 /**
  * A witness item (M4a rev 3): test `testId` of arc lane `lane` witnesses acceptance clause `clause`; `skeleton` is the
  * test's shape as the spec states it. D1 requires its active items (`requiredWitnesses`, src/holistic/required.ts).
+ * `obligation` (paid M4b run 6): the obligation the unit delivers whose witness already proves the clause; the item then
+ * names that witness's lane and one of its test ids exactly (a plan-check redirect is refused otherwise), so the build
+ * never holds two required names for one test. Absent: no obligation's witness proves it (lasting).
  */
-export type WitnessItemDef = Readonly<{ id: WitnessItemId; lane: LaneId; testId: string; clause: ClauseId; skeleton: string }>;
+export type WitnessItemDef = Readonly<{ id: WitnessItemId; lane: LaneId; testId: string; clause: ClauseId; skeleton: string; obligation?: ObligationId }>;
 
 /** What a repair names: a finding (`F-<n>`) or an obligation (`I-<n>`). */
 export type RepairRef = FindingId | ObligationId;
@@ -855,9 +902,10 @@ function noteFields(f: Fields): NoteDef {
   return { id: f.get('id', cid), text: f.get('text', str) };
 }
 function witnessItemFields(f: Fields): WitnessItemDef {
+  const obligation = f.optional('obligation', (v, p) => obligationId(v, p));
   return {
     id: f.get('id', (v, p) => witnessItemId(v, p)), lane: f.get('lane', (v, p) => laneId(v, p)), testId: f.get('testId', str), clause: f.get('clause', cid),
-    skeleton: f.get('skeleton', str),
+    skeleton: f.get('skeleton', str), ...(obligation === undefined ? {} : { obligation }),
   };
 }
 function stated<T>(fields: (f: Fields) => T): Read<Stated<T>> {
@@ -1235,7 +1283,11 @@ export type CommandBody =
   /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
   | Readonly<{ type: 'audit'; lenses: readonly LensKindName[] | null }>
   /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
-  | Readonly<{ type: 'close-admissions' }>;
+  | Readonly<{ type: 'close-admissions' }>
+  /** `roadmap flow accept|reject <proposal> --reason <text>` (M4b): the root agent's decision, idempotent by proposal. Scope ∅. */
+  | Readonly<{ type: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string }>
+  /** `roadmap flow request --reason <text>` (M4b, RC-5): a flow run past the cooldown, once per cooldown window. Scope ∅. */
+  | Readonly<{ type: 'flow-request'; reason: string }>;
 
 /** The lens names a command may carry; `LensKind` in src/holistic/types.ts is the same closed list. */
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
@@ -1299,6 +1351,11 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     type: f.get('type', literal('audit')), lenses: f.get('lenses', nullable(sortedBy(oneOf(LENS_KIND_NAMES), (l) => l, { nonEmpty: true }))),
   })),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
+  'flow-decide': object((f): CommandBody => ({
+    type: f.get('type', literal('flow-decide')), proposal: f.get('proposal', (v, p) => proposalId(v, p)), decision: f.get('decision', oneOf(['accept', 'reject'] as const)),
+    reason: f.get('reason', str),
+  })),
+  'flow-request': object((f): CommandBody => ({ type: f.get('type', literal('flow-request')), reason: f.get('reason', str) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({
@@ -1348,9 +1405,18 @@ export const NEEDS_USER_REASONS = [
   // the first (K14, H9); a checkpoint capture that found the issue policy untrusted, holding admission arc-wide and the
   // capture until acked (OR-L6).
   'pack-review', 'issue-policy-untrusted',
+  // M4b, non-blocking: a flow proposal for the root agent (`flow accept | reject`); host advice for the owner; an applied
+  // proposal's `worse` verdict (with its preimage, RC-6); a flow run without a valid answer after its retry; a ruler path
+  // changed by the root agent's `apply` after the first admission (G11).
+  'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
+  // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
+  'read-denied',
 ] as const;
-/** The M3 reasons raised non-blocking; every other M3 reason is raised blocking. */
-export const NON_BLOCKING_M3_REASONS = ['bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest'] as const satisfies readonly NeedsUserReason[];
+/** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
+export const NON_BLOCKING_M3_REASONS = [
+  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
+  'ruler-changed',
+] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 
 export type NeedsUserSubject = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'arc' }> | Readonly<{ type: 'host' }>;

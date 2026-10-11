@@ -10,6 +10,7 @@ import { sessionContainment } from '../src/contain/session.ts';
 import type { DoneOf, Fact } from '../src/core/events.ts';
 import { arcId, invocationId, opId, parseInvocationId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
+import { PRESSURE_MIN_WALL_MS } from '../src/host/pressure.ts';
 import { invocationDir, invoke, killWorkload } from '../src/pipeline/invoke.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -68,6 +69,27 @@ test('invoke.command-verdicts', T, async () => {
     { type: 'command', verdict: 'pass' }, { type: 'command', verdict: 'fail' }, { type: 'command', verdict: 'pass' },
   ]);
   assert.deepEqual(usageFacts(r.runDir), [], 'commands carry no usage');
+});
+
+// M4b rev 3: the runner measures each launch's cpu wait (exit.json `cpu`) and the done record carries its pressure: null
+// for a launch under PRESSURE_MIN_WALL_MS (its start-up), a fraction for a longer one; a cpu-bound one ran on a cpu.
+test('invoke.pressure', T, async () => {
+  const r = run();
+  const journal = open(r.runDir, r.arc);
+  const containment = context(journal, r.runDir).containment;
+  const short = await invoke(journal, containment, specFor(command(r, 'lane', workload('workload-exit.ts', '0'))));
+  const long = await invoke(journal, containment, specFor(command(r, 'lane', workload('workload-slow.ts', 'spin', String(PRESSURE_MIN_WALL_MS + 500)))));
+  journal.close();
+  const [d1, d2] = spawnDones(r.runDir);
+  assert.ok(d1 !== undefined && d1.outcome.kind === 'result' && d2 !== undefined && d2.outcome.kind === 'result');
+  const cpu = (inv: typeof short.inv) => runnerFiles(invocationDir(absPath(r.runDir), inv), inv).read('exit.json')?.cpu;
+  const c1 = cpu(short.inv);
+  assert.ok(c1 !== undefined && c1 !== null && c1.wallMs < PRESSURE_MIN_WALL_MS, JSON.stringify(c1));
+  assert.equal(d1.outcome.pressure, null, 'a short launch has no pressure');
+  const c2 = cpu(long.inv);
+  assert.ok(c2 !== undefined && c2 !== null && c2.wallMs >= PRESSURE_MIN_WALL_MS && c2.runMs >= 1_000, `the spin ran on a cpu: ${JSON.stringify(c2)}`);
+  const { pressure } = d2.outcome;
+  assert.ok(typeof pressure === 'number' && pressure >= 0 && pressure <= 1, `pressure ${pressure}`);
 });
 
 test('invoke.deadline', T, async () => {

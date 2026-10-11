@@ -33,6 +33,14 @@ nights. Once a month the harbour master copies the latest backup to a memory sti
 In the winter the harbour takes few visitors and bookings drop to a handful a week. That is when the tide table
 for the next year is typed in and checked, and when changes to Tidewater are made and tried out before the season.
 
+Changes are tried on the office machine, where the suite gate runs before anything is copied to the kiosk (see
+0050_Architecture.md, Testing). The note the first volunteer left in the machine's CI script still reads:
+
+> CI: run the test files one at a time (--test-concurrency=1) because of the shared ledger dir. Two files writing
+> the ledger at once lose bookings and the run goes red for nothing.
+
+The suite takes a while because of it; bring a cup of tea.
+
 ## Who to call
 
 The harbour master runs Tidewater. The office staff can use every command. Changes to the code go through the

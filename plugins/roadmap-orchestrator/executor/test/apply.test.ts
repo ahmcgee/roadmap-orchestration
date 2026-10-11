@@ -7,7 +7,7 @@
 // classify.plan-check-shape-edit, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
 // classify.knowndefect-cut-fixer-refused, classify.reentry-widen-with-ruling, classify.reentry-widen-without-ruling-refused; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
 // apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
-// apply.stale-after-evidence-revision.
+// apply.stale-after-evidence-revision, classify.evidence-covers-scope (M4b run 3).
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -98,7 +98,7 @@ function decide(r: ArcRun, unit: string, stage: string, outcome: string, cls: st
   r.journal.fact({ kind: 'stage-outcome', unit: id, stage, attempt, outcome, class: cls, chargeable: false } as Fact);
 }
 
-const routingBase = { profile: 'default', config: null } as const;
+const routingBase = { profile: 'default', config: null, arcRoles: 'm4b' } as const;
 
 function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classified {
   const { runDir } = r.ctx;
@@ -206,6 +206,42 @@ const ROWS: readonly Row[] = [
     expect: () => [{ type: 'unit-changed', unit: unitId('u2') }],
   },
   { name: 'an evidence-only edit of an in-flight unit: in force at once', setup: inFlight, edit: (d) => editSpec(d, 'u1', evidenceGlobs), expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)] },
+  {
+    name: 'classify.evidence-covers-scope: evidenceGlobs naming the unit\'s own paths are refused, the lane, entry and scope pattern named',
+    edit: (d) => {
+      editPlan(d, (p) => void (p.units[1]!['scope'] = ['src/cli.js', 'test/unit/u2.test.js']));
+      editSpec(d, 'u2', (s) => {
+        s['scope'] = ['src/cli.js', 'test/unit/u2.test.js'];
+        s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**/*.js', 'test/unit/u2.test.js', 'coverage/**'] }));
+      });
+      editSpec(d, 'u3', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['test/**'] }))));
+    },
+    expect: [
+      /^unit u2 lane mul: evidenceGlobs entry `src\/\*\*\/\*\.js` covers `src\/cli\.js` of the unit's scope\. evidenceGlobs declare the files the lane's run writes \(its outputs\)/,
+      /^unit u2 lane mul: evidenceGlobs entry `test\/unit\/u2\.test\.js` covers `test\/unit\/u2\.test\.js` of the unit's scope/,
+      /^unit u3 lane mul: evidenceGlobs entry `test\/\*\*` covers `test\/\*\*` of the unit's scope/,
+    ],
+  },
+  {
+    name: 'classify.evidence-covers-scope: a spec in force that breaks the rule (an older release\'s arc) stays readable; an edit not touching its unit applies',
+    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**'] })))),
+    setup: inFlight,
+    edit: (d) => editSpec(d, 'u2', addClause),
+    expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)],
+  },
+  {
+    name: 'classify.evidence-covers-scope: that in-flight unit\'s evidence edit applies once it fixes the entry, and is refused while it keeps it',
+    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**'] })))),
+    setup: inFlight,
+    edit: (d, r) => {
+      editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**', 'out/**'] }))));
+      const kept = classifyNow(r);
+      assert.equal(kept.kind, 'rejected', JSON.stringify(kept));
+      if (kept.kind === 'rejected') assert.deepEqual(kept.reasons.map((x) => x.split('.')[0]), ['unit u1 lane mul: evidenceGlobs entry `src/**` covers `src/**` of the unit\'s scope']);
+      editSpec(d, 'u1', evidenceGlobs);
+    },
+    expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)],
+  },
   { name: 'any other edit at the same rev: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', addClause), expect: [/changed but is still at rev 1; a revision sets rev 2/] },
   { name: 'rev + 1 of an in-flight unit: pending', setup: inFlight, edit: revise, expect: (r) => [specChange(r.d, 'u1', 'revision', 2)] },
   { name: 'rev + 2: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', (s) => void (s['rev'] = 3)), expect: [/is at rev 3, but the unit's recorded rev is 1; a revision sets rev 2/] },
@@ -305,7 +341,7 @@ const ROWS: readonly Row[] = [
   {
     name: 'routing: re-resolved to a new routingRev',
     edit: (d) => editPlan(d, (p) => void (p['routing'] = { build: { med: 'frontier' } })),
-    expect: (r) => [{ type: 'routing', routingRev: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: { build: { med: 'frontier' } } as never, unit: null }).rev }],
+    expect: (r) => [{ type: 'routing', routingRev: resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: { build: { med: 'frontier' } } as never, unit: null, arcRoles: 'm4b' }).rev }],
   },
   { name: 'add a resource declaration: now', edit: (d) => editPlan(d, (p) => void p.resources.push(DB)), expect: () => [{ type: 'resource', resource: resourceName('db'), edit: 'added' }] },
   {
@@ -910,6 +946,44 @@ test('apply.rejections: a stale expectRev, files changed since they were hashed,
     assert.equal(requirePlanInForce(r.ctx.runDir, r.journal.view).plan.units.length, 2);
     assert.deepEqual((await command(r, applyBody(d))).outcome.kind, 'applied', 'the files are the plan in force: nothing to apply');
     assert.equal(applied(d).length, 2, 'an unchanged apply writes no fact');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('apply.lane-row-live-units (paid M4b run 3, OP-3): the lane row checks what a revision makes live: a unit in force with an unrunnable lane is re-entered or cut, while a revision keeping it live, or a successor with the same lane, is refused', T, async () => {
+  // u2's and u3's lane runs `node` on a PATH without it (in force unchecked, as checkpoint ckpt-14 admitted outbox-fragment).
+  const empty = tmpDir('empty-path');
+  const unrunnable = { id: 'u2', argv: ['node', '--test'], env: { set: { PATH: empty }, pass: [] } };
+  const row = (unit: string) => new RegExp(`"kind":"spec-lane-unrunnable","lane":"u2","problem":\\{"argv0":"node","type":"argv0-unresolvable"\\},"unit":"${unit}"`);
+  const reason = (o: CommandOutcome): string => (o.kind === 'rejected' ? o.reason : assert.fail(`not rejected: ${JSON.stringify(o)}`));
+  const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2', lanes: [unrunnable] }, { id: 'u3', lanes: [unrunnable] }] });
+  const r = contextFor(d);
+  try {
+    // A revision that keeps u2 live and changes it re-runs the row over it.
+    const inForce = readFileSync(specPath(d, 'u2'));
+    editSpec(d, 'u2', (s) => {
+      addClause(s);
+      s['rev'] = 2;
+    });
+    assert.match(reason((await command(r, applyBody(d))).outcome), row('u2'));
+    writeFileSync(specPath(d, 'u2'), inForce);
+    // Its re-entry under a successor with u1's lanes: u2 is superseded, so its lanes are not checked.
+    parkAtGate(r, 'u2');
+    reenter('u4', 'u2')(d);
+    const reentry = await command(r, applyBody(d));
+    assert.equal(reentry.outcome.kind, 'applied', JSON.stringify(reentry.outcome));
+    // A successor carrying the same lane is refused for its own lane.
+    parkAtGate(r, 'u3');
+    reenter('u5', 'u3')(d);
+    editSpec(d, 'u5', (s) => void (s['lanes'] = [{ ...unrunnable, cwd: '.', expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' }]));
+    assert.match(reason((await command(r, applyBody(d))).outcome), row('u5'));
+    editPlan(d, (p) => void (p.units = p.units.filter((u) => u.id !== 'u5')));
+    // A cut of the parked u3: the row never runs on what the revision retires.
+    cutUnits('u3')(d);
+    const cut = await command(r, applyBody(d));
+    assert.equal(cut.outcome.kind, 'applied', JSON.stringify(cut.outcome));
+    assert.deepEqual(applied(d).at(-1)!.changes.filter((c) => c.type === 'unit-cut'), [cutChange('u3')]);
   } finally {
     r.journal.close();
   }

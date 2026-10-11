@@ -5,6 +5,7 @@ import type { ModelId, PromptSupport, PromptTable, Role } from '../routing/types
 import { PROMPT as BUILD_LUNA } from './build/gpt-5.6-luna.ts';
 import { PROMPT as BUILD_OPUS } from './build/claude-opus-5-5.ts';
 import { PROMPT as CHECKPOINT_FABLE } from './checkpoint/claude-fable-5-1.ts';
+import { PROMPT as FLOW_OPUS } from './flow/claude-opus-5-5.ts';
 import { PROMPT as GATE_FABLE } from './gate/claude-fable-5-1.ts';
 import { PROMPT as GATE_OPUS } from './gate/claude-opus-5-5.ts';
 import type { PromptModule, PromptModules } from './inputs.ts';
@@ -94,6 +95,20 @@ export const PROMPTS: PromptTable<PromptModules> = {
       type: 'inherits',
       from: 'claude-opus-5-5',
       reviewed: '2026-10-06: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 pack-review prompt with its M4a rev 3 census cross-check and time-fixture and entry-point checks; no Fable-specific change needed',
+    },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
+    'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
+    'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  // M4b: the flow role on frontier (Opus), its rows mirroring packReview's. Fable reads the Opus flow prompt unchanged, as
+  // it reads the pack review's: its rules (the whole method in order, plain literal sentences, the ruler and the lever
+  // shapes as the only scope, change nothing, one report) are what the Fable guide asks of a judgment.
+  flow: {
+    'claude-opus-5-5': { type: 'prompt', prompt: FLOW_OPUS },
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-10-08: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 flow prompt (the five focusing steps, no tampering, the ruler out of reach, the lever catalogue with code\'s checks); no Fable-specific change needed',
     },
     'claude-sonnet-5-5': { type: 'unsupported', reason: SONNET_JUDGMENT },
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },

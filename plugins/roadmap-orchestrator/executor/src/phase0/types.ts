@@ -340,7 +340,27 @@ export type BriefArc = Readonly<{
   opportunities: readonly BriefOpportunity[];
   /** The drift indicator at the ref: each merged non-opportunity admit with findings attributed to its merge outside the slice. */
   drift: readonly BriefDrift[];
+  /** M4b: the arc's flow loop (src/brief.ts `briefFlow`); null for an arc with the loop off (one 1.0.0-dev.7 started). */
+  flow: BriefFlow | null;
 }>;
+
+/**
+ * M4b (plan "Surfaces"): an arc's flow, as rendered lines. At the ref: code's constraint (null before a merge) and the
+ * accounting (diagnostic only). In the delta: the verdicts, the ruler changes and the host advice. Against the previous
+ * arc of the chain: each lever it applied (and no verdict found worse) that this arc's plan no longer carries.
+ */
+export type BriefFlow = Readonly<{
+  constraint: string | null;
+  accounting: string;
+  verdicts: readonly string[];
+  rulerChanges: readonly string[];
+  hostAdvice: readonly string[];
+  dropped: readonly string[];
+}>;
+const briefFlow: Read<BriefFlow> = object((f) => ({
+  constraint: f.get('constraint', nullable(str)), accounting: f.get('accounting', str), verdicts: f.get('verdicts', arrayOf(str)),
+  rulerChanges: f.get('rulerChanges', arrayOf(str)), hostAdvice: f.get('hostAdvice', arrayOf(str)), dropped: f.get('dropped', arrayOf(str)),
+}));
 
 export const ADMIT_CLASS_NAMES = ['repair', 'oversight', 'opportunity'] as const;
 export type BriefConversion = Readonly<{ job: JobId; index: number; reason: ConversionReason }>;
@@ -426,6 +446,7 @@ const briefArc: Read<BriefArc> = object((f) => ({
     unit: g.get('unit', (v, p) => unitId(v, p)), job: g.get('job', (v, p) => jobIdOf(v, p)),
     findings: g.get('findings', arrayOf(object((h) => ({ id: h.get('id', (v, p) => findingId(v, p)), clauses: h.get('clauses', idList(vidR, { nonEmpty: true })) })), { nonEmpty: true })),
   })))),
+  flow: f.get('flow', nullable(briefFlow)),
 }));
 
 export const briefPayload: Read<BriefPayload> = object((f) => {

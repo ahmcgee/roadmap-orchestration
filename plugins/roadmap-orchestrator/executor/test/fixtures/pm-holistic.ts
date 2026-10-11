@@ -1,4 +1,4 @@
-// The holistic whole-pipeline scenario (M3 B8; test/pipeline-matrix.test.ts): an exec-common arc made holistic on a
+// The holistic whole-pipeline scenario (M3 B8; test/serial/pipeline-matrix.test.ts): an exec-common arc made holistic on a
 // corpus target (M4a D0, corpus-target.ts: a fresh holistic start targets a corpus; obligations witnessed on a fake
 // `journey` arc lane, the required lens set L = {vision}) and run by the real supervised `roadmap start` through the
 // whole-pipeline harness (pm-common.ts), keyed per unit and per job.

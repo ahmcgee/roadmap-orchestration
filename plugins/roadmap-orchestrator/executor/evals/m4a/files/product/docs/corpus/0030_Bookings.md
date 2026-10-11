@@ -58,3 +58,24 @@ is asked to phone ahead next time. Tidewater does not track no-shows.
 ## Records
 
 Every booking and cancellation is written to the booking ledger at once. Nothing is kept only in memory.
+
+## Read-outs for the evening tide
+
+A skipper coming in on the evening tide, and the office keeping her berth for her, read the same few things again
+and again. Each read-out below is one small function in a module of its own under `src/`, with its own test file
+under `test/unit/`; none of them needs the command line changed, and no two share a file.
+
+- **The quay sheet** (`src/quay.js`): one line per booking, giving the berth, the vessel, the high water and when
+  the window opens and closes. The office pins the day's lines up by the radio.
+- **Free berths** (`src/free.js`): the berths with no booking for a given window, in register order, so a skipper
+  whose first choice is taken is offered another straight away.
+- **The window note** (`src/note.js`): one line for a tide window, giving its high water and when it opens and
+  closes, as the office reads it out on the radio.
+- **A vessel's schedule** (`src/schedule.js`): every booking of one vessel, earliest first, so a skipper can see
+  what she has booked ahead.
+- **The booking slip** (`src/slip.js`): the one line a skipper keeps for a booking: its id, the vessel, the berth,
+  the date and the high water.
+- **The next window** (`src/next.js`): for a date and a time of day, the first window of that date that has not
+  closed yet, so a skipper on passage knows which window she can still make.
+
+None of these is built yet.

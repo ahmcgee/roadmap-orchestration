@@ -1,7 +1,7 @@
 // M3 step B2: journey lanes in a unit's candidate and the held-claims brake (src/pipeline/integrate.ts, lanes.ts), over
 // real arcs (real git, real processes, fake backends, fake witness lanes scripted per tree). Named tests:
-// brake.must-hold-red, brake.base-red, brake.future-measured (future activation, the latch), brake.split-repair, brake.known-regression-
-// test-level (G11), brake.unmapped-paths, fingerprint.obligation-revs, witness records and lane reuse, and the crash
+// brake.must-hold-red, brake.base-red, brake.future-measured (future activation, the latch), brake.absent-future-witness, brake.split-repair, brake.known-regression-
+// test-level (G11), brake.unmapped-paths, fingerprint.obligation-revs, fingerprint.judged-rev-change-regates, fingerprint.sibling-latch-*, witness records and lane reuse, and the crash
 // cells of the matrix row LATCH (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -14,6 +14,7 @@ import { findingId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { verifySnapshot } from '../src/git/snapshot.ts';
+import { selected } from '../src/pipeline/gate.ts';
 import { candidateBrakeFix } from '../src/pipeline/integrate.ts';
 import { witnessRecordPath } from '../src/pipeline/lanes.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
@@ -23,7 +24,7 @@ import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { scriptTree } from './helpers/witness.ts';
 import { LATCH, crashCells } from './matrix.ts';
-import { candidateTree, holisticArc, tipTree } from './fixtures/brake-common.ts';
+import { type HolisticArc, candidateTree, holisticArc, obligationsJson, tipTree } from './fixtures/brake-common.ts';
 import { closedAs, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import type { Step } from './helpers/scenario.ts';
@@ -36,6 +37,8 @@ const journeys = (r: ArcRun): readonly IntentOf<'proc.spawn'>[] => r.journal.vie
 const journeyLanes = (r: ArcRun): readonly string[] => journeys(r).map((i) => (i.expect.subject.purpose === 'journey' ? `${i.expect.subject.lane}@${i.expect.subject.at.slice(0, 7)}` : ''));
 const witnessedFor = (r: ArcRun) => facts(r).flatMap((f) => (f.kind === 'witnessed' ? [f] : []));
 const latched = (r: ArcRun) => facts(r).flatMap((f) => (f.kind === 'obligation-latched' ? [[f.obligation, f.unit]] : []));
+/** The needs-user items raised so far. */
+const raised = (r: ArcRun): readonly string[] => r.journal.view.opsOf('needsuser.raise').map((i) => i.expect.id);
 const steps = [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
 /** Every in-scope path maps to I-1 (the spec must then declare it). */
 const MAPPED = [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }] as const;
@@ -84,9 +87,12 @@ describe('the held-claims brake', () => {
     const r = contextFor(d);
     try {
       await approveThenScript(r, control, { t1: 'fail' });
-      await step(r.ctx, r.unit('u1'));
+      const parked = await runUnit(r.ctx, r.unit('u1'), admitAll);
       assert.equal(outcomes(d).at(-1), 'candidate:base-red', outcomes(d).join(' '));
       assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
+      assert.ok(parked.kind === 'parked');
+      assert.equal(parked.needsUser.reason, 'base-red');
+      assert.match(parked.needsUser.summary, /alone, without unit u1: lane journey red; obligation I-1 not held\. The base is broken/, 'the item names what was red on the tip alone');
     } finally {
       r.journal.close();
     }
@@ -130,6 +136,39 @@ describe('future obligations', () => {
       scriptTree(control, tipTree(d), { outcomes: { t1: 'pass', t2: 'pass' } });
       await stepUntil(r, 'u3', (f) => f.stage === 'candidate');
       assert.equal(outcomes(d, 'u3').at(-1), 'candidate:red', outcomes(d, 'u3').join(' '));
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('a sibling\'s future witness absent', () => {
+  test('brake.absent-future-witness: a candidate selecting a future obligation another unit delivers, whose witness test file neither the candidate nor the tip has yet, is not base-red: that lane is red on both but measured, never graded; the candidate is green and latches what it completes (paid m4b run 5)', T, async () => {
+    // As run 5's booking-texts: its approval selected clash-refusal's future I-11..13 (lane w-clash, test file not yet
+    // on the base) beside its own future ones (w-outbox, its file added by the unit). Before the fix w-clash, red with
+    // no record on the candidate and on the tip alike, was an unexplained lane the tip reproduced: a blocking base-red.
+    const { d, control } = holisticArc({
+      steps: unitSteps('u1', moduleFiles('mul', '*')),
+      units: [{ id: 'u1', obligations: ['I-1', 'I-2', 'I-3'] }, { id: 'u2' }],
+      lanes: ['journey', 'w-other'],
+      obligations: [
+        { id: 'I-1', testIds: ['t1'] },
+        { id: 'I-2', activation: 'future', deliveredBy: ['u1'], testIds: ['t2'] },
+        { id: 'I-3', activation: 'future', deliveredBy: ['u2'], testIds: ['t3'], lane: 'w-other' },
+      ],
+      mapping: MAPPED.map((m) => ({ ...m, obligations: ['I-1', 'I-2', 'I-3'] })),
+      trees: { '*': { outcomes: { t1: 'pass' }, absent: ['w-other'] } },
+    });
+    const r = contextFor(d);
+    try {
+      await approveThenScript(r, control, { t1: 'pass', t2: 'pass' });
+      const tree = candidateTree(d, 'u1');
+      scriptTree(control, tree, { outcomes: { t1: 'pass', t2: 'pass' }, absent: ['w-other'] });
+      assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
+      assert.ok(outcomes(d).includes('candidate:green'), outcomes(d).join(' '));
+      assert.deepEqual(raised(r), [], 'no needs-user item');
+      assert.deepEqual(latched(r), [['I-2', 'u1']]);
+      assert.ok(journeyLanes(r).some((l) => l.startsWith('w-other@')), 'the absent witness lane did run on the candidate');
     } finally {
       r.journal.close();
     }
@@ -246,11 +285,11 @@ describe('impact mapping', () => {
     }
   });
 
-  test('fingerprint.obligation-revs: the approval binds the selected obligations\' revisions; a mapping change that changes the selection re-gates at ff', T, async () => {
+  test('fingerprint.obligation-revs: the approval binds the selected obligations\' revisions; a mapping change that only grows the selection does not re-gate: the candidate\'s lanes witness the joiner (paid m4b run 6)', T, async () => {
     const { d } = holisticArc({
-      steps: [...steps, gateStep({ decision: 'approve' })], units: [{ id: 'u1', obligations: ['I-1'] }],
-      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }], mapping: [...MAPPED, { pattern: 'lib/**', obligations: ['I-2'] }],
-      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      steps, units: [{ id: 'u1', obligations: ['I-1'] }],
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
+      mapping: [...MAPPED, { pattern: 'lib/**', obligations: ['I-2'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
     });
     const r = contextFor(d);
     const w = wire(r);
@@ -263,10 +302,110 @@ describe('impact mapping', () => {
       writeFileSync(path, JSON.stringify({ ...o, mapping: { paths: [{ pattern: 'lib/**', obligations: ['I-2'] }] } }));
       const outcome = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d, 1 as never)));
       assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+      assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
+      assert.ok(!outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));
+      assert.equal(outcomes(d).filter((x) => x === 'gate:approve').length, 1, 'one gate: the approval held');
+      assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }], 'the approval binds what the gate judged');
+      const cand = r.journal.view.opsOf('candidate.merge').at(-1)!.post.new;
+      assert.ok(journeyLanes(r).includes(`other@${cand.slice(0, 7)}`), `the joiner I-2's lane ran on the candidate: ${journeyLanes(r).join(' ')}`);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('fingerprint.judged-rev-change-regates: an obligation the gate judged changes revision (future → must-hold, rev 2) before ff: fingerprint-invalid, and the re-gate binds rev 2', T, async () => {
+    const { d, control } = holisticArc({
+      steps: [...steps, gateStep({ decision: 'approve' })], units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2' }],
+      obligations: [{ id: 'I-1', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t1'] }], mapping: MAPPED, trees: { '*': { outcomes: { t1: 'pass' } } },
+    });
+    const r = contextFor(d);
+    const w = wire(r);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
+      assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }]);
+      const path = join(d.planPath, '..', 'obligations.json');
+      const next = obligationsJson({ obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED }, control) as Readonly<{ obligations: readonly Readonly<{ proofJudgment: object }>[] }>;
+      const i1 = next.obligations[0]!;
+      writeFileSync(path, JSON.stringify({ ...next, obligations: [{ ...i1, rev: 2, proofJudgment: { ...i1.proofJudgment, obligationRev: 2 } }] }));
+      const outcome = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d, 1 as never)));
+      assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
       await stepUntil(r, 'u1', (f) => f.stage === 'ff');
       assert.equal(outcomes(d).at(-1), 'ff:fingerprint-invalid', outcomes(d).join(' '));
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
-      assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }, { id: 'I-2', rev: 1 }], 'the re-gate binds the new selection');
+      assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 2 }], 'the re-gate binds the new revision');
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('the approval across a sibling\'s publication (paid m4b run 6)', () => {
+  /**
+   * u1 (mul) and u2 (div) touch only unmapped `src/` and `test/` paths, so each selects every must-hold obligation; u2
+   * delivers the future I-2. u1 is approved selecting I-1 alone; u2 then publishes and latches I-2, which u1 now selects.
+   */
+  const siblingArc = (): HolisticArc => holisticArc({
+    // u2 adds mul too (byte-identical, so the merges are clean): its lanes test mul before u1 publishes it. u1's own
+    // note keeps its candidate tree distinct from u2's, so its lanes witness it rather than reuse u2's observation.
+    steps: [
+      ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/note.js': 'export const note = 1;\n' }),
+      ...unitSteps('u2', { ...moduleFiles('mul', '*'), ...moduleFiles('div', '/') }),
+    ],
+    units: [{ id: 'u1' }, { id: 'u2', obligations: ['I-2'] }],
+    obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', activation: 'future', deliveredBy: ['u2'], testIds: ['t2'] }],
+    mapping: [{ pattern: 'lib/**', obligations: ['I-1'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+  });
+
+  async function u1ApprovedThenU2Published(r: ArcRun): Promise<void> {
+    await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
+    assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }]);
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u2'), admitAll), { kind: 'merged' }, outcomes(r.d, 'u2').join(' '));
+    assert.deepEqual(latched(r), [['I-2', 'u2']]);
+    const head = r.journal.view.unit(U1).approval!.fingerprint.unitCommit;
+    assert.deepEqual(selected(r.ctx, r.unit('u1'), sha(git(r.d.repo, 'rev-parse', 'main')), head).map((o) => o.id), ['I-1', 'I-2'], 'u1 now selects I-2');
+  }
+
+  test('fingerprint.sibling-latch-holds: an obligation a sibling\'s publication newly selects does not void the approval: one gate, no fingerprint-invalid, published', T, async () => {
+    const { d } = siblingArc();
+    const r = contextFor(d);
+    try {
+      await u1ApprovedThenU2Published(r);
+      assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
+      assert.ok(!outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));
+      assert.equal(outcomes(d).filter((x) => x === 'gate:approve').length, 1, 'one gate: the approval held');
+      assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('fingerprint.sibling-latch-graded: the joiner is graded on u1\'s candidate: not held there, held on the tip alone, red', T, async () => {
+    const { d, control } = siblingArc();
+    const r = contextFor(d);
+    try {
+      await u1ApprovedThenU2Published(r);
+      scriptTree(control, candidateTree(d, 'u1'), { outcomes: { t1: 'pass', t2: 'fail' } });
+      await stepUntil(r, 'u1', (f) => f.stage === 'candidate');
+      assert.equal(outcomes(d).at(-1), 'candidate:red', outcomes(d).join(' '));
+      const decided = r.journal.view.unit(U1).decided!;
+      const fix = candidateBrakeFix(r.ctx, r.unit('u1'), { type: 'stage', unit: U1, stage: 'candidate', attempt: decided.attempt });
+      assert.match(fix.directives.join('\n'), /Obligation I-2 must hold on the candidate/);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('fingerprint.sibling-latch-finding-blocked: an active P1 over the joiner blocks u1\'s candidate (G10), though its approval does not name it', T, async () => {
+    const { d } = siblingArc();
+    const r = contextFor(d);
+    try {
+      await u1ApprovedThenU2Published(r);
+      r.journal.fact({
+        kind: 'finding-opened', id: findingId('F-1'), key: sha256('1'.repeat(64)), lens: 'witness', severity: 'P1', obligation: 'I-2' as never,
+        visionClauses: [], claim: 'I-2 is not held on the audited head', evidence: [], mutant: null, source: { type: 'job', job: 'audit-1' as never }, gateHadPassed: true,
+      });
+      await stepUntil(r, 'u1', (f) => f.stage === 'candidate');
+      assert.equal(outcomes(d).at(-1), 'candidate:finding-blocked', outcomes(d).join(' '));
     } finally {
       r.journal.close();
     }

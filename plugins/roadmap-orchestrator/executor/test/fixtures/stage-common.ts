@@ -28,7 +28,7 @@ import { resolveRouting } from '../../src/routing/layers.ts';
 import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
 import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
-import { type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
+import { type ClaudeAct, type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
 import { arcFor, events } from './invoke-specs.ts';
 import type { CommandContext } from '../../src/commands/apply.ts';
 import { readHostSample } from '../../src/host/sample.ts';
@@ -102,7 +102,7 @@ function laneJson(l: LaneJson): Record<string, unknown> {
  * Writes start.json as the executor does before any stage runs (src/executor.ts `runExecutor`): generation 1, the
  * repo, the plan file and the profile.
  */
-function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, profile: ProfileName): void {
+export function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, profile: ProfileName): void {
   const start: RunStart = { v: SCHEMA_VERSION, generation: 1, at: isoTimeOf(new Date()), repo, planFile: planPath, profile };
   atomicJson(join(runDir, START_FILE), start);
 }
@@ -119,12 +119,12 @@ export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: Abs
     if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
     keepCorpusFiles(runDir, rows.opened.files);
   }
-  recordPlan(journal, runDir, files, [], { profile, config: null });
+  recordPlan(journal, runDir, files, [], { profile, config: null, arcRoles: 'm4b' });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
 export function applyFilesNow(run: StageRun): void {
-  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: null });
+  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: null, arcRoles: 'm4b' });
 }
 
 /** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */
@@ -220,19 +220,19 @@ export type PlanCheckAnswer = Readonly<{
 }>;
 
 /** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
-export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}): Step {
+export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   const argv = ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence', ...(expect.argv ?? [])];
   return {
     as: 'claude',
     expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode'] },
-    acts: [{
+    acts: [...before, {
       type: 'emit',
       value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])] },
     }],
   };
 }
 
-export const BUILD_REPORT = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [] } as const;
+export const BUILD_REPORT = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true } as const;
 
 /** Stdin-matching pattern for a failing lane's stdout/stderr dir of this run, as a fix round lists it. */
 export function laneEvidencePattern(run: StageRun, lane: string): string {

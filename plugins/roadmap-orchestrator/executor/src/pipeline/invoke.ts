@@ -1,9 +1,9 @@
 // The `proc.spawn` and `proc.kill` operations over the journal (plan "Runner and containment", R13-R15).
 //
 // proc.spawn, on the normal path:
-//   intent{subject, launchSha256, deadlineAt} (durable) → launch.json → start the runner → await it (its
-//   own deadline, the executor's backstop at deadlineAt + 2·grace) → quiescence → adapter (result.json)
-//   → usage fact → done.
+//   intent{subject, launchSha256, deadlineAt} (durable) → launch.json → start the runner → await it (its own
+//   deadline, the executor's backstop at deadlineAt + 2·grace) → quiescence → adapter (result.json) → usage fact
+//   → done{pressure: the launch's own cpu wait, from exit.json's cpu (M4b rev 3, src/host/pressure.ts)}.
 //
 // Quiescence before certification (R13): nothing reads a terminal file, and nothing is certified, while a
 // workload member lives. Members left after the runner is gone are killed by their own journaled
@@ -17,6 +17,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeResult } from '../backends/adapter.ts';
+import { launchPressure } from '../host/pressure.ts';
+import { exitCpuOf } from '../core/upgrade.ts';
 import { scan } from '../contain/proc.ts';
 import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
@@ -76,7 +78,7 @@ export type InvocationOutcome =
   | Readonly<{ kind: 'lost'; op: OpId; inv: InvocationId; treeEffects: boolean }>;
 
 /** How the invocation's runner ended before `settle`: awaited by the live executor, adopted, or already gone at recovery. */
-export type SettleMode = 'live' | 'adopted' | 'recovered';
+export type SettleMode = Readonly<{ type: 'live' }> | Readonly<{ type: 'adopted' }> | Readonly<{ type: 'recovered' }>;
 
 export type Settled = Readonly<{ outcome: InvocationOutcome; recoveredBy: RecoveredBy }>;
 
@@ -102,7 +104,7 @@ export async function invoke(journal: Journal, containment: Containment, spec: L
   const handle = startRunner(invocationDir(spec.runDir, durable.inv), launch, unit);
   await awaitRunner(handle);
   crashPoint('spawn.after-runner-exit', unit);
-  const settled = await settle({ journal, containment, runDir: spec.runDir }, spawnIntent(journal.view, durable.op), 'live');
+  const settled = await settle({ journal, containment, runDir: spec.runDir }, spawnIntent(journal.view, durable.op), { type: 'live' });
   return settled.outcome;
 }
 
@@ -125,7 +127,8 @@ export function spawnIntent(view: JournalView, op: OpId): IntentOf<'proc.spawn'>
  * loud ResultConflictError); without exit.json the invocation is lost. Then the usage fact, then done.
  *
  * `recoveredBy`: live → null; adopted → `adopted`; recovered → `reconciled` when result.json already
- * existed, `redone` when the adapter ran again. A lost invocation found by recovery is `reconciled`.
+ * existed, `redone` when the adapter ran again. A lost invocation found by recovery is `reconciled`. A result's
+ * `pressure` is read from exit.json's cpu in every mode: the runner measured it (M4b rev 3).
  */
 export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, mode: SettleMode): Promise<Settled> {
   const inv = invocationId(intent.op, intent.ordinal);
@@ -134,7 +137,7 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
   const unit = parentUnit(intent.parent, (op) => ctx.journal.view.latestIntent(op));
   // Recovery kills by op, which also reaches stray workloads of earlier ordinals; the runner of every
   // ordinal is dead by then (the latest was just checked, earlier ones were closed lost or aborted).
-  const target: KillTarget = { inv, scope: mode === 'recovered' ? 'op' : 'invocation', reason: 'recovery' };
+  const target: KillTarget = { inv, scope: mode.type === 'recovered' ? 'op' : 'invocation', reason: 'recovery' };
   if (!quiescent(ctx, target)) await killWorkload(ctx, target);
 
   const resultPath = join(dir, 'result.json');
@@ -143,7 +146,9 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
   let outcome: InvocationOutcome;
   let usage: Usage | null;
   let recoveredBy: RecoveredBy;
+  let pressure: number | null = null;
   if (exit !== null) {
+    pressure = launchPressure(exitCpuOf(exit));
     const launch = files.read('launch.json');
     if (launch === null) throw new Error(`${dir}: exit.json without launch.json`);
     if (launchSha256(launch) !== intent.expect.launchSha256) throw new Error(`${dir}/launch.json does not hash to the intent's launchSha256 ${intent.expect.launchSha256}`);
@@ -151,12 +156,12 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
     crashPoint('spawn.after-result', unit);
     outcome = { kind: 'result', op: intent.op, inv, result, resultSha256: sha256(sha256Hex(readFileSync(resultPath))) };
     usage = result.type === 'backend' ? result.usage : null;
-    recoveredBy = mode === 'live' ? null : mode === 'adopted' ? 'adopted' : hadResult ? 'reconciled' : 'redone';
+    recoveredBy = mode.type === 'live' ? null : mode.type === 'adopted' ? 'adopted' : hadResult ? 'reconciled' : 'redone';
   } else {
     if (hadResult) throw new Error(`${dir}: result.json without exit.json`);
     outcome = { kind: 'lost', op: intent.op, inv, treeEffects: existsSync(join(dir, STDOUT_FILE)) };
     usage = { kind: 'unavailable', reason: 'no-result' };
-    recoveredBy = mode === 'live' ? null : 'reconciled';
+    recoveredBy = mode.type === 'live' ? null : 'reconciled';
   }
 
   const charge = chargeOf(intent.expect.subject);
@@ -165,18 +170,18 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
     ctx.journal.fact(usageFact(charge, inv, usage));
   }
   crashPoint('spawn.after-usage', unit);
-  ctx.journal.done(intent.op, 'proc.spawn', doneOutcome(outcome), recoveredBy);
+  ctx.journal.done(intent.op, 'proc.spawn', doneOutcome(outcome, pressure), recoveredBy);
   crashPoint('spawn.after-done', unit);
   return { outcome, recoveredBy };
 }
 
-function doneOutcome(outcome: InvocationOutcome): OpOutcome['proc.spawn'] {
+function doneOutcome(outcome: InvocationOutcome, pressure: number | null): OpOutcome['proc.spawn'] {
   if (outcome.kind === 'lost') return { kind: 'lost', treeEffects: outcome.treeEffects };
   const { result } = outcome;
   const summary: ResultSummary = result.type === 'backend'
     ? { type: 'backend', outcome: result.outcome.kind }
     : { type: 'command', verdict: result.verdict };
-  return { kind: 'result', resultSha256: outcome.resultSha256, summary };
+  return { kind: 'result', resultSha256: outcome.resultSha256, summary, pressure };
 }
 
 type Charge = Readonly<{ routingRev: RoutingRev; subject: MeterSubject }>;
@@ -195,6 +200,7 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
     case 'probe':
     case 'journey':
     case 'mutant':
+    case 'proof':
       return null;
   }
 }
@@ -272,7 +278,7 @@ export function quiescent(ctx: Pick<ProcContext, 'containment' | 'runDir'>, targ
 }
 
 const CANCEL_REASONS: Readonly<Record<KillTarget['reason'], CancelReason | null>> = {
-  pause: 'pause', stop: 'stop', recovery: 'recovery', preempt: 'preempt', deadline: null, stall: null, 'external-unknown': null,
+  pause: 'pause', stop: 'stop', recovery: 'recovery', preempt: 'preempt', supersede: 'supersede', deadline: null, stall: null, reported: null, 'external-unknown': null,
 };
 
 /**

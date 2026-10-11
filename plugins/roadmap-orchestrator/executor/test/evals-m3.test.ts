@@ -195,7 +195,7 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.equal(spawnSync('node', ['src/cli.js', 'total', '0.1', '0.2'], { cwd: l.repo, encoding: 'utf8' }).stdout, '0.30\n', 'sums are exact');
 
   // The barrier (branch R): an audit's lane checkout without the regression passes; with it, the run waits until released.
-  const checkout = join(tmpDir('m3-checkouts'), 'audit-1.lanes');
+  const checkout = join(tmpDir('m3-checkouts'), 'audit-1.lanes-1');
   git(l.repo, 'worktree', 'add', '--detach', checkout, MAIN);
   const clean = runArcLane(o, MONEY_LANE, checkout);
   assert.equal(clean.run().status, 0, 'no regression: the audit\'s run passes straight through');
@@ -235,7 +235,8 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
 
   const steps = storySteps('story', 'default');
   assert.equal(steps.filter((s) => s.unit === undefined).length, 2, 'the one start smokes Claude and Codex');
-  assert.equal(steps.filter((s) => s.unit !== undefined && !/^(audit|ckpt|review)-/.test(s.unit)).length, 12, 'three calls for each of four units');
+  assert.equal(steps.filter((s) => s.unit !== undefined && !/^(audit|ckpt|review|flow)-/.test(s.unit)).length, 12, 'three calls for each of four units');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('flow-') === true).length, 1, 'one flow run (M4b: constraint-shift once three units merged, the repair held until it ended)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('review-') === true).length, 1, 'one pack review call (the corpus arc\'s, before the first admission)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 5, 'five lens calls');
   assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 5, 'five checkpoint calls (the paid run\'s four and the partial bundle)');

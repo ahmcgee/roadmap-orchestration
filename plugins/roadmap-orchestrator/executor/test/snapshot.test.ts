@@ -195,7 +195,7 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
   const planSha = keepInput(r.runDir, Buffer.from(`${JSON.stringify(PLAN)}\n`), PLAN_INPUT);
   const specSha = keepInput(r.runDir, Buffer.from('{"schema":"roadmap/spec-m1"}\n'), SPEC_INPUT);
   const ledgerSha = keepInput(r.runDir, Buffer.from('C-1 — a rule\n'), RULINGS_INPUT);
-  const provenance = routingProvenanceOf({ profile: 'default' as never, config: null }, parsePlan(PLAN));
+  const provenance = routingProvenanceOf({ profile: 'default' as never, config: null, arcRoles: 'm4b' }, parsePlan(PLAN));
   const payloadSha = keepPayload(r.runDir, parseRevisionPayload({
     v: 1, source: { type: 'start' }, base: 0, rev: 1,
     manifest: { planSha256: planSha, specs: { [UNIT]: specSha }, rulings: { ledgerSha256: ledgerSha, sidecars: {} }, obligations: null, vision: null },

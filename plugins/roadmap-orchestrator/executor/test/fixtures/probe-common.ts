@@ -47,7 +47,7 @@ export function openProbeRun(r: ProbeRun): OpenedProbe {
     stage: ctx,
     commands: {
       ...resources, hostEnv: backendEnv(hostEnv), laneEnv: hostEnv, routing: () => ({ profile: 'claude-only', resolved }),
-      routingBase: { profile: 'claude-only', config: null }, docs: DOCS_NOT_YET, planFile: absPath(join(r.planDir, 'plan.json')), planDir,
+      routingBase: { profile: 'claude-only', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET, planFile: absPath(join(r.planDir, 'plan.json')), planDir,
       probes: { prober: createProber(ctx), signal: new AbortController().signal },
     },
   };

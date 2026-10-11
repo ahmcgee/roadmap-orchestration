@@ -1,4 +1,4 @@
-// The concurrent crash matrix's scenarios (test/concurrent-matrix.test.ts; plan F20, G8): M2 arcs run by the
+// The concurrent crash matrix's scenarios (test/serial/concurrent-matrix.test.ts; plan F20, G8): M2 arcs run by the
 // real supervised `roadmap start` through the whole-pipeline harness (pm-common.ts), keyed per unit.
 //
 // Every scenario has the same prefix: the peer unit B (u2) starts and reaches its pin, then the stepping unit A

@@ -30,7 +30,9 @@
 // - The verdict: a cancel for pause or stop is an interruption, not a fault; a failed call whose backend
 //   reported a usage limit or capacity error parks that backend arc-wide (`backend-park`, its seq the park's
 //   epoch) and holds the stage with that park as the hold's cause (G5; lead ruling: outcome != success AND
-//   class in {usage-limit, capacity}); platform or backend error entries on a success are informational.
+//   class in {usage-limit, capacity}); platform or backend error entries on a success are informational. M4b rev 3
+//   (RC-11): a unit's call that its deadline or stall watchdog ended under host pressure is starved, a hold with cause
+//   `host-pressure` (starved.ts), not a process fault.
 // - An implementer call that resumes a session and ends `process-fault` with no complete JSON line on stdout
 //   never had its session persisted (`sessionNeverPersisted`; rounds.ts `callRound` re-runs it fresh).
 // - M3 (LR-d): the arc roles' call (`callArcRole`): a lens of an audit or a checkpoint, a job's fresh read-only session
@@ -67,6 +69,7 @@ import { runnerFiles } from '../runner/files.ts';
 import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
 import { abortReason } from './redlane.ts';
 import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
+import { callRuling, pressureCause } from './starved.ts';
 import { judgmentSeat } from './transitions.ts';
 
 /**
@@ -166,7 +169,7 @@ function routingChanged(record: DispatchRecord): Pinned<never> {
 }
 
 /** Whether any implementer call was ever started for `unit`. */
-function buildStarted(view: JournalView, unit: UnitId): boolean {
+export function buildStarted(view: JournalView, unit: UnitId): boolean {
   return view.opsOf('proc.spawn').some((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build' && i.expect.subject.unit === unit);
 }
 
@@ -546,8 +549,8 @@ export function recordedArcCall(ctx: StageContext, job: JobId, role: ArcRole, at
   return { kind: 'result', inv, invDir, result };
 }
 
-/** Why a stage attempt was interrupted rather than failed. */
-export type Interruption = 'pause' | 'stop' | BackendParkClass;
+/** Why a stage attempt was interrupted rather than failed: M4b rev 3 (RC-11), `host-pressure` for a starved call. */
+export type Interruption = 'pause' | 'stop' | BackendParkClass | 'host-pressure';
 
 /**
  * A call read for the transition table. `interrupted` never charges. A backend park is already recorded
@@ -591,12 +594,18 @@ export function backendOf(called: BackendCallOutcome): Backend {
 /**
  * Reads a finished call. Order: an interruption (outcome `cancelled`: a pause or stop) first, then the
  * usage-limit/capacity park (outcome != success with such an error: a `backend-park` fact, arc-wide, whose seq
- * is the park's epoch and the hold's cause), then the outcome itself.
+ * is the park's epoch and the hold's cause), then, for a unit's stage, a starved call (M4b rev 3, RC-11: a process
+ * fault its deadline or stall watchdog ended under host pressure, `callRuling`: held with cause `host-pressure`,
+ * uncharged), then the outcome itself. A job's call is never starved: no unit is charged for it.
  */
 export function verdictOf(ctx: StageContext, parent: CallParent, called: BackendCallOutcome): BackendVerdict {
   if (called.kind === 'lost') return { kind: 'process-fault', detail: `${called.inv} was lost with its runner` };
   const { result } = called;
-  if (result.outcome.kind === 'cancelled') return { kind: 'interrupted', reason: result.outcome.reason, cause: null, needsUser: null };
+  if (result.outcome.kind === 'cancelled') {
+    // A superseded call is a checkpoint's, which asks again or decides stale itself (src/holistic/checkpoint.ts `ask`).
+    if (result.outcome.reason === 'supersede') throw new Error(`${called.inv} was superseded: only the checkpoint reads a superseded call`);
+    return { kind: 'interrupted', reason: result.outcome.reason, cause: null, needsUser: null };
+  }
   if (result.outcome.kind !== 'success') {
     const park = result.backendErrors.map((e) => e.class).find((c): c is BackendParkClass & BackendErrorClass => (BACKEND_PARK_CLASSES as readonly string[]).includes(c));
     if (park !== undefined) {
@@ -605,6 +614,10 @@ export function verdictOf(ctx: StageContext, parent: CallParent, called: Backend
       const needsUser = park === 'usage-limit' ? usageLimitNeedsUser(parent, backend, called) : null;
       return { kind: 'interrupted', reason: park, cause: { type: 'backend', backend, parkSeq }, needsUser };
     }
+  }
+  if (parent.type === 'stage' && result.outcome.kind === 'process-fault') {
+    const cause = pressureCause(callRuling(ctx.journal.view, ctx.runDir, ctx.journal.view.unit(parent.unit), called.inv));
+    if (cause !== null) return { kind: 'interrupted', reason: 'host-pressure', cause, needsUser: null };
   }
   switch (result.outcome.kind) {
     case 'success':

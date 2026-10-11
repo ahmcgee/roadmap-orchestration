@@ -151,7 +151,7 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
   const lane = (id: string, verdict: LaneRecord['verdict']): LaneRecord => ({
     lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: verdict === 'fail' ? 1 : null, verdict, evidenceDir: absPath(`/ev/${id}`), ignored: null,
     inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(`/ev/${id}/output/files`)],
-    host: null, signatures: [], voided: null, diagnostic: null, flaky: false, reused: null, redRev: 2, repeat: null, hostSuspected: null,
+    host: null, signatures: [], voided: null, diagnostic: null, flaky: false, reused: null, redRev: 2, pressure: null, repeat: null, hostSuspected: null,
   });
   const salvage = sha('a'.repeat(40));
   const stalled = laneFixRound([lane('fast', 'pass'), lane('suite', 'stall')], [], salvage);
@@ -272,7 +272,7 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
   // The architect's evidence-only edit, applied: the unit's spec in force at once.
   recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), absPath(run.repo)), [
     { type: 'spec', unit: U1, edit: 'evidence', specRev: specRev(1), specSha256: fileSha256(run.specPath) },
-  ], { profile: 'default', config: null });
+  ], { profile: 'default', config: null, arcRoles: 'm4b' });
   assert.deepEqual(fingerprintAt(run.ctx, run.unit, run.base), before, 'evidence plumbing is outside the approval fingerprint');
 
   const second = started(await lanes(run.ctx, run.unit, run.base));

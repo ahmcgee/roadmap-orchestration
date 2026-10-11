@@ -10,8 +10,8 @@
 // 4. a Claude `stop_reason: "refusal"` with no schema-valid output turns `malformed` into `refusal`;
 // 5. a reported session id that differs from the launched one turns `success` into `malformed`.
 //
-// A Claude call's Read/Grep/Glob calls are written beside result.json as reads.json (`ReadsFile`), by the
-// same write-once rule; Codex writes none.
+// A Claude call's Read/Grep/Glob calls, and those the CLI refused, are written beside result.json as reads.json
+// (`ReadsFile`), by the same write-once rule; Codex writes none.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { durableWrite } from '../core/fsx.ts';
@@ -37,8 +37,11 @@ export type BackendReading = Readonly<{
   backendErrors: readonly BackendError[];
   /** The backend's stop reason when it reports one (Claude); refusal is read from it. */
   stopReason: string | null;
-  /** The session's read-only tool calls (Claude); null for Codex, or when the output could not be read. */
-  reads: readonly ToolRead[] | null;
+  /**
+   * The session's read-only tool calls and those the CLI refused (Claude's `permission_denials`; none without a
+   * result event); null for Codex, or when the output could not be read.
+   */
+  access: Readonly<{ reads: readonly ToolRead[]; denied: readonly ToolRead[] }> | null;
 }>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -137,7 +140,7 @@ function read(terminal: BackendTerminal, stdoutPath: AbsPath): BackendReading {
     return readClaude(readText(terminal.outputPath) ?? '');
   } catch (error) {
     if (!(error instanceof MalformedOutputError)) throw error;
-    return { sessionId: null, output: { kind: 'absent', why: error.message }, usage: { kind: 'unavailable', reason: 'malformed' }, backendErrors: [], stopReason: null, reads: null };
+    return { sessionId: null, output: { kind: 'absent', why: error.message }, usage: { kind: 'unavailable', reason: 'malformed' }, backendErrors: [], stopReason: null, access: null };
   }
 }
 
@@ -186,7 +189,7 @@ function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted
   const result: BackendResult = terminal.role === 'build'
     ? { ...base, role: terminal.role, session: implementerSession(terminal, reading) }
     : { ...base, role: terminal.role, session: terminal.session.id };
-  return { result, reads: reading.reads === null ? null : { ...bound, reads: reading.reads } };
+  return { result, reads: reading.access === null ? null : { ...bound, ...reading.access } };
 }
 
 function adapted(input: AdapterInput): Adapted {

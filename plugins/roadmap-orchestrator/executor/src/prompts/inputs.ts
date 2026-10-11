@@ -7,7 +7,7 @@
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
-import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
+import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
@@ -15,11 +15,12 @@ import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
 import type {
-  DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding,
+  BundleRejection, DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding,
   Vision, VisionClause, VisionCoverage, VisionQuestion,
 } from '../holistic/types.ts';
 import { obligationSource } from '../holistic/types.ts';
 import type { PinnedRule } from '../corpus/types.ts';
+import type { FlowPromptInputs } from '../flow/types.ts';
 import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
 import type { GateFinding, Premise } from './schemas.ts';
@@ -151,9 +152,12 @@ export type PlanCheckInputs = Readonly<{
 
 /**
  * What the acceptance shape needs beyond the uniform check: the spec's next free witness item id (R59: ids are
- * consecutive from it) and the arc lanes a witness item may name (the obligations file's lanes).
+ * consecutive from it), the arc lanes a witness item may name (the obligations file's lanes), and (paid M4b run 6) the
+ * witnesses of the obligations the unit delivers, already required by their exact ids, which an item restating one reuses.
  */
-export type PlanCheckAcceptance = Readonly<{ nextWitnessId: WitnessItemId; arcLanes: readonly LaneId[] }>;
+export type PlanCheckAcceptance = Readonly<{ nextWitnessId: WitnessItemId; arcLanes: readonly LaneId[]; delivered: readonly DeliveredWitness[] }>;
+/** One obligation the unit delivers or repairs, with its witness's lane and test ids (each required of the unit). */
+export type DeliveredWitness = Readonly<{ obligation: ObligationId; statement: string; lane: LaneId; testIds: readonly string[] }>;
 
 export type BuildInputs = Readonly<{
   spec: RenderedSpec;
@@ -276,6 +280,14 @@ export type LensInputs = Readonly<{
    * judges these against the vision; the code range is not its subject); null: a full audit.
    */
   specsOnly: readonly RenderedSpec[] | null;
+  /** M4b (paid run 3): this lens asked again because drafts of its previous report on this tree were refused; null: a first call. */
+  retry: LensRetry | null;
+}>;
+
+/** A lens asked again: the drafts refused with why, and the claims and causes of the previous report's admitted findings. */
+export type LensRetry = Readonly<{
+  refused: readonly Readonly<{ claim: string; cause: string; reason: string }>[];
+  recorded: readonly Readonly<{ claim: string; cause: string }>[];
 }>;
 
 /**
@@ -294,14 +306,17 @@ export type TriggerView =
 /** A checkpoint decision the executor refused: rejected invalid, or sent to the owner as not applicable as proposed. */
 export type RefusedProposal = Readonly<{ job: JobId; outcome: 'rejected-invalid' | 'owner-request'; reasons: string }>;
 
+/** An earlier job of this checkpoint's trigger whose decision the executor rejected: its reason and detail verbatim. */
+export type PriorRejection = Readonly<{ job: JobId; reason: BundleRejection; detail: string }>;
+
 export type CheckpointInputs = Readonly<{
   vision: VisionInput;
   trigger: TriggerView;
-  /** The previous job of this trigger, when the executor rejected its decision as invalid: its job and reasons verbatim. */
-  priorInvalid: Readonly<{ job: JobId; reasons: string }> | null;
+  /** Paid M4b run 3: every earlier job of this trigger whose decision the executor rejected, any reason, oldest first. */
+  priorRejected: readonly PriorRejection[];
   /**
    * Paid M4a run 12: the proposals refused earlier under the plan revision of this capture, any trigger (the most recent
-   * few, oldest first; `priorInvalid`'s job excluded), each with the executor's reasons verbatim: what no checkpoint
+   * few, oldest first; `priorRejected`'s jobs excluded), each with the executor's reasons verbatim: what no checkpoint
    * proposes again unchanged.
    */
   refused: readonly RefusedProposal[];
@@ -381,6 +396,8 @@ export type RoleInputs = {
   readonly lens: LensInputs;
   readonly checkpoint: CheckpointInputs;
   readonly packReview: PackReviewPromptInputs;
+  /** M4b: a flow run's kept inputs (src/flow/types.ts `FlowInputs`) without their envelope. */
+  readonly flow: FlowPromptInputs;
 };
 
 export const ROLE_INPUTS = {
@@ -390,12 +407,13 @@ export const ROLE_INPUTS = {
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
     'checks',
   ],
-  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
+  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly', 'retry'],
   checkpoint: [
-    'vision', 'trigger', 'priorInvalid', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
+  flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -407,6 +425,7 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   lens: true,
   checkpoint: true,
   packReview: true,
+  flow: true,
 };
 void ROLE_INPUTS_COMPLETE;
 
@@ -566,10 +585,6 @@ Read the spec, the documents above and the code the spec depends on, then return
 ${vision}`;
 }
 
-/**
- * The acceptance shape of a plan-check (E, R59), or nothing for the uniform check: the redirect may only add or replace
- * witness items and facts, and cite; witness items take ids from the spec's next free `W-n`.
- */
 /** Run 10 (C): the previous plan-check answer's refused patch, as the retry reads it (empty when there was none). */
 export function planCheckPriorInvalidText(reason: string | null): string {
   if (reason === null) return '';
@@ -580,9 +595,18 @@ Your previous answer on this unit redirected with a patch the executor refused, 
 </prior_attempt>`;
 }
 
+/**
+ * The acceptance shape of a plan-check (E, R59), or nothing for the uniform check: the redirect may only add or replace
+ * witness items and facts, and cite; witness items take ids from the spec's next free `W-n`.
+ */
 export function acceptanceShapeText(a: PlanCheckAcceptance | null): string {
   if (a === null) return '';
   const lanes = a.arcLanes.length === 0 ? '(none: this arc declares no arc lanes, so no witness item can be written; say so in notes)' : a.arcLanes.join(', ');
+  const delivered = a.delivered.length === 0
+    ? 'This unit delivers no obligation with a witness, so obligation is null on every item.'
+    : `The obligations this unit delivers already name their witness tests, and the executor requires each of them by its exact id:
+${a.delivered.map((d) => `- ${d.obligation}: ${d.statement}\n  lane ${d.lane}, ${d.testIds.length === 1 ? 'test' : 'tests'} ${d.testIds.map((t) => JSON.stringify(t)).join(', ')}`).join('\n')}
+A clause one of these tests proves needs no second test. A witness item for such a clause sets obligation to that obligation's id and copies its lane and one of its test ids exactly; the executor refuses an item whose lane or test id differs. Never name a new test for behaviour one of these tests already proves: the build would then have to keep two names for one test, and renaming one to satisfy the other breaks the first.`;
   return `
 
 <acceptance_shape>
@@ -590,14 +614,18 @@ This check runs in the acceptance shape: an efficient model builds this unit, an
 
 In this shape a redirect may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted. A defect you would fix in another section goes in notes for the build and the gate, or, when it leaves the spec unbuildable, is an escalation.
 
-A witness item is {id, lane, testId, clause, skeleton}:
+${delivered}
+
+A witness item is {id, lane, testId, clause, skeleton, obligation}:
 - id: a new item takes the next free id, ${a.nextWitnessId}, and further new items the ids after it in order, written without leading zeros; replace names a witness id the spec already holds.
 - lane: one of the arc lanes: ${lanes}.
 - testId: the test's exact id as that lane's reporter gives it (for node --test, the suite and test names joined by " > ").
+  Name only a test the change newly makes pass. A check that existing behaviour is preserved passes with the change reverted, so mutation smoke reports it against the unit; it is not a witness item but belongs to a must-hold obligation's witness.
 - clause: the id of the acceptance clause it witnesses.
 - skeleton: the test's shape in one or two plain sentences: the entry point it drives, the fixture it injects, what it asserts. A negative witness drives the real entry point with an injected fixture, never a helper.
+- obligation: the id of the obligation above whose witness test this item names, or null when none of their tests proves the clause.
 
-Approve when every acceptance clause that admits a test already has an active witness item that would fail without the behaviour.
+Approve when every acceptance clause that admits a test already has an active witness item, or a witness test of an obligation above, that would fail without the behaviour.
 </acceptance_shape>`;
 }
 
@@ -613,6 +641,14 @@ export function packReviewDeltaText(delta: PackReviewDelta | null): string {
 export function specsOnlyText(specsOnly: readonly RenderedSpec[] | null): string {
   if (specsOnly === null) return '';
   return `\n\n<specs_only>\nThis audit runs because a plan revision changed only these units' specs; the product code is unchanged since the code lenses last read it, and only the vision lens runs. Judge what these specs now ask for against the vision. Do not audit the code again.\n${documentsXml(specsOnly.map((s) => ({ source: `spec of unit ${s.unit}, revision ${s.rev} (changed by the revision this audit follows)`, content: s.markdown })))}\n</specs_only>`;
+}
+
+/** M4b (paid run 3): a lens asked again, told which drafts of its previous report were refused and why. */
+export function lensRetryText(retry: LensRetry | null): string {
+  if (retry === null) return '';
+  const refused = retry.refused.map((x) => `- claim: ${x.claim}\n  cause: ${x.cause}\n  refused: ${x.reason}`).join('\n');
+  const recorded = retry.recorded.length === 0 ? '(none)' : retry.recorded.map((x) => `- claim: ${x.claim}\n  cause: ${x.cause}`).join('\n');
+  return `\n\n<previous_report>\nThis lens already reported on this tree. The executor could not admit these findings of that report, so they are not recorded:\n${refused}\nReport each of them again with the defect corrected, under the same cause: copy each edit's old text exactly from the file at the audited SHA, with enough lines that it occurs exactly once, and name a lane from the obligations. These findings of that report are recorded; do not report them again:\n${recorded}\nReport anything else your lens finds as usual.\n</previous_report>`;
 }
 
 /** The checkpoint's input manifest (H4): every captured input by kind, id, kept path and hash. */
@@ -799,6 +835,7 @@ export function coverageText(c: VisionCoverage): string {
   const withdrawn = c.withdrawnCited.map((w) => `${w.clause} (cited by ${w.citedBy.join(', ')})`);
   return [
     `Advanced clauses no active obligation serves: ${c.unservedAdvanced.join(', ') || 'none'}`,
+    `Opportunity clauses no active obligation serves (not a gap to close: see the opportunity rules): ${c.unservedOpportunity.join(', ') || 'none'}`,
     `Horizon clauses (beyond this arc, not a gap): ${c.horizon.join(', ') || 'none'}`,
     `Active obligations serving no clause: ${c.obligationsServingNone.join(', ') || 'none'}`,
     `Withdrawn clauses still cited: ${withdrawn.join('; ') || 'none'}`,
@@ -809,10 +846,20 @@ export function divergencesText(divergences: CheckpointInputs['divergences']): s
   return divergences.length === 0 ? '(none)' : divergences.map((d) => `- ${d.id} (${d.type}): ${d.what}`).join('\n');
 }
 
-/** The previous attempt's invalid decision, as the retry reads it (empty when there was none). */
-export function priorInvalidText(p: CheckpointInputs['priorInvalid']): string {
-  if (p === null) return '';
-  return `\n\n<prior_attempt>\nThe previous checkpoint on this trigger, ${p.job}, decided a bundle the executor rejected as invalid, for these reasons: ${p.reasons}\nThis is the last attempt: a second invalid decision goes to the owner as a request. Correct each reason above; do not repeat it.\n</prior_attempt>`;
+/** What a rejection of each reason tells the next attempt, after its detail. */
+const PRIOR_REJECTION_TEXT: Readonly<Record<PriorRejection['reason'], Readonly<{ as: string; then: string }>>> = {
+  invalid: { as: 'rejected as invalid, for these reasons', then: 'Correct each reason; do not repeat it.' },
+  evidence: { as: 'rejected on its evidence', then: 'The lanes it cited were witnessed again on the head: cite the observations given below, not the ones it cited.' },
+  stale: { as: 'rejected as stale', then: 'What it read changed after its capture: decide again from the inputs below.' },
+  busy: { as: 'rejected as busy', then: 'The stage attempts it named have closed: decide again from the inputs below.' },
+};
+
+/** The earlier rejected decisions of this trigger, as the next attempt reads them (empty when there were none). */
+export function priorRejectedText(prior: CheckpointInputs['priorRejected']): string {
+  if (prior.length === 0) return '';
+  const line = (p: PriorRejection): string => `- ${p.job}, ${PRIOR_REJECTION_TEXT[p.reason].as}: ${p.detail}\n  ${PRIOR_REJECTION_TEXT[p.reason].then}`;
+  const last = prior.some((p) => p.reason === 'invalid') ? '\nThis is the last attempt: a second invalid decision goes to the owner as a request.' : '';
+  return `\n\n<prior_attempt>\nEarlier checkpoints on this trigger decided what the executor rejected, oldest first:\n${prior.map(line).join('\n')}${last}\n</prior_attempt>`;
 }
 
 /** The proposals already refused and why, as every checkpoint reads them (empty when there are none). */

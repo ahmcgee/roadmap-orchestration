@@ -12,7 +12,7 @@
 //   the plan in force: a start puts changed files in force through the apply rules, a `--respawn` after a
 //   crash runs the plan in force and ignores unapplied edits) →
 //   refused: `status.rejection.json` in the run dir for exit 78, exit.reason.json{refused}, exit 78/75
-//   → `start.json`, the first heartbeat (the supervisor's readiness signal), `executor-started{generation}`
+//   → `start.json`, the first heartbeat (the supervisor's readiness signal), `executor-started{generation, host, pressure}`
 //   (clears the stop marker) → control-only phase (below) → recovery (recover.ts), which closes a smoke
 //   spawn a crashed start left open like any other → the outcomes of the stage attempts whose backend call
 //   recovery closed are recorded (`consumeRecovered`) → the backend smoke, last of the startup checks (a
@@ -62,8 +62,9 @@ import { hostPath, openHostDir } from './host/hostdir.ts';
 import { isAlive, selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
-import { readHostSample } from './host/sample.ts';
-import { requirePlanInForce } from './input/inforce.ts';
+import { readHostFingerprint, readHostSample } from './host/sample.ts';
+import { pressureAvailability } from './host/pressure.ts';
+import { arcRolesOf, requirePlanInForce } from './input/inforce.ts';
 import type { PlanM1 } from './input/plan.ts';
 import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
 import { type ProberHandle, createProber } from './park/probe.ts';
@@ -227,7 +228,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     const start: RunStart = { v: SCHEMA_VERSION, generation: claim.generation, at: isoTimeOf(new Date()), repo: context.repo, planFile: context.planFile, profile: context.profile };
     atomicJson(join(context.runDir, START_FILE), start);
     writeHeartbeat(context.runDir, claim.generation);
-    journal.fact({ kind: 'executor-started', generation: claim.generation });
+    journal.fact({ kind: 'executor-started', generation: claim.generation, host: readHostFingerprint(), pressure: pressureAvailability() });
 
     const x = contexts(args, context, routing.profile, journal);
     const stopped = args.controlOnly ? await controlOnly(x) : null;
@@ -330,7 +331,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     hostEnv: backendEnv(args.env),
     laneEnv: args.env,
     planFile: context.planFile,
-    routingBase: { profile, config },
+    routingBase: { profile, config, arcRoles: arcRolesOf(journal.view.planApplied()) },
     docs: docsPublisher({ ...resources, hostEnv: args.env, planFile: context.planFile, arbiter }),
     plan: () => inForce().plan,
     routing: (unit) => ({ profile, resolved: routing(unit) }),

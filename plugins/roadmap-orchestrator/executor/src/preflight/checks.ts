@@ -10,7 +10,8 @@
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
 //                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
-//                   `obligation-dropped`, reported as plan-change-refused), a start whose files differ applies
+//                   `obligation-dropped`, and the classifier's lane-evidence row `evidenceScopeConflicts` over
+//                   every unit, both reported as plan-change-refused), a start whose files differ applies
 //                   them through the apply core (src/commands/apply.ts `evaluateRevision`, source `start`) or
 //                   refuses (plan-change-refused); a revision a crash left mid-commit is recovery's first, and so
 //                   is a committed command's write-back (its `command.apply` still open with its revision in force:
@@ -45,7 +46,7 @@ import { durableMkdir, readJson } from '../core/fsx.ts';
 import { type ArcId, INTEGRATION_SLOT, type ResourceName, type Sha, type UnitId, sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { LogCorruptError, type OpenJournal, openJournal, readJournal } from '../core/log.ts';
-import type { HostLockClaim, LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
+import type { HostLockClaim, LaneDef, SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
 import { gitRun, refTarget } from '../git/git.ts';
@@ -57,7 +58,7 @@ import { advancesReasons } from '../holistic/vision.ts';
 import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
-  type InputFiles, type RoutingBase, appendRevision, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
+  type InputFiles, type RoutingBase, appendRevision, arcRolesOf, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
   recordPlan, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
 import { CORPUS_VISION_FILE, type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason, visionFile } from '../input/plan.ts';
@@ -66,16 +67,15 @@ import { finishPendingAcks } from '../chain.ts';
 import { FRESH_START, RESTART, holisticNeedsCorpus, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
-import { checkLaneTiers } from '../resources/reserve.ts';
 import {
   type RepoConfig, type ResolvedRouting, planStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
 } from '../routing/layers.ts';
-import type { ProfileName } from '../routing/types.ts';
+import type { ArcRoleSet, ProfileName } from '../routing/types.ts';
 import { type Ruling, loadRulings, parseRulings } from '../spec/rulings.ts';
-import { SpecFileError, parseSpec } from '../spec/spec.ts';
-import { resolveArgv0 } from './argv0.ts';
+import { SpecFileError, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
+import { laneRows } from './lanerows.ts';
 import { type SmokePark, type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeOutages, smokeRejections } from './smoke.ts';
-import type { CommandProblem, StartupCheck, StartupContext, StartupRejection } from './startup.ts';
+import type { StartupCheck, StartupContext, StartupRejection } from './startup.ts';
 
 type Rejection<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
@@ -318,46 +318,15 @@ export const worktreeRootCheck: StartupCheck<'worktree-root-unusable'> = {
   },
 };
 
-/** A declared command: a lane, or a resource's probe or teardown. */
-type Declared = Readonly<{ argv: readonly string[]; env: LaneEnv }>;
-
-/** argv[0] and the declared host variables of one command. */
-function commandProblems(command: Declared, env: Readonly<Record<string, string | undefined>>): CommandProblem[] {
-  const out: CommandProblem[] = [];
-  if (resolveArgv0(command, env).kind === 'not-found') out.push({ type: 'argv0-unresolvable', argv0: command.argv[0] as string });
-  for (const name of command.env.pass) if (env[name] === undefined) out.push({ type: 'env-missing', name });
-  return out;
-}
-
-function laneProblems(unit: UnitId | null, lane: LaneDef, env: Readonly<Record<string, string | undefined>>): Rejection<'spec-lane-unrunnable'>[] {
-  return commandProblems(lane, env).map((problem) => ({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem }));
-}
-
-/** Every declared resource's probe and teardown (resource variant of the row). */
-function resourceProblems(plan: PlanM1, env: Readonly<Record<string, string | undefined>>): Rejection<'spec-lane-unrunnable'>[] {
-  return plan.resources.flatMap((r) => (['probe', 'teardown'] as const).flatMap((command) =>
-    commandProblems(r[command], env).map((problem): Rejection<'spec-lane-unrunnable'> => ({ kind: 'spec-lane-unrunnable', resource: r.name, command, problem }))));
-}
-
-/**
- * Suite lanes and every unit's active lanes (argv[0], declared host variables, the fast/estate boundary),
- * then every resource's probe and teardown command.
- */
+/** The lane row over every live unit of the plan (src/preflight/lanerows.ts, the one lane validator). */
 export function specLaneCheck(env: Readonly<Record<string, string | undefined>>): StartupCheck<'spec-lane-unrunnable'> {
   return {
     kind: 'spec-lane-unrunnable',
-    check: async (context) => {
-      const out = context.plan.suite.lanes.flatMap((lane) => laneProblems(null, lane, env));
-      for (const unit of context.plan.units) {
-        const bytes = context.specOf(unit);
-        if (bytes === null) throw new Error(`spec-lane-unrunnable: the spec of ${unit.id} is absent, which plan-invalid refuses first`);
-        const spec = parseSpec(bytes, specPath(context, unit));
-        for (const lane of spec.lanes) if (lane.state === 'active') out.push(...laneProblems(unit.id, lane, env));
-        out.push(...checkLaneTiers(spec, unit));
-      }
-      out.push(...resourceProblems(context.plan, env));
-      return out;
-    },
+    check: async (context) => [...laneRows(context.plan, context.plan.units.map((u) => u.id), (unit) => {
+      const bytes = context.specOf(unit);
+      if (bytes === null) throw new Error(`spec-lane-unrunnable: the spec of ${unit.id} is absent, which plan-invalid refuses first`);
+      return parseSpec(bytes, specPath(context, unit));
+    }, env)],
   };
 }
 
@@ -379,7 +348,7 @@ export function committedRepoConfig(repo: AbsPath, commit: Sha): RepoConfig | nu
 
 /** The stack for this arc: the profile, the repo config's seats and class rebinds, the plan's layer (no per-unit layers in M1). */
 export function resolveArcRouting(context: StartupContext): ResolvedRouting {
-  return routingOf(context.profile, context.repo, context.plan);
+  return routingOf(context.profile, context.repo, context.plan, context.arcRoles);
 }
 
 export const routingCheck: StartupCheck<'unsupported-routing'> = {
@@ -480,6 +449,16 @@ function fileSource(planFile: AbsPath, repo: AbsPath): Source | Rejection<'plan-
   return { plan: files.plan, specOf: (unit) => files.specs.get(unit.id)?.bytes ?? null, files };
 }
 
+/** The arc's role set at a start (M4b): its revisions', or `m4b` before its first plan (a corrupt log is refused in group 4). */
+function arcRolesAt(runDir: AbsPath, arc: ArcId): ArcRoleSet | null {
+  try {
+    return arcRolesOf(readJournal(runDir, arc).view.planApplied());
+  } catch (error) {
+    if (error instanceof LogCorruptError) return arcRolesOf(null);
+    throw error;
+  }
+}
+
 /** On a respawn, the plan in force and its kept specs; null when the log records none (or does not read). */
 function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
   let view: JournalView;
@@ -495,9 +474,9 @@ function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
   return { plan: inForce.plan, specOf, files: null };
 }
 
-/** The arc's routing for `plan` under the start's profile and the repo config. */
-export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): ResolvedRouting {
-  return resolveRouting(planStack(profile, readRepoConfig(repo), plan));
+/** The arc's routing for `plan` under the start's profile, the repo config and the arc's role set. */
+export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1, arcRoles: ArcRoleSet | null): ResolvedRouting {
+  return resolveRouting(planStack(profile, readRepoConfig(repo), plan, arcRoles));
 }
 
 /**
@@ -507,7 +486,7 @@ export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1): Re
  * in force and asks nothing.
  */
 export function settlePlan(
-  journal: OpenJournal, context: StartupContext, files: InputFiles | null, corpusFiles: readonly SourceFile[] = [],
+  journal: OpenJournal, context: StartupContext, files: InputFiles | null, env: Readonly<Record<string, string | undefined>>, corpusFiles: readonly SourceFile[] = [],
 ): readonly Rejection<'plan-change-refused'>[] {
   // A start's own revision a crash left mid-commit (it has no docs step): finished from its payload first, exactly as
   // recovery would (src/recover/revision.ts), so the plan in force exists before anything reads it.
@@ -521,11 +500,19 @@ export function settlePlan(
     if (inForce === null) throw new Error('a respawn with no plan in force reads the files');
     return [];
   }
-  const routingBase: RoutingBase = { profile: context.profile, config: readRepoConfig(context.repo) };
+  const routingBase: RoutingBase = { profile: context.profile, config: readRepoConfig(context.repo), arcRoles: context.arcRoles };
   if (inForce === null) {
     // A fresh arc records the files as they are; every unit enters now.
     const reserved = files.plan.units.map((u) => reservedUnitIdReason(u.id)).filter((r) => r !== null);
     if (reserved.length > 0) return [{ kind: 'plan-change-refused', reasons: reserved }];
+    // The classifier's lane-evidence row, over every unit (group 1 already refused a spec that does not load).
+    const evidence = files.plan.units.flatMap((u) => {
+      const file = files.specs.get(u.id);
+      if (file === undefined || file.bytes === null) throw new Error(`settlePlan: unit ${u.id}'s spec is absent, which plan-invalid refuses first`);
+      const spec = parseSpec(file.bytes, file.path);
+      return evidenceScopeConflicts(u.id, [...u.scope, ...spec.scope], spec);
+    });
+    if (evidence.length > 0) return [{ kind: 'plan-change-refused', reasons: evidence }];
     const dropped = obligationDropped(context, files);
     if (dropped.length > 0) return [{ kind: 'plan-change-refused', reasons: dropped }];
     keepCorpusFiles(context.runDir, corpusFiles);
@@ -537,7 +524,7 @@ export function settlePlan(
   // A command whose revision is in force but which a crash cut short (its write-back of that revision into the files
   // may be unfinished): recovery re-runs it and finishes the write-back; the files are settled at the next start.
   if (committedCommand(journal.view)) return [];
-  const rctx = { runDir: context.runDir, view: journal.view, hostDir: context.hostDir, planFile: context.planFile, routingBase };
+  const rctx = { runDir: context.runDir, view: journal.view, hostDir: context.hostDir, planFile: context.planFile, routingBase, laneEnv: env };
   const verdict = evaluateRevision(rctx, files, { type: 'start' });
   switch (verdict.kind) {
     case 'unchanged':
@@ -591,8 +578,9 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   } catch (error) {
     return refused([...legacyRoadmapDir(input.repo), schemaRejection(error)]);
   }
+  const runDir = runDirOf(gitCommonDir(input.repo), plan.arc);
   const context: StartupContext = {
-    repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, runDir: runDirOf(gitCommonDir(input.repo), plan.arc), hostDir: input.hostDir,
+    repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, arcRoles: arcRolesAt(runDir, plan.arc), runDir, hostDir: input.hostDir,
   };
   const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context)), ...(source.files === null ? [] : revisionInputRows(source.files))];
   if (inputRows.length > 0) return refused(inputRows);
@@ -636,25 +624,20 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if ('kind' in journal) return refused([journal], claim);
   const mode = containmentModeCheck(journal);
   if (mode.length > 0) return refused(mode, claim, journal);
-  const planRows = settlePlan(journal, context, source.files, corpusFiles);
+  const planRows = settlePlan(journal, context, source.files, input.env, corpusFiles);
   if (planRows.length > 0) return refused(planRows, claim, journal);
 
   return { kind: 'passed', context, routing: { profile, resolved }, claim, journal, respawn: inForce !== null };
 }
 
 /**
- * The startup rows an apply re-runs over the new plan (SCHEMAS.md "Plan in force"): the input and lane rows
- * for the units whose entry or spec changed (`scoped`), and the routing row when the routing changed.
+ * The startup rows an apply re-runs over the new plan (SCHEMAS.md "Plan in force"): the input rows for the units whose
+ * entry or spec changed (`scoped`), and the routing row when the routing changed. (The lane row is the apply core's,
+ * `evaluateRevision`, so every revision runs it, not only an apply.)
  */
-export async function applyRows(
-  context: StartupContext, scoped: readonly UnitId[], routingChanged: boolean, env: Readonly<Record<string, string | undefined>>,
-): Promise<readonly StartupRejection[]> {
+export async function applyRows(context: StartupContext, scoped: readonly UnitId[], routingChanged: boolean): Promise<readonly StartupRejection[]> {
   const narrowed: StartupContext = { ...context, plan: { ...context.plan, units: context.plan.units.filter((u) => scoped.includes(u.id)) } };
-  return [
-    ...(await planInvalidCheck.check(narrowed)),
-    ...(await specLaneCheck(env).check(narrowed)),
-    ...(routingChanged ? await routingCheck.check(context) : []),
-  ];
+  return [...(await planInvalidCheck.check(narrowed)), ...(routingChanged ? await routingCheck.check(context) : [])];
 }
 
 /**

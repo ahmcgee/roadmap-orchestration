@@ -172,6 +172,8 @@ export const TABLE: Table = {
     // M4a rev 3 (E, R55): a frontier or summit builder under `by-builder` makes no plan-check call; its fresh build
     // assesses in session first.
     'in-session': go(build('fresh')),
+    // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate.
+    'read-denied': retry('read-denied', 'env'),
   },
   build: {
     success: go(at('quiesce')),
@@ -235,6 +237,9 @@ export const TABLE: Table = {
     'routing-changed': park('routing-changed', 'env'),
     // M4a rev 3 (paid run 11): the latest spec series' checkout is gone or of another commit; the lanes run again, uncharged.
     unverified: go(at('lanes')),
+    // Paid M4b run 5: the CLI refused one of the session's reads (a path outside its cwd and --add-dirs), so its approve
+    // may rest on evidence it never opened. A fresh gate, uncharged; refused again, the read surface needs the operator.
+    'read-denied': retry('read-denied', 'env'),
   },
   candidate: {
     green: go(at('ff')),

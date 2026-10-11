@@ -6,6 +6,7 @@ import { adapt, writeResult } from '../src/backends/adapter.ts';
 import { type BackendCall, backendArgv, freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
 import { readClaude } from '../src/backends/claude.ts';
 import { judgmentSessionId } from '../src/core/ids.ts';
+import { readsDeniedOf } from '../src/core/upgrade.ts';
 import { RUNNER_FILE_READERS } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { BACKEND_FIXTURES, CLAUDE_USAGE_LIMIT, capturedClaudeResult, editClaudeResult, fixtureInvocation } from './helpers/scenario.ts';
@@ -104,6 +105,32 @@ describe('claude', () => {
       writeResult(invDir);
       const reads = JSON.parse(readFileSync(join(invDir, 'reads.json'), 'utf8')) as { reads: unknown[] };
       assert.equal(reads.reads.length, 3);
+    });
+    it('the result\'s permission_denials of Read, Grep and Glob are reads.json\'s denied, in order (paid M4b run 5)', () => {
+      const glob = { tool_name: 'Glob', tool_use_id: 'toolu_1', tool_input: { pattern: '**/*', path: '/run/evidence/u1' } };
+      const bash = { tool_name: 'Bash', tool_use_id: 'toolu_2', tool_input: { command: 'ls' } };
+      const read = { tool_name: 'Read', tool_use_id: 'toolu_3', tool_input: { file_path: '/elsewhere/x.md' } };
+      const invDir = editClaudeResult(fixtureInvocation('claude-judgment', EXIT0), (o) => ({ ...o, permission_denials: [glob, bash, read] }));
+      writeResult(invDir);
+      const reads = RUNNER_FILE_READERS['reads.json'](JSON.parse(readFileSync(join(invDir, 'reads.json'), 'utf8')), 'reads.json');
+      assert.deepEqual(reads.denied, [{ tool: 'Glob', pattern: '**/*', path: '/run/evidence/u1' }, { tool: 'Read', path: '/elsewhere/x.md' }]);
+      assert.equal(reads.reads.length, 3, 'the refused calls are not counted twice: reads come from the tool_use blocks');
+    });
+    it('a result without permission_denials is malformed output', () => {
+      const r = adapt(editClaudeResult(fixtureInvocation('claude-judgment', EXIT0), (o) => {
+        delete o['permission_denials'];
+        return o;
+      }));
+      assert.equal(r.type === 'backend' ? r.outcome.kind : null, 'malformed');
+    });
+    it('a reads.json an earlier executor wrote, without denied, reads as written and as none refused', () => {
+      const invDir = fixtureInvocation('claude-judgment', EXIT0);
+      writeResult(invDir);
+      const raw = JSON.parse(readFileSync(join(invDir, 'reads.json'), 'utf8')) as Record<string, unknown>;
+      delete raw['denied'];
+      const reads = RUNNER_FILE_READERS['reads.json'](raw, 'reads.json');
+      assert.equal('denied' in reads, false);
+      assert.deepEqual(readsDeniedOf(reads), []);
     });
     it('Codex writes no reads.json', () => {
       const invDir = fixtureInvocation('codex-fresh', EXIT0);

@@ -4,7 +4,7 @@
 // job and lens by the scenario keys (`unit` = the job id, `lens`; see StepBase in scenario.ts).
 import type { JsonValue } from '../../src/core/json.ts';
 import type { LensKindName } from '../../src/core/records.ts';
-import { validateCheckpointOutput, validateLensOutput, validatePackReviewOutput } from '../../src/prompts/schemas.ts';
+import { validateCheckpointOutput, validateFlowOutput, validateLensOutput, validatePackReviewOutput } from '../../src/prompts/schemas.ts';
 import type { ClaudeAct, Step } from './scenario.ts';
 
 type Obj = { readonly [key: string]: JsonValue };
@@ -16,7 +16,8 @@ export type LensFindingSpec = Readonly<{
   claim?: string;
   cause?: string;
   evidence?: readonly Readonly<{ path: string; line: number }>[];
-  mutant?: Readonly<{ patch: string; lane: string }> | null;
+  /** The wire form: `edits` (M4b), or a pre-M4b recorded answer's `patch`. */
+  mutant?: Readonly<{ lane: string; edits: readonly Readonly<{ path: string; old: string; new: string }>[] }> | Readonly<{ lane: string; patch: string }> | null;
 }>;
 
 /** A lens's answer: `findings` with defaults filled (a P2 citing V-1), plus the required reasons and premises. */
@@ -110,9 +111,12 @@ export function interpretationOnlyNoop(clauses: readonly string[] = ['V-1'], sit
 
 const step = (key: { unit?: string; lens?: LensKindName }, acts: readonly ClaudeAct[]): Step => ({ as: 'claude', ...key, expect: {}, acts });
 
-/** A lens call of `lens` in job `job` answers `findings`; `extra` acts (commit, hang, barrier...) run first. */
-export function lensStep(job: string | undefined, lens: LensKindName, findings: readonly LensFindingSpec[] = [], extra: readonly ClaudeAct[] = []): Step {
-  return step({ ...(job === undefined ? {} : { unit: job }), lens }, [...extra, { type: 'emit', value: lensAnswer(findings) }]);
+/**
+ * A lens call of `lens` in job `job` answers `findings`; `extra` acts (commit, hang, barrier...) run first; `stdinContains`,
+ * text its prompt must hold.
+ */
+export function lensStep(job: string | undefined, lens: LensKindName, findings: readonly LensFindingSpec[] = [], extra: readonly ClaudeAct[] = [], stdinContains: readonly string[] = []): Step {
+  return { ...step({ ...(job === undefined ? {} : { unit: job }), lens }, [...extra, { type: 'emit', value: lensAnswer(findings) }]), expect: { stdinContains } };
 }
 
 /** A checkpoint call of job `job` (a `ckpt-n`) answers `answer`. */
@@ -165,4 +169,40 @@ export function packReviewStep(
   job: string | undefined, findings: readonly PackFindingSpec[] = [], extra: readonly ClaudeAct[] = [], dispositions: readonly PackDispositionSpec[] = [],
 ): Step {
   return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: packReviewAnswer(findings, dispositions) }]);
+}
+
+/** A flow action in wire form (strict: a suite-lane action's unused argv, reporter and cpu null). */
+export const flowAction = {
+  sequence: (unit: string): JsonValue => ({ lever: 'sequence', unit, priority: 'high' }),
+  host: (note: string): JsonValue => ({ lever: 'host', note }),
+  suiteLane: (lane: string, argv: readonly string[] | null, reporter: 'node-test' | null, cpu: number | null): JsonValue =>
+    ({ lever: 'suite-lane', lane, argv: argv === null ? null : [...argv], reporter, cpu }),
+} as const;
+
+export type FlowAnswerSpec = Readonly<{
+  /** The role's reading of the constraint; default: it disputes code's, naming `stage:build`. */
+  constraint?: Readonly<{ station: string; agree: boolean; reason: string }>;
+  /** One proposal (target and action), or none: then `noAction`. */
+  proposal?: Readonly<{ target: string; action: JsonValue }> | null;
+}>;
+
+/** A flow run's answer (M4b), validated by the frozen reader: a proposal, or noAction when `proposal` is null or absent. */
+export function flowAnswer(spec: FlowAnswerSpec = {}): JsonValue {
+  const p = spec.proposal ?? null;
+  const value: Obj = {
+    constraint: { ...(spec.constraint ?? { station: 'stage:build', agree: false, reason: 'scripted reading' }) },
+    diagnosis: 'scripted diagnosis',
+    proposal: p === null ? null : { target: p.target, action: p.action, rationale: 'scripted rationale', risks: 'scripted risks' },
+    noAction: p === null ? 'scripted: nothing to change' : null,
+  };
+  validateFlowOutput(value);
+  return value;
+}
+
+/** An answer the reader refuses (neither a proposal nor noAction): `invalid`. */
+export const INVALID_FLOW_ANSWER: JsonValue = { constraint: { station: 'stage:build', agree: true, reason: 'r' }, diagnosis: 'd', proposal: null, noAction: null };
+
+/** A flow call of job `flow-<n>` answers `answer`; `extra` acts run first. */
+export function flowStep(job: string | undefined, answer: JsonValue = flowAnswer(), extra: readonly ClaudeAct[] = []): Step {
+  return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: answer }]);
 }

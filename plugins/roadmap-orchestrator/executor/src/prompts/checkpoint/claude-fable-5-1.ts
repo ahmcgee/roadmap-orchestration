@@ -17,7 +17,8 @@
 // (paid m3 run 7): the ruling sidecar field by field, its schema value and closed enums from the reader's constants;
 // a park trigger names its cause; a split keeps the children restating a must-hold obligation must-hold. Run 9: a
 // P1 is never accepted or deferred (left to its repair); anchors as `anchorSection` reads them; a retry reads the
-// rejected attempt's reasons. M4a (reviewed 2026-10-03 against the Opus 5.5 and Fable 5.1 guides): the `target` input (the
+// rejected attempt's reasons (paid M4b run 3: every rejected attempt of the trigger, any reason, with what it asks of the
+// retry). M4a (reviewed 2026-10-03 against the Opus 5.5 and Fable 5.1 guides): the `target` input (the
 // corpus rules index with each rule's text hash, which a ruling's rule reference quotes); split children and ruling
 // references anchored at a corpus rule; corpusAmendments proposed for the next Phase 0; the captured issues as
 // <pasted_content> data from trusted collaborators (LR-d), acted on like any evidence, one issueIntake outcome each, an
@@ -29,10 +30,14 @@
 // moving head (C6); the input manifest, read instead of any live roadmap-inputs (F08); every unit's spec embedded with the
 // item ids it holds, add vs replace (F21); ruling ids from the ledger's next id, no padding (C3); the closeout delta and
 // unchanged issues (F11, F27).
+// Paid M4b runs 3 and 5 (2026-10-10): arc lanes are the owner's; the schema lists them for a split child's witness (and
+// the obligations a split or dispose may name); an opportunity comes with its witness on an arc lane in force or goes to
+// corpusAmendments; an opportunity clause no obligation serves is shown apart and is not a gap to close. Owner ruling
+// (2026-10-10): an opportunity without its witness converts `unwitnessed`.
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   checkpointSpecsText, closeoutText, coverageText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
-  priorInvalidText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
+  priorRejectedText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
 } from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
 import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
@@ -59,11 +64,12 @@ Cite only active clauses. A withdrawn clause is marked in the vision and is neve
 You may amend the implementation contracts, the unit specs, routing, limits and the plan graph, and you may weaken or amend an obligation: amend its statement or anchor, re-anchor it, split it and drop part of its text, retire, waive or defer it. Each op in a bundle cites the active V-n clauses that demand it (cites, never empty) and its evidence (evidence, never empty: finding ids, obligation ids with their observation, divergence ids, file:line). An op the cited clauses do not demand does not belong in the bundle. The ops:
 - admit: a new unit. spec is its complete spec.json as an object, in the schema of the plan's unit specs: schema roadmap/spec-m1, unit its id, rev 1, every item with its state (active), a lane item's env.set a list of {name, value}, obligations and repairs [] when it declares none. It holds no witness items; a later patch adds them. origin is repair for a unit that repairs findings, else checkpoint. targets lists the corpus rules (T-n) the unit adds or changes behaviour for; leave it empty only for pure test, witness or documentation work. A rule the spec merely mentions or must keep holding is not a target.
 - patch-spec: patch ops against a unit's current spec, the same ops a plan-check redirect uses. Every unit's spec is in <unit_specs> in full, with the item ids it holds: add needs an id the spec does not hold, and replace an id it holds. A lane item's env.set is a list of {name, value}.
+A lane's evidenceGlobs (in an admit or a patch) name only the files that lane's run writes, its outputs (logs, reports, coverage), never the unit's source or tests: a matched file is never committed or merged. An entry that matches a literal path of the unit's scope, or equals one of its scope patterns, makes the bundle invalid. Paths a lane reads go in its inputs.
 - reenter: a new unit that re-enters a parked or held unit (reenters), from plan-check, build or verify (enterAt, or null for the default); reset names a ruling that resets its chargeable failures, or is null.
 - cut: a unit leaves the plan, with the reason.
 - route: a unit's seats, by model class (efficient, frontier, summit).
 - limits: bounds for one unit, or for the arc when unit is null (convergenceK is arc-wide).
-- obligation-split: children replace an obligation, each with its own witness, and each anchored at exactly one of docRef and rule, the other null: docRef {path, anchor, quotedText} in an architecture doc, or rule, a T-n from the corpus rules index in a corpus arc. Dropping part of the parent's text is recorded as a divergence the owner reviews. Splitting a must-hold obligation (a latched one included) keeps every child that restates it must-hold; a future child is only for new behaviour a unit not yet published delivers.
+- obligation-split: children replace an obligation, each with its own witness, and each anchored at exactly one of docRef and rule, the other null: docRef {path, anchor, quotedText} in an architecture doc, or rule, a T-n from the corpus rules index in a corpus arc. Dropping part of the parent's text is recorded as a divergence the owner reviews. Splitting a must-hold obligation (a latched one included) keeps every child that restates it must-hold; a future child is only for new behaviour a unit not yet published delivers. A child's witness lane is one of the arc lanes in force, which the output schema lists; no op adds an arc lane.
 - obligation-dispose: waive, defer, retire or amend an obligation, under a ruling in rulings that names it in obligationDispositions.
 - invalidate-approval: a unit's plan-check or gate approval no longer stands.
 - rule: put a ruling from rulings in force. A ruling may carry contractOps: anchor-exact edits to the plan's contracts or architecture docs, never to the corpus.
@@ -86,14 +92,17 @@ The executor stamps ruledBy and consistency from this checkpoint's job and the r
 # What only the owner may do
 You cannot express an act that is irreversible or destructive outside the sandbox, that may cost more than $10, or that has legal ramifications, and you cannot touch the vision, resource declarations, .roadmap/config.json, gc or ref deletion. For any of these you may only request it: class names which, summary says what and why in plain sentences. The same holds for what an op would bring in: a lane program the plan in force does not already run, a new environment prerequisite for a lane, or a contract op on a path outside the plan's contracts and architecture docs is a request, never an op. A request raises a blocking question for the owner, so ask only for what the vision needs.
 
+Arc lanes (the obligations file's lanes, which witness obligations) are the owner's alone: no op adds or changes one, and work is never built toward a lane that does not exist. Where a clause could be witnessed only by a new arc lane, do not request the lane and do not keep returning to it: in a corpus arc propose it once in corpusAmendments, and in any arc leave it; the owner adds arc lanes between arcs.
+
 # Admits in a corpus arc
 In a corpus arc the owner chose the arc's slice: the clauses the vision lists as advanced, less any clause an earlier opportunity added. Code classifies every admit after you decide, from its targets, its spec and its cites; you do not label it, and you cannot override it. Its scope is the census state of the rules it targets: its targets, and the rules of the obligations its spec declares, its unit delivers, and its spec repairs (directly or through a repaired finding's obligation). A finding's vision clauses are context, not scope. Every target must be an active rule of the pin.
 - repair: its spec's repairs name a finding still active or an obligation that does not hold on the head. A repair ref to an obligation that holds, an exempt obligation, or a finding no longer active makes the bundle invalid.
 - oversight: no repairs; it closes a gap within the slice's clauses.
 - opportunity: it targets a rule whose census state is out-of-slice, or cites a clause outside the slice. The arc has a budget of one opportunity. Its clauses join the arc's advanced clauses and show in the owner's brief. A later repair of the opportunity's own code is its follow-up, and an opportunity carries at most one follow-up.
+An opportunity is admitted only together with its witness: in the same bundle, an obligation split whose op cites the clause and whose child the opportunity's unit delivers (future), witnessed by tests in an arc lane in force (its tests go in a file that lane runs, so its scope includes that file). Without one, code converts it (below). When its tests could only run in a new arc lane, do not admit it: propose it in corpusAmendments instead. An opportunity clause no active obligation serves (listed apart in <vision_coverage>) is not a gap to close: serve it only through an arc lane in force, otherwise leave it.
 Honest citation: an admit that targets an out-of-slice rule cites the clause outside the slice that the rule advances; its cites outside the slice are the opportunity's clauses. Declare targets honestly: under-declared targets show in the owner's brief as drift. An admit that targets an out-of-slice rule and cites no clause outside the slice makes the bundle invalid.
 A spec item (an acceptance clause or a witness item, in an admit or a patch) never names (T-n) a rule whose census state is out-of-slice, unless this bundle moves that state: an opportunity's obligation split with a child anchored at that rule. Otherwise drop the citation; the bundle that keeps it is invalid.
-Conversion: code drops an admit that touches no clause, an opportunity over the budget, and a second follow-up of an opportunity, records each as a corpus amendment for the owner's next Phase 0 (a second follow-up also banks a debt item naming the opportunity), and applies the rest of the bundle. When another op names a dropped admit's unit (in an admit's after, a patch-spec, route, limits or cut) or an issueIntake acted entry names its index, the whole bundle is invalid instead, so make nothing else depend on an admit that may convert. Work outside the slice that the budget does not cover belongs in corpusAmendments, not in an admit.
+Conversion: code drops an admit that touches no clause, an opportunity over the budget, an opportunity without its witness, and a second follow-up of an opportunity, records each as a corpus amendment for the owner's next Phase 0 (a second follow-up also banks a debt item naming the opportunity), and applies the rest of the bundle. When another op names a dropped admit's unit (in an admit's after, a patch-spec, route, limits or cut) or an issueIntake acted entry names its index, the whole bundle is invalid instead, so make nothing else depend on an admit that may convert (an opportunity's own witness split names its unit, so admit one only while the budget is left). Work outside the slice that the budget does not cover belongs in corpusAmendments, not in an admit.
 
 # Transaction repairs
 Before you admit a repair that reorders the steps of a transaction (staging, a ledger or file save, a publication, a rollback), or patch a spec toward one, write its failure matrix: one row per step, and for each the state the product is left in when the process dies just before the step, just after it, and when the step itself fails. Say which outcome each cell leaves and that the cited clauses accept it. Read the earlier repairs of the same transaction first (the unit specs whose repairs or facts touch the same paths) and carry their cells forward: a repair that fixes one cell by breaking another is the failure this rule exists to stop. Put the matrix in the repair's spec as a facts item, so the build and the gate check against it.
@@ -125,7 +134,7 @@ export const PROMPT: PromptModule<'checkpoint'> = {
   system,
   schema: CHECKPOINT_SCHEMA,
   fields: [
-    'vision', 'trigger', 'priorInvalid', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
+    'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
   ],
   render: (i) => `<vision>
@@ -134,7 +143,7 @@ ${visionText(i.vision)}
 
 <trigger>
 This checkpoint runs because ${triggerText(i.trigger)} The integration head is ${i.head}.
-</trigger>${priorInvalidText(i.priorInvalid)}${refusedText(i.refused)}${closeoutText(i.closeout)}
+</trigger>${priorRejectedText(i.priorRejected)}${refusedText(i.refused)}${closeoutText(i.closeout)}
 
 <vision_coverage>
 ${coverageText(i.coverage)}
