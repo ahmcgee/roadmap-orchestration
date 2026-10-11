@@ -429,6 +429,10 @@ rejected. An edit you never apply has no effect, even after a restart.
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs. Mutation smoke reverts a
   unit's production change (everything outside `testPaths`) and runs its witnesses again; without `testPaths` it
   does not run.
+- A witness lane runs exactly the test files that witness its obligations and names each one in its argv
+  (`["node", "--test", "test/unit/soak.test.js"]`). The whole-suite lane is the suite gate, never an obligation's
+  witness: it hides which test witnesses what, so the flow loop cannot measure or shard one witness, a change to the
+  suite's flags changes every witness's ruler, and impact selection runs the whole suite for any obligation.
 - Before the gate, a corpus arc runs every witness the unit must pass (its delivered and repaired obligations', its
   spec's `witnesses`, its must-hold obligations') by exact test id; a missing or failing one is a fix round. Acceptance
   a witness lane must prove goes in the spec's `witnesses` section: `{id: W-<n>, lane: <arc lane>, testId: <exact
