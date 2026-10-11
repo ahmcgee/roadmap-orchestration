@@ -46,8 +46,11 @@ const T = { timeout: 15 * 60_000 };
 const CALM_MS = 6 * 60_000;
 
 const burners: ChildProcess[] = [];
+// Each burner leads its own session: with CFS autogroup on (Linux's default for sessions), the scheduler shares a cpu
+// between sessions first, so burners sharing the test's session would weigh as one group against the workload's own
+// (the runner starts every workload as a session leader) and leave it about half a cpu: not a saturated host.
 function startBurners(): void {
-  for (let i = 0; i < 4 * availableParallelism(); i++) burners.push(spawn(process.execPath, ['-e', 'for (;;) {}'], { stdio: 'ignore' }));
+  for (let i = 0; i < 4 * availableParallelism(); i++) burners.push(spawn(process.execPath, ['-e', 'for (;;) {}'], { stdio: 'ignore', detached: true }));
 }
 function stopBurners(): void {
   for (const b of burners.splice(0)) b.kill('SIGKILL');
