@@ -58,6 +58,9 @@
 //      publication (a ruling's `constraints.md`, contract ops; `invariants.md`) runs inside it; a publication refused at
 //      the tip → `rejected{stale}`.
 //
+// Steps 0–9 judge, writing only a decision and its items. An exception while judging is an executor fault: decided as in 2
+// (`rejected{invalid}` naming the fault, a second time a request), so a restart never judges the recorded output again.
+//
 // After an applied or no-op decision: its finding dispositions (`ruleFinding`, by `checkpoint{job}`); in a corpus arc the
 // debt its deferrals bank, its amendments and issue outcomes, and its conversions (each an amendment `source: admit`, a
 // follow-up overrun also a debt item naming its opportunity), read from the decision record, never classified again;
@@ -1007,7 +1010,37 @@ const NO_PROPOSAL = (current: InputFiles, obligations: Obligations | null): Prop
   lanes: [], outsidePaths: [], reasons: [],
 });
 
+/** A judged bundle code commits (step 10): the evaluated revision with its divergences, and its source. */
+type Judged = Readonly<{ kind: 'commit'; evaluated: Extract<ReturnType<typeof evaluateRevision>, { kind: 'accepted' }>; source: Parameters<typeof payloadOf>[1] }>;
+
+/**
+ * Judges the bundle (steps 0–9), then commits it (step 10). An exception while judging is an executor fault, never the
+ * bundle's: it is decided like an invalid bundle (rejected, a second time on the trigger a request), so the recorded
+ * output is never judged again; a restart would otherwise replay the same throw until the supervisor gives up.
+ */
 async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDecision> {
+  let judged: BundleDecision | Judged;
+  try {
+    judged = judge(ctx, a);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    process.stderr.write(`roadmap: ${a.job}: the executor failed judging its bundle: ${error.stack ?? error.message}\n`);
+    const why = `the executor failed judging it (an executor fault, not the bundle's): ${error.message}`;
+    return a.secondInvalid
+      ? decided(ctx, a.job, { kind: 'requested', needsUser: bundleRequest(ctx, a, why, false), reason: 'bundle-request' })
+      : decided(ctx, a.job, { kind: 'rejected', reason: 'invalid', detail: why });
+  }
+  if (judged.kind !== 'commit') return judged;
+
+  // 10. The commit: plan-applied (a corpus arc's classes and conversions in its source, Q4), then the divergences from the payload.
+  keepRevision(ctx.runDir, judged.evaluated);
+  const committed = await commitRevision({ journal: ctx.journal, runDir: ctx.runDir, docs: ctx.docs }, payloadOf(judged.evaluated.draft, judged.source), jobParent(a.job));
+  if (committed.kind === 'refused') return decided(ctx, a.job, { kind: 'rejected', reason: 'stale', detail: `its docs publication was refused at the tip: ${committed.reason}` });
+  crashPoint('bundle.after-applied');
+  return { kind: 'applied', planRev: committed.fact.rev };
+}
+
+function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Judged {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
@@ -1128,13 +1161,8 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
     divergences: [...evaluated.draft.divergences, ...opDivergences(base, ops.map((x) => x.op), p.landing), ...interpretationDivergences(a.job, a.captured.vector, a.output)],
   };
 
-  // 10. The commit: plan-applied (a corpus arc's classes and conversions in its source, Q4), then the divergences from the payload.
-  keepRevision(ctx.runDir, { ...evaluated, draft });
   const source = classes === null ? { type: 'bundle' as const, job: a.job } : { type: 'bundle' as const, job: a.job, admits: classes.classes, conversions };
-  const committed = await commitRevision({ journal: ctx.journal, runDir: ctx.runDir, docs: ctx.docs }, payloadOf(draft, source), jobParent(a.job));
-  if (committed.kind === 'refused') return decided(ctx, a.job, { kind: 'rejected', reason: 'stale', detail: `its docs publication was refused at the tip: ${committed.reason}` });
-  crashPoint('bundle.after-applied');
-  return { kind: 'applied', planRev: committed.fact.rev };
+  return { kind: 'commit', evaluated: { ...evaluated, draft }, source };
 }
 
 /** The output's ops minus the admits `job`'s decision record converts (Q4): what was applied, as the brakes count it. */

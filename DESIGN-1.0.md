@@ -1261,3 +1261,9 @@ ladder with its own runnable fixture:
     `unsupported-routing` for a non-holistic start too. An arc 1.0.0-dev.7 started records no role set and keeps the dev.7
     roles: no flow seat, its routing revs unchanged, the flow loop off (scaffolding, deleted once no dev.7 arc is in
     flight). Version 1.0.0-dev.8 adopts dev.7 arcs only.
+  - **Executor faults while judging a bundle are decided, not crashed** (1.0.0-dev.9, a real arc's crash loop). A
+    bundle whose `patch-spec` names a unit an earlier op of it admits or re-enters is valid; its divergence departs
+    from the plan rev, as the introducing op's does. An exception while judging a bundle (steps 0–9) decides it
+    `rejected{invalid}` naming the fault (a second time on the trigger, a request), so a restart never judges the
+    recorded output again. No record changes: version 1.0.0-dev.9 adopts dev.7 and dev.8 arcs as dev.8 does (the
+    upgrade test stays on dev.7 until the next release moves it).
