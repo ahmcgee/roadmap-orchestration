@@ -3,10 +3,10 @@
 // Named tests: bundle.stale, bundle.partial (with the retry's prior_attempt), bundle.vision-always-read (H3), bundle.partial (A18's literal partial bundle), bundle.no-op,
 // noop.interpretation-divergence (H12), bundle.evidence-drift-witnessed, bundle.evidence-drop, bundle.draining-request, bundle.nested-owner-only (H10),
 // bundle.withdrawn-cite-invalid (H16), bundle.rule-race-stale, bundle.ruling-id-collision-invalid, bundle.admit-widens-obligations, bundle.weakening-applies-with-divergence (OR-V), convergence.bound-k,
-// convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13),
+// convergence.bound-identity, bundle.compensating, digest.binds-ids (H11), divergence.preimage-no-inverse (H13), divergence.patch-of-introduced-unit, bundle.fault-decided,
 // ckpt.design-park-respec-first (OR-Q1), ckpt.park-cause, bundle.p1-left-to-repair, and the crash cells of the matrix rows CHECKPOINT_JOB and BUNDLE_ACTIVATE.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
@@ -17,7 +17,7 @@ import { designParkRoute, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import { raiseDigest, uncoveredDivergences } from '../src/holistic/divergence.ts';
 import { findingKey } from '../src/holistic/types.ts';
-import { keptPayload, requirePlanInForce } from '../src/input/inforce.ts';
+import { SPEC_INPUT, inputPath, keptPayload, requirePlanInForce } from '../src/input/inforce.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { syncRepairs } from '../src/pipeline/reproduce.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
@@ -710,6 +710,59 @@ describe('divergences', () => {
       const reversed = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'reverse', divergence: dv!.id as DivergenceId }));
       assert.equal(reversed.kind, 'applied', JSON.stringify(reversed));
       assert.equal(r.journal.view.planApplied()!.specs[unitId('u1')], before.specs[unitId('u1')], 'u1\'s spec as the preimage recorded it');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('divergence.patch-of-introduced-unit (a real arc\'s crash loop): a bundle re-entering u1 as u1-r2 and patching u1-r2\'s spec applies; the patch departs from the plan rev, as the re-entry does', T, async () => {
+    const reenter = { op: 'reenter', unit: 'u1-r2', reenters: 'u1', enterAt: null, reset: null, cites: ['V-1'], evidence: ['u1 must start over'] };
+    const cite = { op: 'patch-spec', unit: 'u1-r2', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: ['C-1'] }], cites: ['V-1'], evidence: ['u1-r2 must cite the api'] };
+    const empty: readonly Step[] = [{ ...planCheckStep({ decision: 'approve' }), unit: 'u1' }, { ...codexStep([], { argv: ['exec', '-C'] }), unit: 'u1' }];
+    const d = checkpointArc([...empty, checkpointStep('ckpt-1', bundle([reenter, cite]))], { units: [{ id: 'u1', lanes: [] }] });
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      assert.equal((await runUnit(ctx, r.unit('u1'), admitAll)).kind, 'parked');
+      const before = r.journal.view.planApplied()!;
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      const pre = { planRev: before.rev, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] };
+      assert.deepEqual(factsOfKind(r, 'divergence').map((x) => [x.index, x.type, x.from, x.preimage]), [[0, 'plan-departed', `plan rev ${before.rev}`, pre], [1, 'plan-departed', `plan rev ${before.rev}`, pre]]);
+      assert.match(factsOfKind(r, 'divergence')[1]!.what, /^patches u1-r2's spec: cite \(a unit this bundle introduces\)$/);
+      assert.equal(r.journal.view.planApplied()!.specs[unitId('u1-r2')] !== undefined, true);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('executor faults', () => {
+  test('bundle.fault-decided: an exception judging a bundle is decided invalid, naming the fault, never crashing; the recorded output is not judged again and the trigger re-evaluates', T, async () => {
+    const d = checkpointArc([
+      ...visionLenses('audit-1'), checkpointStep('ckpt-1', bundle([limitsOp('retries', 2)]), [barrier]), checkpointStep('ckpt-2', bundle([limitsOp('retries', 2)])),
+    ]);
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const running = runCheckpoint(ctx);
+      await reached(d.scenarioDir, 'ckpt', 120_000);
+      // A kept input that no longer hashes to its name: a condition that never happens, so judging it throws.
+      const spec = inputPath(r.ctx.runDir, r.journal.view.planApplied()!.specs[unitId('u1')]!, SPEC_INPUT);
+      const bytes = readFileSync(spec);
+      writeFileSync(spec, 'corrupt');
+      release(d.scenarioDir, 'ckpt');
+      const first = await running;
+      writeFileSync(spec, bytes);
+      assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'invalid', JSON.stringify(first));
+      assert.match(first.decision.detail, /^the executor failed judging it \(an executor fault, not the bundle's\): .* does not hash to its name$/);
+      assert.equal(planLimits(r), null);
+      const second = await runCheckpoint(ctx);
+      assert.ok(second.kind === 'decided' && second.job === 'ckpt-2' && second.decision.kind === 'applied', JSON.stringify(second));
+      assert.deepEqual(decisions(r), [['ckpt-1', 'rejected:invalid']]);
+      assert.deepEqual(bundleRevs(r).map(([, job]) => job), ['ckpt-2']);
+      assert.deepEqual(planLimits(r), { retries: 2 });
     } finally {
       r.journal.close();
     }

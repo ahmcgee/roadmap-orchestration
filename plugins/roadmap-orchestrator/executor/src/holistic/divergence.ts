@@ -4,7 +4,8 @@
 //
 //   ops              one per op that departs (`opDivergences`): an admit, re-entry, cut, route or limits change departs
 //                    from the plan (`plan-departed`, preimage: the plan rev); a spec patch from the unit's spec
-//                    (`plan-departed`, preimage: its spec rev); a split or disposition from the obligation's approved
+//                    (`plan-departed`, preimage: its spec rev; of a unit an earlier op of the bundle introduces, the
+//                    plan rev); a split or disposition from the obligation's approved
 //                    rev (`obligation-departed`, preimage: the obligations' bytes); a landing ruling's contract ops from
 //                    the contract text (`contract-departed`) and its `deviates` doc refs from the target document
 //                    (`target-departed`), preimage: the ledger and the contracts' blobs. A split that drops parent text
@@ -58,8 +59,12 @@ const supersede = (id: string): DivergenceDraft['compensation'] => ({
   hint: `supersede ${id} with \`roadmap rule\` (its contract ops restore the text); \`roadmap reverse\` refuses a ledger or contract preimage`, kind: 'restore-revision',
 });
 
-/** The divergence of one op, or none (a request applies nothing; a ruling that departs from nothing records nothing here). */
-function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, RulingSidecar>): readonly DivergenceDraft[] {
+/**
+ * The divergence of one op, or none (a request applies nothing; a ruling that departs from nothing records nothing here).
+ * `introduced`: the units an earlier op of the bundle admits or re-enters, which have no spec in `b`. Validation applies
+ * the ops in order, so a patch of such a unit is valid; it departs from the plan rev, as the op introducing the unit does.
+ */
+function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, RulingSidecar>, introduced: ReadonlySet<string>): readonly DivergenceDraft[] {
   const common = { job: b.job, cites: canonicalIds(op.cites), evidence: op.evidence };
   const plan = (what: string): DivergenceDraft => ({
     ...common, type: 'plan-departed', from: `plan rev ${b.planRev}`, what, preimage: planPreimage(b), compensation: restore(`plan rev ${b.planRev}`),
@@ -76,10 +81,14 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
     case 'limits':
       return [plan(`sets ${op.unit === null ? 'the arc\'s' : `${op.unit}'s`} limits ${op.limits.map((l) => `${l.field} = ${l.value}`).join(', ')}`)];
     case 'patch-spec': {
+      const what = `patches ${op.unit}'s spec: ${op.patch.map((p) => (p.op === 'cite' ? 'cite' : `${p.op} ${p.op === 'add' || p.op === 'replace' ? p.item.id : p.id}`)).join(', ')}`;
       const rev = b.specRevs[op.unit];
-      if (rev === undefined) throw new Error(`patch-spec of ${op.unit}, which has no spec in force (validation refuses it)`);
+      if (rev === undefined) {
+        if (!introduced.has(op.unit)) throw new Error(`patch-spec of ${op.unit}, which has no spec in force and no earlier op of the bundle introduces (validation refuses it)`);
+        return [plan(`${what} (a unit this bundle introduces)`)];
+      }
       return [{
-        ...common, type: 'plan-departed', from: `spec of ${op.unit} rev ${rev}`, what: `patches ${op.unit}'s spec: ${op.patch.map((p) => (p.op === 'cite' ? 'cite' : `${p.op} ${p.op === 'add' || p.op === 'replace' ? p.item.id : p.id}`)).join(', ')}`,
+        ...common, type: 'plan-departed', from: `spec of ${op.unit} rev ${rev}`, what,
         preimage: { ...planPreimage(b), specs: { [op.unit]: rev } }, compensation: restore(`${op.unit}'s spec rev ${rev}`, ' (refused once the unit re-opened on the patch and published)'),
       }];
     }
@@ -125,7 +134,13 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
 /** The divergences a bundle's ops record, in op order (a landing ruling's under its `rule` op). */
 export function opDivergences(b: DivergenceBase, ops: readonly BundleOp[], rulings: readonly RulingSidecar[]): readonly DivergenceDraft[] {
   const byId = new Map(rulings.map((s) => [s.id as string, s]));
-  return ops.flatMap((op) => ofOp(b, op, byId));
+  const introduced = new Set<string>();
+  return ops.flatMap((op) => {
+    const drafts = ofOp(b, op, byId, introduced);
+    if (op.op === 'admit') introduced.add(op.unit.id);
+    if (op.op === 'reenter') introduced.add(op.unit);
+    return drafts;
+  });
 }
 
 /**

@@ -151,6 +151,13 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
+  threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging
+  (steps 0–9): it decides the bundle invalid and records it, so a restart never replays it. A deterministic throw in
+  `settleDecided`, the scheduler or any other job resumed from a recorded model output would still replay on every
+  restart until the supervisor gives up. Trigger: a second crash loop of that shape; then decide on a general rule
+  (a job's fault is recorded against the job before the throw escapes).
+
 - **Checkpoint reads refused** (paid M4b run 5): the checkpoint call inv 2174 was refused reads of the runtime's
   `inputs/*.plan.json` (outside its `--add-dir`s) and still answered `bundle`. The gate and plan-check void an approve
   after a refused read (`readRefused`, src/pipeline/stages.ts); the checkpoint does not yet. Trigger: a checkpoint
