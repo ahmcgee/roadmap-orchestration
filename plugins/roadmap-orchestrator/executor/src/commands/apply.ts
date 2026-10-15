@@ -79,6 +79,9 @@
 //   close-admissions (M3, B7): `admissions-closed`, the arc drains (src/commands/admissions.ts). Mutation, no scope.
 //   flow-decide, flow-request (M4b) `flow accept|reject <proposal>`: `flow-decided` once per proposal and its item
 //            acknowledged; `flow request`: `flow-requested` (src/commands/flow.ts). Mutations, no scope.
+//   scope-decide (scope growth, 2026-10-15) `scope accept|reject <u>`: the root agent's decision on a unit held by its
+//            plan-check's verified scope-growth proposal; an accept lands the ruled growth (src/commands/scope.ts). Mutation,
+//            scope {u}.
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
@@ -122,7 +125,7 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
+import { APPLY, type ScopeReference, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
@@ -143,6 +146,7 @@ import { isControl, readCommand, readReceipt, receiptSha256, writeReceipt } from
 import { mergeIn } from './mergein.ts';
 import { reverse } from './reverse.ts';
 import { rule, rulingReasons, writeBack, writeBackAfter, writtenBackOf } from './rule.ts';
+import { decideScope } from './scope.ts';
 import { steer } from './steer.ts';
 
 /**
@@ -271,6 +275,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return decideFlow(ctx, command.id, body);
     case 'flow-request':
       return requestFlow(ctx, command.id, body.reason);
+    case 'scope-decide':
+      return decideScope(ctx, command.id, body);
   }
 }
 
@@ -699,9 +705,10 @@ export type ApplyVerdict =
   /** `smoke`: backends the new routings seat that the routing in force did not; they must pass a smoke first. */
   /** `corpusFiles`: a corpus arc's corpus files as its pin re-derived them (kept before the commit, M4a). */
   /** `rulings`: the ids its `--ruling` records land (I2), for the commit's proposer. */
+  /** `advisories` (scope growth, 2026-10-15): Phase-0 row 10's, which never refuse (the receipt and the dry run list them). */
   | Readonly<{
     kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[]; corpusFiles: readonly SourceFile[];
-    rulings: readonly RulingId[];
+    rulings: readonly RulingId[]; advisories: readonly ScopeReference[];
   }>;
 
 /** One rejection per line of text, for a receipt's reason and the dry run. */
@@ -780,7 +787,7 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   if (rows.length > 0) return { kind: 'rejected', reasons: rows.map(rowText) };
   const before = new Set(backendsOf(planRouting(input.routingBase, inForce.plan)));
   const smoke = [...new Set(verdict.routings.flatMap((r) => backendsOf(r)))].filter((b) => !before.has(b)).sort();
-  return { kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke, corpusFiles: p0.opened?.files ?? [], rulings: records.map((r) => r.sidecar.id) };
+  return { kind: 'accepted', rev: inForce.rev, evaluated: verdict, smoke, corpusFiles: p0.opened?.files ?? [], rulings: records.map((r) => r.sidecar.id), advisories: p0.advisories };
 }
 
 /** The apply's manifest is the revision in force already. */
@@ -832,7 +839,7 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
       const committed = await commitUnderFence(ctx, verdict.evaluated, proposer, { type: 'command', command: id }, parentOf(id));
       if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons) };
       const written = rulings.length === 0 ? [] : writeBack(ctx, writtenBackOf(body.manifest), writtenBackOf(keptPayload(ctx.runDir, committed.fact.payloadSha256).manifest));
-      return { kind: 'applied', verified: [...appliedText(committed.fact.rev, committed.fact.changes), ...written] };
+      return { kind: 'applied', verified: [...appliedText(committed.fact.rev, committed.fact.changes), ...written, ...verdict.advisories.map(advisoryText)] };
     }
   }
 }
@@ -870,6 +877,9 @@ export async function commitUnderFence(
 /** A rejected revision's receipt reason (an `apply`'s, a `reverse`'s): every reason, numbered. */
 export const rejectedText = (reasons: readonly string[], what: 'apply' | 'reverse' | 'rule' = 'apply'): string =>
   `${what} rejected (${reasons.length} ${reasons.length === 1 ? 'reason' : 'reasons'}): ${reasons.map((r, i) => `(${i + 1}) ${r}`).join('; ')}`;
+
+/** A Phase-0 advisory as a receipt line (scope growth, 2026-10-15): never a refusal. */
+export const advisoryText = (a: ScopeReference): string => `advisory: ${canonicalJson(a)}`;
 
 const appliedText = (rev: PlanRev, changes: readonly PlanChange[]): readonly string[] =>
   [`plan rev ${rev} in force`, ...changes.map((c) => canonicalJson(c))];

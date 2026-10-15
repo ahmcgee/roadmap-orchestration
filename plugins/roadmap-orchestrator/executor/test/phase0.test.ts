@@ -57,14 +57,14 @@ describe('phase0 check', () => {
   it('phase0.check-green-and-every-row: green with slice candidates; each row in turn; the CLI exits 0, then 78', T, async () => {
     const a = await corpusArc();
     const report = await check(a);
-    assert.deepEqual(report, { rows: [], sliceCandidates: [] }, 'V-1 is served by a must-hold obligation: held on the baseline');
+    assert.deepEqual(report, { rows: [], sliceCandidates: [], advisories: [] }, 'V-1 is served by a must-hold obligation: held on the baseline');
     const cli = async (): Promise<Readonly<{ code: number | null; out: Json }>> => {
       const r = await runUntilExit(process.execPath, [BIN, 'phase0', 'check', '--repo', a.repo, '--plan', a.planPath], {
         env: { PATH: a.forge.path, HOME: process.env['HOME'] ?? '/' }, timeoutMs: 60_000,
       });
       return { code: r.code, out: JSON.parse(r.stdout) as Json };
     };
-    assert.deepEqual(await cli(), { code: 0, out: { rows: [], sliceCandidates: [] } });
+    assert.deepEqual(await cli(), { code: 0, out: { rows: [], sliceCandidates: [], advisories: [] } });
 
     // corpus-invalid: the pin file no longer equals its re-derivation.
     const pinPath = join(a.planDir, PIN_FILE);
@@ -73,7 +73,7 @@ describe('phase0 check', () => {
     assert.deepEqual(await corpusProblems(a), [{ type: 'pin-drift' }]);
     const red = await cli();
     assert.equal(red.code, 78);
-    assert.deepEqual(red.out, { rows: [{ kind: 'corpus-invalid', problems: [{ type: 'pin-drift' }] }], sliceCandidates: [] });
+    assert.deepEqual(red.out, { rows: [{ kind: 'corpus-invalid', problems: [{ type: 'pin-drift' }] }], sliceCandidates: [], advisories: [] });
     writeFileSync(pinPath, pin);
     // phase0-invalid: the census misses T-3.
     const obligations = join(a.planDir, 'obligations.json');
@@ -108,7 +108,7 @@ describe('phase0 check', () => {
 
   it('phase0.slice-candidates: an active world clause only future obligations serve is a candidate (R15)', T, async () => {
     const a = await corpusArc({ activation: 'future' });
-    assert.deepEqual(await check(a), { rows: [], sliceCandidates: ['V-1'] });
+    assert.deepEqual(await check(a), { rows: [], sliceCandidates: ['V-1'], advisories: [] });
   });
 
   it('phase0.scope-overlaps-corpus: a unit scope that may write the same-repo corpus file set', T, async () => {
@@ -436,7 +436,7 @@ describe('phase0 check --from-ref (K20)', () => {
     commitAll(a.repo, 'the live vision moves on');
     assert.deepEqual([...kinds((await check(a)).rows)].sort(), ['corpus-invalid', 'phase0-invalid', 'vision-unconfirmed']);
     const fromRef = await withForge(a.forge, () => phase0Check({ repo: a.repo, source: { type: 'ref', arc: a.arc } }));
-    assert.deepEqual(fromRef, { rows: [], sliceCandidates: [] });
+    assert.deepEqual(fromRef, { rows: [], sliceCandidates: [], advisories: [] });
     assert.deepEqual(phase0Of(a)['intake'], [], 'the live record is not what the ref check read');
   });
 

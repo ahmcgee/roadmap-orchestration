@@ -17,6 +17,7 @@
 // mutation smoke; D1, D2, R38), reused lanes, and the D3 and H1 defect classes.
 // Paid M4b run 5: a gate Globbed the parent of its evidence dirs, was refused, and approved on the ledger alone; the
 // readable dirs are named exactly (listed dirs and below, never above), and a refused read voids an approve (src/pipeline/gate.ts).
+// Scope growth (2026-10-15; same guides): as the Opus gate, the paths salvage reverted as out of scope (<scope_reverted>).
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
   bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
@@ -48,7 +49,7 @@ The obligations block lists the obligations this change selects: owner-approved 
 
 In a corpus arc the executor runs two checks before you, and the executable checks block gives their results; you do not re-run them. Witness presence looked up every required witness test by its exact id on the arc lanes: a required test still missing or failing is a blocking finding that names it. Mutation smoke reverted the unit's production change, kept its test files, and ran the target witness tests again. A killed test failed without the change, so it shows the change. A survived test passed without it, so it does not show what the change does: that is a blocking finding (an acceptance clause left untested) unless the behaviour it checks existed before this unit, which you confirm in the code and record as a note. An inconclusive result proves nothing either way: read that test yourself. When smoke did not run, the block says why, and you judge the tests by reading them. A lane the ledger marks reused passed at an earlier commit whose declared inputs this change leaves untouched; its record stands as evidence for this head.
 
-Scope was pinned at dispatch. Each path listed as scope growth gets its own finding: a note when it was necessary for the spec (say why), a blocking finding whose directive reverts it when it is creep. Growth never licenses reviewing those files as if they were in scope.
+Scope was pinned at dispatch. Each path listed as scope growth gets its own finding: a note when it was necessary for the spec (say why), a blocking finding whose directive reverts it when it is creep. Growth never licenses reviewing those files as if they were in scope. A path listed as reverted was edited by the build outside the envelope and reverted by the executor, so it is in no diff: when the spec cannot be satisfied without it, escalate (only the root agent grows a unit's scope); otherwise record a note that the unit needed no such change.
 
 The Direction settles ties only where the spec, contracts and rulings are silent, and never widens scope; name the preference when it decides something.
 
@@ -132,7 +133,11 @@ ${bullets(i.scope.patterns, '(empty)')}
 
 <scope_growth>
 ${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
-</scope_growth>${gateChecksText(i.checks)}${priorRound(i)}
+</scope_growth>
+
+<scope_reverted>
+${bullets(i.scope.rejected, '(none: the build edited nothing outside the envelope)')}
+</scope_reverted>${gateChecksText(i.checks)}${priorRound(i)}
 
 Gate unit ${i.spec.unit} at head ${i.diff.head}, spec revision ${i.spec.rev}. Grade every acceptance clause, then return your decision.`,
 };

@@ -861,6 +861,12 @@ export type SpecM1 = Readonly<{
    * (`SpecPatchOp` section `witnesses`; non-empty when present; absent: none, lasting, so a dev.6 spec reads unchanged).
    */
   witnesses?: readonly Stated<WitnessItemDef>[];
+  /**
+   * Scope growth (2026-10-15): what the unit removes or renames (repository paths, route strings, symbols: each a literal
+   * `git grep -F` searches for). The Phase-0 row `scope-references-outside` and the plan-check list every file outside the
+   * unit's scope that still names one (non-empty when present, unique; absent: none, lasting, `specRemoves`).
+   */
+  removes?: readonly string[];
 }>;
 
 /**
@@ -881,6 +887,8 @@ export const specObligations = (spec: SpecM1): readonly ObligationId[] => spec.o
 export const specRepairs = (spec: SpecM1): readonly RepairRef[] => spec.repairs ?? [];
 /** A spec's witness items (M4a rev 3); none when absent. */
 export const specWitnesses = (spec: SpecM1): readonly Stated<WitnessItemDef>[] => spec.witnesses ?? [];
+/** What a spec says its unit removes or renames (scope growth, 2026-10-15); none when absent. */
+export const specRemoves = (spec: SpecM1): readonly string[] => spec.removes ?? [];
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
 const cid: Read<ClauseId> = (v, p) => clauseId(v, p);
@@ -912,10 +920,18 @@ function stated<T>(fields: (f: Fields) => T): Read<Stated<T>> {
   return object((f) => ({ ...fields(f), state: f.get('state', itemState) }));
 }
 
+/** One `removes` entry: a literal `git grep -F` searches for, so one line with something besides space. */
+const removed: Read<string> = (v, p) => {
+  const s = str(v, p);
+  if (s.includes('\n') || s.trim() === '') throw new SchemaError(p, 'one line of text a removed or renamed path, route or symbol is named by', v);
+  return s;
+};
+
 export const specM1: Read<SpecM1> = object((f) => {
   const obligations = f.optional('obligations', arrayOf((v, p) => obligationId(v, p), { nonEmpty: true }));
   const repairs = f.optional('repairs', arrayOf(repairRef, { nonEmpty: true }));
   const witnesses = f.optional('witnesses', arrayOf(stated(witnessItemFields), { nonEmpty: true }));
+  const removes = f.optional('removes', arrayOf(removed, { nonEmpty: true }));
   const out: SpecM1 = {
     schema: f.get('schema', literal(SPEC_SCHEMA)),
     unit: f.get('unit', unit),
@@ -930,7 +946,9 @@ export const specM1: Read<SpecM1> = object((f) => {
     ...(obligations === undefined ? {} : { obligations }),
     ...(repairs === undefined ? {} : { repairs }),
     ...(witnesses === undefined ? {} : { witnesses }),
+    ...(removes === undefined ? {} : { removes }),
   };
+  assertUnique(specRemoves(out), (r) => r, `${f.path}.removes`);
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts, ...specWitnesses(out)], (i) => i.id, `${f.path}.<item ids>`);
   assertUnique(specObligations(out), (o) => o, `${f.path}.obligations`);
   assertUnique(specRepairs(out), (r) => r, `${f.path}.repairs`);
@@ -1287,7 +1305,12 @@ export type CommandBody =
   /** `roadmap flow accept|reject <proposal> --reason <text>` (M4b): the root agent's decision, idempotent by proposal. Scope ∅. */
   | Readonly<{ type: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string }>
   /** `roadmap flow request --reason <text>` (M4b, RC-5): a flow run past the cooldown, once per cooldown window. Scope ∅. */
-  | Readonly<{ type: 'flow-request'; reason: string }>;
+  | Readonly<{ type: 'flow-request'; reason: string }>
+  /**
+   * `roadmap scope accept|reject <u> --reason <text>` (scope growth, 2026-10-15): the root agent's decision on the unit's held
+   * scope-growth proposals; an accept lands them as one ruled-growth revision (src/commands/scope.ts). Scope {u}.
+   */
+  | Readonly<{ type: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string }>;
 
 /** The lens names a command may carry; `LensKind` in src/holistic/types.ts is the same closed list. */
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
@@ -1356,6 +1379,9 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     reason: f.get('reason', str),
   })),
   'flow-request': object((f): CommandBody => ({ type: f.get('type', literal('flow-request')), reason: f.get('reason', str) })),
+  'scope-decide': object((f): CommandBody => ({
+    type: f.get('type', literal('scope-decide')), unit: f.get('unit', unit), decision: f.get('decision', oneOf(['accept', 'reject'] as const)), reason: f.get('reason', str),
+  })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({
@@ -1411,6 +1437,9 @@ export const NEEDS_USER_REASONS = [
   'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
   // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
   'read-denied',
+  // Scope growth (2026-10-15), blocking: a plan-check proposed scope growth code verified; the unit is held until the root
+  // agent's `scope accept | reject <unit>`.
+  'scope-growth',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

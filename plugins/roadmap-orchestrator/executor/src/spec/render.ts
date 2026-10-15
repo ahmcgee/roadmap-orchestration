@@ -7,7 +7,8 @@
 // `fastLanesOnly` is the implementer's view: estate lanes are left out entirely, without even a mention.
 // M3 (A13): the obligations a unit declares and what a repair unit repairs follow, each only when the spec has it.
 // M4a rev 3: a spec's witness items follow its facts, and a spec lane's `inputs` its evidence, each only when present, so
-// a spec without them renders as before.
+// a spec without them renders as before. Scope growth (2026-10-15): what the unit removes or renames follows its scope, only
+// when declared.
 import type { ItemState, LaneDef, NoteDef, SpecM1, WitnessItemDef } from '../core/records.ts';
 import { fastLanes } from '../resources/reserve.ts';
 
@@ -60,6 +61,7 @@ export function renderSpec(spec: SpecM1, options: RenderOptions = {}): string {
     `# Spec for unit ${code(spec.unit)}, rev ${spec.rev}`,
     `## Acceptance\n\n${acceptance.join('\n')}`,
     `## Scope\n\n${sorted(spec.scope).map((s) => `- ${code(s)}`).join('\n')}`,
+    ...(spec.removes === undefined ? [] : [`## Removes\n\n${sorted(spec.removes).map((r) => `- ${code(r)}`).join('\n')}`]),
     `## Lanes\n\n${lanes.length === 0 ? '(none)' : lanes.map(lane).join('\n')}`,
     `## Resources\n\n${spec.resources.length === 0 ? '(none)' : sorted(spec.resources).map((r) => `- ${code(r)}`).join('\n')}`,
     notes('Decisions', spec.decisions),

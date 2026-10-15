@@ -185,3 +185,13 @@ export function buildFinalDefault(): true {
   warnDefaulted('build.final', 'a build answer without final (launched before the report rule); read as final');
   return true;
 }
+
+// Scope growth (2026-10-15, still 1.0.0-dev.9): the plan-check answer's `scopeGrowth`. A plan-check call an earlier executor
+// launched answered a schema without it; recovery consumes such an answer after an upgrade. Delete once no arc started on
+// 1.0.0-dev.9 is in flight.
+
+/** A plan-check answer without `scopeGrowth` (launched before scope growth): it proposed none. */
+export function planCheckScopeGrowthDefault(): readonly never[] {
+  warnDefaulted('plan-check.scopeGrowth', 'a plan-check answer without scopeGrowth (launched before scope growth); read as none proposed');
+  return [];
+}

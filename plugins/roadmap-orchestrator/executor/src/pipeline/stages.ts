@@ -70,7 +70,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
-import type { HoldCause, IntentOf, OpKind, OutcomeStage, StageOutcomeDetail, StageOutcomeKind } from '../core/events.ts';
+import type { HoldCause, IntentOf, OpKind, OutcomeStage, ScopeGrowthProposal, StageOutcomeDetail, StageOutcomeKind } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence, holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
@@ -79,16 +79,19 @@ import {
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specWitnesses } from '../core/records.ts';
+import { type ApprovalFingerprint, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specRemoves, specWitnesses } from '../core/records.ts';
 import { readsDeniedOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
-  type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, repoPath, repoPattern,
+  type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, matchesPattern, repoPath, repoPattern,
 } from '../core/values.ts';
 import { FILES_DIR, capturedEvidence, pathPattern } from '../git/evidence.ts';
 import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { mergeHead, resolvedHead } from '../git/mergein.ts';
-import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
+import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, type SalvageRules } from '../git/salvage.ts';
+import { readGuideBytes } from '../corpus/guide.ts';
+import { withinEnvelope } from '../input/envelope.ts';
+import { corpusFileSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import {
   type CorpusInForce, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput,
@@ -101,7 +104,8 @@ import { specCensusMismatches } from '../holistic/rederive.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, BuildAssess, Checkout, CorpusInput, DeliveredWitness, DocText, FastLane, GateTargetInput, PlanCheckAcceptance, PlanCheckCheckouts, PlanCheckPriorRound, ReferenceIndex,
+  ArchitectureInput, BuildAssess, Checkout, CorpusInput, DeliveredWitness, DocText, FastLane, GateTargetInput, PlanCheckAcceptance, PlanCheckCheckouts, PlanCheckPriorRound,
+  PlanCheckScopeGrowth, ReferenceIndex,
   RulingText,
   TargetInput, VisionInput,
 } from '../prompts/inputs.ts';
@@ -688,6 +692,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       // E (R59): an efficient builder's check under `by-builder` maps acceptance clauses to witness items.
       acceptance: shape === 'acceptance' ? acceptanceOf(ctx, unit, now.spec, checkouts.tip.at) : null,
       priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
+      scopeGrowth: planCheckScopeGrowth(ctx, unit.id, pinned.scope, now.spec, checkouts.tip.at),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
     return { checkouts, rendered, target };
@@ -862,6 +867,13 @@ export async function planCheckRead(
   }
   // R2: the judgment may raise the floor, never lower it, and a redirect may not widen the envelope.
   if (riskAbove(pinned.riskFloor, out.risk)) return done(record(ctx, parent, 'risk-lowered'));
+  // Scope growth (2026-10-15): a proposal code verifies holds the unit for the root agent, whatever the decision; nothing
+  // else of the answer is applied (the plan-check runs again once the root agent has ruled).
+  const growth = verifiedGrowth(ctx, unit, spec, pinned.scope, captured.tip, out.scopeGrowth);
+  if (growth.proposals.length > 0) {
+    const detail = { kind: 'scope-growth', proposals: growth.proposals } as const;
+    return done(record(ctx, parent, 'scope-growth', scopeGrowthNeedsUser(ctx, unit, called, growth), NO_PARK_FACTS, undefined, detail));
+  }
   if (widenedResources(unit, out.patch).length > 0) return done(record(ctx, parent, 'scope-widened'));
   if (unknownCites(ctx, out.patch)) return done(record(ctx, parent, 'malformed'));
   const patch = out.patch === null ? null : { expectRev: specRev, by: { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv }, ops: out.patch } as const;
@@ -888,6 +900,109 @@ export async function planCheckRead(
   }
   return done(record(ctx, parent, out.decision));
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Scope growth (2026-10-15)
+
+/**
+ * What a plan-check reads for its proposals: Phase-0 row 10's scan of the spec's `removes` at the tip it checks (outside the
+ * envelope `scope` and the spec's own scope), and the proposals the root agent rejected for the unit.
+ */
+function planCheckScopeGrowth(ctx: StageContext, unit: UnitId, scope: readonly RepoPattern[], spec: SpecM1, tip: Sha): PlanCheckScopeGrowth {
+  const references = scopeReferences(ctx.repo, tip, unit, [...scope, ...spec.scope], specRemoves(spec)).map((r) => ({ removed: r.removed, referrers: r.referrers }));
+  const rejected = ctx.journal.view.unit(unit).scopeDecisions.filter((d) => d.decision === 'rejected')
+    .flatMap((d) => d.proposals.map((p) => ({ patterns: p.patterns, reason: p.reason, rejection: d.reason })));
+  return { references, rejected };
+}
+
+/** A plan-check's proposals as code verified them: the patterns kept, per proposal, and why each other one was dropped. */
+export type VerifiedGrowth = Readonly<{ proposals: readonly ScopeGrowthProposal[]; dropped: readonly string[] }>;
+
+/**
+ * Verifies each proposed pattern by the rules a ruled scope growth must pass, so the root agent is asked only what could
+ * land: a repository pattern outside `.roadmap/`, outside the pinned envelope `scope` (`withinEnvelope`, the classifier's
+ * re-entry rule), matching a file at the tip the plan-check read, covered by no lane's `evidenceGlobs` entry
+ * (`evidenceScopeConflicts`, the classifier's), in a same-repo corpus arc clear of the corpus file set
+ * (`scopeOverlapsCorpus`, the Phase-0 row's), and never one the root agent rejected for the unit. A proposal keeps the
+ * patterns that pass; one left with none is dropped. (`scope accept` then runs the whole classifier on the revision.)
+ */
+function verifiedGrowth(ctx: StageContext, unit: PlanUnit, spec: SpecM1, scope: readonly RepoPattern[], tip: Sha, answers: PlanCheckOutput['scopeGrowth']): VerifiedGrowth {
+  if (answers.length === 0) return { proposals: [], dropped: [] };
+  const files = git(ctx.repo, ['ls-tree', '-r', '-z', '--name-only', tip]).split('\0').filter((f) => f !== '').map((f) => repoPath(f));
+  const rejected = new Set(ctx.journal.view.unit(unit.id).scopeDecisions.filter((d) => d.decision === 'rejected').flatMap((d) => d.proposals.flatMap((p) => p.patterns)));
+  const corpus = ctx.plan().target === 'corpus' ? corpusSet(ctx) : null;
+  const dropped: string[] = [];
+  const why = (raw: string): string | null => {
+    let p: RepoPattern;
+    try {
+      p = repoPattern(raw, 'scopeGrowth.patterns');
+    } catch (error) {
+      if (error instanceof SchemaError) return 'not a repository pattern';
+      throw error;
+    }
+    if (p === '.roadmap' || p.startsWith('.roadmap/')) return 'under .roadmap/, which no unit owns';
+    if (withinEnvelope(p, scope)) return 'already inside the scope envelope';
+    if (rejected.has(p)) return 'the root agent rejected it for this unit';
+    if (!files.some((f) => matchesPattern(f, p))) return `matches no file at the integration tip ${tip}`;
+    if (evidenceScopeConflicts(unit.id, [p], spec).length > 0) return 'a lane\'s evidenceGlobs entry covers it, so its content could never be committed';
+    if (corpus !== null && scopeOverlapsCorpus(corpus, p)) return 'it may overlap the corpus file set';
+    return null;
+  };
+  const proposals = answers.flatMap((a) => {
+    const kept = [...new Set(a.patterns.filter((raw) => {
+      const reason = why(raw);
+      if (reason !== null) dropped.push(`\`${raw}\`: ${reason}`);
+      return reason === null;
+    }) as RepoPattern[])].sort();
+    return kept.length === 0 ? [] : [{ patterns: kept, reason: a.reason }];
+  });
+  return { proposals, dropped };
+}
+
+/** A same-repo corpus arc's corpus file set in force; null for a corpus kept in another repository. */
+function corpusSet(ctx: StageContext): ReturnType<typeof corpusFileSet> | null {
+  const c = corpusInForce(ctx);
+  const guide = readGuideBytes(c.guide.bytes).guide;
+  return guide.source.kind === 'same-repo' ? corpusFileSet(c.pin.value, guide) : null;
+}
+
+/** The blocking item a scope-growth hold raises (the scheduler writes it, parented by the held attempt). */
+function scopeGrowthNeedsUser(ctx: StageContext, unit: PlanUnit, called: BackendCallOutcome, growth: VerifiedGrowth): NeedsUserContent {
+  const { path, spec } = loadUnitSpec(ctx, unit);
+  const proposed = growth.proposals.map((p) => `${p.patterns.map((x) => `\`${x}\``).join(', ')} (${p.reason})`).join('; ');
+  return {
+    blocking: true,
+    subject: { type: 'unit', unit: unit.id },
+    reason: 'scope-growth',
+    summary: `Unit ${unit.id}: its plan-check proposes growing its scope by ${proposed} (spec ${path} at rev ${spec.rev}).`
+      + (growth.dropped.length === 0 ? '' : ` Code dropped: ${growth.dropped.join('; ')}.`),
+    recommendation: `\`roadmap scope accept ${unit.id} --reason <text>\` lands the growth as one ruled revision (a new ruling naming the patterns, the unit's plan and spec scope widened) and re-runs the plan-check on it; `
+      + `\`roadmap scope reject ${unit.id} --reason <text>\` keeps the scope, and the plan-check runs again told so (it decides within the scope, infeasible when the spec cannot be met).`,
+    options: [],
+    evidence: called.kind === 'result' ? [absPath(join(called.invDir, 'result.json'))] : [],
+  };
+}
+
+/**
+ * Scope growth (A): what each of the unit's done salvages reverted as outside the pinned scope, in log order, with the dir
+ * keeping its content (`<run>/rejected/<unit>/<manifest sha256>/`, src/git/salvage.ts).
+ */
+export function salvageRejections(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, unit: UnitId): readonly Readonly<{ paths: readonly RepoPath[]; dir: AbsPath }>[] {
+  const view = ctx.journal.view;
+  const root = absPath(join(ctx.runDir, 'rejected', unit));
+  return view.opsOf('salvage.commit').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && view.doneOf(i.op) !== null).map((i) => {
+    const dir = absPath(join(root, i.expect.rejectedManifestSha256));
+    const checked = checkRejected(dir, i.expect.rejectedManifestSha256);
+    if (checked.kind !== 'complete') throw new Error(`unit ${unit}: the rejected content of salvage ${i.op} at ${dir} is incomplete: ${checked.detail}`);
+    return { paths: checked.manifest.entries.filter((e) => e.reason === 'out-of-scope').map((e) => e.path), dir };
+  });
+}
+
+/** The paths of `paths` still outside the unit's pinned scope (a scope accept since may have taken some in), ascending. */
+export const stillOutside = (ctx: StageContext, unit: UnitId, paths: readonly RepoPath[]): readonly RepoPath[] => {
+  const scope = dispatchOf(ctx.journal.view, unit).scope;
+  return [...new Set(paths.filter((p) => !scope.some((s) => matchesPattern(p, s))))].sort();
+};
 
 /**
  * An executor's spec patch (a plan-check redirect, the implementer's decisions): a machine revision of the unit's spec,

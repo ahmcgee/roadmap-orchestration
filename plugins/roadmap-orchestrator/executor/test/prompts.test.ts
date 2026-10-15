@@ -112,7 +112,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, acceptance: null, priorInvalid: null,
+      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] },
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -130,6 +130,10 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         delivered: [{ obligation: obligationId('I-7'), statement: 'A cancelled booking frees its berth.', lane: laneId('journey'), testIds: ['cancel > frees the berth'] }],
       },
       priorInvalid: 'PRIOR-INVALID-B',
+      scopeGrowth: {
+        references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
+        rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
+      },
     },
   ],
   build: [
@@ -152,7 +156,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
       diff: { base: SHA_A, head: SHA_B, text: 'DIFF-A' },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
-      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
+      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -162,7 +166,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
         ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
-      evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')] },
+      evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
         directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null }],
         premises: [premise('PREMISE-B', 'src/b/x.ts')], fixPaths: [repoPath('src/b/x.ts')], changedPremiseFiles: ['src/b/x.ts'],
@@ -245,6 +249,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   planCheck: {
     decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
+    scopeGrowth: [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }],
     patch: [
       { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'add', section: 'decisions', item: { id: 'R2', text: 'Use the existing parser.' } },
@@ -652,6 +657,35 @@ describe('M3 prompts: the vision and the arc roles', () => {
     // visionConflict is required.
     const { visionConflict: _v, ...without } = ok;
     assert.throws(() => validatePlanCheckOutput(without), SchemaError);
+  });
+
+  it('prompts.scope-growth: plan-check sweeps for references and proposes scopeGrowth from <scope_references>, never a rejected proposal; the gate reads the reverted paths', () => {
+    for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+      const mod = promptFor('planCheck', model);
+      assert.match(mod.system, /sweep for references/, model);
+      assert.match(mod.system, /scopeGrowth/, model);
+      assert.match(mod.system, /<rejected_scope_growth>/, model);
+      const a = mod.render(SAMPLES.planCheck[0]);
+      assert.match(a, /<scope_references>\n\(none: the spec declares no removes, or nothing outside the envelope names them\)\n<\/scope_references>/, model);
+      assert.doesNotMatch(a, /<rejected_scope_growth>/, `${model}: no rejected block without a rejection`);
+      const b = mod.render(SAMPLES.planCheck[1]);
+      assert.match(b, /- `REMOVED-B` is still named by: test\/b\/old\.test\.ts/, model);
+      assert.match(b, /<rejected_scope_growth>\n- `docs\/b\/\*\*`: proposed because GROWTH-REASON-B; rejected because REJECTION-B\n<\/rejected_scope_growth>/, model);
+      const gate = promptFor('gate', model);
+      assert.match(gate.system, /A path listed as reverted/, model);
+      assert.match(gate.render(SAMPLES.gate[1]), /<scope_reverted>\n- test\/b\/REVERTED-B\.test\.ts\n<\/scope_reverted>/, model);
+      assert.match(gate.render(SAMPLES.gate[0]), /<scope_reverted>\n\(none: the build edited nothing outside the envelope\)\n<\/scope_reverted>/, model);
+    }
+    assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
+    assert.ok((PLAN_CHECK_ACCEPTANCE_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
+    const ok = OUTPUTS.planCheck as Record<string, unknown>;
+    assert.deepEqual(validatePlanCheckOutput(ok).scopeGrowth, [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }]);
+    for (const bad of [[{ patterns: [], reason: 'r' }], [{ patterns: ['a'] }], [{ patterns: [''], reason: 'r' }]]) {
+      assert.throws(() => validatePlanCheckOutput({ ...ok, scopeGrowth: bad }), SchemaError, JSON.stringify(bad));
+    }
+    // An answer a dev.9 executor launched has no scopeGrowth: read as none proposed (scaffolding, `planCheckScopeGrowthDefault`).
+    const { scopeGrowth: _g, ...dev9 } = ok;
+    assert.deepEqual(validatePlanCheckOutput(dev9).scopeGrowth, []);
   });
 
   it('the gate (R17) never receives the vision: its selected obligations, without the clauses they serve', () => {

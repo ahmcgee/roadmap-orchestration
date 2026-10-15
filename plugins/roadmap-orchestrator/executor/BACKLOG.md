@@ -165,6 +165,12 @@ None.
   startup's recovery hold closes its attempt, and a resumed held unit re-runs from its decision as an abandoned
   attempt always did. Trigger: a resume of a recovery-held unit that still throws; read the throw site from its
   stderr.
+- **Scope growth beyond the uniform plan-check** (2026-10-15). Deferred: (a) the in-session assessment of a frontier or
+  summit builder under `planCheck.shape: by-builder` proposes no `scopeGrowth` (it makes no plan-check call); (b) a
+  builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own;
+  (c) `start` writes Phase-0 row 10's advisories to the executor's stderr only (`phase0 check` and `apply` print them).
+  Trigger: a unit under `by-builder` needs growth its assessment cannot propose, or a gate escalation that a held
+  proposal would have saved.
 
 - **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
   threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging
@@ -283,6 +289,9 @@ None.
   reads.json without `denied` reads as none refused. With it, `denied` becomes required.
 - `buildFinalDefault` (src/core/upgrade.ts), once no build an executor before the report rule (2026-10-11) launched is
   unconsumed: a build answer without `final` reads as final. With it, `final` becomes required in `buildOutputFor`.
+- `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth
+  (2026-10-15) launched is unconsumed: a plan-check answer without `scopeGrowth` reads as none proposed. With it,
+  `scopeGrowth` becomes required in `planCheckOutput`.
 - `lensPatchMutantDefault` (src/core/upgrade.ts) and `LensMutant`'s `kind: patch` arm with `admitMutant`'s `checkPatch`
   branch, once no audit an executor before paid M4b run 3's fix started is running: a recorded lens answer's mutant
   `{patch, lane}` (a hand-written diff) reads as written. With it, a lens mutant is edits only.

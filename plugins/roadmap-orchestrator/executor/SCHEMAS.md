@@ -192,6 +192,13 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | `stage-outcome` lanes, `StageOutcomeDetail` (fast suite at lanes, 2026-10-15) | `+ base-red` with `detail: base-red{base: Sha, lanes: LaneId[], changedCheckout}` (`DETAILED_OUTCOMES` `lanes/base-red`): a fast suite lane red at the salvage SHA and on the unit's diff base alone; class `advance`, uncharged, `go(gate)` | none: dev.7 and dev.8 records never hold it |
 | `proc.spawn` subject `lane{set: suite}` (fast suite at lanes, 2026-10-15) | no shape change: a `suite` lane spawn now also has a lanes stage parent (the fast suite at the salvage SHA, and on the diff base); `seriesLedger` takes the `set` it reads | none: a dev.8 lanes attempt simply has no suite spawns |
 | `BuildInputs` (fast suite at lanes, 2026-10-15) | `+ suiteLanes: FastLane[]` (`fastSuiteLanes`; `ROLE_INPUTS.build`) | none: rendered per call, never kept |
+| `stage-outcome` plan-check, `StageOutcomeDetail` (scope growth, 2026-10-15) | `+ scope-growth` (class `hold`, the one hold besides `interrupted`; `detail: scope-growth{proposals: [{patterns: RepoPattern[] (ascending, non-empty), reason}]}` (non-empty), `DETAILED_OUTCOMES` `plan-check/scope-growth`) | none: dev.9 records never hold it |
+| Facts (scope growth) | `+ scope-decided{unit, attempt, command, decision: accepted \| rejected, reason}` | none |
+| `CommandBody`, `NeedsUserReason` (scope growth) | `+ scope-decide{unit, decision: accept \| reject, reason}` (scope {u}); `+ scope-growth` (blocking) | none |
+| `UnitState` (fold, scope growth) | `+ scopeDecisions: [{attempt, command, decision, proposals, reason}]` | derived (`[]`) |
+| Plan-check answer (scope growth) | `+ scopeGrowth: [{patterns: string[] (non-empty), reason}]` (`PLAN_CHECK_SCHEMA` and `PLAN_CHECK_ACCEPTANCE_SCHEMA` require it) | absent: none proposed (`planCheckScopeGrowthDefault`, warned once; scaffolding): a plan-check call a dev.9 executor launched |
+| `spec.json` (scope growth) | `+ removes?: string[]` (non-empty, unique, each one line: a path, route or symbol the unit removes or renames) | absent: none (`specRemoves`; lasting) |
+| `phase0 check` report, `apply --dry-run`, an applied `apply` receipt (scope growth) | `+ advisories: ScopeReference[]` (Phase-0 row 10, never a refusal); the receipt's `advisory: <json>` lines | none: output only |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
 **Arc feedback 2026-10-15 (after 1.0.0-dev.9; no version bump in this change).** Additive; nothing to default: no
@@ -409,7 +416,8 @@ in the line belongs to `arc`.
 gate`) \| `trigger` (a risk trigger: the next judgment dispatch sits on the `escalation` seat) \| `hold` (exactly the
 `interrupted` outcome, never chargeable: a pause or stop cancel, or the stage's backend parked on a usage
 limit; the unit waits at its stage and a resume re-runs it as a new attempt, a build as a `continue` of the
-interrupted session; lead ruling, 11b) \| `park` \|
+interrupted session; lead ruling, 11b; since scope growth also plan-check `scope-growth`, released by `scope-decided`
+or a resume, see "Scope growth") \| `park` \|
 `stop` \| `retire`. The attempt number of a stage start is the unit's `attempts` count plus one (numbered
 across the unit's stages). M2: `park?: ParkRecord` only with class `park` (the chargeable bound's is operator
 `design`), written by `outcomeFact` from the table's park class (retryable targets stated by the stage);
@@ -886,14 +894,15 @@ passes, read by `status` for the repo and plan file); `status.rejection.json` (`
 
 | File (run dir) | Type | Content |
 |---|---|---|
-| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: ApplyManifest} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") |
+| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: ApplyManifest} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
 
 Control commands (`CONTROL_COMMANDS = pause, stop, ack`) apply immediately, waiting only for an
 `integration.ff` critical section. Mutations (`resume`, `sweep`, `apply`, `resolve-edge`, `run-only`, and M3's `rule`,
-`reverse`, `steer`, `merge-in`, `audit`, `close-admissions`) apply once
+`reverse`, `steer`, `merge-in`, `audit`, `close-admissions`, M4b's `flow-decide`, `flow-request` and scope growth's
+`scope-decide`) apply once
 their scope has drained (A12): every unit in the command's `CommandScope` has a task that is `idle` or
 `awaiting-admission` (none in a stage or a chain), and no earlier pending mutation overlaps it; while a mutation
 is pending, admission into its scope waits (`drain`). An open stage-parented intent no longer defines the safe
@@ -2508,7 +2517,8 @@ filter keys it across arcs). Crash row ANSWER_RECORD (`answer.after-publish`): a
 3. **The shared Phase-0 rows** (`src/phase0/rows.ts` `phase0Rows(input, mode)`, synchronous) run in four modes:
    a fresh start and `phase0 check --plan` (everything), a restart of an arc with a plan in force (no chain rows), an
    `apply` (no forge, no chain) and `--from-ref` (the closure rows only). `tree-uncommitted` runs for every arc; every
-   other row only for a corpus arc. A respawn runs none. `phase0 check --plan` also runs `runChecks`' pure rows (the
+   other row only for a corpus arc, but row 10 (scope growth, "Scope growth"), an advisory that never refuses, which
+   runs for every arc in every mode. A respawn runs none. `phase0 check --plan` also runs `runChecks`' pure rows (the
    `.roadmap/` layout, `plan-invalid`, the revisioned inputs, routing, lanes) and `holistic-needs-corpus`.
 4. **`holistic-needs-corpus`** (D0, R17, H4) is `phase0 check --plan`'s and a fresh start's (`runChecks`, no plan in
    force: the same `fresh` as the chain rows): a fresh holistic `architecture-doc` start is refused. A start of an arc
@@ -3443,3 +3453,60 @@ fast lanes. Now the lanes stage runs the plan's fast suite lanes in code, and th
   candidate's or a batch's suite runs, so `suiteRuns`, `firstRunReds` and the suite-lane levers' metrics are unchanged.
 
 **Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8: every change is additive and none needs a default.
+
+
+## Scope growth (2026-10-15; still 1.0.0-dev.9)
+
+Units started with scopes too narrow (a unit replacing a shell page needed test files outside its package), and every
+fix cost a build, a park and a re-entry. Three parts; one canonical way a dispatched unit's scope grows stays the ruled
+growth ("Plan in force", `scope growth`), which `scope accept` now builds.
+
+**A. The silent loss made visible.** Salvage still reverts every uncommitted edit outside the pinned scope and keeps its
+content under `<run>/rejected/<unit>/<rejected manifest sha256>/files/` (src/git/salvage.ts, unchanged). Read back from
+the done `salvage.commit` ops and their manifests (`salvageRejections`, src/pipeline/stages.ts; reason `out-of-scope`,
+still outside the pinned scope: `stillOutside`): the gate's `scope.rejected` (prompt `<scope_reverted>`, every salvage of
+the unit; the gate escalates when the spec needs one) and the next fix round's directive (`revertedPathsDirective`, the
+latest salvage's, with the kept dir; src/pipeline/unit.ts `withReverted`). A builder reports a needed out-of-scope path in
+its report's `blockers` as `scope growth: <path>: <why>` (`SCOPE_GROWTH_BLOCKER`; the candidate's transient directive
+says the same): the build report gains no field.
+
+**B. Plan-check proposes; the root agent rules.** `PlanCheckOutput + scopeGrowth: [{patterns: string[], reason}]` (both
+plan-check schemas). Its inputs gain `scopeGrowth: {references, rejected}`: row 10's scan of the spec's `removes` at the
+tip it reads, outside the envelope and the spec's scope, and the proposals the root agent rejected for the unit. Code
+verifies each proposed pattern (`verifiedGrowth`): a repository pattern, not under `.roadmap/`, outside the pinned
+envelope (`withinEnvelope`), matching a file at the tip the check read, covered by no lane `evidenceGlobs` entry
+(`evidenceScopeConflicts`), clear of a same-repo corpus file set (`scopeOverlapsCorpus`, Phase-0's R32 predicate), and
+never a pattern rejected for the unit; a proposal keeps its passing patterns, one with none is dropped. A verified
+proposal records plan-check `scope-growth` (class `hold`, uncharged, `detail: scope-growth{proposals}`), whatever the
+decision, after the vision conflicts' findings and the risk-lowered check and before any patch or risk raise (nothing else
+of the answer applies), with a blocking `scope-growth` item naming the proposals, what code dropped, and the two commands.
+
+`roadmap scope accept|reject <unit> --reason <text>` queues `scope-decide{unit, decision, reason}` (mutation, scope {u};
+src/commands/scope.ts). Refused unless the unit is held by its plan-check's `scope-growth`. Accept, each step only where
+missing: (1) the ruled growth as one revision: the ledger's next ruling (`kind: decision`, `ruledBy: architect`,
+`appliesTo: units[u]`, `lifetime: arc`, its statement naming exactly the added patterns in backticks with the plan-check's
+and the root agent's reasons, its docRef a line of the first file the growth takes in that its anchor quotes (one naming a
+`removes` entry first), its consistency fresh at the integration tip), the plan's unit scope widened, and the unit's spec
+in force at rev + 1 with the patterns in its scope and the ruling in its cites (`grownSpec`); validated by `rulingReasons`,
+evaluated by the apply core (proposer `apply{rulings}`) and the Phase-0 rows (`APPLY`), committed under the fence
+(`plan-applied`, source the command); (2) the write-back: ledger, sidecars and obligations (`rule`'s), the plan (`steer`'s),
+and the unit's live spec file while it holds the spec the growth was built on. A refusal at (1) rejects the command with
+every reason and leaves the unit held. Both: (3) the hold's item acknowledged; (4) `scope-decided`, the postcondition.
+
+The fold: `scope-decided` only of the unit held by that attempt's `scope-growth` hold (else it fails loud); the hold is
+released (`active`) and the decision kept in `UnitState.scopeDecisions` with the proposals it decided. Accepted: the spec
+revision is pending, so the unit re-opens at plan-check on it (`reopenIfDue`), whose dispatch check re-pins the plan's
+wider scope (`pinUpdate`; a unit that has not built re-pins whatever its seat). Rejected: the plan-check re-runs on the
+same spec with `<rejected_scope_growth>`, and a proposal of a rejected pattern is dropped, so it decides within the scope
+(approve, redirect, or infeasible: an escalation). A `resume` (of the unit, or all) also releases the hold: the plan-check
+runs again and may propose again.
+
+**C. Phase-0 row 10, `scope-references-outside`** (src/phase0/rows.ts `scopeReferences`). `SpecM1 + removes?: string[]`.
+For each unit whose spec declares it, each entry is searched literally (`git grep -l -F`) at the integration tip (the
+baseline before the branch exists); the hits inside the unit's scope (plan and spec) or under `.roadmap/` are dropped:
+`ScopeReference{kind: scope-references-outside, unit, removed, referrers: RepoPath[] (ascending, non-empty)}`. An advisory:
+`Phase0Outcome.advisories`, never a row, in every mode; `phase0 check` prints it (`advisories`), `apply --dry-run` and an
+applied `apply` receipt list it, a start writes it to the executor's stderr. The plan-check reads the same scan.
+
+**Upgrade.** See "Record evolution" (the rows marked scope growth): additive; one scaffolding default
+(`planCheckScopeGrowthDefault`). An arc started on 1.0.0-dev.9 is adopted.

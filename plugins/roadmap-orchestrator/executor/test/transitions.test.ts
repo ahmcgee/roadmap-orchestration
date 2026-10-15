@@ -114,6 +114,8 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
   // M4a rev 3 (E): a frontier builder under by-builder makes no plan-check call; its fresh build assesses in session.
   ['plan-check', 'in-session', {}, 'build/fresh@med', 'advance', {}],
+  // Scope growth (2026-10-15): a verified proposal holds the unit for the root agent, uncharged.
+  ['plan-check', 'scope-growth', {}, 'hold', 'hold', {}],
   // build (implementer)
   ['build', 'success', {}, 'quiesce', 'advance', {}],
   ['build', 'refusal', {}, 'park:refusal', 'park', {}],

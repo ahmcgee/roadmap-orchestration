@@ -1252,7 +1252,8 @@ export type ScopeContext = Readonly<{
 
 /**
  * A12's `ScopeOf`, bound to what an apply's classification reads: `resume` (all) → the arc; `resume <u>` →
- * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` and (M4b) `flow-decide` and `flow-request` → none; `apply` → its changes' scope
+ * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` and (M4b) `flow-decide` and `flow-request` → none; `steer`, `merge-in` and
+ * (scope growth) `scope-decide` → their unit; `apply` → its changes' scope
  * (`changesScope`) over the files as they are, its `--ruling` records landed; none when it would be rejected (a ruling
  * record that no longer reads included) or change nothing (it then
  * touches nothing); the arc when the files no longer hash to its manifest (they may be restored before it
@@ -1277,6 +1278,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
         return ARC;
       case 'steer':
       case 'merge-in':
+      case 'scope-decide':
         return unitsScope([body.unit]);
       case 'apply': {
         const inForce = planInForce(sc.runDir, view);

@@ -148,6 +148,19 @@ export type PlanCheckInputs = Readonly<{
    * this retry to correct; null otherwise.
    */
   priorInvalid: string | null;
+  /**
+   * Scope growth (2026-10-15): the reference sweep's start (Phase-0 row 10 over the spec's `removes` at the tip the check
+   * reads) and the unit's earlier proposals the root agent rejected (never proposed again).
+   */
+  scopeGrowth: PlanCheckScopeGrowth;
+}>;
+
+/** What a plan-check reads for its scope-growth proposals. */
+export type PlanCheckScopeGrowth = Readonly<{
+  /** Per `removes` entry with referrers: the files outside the scope envelope that still name it. */
+  references: readonly Readonly<{ removed: string; referrers: readonly RepoPath[] }>[];
+  /** Each rejected proposal: its patterns and reason, and the root agent's reason for rejecting it. */
+  rejected: readonly Readonly<{ patterns: readonly RepoPattern[]; reason: string; rejection: string }>[];
 }>;
 
 /**
@@ -225,8 +238,11 @@ export type GateInputs = Readonly<{
   laneLedger: readonly LaneLedgerEntry[];
   /** Evidence directories the gate may read (lane output, the build's decisions.json). */
   evidence: readonly AbsPath[];
-  /** The pinned envelope, and the diff's paths outside it. */
-  scope: Readonly<{ patterns: readonly RepoPattern[]; growth: readonly RepoPath[] }>;
+  /**
+   * The pinned envelope, the diff's paths outside it, and (scope growth, 2026-10-15) the out-of-scope paths the build edited
+   * that salvage reverted (in no diff), still outside the envelope.
+   */
+  scope: Readonly<{ patterns: readonly RepoPattern[]; growth: readonly RepoPath[]; rejected: readonly RepoPath[] }>;
   /** Later gate rounds rule on their own prior round (§3, sf16); null on the first round. */
   priorRound: GatePriorRound | null;
   /** M4a rev 3: the executable checks' results (`GateChecks`). */
@@ -406,7 +422,10 @@ export type RoleInputs = {
 };
 
 export const ROLE_INPUTS = {
-  planCheck: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid'],
+  planCheck: [
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
+    'scopeGrowth',
+  ],
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
@@ -607,6 +626,23 @@ export function planCheckPriorInvalidText(reason: string | null): string {
 <prior_attempt>
 Your previous answer on this unit redirected with a patch the executor refused, so the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
 </prior_attempt>`;
+}
+
+/**
+ * Scope growth (2026-10-15): the reference sweep's start, and the rejected proposals (only when there are any).
+ */
+export function scopeGrowthText(g: PlanCheckScopeGrowth): string {
+  const refs = g.references.map((r) => `- \`${r.removed}\` is still named by: ${r.referrers.join(', ')}`);
+  const rejected = g.rejected.map((r) => `- ${r.patterns.map((p) => `\`${p}\``).join(', ')}: proposed because ${r.reason}; rejected because ${r.rejection}`);
+  return `
+
+<scope_references>
+${refs.length === 0 ? '(none: the spec declares no removes, or nothing outside the envelope names them)' : refs.join('\n')}
+</scope_references>${rejected.length === 0 ? '' : `
+
+<rejected_scope_growth>
+${rejected.join('\n')}
+</rejected_scope_growth>`}`;
 }
 
 /**

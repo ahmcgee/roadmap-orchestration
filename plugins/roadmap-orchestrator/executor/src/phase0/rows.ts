@@ -29,6 +29,11 @@
 //   8. chain       (a fresh start, live) K, the baseline rules and the ack limit (src/chain.ts; H12, R11).
 //   9. tree        (live) `.roadmap/{vision.json, corpus.md, config.json}` equal to their blobs at HEAD (`tree-uncommitted`,
 //                  K18), for every arc.
+//  10. references  (advisory, never a rejection; every arc, every mode; scope growth 2026-10-15) per unit whose spec declares
+//                  `removes`: each entry searched for literally (`git grep -l -F`) at the integration tip (the baseline before
+//                  the branch exists), the hits inside the unit's scope (plan and spec) or under `.roadmap/` dropped:
+//                  `scope-references-outside{unit, removed, referrers}`, the referrers being the patterns its scope lacks
+//                  (`scopeReferences`, which plan-check reads too).
 // A record that names something absent (a debt disposition of no open item, a promote to a unit the plan does not
 // hold, a resolve by a ruling the ledger does not hold active, an intake act on an unknown unit or rule, an amendment
 // disposition of no amendment) is `plan-invalid{schema}` naming it.
@@ -37,7 +42,7 @@ import { join } from 'node:path';
 import { answerLog, latestAnswers, refQuestions, unappliedOf } from '../answers.ts';
 import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
 import { type ArcId, type DebtId, type IssueId, type UnitId, issueId, phaseQuestionSeq, sha } from '../core/ids.ts';
-import type { SpecM1 } from '../core/records.ts';
+import { type SpecM1, specRemoves } from '../core/records.ts';
 import { sha256Hex } from '../core/json.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
@@ -101,8 +106,17 @@ export type Phase0Input = Readonly<{
   ledger: readonly Ruling[];
 }>;
 
-/** The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps). */
-export type Phase0Outcome = Readonly<{ rows: readonly StartupRejection[]; opened: OpenedSource | null; pin: CorpusPin | null }>;
+/**
+ * Row 10 (scope growth, 2026-10-15), advisory: files outside a unit's scope that still name something its spec `removes`.
+ * `referrers` ascending, non-empty: the patterns the unit's scope would need to keep them working.
+ */
+export type ScopeReference = Readonly<{ kind: 'scope-references-outside'; unit: UnitId; removed: string; referrers: readonly RepoPath[] }>;
+
+/**
+ * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
+ * `advisories`: row 10's, which never refuse.
+ */
+export type Phase0Outcome = Readonly<{ rows: readonly StartupRejection[]; opened: OpenedSource | null; pin: CorpusPin | null; advisories: readonly ScopeReference[] }>;
 
 /** The rows' input over files as a start or an apply reads them (the ledger's rulings parsed; it loads, group 1 checked). */
 export function phase0InputOf(files: InputFiles, config: RepoConfig | null): Phase0Input {
@@ -138,7 +152,8 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const rows: StartupRejection[] = [];
   if (mode.tree) rows.push(...treeUncommitted(input.repo));
   const { plan } = input;
-  if (plan.target !== 'corpus') return { rows, opened: null, pin: null };
+  const advisories = referenceRows(input);
+  if (plan.target !== 'corpus') return { rows, opened: null, pin: null, advisories };
   const where = (what: string): string => `${input.where} (${what})`;
   if (plan.holistic.obligations === undefined) rows.push(schemaRow('plan.holistic.obligations', 'a corpus arc names its obligations file (the census lives there)'));
   const pin = load(rows, 'plan.corpus', where('the corpus pin'), input.pin, parseCorpusPin);
@@ -204,7 +219,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     const c = chainRow(input, guide, previous?.arcs ?? [], previous?.missing ?? null);
     if (c !== null) rows.push({ kind: 'chain-invalid', problem: c });
   }
-  return { rows, opened: rows.length === 0 ? opened : null, pin };
+  return { rows, opened: rows.length === 0 ? opened : null, pin, advisories };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -232,14 +247,53 @@ export function rulingCorpusOf(c: CorpusInForce): RulingCorpus {
   };
 }
 
+/** Whether scope pattern `s` may reach the corpus file set: it matches a pinned file, or may overlap an include pattern (R32). */
+export const scopeOverlapsCorpus = (set: ReturnType<typeof corpusFileSet>, s: RepoPattern): boolean =>
+  set.files.some((f) => matchesPattern(f, s)) || set.patterns.some((p) => mayOverlap(s, p));
+
 function overlapProblems(plan: PlanM1, pin: CorpusPin, guide: CorpusGuide): readonly CorpusProblem[] {
   const set = corpusFileSet(pin, guide);
   const out: CorpusProblem[] = [];
   for (const u of plan.units) {
-    if (u.scope.some((s) => set.files.some((f) => matchesPattern(f, s)) || set.patterns.some((p) => mayOverlap(s, p)))) out.push({ type: 'scope-overlaps-corpus', unit: u.id });
+    if (u.scope.some((s) => scopeOverlapsCorpus(set, s))) out.push({ type: 'scope-overlaps-corpus', unit: u.id });
   }
   for (const c of plan.contracts) if (inCorpusSet(set, c)) out.push({ type: 'contract-overlaps-corpus', path: c });
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 10. References outside a unit's scope (scope growth, 2026-10-15)
+
+/**
+ * The files at `at` outside `scope` (and outside `.roadmap/`) that still name each of `removes`, searched for literally
+ * (`git grep -l -F`); one entry per removed string with referrers. The plan-check of the unit reads the same scan.
+ */
+export function scopeReferences(repo: AbsPath, at: string, unit: UnitId, scope: readonly RepoPattern[], removes: readonly string[]): readonly ScopeReference[] {
+  return removes.flatMap((removed) => {
+    const r = gitRun(repo, ['grep', '-l', '-z', '-F', '-e', removed, at, '--'], { okCodes: [0, 1] });
+    const referrers = [...new Set(r.stdout.split('\0').filter((x) => x !== '').map((hit) => repoPath(hit.slice(at.length + 1))))]
+      .filter((p) => !p.startsWith('.roadmap/') && !scope.some((s) => matchesPattern(p, s)))
+      .sort();
+    return referrers.length === 0 ? [] : [{ kind: 'scope-references-outside' as const, unit, removed, referrers }];
+  });
+}
+
+/** The commit row 10 searches: the integration tip, or the baseline before the integration branch exists. */
+export function referenceCommit(repo: AbsPath, plan: PlanM1): string {
+  const tip = gitRun(repo, ['rev-parse', '--verify', '-q', `refs/heads/${plan.integrationBranch}^{commit}`], { okCodes: [0, 1] });
+  return tip.code === 0 ? tip.stdout.trim() : plan.baseline;
+}
+
+/** Row 10 over the plan's units whose spec loads and declares `removes`. */
+function referenceRows(input: Phase0Input): readonly ScopeReference[] {
+  const specs = parsedSpecs(input).filter((s) => specRemoves(s).length > 0);
+  if (specs.length === 0) return [];
+  const at = referenceCommit(input.repo, input.plan);
+  return specs.flatMap((spec) => {
+    const unit = input.plan.units.find((u) => u.id === spec.unit);
+    if (unit === undefined) throw new Error(`a parsed spec of ${spec.unit}, which the plan does not hold`);
+    return scopeReferences(input.repo, at, unit.id, [...unit.scope, ...spec.scope], specRemoves(spec));
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------

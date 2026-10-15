@@ -6,7 +6,8 @@
 // and an index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
 // approving plan-check's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
 // after a merge-in the base is T), the lane ledger of the unit's latest spec series and its evidence dirs,
-// the build's evidence (decisions.json), the pinned scope envelope and the diff's paths outside it, and on
+// the build's evidence (decisions.json), the pinned scope envelope and the diff's paths outside it (and, scope growth
+// 2026-10-15, the out-of-scope paths the unit's salvages reverted, which no diff shows), and on
 // a later round the prior round's handoff: its directives, findings and premises, the paths the fix changed
 // and the premise files whose blobs changed since (items 25, 29). The session reads the green verification
 // checkout, read-only, and the rulings ledger's directory.
@@ -83,7 +84,7 @@ import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  readRefused, writeJudgmentInputs,
+  readRefused, salvageRejections, stillOutside, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -311,7 +312,9 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, selected(ctx, unit, tip, head), tip),
       diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
-      laneLedger, evidence, scope: { patterns: pinned.scope, growth }, priorRound: priorRound(ctx, unit.id, head),
+      // Scope growth (2026-10-15): every out-of-scope path a salvage of the unit reverted (in no diff), still outside the scope.
+      laneLedger, evidence, scope: { patterns: pinned.scope, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
+      priorRound: priorRound(ctx, unit.id, head),
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head),
     });

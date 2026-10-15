@@ -8,7 +8,7 @@
 import {
   type AbortRecord, type AuditInputs, type BackendParkClass, type CoveredRange, type DoneRecord, type Event, type Fact, type HolisticFact, type Holder,
   type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
-  type ResourceEdge, type RetryStage, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
+  type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
   prevHash, probeTargetKey, serializeEvent,
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
@@ -179,6 +179,17 @@ export type UnitState = Readonly<{
    * gate outcome that advances it. Null otherwise.
    */
   steering: Readonly<{ seq: number; resume: boolean }> | null;
+  /**
+   * Scope growth (2026-10-15): the root agent's decisions on the unit's held scope-growth proposals (`scope-decided`), in log
+   * order, each with the proposals its plan-check attempt held. A later plan-check reads the rejected ones (it is told not
+   * to propose them again, and a proposal of a rejected pattern no longer holds it).
+   */
+  scopeDecisions: readonly ScopeDecision[];
+}>;
+
+/** One `scope-decided` fact with the proposals of the plan-check attempt it decided. */
+export type ScopeDecision = Readonly<{
+  attempt: number; command: CommandId; decision: 'accepted' | 'rejected'; proposals: readonly ScopeGrowthProposal[]; reason: string;
 }>;
 
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null, bounds: Bounds = DEFAULT_BOUNDS): UnitState {
@@ -187,7 +198,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
-    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null,
+    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [],
   };
 }
 
@@ -950,6 +961,9 @@ export class Fold implements JournalView {
       case 'resumed':
         this.#resumed(f.target, fail);
         return;
+      case 'scope-decided':
+        this.#scopeDecided(f, fail);
+        return;
       case 'reopened':
         this.#reopened(f, fail);
         this.#lastReopenSeq = at.seq;
@@ -1475,6 +1489,22 @@ export class Fold implements JournalView {
       ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
       reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects, pendingRevision: null,
     };
+  }
+
+  /**
+   * The root agent's decision on a held scope-growth proposal (src/commands/scope.ts): only of the unit held by that
+   * plan-check attempt's `scope-growth` hold. It releases the hold (the plan-check re-runs as a new, uncharged attempt) and
+   * is kept with the proposals it decided.
+   */
+  #scopeDecided(f: Extract<Fact, { kind: 'scope-decided' }>, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined) return fail(`scope-decided of unit ${f.unit}, which never started`);
+    const held = u.state.interrupted;
+    if (u.state.status !== 'held' || held === null || held.stage !== 'plan-check' || held.outcome !== 'scope-growth' || held.attempt !== f.attempt || held.detail?.kind !== 'scope-growth') {
+      return fail(`scope-decided of unit ${f.unit} plan-check#${f.attempt}, which is not the unit's scope-growth hold (status ${u.state.status}, held ${held === null ? 'none' : `${held.stage}#${held.attempt} ${held.outcome}`})`);
+    }
+    const decision: ScopeDecision = { attempt: f.attempt, command: f.command, decision: f.decision, proposals: held.detail.proposals, reason: f.reason };
+    u.state = { ...u.state, status: 'active', scopeDecisions: [...u.state.scopeDecisions, decision] };
   }
 
   /**
