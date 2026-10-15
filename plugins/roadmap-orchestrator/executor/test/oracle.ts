@@ -9,17 +9,21 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
-import type { Event, Fact, IntegrationFfExpect, IntentOf, RecoveredBy } from '../src/core/events.ts';
+import { type Event, type Fact, type IntegrationFfExpect, type IntentOf, type RecoveredBy, parseEventLine, prevHash } from '../src/core/events.ts';
 import { type ArcId, type UnitId, invocationId } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
+import { canonicalJson } from '../src/core/json.ts';
 import { readJournal } from '../src/core/log.ts';
+import { Fold } from '../src/core/state.ts';
 import { type ApprovalFingerprint, needsUserRecord } from '../src/core/records.ts';
 import type { AbsPath } from '../src/core/values.ts';
 import { git, refTarget, revParse } from '../src/git/git.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
+import { isAssessCall } from '../src/pipeline/stages.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
+import { ADMISSION_STAGES } from '../src/schedule/types.ts';
 import { arcRolesOf } from '../src/input/inforce.ts';
 
 export type Verdict = Readonly<{ pass: boolean; detail: string }>;
@@ -214,6 +218,58 @@ export function stageOutcomes(run: OracleRun, expected: Readonly<Record<string, 
     return JSON.stringify(got) === JSON.stringify(want) ? [] : [`${unit}: ${got.join(' ')}; expected ${want.join(' ')}`];
   });
   return verdict(problems, 'stage outcomes as expected');
+}
+
+/** The run's recovery holds (src/pipeline/unit.ts `holdAbandoned`), as `<unit> <stage>#<attempt>` in log order. */
+export function recoveryHoldsOf(run: OracleRun): readonly string[] {
+  return facts(run).flatMap((f) => (f.kind === 'stage-outcome' && f.cause?.type === 'recovery' ? [`${f.unit} ${f.stage}#${f.attempt}`] : []));
+}
+
+/**
+ * The recovery holds a run with exactly one executor crash must show, derived from its own log, and `outcomes` (the
+ * uncrashed run's, per unit) with each inserted where it falls. At the crash (the log before the restart's
+ * `executor-started`, the last) each unit's open attempt at an admission stage is either consumed by the restart from its backend
+ * call (the attempt's latest backend spawn closed with a result, or a build's lost with tree effects, and not an
+ * in-session assessment: src/pipeline/unit.ts `consumeRecorded`) or closed by one `interrupted` hold, cause recovery,
+ * which follows the unit's outcomes at the crash. Pair with `recoveryHoldsOf(run)`, which must equal `holds`.
+ */
+export function withRecoveryHolds(
+  run: OracleRun, outcomes: Readonly<Record<string, readonly string[]>>,
+): Readonly<{ outcomes: Readonly<Record<string, readonly string[]>>; holds: readonly string[] }> {
+  const lines = readFileSync(join(run.runDir, 'events.jsonl'), 'utf8').split('\n').filter((l) => l !== '');
+  const events = lines.map(parseEventLine);
+  const starts = events.flatMap((e, i) => (e.type === 'fact' && e.fact.kind === 'executor-started' ? [i] : []));
+  // The restart's start is the last; a crash before the first executor's own start record left one.
+  if (starts.length !== 1 && starts.length !== 2) throw new Error(`withRecoveryHolds: the log has ${starts.length} executor starts, not one crash and its restart`);
+  const fold = new Fold(run.arc);
+  /** Each unit's stage outcomes at the crash. */
+  const decided = new Map<string, number>();
+  for (const [i, e] of events.slice(0, starts.at(-1)).entries()) {
+    if (e.type === 'fact' && e.fact.kind === 'stage-outcome') decided.set(e.fact.unit, (decided.get(e.fact.unit) ?? 0) + 1);
+    fold.apply(e, prevHash(Buffer.from(`${lines[i]!}\n`, 'utf8')));
+  }
+  const out: Record<string, readonly string[]> = { ...outcomes };
+  const holds: string[] = [];
+  for (const unit of Object.keys(outcomes)) {
+    const open = fold.unit(unit as UnitId).open;
+    if (open === null || !(ADMISSION_STAGES as readonly string[]).includes(open.stage) || consumable(run, unit, open.stage, open.attempt)) continue;
+    holds.push(`${unit} ${open.stage}#${open.attempt}`);
+    const before = decided.get(unit) ?? 0;
+    out[unit] = [...outcomes[unit]!.slice(0, before), `${open.stage}:interrupted`, ...outcomes[unit]!.slice(before)];
+  }
+  return { outcomes: out, holds };
+}
+
+/** Whether the restart consumes `unit`'s open attempt from its backend call (src/pipeline/unit.ts `consumeRecorded`). */
+function consumable(run: OracleRun, unit: string, stage: string, attempt: number): boolean {
+  if (!['plan-check', 'build', 'gate'].includes(stage)) return false;
+  const key = canonicalJson({ type: 'stage', unit, stage, attempt });
+  const spawn = run.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && canonicalJson(i.parent) === key).at(-1);
+  if (spawn === undefined) return false;
+  const done = run.view.doneOf(spawn.op);
+  if (done === null || done.kind !== 'proc.spawn') throw new Error(`${unit} ${stage}#${attempt}: its backend call ${spawn.op} was never closed`);
+  if (done.outcome.kind === 'lost') return stage === 'build' && done.outcome.treeEffects;
+  return !(stage === 'build' && isAssessCall({ runDir: run.runDir }, invocationId(spawn.op, spawn.ordinal)));
 }
 
 /** Every needs-user raised (journal and file items), by reason, is exactly `expected` (a multiset): no duplicates. */

@@ -40,7 +40,7 @@ import {
   ADMIT_CONVERSIONS, ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_HOLISTIC, PIPELINE_HOST_DEATH,
   PIPELINE_RUNNER_DEATH, PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells,
 } from '../matrix.ts';
-import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf } from '../oracle.ts';
+import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf, recoveryHoldsOf, withRecoveryHolds } from '../oracle.ts';
 import { LABEL_TRACE, NONE, R, appendTrace, inRevisionAt } from '../fixtures/pm-trace.ts';
 import { type ExecRun, SMOKE_DEFAULT, hostFile, journalOf } from '../fixtures/exec-common.ts';
 import {
@@ -156,7 +156,11 @@ async function crashCell(
   assert.deepEqual(finalReason(r), ref.reason);
   const m = callsMatchSteps(r);
   assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, 'every backend call matched its step once: no completed call made twice');
-  assertOracle(runOf(r), { ...expected(ref, r, trace), tree: tree(r) });
+  // A crash-abandoned admission-stage attempt the restart does not consume is closed by its startup's recovery hold.
+  const run = runOf(r);
+  const held = withRecoveryHolds(run, ref.outcomes);
+  assert.deepEqual(recoveryHoldsOf(run), held.holds, 'the recovery holds are exactly the crash-abandoned attempts nothing consumed');
+  assertOracle(run, { ...expected(ref, r, trace), outcomes: held.outcomes, tree: tree(r) });
   return r;
 }
 

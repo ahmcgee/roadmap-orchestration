@@ -135,11 +135,12 @@ export const STRAIGHT_OUTCOMES = {
  * directive). u2: integration advanced under it while it is gated (a conflicting change to add), so the
  * candidate conflicts, the merge-in leaves MERGE_HEAD, the resolve round commits a resolution that breaks
  * add; the unit is gated again, its candidate is red while T alone is green, the fix round reads the
- * suite's evidence, a fresh gate approves, and the candidate publishes.
+ * suite's evidence, a fresh gate approves, and the candidate publishes. The suite is estate tier, so the
+ * candidate is the first to run it (a fast suite would catch the broken add at the lanes stage).
  */
 export const BUMPY: Scenario = {
   // u2 is gated after u1 merged: the explicit edge the serial story meant (an M2 arc schedules a DAG).
-  arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }] }),
+  arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }], suite: [{ ...SUITE_LANE, tier: 'estate' }] }),
   steps: (r) => [
     planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'decisions', item: DECISION }] }),
     { ...planCheckStep({ decision: 'approve' }), expect: { ...planCheckStep({ decision: 'approve' }).expect, stdinContains: [DECISION.text] } },
@@ -233,11 +234,12 @@ export const STALE: Scenario = {
 /**
  * Integration moved by someone else while the candidate's suite runs (a suite lane waits at a barrier the
  * watcher releases after the move): the green candidate is stale at ff, so a fresh candidate publishes,
- * with no new gate.
+ * with no new gate. The barrier lane is estate tier, so the candidate is the first to run it (the lanes
+ * stage runs only the fast suite).
  */
 export const STALE_LANE: Scenario = {
   arc: (barriers) => ({
-    suite: [SUITE_LANE, { id: 'advance', argv: [process.execPath, fixture('pm-lane-barrier.ts'), barriers, 'suite'] }],
+    suite: [SUITE_LANE, { id: 'advance', tier: 'estate', argv: [process.execPath, fixture('pm-lane-barrier.ts'), barriers, 'suite'] }],
   }),
   steps: STALE.steps,
   hooks: (r, barriers) => [atBarrier(barriers, 'suite', () => void advanceIntegration(r.repo, NOTES, 'unrelated work lands first'))],

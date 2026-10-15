@@ -19,7 +19,8 @@
 //                cut short (the record in flight, for a log append's label) is A's at the recorded stage;
 //   the peer     pinned as its scenario says at the crash, and its oracle at the end (below);
 //   the arc      ends as the recorded run did (the oracle: tree, provenance, one publication per unit, every
-//                stage outcome, usage per invocation, no open intent), each backend step called once, one
+//                stage outcome plus the startup's recovery hold of each crash-abandoned admission-stage attempt
+//                nothing consumed, usage per invocation, no open intent), each backend step called once, one
 //                crash; A's recovery trace is the whole-pipeline one for the label (pm-trace.ts), and the
 //                peer's is adoption of whatever it had open.
 //
@@ -71,8 +72,8 @@ import {
   CONCURRENT_BATCH, CONCURRENT_DEBT, CONCURRENT_PUBLICATION, CONCURRENT_RESIDUE, CONCURRENT_TEARDOWN, crashCells,
 } from '../matrix.ts';
 import {
-  type Trace, UNCRASHED, assertOracle, needsUserExactly, noModelIds, oracleRun, outcomesOf, productTree, provenance, publicationsPerUnit, recoveryTrace,
-  snapshotVerifies, unitStates, usagePerInvocation,
+  type OracleRun, type Trace, UNCRASHED, assertOracle, needsUserExactly, noModelIds, oracleRun, outcomesOf, productTree, provenance, publicationsPerUnit, recoveryHoldsOf, recoveryTrace,
+  snapshotVerifies, unitStates, usagePerInvocation, withRecoveryHolds,
 } from '../oracle.ts';
 import { HOLISTIC_PEERS, type HolisticPeer, type JobRow, STEPPING, layoutHolisticConcurrent, sampleJob } from '../fixtures/cm-holistic.ts';
 import { type Sampled, capturesInsideRevisions, describeRecord, holisticProduct, holisticRecords, ownerOf } from '../fixtures/pm-holistic.ts';
@@ -252,6 +253,16 @@ async function reference(t: Owner, peer: Peer): Promise<Reference> {
   assert.ok(edge !== undefined && ref.aRecords[0]!.seq > edge.seq, `${peer}: A starts once B is pinned`);
   peerReference(ref, c);
   return ref;
+}
+
+/**
+ * The crashed run's stage outcomes: the reference's, with the startup's recovery hold of each crash-abandoned
+ * admission-stage attempt nothing consumed (asserted exactly).
+ */
+function heldEnd(run: OracleRun, outcomes: Readonly<Record<string, readonly string[]>>): Readonly<Record<string, readonly string[]>> {
+  const held = withRecoveryHolds(run, outcomes);
+  assert.deepEqual(recoveryHoldsOf(run), held.holds, 'the recovery holds are exactly the crash-abandoned attempts nothing consumed');
+  return held.outcomes;
 }
 
 /** What `r`'s run must end as: the reference's end (its tree, outcomes), on `r`'s own baseline, with `trace`. */
@@ -520,7 +531,9 @@ async function crashCell(t: Owner, ref: Reference, label: string, occurrence: nu
     required: aTrace.required || peerOpen,
     tailDiscarded: aTrace.tailDiscarded,
   };
-  assertOracle(oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc)), expectedEnd(ref, r, trace));
+  const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
+  const held = heldEnd(run, ref.outcomes);
+  assertOracle(run, { ...expectedEnd(ref, r, trace), outcomes: held });
   peerEnd(ref.peer, r, atCrash, pinned, end);
   await opts.check?.(r, atCrash, end);
 }
@@ -782,7 +795,7 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
     assert.ok(builds[0]!.seq < crashSeq, `${u}'s build is the one live at the crash`);
   }
   const trace: Trace = { recoveredBy: [...new Set([...label.recoveredBy, ...PEER_RECOVERY])], required: true, tailDiscarded: label.tailDiscarded };
-  assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: git(r.repo, 'rev-parse', 'main^{tree}'), units, outcomes: ref.outcomes, needsUser: JOB_NEEDS_USER[ref.peer], trace });
+  assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: git(r.repo, 'rev-parse', 'main^{tree}'), units, outcomes: heldEnd(run, ref.outcomes), needsUser: JOB_NEEDS_USER[ref.peer], trace });
   assert.deepEqual(holisticProduct(r.repo), holisticProduct(ref.repo), 'the product as uncrashed, and the same renderings');
   assert.deepEqual(holisticRecords(end), holisticRecords(ref.snap), 'the holistic layer\'s records as uncrashed');
   assert.deepEqual(capturesInsideRevisions(end.events), [], 'no input capture inside an open revision.commit (H2)');
@@ -817,7 +830,7 @@ async function debtCell(t: Owner, ref: JobReference, occurrence: number): Promis
   const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
   const units = Object.fromEntries(jobUnits(ref.peer).map((u) => [u, 'merged' as const]));
   const trace: Trace = { recoveredBy: ['reconciled', 'redone', 'adopted'], required: false, tailDiscarded: false };
-  assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: git(r.repo, 'rev-parse', 'main^{tree}'), units, outcomes: ref.outcomes, needsUser: JOB_NEEDS_USER[ref.peer], trace });
+  assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: git(r.repo, 'rev-parse', 'main^{tree}'), units, outcomes: heldEnd(run, ref.outcomes), needsUser: JOB_NEEDS_USER[ref.peer], trace });
   assert.deepEqual(holisticProduct(r.repo), holisticProduct(ref.repo), 'the product as uncrashed, and the same renderings');
   assert.deepEqual(holisticRecords(end), holisticRecords(ref.snap), 'the holistic layer\'s records as uncrashed');
   assert.deepEqual(capturesInsideRevisions(end.events), [], 'no input capture inside an open revision.commit (H2)');

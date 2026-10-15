@@ -403,10 +403,13 @@ export const REPLAY_LANE = { id: 'replay', argv: ['node', 'journeys/replay.js', 
 /** The plant lane after arc 1's accepted flow change: six files at once, six `@cpu`. */
 export const SHARD = { argv: SEED_SUITE_ARGV.map((a) => (a === PLANT.serial ? '--test-concurrency=6' : a)), cpu: 6 } as const;
 
-/** A golden plan's suite lanes; `sharded`: the plant lane as arc 1's accepted change left it (arc 2 carries it). */
+/**
+ * A golden plan's suite lanes; `sharded`: the plant lane as arc 1's accepted change left it (arc 2 carries it). Both
+ * are slow (minutes), so `estate` as the skill asks: only the candidate runs them, and their time is the slot's.
+ */
 export function suiteLanes(sharded: boolean) {
   const lane = (id: string, argv: readonly string[], cpu?: number) => ({
-    id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH', 'HOME'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], ...(cpu === undefined ? {} : { cpu }),
+    id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH', 'HOME'] }, expectedExit: 0, tier: 'estate', resources: [], evidenceGlobs: [], ...(cpu === undefined ? {} : { cpu }),
   });
   return [sharded ? lane(SUITE_LANE, SHARD.argv, SHARD.cpu) : lane(SUITE_LANE, SEED_SUITE_ARGV), lane(REPLAY_LANE.id, REPLAY_LANE.argv)];
 }
