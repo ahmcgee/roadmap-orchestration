@@ -113,7 +113,8 @@ export type UnitState = Readonly<{
   /**
    * The unit's latest `hold` fact while no later outcome has decided, else null: the interrupted attempt the
    * held stage's re-run starts from. An interrupted build is continued, not restarted (the `continue` round,
-   * src/pipeline/rounds.ts); a chain of pauses keeps the latest.
+   * src/pipeline/rounds.ts); a chain of pauses keeps the latest. A recovery hold (`cause: recovery`) is not one: it
+   * leaves this as it was.
    */
   interrupted: StageOutcomeFact | null;
   /**
@@ -132,6 +133,8 @@ export type UnitState = Readonly<{
    * short, whose invocations recovery has since closed (the driver consumes a completed backend call instead
    * of dispatching again, unit.ts), or a retire, which records no outcome. Null once it has its outcome. `seq`: the
    * seq of the record that first started it (M4a rev 3: `openAttempt` tells a running attempt from an abandoned one).
+   * Arc feedback 2026-10-15: the executor's startup records every abandoned one at an admission stage (its call, or a
+   * recovery hold), so past startup only a running attempt, or a chain stage's about to run again, is open.
    */
   open: Readonly<{ stage: Stage; attempt: number; seq: number }> | null;
   /**
@@ -840,6 +843,11 @@ export class Fold implements JournalView {
         if (f.cause?.type === 'backend' && this.#backendParkSeqs.get(f.cause.parkSeq) !== f.cause.backend) {
           fail(`hold of ${f.unit} ${key} caused by backend ${f.cause.backend}'s park at seq ${f.cause.parkSeq}, which is no park of that backend`);
         }
+        // Arc feedback 2026-10-15: a recovery hold closes exactly the unit's open attempt, one a crash cut short.
+        const open = existing?.state.open ?? null;
+        if (f.cause?.type === 'recovery' && (open === null || open.stage !== f.stage || open.attempt !== f.attempt || open.seq > this.lastExecutorStarted())) {
+          fail(`recovery hold of ${f.unit} ${key}, which is not its crash-abandoned open attempt (${open === null ? 'none is open' : `${open.stage}#${open.attempt} at seq ${open.seq}`})`);
+        }
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
@@ -852,7 +860,12 @@ export class Fold implements JournalView {
           u.state = { ...u.state, entry: null, steering: ends ? null : u.state.steering };
         }
         u.state = afterStageOutcome(u.state, f);
-        if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
+        // A recovery hold continues nothing (its attempt made no call to continue): the re-run starts from the decision and
+        // the interruption before it, as the abandoned attempt's own re-run would have. It holds the unit only while a pause
+        // covers it; otherwise the unit stays active and its stage runs again once admitted.
+        if (f.cause?.type === 'recovery') {
+          if (!this.#pausedAll && !this.#pausedUnits.has(f.unit)) u.state = { ...u.state, status: 'active' };
+        } else if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
         else {
           u.beforeDecided = { decided: u.state.decided, interrupted: u.state.interrupted };
           u.state = { ...u.state, decided: f, interrupted: null, pressureHold: null };
@@ -866,7 +879,7 @@ export class Fold implements JournalView {
           this.#unitParkSeqs.set(at.seq, f.unit);
         }
         const lineage = u.state.lineage;
-        if (f.stage === 'prepare' && f.class !== 'park' && lineage !== null) u.state = { ...u.state, lineage: { ...lineage, prepared: true } };
+        if (f.stage === 'prepare' && f.class !== 'park' && f.class !== 'hold' && lineage !== null) u.state = { ...u.state, lineage: { ...lineage, prepared: true } };
         this.#start(u, key);
         return;
       }

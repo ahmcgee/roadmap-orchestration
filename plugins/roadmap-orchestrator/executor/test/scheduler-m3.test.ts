@@ -486,6 +486,42 @@ describe('repair batches in the scheduler (R7)', () => {
     }
   });
 
+  test('sched.batch-hold-cycle (arc feedback 2026-10-15): two approved repairs, each held at its candidate by the P1 the other fixes, publish as one batch keyed by the lower finding; both retire and both findings resolve', T, async () => {
+    // F-1 is over I-2, F-2 over I-3. u1 repairs F-1 but its diff (src/mul.js) selects I-3; u2 repairs F-2 and selects I-2.
+    const { d } = holisticArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/'))],
+      units: [
+        { id: 'u1', origin: 'repair', obligations: ['I-1', 'I-3'], repairs: ['F-1'] },
+        { id: 'u2', origin: 'repair', obligations: ['I-1', 'I-2'], repairs: ['F-2'], lanes: [{ id: 'div', argv: ['node', '--test', 'test/div.test.js'] }] },
+      ],
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }, { id: 'I-3', testIds: ['t3'] }],
+      mapping: [
+        { pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'src/mul.js', obligations: ['I-3'] }, { pattern: 'src/div.js', obligations: ['I-2'] },
+        { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] },
+      ],
+      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass', t3: 'pass' } } },
+      beforeStart: openBefore(witnessDraft('I-2'), witnessDraft('I-3')),
+    });
+    const r = contextFor(d);
+    const s = startHolistic(r);
+    try {
+      const view = () => r.journal.view;
+      const retired = (u: string): boolean =>
+        view().opsOf('worktree.remove').some((i) => i.parent.type === 'stage' && i.parent.unit === u && i.parent.stage === 'retire' && view().doneOf(i.op) !== null);
+      await until(() => retired('u1') && retired('u2'), WAIT_MS, 'both members of the cycle retired');
+      const cands = view().opsOf('candidate.merge');
+      assert.equal(cands.length, 1, 'neither merged a candidate of its own');
+      assert.deepEqual([cands[0]!.expect.batch?.job, cands[0]!.expect.batch?.members.map((m) => m.unit)], ['batch-1', ['u1', 'u2']]);
+      const holders = view().opsOf('resource.transition').filter((i) => i.expect.holder.type === 'batch').map((i) => i.expect.holder);
+      assert.deepEqual(holders[0], { type: 'batch', finding: 'F-1', attempt: 1 }, 'keyed by the lower finding');
+      assert.deepEqual(factsOf(r, 'stage-outcome').filter((f) => f.stage === 'candidate'), []);
+      for (const u of ['u1', 'u2']) assert.equal(view().unit(unitId(u)).status, 'retired');
+      for (const f of ['F-1', 'F-2']) assert.equal(view().holistic().findings.find((x) => x.id === f)!.state, 'resolved', f);
+    } finally {
+      await stopAndClose(r, s);
+    }
+  });
+
   test('sched.batch-red-fix-round: a red batch records red for each member its own selection attributes, and each member\'s fix round names its red obligation from the batch evidence', T, async () => {
     const { d } = batchArc({ t2: 'fail' });
     const r = contextFor(d);
@@ -493,7 +529,7 @@ describe('repair batches in the scheduler (R7)', () => {
       await approveBoth(r);
       const out = await publish(r);
       assert.deepEqual(out.kind === 'red' ? out.attributable : out, ['u1', 'u2']);
-      assert.deepEqual(settleBatch(r.ctx, F1, [r.unit('u1'), r.unit('u2')], out), { progress: true, retire: [], unbatch: [] });
+      assert.deepEqual(settleBatch(r.ctx, [F1], [r.unit('u1'), r.unit('u2')], out), { progress: true, retire: [], unbatch: [] });
       for (const u of ['u1', 'u2']) {
         const f = r.journal.view.unit(unitId(u)).decided!;
         assert.deepEqual([f.stage, f.outcome, f.chargeable], ['candidate', 'red', true]);

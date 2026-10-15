@@ -144,6 +144,8 @@ export const TABLE: Table = {
     'clean-verify': go(at('lanes')),
     // MERGE_HEAD kept (the M1 conflict precedent): a resolve round, in a fresh session (no session inherits).
     conflicted: go(build('resolve')),
+    // Arc feedback 2026-10-15: a preparation a crash cut short, held by recovery (`cause: recovery`); it prepares again.
+    interrupted: hold,
   },
   // M3 (B3): a vacuity repair reproduces its finding's mutant before anything is graded.
   reproduce: {

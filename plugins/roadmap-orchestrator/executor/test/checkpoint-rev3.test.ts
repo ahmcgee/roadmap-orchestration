@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type EnvId, type InvocationId, type LaneId, type LaneRev, type Sha, type Sha256Hex, arcId } from '../src/core/ids.ts';
+import { type EnvId, type InvocationId, type LaneId, type LaneRev, type Sha, type Sha256Hex, arcId, unitId } from '../src/core/ids.ts';
 import { status } from '../src/status.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
@@ -486,7 +486,7 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
     }
   });
 
-  test('classify.open-attempt-running-vs-abandoned: an attempt an executor restart found open is refused with the crash text', T, async () => {
+  test('classify.open-attempt-running-vs-abandoned: an attempt an executor restart found open does not refuse an edit (arc feedback 2026-10-15: the startup records it); the revision is pending', T, async () => {
     const pc = planCheckStep({ decision: 'approve' });
     const x = await arc([{ ...pc, acts: [pcBarrier, ...pc.acts] } as Step], { audit: false });
     try {
@@ -496,8 +496,9 @@ describe('busy: a bundle touching a unit mid-stage waits for its boundary (C5, R
       const spec = join(x.a.planDir, 'u1.json');
       const was = readFileSync(spec, 'utf8');
       writeFileSync(spec, JSON.stringify({ ...(JSON.parse(was) as Json), rev: 2 }));
-      const refused = await applyCommand(x.w.commands, submitCommand(x.r.ctx.runDir, x.r.journal.view.arc, applyBody(x.a.d)));
-      assert.match(JSON.stringify(refused), /unit u1 has plan-check attempt 1 cut short by a crash/);
+      const applied = await applyCommand(x.w.commands, submitCommand(x.r.ctx.runDir, x.r.journal.view.arc, applyBody(x.a.d)));
+      assert.equal(applied.kind, 'applied', JSON.stringify(applied));
+      assert.equal(x.r.journal.view.unit(unitId('u1')).pendingRevision?.rev, 2);
       writeFileSync(spec, was);
       release(x.a.d.scenarioDir, 'pc');
       await unit;

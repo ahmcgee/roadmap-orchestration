@@ -375,6 +375,10 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   evidence): a design park, so the checkpoint sees it first; otherwise apply a feasible spec revision (it reopens
   the unit) or re-enter.
 - **A lane red for a cause another unit fixes**: a known defect (above), not a re-entry.
+- **Repairs held by each other's findings** (each approved repair waits at its candidate behind a P1 the other
+  fixes): the executor publishes them as one batch. Do not cut them or hand-build a combined unit.
+- **A paused unit whose stage a crash cut short** is held after the next start, like any paused unit: resume, cut,
+  re-enter or respecify it as usual.
 - **Usage limit**: the backend is parked arc-wide and nothing retries. Once the limit resets,
   `roadmap resume --backend <name>`. Never switch profiles to route around it.
 - **Supervisor crash limit** (`sup-*`): the executor crashed on a defect of its own. Never patch the plugin or

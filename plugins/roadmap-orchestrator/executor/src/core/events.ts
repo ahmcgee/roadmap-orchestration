@@ -410,8 +410,9 @@ export type MeterSubject =
 /** Every outcome a stage can report, per stage. `retire` is terminal and reports none. */
 export const STAGE_OUTCOME_KINDS = {
   // A re-entered unit's preparation (M2): where the prepared worktree enters. `conflicted` keeps MERGE_HEAD and
-  // enters a `resolve` round (A6).
-  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted'],
+  // enters a `resolve` round (A6). `interrupted` (arc feedback 2026-10-15): only ever the recovery hold of a preparation
+  // a crash cut short (`cause: recovery`); the stage itself is never cancelled.
+  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted'],
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
   // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed'],
@@ -502,11 +503,15 @@ export type ParkRecord =
  * accepted flow proposal `pending-apply` holds new candidate starts until its revision is committed (`flow-apply`).
  * M4b rev 3 (RC-11, step H2): a unit whose run `inv` was starved, or red under pressure with its rerun pending, is held
  * until a minute of scheduler ticks since the hold shows the host's cpu wait below `PRESSURE_SATURATED` or 30 min pass (`host-pressure`).
+ * Arc feedback 2026-10-15: `recovery` closes an admission-stage attempt a crash cut short that no recorded backend call
+ * decides, written once at startup (src/pipeline/unit.ts `holdAbandoned`): the unit is held while it (or the arc) is
+ * paused and active otherwise, and its re-run starts from the decision before, as the abandoned attempt's would have.
  */
 export type HoldCause =
   | Readonly<{ type: 'backend'; backend: Backend; parkSeq: number }>
   | Readonly<{ type: 'flow-apply'; proposal: ProposalId }>
-  | Readonly<{ type: 'host-pressure'; inv: InvocationId }>;
+  | Readonly<{ type: 'host-pressure'; inv: InvocationId }>
+  | Readonly<{ type: 'recovery' }>;
 
 /** A witness test of an arc lane, as a required-witness or smoke detail names it. */
 export type TestRef = Readonly<{ lane: LaneId; testId: string }>;
@@ -1517,6 +1522,7 @@ const holdCause: Read<HoldCause> = tagged('type', {
   backend: object((f): HoldCause => ({ type: f.get('type', literal('backend')), backend: f.get('backend', backend), parkSeq: f.get('parkSeq', positive) })),
   'flow-apply': object((f): HoldCause => ({ type: f.get('type', literal('flow-apply')), proposal: f.get('proposal', proposalR) })),
   'host-pressure': object((f): HoldCause => ({ type: f.get('type', literal('host-pressure')), inv: f.get('inv', invR) })),
+  recovery: object((f): HoldCause => ({ type: f.get('type', literal('recovery')) })),
 });
 
 /** Strictly ascending seqs, non-empty. */
