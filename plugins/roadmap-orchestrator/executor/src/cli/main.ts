@@ -27,6 +27,7 @@
 // `export.json`. `apply --ruling` lands ruling sidecars with the edits (I2). Step N0 placed each module at its final path.
 // M4b: `flow accept|reject|request` queue the root agent's flow commands and `flow given` writes a host given
 // (src/commands/flow.ts); each prints the queued command or the given, or `{refused}` (78). Step 0a placed the module.
+// Scope growth (2026-10-15): `scope accept|reject <unit> --reason` queues the root agent's `scope-decide` (src/commands/scope.ts).
 //
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
 import { existsSync, readFileSync } from 'node:fs';
@@ -146,6 +147,8 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       });
     case 'merge-in':
       return submit(command.run, hostDir, { type: 'merge-in', unit: command.unit });
+    case 'scope-decide':
+      return submit(command.run, hostDir, { type: 'scope-decide', unit: command.unit, decision: command.decision, reason: command.reason });
     case 'audit':
       return submit(command.run, hostDir, { type: 'audit', lenses: command.lenses });
     case 'close-admissions':
@@ -290,7 +293,10 @@ async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: Pl
     case 'unchanged':
       return { dryRun: true, kind: 'unchanged', rev: verdict.rev };
     case 'accepted':
-      return { dryRun: true, kind: 'accepted', rev: verdict.rev, nextRev: verdict.evaluated.draft.rev, changes: verdict.evaluated.draft.changes, smoke: verdict.smoke };
+      return {
+        dryRun: true, kind: 'accepted', rev: verdict.rev, nextRev: verdict.evaluated.draft.rev, changes: verdict.evaluated.draft.changes, smoke: verdict.smoke,
+        advisories: verdict.advisories,
+      };
   }
 }
 

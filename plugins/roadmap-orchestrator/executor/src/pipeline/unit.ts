@@ -45,6 +45,9 @@
 // witnesses (D1), smoke survivors (D2), or a witness check whose own checkout was left dirty. A resume round quotes why
 // the answer it follows was malformed (I3); the retry of a malformed in-session assessment assesses again, fresh (E).
 //
+// Scope growth (2026-10-15): a fix round after a salvage that reverted the build's out-of-scope edits carries the executor's
+// directive naming them (`withReverted`).
+//
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
 import { existsSync } from 'node:fs';
@@ -86,8 +89,9 @@ import {
 } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck,
-  quiesce, record, recordedCall, salvage, teardown,
+  quiesce, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
+import { revertedPathsDirective } from '../prompts/directives.ts';
 import { requiredAt } from './witnesscheck.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
@@ -364,7 +368,19 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
  * since, the continue of that attempt's last invocation (a hold is only ever recorded from a call's result).
  */
 function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): RoundInput {
-  return continued(ctx, unit, decidedInput(ctx, unit, round, f));
+  return continued(ctx, unit, withReverted(ctx, unit, decidedInput(ctx, unit, round, f)));
+}
+
+/**
+ * Scope growth (2026-10-15, A): a fix round after a salvage that reverted out-of-scope edits tells the builder so (the paths
+ * still outside the scope, and where their content is kept), so a needed path is reported, never silently lost.
+ */
+function withReverted(ctx: StageContext, unit: PlanUnit, round: DecidedRound): DecidedRound {
+  if (round.kind !== 'fix') return round;
+  const latest = salvageRejections(ctx, unit.id).at(-1);
+  const paths = latest === undefined ? [] : stillOutside(ctx, unit.id, latest.paths);
+  if (latest === undefined || paths.length === 0) return round;
+  return { ...round, fix: { ...round.fix, directives: [...round.fix.directives, revertedPathsDirective(paths, latest.dir)] } };
 }
 
 /** `of`, or the continue of its attempt an interruption held since (a hold is only ever recorded from a call's result). */

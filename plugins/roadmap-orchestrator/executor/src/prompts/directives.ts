@@ -13,6 +13,8 @@
 //   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series, then every required id
 //   smokeFixDirectives    D2: target witness tests that still pass with the unit's production change reverted
 //   repeatRedDirective    F2: a red lane that repeated its previous red exactly, so the executor did not rerun it
+//   SCOPE_GROWTH_BLOCKER, revertedPathsDirective   scope growth (2026-10-15): how a builder reports an out-of-scope path it
+//                         needs (the build report's `blockers`), and the fix round after salvage reverted its out-of-scope edits
 import type { TestRef } from '../core/events.ts';
 import type { LaneId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
@@ -31,6 +33,20 @@ export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief b
  * applies from here.
  */
 export const ASSESSED_DIRECTIVE = `Your assessment is recorded. Now build the unit: everything the first message of this session says about the build applies from here (the spec, the scope, the fast lanes, the witness checks, ${DECISIONS_FILE}). Record in ${DECISIONS_FILE} each decision your assessment's premises led you to, then return the build report.`;
+
+/**
+ * Scope growth (2026-10-15): what a builder does with an out-of-scope path the work needs. It never keeps one: it names it in
+ * the report's `blockers`, which the gate reads; a unit's scope grows only through the root agent.
+ */
+export const SCOPE_GROWTH_BLOCKER = 'list each such path in your report\'s blockers as "scope growth: <path>: <why the spec needs it>" and change nothing for it: only the root agent grows a unit\'s scope (its plan-check proposes the growth, `roadmap scope accept` lands it)';
+
+/**
+ * The fix round after salvage reverted the build's edits outside the pinned scope (`paths`, still outside it), their content
+ * kept under `kept` (the salvage's rejected dir, `files/<path>`).
+ */
+export function revertedPathsDirective(paths: readonly string[], kept: string): string {
+  return `The executor reverted your edits to these paths after your last round, because they are outside the unit's pinned scope: ${paths.join(', ')} (your versions are kept under ${kept}/files). Do not edit them again: the executor keeps only in-scope changes. If the spec cannot be met without them, ${SCOPE_GROWTH_BLOCKER}.`;
+}
 
 /** The resume round's directives: RESUME_DIRECTIVE, then why the report was malformed when that is known (I3). */
 export function resumeDirectives(error: string | null): readonly string[] {

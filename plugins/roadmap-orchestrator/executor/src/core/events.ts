@@ -418,7 +418,9 @@ export const STAGE_OUTCOME_KINDS = {
   // M4a rev 3 (E): `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check call, the
   // build assesses in session).
   // Paid M4b run 5: `read-denied`, as at the gate.
-  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'in-session', 'read-denied'],
+  // Scope growth (2026-10-15): `scope-growth` (the answer proposed scope growth code verified: a hold until the root agent's
+  // `scope accept|reject <unit>`, src/commands/scope.ts).
+  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'in-session', 'read-denied', 'scope-growth'],
   // M4a rev 3 (E, R55): the in-session assessment found the spec `infeasible`, or raised the risk floor onto another
   // implementer seat (`risk-raised`).
   build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible', 'risk-raised'],
@@ -522,10 +524,19 @@ export type StageOutcomeDetail =
   | Readonly<{ kind: 'witnesses-missing'; missing: readonly TestRef[]; failed: readonly TestRef[] }>
   | Readonly<{ kind: 'smoke-survived'; obligations: readonly ObligationId[]; testIds: readonly TestRef[] }>
   | Readonly<{ kind: 'known-defect'; id: KnownDefectId; match: KnownDefectMatch }>
-  | Readonly<{ kind: 'infeasible'; notes: string }>;
+  | Readonly<{ kind: 'infeasible'; notes: string }>
+  /** Scope growth (2026-10-15): the plan-check's proposals code verified (`ScopeGrowthProposal`), in answer order. */
+  | Readonly<{ kind: 'scope-growth'; proposals: readonly ScopeGrowthProposal[] }>;
+/**
+ * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
+ * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
+ * plan-check's reason.
+ */
+export type ScopeGrowthProposal = Readonly<{ patterns: readonly RepoPattern[]; reason: string }>;
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
+  'plan-check/scope-growth': 'scope-growth',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -593,6 +604,12 @@ export type Fact =
   | Readonly<{ kind: 'paused'; command: CommandId; target: PauseTarget }>
   | Readonly<{ kind: 'stop-requested'; command: CommandId }>
   | Readonly<{ kind: 'resumed'; command: CommandId; target: ResumeTarget }>
+  /**
+   * Scope growth (2026-10-15): the root agent's `scope accept|reject <unit>` on the proposals of the unit's plan-check
+   * attempt `attempt`, held `scope-growth`. Releases that hold (the unit re-runs plan-check); an accept writes it after the
+   * ruled-growth revision it committed (src/commands/scope.ts).
+   */
+  | Readonly<{ kind: 'scope-decided'; unit: UnitId; attempt: number; command: CommandId; decision: 'accepted' | 'rejected'; reason: string }>
   /**
    * A unit re-opened on a spec revision the architect applied (`specRev`, the unit's recorded spec rev + 1,
    * whose bytes hash to `specSha256`): by `resume <unit>` of a unit parked at a judgment stage (`command`: the
@@ -1498,6 +1515,10 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
   operator: object((f): ParkRecord => ({ class: f.get('class', literal('operator')), kind: f.get('kind', oneOf(OPERATOR_PARK_KINDS)) })),
 });
 
+const scopeGrowthProposal: Read<ScopeGrowthProposal> = object((g) => ({
+  patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), reason: g.get('reason', str),
+}));
+
 const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   'witnesses-missing': object((f): StageOutcomeDetail => {
     const out = { kind: f.get('kind', literal('witnesses-missing')), missing: f.get('missing', testRefs()), failed: f.get('failed', testRefs()) };
@@ -1511,6 +1532,7 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     kind: f.get('kind', literal('known-defect')), id: f.get('id', (v, p) => knownDefectId(v, p)), match: f.get('match', knownDefectMatch),
   })),
   infeasible: object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('infeasible')), notes: f.get('notes', str) })),
+  'scope-growth': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('scope-growth')), proposals: f.get('proposals', arrayOf(scopeGrowthProposal, { nonEmpty: true })) })),
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {
@@ -1833,6 +1855,10 @@ export const fact: Read<Fact> = tagged('kind', {
   paused: object((f): Fact => ({ kind: f.get('kind', literal('paused')), command: f.get('command', cmdR), target: f.get('target', pauseTarget) })),
   'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR) })),
   resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
+  'scope-decided': object((f): Fact => ({
+    kind: f.get('kind', literal('scope-decided')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), command: f.get('command', cmdR),
+    decision: f.get('decision', oneOf(['accepted', 'rejected'] as const)), reason: f.get('reason', str),
+  })),
   reopened: object((f): Fact => ({
     kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
     specSha256: f.get('specSha256', sha256R),
@@ -1932,8 +1958,10 @@ export const fact: Read<Fact> = tagged('kind', {
     // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
-    // An interruption holds the unit, and nothing else does; a hold never charges.
-    if ((out.outcome === 'interrupted') !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome', out.class);
+    // An interruption holds the unit, and so does a plan-check's verified scope-growth proposal; nothing else does; a hold
+    // never charges.
+    const holds = out.outcome === 'interrupted' || (s === 'plan-check' && out.outcome === 'scope-growth');
+    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a plan-check scope-growth', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),

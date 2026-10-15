@@ -101,6 +101,7 @@ import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
+import { SCOPE_GROWTH_BLOCKER } from '../prompts/directives.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.candidate-${attempt}`));
@@ -776,13 +777,14 @@ export function latestCandidate(ctx: StageContext, unit: UnitId): IntentOf<'cand
 /**
  * The fix round's directives for a transient refusal. A path a lane's `evidenceGlobs` entry matches is named with the
  * lane and the entry: it may be the unit's own work under a spec that mislabels it as lane output (M4b run 3), which
- * the builder must keep and report, never delete. Every other path is removed or reported as a scope growth.
+ * the builder must keep and report, never delete. Every other path is removed, or (an out-of-scope path the work needs) named in
+ * the report's blockers as a scope growth only the root agent grants (`SCOPE_GROWTH_BLOCKER`).
  */
 export function transientDirectives(violations: readonly TransientViolation[]): readonly string[] {
   const declared = violations.flatMap((v) => (v.rule === 'lane-evidence' ? [v] : []));
   const other = violations.filter((v) => v.rule !== 'lane-evidence');
   return [
-    ...(other.length === 0 ? [] : [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, say so in your report as a scope growth instead of keeping it.`]),
+    ...(other.length === 0 ? [] : [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, ${SCOPE_GROWTH_BLOCKER} instead of keeping it.`]),
     ...(declared.length === 0 ? [] : [`The candidate merge was refused: these paths match a lane's declared evidenceGlobs, which name the files that lane's run writes (its outputs) and never reach integration: ${declared.map((v) => `${v.path} (lane ${v.lane}, entry \`${v.glob}\`)`).join(', ')}. Remove from the branch only a path that is lane output. A path that is the unit's own work (its source or tests) is not: keep it, change nothing for it, and say in your report that lane ${[...new Set(declared.map((v) => v.lane))].join(', ')}'s evidenceGlobs cover the unit's work, so the spec's entry needs correcting by the architect.`]),
   ];
 }

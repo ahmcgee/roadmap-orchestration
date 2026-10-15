@@ -155,6 +155,12 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     `"planCheck": {"shape": "by-builder"}`: a frontier builder assesses the spec in its own session instead of a
     plan-check call, and an efficient builder gets a plan-check that may add witness items. Plan contracts and unit
     scopes never overlap the corpus files. Write lanes and witnesses per "Lanes, witnesses and clocks".
+    **Scope for what a unit removes.** A unit that removes or renames a file, route, symbol or command lists each
+    in its spec's `removes` (the literal text other code names it by: `"src/shell/page.go"`, `"/shell"`,
+    `"renderShell"`). Its scope must also cover every test and caller outside its package that still uses one:
+    `phase0 check` lists them as `scope-references-outside{unit, removed, referrers}` advisories (and `apply` in its
+    receipt). Add each referrer to the unit's scope, or make sure another unit owns it. A scope too narrow costs a
+    build, a hold and your ruling for every file it misses.
 13. **Integration branch.** `git branch <branch> <baseline>` (move it with `git branch -f` while nothing has
     started). One branch per arc, e.g. `arc/<arc>`, checked out in no worktree.
 14. **Check.** `roadmap phase0 check --repo <repo> --plan <inputs>/plan.json` until it exits 0. Fix inputs, never
@@ -353,6 +359,23 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 **Stop.** One final message: the check-in, the request to merge the stacked PRs in order, first into `main`, each
 with a merge commit, then exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,
 `vision-silent` or `owner` (the owner told you to stop, or an executor defect stopped the arc: "Handling parks").
+
+## Scope growth
+
+A plan-check sweeps for references to what a unit removes or renames and proposes the paths outside its scope.
+Code verifies each (it matches a file, lies outside the scope, and could land); a verified proposal holds the unit
+at plan-check with a blocking `scope-growth` item naming the patterns and why. It is not a park and charges nothing.
+Read the proposal against the spec, then:
+
+- `roadmap scope accept <unit> --reason <text>` when the unit needs them: the executor lands the growth as one ruled
+  revision (a new ruling naming exactly the patterns, the plan and spec scope widened, the files written back) and
+  the unit re-opens at plan-check on it. A refused revision is rejected with every reason; the unit stays held.
+- `roadmap scope reject <unit> --reason <text>` when another unit owns them or the spec is wrong: the plan-check runs
+  again, told what you rejected, and decides within the scope (an infeasible spec then escalates to you).
+
+The builder cannot grow its scope: salvage reverts its edits outside it, the gate and the next fix round are told
+which paths, and the builder names a path it needs in its report's blockers as a scope growth. A gate that escalates
+over one comes to you as a park: grow the scope then by `apply --ruling` with the spec's next rev, or re-enter.
 
 ## Handling parks
 

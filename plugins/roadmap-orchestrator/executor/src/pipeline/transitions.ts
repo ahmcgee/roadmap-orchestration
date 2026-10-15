@@ -23,7 +23,8 @@
 // - A routing change the unit cannot absorb (its implementer's seat moved after a build started;
 //   dispatch.ts) parks it at the stage that found it: `routing-changed`, uncharged.
 // - An interruption (a pause or stop cancel, or the stage's backend parked arc-wide on a usage limit) holds
-//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling).
+//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling). So does a
+//   plan-check's verified scope-growth proposal, until the root agent's `scope accept|reject` (or a resume) releases it.
 //   A held build's new attempt continues the interrupted session (the `continue` round, rounds.ts).
 // - `attempts` counts stage starts, which only the fold sees; `transition` passes it through unchanged.
 // - Every park row names its class (A7): `retryable` (the executor probes its targets, which the stage names,
@@ -174,6 +175,9 @@ export const TABLE: Table = {
     'in-session': go(build('fresh')),
     // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate.
     'read-denied': retry('read-denied', 'env'),
+    // Scope growth (2026-10-15): a proposal code verified holds the unit, uncharged, for the root agent's `scope accept|reject`
+    // (src/commands/scope.ts); its `scope-decided` releases the hold and the plan-check runs again.
+    'scope-growth': hold,
   },
   build: {
     success: go(at('quiesce')),

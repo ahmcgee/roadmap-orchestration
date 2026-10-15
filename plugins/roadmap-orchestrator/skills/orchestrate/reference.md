@@ -45,7 +45,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 - `roadmap apply [--expect-rev <n>] [--dry-run] [--ruling <file>]`: put the edited plan, specs and other revisioned
   inputs in force at the next stage boundary. Each `--ruling` (repeatable) is a ruling sidecar validated as `rule`
   validates it and landed with the edits as one revision. `--dry-run` always exits 0 and prints `kind`:
-  `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke}`; it queues nothing. A revision
+  `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke, advisories}`; it queues nothing.
+  `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
+  files outside a unit's scope that still name what its spec `removes`. They never refuse. A revision
   that changes the plan or the vision cancels a checkpoint deciding on the earlier one (rejected `stale`); its trigger
   is decided again on your revision.
 - `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
@@ -58,6 +60,12 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   implementer round for a parked or `preparing` unit, then salvage, lanes and gate. It parks again unless green and
   `--resume`. `--class` seats that class at the unit's build tier.
 - `roadmap merge-in <unit>`: merge the integration tip into a unit's branch (clean merges only); it re-enters at lanes.
+- `roadmap scope accept|reject <unit> --reason <text> [--repo <path> --arc <arc>]`: queued (scope the unit). Your decision on
+  the scope growth a unit's plan-check proposed (its `scope-growth` item). `accept` lands it as one ruled revision (a new
+  ruling naming the patterns, the unit's plan and spec scope widened, the files written back) and the unit re-opens at
+  plan-check on it; a revision the classifier refuses is rejected with every reason, and the unit stays held. `reject`
+  keeps the scope: the plan-check runs again, told what you rejected, and decides within the scope. Acknowledges the
+  item. Rejected for a unit not held for a proposal.
 - `roadmap audit [--lens <lenses>]`: request an audit (holistic arcs; lenses comma-separated, within the arc's set:
   `invariants`, `drift`, `vacuity`, `vision`).
 - `roadmap close-admissions`: latch `draining`; checkpoint admissions become requests to you; an `apply` adding a
@@ -72,7 +80,9 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
 
 - `roadmap phase0 check --repo <path> --plan <plan.json>`: read-only, the rows a fresh `start` runs on its inputs:
   the `.roadmap/` layout, `plan-invalid`, routing, lanes, `holistic-needs-corpus`, and every corpus, Phase-0,
-  vision, issue-policy, chain and `tree-uncommitted` row (not the host, residue or smoke rows). Prints `{rows, sliceCandidates}`; exit 0 with no rows, else 78.
+  vision, issue-policy, chain and `tree-uncommitted` row (not the host, residue or smoke rows). Prints `{rows, sliceCandidates, advisories}`; exit 0 with no rows, else 78.
+  `advisories` never refuse: `scope-references-outside{unit, removed, referrers}`, the files outside a unit's scope that
+  still name something its spec `removes` (searched at the integration tip, or the baseline before it exists).
   `sliceCandidates`: the active world clauses whose census rules are not all held on the baseline.
 - `roadmap phase0 check --repo <path> --from-ref <arc>`: the same over every input the arc's `refs/roadmap/<arc>`
   recorded, never the live files; only the corpus, census, obligation, debt, question, amendment, intake and vision
@@ -364,6 +374,9 @@ Blocking unless noted. Read the item file before acting.
   close-out is left, the executor declines it, a corpus arc's with an amendment `source: request`, and a later ack is
   rejected), `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest` (the brief ack
   acknowledges the digest and convergence-bound items).
+- `scope-growth` (the unit is held at plan-check): its plan-check proposes scope growth code verified (each pattern
+  matches a file, lies outside the scope, and could land). `scope accept` or `scope reject`
+  (SKILL.md "Scope growth").
 - Flow, non-blocking (SKILL.md "The flow loop"): `flow-proposal` and `flow-host` (`flow accept` or `flow reject`; the
   item's evidence is the run's inputs file), `flow-worse` (revert by `apply` to the `preimage` of the proposal's
   `flow-verdict` fact in the run dir's `events.jsonl`, then `ack`), `ruler-changed` (confirm or revert, then `ack`),

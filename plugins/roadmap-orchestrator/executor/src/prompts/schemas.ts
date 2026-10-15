@@ -27,7 +27,9 @@ import {
   type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, lensPatchMutantDefault } from '../core/upgrade.ts';
+import {
+  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+} from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
@@ -87,8 +89,18 @@ type PlanCheckCommon = Readonly<{
    * `plan-check` finding for the next checkpoint and is never a redirect by itself. Empty outside a holistic arc.
    */
   visionConflict: readonly VisionConflict[];
+  /**
+   * Scope growth (2026-10-15): paths outside the pinned scope the unit needs (the reference sweep: tests and callers of what
+   * it removes or renames), each proposal its patterns and why. Code verifies each pattern (src/pipeline/stages.ts
+   * `verifiedGrowth`); a verified proposal holds the unit for the root agent's `scope accept | reject`. An answer recorded
+   * before it has none (`planCheckScopeGrowthDefault`).
+   */
+  scopeGrowth: readonly ScopeGrowthAnswer[];
 }>;
 export type VisionConflict = Readonly<{ clauses: readonly VisionClauseId[]; note: string }>;
+/** One proposed growth as the plan-check writes it: its patterns are text until code verifies them. */
+export type ScopeGrowthAnswer = Readonly<{ patterns: readonly string[]; reason: string }>;
+const S_SCOPE_GROWTH = sArr(sObj({ patterns: sArr(S_STR), reason: S_STR }));
 export type PlanCheckOutput =
   | (PlanCheckCommon & Readonly<{ decision: 'approve' | 'infeasible' | 'escalate'; patch: null }>)
   | (PlanCheckCommon & Readonly<{ decision: 'redirect'; patch: readonly SpecPatchOp[] }>);
@@ -134,6 +146,7 @@ export const PLAN_CHECK_SCHEMA: Schema = sObj({
   notes: S_STR,
   premises: S_PREMISES,
   visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
+  scopeGrowth: S_SCOPE_GROWTH,
 });
 
 /** A lane item's wire form: its env.set arrives as [{name, value}] and becomes the map spec.json holds. */
@@ -167,6 +180,7 @@ const wireOp: Read<SpecPatchOp> = (value, path) => {
 
 // Reads at validation time, after the M3 helpers below are initialised.
 const visionConflict: Read<VisionConflict> = object((g) => ({ clauses: g.get('clauses', answerIds(vid, { nonEmpty: true })), note: g.get('note', str) }));
+const scopeGrowthAnswer: Read<ScopeGrowthAnswer> = object((g) => ({ patterns: g.get('patterns', arrayOf(str, { nonEmpty: true })), reason: g.get('reason', str) }));
 
 export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutput => {
   const decision = f.get('decision', oneOf(PLAN_CHECK_DECISIONS));
@@ -176,6 +190,7 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
     notes: f.get('notes', text),
     premises: f.get('premises', arrayOf(premise)),
     visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
+    scopeGrowth: f.optional('scopeGrowth', arrayOf(scopeGrowthAnswer)) ?? planCheckScopeGrowthDefault(),
   };
   if (decision === 'redirect') {
     return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
@@ -202,6 +217,7 @@ export const PLAN_CHECK_ACCEPTANCE_SCHEMA: Schema = sObj({
   notes: S_STR,
   premises: S_PREMISES,
   visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
+  scopeGrowth: S_SCOPE_GROWTH,
 });
 
 /** The acceptance shape's answer: a plan-check answer whose redirect ops are witness or fact adds and replaces, or cites. */
