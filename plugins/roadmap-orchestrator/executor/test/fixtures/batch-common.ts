@@ -62,6 +62,6 @@ export function batchContext(r: ArcRun): BatchContext {
   return { ...r.ctx, acquireFirst: w.arbiter.acquireFirst };
 }
 
-export const publish = (r: ArcRun): Promise<BatchOutcome> => publishBatch(batchContext(r), F1, [r.unit('u1'), r.unit('u2')]);
+export const publish = (r: ArcRun): Promise<BatchOutcome> => publishBatch(batchContext(r), [F1], [r.unit('u1'), r.unit('u2')]);
 
 export { contextFor };

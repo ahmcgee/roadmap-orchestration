@@ -194,6 +194,17 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | `BuildInputs` (fast suite at lanes, 2026-10-15) | `+ suiteLanes: FastLane[]` (`fastSuiteLanes`; `ROLE_INPUTS.build`) | none: rendered per call, never kept |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
+**Arc feedback 2026-10-15 (after 1.0.0-dev.9; no version bump in this change).** Additive; nothing to default: no
+dev.9 (or dev.7, dev.8) record holds any of these, and an adopted arc already wedged behind a crash-abandoned attempt
+is closed by its next start's recovery hold.
+
+| Record | Change | Read-time default for dev.9 state |
+|---|---|---|
+| `stage-outcome` | prepare `+ interrupted` (only as a recovery hold) | none: dev.9 records never hold it |
+| `HoldCause` (`stage-outcome.cause`) | `+ recovery{}`: the startup's hold of a crash-abandoned admission-stage attempt nothing consumes (`holdAbandoned`) | none (absent: a pause or stop, as before) |
+| `UnitState` (fold) | a recovery hold leaves `decided` and `interrupted`; `status` `held` under a pause, else `active`; a prepare hold does not mark the lineage prepared | derived |
+| `Holder.batch{finding, attempt}`, `batch-<n>` job, batch items | `finding` is the key (lowest, canonical order) of the findings the batch repairs, one for a single-finding batch, several for a hold cycle | none: a dev.9 holder names the one finding its batch repaired, which is its key |
+
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
@@ -404,7 +415,12 @@ across the unit's stages). M2: `park?: ParkRecord` only with class `park` (the c
 `design`), written by `outcomeFact` from the table's park class (retryable targets stated by the stage);
 `cause?: HoldCause = backend{backend, parkSeq}` only with class `hold`, when a backend park interrupted the stage
 (G5). Stage `prepare` (a re-entered unit's first stage) reports `clean-plan-check | clean-build | clean-verify |
-conflicted`, all `advance`: on to plan-check, a fresh build, lanes, or a `resolve` build.
+conflicted`, all `advance`: on to plan-check, a fresh build, lanes, or a `resolve` build; and (arc feedback 2026-10-15)
+`interrupted`, only as a recovery hold. `cause: recovery` (arc feedback 2026-10-15): the executor's startup closes
+every admission-stage attempt a crash cut short that no recorded backend call decides (`holdAbandoned`,
+src/pipeline/unit.ts) with an uncharged `interrupted` hold; the fold requires it to name the unit's open attempt
+started before the latest `executor-started`, leaves `decided` and `interrupted` as they were (the re-run starts where
+the abandoned attempt did), and sets the unit `held` while it or the arc is paused, else `active`.
 
 The fold derives each unit's `UnitState` from these facts through `afterStageOutcome` (`src/core/state.ts`),
 the same function the transition table uses, so a decision's counters are the log's:
@@ -419,7 +435,8 @@ of that attempt's last invocation, resuming its session in the worktree as left 
 `approval` fact's `{attempt, fingerprint}`, or null. `attempts` counts distinct `(stage, attempt)` pairs named by a
 stage-parented intent or a stage-outcome fact. `open` is the latest such pair (highest attempt) while no stage-outcome fact records it, else null:
 an attempt a crash cut short (step 14b: the driver consumes its completed backend call rather than dispatching
-again), or a retire, which records none. `risk` is the `riskFloor` of the unit's latest `dispatch` fact:
+again; since arc feedback 2026-10-15 the executor's startup records every admission-stage one, a recovery hold when
+nothing is consumed), or a retire, which records none. `risk` is the `riskFloor` of the unit's latest `dispatch` fact:
 a plan-check that raises the risk re-pins the dispatch. `promotion` is set by a `trigger` and cleared by the
 next judgment-stage outcome other than a `retry`. `status` follows the latest outcome's class. `spec` is the
 unit's spec in force as the log last recorded it: its first `dispatch` fact's `{specRev, specSha256}` (a re-pin
@@ -801,8 +818,9 @@ The rules (`PlanChange` names what each accepted change is):
 | `contracts`, `rulings`, `architectureDoc`, `architectureDigest`, `direction` | now | `plan-field{field}` |
 | `arc`, `integrationBranch`, `baseline`, `worktreeRoot` | always refused | |
 
-A spec edit of a unit with an attempt a crash cut short (`UnitState.open`) is refused until the executor has
-recorded that attempt. What the log names is also what the executor publishes and cites: the snapshot's
+A spec edit of a unit whose attempt is running (`openAttempt` live) is refused until its stage boundary; an attempt a
+crash cut short never refuses it (arc feedback 2026-10-15: the executor's startup records it). The same holds for
+`unit-cut`: a unit is in a task only while active, dispatched and unpaused, or running an attempt. What the log names is also what the executor publishes and cites: the snapshot's
 `specs/<unit>.json` and a park's evidence are the kept specs in force. The rulings ledger is not in the manifest:
 it is read from its file (append-only by convention), and the gate's fingerprint binds the ruling revisions it
 read.
@@ -1857,13 +1875,16 @@ supersede the A4 items they name):
    job's checkouts of that kind begun, so each series is certified once). Problems (a must-hold not held, a future already
    held: vacuous) raise one blocking `obligation-baseline` parented by the job. The scheduler (B7) calls it before
    admitting any unit.
-8. **The repair batch** (`publishBatch`): the slot under `batch{finding, attempt}` through `acquireFirst` with the job as
+8. **The repair batch** (`publishBatch`): the slot under `batch{finding, attempt}` (arc feedback 2026-10-15: a batch
+   repairs one or more findings, given in canonical order; `finding` is the first, its key for attempts, the job and the
+   items it raises) through `acquireFirst` with the job as
    the reserve's parent (`AcquireFirst`'s 5th parameter, required exactly for a batch holder); one durable `batch-<n>` per
    finding until it publishes, each attempt reusing it; the chain on `refs/roadmap-run/<arc>/candidate/<batch-n>` (the
    frozen candidate ref shape; a unit entering the plan may not take the id `batch-<n>`, which would share it), each chain merge re-made from `merge-tree`
    of its parents with `commit`'s identity and message. The claims are the union of each member's selection. Red →
    `red{attributable}`: members whose own selection holds a red obligation, none when anything else is red. Before the ff
-   every member's fingerprint at the tip (`stale{invalid}`) and eligibility (`finding-blocked`). A batch ff's provenance
+   every member's fingerprint at the tip (`stale{invalid}`) and eligibility (`finding-blocked`, against the union of the
+   members' repairs, `batchRepairs`: the candidate carries every fix and the brake graded each held). A batch ff's provenance
    is a first-parent chain of ≥ 2 two-parent merges back to T. Its CAS is never redone by recovery (done unpublished;
    the batch runs again); a batch holder whose ff published is left holding the slot for `finishBatch` (latches,
    snapshot, release), any other is abandoned (`abandonBatch`). Crash label `batch.after-candidate` (matrix row
@@ -2221,6 +2242,12 @@ src/needsuser.ts, src/commands/{audit,admissions}.ts):
    finding's members wait for its acknowledgement (`batchSuspended`); `stale{invalid}` → those members leave batching
    (in memory, until their approval changes) and take their own candidate, whose ff re-gates them; `finding-blocked`
    and other `no-verdict`s retry. A crash-cut published batch is finished at the scheduler's start (`finishBatch`).
+   Members are eligible against the batch's repairs (`batchRepairs`). Arc feedback 2026-10-15, hold cycles: with no
+   single-finding batch ready, each approved repair waiting at its candidate whose admission an active P1 holds
+   (`findingBlock`, src/schedule/ready.ts) points at that finding's owner when the owner waits there too; a cycle
+   (`holdCycle`, src/schedule/graph.ts) is one batch of the findings along it, in canonical order, its members every
+   active unpublished unit repairing one of them directly, under the same rules (all waiting, the key finding's batches
+   not suspended, none still blocked against the batch's repairs). Red, refused, stale and the rest settle as above.
 8. **Pause and stop.** A pause kills the paused unit's backend, lane, journey and mutant invocations. A stop (control
    applies at once, §2.3; B7 follow-up lead ruling) kills backend, lane, smoke, journey, mutant and arc-backend (lens and
    checkpoint) invocations: a killed lens call abandons its audit, which runs again later (the spend accepted). A docs

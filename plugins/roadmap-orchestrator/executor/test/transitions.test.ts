@@ -75,6 +75,8 @@ const ROWS: readonly Row[] = [
   ['prepare', 'clean-build', {}, 'build/fresh@med', 'advance', {}],
   ['prepare', 'clean-verify', {}, 'lanes', 'advance', {}],
   ['prepare', 'conflicted', {}, 'build/resolve@med', 'advance', {}],
+  // Arc feedback 2026-10-15: only ever a recovery hold of a preparation a crash cut short.
+  ['prepare', 'interrupted', {}, 'hold', 'hold', {}],
   // reproduce (a vacuity repair's first stage, M3)
   ['reproduce', 'reproduced', {}, 'plan-check@med', 'advance', {}],
   ['reproduce', 'not-reproduced', {}, 'park:not-reproduced', 'park', {}],

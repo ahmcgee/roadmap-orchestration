@@ -157,6 +157,14 @@ None.
   defect matches spec lanes only, so a fast suite red naming one charges. Triggers: the fast suite's share of
   `stage:lanes` service time shows on the flow chart; a restart re-running base checks costs measurably; a known defect
   whose lane is a suite lane. Then: reuse by lane identity as F1a does, journal the base verdict, extend `knownDefectHit`.
+- **Hold cycles beyond the first blocker** (arc feedback 2026-10-15). The cycle graph follows each waiting repair's
+  first blocking P1 only (`findingBlock`); a member that a second P1, owned outside the cycle, also holds leaves the
+  cycle unbatched, waiting as before. Trigger: an arc whose repairs wait at their candidates with no cycle batch while
+  every blocker's owner is approved; then follow every blocker and batch the closure.
+- **The dev.9 resume crash** (arc feedback 2026-10-15). The stuck unit's crash on `resume` was not reproduced: the
+  startup's recovery hold closes its attempt, and a resumed held unit re-runs from its decision as an abandoned
+  attempt always did. Trigger: a resume of a recovery-held unit that still throws; read the throw site from its
+  stderr.
 
 - **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
   threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging

@@ -15,7 +15,10 @@
 // tree effects) but whose stage-outcome fact is missing (the fold's `open` attempt) is recorded from that
 // call, never dispatched again; a judgment's against its recorded `judgment-inputs` (`consumeJudgment`, F1).
 // Any other cut short attempt (no call yet, a lost call, a stage without one) runs again as a new,
-// uncharged attempt. The executor records these at startup, right after recovery.
+// uncharged attempt. The executor records these at startup, right after recovery; there, an admission-stage attempt
+// nothing consumes is closed by a recovery hold (`holdAbandoned`, arc feedback 2026-10-15), so a paused unit is held
+// (cut, re-entered, respecified or resumed like any held unit) instead of keeping a dead attempt open; a chain stage's
+// runs again at once, pause or not.
 //
 // A held unit (an interrupted stage) re-runs that stage when the driver is called again: calling it is
 // the resume. An interrupted build is not restarted: its re-run is a `continue` round (rounds.ts) of the
@@ -61,7 +64,9 @@ import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { buildOutputFor } from '../prompts/schemas.ts';
 import { type InvocationId, type OpId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
-import type { EntryPoint, UnitState } from '../core/state.ts';
+import { type EntryPoint, type UnitState, openAttempt } from '../core/state.ts';
+import { NO_PARK_FACTS } from '../park/table.ts';
+import { ADMISSION_STAGES } from '../schedule/types.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
@@ -534,6 +539,23 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
 export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
   const recorded = await consumeRecorded(ctx, unit, ctx.journal.view.unit(unit.id).decided);
   return recorded === null ? null : after(ctx, unit, recorded);
+}
+
+/**
+ * Closes the unit's admission-stage attempt a crash cut short that `consume` did not record (no call yet, a lost call, an
+ * in-session assessment, a stage without a call) with an uncharged `interrupted` hold, `cause: recovery`: the unit is
+ * held while a pause covers it, else stays active, and its next attempt re-runs the stage from the decision before (the
+ * fold leaves `decided` and `interrupted` alone, so the crash readers still find the abandoned attempt by number:
+ * stages.ts `crashedAssessment`, rounds.ts `crashLostDeadline`). The executor calls it for every unit at startup, after
+ * `consume` (arc feedback 2026-10-15); no-op when nothing is open or the open attempt is a chain stage's (it runs again at
+ * the start, whatever pause says). A running attempt here is a bug: nothing runs before the scheduler.
+ */
+export function holdAbandoned(ctx: StageContext, unit: PlanUnit): void {
+  const open = openAttempt(ctx.journal.view, unit.id);
+  if (open === null || !(ADMISSION_STAGES as readonly Stage[]).includes(open.stage)) return;
+  if (open.live) throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is running before the scheduler started`);
+  const parent = { type: 'stage', unit: unit.id, stage: open.stage as (typeof ADMISSION_STAGES)[number], attempt: open.attempt } as const;
+  record(ctx, parent, 'interrupted', null, NO_PARK_FACTS, { type: 'recovery' });
 }
 
 /**

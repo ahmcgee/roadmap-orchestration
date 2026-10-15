@@ -231,7 +231,10 @@ that fails partway leaves one residue per failed resource. `start` for any arc r
   retryable park raises a non-blocking `park-escalated` `needs-user` and probing continues at the cap (owner
   ruling 2026-09-30). `operator` parks (`env`: resumed by `resume <unit>`; `design`: an applied spec revision)
   wait for the architect. A stage interrupted by a backend park is held as `hold{backend{b, parkSeq}}`, released
-  by a matching passing probe or `resume --backend`; operator pauses are preserved.
+  by a matching passing probe or `resume --backend`; operator pauses are preserved. An admission-stage attempt a
+  crash cut short that no completed backend call decides is recorded at the executor's startup as `hold{recovery}`
+  (uncharged): it holds the unit while a pause covers it (resume, cut, re-entry and spec edits then work as for any
+  held unit), and otherwise the stage simply runs again (arc feedback 2026-10-15).
 - **Usage limits (owner ruling 2026-09-25, unchanged by owner ruling 2026-09-30).** A `usage-limit` CLI error
   event marks that backend `limited` arc-wide: running processes finish, stages needing it park as
   `operator/usage-limit`, others run until they need it, and one `needs-user` is raised. It never auto-retries:
@@ -310,7 +313,8 @@ arc whose owner died, a no-op otherwise); `witness-check --lane-file` (the imple
 `apply --expect-rev`); `apply --ruling <sidecar>` (repeatable: rulings and the edits that depend on them land as one
 revision). `apply` gains the edit classes `unit-priority`, `known-defects` and `plan-check-shape` (none drains), and a
 re-entry may widen its lineage's scope envelope on an active ruling naming exactly the added patterns. A spec edit of a
-unit whose attempt is running is refused until its stage boundary; one a crash cut short, until the executor records it.
+unit whose attempt is running is refused until its stage boundary; an attempt a crash cut short never refuses it (the
+executor's startup records every one, `hold{recovery}` above).
 
 ### 2.4 `status`
 
@@ -659,8 +663,12 @@ which publishes when its candidate shows every repaired obligation held with int
 `origin: repair` needs non-empty `repairs` and ranks first (R6, §2.2). **Batch repair (R7, G5, H4):** all
 approved units repairing one finding publish as one candidate, chained `--no-ff` merges on the candidate ref under
 the slot holder `batch{finding, attempt}`; its lanes run under one durable job identity `job{batch-<seq>}`, whose
-residues are job-owned; `ff` validates every member's fingerprint and every member retires on that one `ff`. On
-red, a fix round per attributable member, else every member parks. A parked owner's P1 escalates at the park
+residues are job-owned; `ff` validates every member's fingerprint and every member retires on that one `ff`. A
+member's eligibility counts every member's repairs: the batch candidate carries all the fixes and the brake grades
+each repaired obligation held. Approved repairs each held by a P1 another of them owns (fixed on its branch) form a
+cycle no single candidate breaks; the findings along it publish as one batch keyed by the lowest finding id (arc
+feedback 2026-10-15). Exempting a repair from a P1 another repair fixed only on its own branch is unsound and never
+done: its candidate lacks that fix. On red, a fix round per attributable member, else every member parks. A parked owner's P1 escalates at the park
 deadline; P1s never bank; while `draining`, a new P1 or P2 raises a blocking `new-finding-draining`. Per finding
 `{lens, severity, gateHadPassed, disposition, merged, timeToResolve}` is recorded, so arc 2 measures whether the
 checkpoint works.
@@ -1279,3 +1287,7 @@ ladder with its own runnable fixture:
     build prompt lists the fast suite lanes as commands the builder runs green beside its fast lanes; code still enforces
     them. The suite lanes may not change while a lanes attempt runs them or a lanes red awaits its fix round. Additive
     only: a lanes `base-red` outcome with its detail (SCHEMAS.md "The fast suite at the lanes stage").
+  - **No way out when the scheduler is stuck** (arc feedback 2026-10-15). A crash-abandoned admission-stage attempt is
+    closed at startup by an uncharged `hold{recovery}` (prepare gains `interrupted` for it), so a paused unit is
+    held, not wedged behind a dead attempt; an adopted arc already wedged is unwedged by its next start. Mutually
+    held repairs publish as one cycle batch (§2.8 Batch repair). Additive records only (SCHEMAS.md "Record evolution").

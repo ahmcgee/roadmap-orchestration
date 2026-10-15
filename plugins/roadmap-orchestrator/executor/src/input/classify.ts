@@ -269,12 +269,10 @@ function dispatchedSpec(
   if (status === 'park-pending' && (u.decided === null || !['plan-check', 'gate'].includes(u.decided.stage))) {
     return `unit ${unit.id} is parked at ${u.decided?.stage}, which is final in M1; re-enter the work under a new unit id`;
   }
+  // Arc feedback 2026-10-15: an attempt a crash cut short is recorded at the executor's startup (a recovery hold, or its
+  // call), so only a running one refuses.
   const open = openAttempt(input.view, unit.id);
-  if (open !== null) {
-    return open.live
-      ? `unit ${unit.id} is running ${open.stage} attempt ${open.attempt}; apply the edit at its stage boundary`
-      : `unit ${unit.id} has ${open.stage} attempt ${open.attempt} cut short by a crash; apply its spec edit once the executor has recorded that attempt`;
-  }
+  if (open?.live === true) return `unit ${unit.id} is running ${open.stage} attempt ${open.attempt}; apply the edit at its stage boundary`;
   const kept = keptInput(input.runDir, recorded.sha256, SPEC_INPUT);
   if (kept === null) throw new Error(`unit ${unit.id}: the spec it was dispatched at (${recorded.sha256}) is not kept in the run dir`);
   const was = parseSpec(kept, path);
@@ -349,9 +347,12 @@ function riskFloorReason(input: ClassifyInput, unit: PlanUnit, spec: SpecM1 | nu
   return ruled ? null : `unit ${unit.id}: risk ${unit.risk} is below its Phase-0 floor ${floor}; lowering it needs its spec to cite an active ruling for ${unit.id}`;
 }
 
-/** Whether the unit is in a task (A12, as the log shows it): active past its first dispatch and not paused, or with an attempt a crash cut short. */
+/**
+ * Whether the unit is in a task (A12, as the log shows it): active past its first dispatch and not paused, or running an
+ * attempt. An attempt a crash cut short is not a task: startup records it (arc feedback 2026-10-15).
+ */
 function inTask(view: JournalView, u: UnitState): boolean {
-  if (u.open !== null) return true;
+  if (openAttempt(view, u.unit)?.live === true) return true;
   const c = view.control();
   return u.status === 'active' && started(view, u.unit) && !c.pausedAll && !c.pausedUnits.includes(u.unit);
 }
