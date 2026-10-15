@@ -189,8 +189,18 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | `spec.json` witness item, `SpecPatchOp` witness item (paid M4b run 6) | `+ obligation?: ObligationId`: the delivered obligation whose witness the item restates (its lane and one of its test ids, exactly) | absent: no obligation's witness (lasting) |
 | Plan-check acceptance answer (paid M4b run 6) | witness item `+ obligation: ObligationId \| null` (`PLAN_CHECK_ACCEPTANCE_SCHEMA` requires it; null is spec.json's absent) | a recorded answer without it reads as null (lasting, no warning: the same meaning) |
 | Build answer, exit.json, kill reasons (the report rule, 2026-10-11) | `buildSchemaFor` `+ final: boolean` (required; the reader admits `true` only); exit cause `+ reported`, `KILL_REASONS + reported` (src/runner/report.ts) | a build answer without `final` reads as final (`buildFinalDefault`, warned once; scaffolding): its schema had none, so its runner never watched it and it ended with its session; dev.7 exit.json never holds `reported` |
-| `stage-outcome` lanes, `StageOutcomeDetail` (fast suite at lanes, 2026-10-15) | `+ base-red` with `detail: base-red{base: Sha, lanes: LaneId[], changedCheckout}` (`DETAILED_OUTCOMES` `lanes/base-red`): a fast suite lane red at the salvage SHA and on the unit's diff base alone; class `advance`, uncharged, `go(gate)` | none: dev.7 and dev.8 records never hold it |
-| `proc.spawn` subject `lane{set: suite}` (fast suite at lanes, 2026-10-15) | no shape change: a `suite` lane spawn now also has a lanes stage parent (the fast suite at the salvage SHA, and on the diff base); `seriesLedger` takes the `set` it reads | none: a dev.8 lanes attempt simply has no suite spawns |
+| dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
+
+**1.0.0-dev.9 → 1.0.0-dev.10 (2026-10-15 arc feedback: the fast suite at lanes, the scheduler unwedged, scope growth,
+judges' output validated once and repaired in session).** `SCHEMA_VERSION` stays 1; every change is additive. The
+scaffolding defaults are `planCheckScopeGrowthDefault` and `checkpointRulingTextDefault` in `src/core/upgrade.ts`. An
+arc started on dev.9 is adopted; one already wedged behind a crash-abandoned attempt is closed by its next start's
+recovery hold.
+
+| Record | Change | Read-time default for dev.9 state |
+|---|---|---|
+| `stage-outcome` lanes, `StageOutcomeDetail` (fast suite at lanes, 2026-10-15) | `+ base-red` with `detail: base-red{base: Sha, lanes: LaneId[], changedCheckout}` (`DETAILED_OUTCOMES` `lanes/base-red`): a fast suite lane red at the salvage SHA and on the unit's diff base alone; class `advance`, uncharged, `go(gate)` | none: dev.9 records never hold it |
+| `proc.spawn` subject `lane{set: suite}` (fast suite at lanes, 2026-10-15) | no shape change: a `suite` lane spawn now also has a lanes stage parent (the fast suite at the salvage SHA, and on the diff base); `seriesLedger` takes the `set` it reads | none: a dev.9 lanes attempt simply has no suite spawns |
 | `BuildInputs` (fast suite at lanes, 2026-10-15) | `+ suiteLanes: FastLane[]` (`fastSuiteLanes`; `ROLE_INPUTS.build`) | none: rendered per call, never kept |
 | `stage-outcome` plan-check, `StageOutcomeDetail` (scope growth, 2026-10-15) | `+ scope-growth` (class `hold`, the one hold besides `interrupted`; `detail: scope-growth{proposals: [{patterns: RepoPattern[] (ascending, non-empty), reason}]}` (non-empty), `DETAILED_OUTCOMES` `plan-check/scope-growth`) | none: dev.9 records never hold it |
 | Facts (scope growth) | `+ scope-decided{unit, attempt, command, decision: accepted \| rejected, reason}` | none |
@@ -199,24 +209,10 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | Plan-check answer (scope growth) | `+ scopeGrowth: [{patterns: string[] (non-empty), reason}]` (`PLAN_CHECK_SCHEMA` and every `planCheckAcceptanceSchemaFor` schema require it) | absent: none proposed (`planCheckScopeGrowthDefault`, warned once; scaffolding): a plan-check call a dev.9 executor launched |
 | `spec.json` (scope growth) | `+ removes?: string[]` (non-empty, unique, each one line: a path, route or symbol the unit removes or renames) | absent: none (`specRemoves`; lasting) |
 | `phase0 check` report, `apply --dry-run`, an applied `apply` receipt (scope growth) | `+ advisories: ScopeReference[]` (Phase-0 row 10, never a refusal); the receipt's `advisory: <json>` lines | none: output only |
-| dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
-
-**Arc feedback 2026-10-15 (after 1.0.0-dev.9; no version bump in this change).** Additive; nothing to default: no
-dev.9 (or dev.7, dev.8) record holds any of these, and an adopted arc already wedged behind a crash-abandoned attempt
-is closed by its next start's recovery hold.
-
-| Record | Change | Read-time default for dev.9 state |
-|---|---|---|
 | `stage-outcome` | prepare `+ interrupted` (only as a recovery hold) | none: dev.9 records never hold it |
 | `HoldCause` (`stage-outcome.cause`) | `+ recovery{}`: the startup's hold of a crash-abandoned admission-stage attempt nothing consumes (`holdAbandoned`) | none (absent: a pause or stop, as before) |
 | `UnitState` (fold) | a recovery hold leaves `decided` and `interrupted`; `status` `held` under a pause, else `active`; a prepare hold does not mark the lineage prepared | derived |
 | `Holder.batch{finding, attempt}`, `batch-<n>` job, batch items | `finding` is the key (lowest, canonical order) of the findings the batch repairs, one for a single-finding batch, several for a hold cycle | none: a dev.9 holder names the one finding its batch repaired, which is its key |
-
-**1.0.0-dev.9 → next (2026-10-15 arc feedback #3: judges' output validated once, repaired in session).** `SCHEMA_VERSION`
-stays 1; every change is additive. The one scaffolding default is `checkpointRulingTextDefault` in `src/core/upgrade.ts`.
-
-| Record | Change | Read-time default for dev.9 state |
-|---|---|---|
 | `launch.json` `terminal.session` (`JudgmentSession`) | `mode: fresh \| resume`: `resume` only for a `REPAIR_ROLES` role (`planCheck`, `checkpoint`), the repair turn; the reader refuses it on any other role. A repair role's fresh call runs without `--no-session-persistence` | none: dev.9 records hold `fresh` only, which reads as written |
 | `stage-outcome` build and lanes, `NeedsUserReason` | `+ witness-lane-missing` (a required witness item names no arc lane in force; park `env`, blocking) | none: dev.9 records never hold it |
 | Checkpoint answer (`CheckpointOutput`, the recorded call's `result.json`) | `rulings`: objects `S_RULING` constrains (the model-owned sidecar fields; `ruledBy`, `consistency` stamped), read into canonical JSON text | a ruling recorded as JSON text reads as written (`checkpointRulingTextDefault`, warned once; scaffolding) |
@@ -3431,7 +3427,7 @@ any crash does, and the hold's release is derived from the log, the ticks and th
 
 **Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8.
 
-## The fast suite at the lanes stage (2026-10-15 batch; still 1.0.0-dev.9)
+## The fast suite at the lanes stage (2026-10-15; 1.0.0-dev.10)
 
 Builders handed over code the candidate's suite rejected (lint, an unused helper): their prompt named only the spec's
 fast lanes. Now the lanes stage runs the plan's fast suite lanes in code, and the build prompt names them.
@@ -3471,7 +3467,7 @@ fast lanes. Now the lanes stage runs the plan's fast suite lanes in code, and th
 **Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8: every change is additive and none needs a default.
 
 
-## Scope growth (2026-10-15; still 1.0.0-dev.9)
+## Scope growth (2026-10-15; 1.0.0-dev.10)
 
 Units started with scopes too narrow (a unit replacing a shell page needed test files outside its package), and every
 fix cost a build, a park and a re-entry. Three parts; one canonical way a dispatched unit's scope grows stays the ruled

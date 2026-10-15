@@ -1297,7 +1297,7 @@ ladder with its own runnable fixture:
     `rejected{invalid}` naming the fault (a second time on the trigger, a request), so a restart never judges the
     recorded output again. No record changes: version 1.0.0-dev.9 adopts dev.7 and dev.8 arcs as dev.8 does (the
     upgrade test stays on dev.7 until the next release moves it).
-  - **The fast suite runs at the lanes stage** (2026-10-15 arc feedback: builders handed over code the pre-merge suite
+  - **The fast suite runs at the lanes stage** (1.0.0-dev.10, 2026-10-15 arc feedback: builders handed over code the pre-merge suite
     rejected, lint and an unused helper, red three times; owner ruling: run the fast-tier suite lanes after every build,
     deterministically in code). After a green certified spec series the lanes stage runs the plan's fast suite lanes,
     less any identical to a spec lane, at the salvage SHA in their own clean checkout, each under its own reservation;
@@ -1309,7 +1309,13 @@ ladder with its own runnable fixture:
     build prompt lists the fast suite lanes as commands the builder runs green beside its fast lanes; code still enforces
     them. The suite lanes may not change while a lanes attempt runs them or a lanes red awaits its fix round. Additive
     only: a lanes `base-red` outcome with its detail (SCHEMAS.md "The fast suite at the lanes stage").
-  - **No way out when the scheduler is stuck** (arc feedback 2026-10-15). A crash-abandoned admission-stage attempt is
+  - **No way out when the scheduler is stuck** (1.0.0-dev.10, arc feedback 2026-10-15). A crash-abandoned admission-stage attempt is
     closed at startup by an uncharged `hold{recovery}` (prepare gains `interrupted` for it), so a paused unit is
     held, not wedged behind a dead attempt; an adopted arc already wedged is unwedged by its next start. Mutually
     held repairs publish as one cycle batch (§2.8 Batch repair). Additive records only (SCHEMAS.md "Record evolution").
+  - **Version 1.0.0-dev.10** (2026-10-15) carries four arc-feedback changes: the fast suite at lanes and the unwedged
+    scheduler (above), scope growth (§2.1 plan-check, `scope accept|reject`) and judges' output validated once and
+    repaired in session (§2.1). Every record change is additive with read-time defaults for dev.9 state (SCHEMAS.md
+    "Record evolution", 1.0.0-dev.9 → 1.0.0-dev.10); it adopts the arcs dev.9 adopts and dev.9's own. A plan-check
+    answer that proposes scope growth code verifies is a hold, nothing else of it applied: its patch is neither judged
+    nor sent to a repair turn.

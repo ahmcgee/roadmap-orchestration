@@ -196,7 +196,7 @@ export function buildFinalDefault(): true {
   return true;
 }
 
-// Scope growth (2026-10-15, still 1.0.0-dev.9): the plan-check answer's `scopeGrowth`. A plan-check call an earlier executor
+// Scope growth (2026-10-15, 1.0.0-dev.10): the plan-check answer's `scopeGrowth`. A plan-check call an earlier executor
 // launched answered a schema without it; recovery consumes such an answer after an upgrade. Delete once no arc started on
 // 1.0.0-dev.9 is in flight.
 
