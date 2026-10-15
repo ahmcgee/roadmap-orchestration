@@ -1,7 +1,8 @@
 // Lane execution (plan "Pipeline", lanes and candidate rows; DESIGN-1.0.md §4 Verification, Lanes): the
 // executor runs a series of lanes serially, verbatim, under their reservations, in a clean detached
 // checkout, fast lanes before estate lanes, and keeps one evidence dir per lane. The same series runs a
-// unit's spec lanes at the salvage SHA (set `spec`, the lanes stage) and the plan's suite on the candidate
+// unit's spec lanes at the salvage SHA (set `spec`, the lanes stage), the plan's fast suite lanes at the salvage SHA and
+// on the unit's diff base (set `suite`, the lanes stage, stages.ts `fastSuite`) and the plan's suite on the candidate
 // merge and on the integration tip alone (set `suite`, the candidate stage). Arc lanes (M3) run as a journey series
 // (`runJourneySeries`, at the end of this file) under the same rules.
 //
@@ -80,7 +81,7 @@ import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { type HostSample, readHostSample } from '../host/sample.ts';
 import { HOST_SIGNATURES, HOST_SIGNATURES_REV, type HostSignatureId, outputSignatures, outputTail } from '../host/signatures.ts';
 import { type Argv0, resolveArgv0 } from '../preflight/argv0.ts';
-import type { LaneLedgerEntry, ObligationView } from '../prompts/inputs.ts';
+import type { FastLane, LaneLedgerEntry, ObligationView } from '../prompts/inputs.ts';
 import { instanceEnv, laneCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import {
@@ -194,6 +195,16 @@ export function seriesOrder<L extends LaneDef>(lanes: readonly L[]): readonly L[
 /** The spec's series: struck and deferred lanes do not run. */
 export function laneOrder(spec: SpecM1): readonly SpecLane[] {
   return seriesOrder(spec.lanes.filter((l) => l.state === 'active'));
+}
+
+/**
+ * The fast suite lanes a unit's lanes stage runs after its green spec series, and its builder runs before its final report
+ * (the 2026-10-15 batch): the plan's fast suite lanes in declared order, less each one identical to an active spec lane
+ * (`sameExecution`), whose pass the spec series already is.
+ */
+export function fastSuiteLanes(suite: readonly LaneDef[], spec: SpecM1): readonly FastLane[] {
+  const active = laneOrder(spec);
+  return suite.filter((l): l is FastLane => l.tier === 'fast' && !active.some((s) => sameExecution(l, s)));
 }
 
 /**
@@ -894,12 +905,13 @@ export function latestSpecSeries(ctx: Readonly<{ journal: Readonly<{ view: Journ
 }
 
 /**
- * The ledger of the series `parent` ran at commit `at` with evidence under `root`, in order (a candidate
- * attempt runs two: on the candidate, then on the integration tip alone), one record per lane: its first
+ * The ledger of the `set` series `parent` ran at commit `at` with evidence under `root`, in order (a candidate
+ * attempt runs two: on the candidate, then on the integration tip alone; a lanes attempt its spec series, then its fast
+ * suite series at the same commit, then the fast suite on the unit's diff base), one record per lane: its first
  * run and its rerun, if any, combined as the series combined them, or (a spec series, F1a) the earlier execution it
  * reused, read back from that execution's series. `lanes` hold the definitions it ran, found by id.
  */
-export function seriesLedger(ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, root: AbsPath): readonly LaneRecord[] {
+export function seriesLedger(ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, at: Sha, root: AbsPath): readonly LaneRecord[] {
   const defOf = (id: LaneId, by: string): LaneDef => {
     const lane = lanes.find((l) => l.id === id);
     if (lane === undefined) throw new Error(`lane ${id} of ${by} is not among the lanes given`);
@@ -908,11 +920,12 @@ export function seriesLedger(ctx: StageContext, parent: StageParent, lanes: read
   const runs = new Map<LaneId, IntentOf<'proc.spawn'>[]>();
   for (const intent of ctx.journal.view.opsOf('proc.spawn')) {
     const s = intent.expect.subject;
-    if (s.purpose !== 'lane' || s.at !== at || !sameParent(intent.parent, parent)) continue;
+    if (s.purpose !== 'lane' || s.set !== set || s.at !== at || !sameParent(intent.parent, parent)) continue;
     runs.set(s.lane, [...(runs.get(s.lane) ?? []), intent]);
   }
   const ran = [...runs].map(([id, spawns]) => ({ seq: parseOpId(spawns[0]!.op).seq, record: spawnRecord(ctx, parent, defOf(id, spawns[0]!.op), spawns, root) }));
-  const reused = ctx.journal.view.holistic().laneReuses.filter((r) => sameParent(r.parent, parent))
+  // Only a spec series reuses a lane (F1a).
+  const reused = ctx.journal.view.holistic().laneReuses.filter((r) => set === 'spec' && sameParent(r.parent, parent))
     .map((r) => ({ seq: r.seq, record: reusedRecord(ctx, r.from, defOf(r.lane, `lane-reused seq ${r.seq}`)) }));
   return [...ran, ...reused].sort((a, b) => a.seq - b.seq).map((e) => e.record);
 }
@@ -979,12 +992,13 @@ export const arcJourneyLane = (def: ArcLaneDef): JourneyLane => ({ def, laneRev:
 export const standInJourneyLane = (def: ArcLaneDef): JourneyLane => ({ ...arcJourneyLane(def), suite: true });
 
 /**
- * Whether a suite lane and an arc lane are one execution (F6, R63): the same argv, cwd, declared env and expected exit,
- * so on the same tree the arc lane's run (with its reporter's env added) is the suite lane's run.
+ * Whether a suite lane and another lane are one execution (F6, R63): the same argv, cwd, declared env and expected exit,
+ * so on the same tree the other's run is the suite lane's: an arc lane's (with its reporter's env added), or a spec
+ * lane's (`fastSuiteLanes`).
  */
-export function sameExecution(suite: LaneDef, arc: ArcLaneDef): boolean {
+export function sameExecution(suite: LaneDef, other: LaneDef): boolean {
   const shape = (l: LaneDef): string => canonicalJson({ argv: l.argv, cwd: l.cwd, set: l.env.set, pass: [...l.env.pass].sort(), expectedExit: l.expectedExit });
-  return shape(suite) === shape(arc);
+  return shape(suite) === shape(other);
 }
 
 /** Each suite lane's identical arc lane among `arc` (the first, by `sameExecution`), by suite lane id. */

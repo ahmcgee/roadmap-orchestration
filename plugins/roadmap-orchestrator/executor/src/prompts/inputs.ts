@@ -167,6 +167,11 @@ export type BuildInputs = Readonly<{
   /** The approving plan-check's notes: facts it found about existing code (item 26); empty when none. */
   planCheckNotes: string;
   fastLanes: readonly FastLane[];
+  /**
+   * The 2026-10-15 batch: the plan's fast suite lanes the lanes stage runs after the spec's (`fastSuiteLanes`,
+   * src/pipeline/lanes.ts), which the implementer runs green beside its fast lanes; empty when the plan has none.
+   */
+  suiteLanes: readonly FastLane[];
   /** Where the implementer writes decisions.json; outside the worktree, snapshotted by the executor. */
   evidenceDir: AbsPath;
   worktree: AbsPath;
@@ -402,7 +407,7 @@ export type RoleInputs = {
 
 export const ROLE_INPUTS = {
   planCheck: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid'],
-  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
     'checks',
@@ -509,6 +514,15 @@ export function fastLanesText(worktree: AbsPath, lanes: readonly FastLane[]): st
     const pass = l.env.pass.length === 0 ? '' : `; needs ${l.env.pass.join(', ')} from the environment`;
     return `- ${l.id} (expects exit ${l.expectedExit}${pass}):\n  ${laneCommand(worktree, l)}`;
   }).join('\n');
+}
+
+/**
+ * The suite lanes a build runs beside its fast lanes (the 2026-10-15 batch), as their exact commands; nothing when the plan
+ * has none. Reported as experiments: lanesRun holds the spec's fast lanes only (its schema's enum).
+ */
+export function suiteLanesText(worktree: AbsPath, lanes: readonly FastLane[]): string {
+  if (lanes.length === 0) return '';
+  return `\n\n<suite_lanes>\nThe executor runs these suite lanes after your fast lanes, in a clean checkout of your commit, and a red one comes back to you as a fix round. Run each exactly as written beside the fast lanes, after your last change, until it exits with its expected code, and report each run in experiments under the name suite:<id>, never in lanesRun:\n${fastLanesText(worktree, lanes)}\n</suite_lanes>`;
 }
 
 export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {

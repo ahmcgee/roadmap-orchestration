@@ -207,6 +207,12 @@ describe('m4a-rev3 facts and outcomes', () => {
     refuses(outcome('lanes', 'green', 'advance', false, missing), /detail$/);
     refuses(outcome('plan-check', 'infeasible', 'route-up', false, { kind: 'infeasible', notes: 'n' }), /detail$/);
     refuses(outcome('lanes', 'known-defect', 'advance', false, missing), /detail$/);
+    // The 2026-10-15 batch: a fast suite red on the unit's diff base alone too.
+    const base = '0'.repeat(40);
+    roundTrip(outcome('lanes', 'base-red', 'advance', false, { kind: 'base-red', base, lanes: ['lint'], changedCheckout: false }));
+    roundTrip(outcome('lanes', 'base-red', 'advance', false, { kind: 'base-red', base, lanes: [], changedCheckout: true }));
+    refuses(outcome('lanes', 'base-red', 'advance', false), /detail$/);
+    refuses(outcome('lanes', 'base-red', 'advance', false, { kind: 'base-red', base, lanes: [], changedCheckout: false }), /detail$/);
     for (const key of Object.keys(DETAILED_OUTCOMES)) {
       const [stage, kind] = key.split('/') as [keyof typeof STAGE_OUTCOME_KINDS, string];
       assert.ok((STAGE_OUTCOME_KINDS[stage] as readonly string[]).includes(kind), key);

@@ -224,6 +224,9 @@ export const TABLE: Table = {
     'smoke-survived': { do: 'bounded', round: 'smoke', bound: 'smokeRounds', to: build('fix'), chargeable: true, then: go(at('gate')) },
     // M4a rev 3 (F4): the unit hit a plan known defect; uncharged, it waits at prepare for the fixer, then merges the tip in.
     'known-defect': go(at('prepare')),
+    // A fast suite lane red at the salvage SHA and on the unit's diff base alone: the base's red, not the unit's. Uncharged,
+    // on to the gate; the candidate's suite on the tip then decides (its own `base-red` halts merges while the tip is red).
+    'base-red': go(at('gate')),
   },
   gate: {
     approve: go(at('candidate')),

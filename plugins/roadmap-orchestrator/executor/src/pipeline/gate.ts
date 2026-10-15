@@ -299,7 +299,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const seated = judgmentDispatch(ctx, unit.id, 'gate');
     if (seated.kind !== 'pinned') return { kind: 'routing-changed', needsUser: seated.needsUser };
     const pinned = dispatchOf(ctx.journal.view, unit.id);
-    const laneLedger = seriesLedger(ctx, series, spec.lanes, head, specSeriesRoot(ctx.runDir, series));
+    const laneLedger = seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series));
     const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id)];
     const base = diffBase(ctx.repo, tip, head);
     const growth = paths.filter((p) => !pinned.scope.some((g) => matchesGlob(p, g)));

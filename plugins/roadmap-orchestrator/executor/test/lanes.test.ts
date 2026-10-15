@@ -229,7 +229,7 @@ test('lanes.ignored-census-pass: a passing lane\'s ignored writes are counted, n
   const [spawn] = laneSpawns(run);
   assert.ok(spawn !== undefined && spawn.parent.type === 'stage');
   rmSync(join(done.ledger[0]!.evidenceDir, 'ignored.json'));
-  const [first] = seriesLedger(run.ctx, spawn.parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(run.runDir, spawn.parent));
+  const [first] = seriesLedger(run.ctx, spawn.parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawn.parent));
   assert.equal(first?.ignored, null);
   assert.doesNotMatch(laneLedgerText([first!]), /ignored writes/);
 });

@@ -135,12 +135,12 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   build: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
+      planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
       scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
-      planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
+      planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
       assess: { risk: 'high', vision: vision(2, 'VISION-B') },
@@ -840,7 +840,19 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     }
   });
 
-  it('prompts.build-assess-directive: a read-only first invocation answered as planAssessment, the pinned floor, the vision as context', () => {
+  it('prompts.build-suite-lanes: the plan\'s fast suite lanes as exact commands run beside the fast lanes, reported as experiments; nothing without them', () => {
+    for (const model of BUILDERS) {
+      const mod = promptFor('build', model);
+      assert.doesNotMatch(mod.render(SAMPLES.build[0]), /[Ss]uite lanes?/, `${model}: no suite section without suite lanes`);
+      const text = mod.render({ ...SAMPLES.build[1], assess: null, fixRound: null });
+      assert.match(text, /- eslint \(expects exit 0\):\n {2}cd \/wt\/b && env CI=1 npx eslint \./, `${model}: the exact command`);
+      for (const needle of [/after your fast lanes/, /fix round/, /after your last change/, /experiments/, /suite:<id>/, /never in lanesRun/]) {
+        assert.match(text, needle, `build/${model}: ${needle}`);
+      }
+    }
+  });
+
+  it('prompts.build-assess-directive:a read-only first invocation answered as planAssessment, the pinned floor, the vision as context', () => {
     for (const model of BUILDERS) {
       const mod = promptFor('build', model);
       assert.doesNotMatch(mod.render(SAMPLES.build[0]), /planAssessment|assessment/, `${model}: no assessment in a build`);

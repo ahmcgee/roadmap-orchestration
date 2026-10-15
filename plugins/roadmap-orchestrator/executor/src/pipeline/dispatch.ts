@@ -650,6 +650,12 @@ export const witnessWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt
 /** M4a rev 3 (D2): a lanes attempt's detached checkout of the salvage SHA with its production diff reverted (mutation smoke). */
 export const smokeWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.smoke-${attempt}`));
+/**
+ * A lanes attempt's detached checkouts for its fast suite lanes (the 2026-10-15 batch): `suite` of the salvage SHA, `base`
+ * of the unit's diff base, never the verification checkout the gate reads.
+ */
+export const fastSuiteWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number, at: 'suite' | 'base'): AbsPath =>
+  absPath(join(root, arc, `${unit}.fast-${at}-${attempt}`));
 
 export type StageParent = Extract<Parent, { type: 'stage' }>;
 

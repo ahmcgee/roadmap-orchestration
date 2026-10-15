@@ -424,6 +424,12 @@ rejected. An edit you never apply has no effect, even after a restart.
   Copy its flags exactly as the project runs them today, even where the corpus says a faster setting is now safe:
   changing how the gate runs is the flow loop's lever, which proves the same tests still pass and measures the
   change. Retuning a flag while authoring skips that proof.
+- Every fast suite lane runs after each build too: the lanes stage runs them on the unit's commit once its spec lanes
+  pass, and the builder is told to run them first. A red one that is also red on the unit's base alone does not charge
+  the unit; otherwise it is the unit's fix round, long before the candidate. So give each cheap check its own fast suite
+  lane (lint, typecheck, format check: `["npx", "eslint", "."]`, `["npx", "tsc", "--noEmit"]`), never one lane that
+  chains them: a fix round then names the check that failed, and the run time of each is measured apart. Keep slow or
+  stateful suites `estate`: only the candidate runs those.
 - A spec lane may declare `inputs`, the repo patterns it reads: a fast lane's pass is then reused on a later commit
   that touched none of them. Suite and arc lanes never declare it.
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs. Mutation smoke reverts a

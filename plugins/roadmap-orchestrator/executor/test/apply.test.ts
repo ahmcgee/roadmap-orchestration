@@ -379,6 +379,16 @@ const ROWS: readonly Row[] = [
     expect: [/suite lanes may not change while a candidate is under way \(unit u1 is past a candidate attempt\)/],
   },
   {
+    // The 2026-10-15 batch: a lanes red's fix round reads the fast suite lanes back by their definitions in force.
+    name: 'suite lanes while a unit\'s lanes red awaits its fix round: refused',
+    setup: (r) => {
+      pin(r, 'u1');
+      decide(r, 'u1', 'lanes', 'red', 'advance');
+    },
+    edit: (d) => editPlan(d, (p) => void p.suite.lanes.push({ ...p.suite.lanes[0]!, id: 'suite2' })),
+    expect: [/suite lanes may not change while a lanes attempt runs them or its fix round reads them \(unit u1\)/],
+  },
+  {
     name: 'arc, integrationBranch, baseline, worktreeRoot: always refused',
     edit: (d) => editPlan(d, (p) => {
       p['integrationBranch'] = 'other';

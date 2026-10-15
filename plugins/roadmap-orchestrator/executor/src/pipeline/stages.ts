@@ -37,10 +37,10 @@
 //               answer is read against the spec rev its `judgment-inputs` captured; each `visionConflict` opens
 //               a P3 `plan-check` finding for the checkpoint (R17, src/holistic/findings.ts), never a redirect.
 //   build       the implementer round (rounds.ts) under its entry reservation, held from reserve to
-//               teardown; the D4 escalation is decided before the seat (G1); prompt: fast lanes only, the
-//               worktree, the evidence dir, the pinned scope, the approving plan-check's notes. A resumed
-//               session that never persisted re-runs once, fresh (`callRound`). A resolve round, or the
-//               continue of one, must leave the merge-in committed.
+//               teardown; the D4 escalation is decided before the seat (G1); prompt: fast lanes only (the spec's,
+//               and the plan's fast suite lanes, `fastSuiteLanes`), the worktree, the evidence dir, the pinned scope,
+//               the approving plan-check's notes. A resumed session that never persisted re-runs once, fresh
+//               (`callRound`). A resolve round, or the continue of one, must leave the merge-in committed.
 //   quiesce     the build invocation's workload is empty (invoke already guarantees it; asserted).
 //   evidence    `evidence.snapshot` of the build's stdout, stderr and evidence dir, and the fast lanes'
 //               declared outputs in the worktree; then the implementer's decisions.json is appended to
@@ -52,9 +52,10 @@
 //   teardown    cleanup of the build's reservation.
 //   lanes       lanes.ts in a detached checkout of the salvage SHA; the lane ledger for the gate. M4a rev 3: a plan known
 //               defect the unit matches (by lane before any lane runs, by a red lane's output after) is `known-defect`,
-//               uncharged, to prepare (F4, `knownDefectHit`); in a corpus arc a green certified series then runs the
-//               executable checks: witness presence (witnesscheck.ts, D1) and mutation smoke (smoke.ts, D2). The
-//               verification checkout is kept only when the gate is next.
+//               uncharged, to prepare (F4, `knownDefectHit`); a green certified series then runs the plan's fast suite
+//               lanes (`fastSuite`, below: a red one on the unit's diff base too is `base-red`, uncharged), and in a
+//               corpus arc the executable checks: witness presence (witnesscheck.ts, D1) and mutation smoke (smoke.ts,
+//               D2). The verification checkout is kept only when the gate is next.
 //
 // M4a rev 3 (E, R55): under `planCheck.shape: by-builder` in a corpus arc with arc lanes (`planCheckShape`), a frontier or
 // summit builder's plan-check records `in-session` without a call, and its fresh build makes two invocations in one
@@ -78,7 +79,7 @@ import {
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specWitnesses } from '../core/records.ts';
+import { type ApprovalFingerprint, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specWitnesses } from '../core/records.ts';
 import { readsDeniedOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
@@ -88,7 +89,7 @@ import { FILES_DIR, capturedEvidence, pathPattern } from '../git/evidence.ts';
 import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { mergeHead, resolvedHead } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, planSalvage, type SalvageRules } from '../git/salvage.ts';
-import { unitDiffPaths } from '../git/transient.ts';
+import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import {
   type CorpusInForce, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keptInput,
   keptPayload, parseUnitSpec, requirePlanInForce, revisionInForce, specBytesOf, specShaInForce,
@@ -126,12 +127,12 @@ import { runnerFiles } from '../runner/files.ts';
 import {
   type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, type ImplementerDispatch, type Pinned, type StageContext, type StageParent,
   backendOf, callBackend, cancelledNow, dispatchOf, enter, evidenceRoot, implementerDispatch, isCancelled, judgmentDeadlineMs, judgmentDispatch, nonEmpty, pinDispatch,
-  raiseRisk, riskAbove, runOp, runPrepared, sameSession, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
+  fastSuiteWorktree, raiseRisk, riskAbove, runOp, runPrepared, sameSession, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type VerificationTree, dirtyPaths, laneOrder, laneRuntime, presentCheckouts, removeCheckout, removeVerificationTree, runLaneSeries,
-  seriesEntry, specSeriesRoot,
+  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, dirtyPaths, fastSuiteLanes, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
+  removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot,
 } from './lanes.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
@@ -1095,7 +1096,8 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const render = (fixRound: RoundCall['fixRound'], assess: BuildAssess | null): string => prompt.render({
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
-    fastLanes: activeFastLanes(spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope, fixRound, witnessChecks, assess,
+    fastLanes: activeFastLanes(spec), suiteLanes: fastSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope,
+    fixRound, witnessChecks, assess,
   });
   const callFor = (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
@@ -1409,6 +1411,111 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
   }
 }
 
+// ---------------------------------------------------------------------------------------------------
+// The fast suite at the lanes stage (the 2026-10-15 batch)
+//
+// After a green certified spec series the lanes stage runs the plan's fast suite lanes (`fastSuiteLanes`: less those
+// identical to a spec lane) at the salvage SHA, in their own detached checkout (`fastSuiteWorktree` `suite`), each under
+// its own reservation, as `lane{set: suite}` spawns of the lanes attempt with evidence under `<attempt root>/_suite`. So a
+// builder's lint or typecheck red is a fix round of its own build, not a candidate red. A failed fast suite (a red lane,
+// or a changed checkout) runs again on the unit's diff base alone (`diffBase(T, salvage)`: what the unit built on), the
+// red lane only (or, for a changed checkout, every lane that ran), under `<attempt root>/_base`. Base green: the unit's
+// red, a chargeable fix round with the fast suite's evidence (`red`, or `not-certified` for a changed checkout). Base
+// failed too: `base-red`, uncharged, on to the gate. The candidate stays the one place that decides a broken base: its
+// suite runs on the current tip, so a tip that fixed the base since passes, and a tip still red is its `base-red` (merges
+// halt, `needs-user`). A park here could not heal: the unit's commit never contains a later fix of its base, and only
+// the candidate merges the tip. A base check's verdict is shared by every unit of the run (`BASE_CHECKS`): units red on
+// the same lanes over the same base run it once.
+
+/** Where a lanes attempt keeps the evidence of its fast suite: at the salvage SHA (`suite`), on the diff base alone (`base`). */
+export const fastSuiteRoot = (runDir: AbsPath, parent: StageParent, at: 'suite' | 'base'): AbsPath => absPath(join(evidenceRoot(runDir, parent), `_${at}`));
+
+/** The fast suite on the diff base alone: whether it failed (a red lane, or a changed checkout), or no verdict (what the attempt records). */
+type BaseCheck =
+  | Readonly<{ kind: 'verdict'; failed: boolean; lanes: readonly LaneId[]; changedCheckout: boolean }>
+  | Readonly<{ kind: 'none'; verdict: LanesVerdict }>;
+
+/**
+ * Base checks per journal (one run), by base SHA and lanes: kept while they have a verdict. A unit asking while another's
+ * check runs waits for it (a pause of the waiter takes effect after: the wait is that check's lanes); one without a
+ * verdict (that unit paused, say) is dropped and the waiter runs its own.
+ */
+const BASE_CHECKS = new WeakMap<object, Map<string, Promise<BaseCheck>>>();
+
+/** A fast suite series' end that is no product verdict, its host pressure read first (RC-11), else null. */
+function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdict | null {
+  const cause = pressureCause(seriesRuling(ctx.runDir, ctx.journal.view.unit(unit), series.end));
+  if (cause !== null) return { kind: 'interrupted', cause };
+  const { end } = series;
+  switch (end.kind) {
+    case 'green':
+    case 'red':
+      return null;
+    case 'occupied':
+      return { kind: 'occupied', needsUser: end.needsUser };
+    case 'cleanup-failed':
+      return { kind: 'cleanup-failed', failed: end.failed };
+    case 'blocked':
+    case 'interrupted':
+      return { kind: end.kind };
+  }
+}
+
+/** `lanes` at `at` in their own checkout, removed afterwards (citing the series' evidence). */
+async function fastSuiteSeries(ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime): Promise<Series> {
+  const { worktreeRoot, arc } = ctx.plan();
+  const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
+  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false);
+  if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
+  return series;
+}
+
+/** `lanes` on `base` alone, run once per run for every unit asking (a check without a verdict is not kept). */
+async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lanes: readonly LaneDef[], rt: LaneRuntime): Promise<BaseCheck> {
+  const checks = BASE_CHECKS.get(ctx.journal) ?? new Map<string, Promise<BaseCheck>>();
+  BASE_CHECKS.set(ctx.journal, checks);
+  const key = canonicalJson({ base, lanes });
+  const known = checks.get(key);
+  if (known !== undefined) {
+    const check = await known;
+    if (check.kind === 'verdict') return check;
+  }
+  const running = (async (): Promise<BaseCheck> => {
+    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt);
+    const fault = suiteFault(ctx, parent.unit, series);
+    if (fault !== null) return { kind: 'none', verdict: fault };
+    const red = series.end.kind === 'red' ? [series.end.lane.lane] : [];
+    return { kind: 'verdict', failed: red.length > 0 || series.dirty.length > 0, lanes: red, changedCheckout: series.dirty.length > 0 };
+  })();
+  checks.set(key, running);
+  const check = await running;
+  if (check.kind !== 'verdict' && checks.get(key) === running) checks.delete(key);
+  return check;
+}
+
+/** The fast suite after a green spec series: its verdict, and its series at the salvage SHA (null when it has no lane). */
+async function fastSuite(
+  ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime,
+): Promise<Readonly<{ verdict: LanesVerdict; series: Series | null }>> {
+  const lanes = fastSuiteLanes(ctx.plan().suite.lanes, spec);
+  if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
+  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt);
+  const fault = suiteFault(ctx, unit.id, series);
+  if (fault !== null) return { verdict: fault, series };
+  const { end, dirty } = series;
+  if (end.kind === 'green' && dirty.length === 0) return { verdict: { kind: 'green' }, series };
+  // A series stops at its red lane, so that lane alone runs on the base; a changed checkout reruns every lane that ran.
+  const failing = end.kind === 'red' ? lanes.filter((l) => l.id === end.lane.lane) : lanes.filter((l) => series.ledger.some((r) => r.lane === l.id));
+  const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
+  // A unit whose commit is its base (nothing of its own) failed on the base in this very run.
+  const check: BaseCheck = base === salvaged
+    ? { kind: 'verdict', failed: true, lanes: end.kind === 'red' ? [end.lane.lane] : [], changedCheckout: dirty.length > 0 }
+    : await baseCheck(ctx, parent, base, failing, rt);
+  if (check.kind === 'none') return { verdict: check.verdict, series };
+  if (!check.failed) return { verdict: { kind: end.kind === 'red' ? 'red' : 'not-certified' }, series };
+  return { verdict: { kind: 'base-red', detail: { kind: 'base-red', base, lanes: check.lanes, changedCheckout: check.changedCheckout } }, series };
+}
+
 export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone | Cancelled> {
   const { spec } = loadUnitSpec(ctx, unit);
   const order = laneOrder(spec);
@@ -1442,14 +1549,23 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     const hit = knownDefectHit(ctx, unit, spec, series.ledger);
     if (hit !== null) verdict = { kind: 'known-defect', detail: { kind: 'known-defect', id: hit.id, match: hit.match } };
   }
-  // D1, D2 (corpus arcs): only after a green certified spec series.
-  if (verdict.kind === 'green' && checksApply(ctx)) verdict = await executableChecks(ctx, unit, parent, salvaged, rt);
+  // The fast suite lanes (the 2026-10-15 batch): only after a green certified spec series.
+  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt) : null;
+  if (suite !== null) verdict = suite.verdict;
+  // D1, D2 (corpus arcs): only after a green certified spec series and a fast suite that passed or was the base's red.
+  if ((verdict.kind === 'green' || verdict.kind === 'base-red') && checksApply(ctx)) {
+    const checks = await executableChecks(ctx, unit, parent, salvaged, rt);
+    if (checks.kind !== 'green') verdict = checks;
+  }
   const kind = verdict.kind;
   // The gate reads the verification checkout: kept only when the gate is next (green, or survivors past the smoke bound).
   const next = transition(ctx.journal.view.unit(unit.id), { stage: 'lanes', kind });
   const keep = next.kind === 'stage' && next.stage === 'gate' ? series.tree : null;
   if (series.tree !== null && keep === null) await removeVerificationTree(ctx, series.tree, parent);
-  const fix = kind === 'red' || (kind === 'not-certified' && series.dirty.length > 0) ? laneFixRound(series.ledger, series.dirty, salvaged) : null;
+  // A fix round reads the spec series and the fast suite at the salvage SHA (`lanesFixRound`, unit.ts, rebuilds the same).
+  const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
+  const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
+  const fix = kind === 'red' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
   const facts = failedFacts(verdict.failed ?? []);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

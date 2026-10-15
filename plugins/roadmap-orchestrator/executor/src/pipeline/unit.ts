@@ -85,8 +85,8 @@ import {
   witnessCheckoutFixRound, witnessFixRound,
 } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck,
-  quiesce, record, recordedCall, salvage, teardown,
+  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
+  planCheck, quiesce, record, recordedCall, salvage, teardown,
 } from './stages.ts';
 import { requiredAt } from './witnesscheck.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
@@ -209,7 +209,7 @@ function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Reado
   const batch = memberBatchCandidate(view, at);
   if (batch !== null) return { fix: batchMemberFix(ctx, unit, batch), suite: [] };
   // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
-  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
   // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
   const survived = mutantFix(ctx, at);
   if (survived !== null) return { fix: survived, suite };
@@ -280,13 +280,19 @@ function stillRequired(refs: readonly TestRef[], required: readonly RequiredWitn
   return refs.filter((r) => keys.has(testRefKey(r)));
 }
 
-/** The fix round after lanes attempt `f` (red, not certified, witnesses missing, smoke survivors), from what it recorded. */
+/**
+ * The fix round after lanes attempt `f` (red, not certified, witnesses missing, smoke survivors), from what it recorded. A
+ * red or dirty series is the spec series' or the fast suite's at the salvage SHA (stages.ts `fastSuite`): both are read.
+ */
 function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, tip: Sha): DecidedRound {
   const view = ctx.journal.view;
   const { spec } = loadUnitSpec(ctx, unit);
   const parent = stageParent(f);
   const root = specSeriesRoot(ctx.runDir, parent);
-  const ledger = seriesLedger(ctx, parent, spec.lanes, tip, root);
+  const ledger = seriesLedger(ctx, parent, spec.lanes, 'spec', tip, root);
+  const suiteRoot = fastSuiteRoot(ctx.runDir, parent, 'suite');
+  const series = [...ledger, ...seriesLedger(ctx, parent, ctx.plan().suite.lanes, 'suite', tip, suiteRoot)];
+  const dirty = [...seriesDirty(view, root), ...seriesDirty(view, suiteRoot)];
   switch (f.outcome) {
     case 'witnesses-missing': {
       if (f.detail?.kind !== 'witnesses-missing') throw new Error(`unit ${unit.id}: lanes#${f.attempt} witnesses-missing without its detail`);
@@ -304,8 +310,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return smokeFixRound(survived, required, smokeEvidence(ctx, parent), ledger, tip);
     }
     case 'not-certified': {
-      const dirty = seriesDirty(view, root);
-      if (dirty.length > 0) return laneFixRound(ledger, dirty, tip);
+      if (dirty.length > 0) return laneFixRound(series, dirty, tip);
       // D1: the witness lanes left their own checkout dirty or moved (the spec series was clean).
       const witnessRoot = absPath(join(evidenceRoot(ctx.runDir, parent), 'journey'));
       const dest = absPath(join(witnessRoot, `_dirty-${basename(witnessWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt))}`));
@@ -313,7 +318,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return witnessCheckoutFixRound(snap === undefined ? [] : snap.expect.globs.map(patternPath), [...witnessEvidence(ctx, parent), ...(snap === undefined ? [] : [dest])], ledger, tip);
     }
     default:
-      return laneFixRound(ledger, seriesDirty(view, root), tip);
+      return laneFixRound(series, dirty, tip);
   }
 }
 
@@ -343,13 +348,13 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       return lanesFixRound(ctx, unit, f, tip);
     case 'gate': {
       const parent = specSeries();
-      return gateReviseRound(gateDirectives(ctx, stageParent(f)), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
+      return gateReviseRound(gateDirectives(ctx, stageParent(f)), seriesLedger(ctx, parent, spec.lanes, 'spec', tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
     }
     case 'candidate': {
       const parent = specSeries();
       const verification = verificationOf(parent);
       if (f.outcome === 'transient-violation') {
-        return candidateFixRound(candidateRefusalFix(ctx, unit), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verification, tip);
+        return candidateFixRound(candidateRefusalFix(ctx, unit), seriesLedger(ctx, parent, spec.lanes, 'spec', tip, specSeriesRoot(ctx.runDir, parent)), verification, tip);
       }
       const red = candidateRed(ctx, unit, stageParent(f));
       return candidateFixRound(red.fix, red.suite, verification, tip);

@@ -55,7 +55,7 @@ const runtime = (ctx: StageContext, sampleHost: () => HostSample, signal: AbortS
   acquire, rank: () => { throw new Error('not ranked'); }, signal, sampleHost,
 });
 
-const readBack = (run: StageRun, ctx: StageContext = run.ctx) => seriesLedger(ctx, PARENT, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(ctx.runDir, PARENT));
+const readBack = (run: StageRun, ctx: StageContext = run.ctx) => seriesLedger(ctx, PARENT, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(ctx.runDir, PARENT));
 
 test('lanes.flake-red-green: red then green on the diagnostic rerun is red, flaky, charged; both runs kept; the fix round is told', T, async () => {
   const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
@@ -94,7 +94,7 @@ test('lanes.flake-red-green: red then green on the diagnostic rerun is red, flak
   // Read back from the journal and the files: the same record.
   const spawnParent = spawns[0]!.parent;
   assert.ok(spawnParent.type === 'stage');
-  const back = seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(run.runDir, spawnParent));
+  const back = seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawnParent));
   assert.deepEqual(back, done.ledger);
   assert.deepEqual(laneFixRound(back, [], run.base), done.fix);
 });
@@ -114,7 +114,7 @@ test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix 
   assert.deepEqual(done.fix.fix.directives, []);
   const spawnParent = laneSpawns(run)[0]!.parent;
   assert.ok(spawnParent.type === 'stage');
-  assert.deepEqual(seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, run.base, specSeriesRoot(run.runDir, spawnParent)), done.ledger);
+  assert.deepEqual(seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawnParent)), done.ledger);
 });
 
 test('lanes.vanished-program-host-fault (paid M4b run 3, OP-3): a lane whose program left the host after admission fails to spawn; that is a host fault, blocked with no verdict, never red', T, async () => {

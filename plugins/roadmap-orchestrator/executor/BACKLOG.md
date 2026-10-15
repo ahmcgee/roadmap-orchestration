@@ -151,6 +151,13 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **The fast suite at the lanes stage** (2026-10-15 batch, deferred while unproven). Each lanes attempt runs the fast
+  suite afresh: no reuse of an earlier certified pass (F1a covers spec lanes only), a base check's verdict lives in
+  memory for the run (a restart runs it again; a candidate's tip-alone run is never read as one), and a plan known
+  defect matches spec lanes only, so a fast suite red naming one charges. Triggers: the fast suite's share of
+  `stage:lanes` service time shows on the flow chart; a restart re-running base checks costs measurably; a known defect
+  whose lane is a suite lane. Then: reuse by lane identity as F1a does, journal the base verdict, extend `knownDefectHit`.
+
 - **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
   threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging
   (steps 0–9): it decides the bundle invalid and records it, so a restart never replays it. A deterministic throw in

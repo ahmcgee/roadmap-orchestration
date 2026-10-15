@@ -162,6 +162,9 @@ const ROWS: readonly Row[] = [
   ['lanes', 'smoke-survived', { counters: { smokeRounds: 1 }, promotion: true }, 'gate@escalation', 'advance', {}],
   // M4a rev 3 (F4): a known defect sends the unit back to prepare, uncharged.
   ['lanes', 'known-defect', {}, 'prepare', 'advance', {}],
+  // A fast suite lane red on the unit's diff base alone too: the base's red, uncharged, on to the gate.
+  ['lanes', 'base-red', {}, 'gate@med', 'advance', {}],
+  ['lanes', 'base-red', { promotion: true }, 'gate@escalation', 'advance', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],

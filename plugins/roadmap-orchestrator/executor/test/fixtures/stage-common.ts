@@ -73,6 +73,8 @@ export type SetupOptions = Readonly<{
   profile?: ProfileName;
   /** The repo's .gitignore; default `out/`. */
   gitignore?: string;
+  /** The plan's suite lanes (default none). */
+  suite?: readonly LaneJson[];
 }>;
 
 export type StageRun = Readonly<{
@@ -96,6 +98,12 @@ function laneJson(l: LaneJson): Record<string, unknown> {
     tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }), state: 'active',
   };
+}
+
+/** A suite lane as plan.json writes it: a spec lane's shape without its item state. */
+function suiteLaneJson(l: LaneJson): Record<string, unknown> {
+  const { state: _state, ...lane } = laneJson(l);
+  return lane;
 }
 
 /**
@@ -180,7 +188,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
-    suite: { lanes: [] }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
+    suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [] }],
   }));
   const plan: PlanM1 = parsePlan(JSON.parse(readFileSync(planPath, 'utf8')));

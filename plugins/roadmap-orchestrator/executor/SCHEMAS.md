@@ -189,6 +189,9 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | `spec.json` witness item, `SpecPatchOp` witness item (paid M4b run 6) | `+ obligation?: ObligationId`: the delivered obligation whose witness the item restates (its lane and one of its test ids, exactly) | absent: no obligation's witness (lasting) |
 | Plan-check acceptance answer (paid M4b run 6) | witness item `+ obligation: ObligationId \| null` (`PLAN_CHECK_ACCEPTANCE_SCHEMA` requires it; null is spec.json's absent) | a recorded answer without it reads as null (lasting, no warning: the same meaning) |
 | Build answer, exit.json, kill reasons (the report rule, 2026-10-11) | `buildSchemaFor` `+ final: boolean` (required; the reader admits `true` only); exit cause `+ reported`, `KILL_REASONS + reported` (src/runner/report.ts) | a build answer without `final` reads as final (`buildFinalDefault`, warned once; scaffolding): its schema had none, so its runner never watched it and it ended with its session; dev.7 exit.json never holds `reported` |
+| `stage-outcome` lanes, `StageOutcomeDetail` (fast suite at lanes, 2026-10-15) | `+ base-red` with `detail: base-red{base: Sha, lanes: LaneId[], changedCheckout}` (`DETAILED_OUTCOMES` `lanes/base-red`): a fast suite lane red at the salvage SHA and on the unit's diff base alone; class `advance`, uncharged, `go(gate)` | none: dev.7 and dev.8 records never hold it |
+| `proc.spawn` subject `lane{set: suite}` (fast suite at lanes, 2026-10-15) | no shape change: a `suite` lane spawn now also has a lanes stage parent (the fast suite at the salvage SHA, and on the diff base); `seriesLedger` takes the `set` it reads | none: a dev.8 lanes attempt simply has no suite spawns |
+| `BuildInputs` (fast suite at lanes, 2026-10-15) | `+ suiteLanes: FastLane[]` (`fastSuiteLanes`; `ROLE_INPUTS.build`) | none: rendered per call, never kept |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
@@ -492,7 +495,8 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 | `needsuser.raise` | `id, path, blocking` | `{sha256}` | `raised` |
 | `command.apply` | `command, commandSha256` | `null` | `applied{receiptSha256}` \| `rejected{reason}` |
 
-`SpawnSubject`: `backend{role, tier, routingRev, unit, attempt}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` \|
+`SpawnSubject`: `backend{role, tier, routingRev, unit, attempt}` \| `lane{unit, lane, set: spec\|suite, at: Sha}` (a `suite` lane under a
+candidate attempt, or, since the 2026-10-15 batch, a lanes attempt's fast suite) \|
 `teardown|probe{unit\|null, resource: ResourceInstance}` \| `smoke{check, target: backend{backend, role, tier, routingRev} \| command}`
 (M3 adds `arc-backend`, `journey`, `mutant`: "M3: the holistic layer").
 `(role, tier)` is a seat (`build.escalation` is refused), which the usage fact copies.
@@ -3373,3 +3377,42 @@ pause. Recovery: nothing beyond the hold fact is journaled, so no new crash row;
 any crash does, and the hold's release is derived from the log, the ticks and the clock.
 
 **Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8.
+
+## The fast suite at the lanes stage (2026-10-15 batch; still 1.0.0-dev.9)
+
+Builders handed over code the candidate's suite rejected (lint, an unused helper): their prompt named only the spec's
+fast lanes. Now the lanes stage runs the plan's fast suite lanes in code, and the build prompt names them.
+
+- **Which lanes** (`fastSuiteLanes`, src/pipeline/lanes.ts): the plan's suite lanes of tier `fast`, in declared order,
+  less each one identical to an active spec lane (`sameExecution`: argv, cwd, declared env, expected exit), whose pass the
+  spec series already is. Estate suite lanes stay the candidate's alone.
+- **When and where** (src/pipeline/stages.ts `fastSuite`): only after a green certified spec series, before the D1/D2
+  checks; in their own detached checkout of the salvage SHA (`fastSuiteWorktree(..., 'suite')`, `<unit>.fast-suite-<attempt>`),
+  each lane under its own reservation through the stage's `acquire`, as `lane{set: suite}` spawns of the lanes attempt,
+  evidence under `<attempt evidence root>/_suite` (`fastSuiteRoot`); the checkout is removed after the series, citing its
+  evidence. The red-lane protocol and host pressure (RC-11) read the series as they read a spec series.
+- **A failed fast suite** (a red lane, or a changed checkout) runs again on the unit's diff base alone, `diffBase(T,
+  salvage)`: the red lane only (a series stops at it), or every lane that ran for a changed checkout, in
+  `<unit>.fast-base-<attempt>`, evidence under `_base`. Base green → `red` (or `not-certified` for a changed checkout), a
+  chargeable fix round whose evidence is the spec series' and the fast suite's at the salvage SHA (the live `laneFixRound`
+  and the rebuilt `lanesFixRound`, src/pipeline/unit.ts, read both). Base failed too → `base-red{base, lanes,
+  changedCheckout}`, uncharged, `go(gate)`; the D1/D2 checks still run. A base equal to the salvage SHA (a unit with
+  nothing of its own) failed by the fast suite's own run. A base check without a verdict (blocked, interrupted, occupied,
+  cleanup-failed, host pressure) is the attempt's outcome.
+- **Why `base-red` goes on to the gate** (not a park, not the known-defect path): the candidate is the one place that
+  decides a broken base, against the current tip: a tip that fixed the base since passes there, and a tip still red is
+  the candidate's own `base-red` (merges halt, blocking `needs-user`). A park at lanes could never heal: the unit's commit
+  never contains a later fix of its base, and only the candidate merges the tip in. The known-defect path needs a plan
+  entry and a fixer unit, which a broken base has neither of.
+- **One base run per run** (`BASE_CHECKS`): a check is keyed by base SHA and lane definitions per journal, so units red on
+  the same lanes over the same base share one run, under the attempt that started it; a check without a verdict is not
+  kept. A restart runs it again.
+- **Apply.** The suite lanes may not change while a lanes attempt is open or a unit's decided outcome is lanes `red` or
+  `not-certified` (its fix round reads the fast suite back by the definitions in force), as at a candidate.
+- **Prompt.** `BuildInputs.suiteLanes`: both build modules render them, when there are any, as exact commands the builder
+  runs beside its fast lanes after its last change, reported as `experiments` (`suite:<id>`); `lanesRun` stays the spec's
+  fast lanes (its schema's enum).
+- **Flow.** A lanes attempt's suite spawns are service of `stage:lanes` (`spawnStation`); `suiteRunOf` reads only a
+  candidate's or a batch's suite runs, so `suiteRuns`, `firstRunReds` and the suite-lane levers' metrics are unchanged.
+
+**Upgrade.** See "Record evolution", 1.0.0-dev.7 → 1.0.0-dev.8: every change is additive and none needs a default.

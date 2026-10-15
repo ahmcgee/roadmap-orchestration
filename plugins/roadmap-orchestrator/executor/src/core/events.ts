@@ -428,8 +428,9 @@ export const STAGE_OUTCOME_KINDS = {
   teardown: ['released', 'cleanup-failed'],
   // M4a rev 3 (corpus arcs, LR-h): `witnesses-missing` (D1: a required witness id absent or failing after a green certified
   // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known
-  // defect, uncharged, back to prepare).
-  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect'],
+  // defect, uncharged, back to prepare). `base-red` (the 2026-10-15 batch): a fast suite lane red at the salvage SHA is red on
+  // the unit's diff base alone too; uncharged, on to the gate (the candidate decides against the tip).
+  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red'],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry,
   // `readRefused`, src/pipeline/stages.ts).
@@ -516,16 +517,19 @@ export const testRefKey = (t: TestRef): string => `${t.lane}\u0000${t.testId}`;
  * What an outcome carries beyond its name (M4a rev 3), present exactly on these outcomes: `witnesses-missing` (the
  * required ids absent, zero-selected, skipped or malformed: `missing`; failing: `failed`), `smoke-survived` (the
  * surviving targets and their obligations), `known-defect` (the plan entry hit: its id and the match it hit, so an edited
- * match releases the hold, src/schedule/ready.ts), build `infeasible` (the assessment's notes).
+ * match releases the hold, src/schedule/ready.ts), build `infeasible` (the assessment's notes), lanes `base-red` (the diff base
+ * the fast suite ran on alone, the fast suite lanes red there, whether they changed its checkout).
  */
 export type StageOutcomeDetail =
   | Readonly<{ kind: 'witnesses-missing'; missing: readonly TestRef[]; failed: readonly TestRef[] }>
   | Readonly<{ kind: 'smoke-survived'; obligations: readonly ObligationId[]; testIds: readonly TestRef[] }>
   | Readonly<{ kind: 'known-defect'; id: KnownDefectId; match: KnownDefectMatch }>
-  | Readonly<{ kind: 'infeasible'; notes: string }>;
+  | Readonly<{ kind: 'infeasible'; notes: string }>
+  | Readonly<{ kind: 'base-red'; base: Sha; lanes: readonly LaneId[]; changedCheckout: boolean }>;
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
+  'lanes/base-red': 'base-red',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -1511,6 +1515,13 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     kind: f.get('kind', literal('known-defect')), id: f.get('id', (v, p) => knownDefectId(v, p)), match: f.get('match', knownDefectMatch),
   })),
   infeasible: object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('infeasible')), notes: f.get('notes', str) })),
+  'base-red': object((f): StageOutcomeDetail => {
+    const out = {
+      kind: f.get('kind', literal('base-red')), base: f.get('base', shaR), lanes: f.get('lanes', arrayOf(laneR)), changedCheckout: f.get('changedCheckout', bool),
+    };
+    if (out.lanes.length === 0 && !out.changedCheckout) throw new SchemaError(f.path, 'a red lane or a changed checkout', out);
+    return out;
+  }),
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {

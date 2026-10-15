@@ -128,7 +128,7 @@ Seats below are the `default` profile's (§4); state records the role and `routi
 ```
 plan (sol) → plan-check (opus medium; opus xhigh on escalation) → build (luna low/med · opus 5.5 high risk)
   → session-empty → evidence snapshot → classified salvage → teardown → clean worktree at salvage SHA
-  → lanes (executor, serial, locked, fast then estate) → [review digest (sol, med/high only)]
+  → lanes (executor, serial, locked, fast then estate; then the plan's fast suite lanes) → [review digest (sol, med/high only)]
   → gate (opus medium · opus xhigh on escalation or triggered)
   → integration slot: candidate (--no-ff) → transient check → suite + journey lanes → ff-only
     → published | abandoned | recovery-required → checkpoint cadence (§2.5)
@@ -1267,3 +1267,15 @@ ladder with its own runnable fixture:
     `rejected{invalid}` naming the fault (a second time on the trigger, a request), so a restart never judges the
     recorded output again. No record changes: version 1.0.0-dev.9 adopts dev.7 and dev.8 arcs as dev.8 does (the
     upgrade test stays on dev.7 until the next release moves it).
+  - **The fast suite runs at the lanes stage** (2026-10-15 arc feedback: builders handed over code the pre-merge suite
+    rejected, lint and an unused helper, red three times; owner ruling: run the fast-tier suite lanes after every build,
+    deterministically in code). After a green certified spec series the lanes stage runs the plan's fast suite lanes,
+    less any identical to a spec lane, at the salvage SHA in their own clean checkout, each under its own reservation;
+    estate suite lanes stay the candidate's. A failed one runs again on the unit's diff base alone: base green is the
+    unit's red, a chargeable fix round with the suite lane's evidence; base red too is `base-red`, uncharged, and the unit
+    goes on to the gate, because the candidate is the one place that decides a broken base against the current tip (a
+    tip that fixed it since passes; a tip still red halts merges there), and a park at lanes could never heal (the unit's
+    commit never contains a later fix of its base). A base's verdict is run once per run for every unit asking. The
+    build prompt lists the fast suite lanes as commands the builder runs green beside its fast lanes; code still enforces
+    them. The suite lanes may not change while a lanes attempt runs them or a lanes red awaits its fix round. Additive
+    only: a lanes `base-red` outcome with its detail (SCHEMAS.md "The fast suite at the lanes stage").

@@ -41,7 +41,8 @@
 //                               waiter is in a stage, so the arc-wide drain of a resource edit (A12) already
 //                               excludes one
 //   capacity                    over capacity (an `@cpu` request above the pool's size): refused
-//   suite lanes                 now (the next candidate runs them); refused while a unit is at a candidate
+//   suite lanes                 now (the next candidate runs them); refused while a unit is at a candidate, or while a
+//                               lanes attempt runs its fast suite or its red (not-certified) outcome awaits its fix round
 //   arc, integrationBranch, baseline, worktreeRoot: always refused
 //
 // M4a (step C1):
@@ -772,8 +773,16 @@ export function classify(input: ClassifyInput): Classified {
       return s.decided?.stage === 'candidate' && (s.status === 'active' || s.status === 'held');
     });
     const open = view.openIntents().some((i) => i.kind === 'candidate.merge' || (i.parent.type === 'stage' && i.parent.stage === 'candidate'));
+    // A lanes attempt runs the fast suite lanes, and its fix round reads them back by their definitions in force.
+    const atLanes = cur.units.filter((u) => {
+      const s = view.unit(u.id);
+      if (s.status !== 'active' && s.status !== 'held') return false;
+      return s.open?.stage === 'lanes' || (s.decided?.stage === 'lanes' && (s.decided.outcome === 'red' || s.decided.outcome === 'not-certified'));
+    });
     if (open || atCandidate.length > 0) {
       reasons.push(`the suite lanes may not change while a candidate is under way (${open ? 'a candidate op is open' : `unit ${atCandidate.map((u) => u.id).join(', ')} is past a candidate attempt`})`);
+    } else if (atLanes.length > 0) {
+      reasons.push(`the suite lanes may not change while a lanes attempt runs them or its fix round reads them (unit ${atLanes.map((u) => u.id).join(', ')})`);
     } else {
       changes.push({ type: 'suite' });
     }

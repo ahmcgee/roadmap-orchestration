@@ -24,7 +24,7 @@
 // a negative witness drives the real entry point with an injected fixture, never a helper (F20); `experiments` for every
 // other command run; and the in-session assessment, a read-only first invocation answered as planAssessment (E, R55).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, assessText, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText, witnessChecksText } from '../inputs.ts';
+import { UNIT_POLICY, assessText, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `You are the implementer for one unit of a roadmap build, working alone and unattended in a git worktree. Nobody is watching and nobody will answer a question. The run ends when you return your final structured report; after it, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a separate reviewer gates the result against the spec.
@@ -103,7 +103,7 @@ function ask(i: BuildInputs): string {
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -131,7 +131,7 @@ ${bullets(i.scope, '(empty)')}
 
 <fast_lanes>
 ${fastLanesText(i.worktree, i.fastLanes)}
-</fast_lanes>${witnessChecksText(i.witnessChecks)}${fixRound(i)}
+</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${fixRound(i)}
 
 ${ask(i)}`,
 };
