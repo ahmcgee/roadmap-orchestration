@@ -151,6 +151,14 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **The fast suite is not a flow lever at the lanes stage** (2026-10-15). A fast suite lane's time counts as
+  `stage:lanes` service, but a suite-lane lever targets only the integration slot or host cpu, so a slow lane left
+  `fast` that makes lanes the constraint has no proposal. Trigger: a flow verdict naming `stage:lanes` while fast suite
+  spawns dominate its service time; then let the suite-lane lever target the lanes stage (or propose moving it to
+  `estate`).
+- **Paid m4a early abort ignores the plant lane's tier** (2026-10-15). `plantLaneOf` in the m4a driver does not check
+  that the root agent declared the slow suite lane `estate`; a `fast` one makes lanes the constraint and fails
+  `flow-constraint` only hours in. Trigger: the next paid m4a run; add the tier to the early-abort check before it.
 - **The fast suite at the lanes stage** (2026-10-15 batch, deferred while unproven). Each lanes attempt runs the fast
   suite afresh: no reuse of an earlier certified pass (F1a covers spec lanes only), a base check's verdict lives in
   memory for the run (a restart runs it again; a candidate's tip-alone run is never read as one), and a plan known
