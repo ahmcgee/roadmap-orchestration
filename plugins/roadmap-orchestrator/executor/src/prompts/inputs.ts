@@ -585,13 +585,16 @@ Read the spec, the documents above and the code the spec depends on, then return
 ${vision}`;
 }
 
-/** Run 10 (C): the previous plan-check answer's refused patch, as the retry reads it (empty when there was none). */
+/**
+ * Run 10 (C), every reason since 2026-10-15: why the previous plan-check answer (its repair turn's, when it made one) was
+ * refused, as the retry reads it (empty when it was not).
+ */
 export function planCheckPriorInvalidText(reason: string | null): string {
   if (reason === null) return '';
   return `
 
 <prior_attempt>
-Your previous answer on this unit redirected with a patch the executor refused, so the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
+Your previous answer on this unit was refused, so nothing of it was applied and the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
 </prior_attempt>`;
 }
 

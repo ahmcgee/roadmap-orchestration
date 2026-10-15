@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { adapt, writeResult } from '../src/backends/adapter.ts';
-import { type BackendCall, backendArgv, freshClaudeImplementerSession, freshJudgmentSession } from '../src/backends/argv.ts';
+import { type BackendCall, backendArgv, freshClaudeImplementerSession, freshJudgmentSession, resumedJudgmentSession } from '../src/backends/argv.ts';
 import { readClaude } from '../src/backends/claude.ts';
 import { judgmentSessionId } from '../src/core/ids.ts';
 import { readsDeniedOf } from '../src/core/upgrade.ts';
@@ -179,13 +179,19 @@ describe('claude', () => {
       assert.equal(argv.includes('--no-session-persistence'), true);
       assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Grep,Glob');
     });
-    it('a resumed judgment call is unrepresentable', () => {
-      const call: BackendCall = {
-        kind: 'claude-judgment', role: 'planCheck', triple: TRIPLE, schemaText: '{}', system: 'S', evidenceDirs: [],
-        // @ts-expect-error: a judgment session's only mode is 'fresh'
-        session: { backend: 'claude', mode: 'resume', id: judgmentSessionId('18b3bbf3-98ce-4ced-87c2-639d61b25ef1') },
-      };
-      assert.equal(call.kind, 'claude-judgment');
+    it('a repair role (plan-check, checkpoint) persists its fresh session and resumes it with --resume; any other judgment resuming is refused', () => {
+      const id = judgmentSessionId('18b3bbf3-98ce-4ced-87c2-639d61b25ef1');
+      for (const role of ['planCheck', 'checkpoint'] as const) {
+        const fresh = backendArgv({ kind: 'claude-judgment', role, triple: TRIPLE, session: { backend: 'claude', mode: 'fresh', id }, schemaText: '{}', system: 'S', evidenceDirs: [] });
+        assert.equal(fresh[fresh.indexOf('--session-id') + 1], id);
+        assert.equal(fresh.includes('--no-session-persistence'), false, `${role}: its session persists for the repair turn`);
+        const repair = backendArgv({ kind: 'claude-judgment', role, triple: TRIPLE, session: resumedJudgmentSession(id), schemaText: '{}', system: 'S', evidenceDirs: [] });
+        assert.equal(repair[repair.indexOf('--resume') + 1], id);
+        assert.equal(repair.includes('--session-id'), false);
+      }
+      for (const role of ['gate', 'lens', 'packReview', 'flow'] as const) {
+        assert.throws(() => backendArgv({ kind: 'claude-judgment', role, triple: TRIPLE, session: resumedJudgmentSession(id), schemaText: '{}', system: 'S', evidenceDirs: [] }), /never resumes/);
+      }
     });
     it('a Codex judgment call is unrepresentable', () => {
       // @ts-expect-error: judgment is Claude only (R21); a Codex triple does not fit a judgment call
@@ -195,11 +201,17 @@ describe('claude', () => {
       };
       assert.equal(call.kind, 'claude-judgment');
     });
-    it('launch.json refuses a judgment terminal whose session resumes', () => {
+    it('launch.json refuses a judgment terminal whose session resumes, but a repair role\'s', () => {
       const invDir = fixtureInvocation('claude-judgment', EXIT0);
-      const launch = JSON.parse(readFileSync(join(invDir, 'launch.json'), 'utf8')) as { terminal: { session: { mode: string } } };
+      const launch = JSON.parse(readFileSync(join(invDir, 'launch.json'), 'utf8')) as { terminal: { role: string; session: { mode: string } } };
       launch.terminal.session.mode = 'resume';
+      launch.terminal.role = 'gate';
       assert.throws(() => RUNNER_FILE_READERS['launch.json'](launch, 'launch.json'), SchemaError);
+      for (const role of ['planCheck', 'checkpoint']) {
+        launch.terminal.role = role;
+        const read = RUNNER_FILE_READERS['launch.json'](launch, 'launch.json');
+        assert.ok(read.terminal.type === 'backend' && read.terminal.session.backend === 'claude' && read.terminal.session.mode === 'resume');
+      }
     });
     it('a judgment result carries the launched session id', () => {
       const r = adapt(fixtureInvocation('claude-judgment', EXIT0));

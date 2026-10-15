@@ -11,9 +11,9 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type DivergenceId, type NeedsUserId, commandId, unitId } from '../src/core/ids.ts';
+import { type DivergenceId, type NeedsUserId, commandId, jobIdOf, unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { designParkRoute, runCheckpoint } from '../src/holistic/checkpoint.ts';
+import { designParkRoute, outputOf, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import { raiseDigest, uncoveredDivergences } from '../src/holistic/divergence.ts';
 import { findingKey } from '../src/holistic/types.ts';
@@ -24,7 +24,7 @@ import { runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { VALID_OP, checkpointAnswer, checkpointStep, interpretationOnlyNoop, lensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
+import { VALID_OP, checkpointAnswer, checkpointRepairStep, checkpointStep, interpretationOnlyNoop, lensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -106,7 +106,11 @@ describe('the checkpoint and its bundle', () => {
   });
 
   test('bundle.partial (A18): a two-op bundle whose second op is invalid applies neither; the trigger re-evaluates once; a second invalid bundle goes to the owner', T, async () => {
-    const d = checkpointArc([...visionLenses('audit-1'), checkpointStep('ckpt-1', twoOpBundleSecondInvalid()), checkpointStep('ckpt-2', twoOpBundleSecondInvalid())]);
+    // 2026-10-15: each job's invalid bundle takes its repair turn (here repeating it) before it is decided.
+    const d = checkpointArc([
+      ...visionLenses('audit-1'), checkpointStep('ckpt-1', twoOpBundleSecondInvalid()), checkpointRepairStep('ckpt-1', twoOpBundleSecondInvalid(), ['V-999', 'no-such-unit']),
+      checkpointStep('ckpt-2', twoOpBundleSecondInvalid()), checkpointRepairStep('ckpt-2', twoOpBundleSecondInvalid()),
+    ]);
     const r = contextFor(d);
     const { ctx, w } = checkpointContext(r);
     try {
@@ -409,7 +413,8 @@ describe('the activation checks', () => {
       await completedAudit(r, ctx);
       const ruled = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
       assert.equal(ruled.kind, 'applied', JSON.stringify(ruled));
-      appendSteps(d, [checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-3')], rulings: [checkpointRuling('C-2'), checkpointRuling('C-3')] }))]);
+      const colliding = checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-3')], rulings: [checkpointRuling('C-2'), checkpointRuling('C-3')] });
+      appendSteps(d, [checkpointStep('ckpt-1', colliding), checkpointRepairStep('ckpt-1', colliding, ['C-2 is already in the ledger'])]);
       const rev = r.journal.view.planApplied()!.rev;
       const out = await runCheckpoint(ctx);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
@@ -417,6 +422,81 @@ describe('the activation checks', () => {
       assert.equal(r.journal.view.planApplied()!.rev, rev, 'nothing applied');
     } finally {
       r.journal.close();
+    }
+  });
+
+  // 2026-10-15 (arc feedback #3): the checkpoint's own output is never refused on bookkeeping it can correct.
+  test('bundle.repair-turn-applies: an invalid bundle goes back once to the same session with every reason; the corrected answer applies, no invalid decision recorded', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      appendSteps(d, [
+        checkpointStep('ckpt-1', twoOpBundleSecondInvalid()),
+        checkpointRepairStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [VALID_OP] }), ['V-999', 'no-such-unit']),
+      ]);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      assert.deepEqual(decisions(r), [], 'the applied revision is the decision: nothing was rejected');
+      assert.deepEqual(planLimits(r), { convergenceK: 3 });
+      const [fresh, repair] = readCalls(d.scenarioPath).filter((c) => c.unit === 'ckpt-1');
+      assert.equal(repair!.argv[repair!.argv.indexOf('--resume') + 1], fresh!.argv[fresh!.argv.indexOf('--session-id') + 1], 'the repair turn resumes the refused answer\'s session');
+      assert.equal(repair!.argv[repair!.argv.indexOf('--json-schema') + 1], fresh!.argv[fresh!.argv.indexOf('--json-schema') + 1], 'with the call\'s own schema');
+      assert.equal(repair!.cwd, fresh!.cwd, 'in the checkout of the captured head, made again');
+      assert.ok(!fresh!.argv.includes('--no-session-persistence'), 'the checkpoint\'s fresh session persists for its repair turn');
+      assert.deepEqual(outputOf(ctx, jobIdOf('ckpt-1'))?.output.ops.map((o) => o.op), ['limits'], 'the job acts on the repaired answer');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.repair-turn-schema: a ruling missing a field is off the answer\'s schema; the repair turn is told which, and the completed ruling lands', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const full = JSON.parse(checkpointRuling('C-2')) as Record<string, JsonValue>;
+      const { trigger: _t, ...missing } = full;
+      const answer = (ruling: JsonValue): JsonValue => ({ ...(checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2')], rulings: [checkpointRuling('C-2')] }) as Record<string, JsonValue>), rulings: [ruling] });
+      appendSteps(d, [checkpointStep('ckpt-1', answer(missing)), checkpointRepairStep('ckpt-1', answer(full), ['malformed: ', '$.rulings[0]'])]);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      assert.deepEqual(Object.keys(keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!).manifest.rulings.sidecars), ['C-2']);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('bundle.duplicate-bookkeeping: a ruling listed twice and its rule op given twice, both exactly, land once; two different rule ops of one ruling are a reason', T, async () => {
+    const d = checkpointArc(visionLenses('audit-1'));
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      await completedAudit(r, ctx);
+      const twice = checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), ruleOp('C-2')], rulings: [checkpointRuling('C-2'), checkpointRuling('C-2')] });
+      appendSteps(d, [checkpointStep('ckpt-1', twice)]);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      const ledger = keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!).manifest.rulings;
+      assert.deepEqual(Object.keys(ledger.sidecars), ['C-2']);
+    } finally {
+      r.journal.close();
+    }
+    const e = checkpointArc(visionLenses('audit-1'));
+    const s = contextFor(e);
+    const { ctx: ctx2 } = checkpointContext(s);
+    try {
+      await completedAudit(s, ctx2);
+      const differing = checkpointAnswer({ decision: 'bundle', ops: [ruleOp('C-2'), { ...(ruleOp('C-2') as Record<string, JsonValue>), evidence: ['another reading'] }], rulings: [checkpointRuling('C-2')] });
+      const reason = 'ops 1 and 2 both land ruling C-2, differently: land it through one `rule` op';
+      appendSteps(e, [checkpointStep('ckpt-1', differing), checkpointRepairStep('ckpt-1', differing, [reason])]);
+      const out = await runCheckpoint(ctx2);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
+      assert.equal(out.decision.detail, reason);
+    } finally {
+      s.journal.close();
     }
   });
 
@@ -478,7 +558,8 @@ describe('the activation checks', () => {
     const { ctx, w } = checkpointContext(r);
     try {
       await applyVision(r, w, [{ id: 'V-3', kind: 'good', text: 'Errors are silent.', rank: null, state: 'withdrawn' }]);
-      appendSteps(d, [checkpointStep('ckpt-1', bundle([{ op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-3'], evidence: ['e'] }]))]);
+      const withdrawn = bundle([{ op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-3'], evidence: ['e'] }]);
+      appendSteps(d, [checkpointStep('ckpt-1', withdrawn), checkpointRepairStep('ckpt-1', withdrawn, ['cites V-3, which is withdrawn'])]);
       await completedAudit(r, ctx);
       const out = await runCheckpoint(ctx);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
@@ -550,7 +631,8 @@ describe('the activation checks', () => {
     try {
       // The program every lane in force runs (so no owner-only lane-program request), on a PATH that does not hold it.
       const lane = { id: 'u2', argv: ['node', '--test'], cwd: '.', env: { set: { PATH: tmpDir('empty-path') }, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' };
-      appendSteps(d, [checkpointStep('ckpt-1', bundle([admitOp(d, 'u2', [lane])]))]);
+      const unrunnable = bundle([admitOp(d, 'u2', [lane])]);
+      appendSteps(d, [checkpointStep('ckpt-1', unrunnable), checkpointRepairStep('ckpt-1', unrunnable, ['spec-lane-unrunnable'])]);
       await completedAudit(r, ctx);
       const rev = r.journal.view.planApplied()!.rev;
       const out = await runCheckpoint(ctx);
@@ -811,7 +893,7 @@ describe('P1s and their repair (paid m3 run 9)', () => {
       const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec };
       const accepting = checkpointAnswer({ decision: 'bundle', ops: [repair], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'handled by r1' }] });
       appendSteps(d, [
-        checkpointStep('ckpt-1', accepting), checkpointStep('ckpt-2', bundle([repair])),
+        checkpointStep('ckpt-1', accepting), checkpointRepairStep('ckpt-1', accepting, ['finding F-1 is a P1: P1s never bank']), checkpointStep('ckpt-2', bundle([repair])),
         { ...planCheckStep({ decision: 'approve' }), unit: 'r1' }, { ...mulBuild(), unit: 'r1' }, { ...gateStep({ decision: 'approve' }), unit: 'r1' },
       ]);
       await completedAudit(r, ctx);

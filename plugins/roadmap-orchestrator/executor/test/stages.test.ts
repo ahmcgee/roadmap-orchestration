@@ -1,7 +1,7 @@
 // The unit stages from plan-check through lanes (src/pipeline/stages.ts), integrated and fake-backed: real
 // processes through the runner, real git, the fake codex and claude behind PATH shims. Includes the two
 // deterministic fixtures of this step (redirect then approve; red lane → fix round reading the evidence
-// dir) and the named tests session.judgment-never-resumes, redirect.no-widen, backend.usage-limit,
+// dir) and the named tests session.plan-check-repair, redirect.no-widen, backend.usage-limit,
 // stages.interrupted-holds, stages.contract-touched-promotes, stages.counters-from-fold, stages.no-model-ids,
 // rounds.fix-without-session-starts-fresh, rounds.resume-without-session-starts-fresh,
 // rounds.crash-lost-inherits-deadline; and the arc-1 feedback behaviour: plan-check.checkouts, plan-check.prior-round, plan-check.cites, library.withdrawn-not-embedded.
@@ -28,7 +28,7 @@ import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import {
   BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, applyFilesNow, type StageRun, U1, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts,
-  planCheckStep, seated, setupUnit, spawnIntents, started, worktreeOf,
+  planCheckRepairStep, planCheckStep, seated, setupUnit, spawnIntents, started, worktreeOf,
 } from './fixtures/stage-common.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 
@@ -102,23 +102,33 @@ test('stages.redirect-then-approve: a redirect patches the spec (rev+1), a fresh
   assert.equal(run.journal.view.unit(U1).counters.redirects, 1);
 });
 
-test('session.judgment-never-resumes: every judgment call is a new --session-id, a retry included', T, async () => {
+test('session.plan-check-repair: a refused answer goes back once, in the same session; refused again it is malformed, and the retry is a new session', T, async () => {
   const malformed = { ...planCheckStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] } as const;
-  const run = setupUnit({ steps: [malformed, planCheckStep({ decision: 'approve' })] });
-  const first = started(await planCheck(run.ctx, run.unit));
-  assert.equal(first.outcome.kind, 'malformed');
-  assert.equal(show(first.next), 'plan-check@med', 'the uncharged retry');
-  const second = started(await planCheck(run.ctx, run.unit));
-  assert.equal(second.outcome.kind, 'approve');
-  assert.notEqual(first.session, second.session);
-  for (const call of readCalls(run.scenario.path)) {
-    assert.ok(!call.argv.includes('--resume'), 'a judgment never resumes');
-    assert.ok(call.argv.includes('--no-session-persistence'));
-  }
-  for (const intent of spawnIntents(run)) {
+  const repairedMalformed = { ...planCheckRepairStep({ decision: 'approve' }, ['the answer does not match its schema']), acts: [{ type: 'malformed' }] } as const;
+  const run = setupUnit({
+    steps: [malformed, planCheckRepairStep({ decision: 'approve' }, ['the answer does not match its schema']), malformed, repairedMalformed, planCheckStep({ decision: 'approve' })],
+  });
+  const repaired = started(await planCheck(run.ctx, run.unit));
+  assert.equal(repaired.outcome.kind, 'approve', 'the repair turn\'s answer is the attempt\'s');
+  const refused = started(await planCheck(run.ctx, run.unit));
+  assert.equal(refused.outcome.kind, 'malformed');
+  assert.equal(show(refused.next), 'plan-check@med', 'the uncharged retry');
+  const fresh = started(await planCheck(run.ctx, run.unit));
+  assert.equal(fresh.outcome.kind, 'approve');
+  assert.deepEqual([repaired.attempt, refused.attempt, fresh.attempt], [1, 2, 3], 'a repair turn is no attempt of its own');
+  const calls = readCalls(run.scenario.path);
+  const arg = (i: number, flag: string): string | undefined => calls[i]!.argv[calls[i]!.argv.indexOf(flag) + 1];
+  assert.equal(arg(1, '--resume'), arg(0, '--session-id'), 'the repair turn resumes the refused answer\'s session');
+  assert.equal(arg(3, '--resume'), arg(2, '--session-id'));
+  assert.equal(repaired.session, arg(0, '--session-id'));
+  assert.notEqual(fresh.session, refused.session, 'a retry is a fresh session');
+  const modes = spawnIntents(run).map((intent) => {
     const t = launchOf(run, intent).terminal;
-    assert.ok(t.type === 'backend' && t.role === 'planCheck' && t.session.backend === 'claude' && t.session.mode === 'fresh');
-  }
+    assert.ok(t.type === 'backend' && t.role === 'planCheck' && t.session.backend === 'claude');
+    return t.session.mode;
+  });
+  assert.deepEqual(modes, ['fresh', 'resume', 'fresh', 'resume', 'fresh']);
+  assert.deepEqual(outcomeFacts(run).map((f) => f.kind === 'stage-outcome' && `${f.outcome}#${f.attempt}`), ['approve#1', 'malformed#2', 'approve#3']);
 });
 
 test('redirect.no-widen: a redirect that widens the envelope or lowers the risk is refused and routes up', T, async () => {
@@ -424,7 +434,8 @@ test('stages.contract-touched-promotes: a contract path in the round\'s commits 
 
 test('stages.counters-from-fold: attempts and counters are the log\'s, identical after a reopen', T, async () => {
   const malformed = { ...planCheckStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] } as const;
-  const run = setupUnit({ steps: [malformed, planCheckStep({ decision: 'approve' }), codexBuild([])] });
+  const repairedMalformed = { ...planCheckRepairStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] } as const;
+  const run = setupUnit({ steps: [malformed, repairedMalformed, planCheckStep({ decision: 'approve' }), codexBuild([])] });
   const a = started(await planCheck(run.ctx, run.unit));
   const b = started(await planCheck(run.ctx, run.unit));
   const c = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
@@ -558,10 +569,13 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
     'C-3 — withdrawn by C-2', '',
   ].join('\n'));
   applyFilesNow(run);
+  const nope = 'the patch cites contract contracts/nope.md, which is no plan contract';
   setSteps(run, [
     planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: ['contracts/nope.md'], rulings: [] }] }),
+    // 2026-10-15: the repair turn is told why; repeating the cite, the attempt is malformed and the retry is told why too.
+    planCheckRepairStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: ['contracts/nope.md'], rulings: [] }] }, [nope]),
     planCheckStep({ decision: 'redirect', patch: [{ op: 'cite', contracts: [], rulings: ['C-2'] }] }, {
-      stdinContains: ['C-1: Arithmetic helpers live in src/', '- C-2: Second rule here.\n', '- C-3: withdrawn by C-2'],
+      stdinContains: ['C-1: Arithmetic helpers live in src/', '- C-2: Second rule here.\n', '- C-3: withdrawn by C-2', `Your previous answer on this unit was refused, so nothing of it was applied and the spec is unchanged: ${nope}.`],
     }),
     planCheckStep({ decision: 'approve' }, { stdinContains: ['C-2: Second rule here. More text follows.'] }),
   ]);

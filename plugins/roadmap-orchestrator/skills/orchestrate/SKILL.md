@@ -186,7 +186,10 @@ $0.30), so the wakes are few by design.
   read the vision wrong. A `bundle-request` is yours: `ack` it with `--choice apply` or `--choice reject`; one the
   executor cannot apply offers `--choice acknowledge` (you made the change with `apply`, or none is needed) or
   `--choice decline`. One still unanswered when only the close-out is left is declined by the executor, and its
-  proposal becomes an amendment for the next Phase 0: a non-blocking item never holds completion.
+  proposal becomes an amendment for the next Phase 0: a non-blocking item never holds completion. The executor already
+  sent a refused checkpoint or plan-check answer back to its own session once with every reason, and drops a ruling or
+  `rule` op given twice identically: an invalid bundle that reaches you was refused twice on substance, so never
+  rebuild it by hand to get past bookkeeping; make the change it needs with `apply`, or decline it.
 - **Checkpoint admits** (corpus arcs). Code classes every unit a checkpoint admits (`status.admits`): `repair`
   (something broken, or a delivered obligation not holding), `oversight` (a gap within the slice's clauses) or
   `opportunity` (it advances a clause outside the slice; its clauses join `advances`). An admit must cite every
@@ -371,6 +374,9 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   Add a unit with a new id and `"reenters": {"unit": <old>}` (its fixed spec, the same scope), ack the old item,
   `roadmap apply`. The new unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand.
   Its scope may grow beyond the lineage's only on a ruling its spec cites that names exactly the added patterns.
+- **Parked `witness-lane-missing`** (an arc started on 1.0.0-dev.9: the unit's spec names a witness lane that is no
+  arc lane): add that lane to the obligations with `roadmap apply`, then `roadmap resume <unit>`; or re-enter the unit
+  with a spec whose witness items name arc lanes. An apply can no longer create this state.
 - **Parked `escalation` after an assessment found the spec infeasible** (the build's `infeasible` notes are in the
   evidence): a design park, so the checkpoint sees it first; otherwise apply a feasible spec revision (it reopens
   the unit) or re-enter.

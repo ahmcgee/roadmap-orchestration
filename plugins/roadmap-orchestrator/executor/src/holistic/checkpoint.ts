@@ -46,7 +46,10 @@
 //      closeout (`closeout{since}`): the findings and specs are not repeated. Issues unchanged since the latest decided
 //      checkpoint, on unchanged grounds, are not listed (`issuesUnchangedSince`, src/holistic/intake.ts `issueReuse`). A resumed job consumes a
 //      call it made; a call interrupted (a pause, a stop, a backend park) leaves the job running and a later run asks
-//      again as the next attempt. A refusal, malformed answer or fault is an invalid decision.
+//      again as the next attempt. A refusal or fault is an invalid decision. 2026-10-15: an answer off its schema, or
+//      whose bundle the activation finds invalid, first takes one repair turn: its own session resumed (`repairCall`)
+//      with every reason, as the next attempt, whose answer is decided (refused again: invalid). A repair turn the job
+//      already made is consumed in place of the answer it repaired (`madeRepair`).
 //   4b. Drift (paid M4b run 3). A decision is checked at its activation against the arc as it is then, strictly; what
 //      moved since the capture is handled by what can judge it. Code can re-check the head: the decision's cited lanes
 //      with no observation on the head now (a publication moved it under the call) are witnessed there before the
@@ -63,11 +66,13 @@
 //
 // OR-Q1: `designParkRoute` tells the scheduler what a design park waits for: the checkpoint (its park item is held
 // back), the owner (`respec-second`, raised here), or its own park item (the checkpoint decided nothing applicable).
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { CheckpointIssues, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { canonicalJson } from '../core/json.ts';
+import { type JsonValue, canonicalJson } from '../core/json.ts';
 import { type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, INTEGRATION_SLOT, invocationId, parseInvocationId, canonicalIds } from '../core/ids.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -91,6 +96,7 @@ import { arcJourneyLane, jobSeriesCheckout, laneEnvId, observations, observedVie
 import { decidedBy } from '../pipeline/transitions.ts';
 import { candidateRedCause } from '../pipeline/unit.ts';
 import { architecture, docAt, inMs, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
+import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
 import { type CheckpointInputs, type CheckpointSpec, type FindingView, type ManifestEntry, type ManifestKind, type TriggerView, visionInputOf } from '../prompts/inputs.ts';
 import { type CheckpointIds, type CheckpointOutput, checkpointSchemaFor, validateCheckpointOutput } from '../prompts/schemas.ts';
@@ -100,7 +106,7 @@ import { renderSpec } from '../spec/render.ts';
 import { nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, rewitnessP1s, withCpu } from './audit.ts';
-import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, activate, effectiveOps, raiseOnce, recordedAdmits, settleDecided, vectorAt } from './bundle.ts';
+import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, type Refused, activate, effectiveOps, raiseOnce, recordedAdmits, settleDecided, vectorAt } from './bundle.ts';
 import { opportunityClauses } from './admits.ts';
 import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
@@ -611,9 +617,14 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
 // ---------------------------------------------------------------------------------------------------
 // The call
 
+/**
+ * A call's reading. `repairOf` (2026-10-15, arc feedback #3): the attempt whose answer may still take its repair turn (a
+ * fresh call's answer that its schema or the bundle's validation may refuse), or null (a repair turn's own answer, an
+ * enactment's, or a failure that is no answer: a refusal, a fault, a lost call).
+ */
 type Asked =
-  | Readonly<{ kind: 'output'; output: CheckpointOutput; inv: InvocationId }>
-  | Readonly<{ kind: 'failed'; detail: string; inv: InvocationId }>
+  | Readonly<{ kind: 'output'; output: CheckpointOutput; inv: InvocationId; repairOf: number | null }>
+  | Readonly<{ kind: 'failed'; detail: string; inv: InvocationId; repairOf: number | null }>
   | Readonly<{ kind: 'interrupted'; detail: string }>
   | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' }>
   /** A revision superseded the captured inputs (`supersededBy`): decided `rejected{stale}` with no (further) call. */
@@ -685,17 +696,24 @@ export function checkpointIdsOf(obligations: Readonly<{ lanes: readonly Pick<Arc
   };
 }
 
-/** Reads a call: an output, a failure (an invalid decision), or an interruption (its park or usage-limit item written). */
-function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome): Asked {
+/**
+ * Reads call `attempt` of the job: an output, a failure (an invalid decision), or an interruption (its park or usage-limit
+ * item written). `repaired`: the call is a repair turn, whose answer takes no further one.
+ */
+function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome, attempt: number, repaired: boolean): Asked {
   const v = verdictOf(ctx, jobParent(job), called);
+  const repairOf = repaired ? null : attempt;
   switch (v.kind) {
     case 'success':
       try {
-        return { kind: 'output', output: validateCheckpointOutput(v.value), inv: called.inv };
+        return { kind: 'output', output: validateCheckpointOutput(v.value), inv: called.inv, repairOf };
       } catch (error) {
-        if (error instanceof SchemaError) return { kind: 'failed', detail: `malformed decision: ${error.message}`, inv: called.inv };
+        if (error instanceof SchemaError) return { kind: 'failed', detail: `malformed decision: ${error.message}`, inv: called.inv, repairOf };
         throw error;
       }
+    // An answer the adapter found off its schema is an answer to repair.
+    case 'malformed':
+      return { kind: 'failed', detail: `malformed: ${v.detail}`, inv: called.inv, repairOf };
     case 'interrupted': {
       if (v.needsUser !== null) {
         const parent: Parent = { type: 'op', op: parseInvocationId(called.inv).op };
@@ -704,7 +722,21 @@ function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome): A
       return { kind: 'interrupted', detail: `interrupted: ${v.reason}` };
     }
     default:
-      return { kind: 'failed', detail: `${v.kind}: ${v.detail}`, inv: called.inv };
+      return { kind: 'failed', detail: `${v.kind}: ${v.detail}`, inv: called.inv, repairOf: null };
+  }
+}
+
+/**
+ * The repair turn the job already made after its answer at `attempt` (a later attempt; an interrupted one is skipped), read
+ * as the job's answer: a crash after it never judges the answer it repaired again. Null when it made none.
+ */
+function madeRepair(ctx: CheckpointContext, job: JobId, attempt: number): Asked | null {
+  for (let next = attempt + 1; ; next++) {
+    const called = recordedArcCall(ctx, job, 'checkpoint', next);
+    if (called === null) return null;
+    if (interruptedCall(called)) continue;
+    if (called.kind === 'lost') return { kind: 'failed', detail: `${called.inv} was lost with its runner`, inv: called.inv, repairOf: null };
+    return read(ctx, job, called, next, true);
   }
 }
 
@@ -713,7 +745,7 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
   for (let attempt = 1; ; attempt++) {
     const recordedCall = recordedArcCall(ctx, s.job, 'checkpoint', attempt);
     if (recordedCall !== null && interruptedCall(recordedCall)) continue;
-    if (recordedCall !== null && recordedCall.kind === 'result') return read(ctx, s.job, recordedCall);
+    if (recordedCall !== null && recordedCall.kind === 'result') return madeRepair(ctx, s.job, attempt) ?? read(ctx, s.job, recordedCall, attempt, false);
     // Paid M4b run 3: inputs a revision superseded are not asked (again); a superseded call ends here as well.
     const superseded = supersededBy(ctx, s);
     if (superseded !== null) return { kind: 'superseded', detail: superseded };
@@ -730,12 +762,47 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     const called = await withCpu(ctx, s.job, () => supersedable(ctx, s, () => callArcRole(ctx, {
       job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered, schema: checkpointSchemaFor(checkpointIdsOf(r.obligations)), cwd: checkout,
       evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
-      deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
+      deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
     })));
     await removeCheckout(ctx, s.job, checkout);
     if (called.kind === 'result' && called.result.outcome.kind === 'cancelled' && called.result.outcome.reason === 'supersede') continue;
-    if (called.kind === 'lost') return { kind: 'failed', detail: `${called.inv} was lost with its runner`, inv: called.inv };
-    return read(ctx, s.job, called);
+    if (called.kind === 'lost') return { kind: 'failed', detail: `${called.inv} was lost with its runner`, inv: called.inv, repairOf: null };
+    return read(ctx, s.job, called, attempt, false);
+  }
+}
+
+/**
+ * 2026-10-15 (arc feedback #3): the repair turn of the answer call `inv` gave as attempt `of`: the same session resumed once
+ * (`--resume`; the checkpoint's fresh call persists it) with every reason the answer was refused (its schema, or the
+ * bundle's validation), in the checkout of the captured head made again (a resumed Claude session is found by its cwd),
+ * with the call's own schema. The next attempt after `of`; an interrupted one is asked again as the one after.
+ */
+async function repairCall(ctx: CheckpointContext, s: Captured, inv: InvocationId, of: number, reasons: readonly string[]): Promise<Asked> {
+  for (let attempt = of + 1; ; attempt++) {
+    const recordedCall = recordedArcCall(ctx, s.job, 'checkpoint', attempt);
+    if (recordedCall !== null && interruptedCall(recordedCall)) continue;
+    if (recordedCall !== null && recordedCall.kind === 'result') return read(ctx, s.job, recordedCall, attempt, true);
+    const superseded = supersededBy(ctx, s);
+    if (superseded !== null) return { kind: 'superseded', detail: superseded };
+    const skip = checkpointSkip(ctx);
+    if (skip !== null) return { kind: 'skipped', reason: skip };
+    const launch = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('launch.json');
+    if (launch === null || launch.terminal.type !== 'backend' || launch.terminal.role !== 'checkpoint') throw new Error(`${inv}: a checkpoint call without its checkpoint launch.json`);
+    const { schemaPath, session } = launch.terminal;
+    if (session.backend !== 'claude' || session.mode !== 'fresh') throw new Error(`${inv}: a checkpoint repair turn follows a fresh Claude session, not ${canonicalJson(session)}`);
+    const prompt = promptFor('checkpoint', arcSeat(ctx, 'checkpoint').triple.model);
+    const checkout = checkpointCheckout(ctx, s.job);
+    await removeJobCheckouts(ctx, s.job);
+    await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${s.job}`, jobParent(s.job), { path: checkout, checkout: { type: 'detached', at: s.headSha } });
+    const called = await withCpu(ctx, s.job, () => supersedable(ctx, s, () => callArcRole(ctx, {
+      job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered: judgmentRepairDirective(reasons), schema: JSON.parse(readFileSync(schemaPath, 'utf8')) as JsonValue,
+      cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(architecture(ctx, s.headSha))],
+      deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: resumedJudgmentSession(session.id),
+    })));
+    await removeCheckout(ctx, s.job, checkout);
+    if (called.kind === 'result' && called.result.outcome.kind === 'cancelled' && called.result.outcome.reason === 'supersede') continue;
+    if (called.kind === 'lost') return { kind: 'failed', detail: `${called.inv} was lost with its runner`, inv: called.inv, repairOf: null };
+    return read(ctx, s.job, called, attempt, true);
   }
 }
 
@@ -859,32 +926,64 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
   if (enact) {
     const out = outputOf(ctx, prev!.inputs.job);
     if (out === null) throw new Error(`${job} enacts ${prev!.inputs.job}'s bundle, whose output is not recorded`);
-    asked = { kind: 'output', ...out };
+    asked = { kind: 'output', ...out, repairOf: null };
   } else {
     asked = await ask(ctx, s);
   }
-  if (asked.kind === 'skipped') return asked;
-  if (asked.kind === 'superseded') {
-    const decision: BundleDecision = { kind: 'rejected', reason: 'stale', detail: asked.detail };
-    ctx.journal.fact({ kind: 'bundle-decided', job, outcome: decision });
-    return { kind: 'decided', job, trigger: s.trigger, decision };
+  // 2026-10-15 (arc feedback #3): an answer off its schema takes its repair turn before anything is decided.
+  if (asked.kind === 'failed' && asked.repairOf !== null) {
+    asked = await repairCall(ctx, s, asked.inv, asked.repairOf, [asked.detail]);
   }
-  if (asked.kind === 'interrupted') return { kind: 'interrupted', job, detail: asked.detail };
+  const answered = await answerOf(ctx, s, asked);
+  if (answered.kind !== 'output' && answered.kind !== 'failed') return answered;
   crashPoint('checkpoint.after-call');
-  if (asked.kind === 'output') await witnessDrift(ctx, job, asked.output);
+  const decision = await decideAnswer(ctx, s, answered, enact, prev);
+  if (decision.kind !== 'refused') return { kind: 'decided', job, trigger: s.trigger, decision };
+  // 2026-10-15: an invalid bundle of a fresh answer takes its repair turn with every reason, and that answer is decided.
+  if (answered.kind !== 'output' || answered.repairOf === null) throw new Error(`${job}: a refused bundle without a repair turn to take`);
+  const repaired = await answerOf(ctx, s, await repairCall(ctx, s, answered.inv, answered.repairOf, decision.reasons));
+  if (repaired.kind !== 'output' && repaired.kind !== 'failed') return repaired;
+  const final = await decideAnswer(ctx, s, repaired, enact, prev);
+  if (final.kind === 'refused') throw new Error(`${job}: a repair turn's answer was refused for another repair turn`);
+  return { kind: 'decided', job, trigger: s.trigger, decision: final };
+}
 
-  const { trigger } = s;
+/** A call's reading as the job's answer, or what ends the run without one (skipped, superseded: decided stale, interrupted). */
+async function answerOf(ctx: CheckpointContext, s: Captured, asked: Asked): Promise<Extract<Asked, Readonly<{ kind: 'output' | 'failed' }>> | CheckpointOutcome> {
+  switch (asked.kind) {
+    case 'skipped':
+      return asked;
+    case 'superseded': {
+      const decision: BundleDecision = { kind: 'rejected', reason: 'stale', detail: asked.detail };
+      ctx.journal.fact({ kind: 'bundle-decided', job: s.job, outcome: decision });
+      return { kind: 'decided', job: s.job, trigger: s.trigger, decision };
+    }
+    case 'interrupted':
+      return { kind: 'interrupted', job: s.job, detail: asked.detail };
+    default:
+      return asked;
+  }
+}
+
+/**
+ * Decides the job's answer: a failure is an invalid decision (a trigger's second goes to the owner); an output is
+ * activated (src/holistic/bundle.ts), `refused` when it is invalid and may still take its repair turn (`repairOf`).
+ */
+async function decideAnswer(
+  ctx: CheckpointContext, s: Captured, asked: Extract<Asked, Readonly<{ kind: 'output' | 'failed' }>>, enact: boolean, prev: CheckpointState | null,
+): Promise<BundleDecision | Refused> {
+  const { job, trigger } = s;
+  if (asked.kind === 'output') await witnessDrift(ctx, job, asked.output);
   const secondInvalid = ctx.journal.view.holistic().checkpoints.some((c) => triggerKey(c.inputs.trigger) === triggerKey(trigger) && c.decided?.kind === 'rejected' && c.decided.reason === 'invalid');
   if (asked.kind === 'failed') {
     const decision: BundleDecision = secondInvalid
       ? { kind: 'requested', needsUser: failedTwice(ctx, job, asked.detail), reason: 'bundle-request' }
       : { kind: 'rejected', reason: 'invalid', detail: asked.detail };
     ctx.journal.fact({ kind: 'bundle-decided', job, outcome: decision.kind === 'requested' ? { kind: 'requested', needsUser: decision.needsUser } : decision });
-    return { kind: 'decided', job, trigger, decision };
+    return decision;
   }
   const a: Activation = {
-    job, captured: enact ? prev!.inputs : s, output: asked.output, inv: asked.inv, enact, secondInvalid, applied: appliedBundles(ctx),
+    job, captured: enact ? prev!.inputs : s, output: asked.output, inv: asked.inv, enact, secondInvalid, applied: appliedBundles(ctx), repairable: !enact && asked.repairOf !== null,
   };
-  const decision = await activate(ctx, a);
-  return { kind: 'decided', job, trigger, decision };
+  return activate(ctx, a);
 }

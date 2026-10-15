@@ -15,19 +15,19 @@ import {
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
-import type { JsonValue } from '../core/json.ts';
+import { type JsonValue, canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS, type Bounds, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecPatchOp, specM1, specPatchOp } from '../core/records.ts';
 import {
   Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
 import { type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
-  ACTIVATIONS, type Activation, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
+  ACTIVATIONS, type Activation, DOC_RELATIONS, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
   OWNER_ONLY_CLASSES, PACK_DISPOSITIONS, PACK_SEVERITIES, type DocRef, type PackDisposition, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
-  type PackTarget, type WitnessRef, observationKey, packDisposition, packTarget,
+  type PackTarget, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA, RULING_STATUSES, type WitnessRef, observationKey, packDisposition, packTarget,
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, lensPatchMutantDefault } from '../core/upgrade.ts';
+import { admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, lensPatchMutantDefault } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
@@ -191,18 +191,35 @@ export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
 // or replace witness items and facts, and cite; witness items enter the spec through this one patch channel, their ids
 // the next free `W-n` the prompt states (the patch engine refuses a reused id: `id-reused`). `obligation` (paid M4b run 6):
 // the delivered obligation whose witness the item restates, or null; a recorded answer without it reads as null.
-const S_WITNESS_ITEM = sObj({ id: S_STR, lane: S_STR, testId: S_STR, clause: S_STR, skeleton: S_STR, obligation: sNullable(S_STR) });
-export const PLAN_CHECK_ACCEPTANCE_SCHEMA: Schema = sObj({
-  decision: sEnum(PLAN_CHECK_DECISIONS),
-  reasons: sArr(S_STR),
-  patch: sNullable(sArr({
-    anyOf: [...itemOps('witnesses', S_WITNESS_ITEM), ...itemOps('facts', S_NOTE_ITEM), sObj({ op: sEnum(['cite']), contracts: sArr(S_STR), rulings: sArr(S_STR) })],
-  })),
-  risk: sEnum(RISK_TIERS),
-  notes: S_STR,
-  premises: S_PREMISES,
-  visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
-});
+// 2026-10-15 (arc feedback #3): each call writes its own schema, `planCheckAcceptanceSchemaFor(<the arc lanes in force>)`, so
+// a witness item's lane is an enum of the arc lanes, as a checkpoint split child's is (`checkpointSchemaFor`).
+const sWitnessItem = (arcLanes: readonly LaneId[] | null): Schema =>
+  sObj({ id: S_STR, lane: arcLanes === null || arcLanes.length === 0 ? S_STR : sEnum(arcLanes), testId: S_STR, clause: S_STR, skeleton: S_STR, obligation: sNullable(S_STR) });
+export function planCheckAcceptanceSchemaFor(arcLanes: readonly LaneId[] | null): Schema {
+  return sObj({
+    decision: sEnum(PLAN_CHECK_DECISIONS),
+    reasons: sArr(S_STR),
+    patch: sNullable(sArr({
+      anyOf: [...itemOps('witnesses', sWitnessItem(arcLanes)), ...itemOps('facts', S_NOTE_ITEM), sObj({ op: sEnum(['cite']), contracts: sArr(S_STR), rulings: sArr(S_STR) })],
+    })),
+    risk: sEnum(RISK_TIERS),
+    notes: S_STR,
+    premises: S_PREMISES,
+    visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
+  });
+}
+/** The acceptance schema the prompt modules and the probe carry: any lane id. */
+export const PLAN_CHECK_ACCEPTANCE_SCHEMA: Schema = planCheckAcceptanceSchemaFor(null);
+
+/**
+ * Whether a plan-check call's schema (its launch's, as kept) is the acceptance shape's: its patch ops include a witness
+ * item's. Read from the schema itself, so a call made under other arc lanes, or an earlier release's, is still told apart.
+ */
+export function isAcceptanceSchema(schema: unknown): boolean {
+  const patch = (schema as { properties?: { patch?: { anyOf?: readonly { items?: { anyOf?: readonly { properties?: { section?: { enum?: readonly string[] } } }[] } }[] } } })
+    .properties?.patch?.anyOf?.[0]?.items?.anyOf ?? [];
+  return patch.some((op) => op.properties?.section?.enum?.includes('witnesses') === true);
+}
 
 /** The acceptance shape's answer: a plan-check answer whose redirect ops are witness or fact adds and replaces, or cites. */
 export function validatePlanCheckAcceptanceOutput(value: unknown): PlanCheckOutput {
@@ -528,7 +545,10 @@ export type CheckpointOutput = Readonly<{
   reasons: readonly string[];
   /** Empty exactly on a `no-op`. */
   ops: readonly BundleOp[];
-  /** Ruling sidecars (`roadmap/ruling-m3`) as JSON text; empty on a `no-op`. */
+  /**
+   * Ruling sidecars (`roadmap/ruling-m3`) as canonical JSON text (the model writes objects, `S_RULING`); empty on a
+   * `no-op`.
+   */
   rulings: readonly string[];
   findingDispositions: readonly Readonly<{ finding: FindingId; disposition: FindingDisposition; reason: string }>[];
   /** H12: readings of the vision where it does not anticipate a situation; each records a divergence, even on a `no-op`. */
@@ -585,6 +605,37 @@ const S_ADMIT_SPEC = sObj({
 });
 
 /**
+ * A ruling sidecar as the checkpoint writes it (2026-10-15, arc feedback #3): the `roadmap/ruling-m3` fields the model
+ * owns, structurally, so a missing field or a wrong format is a schema violation the adapter catches (and the repair turn
+ * names), never a refused bundle. `ruledBy` and `consistency` are not offered: the executor stamps both (lead ruling).
+ * A doc ref is `{path, anchor, quotedText, relation}`, a rule ref `{rule, textSha256, relation}` (M4a).
+ */
+const S_RULING = sObj({
+  schema: sEnum([RULING_SCHEMA]),
+  id: S_STR,
+  statement: S_STR,
+  kind: sEnum(RULING_KINDS),
+  trigger: S_STR,
+  supersedes: sArr(sObj({ id: S_STR, part: sNullable(S_STR) })),
+  condition: sNullable(S_STR),
+  docRefs: sArr({
+    anyOf: [
+      sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR, relation: sEnum(DOC_RELATIONS) }),
+      sObj({ rule: S_STR, textSha256: S_STR, relation: sEnum(RULE_RELATIONS) }),
+    ],
+  }),
+  contractRefs: S_IDS,
+  contractOps: sArr(sObj({ path: S_STR, anchor: S_STR, oldText: S_STR, newText: S_STR })),
+  obligations: S_IDS,
+  obligationDispositions: sArr(sObj({ id: S_STR, disposition: sEnum(OBLIGATION_DISPOSITIONS) })),
+  cites: S_IDS,
+  evidence: sArr(S_STR),
+  appliesTo: { anyOf: [sObj({ type: sEnum(['arc']) }), sObj({ type: sEnum(['units']), units: S_IDS })] },
+  lifetime: sEnum(RULING_LIFETIMES),
+  status: sEnum(RULING_STATUSES),
+});
+
+/**
  * The closed id sets a checkpoint call knows when it is made (paid M4b run 5, ckpt-4: a split child named a witness lane
  * that is no arc lane, and the decision was refused only after the whole call): the arc lanes, the active obligations a
  * split may name as its parent, and every obligation in force a dispose may name, all from the captured obligations.
@@ -618,7 +669,7 @@ export function checkpointSchemaFor(ids: CheckpointIds | null): Schema {
         opSchema('request', { class: sEnum(OWNER_ONLY_CLASSES), summary: S_STR }),
       ],
     }),
-    rulings: sArr(S_STR),
+    rulings: sArr(S_RULING),
     findingDispositions: sArr(sObj({ finding: S_STR, disposition: sEnum(FINDING_DISPOSITIONS), reason: S_STR })),
     interpretations: sArr(sObj({ clauses: S_IDS, situation: S_STR, reading: S_STR })),
     cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
@@ -759,12 +810,22 @@ export const bundleOp: Read<BundleOp> = (value, path) => {
   return out;
 };
 
+/**
+ * One ruling of the answer as the JSON text the bundle parses (`stampedRulings`): the object `S_RULING` constrains, as
+ * canonical JSON. A recorded answer from before 2026-10-15 holds the text itself (`checkpointRulingTextDefault`).
+ */
+const rulingText: Read<string> = (value, path) => {
+  if (typeof value === 'string') return checkpointRulingTextDefault(value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'a ruling sidecar object', value);
+  return canonicalJson(value as JsonValue);
+};
+
 export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
   const out: CheckpointOutput = {
     decision: f.get('decision', oneOf(CHECKPOINT_DECISIONS)),
     reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
     ops: f.get('ops', arrayOf(bundleOp)),
-    rulings: f.get('rulings', arrayOf(str)),
+    rulings: f.get('rulings', arrayOf(rulingText)),
     findingDispositions: f.get('findingDispositions', arrayOf(object((g) => ({
       finding: g.get('finding', (v, p): FindingId => findingId(v, p)), disposition: g.get('disposition', oneOf(FINDING_DISPOSITIONS)), reason: g.get('reason', str),
     })))),

@@ -33,7 +33,7 @@ import type { Step } from './helpers/scenario.ts';
 import { scriptTree } from './helpers/witness.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { wire } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep, started } from './fixtures/stage-common.ts';
+import { SCENARIO_TIMEOUT_MS, admitAll, planCheckRepairStep, planCheckStep, started } from './fixtures/stage-common.ts';
 import {
   MAPPED, MUTANT_PATCH, STALE_PATCH, STRICT_TEST, buildOf, openBefore, tipOf, treeWith, vacuityArc, vacuityDraft as vacuityDraftOf, witnessDraft,
 } from './fixtures/repair-common.ts';
@@ -376,7 +376,10 @@ describe('plan-check and the findings store', () => {
       r.journal.close();
     }
     const bad = holisticArc({
-      steps: [planCheckStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] })],
+      steps: [
+        planCheckStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] }),
+        planCheckRepairStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] }, ['visionConflict cites V-9, which is no active clause of the vision in force']),
+      ],
       units: [{ id: 'u1', obligations: ['I-1'] }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED, trees: {},
     });
     const b = contextFor(bad.d);

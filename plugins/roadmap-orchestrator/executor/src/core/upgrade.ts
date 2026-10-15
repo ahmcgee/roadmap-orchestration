@@ -58,6 +58,16 @@ export function admitSpecTextDefault(text: string): string {
 
 
 /**
+ * A checkpoint answer's ruling (2026-10-15, arc feedback #3): the model now writes it as an object `S_RULING` constrains; an
+ * answer recorded before wrote its JSON text, read as written (the bundle parses it, as it did then). Scaffolding: deleted
+ * once no arc started on 1.0.0-dev.9 is in flight.
+ */
+export function checkpointRulingTextDefault(text: string): string {
+  warnDefaulted('checkpoint.rulings', 'a checkpoint ruling as JSON text (an answer written before 2026-10-15); read as written');
+  return text;
+}
+
+/**
  * A numbered-id list in plain string order (`["T-10","T-9"]`): how every release before 1.0.0-dev.7 validated and wrote
  * them, so a dev.6 record, an arc started before the fix, or a vision, obligations, ruling or Phase-0 file written for
  * them may hold one. It reads as written (byte-preserving); everything written now is in canonical order (`idsAscending`).

@@ -9,6 +9,7 @@
 //   CONTINUE_DIRECTIVE    the continue of an interrupted build
 //   STEER_DIRECTIVE       the architect's steer brief follows
 //   ASSESSED_DIRECTIVE    the implementing invocation after an in-session assessment (E)
+//   judgmentRepairDirective  a plan-check's or checkpoint's repair turn: the refused answer's reasons (2026-10-15)
 //   stalledLaneDirective, flakyLaneDirective, dirtyLanesDirective, movedHeadDirective   a failing or uncertified series
 //   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series, then every required id
 //   smokeFixDirectives    D2: target witness tests that still pass with the unit's production change reverted
@@ -31,6 +32,15 @@ export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief b
  * applies from here.
  */
 export const ASSESSED_DIRECTIVE = `Your assessment is recorded. Now build the unit: everything the first message of this session says about the build applies from here (the spec, the scope, the fast lanes, the witness checks, ${DECISIONS_FILE}). Record in ${DECISIONS_FILE} each decision your assessment's premises led you to, then return the build report.`;
+
+/**
+ * 2026-10-15 (arc feedback #3): the repair turn of a plan-check or checkpoint whose answer the executor refused (its schema,
+ * or its validator): the same session resumed once with every reason, so the judge corrects its own answer.
+ */
+export function judgmentRepairDirective(reasons: readonly string[]): string {
+  if (reasons.length === 0) throw new Error('judgmentRepairDirective: a repair turn names why the answer was refused');
+  return `Your answer was refused: ${reasons.join('; ')}. Return a corrected answer.`;
+}
 
 /** The resume round's directives: RESUME_DIRECTIVE, then why the report was malformed when that is known (I3). */
 export function resumeDirectives(error: string | null): readonly string[] {

@@ -316,8 +316,11 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
   };
   const resources = { ...base, plan: () => inForce().plan };
   const arbiter = createArbiter(resources);
+  const routingBase = { profile, config, arcRoles: arcRolesOf(journal.view.planApplied()) };
   const stage: StageContext = {
     ...resources,
+    planFile: context.planFile,
+    routingBase,
     hostEnv: args.env,
     routing,
     acquire: arbiter.acquire,
@@ -331,7 +334,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     hostEnv: backendEnv(args.env),
     laneEnv: args.env,
     planFile: context.planFile,
-    routingBase: { profile, config, arcRoles: arcRolesOf(journal.view.planApplied()) },
+    routingBase,
     docs: docsPublisher({ ...resources, hostEnv: args.env, planFile: context.planFile, arbiter }),
     plan: () => inForce().plan,
     routing: (unit) => ({ profile, resolved: routing(unit) }),

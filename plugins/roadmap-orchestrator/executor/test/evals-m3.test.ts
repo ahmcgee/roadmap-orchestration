@@ -239,7 +239,7 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.equal(steps.filter((s) => s.unit?.startsWith('flow-') === true).length, 1, 'one flow run (M4b: constraint-shift once three units merged, the repair held until it ended)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('review-') === true).length, 1, 'one pack review call (the corpus arc\'s, before the first admission)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 5, 'five lens calls');
-  assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 5, 'five checkpoint calls (the paid run\'s four and the partial bundle)');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 6, 'six checkpoint calls (the paid run\'s four, the partial bundle and its repair turn)');
 });
 
 type Fixture = Readonly<{ dir: string; driver: Exit; report: Report; checked: Checked }>;

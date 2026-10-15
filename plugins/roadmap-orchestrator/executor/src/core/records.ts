@@ -22,7 +22,7 @@ import type { SchemaVersion } from './version.ts';
 import { dev6SmokeBounds } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, modelClass,
+  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, isRepairRole, modelClass,
   profileName, riskTier,
 } from '../routing/types.ts';
 
@@ -111,7 +111,11 @@ function binding(f: Fields): InvocationBinding {
   return b;
 }
 
-export type JudgmentSession = Readonly<{ backend: 'claude'; mode: 'fresh'; id: JudgmentSessionId }>;
+/**
+ * A judgment session: fresh, or (2026-10-15, a repair role's repair turn only: `REPAIR_ROLES`) the same session resumed once
+ * with the reasons its answer was refused. The reader refuses a resumed session on any other role.
+ */
+export type JudgmentSession = Readonly<{ backend: 'claude'; mode: 'fresh' | 'resume'; id: JudgmentSessionId }>;
 /** Codex assigns its own thread id on a fresh exec, so a fresh Codex session carries no id until its result. */
 export type ImplementerSession =
   | Readonly<{ backend: 'claude'; mode: 'fresh' | 'resume'; id: ImplementerSessionId }>
@@ -153,9 +157,9 @@ export type LaunchFile = InvocationBinding & Readonly<{
   terminal: LaunchTerminal;
 }>;
 
-const judgmentSession: Read<JudgmentSession> = object((f) => ({
+const judgmentSession = (r: FreshRole): Read<JudgmentSession> => object((f) => ({
   backend: f.get('backend', literal('claude')),
-  mode: f.get('mode', literal('fresh')),
+  mode: f.get('mode', isRepairRole(r) ? oneOf(['fresh', 'resume'] as const) : literal('fresh')),
   id: f.get('id', (v, p) => judgmentSessionId(v, p)),
 }));
 
@@ -187,7 +191,7 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
       };
       return r === 'build'
         ? { ...base, role: f.get('role', literal('build')), session: f.get('session', implementerSession) }
-        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', judgmentSession) };
+        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', judgmentSession(r)) };
     })(value, path);
   },
 });
@@ -1411,6 +1415,8 @@ export const NEEDS_USER_REASONS = [
   'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
   // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
   'read-denied',
+  // 2026-10-15 (arc feedback #3), blocking: a unit's required witness item names no arc lane in force (build or lanes).
+  'witness-lane-missing',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

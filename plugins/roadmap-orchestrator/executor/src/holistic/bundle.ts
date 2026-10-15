@@ -34,7 +34,10 @@
 //      `admit` is classified (src/holistic/admits.ts, over `admitWorldOf`); a converted admit is dropped from the
 //      proposal (unless another op or an `acted` intake names it: then a reason), an opportunity's clauses join
 //      `holistic.advances`, and the proposal is rebuilt from the effective ops. Any reason → `rejected{invalid}`; a
-//      trigger's second invalid bundle → `bundle-request`.
+//      trigger's second invalid bundle → `bundle-request`. 2026-10-15: a fresh answer's invalid bundle is not decided:
+//      `activate` returns `refused` with every reason, and the checkpoint takes its repair turn (`Activation.repairable`).
+//      A `rule` op repeated exactly is dropped (`distinctRuleOps`), as is a ruling listed twice exactly (`stampedRulings`);
+//      two that differ are a reason.
 //   3. Owner-only (A16, H10). A `request` op, or an op with a nested owner-only effect (a lane whose argv[0] no lane of
 //      the plan in force runs, a lane env prerequisite no lane in force passes, a contract op outside the plan's
 //      contracts and architecture doc) → one blocking `owner-request`; nothing is applied.
@@ -71,7 +74,7 @@ import type { Parent } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { holdFence } from '../core/fence.ts';
-import { canonicalJson } from '../core/json.ts';
+import { type JsonValue, canonicalJson } from '../core/json.ts';
 import {
   type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha,
   type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
@@ -133,6 +136,9 @@ export type BundleDecision =
   | Readonly<{ kind: 'rejected'; reason: BundleRejection; detail: string; units?: readonly BusyAttempt[] }>
   | Readonly<{ kind: 'requested'; needsUser: NeedsUserId; reason: Extract<NeedsUserReason, 'bundle-request' | 'owner-request'> }>;
 
+/** An invalid bundle of a repairable output (`Activation.repairable`): nothing is decided; its reasons go to the repair turn. */
+export type Refused = Readonly<{ kind: 'refused'; reasons: readonly string[] }>;
+
 /** One activation: the deciding job, the inputs the output was decided on, the output, and the call that produced it. */
 export type Activation = Readonly<{
   job: JobId;
@@ -145,6 +151,11 @@ export type Activation = Readonly<{
   enact: boolean;
   /** Its trigger was rejected invalid once already: this bundle, if invalid, goes to the owner. */
   secondInvalid: boolean;
+  /**
+   * 2026-10-15 (arc feedback #3): the output is a fresh call's answer that may still take its repair turn. Invalid, it is
+   * not decided: `activate` returns `refused` with every reason, and the checkpoint resumes the call's session once.
+   */
+  repairable: boolean;
   /** Every bundle applied before, in log order (the brakes count them). */
   applied: readonly AppliedBundle[];
 }>;
@@ -253,9 +264,29 @@ function appliedByRev(ctx: CheckpointContext, rev: number) {
 /** What the ops touch: for staleness and the preimages. */
 type Touched = { plan: boolean; specs: Set<UnitId>; obligations: boolean; ledger: boolean; contracts: Set<RepoPath> };
 
-/** An op of the output with its index there (a converted admit drops out; the rest keep their index). */
+/** An op of the output with its index there (a converted admit or a repeated `rule` op drops out; the rest keep their index). */
 type IndexedOp = Readonly<{ index: number; op: BundleOp }>;
 const indexed = (ops: readonly BundleOp[]): readonly IndexedOp[] => ops.map((op, index) => ({ index, op }));
+
+/**
+ * 2026-10-15 (arc feedback #3): the ops with each `rule` op that repeats an earlier one exactly dropped (pure bookkeeping:
+ * landing a ruling twice appended it to the ledger twice); two `rule` ops of one ruling that differ are a reason.
+ */
+function distinctRuleOps(ops: readonly IndexedOp[]): Readonly<{ ops: readonly IndexedOp[]; reasons: readonly string[] }> {
+  const first = new Map<string, IndexedOp>();
+  const reasons: string[] = [];
+  const kept = ops.filter((x) => {
+    if (x.op.op !== 'rule') return true;
+    const earlier = first.get(x.op.ruling);
+    if (earlier === undefined) {
+      first.set(x.op.ruling, x);
+      return true;
+    }
+    if (canonicalJson(earlier.op) !== canonicalJson(x.op)) reasons.push(`ops ${earlier.index + 1} and ${x.index + 1} both land ruling ${x.op.ruling}, differently: land it through one \`rule\` op`);
+    return false;
+  });
+  return { ops: kept, reasons };
+}
 
 /**
  * What a proposal is built from: the effective ops; the clauses this bundle's opportunities add to `holistic.advances`;
@@ -349,9 +380,19 @@ function stampedRulings(ctx: CheckpointContext, a: Activation, reasons: string[]
   const routingRev = callRoutingRev(ctx, a.inv);
   const ledgerSha256 = a.captured.vector.ledgerSha256;
   if (ledgerSha256 === null) throw new Error(`${a.job}: a holistic revision keeps its ledger, but the capture names none`);
+  // 2026-10-15 (arc feedback #3): a ruling listed twice exactly is one ruling; two different rulings under one id are a reason.
+  const seen = new Map<string, Readonly<{ index: number; key: string }>>();
   return a.output.rulings.flatMap((text, i) => {
     try {
       const raw = answerIdOrder(JSON.parse(text) as Record<string, unknown>);
+      const key = canonicalJson(raw as JsonValue);
+      const id = typeof raw['id'] === 'string' ? raw['id'] : null;
+      const earlier = id === null ? undefined : seen.get(id);
+      if (earlier !== undefined) {
+        if (earlier.key !== key) reasons.push(`rulings ${earlier.index + 1} and ${i + 1} are both ${id}, with different content: give each ruling once`);
+        return [];
+      }
+      if (id !== null) seen.set(id, { index: i, key });
       const draft = parseRulingSidecar({
         ...raw, ruledBy: { type: 'checkpoint', job: a.job },
         consistency: {
@@ -987,9 +1028,9 @@ function proposerOf(a: Activation, ops: readonly IndexedOp[], admits: readonly C
  * Activates one checkpoint decision (see the header) and records it: `plan-applied{source: bundle{job}}`, or
  * `bundle-decided`. Holds the revision fence throughout.
  */
-export async function activate(ctx: CheckpointContext, a: Activation): Promise<BundleDecision> {
+export async function activate(ctx: CheckpointContext, a: Activation): Promise<BundleDecision | Refused> {
   const hold = await holdFence(ctx.journal);
-  let decision: BundleDecision;
+  let decision: BundleDecision | Refused;
   try {
     decision = await decide(ctx, { ...a, output: numericRulingIds(a.output) });
   } finally {
@@ -1018,8 +1059,8 @@ type Judged = Readonly<{ kind: 'commit'; evaluated: Extract<ReturnType<typeof ev
  * bundle's: it is decided like an invalid bundle (rejected, a second time on the trigger a request), so the recorded
  * output is never judged again; a restart would otherwise replay the same throw until the supervisor gives up.
  */
-async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDecision> {
-  let judged: BundleDecision | Judged;
+async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDecision | Refused> {
+  let judged: BundleDecision | Refused | Judged;
   try {
     judged = judge(ctx, a);
   } catch (error) {
@@ -1040,13 +1081,14 @@ async function decide(ctx: CheckpointContext, a: Activation): Promise<BundleDeci
   return { kind: 'applied', planRev: committed.fact.rev };
 }
 
-function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Judged {
+function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused | Judged {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   const revision = revisionInForce(ctx.runDir, inForce);
   const current = inForceFiles(ctx.runDir, view, inForce, revision, ctx.planFile, ctx.repo);
   const now = vectorAt(ctx, inForce, revision, current, integrationHead(ctx));
-  const all = indexed(a.output.ops);
+  // 2026-10-15 (arc feedback #3): a `rule` op given twice identically is one op (refused only when the two differ).
+  const { ops: all, reasons: duplicated } = distinctRuleOps(indexed(a.output.ops));
   // M4a rev 3 (LR-h): admit classes, census moves and opportunities exist in a corpus arc only.
   const corpus = revision.corpus !== null && a.output.decision === 'bundle';
   const recorded = corpus ? recordedAdmits(ctx.journal.view) : [];
@@ -1068,12 +1110,16 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Judged {
   if (stale.length > 0) return decided(ctx, a.job, { kind: 'rejected', reason: 'stale', detail: stale.join('; ') });
 
   // 2. Validation (H16), and the proposal's own reasons; then (a corpus arc) the admit classes (OR-A1).
-  const invalid = (reasons: readonly string[]): BundleDecision => (a.secondInvalid
-    ? decided(ctx, a.job, { kind: 'requested', needsUser: bundleRequest(ctx, a, `it is invalid a second time (${reasons.join('; ')})`, false), reason: 'bundle-request' })
-    : decided(ctx, a.job, { kind: 'rejected', reason: 'invalid', detail: reasons.join('; ') }));
+  // 2026-10-15: a repairable output's invalid bundle is not decided; its reasons go back to the session (`Refused`).
+  const invalid = (reasons: readonly string[]): BundleDecision | Refused => (a.repairable
+    ? { kind: 'refused', reasons }
+    : a.secondInvalid
+      ? decided(ctx, a.job, { kind: 'requested', needsUser: bundleRequest(ctx, a, `it is invalid a second time (${reasons.join('; ')})`, false), reason: 'bundle-request' })
+      : decided(ctx, a.job, { kind: 'rejected', reason: 'invalid', detail: reasons.join('; ') }));
   const pin = revision.corpus?.pin.value ?? null;
   const reasons = [
-    ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output), ...intakeReasons(ctx.runDir, a.captured, pin, a.output, issueReuse(view, ctx.runDir, a.captured)), ...p.reasons,
+    ...duplicated, ...citeAndDispositionReasons(ctx, a, revision), ...amendmentReasons(pin, a.output),
+    ...intakeReasons(ctx.runDir, a.captured, pin, a.output, issueReuse(view, ctx.runDir, a.captured)), ...p.reasons,
   ];
   if (reasons.length > 0) return invalid(reasons);
   let classes: AdmitClassification | null = null;

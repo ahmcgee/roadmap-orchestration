@@ -421,7 +421,8 @@ export const STAGE_OUTCOME_KINDS = {
   'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'in-session', 'read-denied'],
   // M4a rev 3 (E, R55): the in-session assessment found the spec `infeasible`, or raised the risk floor onto another
   // implementer seat (`risk-raised`).
-  build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible', 'risk-raised'],
+  // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
+  build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible', 'risk-raised', 'witness-lane-missing'],
   quiesce: ['empty'],
   evidence: ['captured'],
   salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
@@ -429,7 +430,7 @@ export const STAGE_OUTCOME_KINDS = {
   // M4a rev 3 (corpus arcs, LR-h): `witnesses-missing` (D1: a required witness id absent or failing after a green certified
   // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known
   // defect, uncharged, back to prepare).
-  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect'],
+  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'witness-lane-missing'],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry,
   // `readRefused`, src/pipeline/stages.ts).

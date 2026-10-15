@@ -91,6 +91,12 @@
 //   spec obligations, repairs   declared obligations exist and cover every non-exempt obligation a mapping pattern
 //                               that may overlap the unit's scope names (prefix-conservative); a `repair` unit
 //                               declares repairs, each an obligation or a finding of the arc
+//   witness items (2026-10-15)  every active witness item names an arc lane in force, checked on each unit the revision
+//                               touches and, when the obligations change, on every unit that can still run; one naming
+//                               an obligation restates a binding obligation's witness the unit delivers, exactly
+//                               (paid M4b run 6's plan-check rule, now every proposer's)
+//   plan-check (2026-10-15)     proposer `plan-check{unit}`: a redirect's patched spec of its own unit, validated and
+//                               never committed; the dispatched-spec rules do not apply to that spec
 //   specs ↔ census (run 10, C)  a corpus arc: every spec of the revision against its census (`spec-census-mismatch`,
 //                               src/holistic/rederive.ts `specCensusMismatches`, the Phase-0 rows' one predicate), for
 //                               every proposer: an apply's or a bundle's revision cannot break what the start held
@@ -109,7 +115,7 @@ import type { Phase0Record } from '../phase0/types.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type Bounds, type HashedFile, type ResidueKey, type RevisionManifest, type SpecM1, BOUND_FIELDS, specObligations, specRepairs,
+  type Bounds, type HashedFile, type ResidueKey, type RevisionManifest, type SpecM1, BOUND_FIELDS, specObligations, specRepairs, specWitnesses,
 } from '../core/records.ts';
 import { type UnitState, maxTier, openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -131,7 +137,7 @@ import { type Ruling, ledgerAfter, parseRulings, sidecarsAfter } from '../spec/r
 import { SpecFileError, bytesSha256, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import {
   type InForce, type InputFile, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
-  readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, unitRouting,
+  readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
 } from './inforce.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
@@ -151,6 +157,12 @@ import {
 export type Proposer =
   | Readonly<{ type: 'apply'; rulings?: readonly RulingId[] }>
   | Readonly<{ type: 'rule' | 'reverse' | 'start' | 'executor' }>
+  /**
+   * 2026-10-15 (arc feedback #3): a plan-check redirect's patch of its own unit's spec, validated (never committed: the
+   * stage applies it as a machine `spec.patch`) by the same classifier every revision runs. Its unit is mid-attempt and
+   * its patch takes the next rev, so the dispatched-spec rules do not apply to that unit's spec.
+   */
+  | Readonly<{ type: 'plan-check'; unit: UnitId }>
   | Readonly<{ type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[] }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
@@ -656,6 +668,13 @@ export function classify(input: ClassifyInput): Classified {
       }
       continue;
     }
+    if (proposer.type === 'plan-check' && proposer.unit === unit.id) {
+      if (bytesSha256(file.bytes) !== specShaInForce(view, unit.id)) {
+        changes.push({ type: 'spec', unit: unit.id, edit: 'revision', specRev: spec.rev, specSha256: bytesSha256(file.bytes) });
+        scoped.add(unit.id);
+      }
+      continue;
+    }
     const c = dispatchedSpec(input, unit, view.unit(unit.id), file.path, file.bytes, spec, inputs);
     if (typeof c === 'string') reasons.push(c);
     else if (c !== null) {
@@ -951,15 +970,22 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
  * The spec rows of every unit the revision adds or whose spec or entry it changes: no lane's `evidenceGlobs` entry
  * covers a pattern of its scope (src/spec/spec.ts `evidenceScopeConflicts`); its declared obligations exist and
  * cover every non-exempt obligation of a mapping pattern that may overlap its scope (prefix-conservative); a `repair`
- * unit declares repairs, each an obligation or a finding of the arc.
+ * unit declares repairs, each an obligation or a finding of the arc; (2026-10-15) a witness item naming an obligation
+ * restates that obligation's witness exactly (`witnessReuseReasons`). And (2026-10-15, arc feedback #3) every active
+ * witness item names an arc lane in force (`witnessLaneReasons`): of those units, and of every unit that can still run
+ * whenever the obligations change, so no revision leaves a required witness on a lane the lanes stage cannot run.
  */
 function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<UnitId, SpecM1>, changes: readonly PlanChange[], reasons: string[]): void {
   const touched = new Set<UnitId>(changes.flatMap((c) => (c.type === 'spec' || c.type === 'unit-added' || c.type === 'unit-changed' ? [c.unit] : [])));
   const obligations = inputs.obligations;
   const findings = new Set<string>(input.view.holistic().findings.map((f) => f.id));
+  const live = (unit: PlanUnit): boolean => unit.cut === undefined && !['retired', 'cut', 'superseded'].includes(input.view.unit(unit.id).status);
   for (const unit of input.next.plan.units) {
     const spec = specs.get(unit.id);
-    if (!touched.has(unit.id) || spec === undefined) continue;
+    if (spec === undefined) continue;
+    if (touched.has(unit.id) || (inputs.changed.obligations && live(unit))) reasons.push(...witnessLaneReasons(unit.id, spec, obligations));
+    if (!touched.has(unit.id)) continue;
+    reasons.push(...witnessReuseReasons(unit.id, spec, obligations));
     reasons.push(...evidenceScopeConflicts(unit.id, [...unit.scope, ...spec.scope], spec));
     const declared = specObligations(spec);
     const byId = new Map((obligations?.obligations ?? []).map((o) => [o.id, o]));
@@ -978,6 +1004,37 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
   }
 }
 
+/** 2026-10-15 (arc feedback #3): each active witness item of `spec` whose lane is no arc lane of `obligations`. */
+export function witnessLaneReasons(unit: UnitId, spec: SpecM1, obligations: Obligations | null): readonly string[] {
+  const lanes = new Set<string>(obligations?.lanes.map((l) => l.id) ?? []);
+  const known = lanes.size === 0 ? 'the arc has no arc lanes' : `the arc lanes are ${[...lanes].sort().join(', ')}`;
+  return specWitnesses(spec).filter((w) => w.state === 'active' && !lanes.has(w.lane))
+    .map((w) => `unit ${unit}'s witness item ${w.id} names lane ${w.lane}, which is not an arc lane in force (${known}): name an arc lane, or strike the item`);
+}
+
+/**
+ * Paid M4b run 6, a classifier row since 2026-10-15: each active witness item naming an obligation
+ * (`WitnessItemDef.obligation`) names a binding obligation the unit delivers (its `deliveredBy` names the unit, or its
+ * spec repairs it), and restates that obligation's witness exactly: its lane and one of its test ids. The build then
+ * holds one required name per test, never two to rename between.
+ */
+function witnessReuseReasons(unit: UnitId, spec: SpecM1, obligations: Obligations | null): readonly string[] {
+  const linked = specWitnesses(spec).filter((w) => w.state === 'active' && w.obligation !== undefined);
+  if (linked.length === 0) return [];
+  const repairs = new Set<string>(specRepairs(spec));
+  const delivered = (obligations?.obligations ?? []).filter((o) => o.state.type === 'active' && !isExempt(o) && o.witness !== null && (o.deliveredBy.includes(unit) || repairs.has(o.id)));
+  const tests = (o: (typeof delivered)[number]): string => `lane ${o.witness!.lane}, test ${o.witness!.testIds.map((t) => JSON.stringify(t)).join(' or ')}`;
+  return linked.flatMap((w) => {
+    const o = delivered.find((x) => x.id === w.obligation);
+    if (o === undefined) {
+      const named = delivered.length === 0 ? 'this unit delivers none, so set it to null' : `set it to null or to one of ${delivered.map((x) => x.id).join(', ')}`;
+      return [`unit ${unit}'s witness item ${w.id} names obligation ${w.obligation}, which is not an obligation this unit delivers with a witness: ${named}`];
+    }
+    if (w.lane === o.witness!.lane && o.witness!.testIds.includes(w.testId)) return [];
+    return [`unit ${unit}'s witness item ${w.id} names ${o.id}'s witness, so it takes that witness's exact lane and test id (${tests(o)}), not lane ${w.lane}, test ${JSON.stringify(w.testId)}`];
+  });
+}
+
 /**
  * Run 10 (C): the specs against the census hold at every revision, not only at the start (src/holistic/rederive.ts
  * `specCensusMismatches`, the Phase-0 rows' predicate), over every spec of the revision. One reason, the Phase-0 row as
@@ -989,6 +1046,13 @@ function censusRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap
   const problems = specCensusMismatches(input.next.plan.units.flatMap((u) => specs.get(u.id) ?? []), inputs.obligations, census);
   if (problems.length === 0) return;
   const row = canonicalJson({ kind: 'phase0-invalid', problems });
+  if (input.proposer.type === 'plan-check') {
+    // Run 10 (C): a plan-check redirect is told how to fix its own patch.
+    reasons.push(`${row}: ${problems.map((p) => (p.item.startsWith('I-')
+      ? `unit ${p.unit} declares ${p.item}, on ${p.rule}, whose census state is ${p.state}`
+      : `unit ${p.unit}'s ${p.item.startsWith('W-') ? 'witness item' : 'acceptance clause'} ${p.item} names ${p.rule}, which the census puts out of slice: cite only in-slice rules in an acceptance clause or witness item, or leave ${p.rule} as a note (a facts item, or notes)`)).join('; ')}`);
+    return;
+  }
   if (input.proposer.type !== 'bundle') {
     reasons.push(row);
     return;

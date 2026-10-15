@@ -8,8 +8,9 @@
 //
 //   story      branch R (regressed), the plan's story, plus the literal partial bundle (A18, G19): after the stale
 //              rejection (ckpt-1, held at the fake barrier `ckpt-1.hold` until the driver's `apply` is applied), ckpt-2
-//              answers the repair admit followed by an invalid op (`twoOpBundleSecondInvalid`): rejected invalid,
-//              nothing applied; its one re-evaluation (ckpt-3) admits the repair alone. Then audit-2 (drift: the
+//              answers the repair admit followed by an invalid op (`twoOpBundleSecondInvalid`), and its repair turn
+//              (2026-10-15: the same session resumed with the reasons) answers it again: rejected invalid, nothing
+//              applied; its one re-evaluation (ckpt-3) admits the repair alone. Then audit-2 (drift: the
 //              vision lens) and ckpt-4 no-op, audit-3 (final: both lenses of L) and ckpt-5 no-op.
 //   prevented  branch P, after paid run 3: tidy's plan-check twice answers `infeasible` with a V-2 vision conflict
 //              (one P3 finding), so tidy parks for design; the park's checkpoint ckpt-1 is held and rejected stale,
@@ -29,7 +30,9 @@
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
-import { INVALID_OP, admitSpecWire, checkpointAnswer, checkpointStep, flowStep, lensStep, packReviewStep, twoOpBundleSecondInvalid } from '../../test/helpers/holistic.ts';
+import {
+  INVALID_OP, admitSpecWire, checkpointAnswer, checkpointRepairStep, checkpointStep, flowStep, lensStep, packReviewStep, twoOpBundleSecondInvalid,
+} from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
 import { FAKE_CKPT_HOLD, FAKE_FLOW_HOLD } from './layout.ts';
@@ -89,6 +92,7 @@ const JOB_STEPS_R: readonly Step[] = [
   lensStep('audit-1', 'invariants'),
   checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
   checkpointStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
+  checkpointRepairStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
   checkpointStep('ckpt-3', REPAIR_BUNDLE),
   lensStep('audit-2', 'vision'),
   checkpointStep('ckpt-4', NO_OP),

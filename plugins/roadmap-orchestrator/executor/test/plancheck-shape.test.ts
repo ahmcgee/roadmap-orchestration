@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { arcId } from '../src/core/ids.ts';
+import { arcId, invocationId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
@@ -19,7 +19,7 @@ import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type Step, readCalls } from './helpers/scenario.ts';
 import { type ChecksArc, type ChecksOptions, checksArc, outcomeFacts } from './fixtures/checks-common.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, planCheckRepairStep, planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcDescriptor, type ArcRun, MUL, contextFor, gateStep, isGateCall, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -31,7 +31,11 @@ const sessionArg = (c: CallRecord, flag: '--session-id' | '--resume'): string | 
   return i === -1 ? null : c.argv[i + 1]!;
 };
 const isAssess = (c: CallRecord): boolean => (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"planAssessment"');
-const isPlanCheck = (c: CallRecord): boolean => c.as === 'claude' && c.argv.includes('--no-session-persistence') && !isGateCall(c);
+/** A plan-check call: a Claude judgment whose schema has a patch and no ops (the checkpoint's), whatever its shape. */
+const isPlanCheck = (c: CallRecord): boolean => {
+  const schema = c.argv[c.argv.indexOf('--json-schema') + 1] ?? '';
+  return c.as === 'claude' && c.argv.includes('Read,Grep,Glob') && schema.includes('"patch"') && !schema.includes('"ops"') && !isGateCall(c);
+};
 
 /** A claude implementer's fresh in-session assessment answering `a` (after `before` acts). */
 function assessStep(a: Readonly<{ feasible?: boolean; riskFloor?: string; visionConflict?: readonly JsonValue[]; notes?: string }>, before: readonly ClaudeAct[] = []): Step {
@@ -116,7 +120,8 @@ describe('plan-check shape (E)', () => {
   });
 
   test('plancheck.acceptance-prose-ops-refused: an acceptance-shape redirect editing anything but witness items, facts or cites is malformed', T, async () => {
-    const a = await arc({ steps: [planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'decisions', item: { id: 'R9', text: 'Use the parser.' } }] })] });
+    const prose = { decision: 'redirect', patch: [{ op: 'add', section: 'decisions', item: { id: 'R9', text: 'Use the parser.' } }] } as const;
+    const a = await arc({ steps: [planCheckStep(prose), planCheckRepairStep(prose, ['the answer does not match its schema: exit 0 without schema-valid output: schema violation at $.patch'])] });
     const r = under(a, null);
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'plan-check');
@@ -128,7 +133,11 @@ describe('plan-check shape (E)', () => {
 
   test('plancheck.witness-id-reused-malformed: a witness item reusing an id the spec holds is malformed (id-reused)', T, async () => {
     const item = { id: 'W-1', lane: 'journey', testId: 't9', clause: 'A1', skeleton: 's', obligation: null };
-    const a = await arc({ steps: [planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'witnesses', item }] }, { stdinContains: ['the next free id, W-2'] })], witnesses: [{ id: 'W-1', testId: 't1' }] });
+    const reused = { decision: 'redirect', patch: [{ op: 'add', section: 'witnesses', item }] } as const;
+    const a = await arc({
+      steps: [planCheckStep(reused, { stdinContains: ['the next free id, W-2'] }), planCheckRepairStep(reused, ['the patch does not apply'])],
+      witnesses: [{ id: 'W-1', testId: 't1' }],
+    });
     const r = under(a, null);
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'plan-check');
@@ -147,12 +156,15 @@ describe('plan-check shape (E)', () => {
   });
 
   test('plancheck.witness-reuse-refused: an item naming a delivered obligation under another test id, or an obligation the unit does not deliver, is malformed, not applied; the retry is told why', T, async () => {
-    const reason = 'witness item W-1 names I-1\'s witness, so it takes that witness\'s exact lane and test id (lane journey, test "t1"), not lane journey, test "t9"; '
-      + 'witness item W-2 names obligation I-9, which is not an obligation this unit delivers with a witness: set it to null or to one of I-1';
+    const reason = 'unit u1\'s witness item W-1 names I-1\'s witness, so it takes that witness\'s exact lane and test id (lane journey, test "t1"), not lane journey, test "t9"; '
+      + 'unit u1\'s witness item W-2 names obligation I-9, which is not an obligation this unit delivers with a witness: set it to null or to one of I-1';
+    const bad = { decision: 'redirect', patch: [linked('W-1', 't9', 'I-1'), linked('W-2', 't8', 'I-9')] } as const;
     const a = await arc({
       ...DELIVERS,
       steps: [
-        planCheckStep({ decision: 'redirect', patch: [linked('W-1', 't9', 'I-1'), linked('W-2', 't8', 'I-9')] }, { stdinContains: ['<acceptance_shape>', '- I-1: ', '  lane journey, test "t1"'] }),
+        planCheckStep(bad, { stdinContains: ['<acceptance_shape>', '- I-1: ', '  lane journey, test "t1"'] }),
+        // 2026-10-15: the repair turn is told every reason; repeating the patch, the attempt is malformed.
+        planCheckRepairStep(bad, [reason]),
         planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] }),
       ],
     });
@@ -187,6 +199,57 @@ describe('plan-check shape (E)', () => {
     }
   });
 
+  test('plancheck.repair-turn-patches: a refused patch goes back in the same session with every reason; the corrected answer is the attempt\'s and patches', T, async () => {
+    const reason = 'unit u1\'s witness item W-1 names I-1\'s witness, so it takes that witness\'s exact lane and test id (lane journey, test "t1"), not lane journey, test "t9"';
+    const a = await arc({
+      ...DELIVERS,
+      steps: [
+        planCheckStep({ decision: 'redirect', patch: [linked('W-1', 't9', 'I-1')] }),
+        planCheckRepairStep({ decision: 'redirect', patch: [linked('W-1', 't1', 'I-1')] }, [reason]),
+        planCheckStep({ decision: 'approve' }, { stdinContains: ['lane `journey` test `t1` witnesses `A1` (the witness of I-1)'] }),
+      ],
+    });
+    const r = under(a, null);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+      assert.deepEqual(outcomes(a.d), ['plan-check:redirect', 'plan-check:approve'], 'no malformed attempt: the repair turn settled it');
+      const calls = readCalls(a.d.scenarioPath).filter(isPlanCheck);
+      assert.equal(sessionArg(calls[1]!, '--resume'), sessionArg(calls[0]!, '--session-id'));
+      assert.match(calls[1]!.argv[calls[1]!.argv.indexOf('--json-schema') + 1]!, /"witnesses"/, 'the repair turn answers the same schema');
+      const spec = loadUnitSpec(r.ctx, r.unit('u1')).spec;
+      assert.equal(spec.rev, 2);
+      assert.deepEqual(spec.witnesses?.map((w) => [w.id, w.testId, w.obligation ?? null]), [['W-1', 't1', 'I-1']]);
+      const spawns = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'planCheck');
+      const patch = r.journal.view.opsOf('spec.patch').find((i) => i.expect.patch.by.role === 'planCheck');
+      assert.equal(patch?.expect.patch.by.inv, invocationId(spawns[1]!.op, spawns[1]!.ordinal), 'the patch is the repair turn\'s');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('plancheck.witness-lane-enum: an acceptance call\'s witness lane is an enum of the arc lanes; an answer naming another lane is off its schema, and the repair turn is told so', T, async () => {
+    const item = (lane: string): JsonValue => ({ op: 'add', section: 'witnesses', item: { id: 'W-1', lane, testId: 't9', clause: 'A1', skeleton: 's', obligation: null } });
+    const a = await arc({
+      steps: [
+        planCheckStep({ decision: 'redirect', patch: [item('unit-lane')] }),
+        planCheckRepairStep({ decision: 'redirect', patch: [item('journey')] }, ['the answer does not match its schema', 'unit-lane']),
+        planCheckStep({ decision: 'approve' }),
+      ],
+    });
+    const r = under(a, null);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+      assert.deepEqual(outcomes(a.d), ['plan-check:redirect', 'plan-check:approve']);
+      const first = readCalls(a.d.scenarioPath).filter(isPlanCheck)[0]!;
+      const schema = JSON.parse(first.argv[first.argv.indexOf('--json-schema') + 1]!) as { properties: { patch: { anyOf: [{ items: { anyOf: { properties: { item?: { properties?: { lane?: unknown } } } }[] } }] } } };
+      const lanes = schema.properties.patch.anyOf[0].items.anyOf.flatMap((op) => (op.properties.item?.properties?.lane === undefined ? [] : [op.properties.item.properties.lane]));
+      assert.deepEqual(lanes, [{ type: 'string', enum: ['journey'] }, { type: 'string', enum: ['journey'] }], 'add and replace both enumerate the arc lanes in force');
+      assert.deepEqual(loadUnitSpec(r.ctx, r.unit('u1')).spec.witnesses?.map((w) => w.lane), ['journey']);
+    } finally {
+      r.journal.close();
+    }
+  });
+
   // Run 10 (C): a redirect's patch is held to the census by the one predicate (`specCensusMismatches`); the corpus-unit
   // census puts T-1 in slice (I-1) and every other rule out of slice.
   const clause = (text: string): JsonValue => ({ op: 'add', section: 'acceptance', item: { id: 'A9', clause: text, failLoudIfUndelivered: false } });
@@ -194,7 +257,11 @@ describe('plan-check shape (E)', () => {
   test('plancheck.census-out-of-slice-refused: a redirect citing an out-of-slice rule is malformed, not applied; the retry is told why', T, async () => {
     const reason = 'unit u1\'s acceptance clause A9 names T-2, which the census puts out of slice: cite only in-slice rules';
     const a = await checksArc({
-      steps: [planCheckStep({ decision: 'redirect', patch: [clause('A second berth booking is refused (T-2).')] }), planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] })],
+      steps: [
+        planCheckStep({ decision: 'redirect', patch: [clause('A second berth booking is refused (T-2).')] }),
+        planCheckRepairStep({ decision: 'redirect', patch: [clause('A second berth booking is refused (T-2).')] }, [reason]),
+        planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] }),
+      ],
     });
     const r = contextFor(a.d);
     try {
@@ -211,7 +278,11 @@ describe('plan-check shape (E)', () => {
     const reason = 'unit u1 lane logs: evidenceGlobs entry `test/**` covers `test/**` of the unit\'s scope';
     const lane = { id: 'logs', argv: ['node', '-e', '0'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: ['test/**'], evidenceExcludes: [] };
     const a = await checksArc({
-      steps: [planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'lanes', item: lane }] }), planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] })],
+      steps: [
+        planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'lanes', item: lane }] }),
+        planCheckRepairStep({ decision: 'redirect', patch: [{ op: 'add', section: 'lanes', item: lane }] }, [reason]),
+        planCheckStep({ decision: 'approve' }, { stdinContains: ['<prior_attempt>', reason] }),
+      ],
     });
     const r = contextFor(a.d);
     try {

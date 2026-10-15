@@ -75,14 +75,14 @@ A lane's evidenceGlobs (in an admit or a patch) name only the files that lane's 
 - rule: put a ruling from rulings in force. A ruling may carry contractOps: anchor-exact edits to the plan's contracts or architecture docs, never to the corpus.
 - request: an act only the owner may take (below). It applies nothing and waits for the owner.
 
-rulings holds each ruling you issue as the text of one JSON object with exactly these fields; one that does not parse makes the bundle invalid:
+rulings holds each ruling you issue as one object with exactly these fields, each once; list a ruling once, and land it through exactly one rule op:
 - schema: "${RULING_SCHEMA}".
 - id: the first ruling you issue takes the id in <next_ruling_id>, and each further one the next number (C-9, then C-10), written without leading zeros. statement: the ruling itself. trigger: what prompted it, in a sentence.
 - kind: one of ${quoted(RULING_KINDS)}.
 - supersedes: [{id, part}], part a string or null. condition: a string or null.
 - docRefs (never empty): document references [{path, anchor, quotedText, relation}], relation one of ${quoted(DOC_RELATIONS)}; a deviates reference needs contractOps. In a corpus arc an entry may instead be a rule reference {rule, textSha256, relation}: rule a T-n from the rules index, textSha256 the hash printed beside it, relation one of ${quoted(RULE_RELATIONS)}. A ruling never deviates from a rule: where the corpus is wrong, propose a corpus amendment.
 - An anchor (in docRefs and contractOps) is #<heading-slug> for a section, the heading lowercased with punctuation dropped and spaces as hyphens (## Money is #money), spanning to the next heading of its level or above; otherwise it is literal text found on exactly one line, spanning to the next heading. quotedText occurs verbatim inside that span, and a contract op's oldText exactly once.
-- contractRefs: paths, ascending. contractOps: [{path, anchor, oldText, newText}].
+- contractRefs: paths, ascending. contractOps: [{path, anchor, oldText, newText}]. Two ops may edit one section when their oldText spans do not overlap.
 - obligations: I-n ids, ascending. obligationDispositions: [{id, disposition}] ascending by id, disposition one of ${quoted(OBLIGATION_DISPOSITIONS)}.
 - cites: active V-n, ascending, never empty. evidence: strings, never empty.
 - appliesTo: {"type": "arc"} or {"type": "units", "units": [unit ids, ascending]}.

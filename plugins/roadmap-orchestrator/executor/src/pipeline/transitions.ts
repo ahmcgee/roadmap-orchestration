@@ -196,6 +196,9 @@ export const TABLE: Table = {
     infeasible: park('escalation', 'design'),
     // The assessment raised the risk floor onto another implementer seat: a fresh build there, uncharged.
     'risk-raised': go(build('fresh')),
+    // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
+    // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.
+    'witness-lane-missing': park('witness-lane-missing', 'env'),
   },
   quiesce: { empty: go(at('evidence')) },
   evidence: { captured: go(at('salvage')) },
@@ -224,6 +227,8 @@ export const TABLE: Table = {
     'smoke-survived': { do: 'bounded', round: 'smoke', bound: 'smokeRounds', to: build('fix'), chargeable: true, then: go(at('gate')) },
     // M4a rev 3 (F4): the unit hit a plan known defect; uncharged, it waits at prepare for the fixer, then merges the tip in.
     'known-defect': go(at('prepare')),
+    // 2026-10-15: as at build.
+    'witness-lane-missing': park('witness-lane-missing', 'env'),
   },
   gate: {
     approve: go(at('candidate')),
