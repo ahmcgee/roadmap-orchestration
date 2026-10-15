@@ -12,6 +12,7 @@ import type { MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ReadsFile, ToolRead } from './records.ts';
+import type { ClassTable } from '../routing/types.ts';
 
 const warned = new Set<string>();
 
@@ -205,3 +206,25 @@ export function planCheckScopeGrowthDefault(): readonly never[] {
   warnDefaulted('plan-check.scopeGrowth', 'a plan-check answer without scopeGrowth (launched before scope growth); read as none proposed');
   return [];
 }
+
+// Efficient judgment (owner ruling 2026-10-15, 1.0.0-dev.10): the built-in seat table moved planCheck.low/med, gate.low,
+// lens.arc and flow.arc to the efficient class. Records carry a `routingRev`, never a table, and OR-L3 binds every revision
+// through HEAD's seats and catalogue, so a rev an earlier executor recorded is one HEAD no longer rebuilds. Delete (with
+// `resolveRoutingUnder` and status's `preDev10RevAlias`) once no arc started on 1.0.0-dev.9 is in flight.
+
+/**
+ * The built-in seats 1.0.0-dev.9 (and dev.7 and dev.8) hashed: frontier at every judgment tier but escalation, the
+ * lenses, the pack review and the flow seat on frontier. Kept only so `status` can join such a meter row's recorded
+ * `routingRev` to its revision's current table (src/status.ts `preDev10RevAlias`); nothing routes under it. No judgment
+ * seat could name the efficient class then (a Codex or Sonnet judgment was refused at startup), so HEAD's catalogue
+ * resolves these seats to the triples dev.9 hashed.
+ */
+export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
+  planCheck: { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' },
+  build: { low: 'efficient', med: 'efficient', high: 'frontier' },
+  gate: { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' },
+  lens: { arc: 'frontier' },
+  checkpoint: { arc: 'summit' },
+  packReview: { arc: 'frontier' },
+  flow: { arc: 'frontier' },
+};

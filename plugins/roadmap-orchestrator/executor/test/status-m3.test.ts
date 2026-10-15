@@ -2,7 +2,7 @@
 // arcs whose log is written directly (real repos, real run dirs, the real fold): the facts are the frozen M3 ones, so
 // what a later step writes renders the same. Named tests: status.target, status.findings-audit, status.coverage-per-lens,
 // status.decisions-since, status.divergences-since-ack, status.completion-sealed, status.log-size, status.non-holistic-arc,
-// status.dev6-alias.
+// status.dev9-alias.
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import { submitCommand } from '../src/commands/queue.ts';
 import type { Fact, IntentOf, RevisionPayload } from '../src/core/events.ts';
 import {
-  type Sha, type UnitId, arcId, commandId, envId, invocationId, jobId, opKey, planRev, sha, sha256, unitId,
+  type RoutingRev, type Sha, type UnitId, arcId, commandId, envId, invocationId, jobId, opKey, planRev, sha, sha256, unitId,
 } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
@@ -25,8 +25,9 @@ import { ledgerAfter } from '../src/spec/rulings.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
-import { resolveRouting } from '../src/routing/layers.ts';
-import { MODEL_IDS } from '../src/routing/types.ts';
+import { resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
+import { PRE_DEV10_BUILTIN_SEATS } from '../src/core/upgrade.ts';
+import { MODEL_IDS, unitSeatRef } from '../src/routing/types.ts';
 import { type Status, status } from '../src/status.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
 import { runOp } from './fixtures/git-common.ts';
@@ -412,6 +413,44 @@ describe('status M3', () => {
       assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] });
       assert.deepEqual(s.spend.byModel, { models: [{ model: 'gpt-5.6-luna', calls: 1, input: 10, output: 2, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 }], unresolvedRevs: [] });
       assert.equal(s.routing?.rev, rev);
+      noModelIds(s);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('status: routing revs recorded before 1.0.0-dev.10 (efficient judgment, OR-L3)', () => {
+  it('status.dev9-alias: a meter row under the rev an earlier executor recorded joins its revision\'s current table: nothing unresolved, byModel on today\'s bindings', T, () => {
+    const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
+    const r = contextFor(d);
+    try {
+      const stack = { profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' } as const;
+      const now = resolveRouting(stack).rev;
+      const dev9 = resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, stack).rev;
+      assert.notEqual(dev9, now, 'the seat table moved the rev');
+      let n = 0;
+      const meter = (rev: RoutingRev, role: 'planCheck' | 'build' | 'gate', tier: 'low' | 'med', input: number): void => {
+        n += 1;
+        const stage = role === 'planCheck' ? 'plan-check' : role;
+        const inv = invocationId(r.journal.begin({
+          kind: 'proc.spawn', key: opKey(`dev9:${n}`), parent: { type: 'stage', unit: U('u1'), stage, attempt: n }, deadlineAt: null,
+          body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: n, ...unitSeatRef(role, tier) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
+        }).op, 1);
+        r.journal.fact({
+          kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', ...unitSeatRef(role, tier), unit: U('u1'), attempt: n },
+          usage: { inputTokens: input, outputTokens: 1, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null },
+        });
+      };
+      meter(dev9, 'planCheck', 'med', 100);
+      meter(dev9, 'build', 'med', 20);
+      meter(dev9, 'gate', 'low', 3);
+      meter(now, 'planCheck', 'low', 4);
+      const s = statusOf(r);
+      assert.deepEqual(s.spend.byModel.unresolvedRevs, [], 'the earlier rev resolves through its alias');
+      assert.equal(s.spend.byModel.models.reduce((x, m) => x + m.input, 0), s.spend.byRole.reduce((x, t) => x + t.input, 0), 'byModel totals equal the meter\'s');
+      // dev.9 judged plan-check med and gate low on Opus; OR-L3 attributes them to today's bindings: efficient, Sonnet.
+      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-sonnet-5-5', 3, 107], ['gpt-5.6-luna', 1, 20]]);
       noModelIds(s);
     } finally {
       r.journal.close();

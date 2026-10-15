@@ -192,8 +192,9 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
 
 **1.0.0-dev.9 → 1.0.0-dev.10 (2026-10-15 arc feedback: the fast suite at lanes, the scheduler unwedged, scope growth,
-judges' output validated once and repaired in session).** `SCHEMA_VERSION` stays 1; every change is additive. The
-scaffolding defaults are `planCheckScopeGrowthDefault` and `checkpointRulingTextDefault` in `src/core/upgrade.ts`. An
+judges' output validated once and repaired in session; the efficient class judges low risk).** `SCHEMA_VERSION` stays 1;
+every change is additive. The scaffolding is `planCheckScopeGrowthDefault`, `checkpointRulingTextDefault` and
+`PRE_DEV10_BUILTIN_SEATS` (with `resolveRoutingUnder` and status's `preDev10RevAlias`) in `src/core/upgrade.ts`. An
 arc started on dev.9 is adopted; one already wedged behind a crash-abandoned attempt is closed by its next start's
 recovery hold.
 
@@ -218,6 +219,8 @@ recovery hold.
 | Checkpoint answer (`CheckpointOutput`, the recorded call's `result.json`) | `rulings`: objects `S_RULING` constrains (the model-owned sidecar fields; `ruledBy`, `consistency` stamped), read into canonical JSON text | a ruling recorded as JSON text reads as written (`checkpointRulingTextDefault`, warned once; scaffolding) |
 | Plan-check acceptance answer | per-call schema `planCheckAcceptanceSchemaFor(<arc lanes in force>)`: a witness item's `lane` an enum of the arc lanes; the call's shape is read from its kept schema (`isAcceptanceSchema`) | a dev.9 call's schema (any lane) reads as the acceptance shape as before |
 | `Proposer` (classifier input, not persisted) | `+ plan-check{unit}`: a redirect's patched spec validated through `evaluateRevision`, never committed | none |
+| `routingRev` (dispatch facts, spawn subjects, meter facts, `judgment-inputs`, `launch.json` terminal), `status.routing` (efficient judgment, owner ruling 2026-10-15) | no shape change: the built-in seats put planCheck.low/med, gate.low, `lens.arc` and `flow.arc` on efficient, whose judgment binding is Sonnet 5.5 high in both profiles (`ClassBinding{build, judgment}`), so every resolved table and rev moves; `status.routing.seats` names the new classes | none read: OR-L3 binds every revision through HEAD's seats, so an adopted dev.9 arc resolves to new revs and each unit re-pins at its next dispatch with its implementer seat unchanged (no build seat moved): nothing parks `routing-changed`. `status` aliases a dev.9 rev to its revision's current table (`preDev10RevAlias` over `PRE_DEV10_BUILTIN_SEATS`; scaffolding), so its spend resolves, attributed to today's bindings |
+| `PROMPTS` (not persisted) | Sonnet 5.5 `inherits` for every judgment role (planCheck, gate, lens, packReview, flow from Opus; checkpoint from Fable) | none |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -313,7 +316,7 @@ means before any *pipeline* intent.
 | `legacy-roadmap-dir` | in-tree `.roadmap/` beyond `contracts/`, `constraints.md`, `invariants.md`, `debt.md`, `config.json` (M4a: and `vision.json`, `corpus.md`) | `path, unexpected[]` | 78 |
 | `worktree-root-unusable` | `worktreeRoot` on tmpfs or not writable | `path, problem: tmpfs\|not-writable, detail` | 78 |
 | `spec-lane-unrunnable` | lane `argv[0]` unresolvable, env prerequisite missing, estate lane for the implementer; resource variant (lead ruling, 13b): a declared resource's probe or teardown `argv[0]` unresolvable or env prerequisite missing | `unit\|null, lane, problem` \| `resource, command: probe\|teardown, problem` | 78 |
-| `unsupported-routing` | a seat's class binds an unsupported triple (every Codex judgment triple) | `role, tier` (a seat), `layer` (that chose the class), `class, unit\|null, why: codex-judgment\|no-prompt` | 78 |
+| `unsupported-routing` | a seat's class binds an unsupported triple (every Codex judgment triple, which only a repo's Codex rebind of a class a judgment seat names puts there) | `role, tier` (a seat), `layer` (that chose the class), `class, unit\|null, why: codex-judgment\|no-prompt` | 78 |
 | `undispositioned-residue` | a host residue neither `cleaned` nor `isolated\|transferred` | `residues: ResidueKey[]` | 78 |
 | `host-busy` | live host owner, or live recovery-lock holder | `holder: owner\|recovery, arc, generation, pid` | **75** |
 | `previous-arc-unreconciled` | previous claim's arc has unreconcilable invocations (R18); durable needs-user | `arc, invocations[]` | 78 |
@@ -860,13 +863,20 @@ seat order is unchanged; `UnitRole` the first three, `ArcRole` the last two, `Ju
 high` (a unit's risk); `JudgmentSeat = RiskTier | escalation`; seats: build has `RiskTier`, planCheck and gate have
 `JudgmentSeat`, lens and checkpoint the one seat `arc` (`SeatRef = {role, tier}`, `build.escalation` and `gate.arc`
 unrepresentable; `UnitSeatRef` and `ArcSeatRef` split it, and a unit's backend subject and seat meter name only a
-`UnitSeatRef`). Built-in arc seats: `lens.arc` → frontier, `checkpoint.arc` → summit. They are in force only in a
+`UnitSeatRef`). Built-in arc seats: `lens.arc` → efficient (frontier before 1.0.0-dev.10), `checkpoint.arc` → summit. They are in force only in a
 holistic arc (G20): `RoutingStack.holistic?: true` (`planStack(profile, config, plan)` sets it from
 `plan.holistic`; `arcStack` never does), `ResolvedRouting.holistic`, `seatsInForce(resolved)` (every seat when
 holistic, else the unit roles' seats), which `unsupportedSeats` and the smoke's seat choice iterate, and
 `routingRevOf(table, holistic)`, which hashes the unit roles alone when not holistic (the M2 table). `ModelClass = efficient | frontier |
-summit`; the class catalogue binds per profile: `efficient` → codex gpt-5.6-luna medium (`default`) or
-claude-sonnet-5-5 medium (`claude-only`), `frontier` → claude-opus-5-5 high, `summit` → claude-fable-5-1 high. `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
+summit`; the class catalogue (`CLASS_CATALOGUE: {[P]: {[C]: ClassBinding}}`) binds per profile, twice per class:
+`ClassBinding = {build: Triple, judgment: ClaudeTriple}`, the build triple at a build seat and the judgment triple at every
+other (`boundAt`). `efficient` → build codex gpt-5.6-luna medium (`default`) or claude-sonnet-5-5 medium (`claude-only`),
+judgment claude-sonnet-5-5 high (both); `frontier` → claude-opus-5-5 medium, `summit` → claude-opus-5-5 xhigh (both kinds,
+both profiles). Built-in seats (1.0.0-dev.10): planCheck `{low: efficient, med: efficient, high: frontier, escalation:
+summit}`, build `{low: efficient, med: efficient, high: frontier}`, gate `{low: efficient, med: frontier, high: frontier,
+escalation: summit}`, lens and flow efficient, packReview frontier, checkpoint summit. A repo rebind (`ClassBindings`) binds
+its one triple at every seat that names the class. `PROMPTS[role]['claude-sonnet-5-5']` inherits a Claude module for every
+judgment role (2026-10-15 review). `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
 SeatTable<ModelClass>` (the built-in seats, shared by both profiles); `RoutingLayer` = a class at any subset of seats (a named role needs
 ≥ 1 seat; a triple is refused); `ClassBindings` = a triple for any subset of classes (repo config only; a
 binding's effort must be one `models.ts` lists for its model: Claude low|medium|high|xhigh|max, Codex low|medium|high); `RoutingLayerName = builtin | repo-config | plan
@@ -1447,7 +1457,8 @@ implemented it: `reverse` A2, `steer` and `merge-in` A3, `rule` A4, `audit` and 
 
 **Prompts** (`src/prompts/`). Since B4: lens/Opus a module, lens/Fable inherits it; checkpoint/Fable a module,
 checkpoint/Opus inherits it; Sonnet and Codex are `unsupported` for both, so a holistic plan seating either role on
-one is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why: no-prompt}` at startup. Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses, questions, advances} (`visionInputOf`;
+one is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why: no-prompt}` at startup (1.0.0-dev.10: Sonnet
+inherits every judgment module, "Routing types"; only Codex is refused, as `codex-judgment`). Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses, questions, advances} (`visionInputOf`;
 `advances` from the plan at the revision the inputs were captured at),
 lens, obligations: ObligationView[] ({obligation, exempt, observation{key, verdict}|null}), range{from, to, diff},
 owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout, specsOnly, retry:
@@ -1982,7 +1993,7 @@ supersede the A4 items they name):
 2. **`MAX_LENS_FINDINGS` (8)** is stated in the prompt as the reporting bound, worst first; the reader does not
    enforce it (an anti-spiral bound on reporting, never on reading).
 3. **Routing**: lens/Opus and checkpoint/Fable are modules; lens/Fable and checkpoint/Opus inherit them (reviewed
-   2026-09-30); Sonnet and Codex are unsupported for both ("Prompts" above).
+   2026-09-30); Sonnet and Codex are unsupported for both ("Prompts" above; Sonnet inherits since 1.0.0-dev.10).
 
 **Choices made in M3 B5** (the cadence audit, coverage, the arc roles' call; src/holistic/{audit,cadence,coverage}.ts,
 src/pipeline/dispatch.ts `callArcRole`):
@@ -2501,7 +2512,7 @@ filter keys it across arcs). Crash row ANSWER_RECORD (`answer.after-publish`): a
 3. **The packReview prompt is a placeholder `prompt` module, not `unsupported`**: the routing row checks every seat in
    force of a holistic arc (`seatsInForce`), so an unsupported packReview would refuse every holistic start. The
    placeholder renders every input and carries the frozen schema; nothing spawns it before B1 replaces it (C3 lands the
-   job). Fable inherits it, Sonnet and Codex are unsupported, as for the lens.
+   job). Fable inherits it, Sonnet and Codex are unsupported, as for the lens (Sonnet inherits since 1.0.0-dev.10).
 4. **Problem fields beyond the plan's list**: `rule-retired-reappears{id}`, `source-unreadable{detail}` and
    `census-dangling{rules}` name what they refuse.
 5. **The checkpoint's new keys are read, not yet required of the model**: the strict schema gains `corpusAmendments` and
@@ -3276,14 +3287,15 @@ flow-decide{proposal, decision: accept | reject, reason} | flow-request{reason}`
 --note <text>`. `NeedsUserReason + flow-proposal, flow-host, flow-worse, flow-invalid, ruler-changed`, all in
 `NON_BLOCKING_M3_REASONS`.
 
-**Routing.** `ROLES += flow`, `ARC_ROLES += flow`, seat `arc`; `BUILTIN_SEATS.flow = {arc: frontier}`.
+**Routing.** `ROLES += flow`, `ARC_ROLES += flow`, seat `arc`; `BUILTIN_SEATS.flow = {arc: frontier}` (`{arc: efficient}` since 1.0.0-dev.10).
 `ARC_ROLES_IN_FORCE`: `none: [flow]`, `architecture-doc: [lens, checkpoint, flow]`, `corpus: [lens, checkpoint, packReview,
 flow]`, gated by the arc's role set: `arcRolesInForce(scope, arcRoles)` drops `flow` when `arcRoles` is null.
 `RoutingProvenance.arcRoles?: 'm4b'` (`ARC_ROLE_SETS`); `RoutingStack.arcRoles?`, `ResolvedRouting.arcRoles`,
 `RoutingBase.arcRoles` and `StartupContext.arcRoles` (`arcRolesOf(planApplied)`: `m4b` before the first plan, else the
 revisions'). `routingRevOf(table, scope, arcRoles)` hashes the unit roles and `arcRolesInForce`, so an arc dev.7 started
 keeps its revs. `PROMPTS.flow` mirrors `packReview`: Opus a module (src/prompts/flow/claude-opus-5-5.ts), Fable
-inherits it, Sonnet and the Codex models unsupported; `ROLE_INPUTS.flow` = the `FlowPromptInputs` keys.
+inherits it, Sonnet and the Codex models unsupported (Sonnet inherits since 1.0.0-dev.10, which seats flow on efficient);
+`ROLE_INPUTS.flow` = the `FlowPromptInputs` keys.
 
 **`LEVER_PATHS`** (src/flow/levers.ts; the fence: `diffPaths(plan, flowRevision(plan, action)) ⊆ LEVER_PATHS[lever]`, else
 a bug). A path is the plan.json field: dotted keys, `[<key>]` an entry of a keyed list, `<tier>` a build tier.

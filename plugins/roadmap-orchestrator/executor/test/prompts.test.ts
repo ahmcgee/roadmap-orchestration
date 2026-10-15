@@ -376,6 +376,12 @@ describe('prompts', () => {
       const s = PROMPTS[role][model];
       if (s.type === 'inherits') assert.equal(PROMPTS[role][s.from].type, 'prompt', `${role}/${model}: inherits a real module`);
     }
+    // Sonnet 5.5 judges on the efficient class (2026-10-15): every judgment role reads a Claude module, reviewed for it.
+    for (const role of ROLES.filter((r) => r !== 'build')) {
+      const s = PROMPTS[role]['claude-sonnet-5-5'];
+      assert.ok(s.type === 'inherits' && s.reviewed.startsWith('2026-10-15: Sonnet 5.5 migration guidance'), `${role}/sonnet: ${JSON.stringify(s)}`);
+      assert.equal(promptFor(role, 'claude-sonnet-5-5'), promptFor(role, s.from));
+    }
   });
 
   it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => {
@@ -514,15 +520,18 @@ describe('output validators', () => {
 });
 
 describe('M3 prompts: the vision and the arc roles', () => {
-  const ARC_MODELS = ['claude-opus-5-5', 'claude-fable-5-1'] as const;
+  /** Every Claude model: Opus and Fable have written modules, Sonnet reads them (owner ruling 2026-10-15, efficient judgment). */
+  const ARC_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'] as const;
 
-  it('the arc roles are supported on Opus and Fable: lens/Opus and checkpoint/Fable written, the other inherits; Sonnet and Codex unsupported', () => {
+  it('the arc roles are supported on every Claude model: lens/Opus and checkpoint/Fable written, the others inherit; Codex unsupported', () => {
     assert.equal(PROMPTS.lens['claude-opus-5-5'].type, 'prompt');
     assert.equal(PROMPTS.checkpoint['claude-fable-5-1'].type, 'prompt');
     assert.equal(promptFor('lens', 'claude-fable-5-1'), promptFor('lens', 'claude-opus-5-5'));
+    assert.equal(promptFor('lens', 'claude-sonnet-5-5'), promptFor('lens', 'claude-opus-5-5'));
     assert.equal(promptFor('checkpoint', 'claude-opus-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
+    assert.equal(promptFor('checkpoint', 'claude-sonnet-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
     for (const role of ['lens', 'checkpoint'] as const) {
-      for (const model of ['claude-sonnet-5-5', 'gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.throws(() => promptFor(role, model), UnsupportedPromptError);
+      for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.throws(() => promptFor(role, model), UnsupportedPromptError);
       for (const model of ARC_MODELS) {
         const s = PROMPTS[role][model];
         if (s.type === 'inherits') assert.match(s.reviewed, /^\d{4}-\d{2}-\d{2}: /, `${role}/${model}: a dated review`);
