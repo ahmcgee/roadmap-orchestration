@@ -55,7 +55,8 @@ export function wire(r: ArcRun): Wired {
 
 /**
  * A suite lane whose first run anywhere parks until `<dir>/lane.release` exists (after writing `<dir>/lane.reached`),
- * printing progress; every later run passes at once. The unit's candidate runs it first and parks there.
+ * printing progress; every later run passes at once. The unit's candidate runs it first and parks there: an estate lane,
+ * so the lanes stage's fast suite (stages.ts `fastSuite`) never runs it.
  */
 export function barrierSuite(dir: string): LaneJson {
   const script = [
@@ -66,7 +67,7 @@ export function barrierSuite(dir: string): LaneJson {
     "  while (!fs.existsSync(d + '/lane.release')) { if (Date.now() > until) process.exit(3); process.stdout.write('.'); Atomics.wait(cell, 0, 0, 50); }",
     '}',
   ].join('\n');
-  return { id: 'suite', argv: ['node', '-e', script, dir] };
+  return { id: 'suite', tier: 'estate', argv: ['node', '-e', script, dir] };
 }
 
 /** An architect's ruling record (raw JSON), its consistency judged at `r`'s integration tip and the revisions in force. */

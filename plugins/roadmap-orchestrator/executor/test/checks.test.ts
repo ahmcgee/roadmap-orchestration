@@ -297,7 +297,13 @@ describe('D2 mutation smoke', () => {
   test('gate.no-spec-lanes-after-smoke (paid M4a run 11): a unit whose spec declares no lanes, its D1 witness journey and a surviving smoke, one fix round, then the gate finds the last lanes attempt\'s own checkout and the unit merges', T, async () => {
     // Run 11 (witness-hardening, seq 1585-1641): no spec lane ran, so no verification checkout existed; the only checkout of
     // the attempt was D1's witness journey's, removed before its certificate; the gate threw on every restart.
-    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null, { noSpecLanes: true });
+    // The plan's suite lanes are estate lanes, as run 11's suite ran at the candidate only: no lane at all runs at the lanes
+    // stage (no fast suite, stages.ts `fastSuite`, either).
+    const estateSuite = (p: Record<string, unknown>): void => {
+      const suite = p['suite'] as { lanes: Record<string, unknown>[] };
+      p['suite'] = { ...suite, lanes: suite.lanes.map((l) => ({ ...l, tier: 'estate' })) };
+    };
+    const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null, { noSpecLanes: true, plan: estateSuite });
     try {
       assert.deepEqual(spawns(a.d).filter((i) => i.expect.subject.purpose === 'lane'), [], 'no spec lane exists');
       assert.equal(lanesFacts(a.d).at(-1)!.outcome, 'smoke-survived');
@@ -480,8 +486,8 @@ const GREEN_STEPS = [planCheckStep({ decision: 'approve' }), mulBuild(), gateSte
 describe('crash rows', () => {
   test('witnesscheck.uncertified-observation-reruns / crash WITNESS_CHECK (lanes.after-census-before-certified in D1): no certificate, so the restart runs the witness lane again', T, async () => {
     const a = await checksArc({ steps: GREEN_STEPS });
-    // Occurrence 1 is the spec series' own census; 2 is the witness check's.
-    await crashThenResume(a, 'lanes.after-census-before-certified', 2);
+    // Occurrence 1 is the spec series' own census; 2 the fast suite's (stages.ts `fastSuite`); 3 is the witness check's.
+    await crashThenResume(a, 'lanes.after-census-before-certified', 3);
     assert.deepEqual(outcomes(a.d), [...PRE_LANES, 'lanes:green', ...MERGED], 'the same outcomes as an uncrashed run');
     assert.equal(journeyRuns(a.d).length, 2, 'uncertified: run again');
     assert.equal(readCalls(a.d.scenarioPath).length, 3, 'no backend call twice');

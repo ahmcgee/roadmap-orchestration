@@ -23,12 +23,15 @@ type Json = Record<string, unknown>;
 /** Every in-scope path maps to I-1, so the candidate selects it and its arc lane `journey` runs. */
 const MAPPED = [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }] as const;
 
-/** Makes the plan's suite the arc lane `journey` itself (as a suite lane), with `envSet` set on the copy. */
+/**
+ * Makes the plan's suite the arc lane `journey` itself (as a suite lane), with `envSet` set on the copy. An estate lane, so
+ * the candidate is the first to run it (the lanes stage's fast suite, stages.ts `fastSuite`, runs fast lanes only).
+ */
 const suiteCopy = (envSet: Readonly<Record<string, string>>) => (x: ArcDescriptor): void => {
   const planDir = join(x.planPath, '..');
   const arcLane = (JSON.parse(readFileSync(join(planDir, 'obligations.json'), 'utf8')) as { lanes: Json[] }).lanes[0]!;
   const { reporter: _r, ...def } = arcLane;
-  const suiteLane = { ...def, id: 'suite-journey', env: { set: envSet, pass: ['PATH'] } };
+  const suiteLane = { ...def, id: 'suite-journey', tier: 'estate', env: { set: envSet, pass: ['PATH'] } };
   const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
   writeFileSync(x.planPath, JSON.stringify({ ...plan, suite: { lanes: [suiteLane] } }));
 };

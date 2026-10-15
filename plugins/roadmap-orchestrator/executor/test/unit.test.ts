@@ -25,7 +25,7 @@ import { type Step, readCalls } from './helpers/scenario.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
-  ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, U1, appendSteps, codexStep, isGateCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
+  ADD_BROKEN, ADD_FIXED, type ArcRun, MUL, SUITE_LANE, U1, appendSteps, codexStep, isGateCall, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil,
   unitWorktreePath, workDirPattern,
 } from './fixtures/unit-common.ts';
 
@@ -75,9 +75,10 @@ describe('unit: one unit merged first time', () => {
     assert.equal(ff.length, 1);
     assert.ok(ff[0]!.kind === 'integration.ff');
     assert.deepEqual(ff[0]!.expect.fingerprint, approval.fingerprint, 'the ff intent records the approval fingerprint');
-    // The suite ran on exactly that commit.
+    // The suite ran on exactly that commit, after the lanes stage's fast suite (stages.ts `fastSuite`) at the approved unit commit.
     const suite = intents(r.d.runDir, 'proc.spawn').filter((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite');
-    assert.deepEqual(suite.map((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.at), [head]);
+    assert.deepEqual(suite.map((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.at), [approval.fingerprint.unitCommit, head]);
+    assert.deepEqual(suite.map((i) => i.parent.type === 'stage' && i.parent.stage), ['lanes', 'candidate']);
   });
 
   test('snapshot.after-publish: the ref moved, the tree verifies against its manifest, the high-water mark covers the ff', () => {
@@ -183,7 +184,8 @@ test('fixture conflict → merge-in → resolve: T moves under the approved unit
 });
 
 test('fixture red candidate → fix → fresh gate → green: the suite is red on the candidate and green at T alone', T, async () => {
-  const d = setupArc({ steps: [] });
+  // An estate suite lane: the lanes stage's fast suite (stages.ts `fastSuite`) would catch the broken add before the candidate.
+  const d = setupArc({ steps: [], suite: [{ ...SUITE_LANE, tier: 'estate' }] });
   const suiteOutput = `(${literal(d.runDir)}\\/evidence\\/u1\\/[0-9]+-candidate\\/candidate\\/suite\\/output\\/files)`;
   appendSteps(d, [
     planCheckStep({ decision: 'approve' }),
