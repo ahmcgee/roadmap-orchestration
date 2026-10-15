@@ -15,7 +15,8 @@
 //   → `start.json`, the first heartbeat (the supervisor's readiness signal), `executor-started{generation, host, pressure}`
 //   (clears the stop marker) → control-only phase (below) → recovery (recover.ts), which closes a smoke
 //   spawn a crashed start left open like any other → the outcomes of the stage attempts whose backend call
-//   recovery closed are recorded (`consumeRecovered`) → the backend smoke, last of the startup checks (a
+//   recovery closed are recorded, and every other admission-stage attempt a crash cut short is closed by a recovery
+//   hold (`consumeRecovered`) → the backend smoke, last of the startup checks (a
 //   refusal exits `refused` as above, after readiness; on a respawn a failed backend is parked instead, A18)
 //   → the scheduler (src/schedule/scheduler.ts), which runs every unit that may run, each in its own task, and
 //   the holistic layer's jobs (baseline, audits, checkpoints, repair batches, the close-out), applies commands as
@@ -71,7 +72,7 @@ import { type ProberHandle, createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
 import { docsPublisher } from './pipeline/publish.ts';
 import { syncRepairs } from './pipeline/reproduce.ts';
-import { consume } from './pipeline/unit.ts';
+import { consume, holdAbandoned } from './pipeline/unit.ts';
 import { readRepoConfig, runChecks, smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
 import {
@@ -263,14 +264,17 @@ function refuse(args: ExecutorArgs, rejections: readonly StartupRejection[]): Re
 
 /**
  * Records, at startup, the outcome of every stage attempt whose backend call recovery closed (`consume` in
- * unit.ts), and raises the needs-user it decides. Done before the scheduler, so a unit that a pause holds
- * does not wait for its next step to learn it was interrupted: one resume releases it (lead ruling, 14c).
+ * unit.ts), and raises the needs-user it decides; then closes every other admission-stage attempt a crash cut short
+ * with a recovery hold (`holdAbandoned`, arc feedback 2026-10-15). Done before the scheduler, so a unit that a pause
+ * holds does not wait for its next step to learn it was interrupted: one resume releases it (lead ruling, 14c), and
+ * no dead attempt keeps it from being cut, re-entered or respecified meanwhile.
  */
 async function consumeRecovered(x: Exec): Promise<void> {
   const route = designRoute(holisticContexts(x));
   for (const unit of x.stage.plan().units) {
     const s = await consume(x.stage, unit);
-    if (s !== null && s.kind !== 'continue') raiseResult(x.stage, unit.id, s, route);
+    if (s === null) holdAbandoned(x.stage, unit);
+    else if (s.kind !== 'continue') raiseResult(x.stage, unit.id, s, route);
   }
 }
 
@@ -316,8 +320,11 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
   };
   const resources = { ...base, plan: () => inForce().plan };
   const arbiter = createArbiter(resources);
+  const routingBase = { profile, config, arcRoles: arcRolesOf(journal.view.planApplied()) };
   const stage: StageContext = {
     ...resources,
+    planFile: context.planFile,
+    routingBase,
     hostEnv: args.env,
     routing,
     acquire: arbiter.acquire,
@@ -331,7 +338,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     hostEnv: backendEnv(args.env),
     laneEnv: args.env,
     planFile: context.planFile,
-    routingBase: { profile, config, arcRoles: arcRolesOf(journal.view.planApplied()) },
+    routingBase,
     docs: docsPublisher({ ...resources, hostEnv: args.env, planFile: context.planFile, arbiter }),
     plan: () => inForce().plan,
     routing: (unit) => ({ profile, resolved: routing(unit) }),

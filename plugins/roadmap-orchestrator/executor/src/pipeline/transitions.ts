@@ -23,7 +23,8 @@
 // - A routing change the unit cannot absorb (its implementer's seat moved after a build started;
 //   dispatch.ts) parks it at the stage that found it: `routing-changed`, uncharged.
 // - An interruption (a pause or stop cancel, or the stage's backend parked arc-wide on a usage limit) holds
-//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling).
+//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling). So does a
+//   plan-check's verified scope-growth proposal, until the root agent's `scope accept|reject` (or a resume) releases it.
 //   A held build's new attempt continues the interrupted session (the `continue` round, rounds.ts).
 // - `attempts` counts stage starts, which only the fold sees; `transition` passes it through unchanged.
 // - Every park row names its class (A7): `retryable` (the executor probes its targets, which the stage names,
@@ -144,6 +145,8 @@ export const TABLE: Table = {
     'clean-verify': go(at('lanes')),
     // MERGE_HEAD kept (the M1 conflict precedent): a resolve round, in a fresh session (no session inherits).
     conflicted: go(build('resolve')),
+    // Arc feedback 2026-10-15: a preparation a crash cut short, held by recovery (`cause: recovery`); it prepares again.
+    interrupted: hold,
   },
   // M3 (B3): a vacuity repair reproduces its finding's mutant before anything is graded.
   reproduce: {
@@ -174,6 +177,9 @@ export const TABLE: Table = {
     'in-session': go(build('fresh')),
     // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate.
     'read-denied': retry('read-denied', 'env'),
+    // Scope growth (2026-10-15): a proposal code verified holds the unit, uncharged, for the root agent's `scope accept|reject`
+    // (src/commands/scope.ts); its `scope-decided` releases the hold and the plan-check runs again.
+    'scope-growth': hold,
   },
   build: {
     success: go(at('quiesce')),
@@ -196,6 +202,9 @@ export const TABLE: Table = {
     infeasible: park('escalation', 'design'),
     // The assessment raised the risk floor onto another implementer seat: a fresh build there, uncharged.
     'risk-raised': go(build('fresh')),
+    // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
+    // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.
+    'witness-lane-missing': park('witness-lane-missing', 'env'),
   },
   quiesce: { empty: go(at('evidence')) },
   evidence: { captured: go(at('salvage')) },
@@ -224,6 +233,11 @@ export const TABLE: Table = {
     'smoke-survived': { do: 'bounded', round: 'smoke', bound: 'smokeRounds', to: build('fix'), chargeable: true, then: go(at('gate')) },
     // M4a rev 3 (F4): the unit hit a plan known defect; uncharged, it waits at prepare for the fixer, then merges the tip in.
     'known-defect': go(at('prepare')),
+    // A fast suite lane red at the salvage SHA and on the unit's diff base alone: the base's red, not the unit's. Uncharged,
+    // on to the gate; the candidate's suite on the tip then decides (its own `base-red` halts merges while the tip is red).
+    'base-red': go(at('gate')),
+    // 2026-10-15: as at build.
+    'witness-lane-missing': park('witness-lane-missing', 'env'),
   },
   gate: {
     approve: go(at('candidate')),

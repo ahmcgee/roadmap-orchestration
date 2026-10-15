@@ -74,6 +74,15 @@ ${bullets(i.fixRound.directives, '(none)')}
 Fix exactly what failed and what the directives name. Carry out each directive, or list in blockers why it is wrong and leave the code. Then rerun every fast lane. Stop when they pass; anything past the repairs is scope creep.`;
 }
 
+function suiteLanes(i: BuildInputs): string {
+  if (i.suiteLanes.length === 0) return '';
+  return `
+
+# Suite lanes
+The executor runs these after your fast lanes, in a clean checkout of your commit; a red one comes back to you as a fix round. Run each exactly as written beside the fast lanes, after your last change, until it exits with its expected code. Report each run in experiments as suite:<id>, never in lanesRun:
+${fastLanesText(i.worktree, i.suiteLanes)}`;
+}
+
 function witnessChecks(i: BuildInputs): string {
   if (i.witnessChecks.length === 0) return '';
   return `
@@ -94,7 +103,7 @@ function task(i: BuildInputs): string {
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
 ${i.spec.markdown}
 
@@ -117,7 +126,7 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 ${bullets(i.scope, '(empty)')}
 
 # Fast lanes
-${fastLanesText(i.worktree, i.fastLanes)}${witnessChecks(i)}${fixRound(i)}
+${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${fixRound(i)}
 
 # Task
 ${task(i)}`,

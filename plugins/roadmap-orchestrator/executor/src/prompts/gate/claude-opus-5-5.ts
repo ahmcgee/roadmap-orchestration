@@ -20,6 +20,8 @@
 // bypasses the entry point) and of H1 (a transaction step moved without a failure matrix).
 // Paid M4b run 5: a gate Globbed the parent of its evidence dirs, was refused, and approved on the ledger alone; the
 // readable dirs are named exactly (listed dirs and below, never above), and a refused read voids an approve (src/pipeline/gate.ts).
+// Scope growth (2026-10-15; same guides): the paths salvage reverted as out of scope reach the gate as <scope_reverted>, so
+// a build that needed one is escalated to the root agent rather than lost silently.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
   bullets, documentsXml, findingsText, laneLedgerText, obligationsText, pasted, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
@@ -60,7 +62,7 @@ In a corpus arc the executor runs two checks before you, and the executable chec
 </executable_checks>
 
 <scope>
-The scope envelope was pinned at dispatch. Rule on each path listed as scope growth with its own finding: a note when the path was necessary to satisfy the spec (say why), a blocking finding with a directive to revert it when it is creep. Growth is a signal to you, never a licence to review those files as if they were in scope.
+The scope envelope was pinned at dispatch. Rule on each path listed as scope growth with its own finding: a note when the path was necessary to satisfy the spec (say why), a blocking finding with a directive to revert it when it is creep. Growth is a signal to you, never a licence to review those files as if they were in scope. A path listed as reverted was edited by the build outside the envelope and reverted by the executor, so it is in no diff: when the spec cannot be satisfied without it, escalate (only the root agent grows a unit's scope); otherwise record a note that the unit needed no such change.
 </scope>
 
 <direction>
@@ -150,7 +152,11 @@ ${bullets(i.scope.patterns, '(empty)')}
 
 <scope_growth>
 ${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
-</scope_growth>${gateChecksText(i.checks)}${priorRound(i)}
+</scope_growth>
+
+<scope_reverted>
+${bullets(i.scope.rejected, '(none: the build edited nothing outside the envelope)')}
+</scope_reverted>${gateChecksText(i.checks)}${priorRound(i)}
 
 Gate unit ${i.spec.unit} at head ${i.diff.head}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`,
 };

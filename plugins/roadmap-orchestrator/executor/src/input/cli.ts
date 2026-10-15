@@ -95,7 +95,9 @@ export type Command =
   // live arc) and `flow given --repo --lever --note` (a host given).
   | Readonly<{ command: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string; run: RunLocator }>
   | Readonly<{ command: 'flow-request'; reason: string; run: RunLocator }>
-  | Readonly<{ command: 'flow-given'; repo: string; lever: FlowLever; note: string }>;
+  | Readonly<{ command: 'flow-given'; repo: string; lever: FlowLever; note: string }>
+  /** Scope growth (2026-10-15): `scope accept|reject <unit> --reason <text>`, the root agent's decision on a held proposal. */
+  | Readonly<{ command: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string; run: RunLocator }>;
 
 /** What `phase0 check` reads: a plan file in the working tree, or every input by the digests `refs/roadmap/<arc>` recorded (K20). */
 export type Phase0Source = Readonly<{ type: 'plan'; plan: string }> | Readonly<{ type: 'ref'; arc: ArcId }>;
@@ -428,9 +430,17 @@ export function parseCommand(argv: readonly string[]): Command {
           throw new CliError(`flow: expected the subcommand accept, reject, request or given, got ${JSON.stringify(sub ?? '')}`);
       }
     }
+    case 'scope': {
+      const [sub, ...args] = rest;
+      if (sub !== 'accept' && sub !== 'reject') throw new CliError(`scope: expected the subcommand accept or reject, got ${JSON.stringify(sub ?? '')}`);
+      const name = `scope ${sub}`;
+      const p = parseRest(args, { ...LOCATOR, reason: 'value' }, name);
+      const unit = arg(name, '<unit>', unitId, onePositional(p, name, '<unit>'));
+      return { command: 'scope-decide', unit, decision: sub, reason: nonBlank(name, 'reason', required(p, name, 'reason', '<text>')), run: locator(p, name) };
+    }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, rule, reverse, steer, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, issues, chain status, answer, witness-check, resume-arc, inputs export, flow accept, flow reject, flow request, flow given, scope accept, scope reject`,
       );
   }
 }

@@ -40,14 +40,16 @@ export function openProbeRun(r: ProbeRun): OpenedProbe {
   const hostEnv = { ...process.env, PATH: `${r.binDir}:${process.env['PATH'] ?? ''}` };
   const host = { sample: CLEAR };
   const planDir = absPath(r.planDir);
+  const planFile = absPath(join(r.planDir, 'plan.json'));
+  const routingBase = { profile: 'claude-only', config: null, arcRoles: 'm4b' } as const;
   const ctx: ProberContext = {
-    ...resources, routing: () => resolved, hostEnv, planDir, profile: 'claude-only', sample: () => host.sample, ...serialRuntime(resources),
+    ...resources, routing: () => resolved, hostEnv, planDir, planFile, routingBase, profile: 'claude-only', sample: () => host.sample, ...serialRuntime(resources),
   };
   const recovery: RecoveryContext = {
     stage: ctx,
     commands: {
       ...resources, hostEnv: backendEnv(hostEnv), laneEnv: hostEnv, routing: () => ({ profile: 'claude-only', resolved }),
-      routingBase: { profile: 'claude-only', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET, planFile: absPath(join(r.planDir, 'plan.json')), planDir,
+      routingBase, docs: DOCS_NOT_YET, planFile, planDir,
       probes: { prober: createProber(ctx), signal: new AbortController().signal },
     },
   };

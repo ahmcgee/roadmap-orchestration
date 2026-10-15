@@ -148,6 +148,19 @@ export type PlanCheckInputs = Readonly<{
    * this retry to correct; null otherwise.
    */
   priorInvalid: string | null;
+  /**
+   * Scope growth (2026-10-15): the reference sweep's start (Phase-0 row 10 over the spec's `removes` at the tip the check
+   * reads) and the unit's earlier proposals the root agent rejected (never proposed again).
+   */
+  scopeGrowth: PlanCheckScopeGrowth;
+}>;
+
+/** What a plan-check reads for its scope-growth proposals. */
+export type PlanCheckScopeGrowth = Readonly<{
+  /** Per `removes` entry with referrers: the files outside the scope envelope that still name it. */
+  references: readonly Readonly<{ removed: string; referrers: readonly RepoPath[] }>[];
+  /** Each rejected proposal: its patterns and reason, and the root agent's reason for rejecting it. */
+  rejected: readonly Readonly<{ patterns: readonly RepoPattern[]; reason: string; rejection: string }>[];
 }>;
 
 /**
@@ -167,6 +180,11 @@ export type BuildInputs = Readonly<{
   /** The approving plan-check's notes: facts it found about existing code (item 26); empty when none. */
   planCheckNotes: string;
   fastLanes: readonly FastLane[];
+  /**
+   * The 2026-10-15 batch: the plan's fast suite lanes the lanes stage runs after the spec's (`fastSuiteLanes`,
+   * src/pipeline/lanes.ts), which the implementer runs green beside its fast lanes; empty when the plan has none.
+   */
+  suiteLanes: readonly FastLane[];
   /** Where the implementer writes decisions.json; outside the worktree, snapshotted by the executor. */
   evidenceDir: AbsPath;
   worktree: AbsPath;
@@ -220,8 +238,11 @@ export type GateInputs = Readonly<{
   laneLedger: readonly LaneLedgerEntry[];
   /** Evidence directories the gate may read (lane output, the build's decisions.json). */
   evidence: readonly AbsPath[];
-  /** The pinned envelope, and the diff's paths outside it. */
-  scope: Readonly<{ patterns: readonly RepoPattern[]; growth: readonly RepoPath[] }>;
+  /**
+   * The pinned envelope, the diff's paths outside it, and (scope growth, 2026-10-15) the out-of-scope paths the build edited
+   * that salvage reverted (in no diff), still outside the envelope.
+   */
+  scope: Readonly<{ patterns: readonly RepoPattern[]; growth: readonly RepoPath[]; rejected: readonly RepoPath[] }>;
   /** Later gate rounds rule on their own prior round (§3, sf16); null on the first round. */
   priorRound: GatePriorRound | null;
   /** M4a rev 3: the executable checks' results (`GateChecks`). */
@@ -401,8 +422,11 @@ export type RoleInputs = {
 };
 
 export const ROLE_INPUTS = {
-  planCheck: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid'],
-  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  planCheck: [
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
+    'scopeGrowth',
+  ],
+  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
     'checks',
@@ -511,6 +535,15 @@ export function fastLanesText(worktree: AbsPath, lanes: readonly FastLane[]): st
   }).join('\n');
 }
 
+/**
+ * The suite lanes a build runs beside its fast lanes (the 2026-10-15 batch), as their exact commands; nothing when the plan
+ * has none. Reported as experiments: lanesRun holds the spec's fast lanes only (its schema's enum).
+ */
+export function suiteLanesText(worktree: AbsPath, lanes: readonly FastLane[]): string {
+  if (lanes.length === 0) return '';
+  return `\n\n<suite_lanes>\nThe executor runs these suite lanes after your fast lanes, in a clean checkout of your commit, and a red one comes back to you as a fix round. Run each exactly as written beside the fast lanes, after your last change, until it exits with its expected code, and report each run in experiments under the name suite:<id>, never in lanesRun:\n${fastLanesText(worktree, lanes)}\n</suite_lanes>`;
+}
+
 export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {
   if (ledger.length === 0) return '(no lanes ran)';
   return ledger.map((l) => {
@@ -585,14 +618,34 @@ Read the spec, the documents above and the code the spec depends on, then return
 ${vision}`;
 }
 
-/** Run 10 (C): the previous plan-check answer's refused patch, as the retry reads it (empty when there was none). */
+/**
+ * Run 10 (C), every reason since 2026-10-15: why the previous plan-check answer (its repair turn's, when it made one) was
+ * refused, as the retry reads it (empty when it was not).
+ */
 export function planCheckPriorInvalidText(reason: string | null): string {
   if (reason === null) return '';
   return `
 
 <prior_attempt>
-Your previous answer on this unit redirected with a patch the executor refused, so the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
+Your previous answer on this unit was refused, so nothing of it was applied and the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
 </prior_attempt>`;
+}
+
+/**
+ * Scope growth (2026-10-15): the reference sweep's start, and the rejected proposals (only when there are any).
+ */
+export function scopeGrowthText(g: PlanCheckScopeGrowth): string {
+  const refs = g.references.map((r) => `- \`${r.removed}\` is still named by: ${r.referrers.join(', ')}`);
+  const rejected = g.rejected.map((r) => `- ${r.patterns.map((p) => `\`${p}\``).join(', ')}: proposed because ${r.reason}; rejected because ${r.rejection}`);
+  return `
+
+<scope_references>
+${refs.length === 0 ? '(none: the spec declares no removes, or nothing outside the envelope names them)' : refs.join('\n')}
+</scope_references>${rejected.length === 0 ? '' : `
+
+<rejected_scope_growth>
+${rejected.join('\n')}
+</rejected_scope_growth>`}`;
 }
 
 /**

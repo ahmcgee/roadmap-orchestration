@@ -45,6 +45,7 @@ import { detectContainmentMode } from '../contain/detect.ts';
 import { durableMkdir, readJson } from '../core/fsx.ts';
 import { type ArcId, INTEGRATION_SLOT, type ResourceName, type Sha, type UnitId, sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
 import { LogCorruptError, type OpenJournal, openJournal, readJournal } from '../core/log.ts';
 import type { HostLockClaim, LaneDef, SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -594,6 +595,9 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     const p0 = phase0Rows(phase0InputOf(source.files, readRepoConfig(input.repo)), fresh ? FRESH_START : RESTART);
     const rows = [...(fresh ? holisticNeedsCorpus(source.files.plan) : []), ...p0.rows];
     if (rows.length > 0) return refused(rows);
+    // Row 10's advisories never refuse a start; the executor's stderr (the supervisor's err file) keeps them, and
+    // `phase0 check` and `apply` print them where the root agent reads.
+    for (const a of p0.advisories) process.stderr.write(`roadmap: advisory ${canonicalJson(a)}\n`);
     corpusFiles = p0.opened?.files ?? [];
   }
 

@@ -72,7 +72,7 @@ function series(run: StageRun, attempt: number, defs: readonly LaneDef[], at: Sh
 }
 
 const readBack = (run: StageRun, attempt: number, at: Sha) =>
-  seriesLedger(run.ctx, parentOf(attempt), specLanes(run), at, specSeriesRoot(run.runDir, parentOf(attempt)));
+  seriesLedger(run.ctx, parentOf(attempt), specLanes(run), 'spec', at, specSeriesRoot(run.runDir, parentOf(attempt)));
 
 const laneSpawns = (run: StageRun, lane: string, attempt?: number): readonly IntentOf<'proc.spawn'>[] => spawnIntents(run).filter((i) => {
   const s = i.expect.subject;

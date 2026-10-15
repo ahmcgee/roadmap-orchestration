@@ -35,7 +35,16 @@ test('merge.base-red: the suite is red on the candidate and on T alone; the unit
     assert.equal(outcomes(d).at(-1), 'candidate:base-red');
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0, 'base-red is uncharged');
     assert.equal(git(d.repo, 'rev-parse', 'main'), tip, 'integration never moved');
-    const suites = intents(d.runDir, 'proc.spawn').flatMap((i) => (i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite' ? [i.expect.subject.at] : []));
+    const suiteSpawns = intents(d.runDir, 'proc.spawn').flatMap((i) => (i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' && i.expect.subject.set === 'suite' ? [i] : []));
+    const atOf = (i: (typeof suiteSpawns)[number]): string => (i.kind === 'proc.spawn' && i.expect.subject.purpose === 'lane' ? i.expect.subject.at : '');
+    // The lanes stage's fast suite (stages.ts `fastSuite`) ran first: red at the unit commit, and red again on its diff
+    // base T alone, so the lanes stage recorded an uncharged base-red and went on to the gate.
+    const unitCommit = r.journal.view.unit(U1).approval!.fingerprint.unitCommit;
+    const lanesSpawns = suiteSpawns.filter((i) => i.parent.type === 'stage' && i.parent.stage === 'lanes');
+    assert.deepEqual(lanesSpawns.map(atOf), [unitCommit, unitCommit, tip, tip], 'the fast suite red at the unit commit and on T alone, each red lane rerun');
+    assert.ok(outcomes(d).includes('lanes:base-red'), outcomes(d).join(' '));
+    const suites = suiteSpawns.filter((i) => i.parent.type === 'stage' && i.parent.stage === 'candidate').map(atOf);
+    assert.equal(suiteSpawns.length, lanesSpawns.length + suites.length, 'every suite spawn is the lanes stage\'s or the candidate\'s');
     // Each red suite lane is rerun once at its SHA (the red-lane protocol's diagnostic rerun, M2 A10).
     assert.equal(suites.length, 4);
     assert.notEqual(suites[0], tip);

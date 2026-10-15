@@ -8,7 +8,7 @@
 import {
   type AbortRecord, type AuditInputs, type BackendParkClass, type CoveredRange, type DoneRecord, type Event, type Fact, type HolisticFact, type Holder,
   type IntentOf, type IntentRecord, type JudgmentInputs, type JudgmentStage, type OpKind, type ParkRecord, type PlanAppliedFact, type ProbeTarget,
-  type ResourceEdge, type RetryStage, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
+  type ResourceEdge, type RetryStage, type ScopeGrowthProposal, type StageOutcomeFact, JUDGMENT_STAGES, RECLAIM_HOLDERS, RESIDUE_HOLDERS, RETRY_STAGES, RETRYABLE_BACKEND_PARKS,
   prevHash, probeTargetKey, serializeEvent,
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
@@ -113,7 +113,8 @@ export type UnitState = Readonly<{
   /**
    * The unit's latest `hold` fact while no later outcome has decided, else null: the interrupted attempt the
    * held stage's re-run starts from. An interrupted build is continued, not restarted (the `continue` round,
-   * src/pipeline/rounds.ts); a chain of pauses keeps the latest.
+   * src/pipeline/rounds.ts); a chain of pauses keeps the latest. A recovery hold (`cause: recovery`) is not one: it
+   * leaves this as it was.
    */
   interrupted: StageOutcomeFact | null;
   /**
@@ -132,6 +133,8 @@ export type UnitState = Readonly<{
    * short, whose invocations recovery has since closed (the driver consumes a completed backend call instead
    * of dispatching again, unit.ts), or a retire, which records no outcome. Null once it has its outcome. `seq`: the
    * seq of the record that first started it (M4a rev 3: `openAttempt` tells a running attempt from an abandoned one).
+   * Arc feedback 2026-10-15: the executor's startup records every abandoned one at an admission stage (its call, or a
+   * recovery hold), so past startup only a running attempt, or a chain stage's about to run again, is open.
    */
   open: Readonly<{ stage: Stage; attempt: number; seq: number }> | null;
   /**
@@ -176,6 +179,17 @@ export type UnitState = Readonly<{
    * gate outcome that advances it. Null otherwise.
    */
   steering: Readonly<{ seq: number; resume: boolean }> | null;
+  /**
+   * Scope growth (2026-10-15): the root agent's decisions on the unit's held scope-growth proposals (`scope-decided`), in log
+   * order, each with the proposals its plan-check attempt held. A later plan-check reads the rejected ones (it is told not
+   * to propose them again, and a proposal of a rejected pattern no longer holds it).
+   */
+  scopeDecisions: readonly ScopeDecision[];
+}>;
+
+/** One `scope-decided` fact with the proposals of the plan-check attempt it decided. */
+export type ScopeDecision = Readonly<{
+  attempt: number; command: CommandId; decision: 'accepted' | 'rejected'; proposals: readonly ScopeGrowthProposal[]; reason: string;
 }>;
 
 export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, spec: SpecState | null = null, bounds: Bounds = DEFAULT_BOUNDS): UnitState {
@@ -184,7 +198,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
-    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null,
+    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [],
   };
 }
 
@@ -840,6 +854,11 @@ export class Fold implements JournalView {
         if (f.cause?.type === 'backend' && this.#backendParkSeqs.get(f.cause.parkSeq) !== f.cause.backend) {
           fail(`hold of ${f.unit} ${key} caused by backend ${f.cause.backend}'s park at seq ${f.cause.parkSeq}, which is no park of that backend`);
         }
+        // Arc feedback 2026-10-15: a recovery hold closes exactly the unit's open attempt, one a crash cut short.
+        const open = existing?.state.open ?? null;
+        if (f.cause?.type === 'recovery' && (open === null || open.stage !== f.stage || open.attempt !== f.attempt || open.seq > this.lastExecutorStarted())) {
+          fail(`recovery hold of ${f.unit} ${key}, which is not its crash-abandoned open attempt (${open === null ? 'none is open' : `${open.stage}#${open.attempt} at seq ${open.seq}`})`);
+        }
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
@@ -852,7 +871,12 @@ export class Fold implements JournalView {
           u.state = { ...u.state, entry: null, steering: ends ? null : u.state.steering };
         }
         u.state = afterStageOutcome(u.state, f);
-        if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
+        // A recovery hold continues nothing (its attempt made no call to continue): the re-run starts from the decision and
+        // the interruption before it, as the abandoned attempt's own re-run would have. It holds the unit only while a pause
+        // covers it; otherwise the unit stays active and its stage runs again once admitted.
+        if (f.cause?.type === 'recovery') {
+          if (!this.#pausedAll && !this.#pausedUnits.has(f.unit)) u.state = { ...u.state, status: 'active' };
+        } else if (f.class === 'hold') u.state = { ...u.state, interrupted: f };
         else {
           u.beforeDecided = { decided: u.state.decided, interrupted: u.state.interrupted };
           u.state = { ...u.state, decided: f, interrupted: null, pressureHold: null };
@@ -866,7 +890,7 @@ export class Fold implements JournalView {
           this.#unitParkSeqs.set(at.seq, f.unit);
         }
         const lineage = u.state.lineage;
-        if (f.stage === 'prepare' && f.class !== 'park' && lineage !== null) u.state = { ...u.state, lineage: { ...lineage, prepared: true } };
+        if (f.stage === 'prepare' && f.class !== 'park' && f.class !== 'hold' && lineage !== null) u.state = { ...u.state, lineage: { ...lineage, prepared: true } };
         this.#start(u, key);
         return;
       }
@@ -936,6 +960,9 @@ export class Fold implements JournalView {
         return;
       case 'resumed':
         this.#resumed(f.target, fail);
+        return;
+      case 'scope-decided':
+        this.#scopeDecided(f, fail);
         return;
       case 'reopened':
         this.#reopened(f, fail);
@@ -1462,6 +1489,22 @@ export class Fold implements JournalView {
       ...u.state, stage: 'plan-check', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
       reopened: { command: f.command, specRev: f.specRev }, redirectBase: u.state.counters.redirects, pendingRevision: null,
     };
+  }
+
+  /**
+   * The root agent's decision on a held scope-growth proposal (src/commands/scope.ts): only of the unit held by that
+   * plan-check attempt's `scope-growth` hold. It releases the hold (the plan-check re-runs as a new, uncharged attempt) and
+   * is kept with the proposals it decided.
+   */
+  #scopeDecided(f: Extract<Fact, { kind: 'scope-decided' }>, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined) return fail(`scope-decided of unit ${f.unit}, which never started`);
+    const held = u.state.interrupted;
+    if (u.state.status !== 'held' || held === null || held.stage !== 'plan-check' || held.outcome !== 'scope-growth' || held.attempt !== f.attempt || held.detail?.kind !== 'scope-growth') {
+      return fail(`scope-decided of unit ${f.unit} plan-check#${f.attempt}, which is not the unit's scope-growth hold (status ${u.state.status}, held ${held === null ? 'none' : `${held.stage}#${held.attempt} ${held.outcome}`})`);
+    }
+    const decision: ScopeDecision = { attempt: f.attempt, command: f.command, decision: f.decision, proposals: held.detail.proposals, reason: f.reason };
+    u.state = { ...u.state, status: 'active', scopeDecisions: [...u.state.scopeDecisions, decision] };
   }
 
   /**

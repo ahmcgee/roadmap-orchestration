@@ -64,7 +64,8 @@ export const INVALID_OP: JsonValue = { op: 'cut', unit: 'no-such-unit', reason: 
 export type CheckpointSpec = Readonly<{
   decision: 'no-op' | 'bundle';
   ops?: readonly JsonValue[];
-  rulings?: readonly string[];
+  /** Ruling sidecars: objects (the wire form since 2026-10-15), or their JSON text, which is parsed into one. */
+  rulings?: readonly (string | JsonValue)[];
   findingDispositions?: readonly Readonly<{ finding: string; disposition: 'dismissed' | 'deferred' | 'accepted'; reason: string }>[];
   interpretations?: readonly Readonly<{ clauses: readonly string[]; situation: string; reading: string }>[];
   /** M4a: amendments the checkpoint proposes (`rules` are `T-n` ids). */
@@ -87,7 +88,7 @@ export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
     decision: spec.decision,
     reasons: ['scripted checkpoint'],
     ops: [...(spec.ops ?? [])],
-    rulings: [...(spec.rulings ?? [])],
+    rulings: (spec.rulings ?? []).map((r) => (typeof r === 'string' ? JSON.parse(r) as JsonValue : r)),
     findingDispositions: (spec.findingDispositions ?? []).map((d) => ({ ...d })),
     interpretations: (spec.interpretations ?? []).map((i) => ({ clauses: [...i.clauses], situation: i.situation, reading: i.reading })),
     cites: { vision: ['V-1'], observations: [], findings: [] },
@@ -122,6 +123,17 @@ export function lensStep(job: string | undefined, lens: LensKindName, findings: 
 /** A checkpoint call of job `job` (a `ckpt-n`) answers `answer`. */
 export function checkpointStep(job: string | undefined, answer: JsonValue, extra: readonly ClaudeAct[] = []): Step {
   return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: answer }]);
+}
+
+/**
+ * 2026-10-15: the repair turn of job `job`'s refused answer: its session resumed (`--resume`), the stdin naming why it was
+ * refused (`stdinContains` adds to the directive's opening); it answers `answer`.
+ */
+export function checkpointRepairStep(job: string, answer: JsonValue, stdinContains: readonly string[] = []): Step {
+  return {
+    ...checkpointStep(job, answer),
+    expect: { argv: ['--resume'], argvLacks: ['--session-id', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
+  };
 }
 
 export type PackFindingSpec = Readonly<{

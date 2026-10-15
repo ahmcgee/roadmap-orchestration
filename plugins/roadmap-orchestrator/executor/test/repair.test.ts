@@ -33,7 +33,7 @@ import type { Step } from './helpers/scenario.ts';
 import { scriptTree } from './helpers/witness.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { wire } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep, started } from './fixtures/stage-common.ts';
+import { SCENARIO_TIMEOUT_MS, admitAll, planCheckRepairStep, planCheckStep, started } from './fixtures/stage-common.ts';
 import {
   MAPPED, MUTANT_PATCH, STALE_PATCH, STRICT_TEST, buildOf, openBefore, tipOf, treeWith, vacuityArc, vacuityDraft as vacuityDraftOf, witnessDraft,
 } from './fixtures/repair-common.ts';
@@ -252,7 +252,7 @@ describe('P1 blocking and repair (G10, R6, R7)', () => {
       assert.deepEqual(batchable(r.journal.view.holistic().findings, repairUnits(r.ctx)), [{ finding: 'F-1', units: ['u1', 'u2'] }]);
       const tip = tipOf(d);
       const w = wire(r);
-      const outcome = await publishBatch({ ...r.ctx, acquireFirst: w.arbiter.acquireFirst }, F1, [r.unit('u1'), r.unit('u2')]);
+      const outcome = await publishBatch({ ...r.ctx, acquireFirst: w.arbiter.acquireFirst }, [F1], [r.unit('u1'), r.unit('u2')]);
       const head = tipOf(d);
       assert.deepEqual(outcome, { kind: 'published', job: jobId('batch', 1), head });
       // Git truth: a first-parent chain of two --no-ff merges on the tip, one per member.
@@ -376,7 +376,10 @@ describe('plan-check and the findings store', () => {
       r.journal.close();
     }
     const bad = holisticArc({
-      steps: [planCheckStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] })],
+      steps: [
+        planCheckStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] }),
+        planCheckRepairStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] }, ['visionConflict cites V-9, which is no active clause of the vision in force']),
+      ],
       units: [{ id: 'u1', obligations: ['I-1'] }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED, trees: {},
     });
     const b = contextFor(bad.d);

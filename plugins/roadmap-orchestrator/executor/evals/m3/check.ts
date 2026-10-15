@@ -48,7 +48,7 @@
 //   run-ended (complete), units-settled (merged, or cut or superseded by a bundle), head-is-publication (the head is the last publication's commit: a unit's
 //   tested candidate or the docs commit), diff-product-and-docs (units' scopes plus the living `.roadmap/` docs,
 //   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens,
-//   checkpoint and pack-review calls), meter-covers-calls (unit and arc calls), no-model-ids
+//   checkpoint and pack-review calls; a plan-check's or checkpoint's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
 // reproduction, batch repair, per-identity bound, owner-request, draining, real go, literal partial bundle. The paid
@@ -683,14 +683,22 @@ function resultOf(run: Run, i: IntentOf<'proc.spawn'>): ResultFile | null {
 function judgmentFresh(run: Run): Verdict {
   const problems: string[] = [];
   const seen = new Map<string, string>();
+  const repaired = new Set<string>();
   const roles = new Set<string>();
   for (const i of spawnIntents(run)) {
     const role = backendRole(i);
     if (role === null || !JUDGMENT_ROLES.has(role) || i.expect.subject.purpose === 'smoke') continue;
     roles.add(role);
     const { inv, launch } = launchOf(run, i);
-    if (launch.argv.includes('--resume')) problems.push(`${inv}: judgment argv resumes`);
     const t = launch.terminal;
+    // 2026-10-15: a plan-check's or checkpoint's repair turn resumes its own earlier fresh session, once.
+    if (t.type === 'backend' && t.role !== 'build' && t.session.mode === 'resume' && (role === 'planCheck' || role === 'checkpoint')) {
+      if (seen.get(t.session.id) === undefined) problems.push(`${inv}: a repair turn resumes ${t.session.id}, no earlier fresh judgment session`);
+      if (repaired.has(t.session.id)) problems.push(`${inv}: a second repair turn of ${t.session.id}`);
+      repaired.add(t.session.id);
+      continue;
+    }
+    if (launch.argv.includes('--resume')) problems.push(`${inv}: judgment argv resumes`);
     if (t.type !== 'backend' || t.session.mode !== 'fresh' || !('id' in t.session)) {
       problems.push(`${inv}: judgment session is not a fresh named session`);
       continue;

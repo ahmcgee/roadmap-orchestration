@@ -80,7 +80,13 @@
 //     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
 //     (a fix round each, `batchMemberFix`); a red nothing attributes, a conflict, a base red, an occupied lane or a
 //     foreign move raises one blocking item and the members wait for its acknowledgement; members whose approval no
-//     longer holds at the tip leave the batch (each takes its own candidate, whose ff re-gates it).
+//     longer holds at the tip leave the batch (each takes its own candidate, whose ff re-gates it). A batch's members
+//     are eligible against what the whole batch repairs (`batchRepairs`): its candidate carries every member's fix.
+//     Arc feedback 2026-10-15: approved repairs waiting at their candidates, each held by an active P1 that another of
+//     them owns (fixed on its branch), form a cycle (`holdCycle`) that no single candidate can break; the findings along
+//     it publish as one batch (keyed by the lowest), every unit repairing one of them directly a member, under the same
+//     rules (all of them waiting, none suspended, none still held against the batch's repairs). Single-finding batches
+//     are planned first.
 //
 // Design parks (OR-Q1, `designParkRoute`): in a holistic arc a design park goes to the checkpoint first, and its
 // own item waits; a checkpoint that respecified the unit re-opens it on its pending revision (`reopened`), one that
@@ -139,7 +145,7 @@ import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue, trippedTargets } from '../park/schedule.ts';
 import { baselineDue, runBaseline } from '../pipeline/baseline.ts';
 import { type StageContext, runOp } from '../pipeline/dispatch.ts';
-import { type BatchOutcome, finishBatch, findingBlocking, heldBatch, publishBatch } from '../pipeline/integrate.ts';
+import { type BatchOutcome, batchRepairs, finishBatch, findingBlocking, heldBatch, publishBatch } from '../pipeline/integrate.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
 import { laneEnvId, observations } from '../pipeline/lanes.ts';
 import { type DocsContext, closeOutFiles, endDetail, publishCloseOut } from '../pipeline/publish.ts';
@@ -151,7 +157,8 @@ import { recoverReservations } from '../recover/resource.ts';
 import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Arbiter, FirstHolder } from './arbiter.ts';
-import { admitter, nextStage, rankOf, ready } from './ready.ts';
+import { holdCycle } from './graph.ts';
+import { admitter, findingBlock, nextStage, rankOf, ready } from './ready.ts';
 import { type AdmissionStage, type CommandScope, PARK_ESCALATE_MS, PROBE_BACKOFF_MIN, type ResourceRequest, type TaskState } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -548,7 +555,8 @@ export function readOnlyContexts(x: Readonly<{
   };
   const containment: Containment = { mode: 'session', launch: refuse('launched'), members: refuse('scanned'), kill: refuse('killed'), empty: refuse('scanned') };
   const stage: StageContext = {
-    journal, containment, runDir: x.runDir, repo: x.repo, hostDir: x.hostDir, plan: x.plan, planDir: absPath(dirname(x.planFile)), hostEnv: x.hostEnv,
+    journal, containment, runDir: x.runDir, repo: x.repo, hostDir: x.hostDir, plan: x.plan, planDir: absPath(dirname(x.planFile)), planFile: x.planFile, routingBase: x.routingBase,
+    hostEnv: x.hostEnv,
     routing: refuse('resolved routing'), acquire: refuse('reserved'), rank: refuse('ranked'), signal: new AbortController().signal,
   };
   const arbiter: Arbiter = { acquire: refuse('reserved'), acquireFirst: refuse('reserved'), wake: refuse('woke the arbiter'), waiting: refuse('read waiters'), waitingFirst: refuse('read waiters') };
@@ -645,7 +653,9 @@ export type BatchSettled = Readonly<{ progress: boolean; retire: readonly UnitId
  * attributes, any other refusal, a base red, a foreign move or an occupied lane raises one blocking item, parented by the
  * attempt's slot reservation, for which the members wait (`batchSuspended`); stale members leave the batch.
  */
-export function settleBatch(ctx: StageContext, finding: FindingId, members: readonly PlanUnit[], out: BatchOutcome): BatchSettled {
+export function settleBatch(ctx: StageContext, findings: readonly FindingId[], members: readonly PlanUnit[], out: BatchOutcome): BatchSettled {
+  const finding = findings[0];
+  if (finding === undefined) throw new Error('a batch repairs at least one finding');
   const none: BatchSettled = { progress: true, retire: [], unbatch: [] };
   const memberOutcome = (unit: UnitId, kind: 'red' | 'transient-violation'): void => {
     record(ctx, at(start(ctx, unit, 'candidate'), 'candidate'), kind);
@@ -658,7 +668,7 @@ export function settleBatch(ctx: StageContext, finding: FindingId, members: read
   };
   const hold = (summary: string): void => raise({
     blocking: true, subject: { type: 'arc' }, reason: 'candidate-red',
-    summary: `Repair batch ${out.job} for ${finding} (${members.map((m) => m.id).join(', ')}): ${summary}. Its members wait for this item.`,
+    summary: `Repair batch ${out.job} for ${findings.join(', ')} (${members.map((m) => m.id).join(', ')}): ${summary}. Its members wait for this item.`,
     recommendation: 'Read the batch evidence and fix what it names (the base, the suite, or the repair plan with `roadmap apply`); then acknowledge this item: the batch runs again.',
     options: [], evidence: [jobEvidenceRoot(ctx.runDir, out.job)],
   });
@@ -831,12 +841,14 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   const approvalKey = (unit: UnitId): string => canonicalJson(view().unit(unit).approval);
 
-  type BatchPlan = Readonly<{ held: ReadonlySet<UnitId>; ready: Readonly<{ finding: FindingId; members: readonly PlanUnit[] }> | null }>;
+  type BatchPlan = Readonly<{ held: ReadonlySet<UnitId>; ready: Readonly<{ findings: readonly FindingId[]; members: readonly PlanUnit[] }> | null }>;
   const NO_BATCH: BatchPlan = { held: new Set(), ready: null };
 
   /**
    * R7: for each active finding at least two active units repair directly (not yet published), the approved ones
-   * waiting at their candidate are held; once all of them wait there (and none is finding-blocked), they are a batch.
+   * waiting at their candidate are held; once all of them wait there (and none is held by a finding the batch does not
+   * repair), they are a batch. Failing that, a cycle of finding holds among the approved repairs waiting at their
+   * candidates (`holdCycle`) is one batch of the findings along it (arc feedback 2026-10-15).
    */
   const batchPlan = (): BatchPlan => {
     const v = view();
@@ -844,25 +856,39 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     const findings = v.holistic().findings.filter(isActive);
     if (findings.length === 0) return NO_BATCH;
     for (const [u, key] of unbatched) if (approvalKey(u) !== key) unbatched.delete(u);
-    const repairs = repairUnits(x.stage);
+    const live = repairUnits(x.stage).filter((r) => v.unit(r.unit).status === 'active' && !unbatched.has(r.unit)
+      && (r.progress.kind === 'working' || r.progress.kind === 'approved'));
+    const waiting = new Set(live.filter((r) => {
+      const t = tasks.get(r.unit);
+      const next = upcoming(v.unit(r.unit), specOf(planUnit(r.unit)).reproduces);
+      return r.progress.kind === 'approved' && next?.kind === 'admission' && next.stage === 'candidate' && (t === undefined || t.state === 'awaiting-admission' || t.state === 'idle');
+    }).map((r) => r.unit));
+    /** The batch of `group` (findings in canonical order, the first its key): every unit repairing one directly, once all wait. */
+    const batchOf = (group: readonly FindingId[]): BatchPlan['ready'] => {
+      const direct = live.filter((r) => r.repairs.some((ref) => (group as readonly string[]).includes(ref)));
+      if (direct.length < 2 || !direct.every((r) => waiting.has(r.unit)) || batchSuspended(v, group[0]!)) return null;
+      const members = direct.map((r) => planUnit(r.unit));
+      const repaired = batchRepairs(x.stage, members);
+      return members.some((m) => findingBlocking(x.stage, m, repaired) !== null) ? null : { findings: group, members };
+    };
     const held = new Set<UnitId>();
     let batch: BatchPlan['ready'] = null;
     for (const f of findings) {
-      const direct = repairs.filter((r) => r.repairs.includes(f.id) && v.unit(r.unit).status === 'active' && !unbatched.has(r.unit)
-        && (r.progress.kind === 'working' || r.progress.kind === 'approved'));
+      const direct = live.filter((r) => r.repairs.includes(f.id));
       if (direct.length < 2) continue;
-      const waitingAtCandidate = direct.filter((r) => {
-        const t = tasks.get(r.unit);
-        const next = upcoming(v.unit(r.unit), specOf(planUnit(r.unit)).reproduces);
-        return r.progress.kind === 'approved' && next?.kind === 'admission' && next.stage === 'candidate' && (t === undefined || t.state === 'awaiting-admission' || t.state === 'idle');
-      });
-      for (const r of waitingAtCandidate) held.add(r.unit);
-      if (batch !== null || waitingAtCandidate.length !== direct.length || batchSuspended(v, f.id)) continue;
-      const members = waitingAtCandidate.map((r) => planUnit(r.unit));
-      if (members.some((m) => findingBlocking(x.stage, m) !== null)) continue;
-      batch = { finding: f.id, members };
+      for (const r of direct) if (waiting.has(r.unit)) held.add(r.unit);
+      batch ??= batchOf([f.id]);
     }
-    return { held, ready: batch };
+    if (batch !== null) return { held, ready: batch };
+    const owners = new Map(findings.map((f) => [f.id, f.owner] as const));
+    const blocked = new Map<UnitId, Readonly<{ finding: FindingId; owner: UnitId }>>();
+    for (const u of waiting) {
+      const block = findingBlock(v, u, specOf(planUnit(u)).repairs);
+      const owner = block === null ? null : owners.get(block.finding) ?? null;
+      if (block !== null && owner !== null && waiting.has(owner)) blocked.set(u, { finding: block.finding, owner });
+    }
+    const cycle = holdCycle(blocked);
+    return { held, ready: cycle === null ? null : batchOf(cycle) };
   };
 
   // -------------------------------------------------------------------------------------------------
@@ -1073,8 +1099,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     const ready = batch.ready;
     if (ready !== null && !holds.arc && due('batch') && heldBatch(view()) === null) {
       trackRetrying('batch', 'batch', async () => {
-        const out = await publishBatch({ ...x.stage, acquireFirst: arbiter.acquireFirst }, ready.finding, ready.members);
-        const settled = settleBatch(x.stage, ready.finding, ready.members, out);
+        const out = await publishBatch({ ...x.stage, acquireFirst: arbiter.acquireFirst }, ready.findings, ready.members);
+        const settled = settleBatch(x.stage, ready.findings, ready.members, out);
         for (const u of settled.retire) retiring.add(u);
         for (const u of settled.unbatch) unbatched.set(u, approvalKey(u));
         if (out.kind === 'no-verdict' && out.end.kind !== 'occupied') return { kind: 'no-verdict', job: out.job, detail: endDetail(out.end) };

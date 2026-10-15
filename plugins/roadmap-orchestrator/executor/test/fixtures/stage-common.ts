@@ -73,6 +73,8 @@ export type SetupOptions = Readonly<{
   profile?: ProfileName;
   /** The repo's .gitignore; default `out/`. */
   gitignore?: string;
+  /** The plan's suite lanes (default none). */
+  suite?: readonly LaneJson[];
 }>;
 
 export type StageRun = Readonly<{
@@ -96,6 +98,12 @@ function laneJson(l: LaneJson): Record<string, unknown> {
     tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }), state: 'active',
   };
+}
+
+/** A suite lane as plan.json writes it: a spec lane's shape without its item state. */
+function suiteLaneJson(l: LaneJson): Record<string, unknown> {
+  const { state: _state, ...lane } = laneJson(l);
+  return lane;
 }
 
 /**
@@ -180,7 +188,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
-    suite: { lanes: [] }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
+    suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [] }],
   }));
   const plan: PlanM1 = parsePlan(JSON.parse(readFileSync(planPath, 'utf8')));
@@ -201,6 +209,8 @@ export function setupUnit(opts: SetupOptions): StageRun {
     routing: () => routing,
     hostEnv: { ...process.env, PATH: `${scenario.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(planDir),
+    planFile: absPath(planPath),
+    routingBase: { profile: opts.profile ?? 'default', config: null, arcRoles: null },
     ...serialRuntime(resources),
   };
   return { ctx, journal, unit, repo: absPath(repo), runDir: absPath(runDir), planDir: absPath(planDir), specPath: absPath(specPath), base, scenario, stateDir, scratch: tmpDir('stage-scratch') };
@@ -217,18 +227,35 @@ export type PlanCheckAnswer = Readonly<{
   premises?: readonly JsonValue[];
   /** M3 (R17): vision conflicts the check reports (default none). */
   visionConflict?: readonly Readonly<{ clauses: readonly string[]; note: string }>[];
+  /** Scope growth (2026-10-15): proposals the check makes (default none). */
+  scopeGrowth?: readonly Readonly<{ patterns: readonly string[]; reason: string }>[];
 }>;
 
 /** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
 export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
-  const argv = ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence', ...(expect.argv ?? [])];
+  // 2026-10-15: a plan-check's fresh session persists (no --no-session-persistence) so its repair turn can resume it.
+  const argv = ['-p', '--tools', 'Read,Grep,Glob', '--session-id', ...(expect.argv ?? [])];
   return {
     as: 'claude',
-    expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode'] },
-    acts: [...before, {
-      type: 'emit',
-      value: { decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])] },
-    }],
+    expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] },
+    acts: [...before, { type: 'emit', value: planCheckAnswer(a) }],
+  };
+}
+
+/** A plan-check's answer as the fake emits it. */
+export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
+  ({ decision: a.decision, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
+    scopeGrowth: (a.scopeGrowth ?? []).map((g) => ({ patterns: [...g.patterns], reason: g.reason })) }) as JsonValue;
+
+/**
+ * 2026-10-15: a plan-check's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which
+ * the stdin carries (`stdinContains` adds to the directive's opening).
+ */
+export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly string[] = [], before: readonly ClaudeAct[] = []): Step {
+  return {
+    as: 'claude',
+    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
+    acts: [...before, { type: 'emit', value: planCheckAnswer(a) }],
   };
 }
 

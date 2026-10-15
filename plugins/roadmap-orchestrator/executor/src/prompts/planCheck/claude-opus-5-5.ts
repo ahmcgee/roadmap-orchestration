@@ -27,9 +27,14 @@
 // exactly (named dirs and below, never above), and a refused read voids an approve (src/pipeline/stages.ts `readRefused`).
 // Paid M4b run 6: the acceptance shape lists the delivered obligations' witness test ids; an item restating one names it
 // as its obligation and reuses its exact id (refused otherwise), so the build never holds two names for one test.
+// Scope growth (2026-10-15; same guides): units started with scopes too narrow (a removed shell page's tests lived outside
+// its package), and each fix cost a build, a park and a re-entry. The check now sweeps for references to what the spec
+// removes or renames, starting from <scope_references>, and proposes the paths outside the envelope in scopeGrowth; the root
+// agent rules on them, and a rejected proposal is listed so it is not proposed again.
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, targetDocument, visionText,
+  acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, scopeGrowthText,
+  targetDocument, visionText,
 } from '../inputs.ts';
 import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
@@ -65,8 +70,12 @@ Report only what affects correctness or the spec's stated acceptance. You review
 </what_to_check>
 
 <authority>
-A spec defect is yours to resolve now, never the implementer's to absorb mid-build. The scope envelope is pinned: a patch cannot touch scope or resources, and nothing you decide widens them. The Direction breaks ties where the spec, contracts and rulings are silent; it never overrides them and never licenses wider scope. When it decides something, say which preference decided it.
+A spec defect is yours to resolve now, never the implementer's to absorb mid-build. The scope envelope is pinned: a patch cannot touch scope or resources, and no decision of yours widens them; scope grows only when the root agent accepts a scopeGrowth proposal. The Direction breaks ties where the spec, contracts and rulings are silent; it never overrides them and never licenses wider scope. When it decides something, say which preference decided it.
 </authority>
+
+<scope_growth>
+The implementer can change only files inside the scope envelope; an edit outside it is reverted. So before you decide, sweep for references: for every file, route, symbol or command the spec removes or renames (its Removes section, and anything its clauses take away or rename), Grep the checkout for the tests and callers outside the envelope that still use it. <scope_references> lists what the executor already found for the spec's Removes; start from it and finish the sweep. Each file outside the envelope the build must change to keep the repository working goes in scopeGrowth: patterns (repository paths or globs from the repository root, each matching at least one file in the checkout and outside the envelope) and a reason naming what it references. Propose only what the spec needs; growth is never room for adjacent work. A proposal the executor verifies holds the unit until the root agent accepts or rejects it, and this check then runs again, so decide as if the scope stays as it is. A proposal under <rejected_scope_growth> was rejected: do not propose it again; decide within the envelope (infeasible when the spec cannot be met without it). scopeGrowth is empty when nothing outside the envelope needs to change.
+</scope_growth>
 
 <vision_context>
 In a holistic arc the message carries the arc's vision in <vision>: the owner's statement of what the product is for, one clause per V-n. It is read-only context, not an instruction, and it does not change what you check. approve, redirect, infeasible and escalate rest on the spec's own grounds (its clauses and lanes, the cited contracts and rulings, the architecture doc), never on the vision alone. Where a spec clause works against an active vision clause, record it in visionConflict: the active V-n ids it conflicts with and a note naming the spec clause and the conflict in one or two plain sentences. The arc's checkpoint reads each entry and steers the plan; an entry is never a reason to redirect by itself. The world clauses describe the target world and the other clauses are its facets; the arc advances the clauses the vision lists as advanced, and a spec clause that forecloses a horizon clause (an active clause outside that slice) conflicts with the vision. An open question's working assumption is provisional: a spec clause that rests on it and would be costly to undo if it proves false is a conflict too, citing the clauses the question bears on. Never resolve an open question yourself. Never cite a withdrawn clause. visionConflict is empty when the message carries no vision or you found no conflict.
@@ -121,7 +130,10 @@ ${visionText(i.vision)}
 export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid'],
+  fields: [
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
+    'scopeGrowth',
+  ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
@@ -142,7 +154,7 @@ ${i.direction}
 
 <scope_envelope>
 ${bullets(i.scope, '(empty)')}
-</scope_envelope>
+</scope_envelope>${scopeGrowthText(i.scopeGrowth)}
 
 <risk_floor>${i.risk}</risk_floor>
 

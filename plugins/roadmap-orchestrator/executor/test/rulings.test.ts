@@ -146,14 +146,23 @@ describe('ruling sidecars', () => {
     refused(sidecar({ supersedes: [{ id: 'C-3', part: null }] }), /supersedes itself/);
   });
 
-  it('rulings.sidecar-overlap: two contract ops of one document with overlapping anchors are refused', () => {
+  it('rulings.sidecar-overlap: two contract ops of one document whose old text overlaps are refused; disjoint ones in one section apply, last range first', () => {
     const ops = [
+      { path: 'docs/money.md', anchor: '#rounding', oldText: 'round half-up', newText: 'round half-even' },
+      { path: 'docs/money.md', anchor: '#rounding', oldText: 'half-up at the cent', newText: 'half-even at the cent' },
+    ];
+    refused(sidecar({ contractOps: ops }), /contract ops on docs\/money\.md overlap: the old text "round half-up" under anchor "#rounding" and "half-up at the cent" under "#rounding" share characters/);
+    // Arc feedback #3 (2026-10-15): #display is nested in #rounding's section, and #rounding's own two edits share it; none
+    // of the three replaced ranges overlaps, so the ruling lands, each edit at its own place.
+    const disjoint = [
       { path: 'docs/money.md', anchor: '#rounding', oldText: 'half-up', newText: 'half-even' },
       { path: 'docs/money.md', anchor: '#display', oldText: 'two places', newText: 'three places' },
+      { path: 'docs/money.md', anchor: '#rounding', oldText: 'four places', newText: 'six places' },
     ];
-    refused(sidecar({ contractOps: ops }), /contract ops on docs\/money\.md overlap: anchors "#rounding" and "#display"/);
-    const disjoint = [ops[1], { path: 'docs/money.md', anchor: '#currency', oldText: 'One currency', newText: 'Many currencies' }];
     assert.deepEqual(validateRuling(sidecar({ contractOps: disjoint }), context()), []);
+    const applied = applyContractOps(disjoint.map((o) => ({ ...o, path: repoPath(o.path) })), rulingId('C-3'), (p) => DOCS[p] ?? null);
+    assert.ok('edits' in applied);
+    assert.equal(applied.edits[0]!.text, `<!-- revised by C-3 -->\n${MONEY.replace('half-up', 'half-even').replace('four places', 'six places').replace('two places', 'three places')}`);
   });
 
   it('rulings.deviates-needs-ops: a deviating docRef without contract ops is refused; ops stay on listed plan documents', () => {

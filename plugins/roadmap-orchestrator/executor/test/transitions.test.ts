@@ -75,6 +75,8 @@ const ROWS: readonly Row[] = [
   ['prepare', 'clean-build', {}, 'build/fresh@med', 'advance', {}],
   ['prepare', 'clean-verify', {}, 'lanes', 'advance', {}],
   ['prepare', 'conflicted', {}, 'build/resolve@med', 'advance', {}],
+  // Arc feedback 2026-10-15: only ever a recovery hold of a preparation a crash cut short.
+  ['prepare', 'interrupted', {}, 'hold', 'hold', {}],
   // reproduce (a vacuity repair's first stage, M3)
   ['reproduce', 'reproduced', {}, 'plan-check@med', 'advance', {}],
   ['reproduce', 'not-reproduced', {}, 'park:not-reproduced', 'park', {}],
@@ -112,6 +114,8 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
   // M4a rev 3 (E): a frontier builder under by-builder makes no plan-check call; its fresh build assesses in session.
   ['plan-check', 'in-session', {}, 'build/fresh@med', 'advance', {}],
+  // Scope growth (2026-10-15): a verified proposal holds the unit for the root agent, uncharged.
+  ['plan-check', 'scope-growth', {}, 'hold', 'hold', {}],
   // build (implementer)
   ['build', 'success', {}, 'quiesce', 'advance', {}],
   ['build', 'refusal', {}, 'park:refusal', 'park', {}],
@@ -133,6 +137,9 @@ const ROWS: readonly Row[] = [
   // build has no escalation seat to route up to); a raised floor on another seat builds fresh there, uncharged.
   ['build', 'infeasible', {}, 'park:escalation', 'park', {}],
   ['build', 'risk-raised', {}, 'build/fresh@med', 'advance', {}],
+  // 2026-10-15 (arc feedback #3): a required witness item on no arc lane in force parks env, uncharged (resume re-runs it).
+  ['build', 'witness-lane-missing', {}, 'park:witness-lane-missing', 'park', {}],
+  ['build', 'witness-lane-missing', { counters: { chargeableFailures: 2 } }, 'park:witness-lane-missing', 'park', {}],
   // quiesce → evidence → salvage → teardown
   ['quiesce', 'empty', {}, 'evidence', 'advance', {}],
   ['evidence', 'captured', {}, 'salvage', 'advance', {}],
@@ -162,6 +169,10 @@ const ROWS: readonly Row[] = [
   ['lanes', 'smoke-survived', { counters: { smokeRounds: 1 }, promotion: true }, 'gate@escalation', 'advance', {}],
   // M4a rev 3 (F4): a known defect sends the unit back to prepare, uncharged.
   ['lanes', 'known-defect', {}, 'prepare', 'advance', {}],
+  // A fast suite lane red on the unit's diff base alone too: the base's red, uncharged, on to the gate.
+  ['lanes', 'base-red', {}, 'gate@med', 'advance', {}],
+  ['lanes', 'base-red', { promotion: true }, 'gate@escalation', 'advance', {}],
+  ['lanes', 'witness-lane-missing', {}, 'park:witness-lane-missing', 'park', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
@@ -231,7 +242,7 @@ describe('transitions', () => {
       'plan-check redirect': 'design', 'plan-check infeasible': 'design', 'plan-check scope-widened': 'design', 'plan-check refusal': 'design',
       'plan-check malformed': 'design', 'plan-check process-fault': 'retryable', 'plan-check routing-changed': 'env', 'plan-check read-denied': 'env',
       'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
-      'build occupied': 'env', 'build cleanup-failed': 'retryable',
+      'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
       'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',

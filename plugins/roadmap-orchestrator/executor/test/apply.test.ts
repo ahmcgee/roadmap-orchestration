@@ -300,7 +300,8 @@ const ROWS: readonly Row[] = [
     expect: [/unit u1 is parked at candidate, which is final in M1/],
   },
   {
-    name: 'rev + 1 of a unit with an attempt a crash cut short: refused until the executor records it',
+    // Arc feedback 2026-10-15: the startup records such an attempt (a recovery hold), so it never refuses an edit.
+    name: 'rev + 1 of a unit with an attempt a crash cut short: pending, as for any unit in flight',
     setup: (r) => {
       inFlight(r);
       const parent = { type: 'stage', unit: U1, stage: 'build', attempt: 2 } as const;
@@ -311,7 +312,7 @@ const ROWS: readonly Row[] = [
       r.journal.fact({ kind: 'executor-started', generation: 2 });
     },
     edit: revise,
-    expect: [/unit u1 has build attempt 2 cut short by a crash/],
+    expect: (r) => [specChange(r.d, 'u1', 'revision', 2)],
   },
   {
     // classify.open-attempt-running-vs-abandoned (M4a rev 3, C5, R50): an attempt started under the running executor is live.
@@ -377,6 +378,16 @@ const ROWS: readonly Row[] = [
     },
     edit: (d) => editPlan(d, (p) => void p.suite.lanes.push({ ...p.suite.lanes[0]!, id: 'suite2' })),
     expect: [/suite lanes may not change while a candidate is under way \(unit u1 is past a candidate attempt\)/],
+  },
+  {
+    // The 2026-10-15 batch: a lanes red's fix round reads the fast suite lanes back by their definitions in force.
+    name: 'suite lanes while a unit\'s lanes red awaits its fix round: refused',
+    setup: (r) => {
+      pin(r, 'u1');
+      decide(r, 'u1', 'lanes', 'red', 'advance');
+    },
+    edit: (d) => editPlan(d, (p) => void p.suite.lanes.push({ ...p.suite.lanes[0]!, id: 'suite2' })),
+    expect: [/suite lanes may not change while a lanes attempt runs them or its fix round reads them \(unit u1\)/],
   },
   {
     name: 'arc, integrationBranch, baseline, worktreeRoot: always refused',

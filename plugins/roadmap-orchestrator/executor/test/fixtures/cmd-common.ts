@@ -23,7 +23,9 @@ export function openCommandRun(run: CmdRun): Readonly<{ ctx: CommandContext; sta
   if (home === undefined) throw new Error('tests need HOME');
   const hostEnv = { PATH: run.binDir, HOME: home };
   const planDir = absPath(run.repo);
-  const stage: StageContext = { ...ctx, hostEnv, planDir, routing: () => routing.resolved, ...serialRuntime(ctx) };
+  const planFile = absPath(join(run.repo, 'plan.json'));
+  const routingBase = { profile: 'default', config: null, arcRoles: 'm4b' } as const;
+  const stage: StageContext = { ...ctx, hostEnv, planDir, planFile, routingBase, routing: () => routing.resolved, ...serialRuntime(ctx) };
   return {
     journal,
     stage,
@@ -31,8 +33,8 @@ export function openCommandRun(run: CmdRun): Readonly<{ ctx: CommandContext; sta
       ...ctx,
       hostEnv,
       planDir,
-      laneEnv: {}, planFile: absPath(join(run.repo, 'plan.json')),
-      routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET,
+      laneEnv: {}, planFile,
+      routingBase, docs: DOCS_NOT_YET,
       routing: () => routing,
       probes: testProbes(stage),
     },

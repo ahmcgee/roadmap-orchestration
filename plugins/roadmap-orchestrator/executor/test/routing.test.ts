@@ -27,6 +27,8 @@ const OPUS: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'med
 const OPUS_XHIGH: Triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'xhigh' };
 const FABLE: Triple = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' };
 const SONNET: Triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' };
+/** The efficient class's judgment binding in both profiles (owner ruling 2026-10-15): Sonnet 5.5 at high. */
+const SONNET_HIGH: Triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' };
 const LUNA: Triple = { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' };
 const SOL_HIGH: Triple = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' };
 const base: RoutingStack = arcStack('default', null, null);
@@ -41,24 +43,53 @@ describe('routing', () => {
   });
 
   it('routing.classes: the class catalogue is the one binding, per profile; seats name classes, never models', () => {
+    const both = (t: Triple) => ({ build: t, judgment: t });
     assert.deepEqual(CLASS_CATALOGUE, {
-      default: { efficient: LUNA, frontier: OPUS, summit: OPUS_XHIGH },
-      'claude-only': { efficient: SONNET, frontier: OPUS, summit: OPUS_XHIGH },
+      default: { efficient: { build: LUNA, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_XHIGH) },
+      'claude-only': { efficient: { build: SONNET, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_XHIGH) },
     });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(BUILTIN_SEATS), new RegExp(m.replace('.', '\\.')));
-    const judgment = { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' };
-    assert.deepEqual(BUILTIN_SEATS.planCheck, judgment);
-    assert.deepEqual(BUILTIN_SEATS.gate, judgment);
-    assert.deepEqual(BUILTIN_SEATS.build, { low: 'efficient', med: 'efficient', high: 'frontier' });
+    assert.deepEqual(BUILTIN_SEATS, {
+      planCheck: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
+      build: { low: 'efficient', med: 'efficient', high: 'frontier' },
+      gate: { low: 'efficient', med: 'frontier', high: 'frontier', escalation: 'summit' },
+      lens: { arc: 'efficient' },
+      checkpoint: { arc: 'summit' },
+      packReview: { arc: 'frontier' },
+      flow: { arc: 'efficient' },
+    });
   });
 
-  it('built-in profiles resolve: efficient (Luna; Sonnet under claude-only) builds low/med, Opus medium builds high and judges every tier, Opus xhigh holds escalation', () => {
+  it('built-in profiles resolve: efficient builds low/med (Luna; Sonnet medium under claude-only) and judges plan-check low/med, gate low, the lenses and flow on Sonnet high; Opus medium builds high and judges the rest; Opus xhigh holds escalation', () => {
     const d = resolveRouting(base).table;
     assert.deepEqual(d.build, { low: LUNA, med: LUNA, high: OPUS });
     const c = resolveRouting(arcStack('claude-only', null, null)).table;
     assert.deepEqual(c.build, { low: SONNET, med: SONNET, high: OPUS });
-    for (const t of [d, c]) for (const r of ['planCheck', 'gate'] as const) assert.deepEqual(t[r], { low: OPUS, med: OPUS, high: OPUS, escalation: OPUS_XHIGH }, r);
-    for (const p of PROFILES) assert.deepEqual(unsupportedSeats(resolveRouting(arcStack(p, null, null)), null), [], p);
+    for (const t of [d, c]) {
+      assert.deepEqual(t.planCheck, { low: SONNET_HIGH, med: SONNET_HIGH, high: OPUS, escalation: OPUS_XHIGH });
+      assert.deepEqual(t.gate, { low: SONNET_HIGH, med: OPUS, high: OPUS, escalation: OPUS_XHIGH });
+      assert.deepEqual([t.lens.arc, t.checkpoint.arc, t.packReview.arc, t.flow.arc], [SONNET_HIGH, OPUS_XHIGH, OPUS, SONNET_HIGH]);
+    }
+    for (const p of PROFILES) {
+      assert.deepEqual(unsupportedSeats(resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' }), null), [], p);
+    }
+  });
+
+  it('routing.efficient-judgment: the efficient class judges on Sonnet 5.5 high in both profiles, at every judgment seat a layer gives it, with a prompt for every judgment role', () => {
+    const everyJudgment = layer({
+      planCheck: { low: 'efficient', med: 'efficient', high: 'efficient', escalation: 'efficient' },
+      gate: { low: 'efficient', med: 'efficient', high: 'efficient', escalation: 'efficient' },
+      lens: { arc: 'efficient' }, checkpoint: { arc: 'efficient' }, packReview: { arc: 'efficient' }, flow: { arc: 'efficient' },
+    });
+    for (const p of PROFILES) {
+      assert.deepEqual(CLASS_CATALOGUE[p].efficient.judgment, SONNET_HIGH, p);
+      const r = resolveRouting({ ...arcStack(p, null, everyJudgment), arcScope: 'corpus', arcRoles: 'm4b' });
+      for (const s of SEAT_REFS) if (s.role !== 'build') assert.deepEqual(atSeat(r.table, s), SONNET_HIGH, `${p} ${s.role}.${s.tier}`);
+      assert.deepEqual(unsupportedSeats(r, null), [], `${p}: route may seat the efficient class at any judgment seat`);
+    }
+    // The build seats keep the build binding: Luna under default, Sonnet medium under claude-only.
+    assert.deepEqual(resolveRouting(arcStack('default', null, layer({ build: { high: 'efficient' } }))).table.build.high, LUNA);
+    assert.deepEqual(resolveRouting(arcStack('claude-only', null, layer({ build: { high: 'efficient' } }))).table.build.high, SONNET);
   });
 
   it('routing.layers: each layer overrides the one below, per seat; sources name the layer that chose the class', () => {
@@ -90,6 +121,7 @@ describe('routing', () => {
     assert.deepEqual(r.table.build.low, SOL_HIGH);
     assert.deepEqual(r.table.build.med, SOL_HIGH);
     assert.deepEqual(r.table.build.high, OPUS);
+    assert.deepEqual(r.table.planCheck.low, SOL_HIGH, 'a rebind binds the judgment seats that name the class too');
     assert.equal(r.classes.build.low, 'efficient');
     assert.equal(r.sources.build.low, 'builtin', 'the class was chosen by the profile');
     assert.deepEqual(r.bindings, { efficient: 'repo-config', frontier: 'builtin', summit: 'builtin' });
@@ -117,15 +149,23 @@ describe('routing', () => {
     for (const role of ['planCheck', 'gate'] as const) for (const m of ['gpt-5.6-luna', 'gpt-5.6-sol'] as const) {
       assert.equal(support(role, m).type, 'unsupported', `${role}/${m}`);
     }
+    // A repo rebind binds the class at every seat that names it, judgment seats included: only it puts Codex there.
     const summitOnSol = parseRepoConfig({ routing: { classes: { summit: SOL_HIGH } } });
-    const r = resolveRouting({ ...arcStack('default', summitOnSol, layer({ gate: { med: 'efficient' } })), unit: layer({ planCheck: { low: 'efficient' } }) });
+    const r = resolveRouting({ ...arcStack('default', summitOnSol, layer({ gate: { med: 'summit' } })), unit: layer({ planCheck: { low: 'summit' } }) });
     const u = unitId('u-one');
     const rejections = unsupportedSeats(r, u);
     assert.deepEqual(rejections, [
-      { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'unit', class: 'efficient', unit: u, why: 'codex-judgment' },
+      { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'unit', class: 'summit', unit: u, why: 'codex-judgment' },
       { kind: 'unsupported-routing', role: 'planCheck', tier: 'escalation', layer: 'builtin', class: 'summit', unit: u, why: 'codex-judgment' },
-      { kind: 'unsupported-routing', role: 'gate', tier: 'med', layer: 'plan', class: 'efficient', unit: u, why: 'codex-judgment' },
+      { kind: 'unsupported-routing', role: 'gate', tier: 'med', layer: 'plan', class: 'summit', unit: u, why: 'codex-judgment' },
       { kind: 'unsupported-routing', role: 'gate', tier: 'escalation', layer: 'builtin', class: 'summit', unit: u, why: 'codex-judgment' },
+    ]);
+    // The efficient class's catalogue judgment binding is Claude under default, where its builds are Codex; a repo that
+    // rebinds it to Codex has its efficient judgment seats refused like any other.
+    const efficientOnSol = unsupportedSeats(resolveRouting(arcStack('default', parseRepoConfig(fixture('config-classes.json')), null)), null);
+    assert.deepEqual(efficientOnSol.map((x) => x.kind === 'unsupported-routing' ? [x.role, x.tier, x.layer, x.class, x.why] : null), [
+      ['planCheck', 'low', 'builtin', 'efficient', 'codex-judgment'], ['planCheck', 'med', 'builtin', 'efficient', 'codex-judgment'],
+      ['gate', 'low', 'builtin', 'efficient', 'codex-judgment'],
     ]);
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(rejections), new RegExp(m.replace('.', '\\.')));
     // A Claude model without a prompt for the role is `no-prompt` (Fable 5.1, reached by a repo rebind, has no build prompt).
@@ -200,10 +240,10 @@ describe('routing: the arc seats (M3)', () => {
       // An arc seat rebound in a plan layer changes nothing while the arc is not holistic.
       assert.equal(resolveRouting(arcStack(p, null, layer({ lens: { arc: 'summit' } }))).rev, r.rev);
     }
-    // The built-in arc seats: the lenses on frontier (Opus medium), the checkpoint on summit (Opus xhigh).
+    // The built-in arc seats: the lenses on efficient (Sonnet high), the checkpoint on summit (Opus xhigh).
     const base = resolveRouting(arcStack('default', null, null));
-    assert.deepEqual([base.classes.lens.arc, base.classes.checkpoint.arc], ['frontier', 'summit']);
-    assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [OPUS, OPUS_XHIGH]);
+    assert.deepEqual([base.classes.lens.arc, base.classes.checkpoint.arc], ['efficient', 'summit']);
+    assert.deepEqual([base.table.lens.arc, base.table.checkpoint.arc], [SONNET_HIGH, OPUS_XHIGH]);
     // A plan naming a vision puts the M3 arc seats in force: every seat but the pack review's (LR-0a-1) and, in the dev.7
     // role set, the flow seat's is checked (the built-in arc seats have prompt modules since B4), and the rev hashes them too.
     const plan = { target: 'architecture-doc', holistic: { vision: planPath('vision.json'), advances: [visionClauseId('V-1')] } } as const;
@@ -212,16 +252,16 @@ describe('routing: the arc seats (M3)', () => {
     assert.equal(seatsInForce(h).length, SEAT_REFS.length - 2);
     assert.notEqual(h.rev, base.rev);
     assert.deepEqual(unsupportedSeats(h, null), []);
-    // A Claude model with no module for an arc role is still refused as no-prompt (Sonnet, efficient under claude-only).
-    const sonnet = resolveRouting(planStack('claude-only', null, { ...plan, routing: layer({ lens: { arc: 'efficient' } }) }, null));
-    assert.deepEqual(unsupportedSeats(sonnet, null), [
-      { kind: 'unsupported-routing', role: 'lens', tier: 'arc', layer: 'plan', class: 'efficient', unit: null, why: 'no-prompt' },
-    ]);
+    // Every Claude model has a module for every arc role (Sonnet since 2026-10-15): a plan may seat the checkpoint on efficient.
+    const sonnet = resolveRouting(planStack('claude-only', null, { ...plan, routing: layer({ checkpoint: { arc: 'efficient' } }) }, null));
+    assert.deepEqual(sonnet.table.checkpoint.arc, SONNET_HIGH);
+    assert.deepEqual(unsupportedSeats(sonnet, null), []);
     assert.equal(resolveRouting(planStack('default', null, { target: 'architecture-doc' }, null)).rev, base.rev, 'no vision: the M2 stack');
-    // A plan layer may seat the arc roles; a Codex class there is a Codex judgment.
-    const codex = resolveRouting(planStack('default', null, { ...plan, routing: layer({ checkpoint: { arc: 'efficient' } }) }, null));
+    // A plan layer may seat the arc roles; a class the repo rebinds to Codex there is a Codex judgment.
+    const frontierOnSol = parseRepoConfig({ routing: { classes: { frontier: SOL_HIGH } } });
+    const codex = resolveRouting(planStack('default', frontierOnSol, { ...plan, routing: layer({ checkpoint: { arc: 'frontier' } }) }, null));
     assert.deepEqual(unsupportedSeats(codex, null).at(-1), {
-      kind: 'unsupported-routing', role: 'checkpoint', tier: 'arc', layer: 'plan', class: 'efficient', unit: null, why: 'codex-judgment',
+      kind: 'unsupported-routing', role: 'checkpoint', tier: 'arc', layer: 'plan', class: 'frontier', unit: null, why: 'codex-judgment',
     });
   });
 });
@@ -231,13 +271,13 @@ describe('routing: M4a (OR-Q17, OR-L3, LR-0a-1)', () => {
 
   it('routing.catalogue-m4a: frontier is Opus 5.5 medium and summit Opus 5.5 xhigh in both profiles; Fable is reachable only by a repo rebind', () => {
     for (const p of PROFILES) {
-      assert.deepEqual([CLASS_CATALOGUE[p].frontier, CLASS_CATALOGUE[p].summit], [OPUS, OPUS_XHIGH], p);
+      assert.deepEqual([CLASS_CATALOGUE[p].frontier, CLASS_CATALOGUE[p].summit], [{ build: OPUS, judgment: OPUS }, { build: OPUS_XHIGH, judgment: OPUS_XHIGH }], p);
       const r = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
       for (const s of SEAT_REFS) assert.notEqual(atSeat(r.table, s).model, 'claude-fable-5-1', `${p} ${s.role}.${s.tier}`);
       assert.deepEqual(unsupportedSeats(r, null), [], `${p}: every seat of a corpus arc has a prompt`);
     }
-    assert.deepEqual(CLASS_CATALOGUE.default.efficient, LUNA);
-    assert.deepEqual(CLASS_CATALOGUE['claude-only'].efficient, SONNET);
+    assert.deepEqual(CLASS_CATALOGUE.default.efficient, { build: LUNA, judgment: SONNET_HIGH });
+    assert.deepEqual(CLASS_CATALOGUE['claude-only'].efficient, { build: SONNET, judgment: SONNET_HIGH });
     assert.ok(MODELS['claude-fable-5-1'].efforts.includes('high'), 'Fable stays in the model catalogue');
     const fable = resolveRouting(arcStack('default', parseRepoConfig({ routing: { classes: { summit: FABLE } } }), null));
     assert.deepEqual(fable.table.gate.escalation, FABLE);

@@ -2,8 +2,9 @@
 // superseded: every edge on it stands for its lineage head. `effectiveGraph` builds that graph from a plan
 // for validation (the classifier refuses an apply whose effective graph has a cycle, counting the edges
 // that activate only after preparation); `effectiveDependency` resolves one edge at run time, where an edge
-// moves to the head only once the head's preparation recorded an outcome.
-import type { UnitId } from '../core/ids.ts';
+// moves to the head only once the head's preparation recorded an outcome. Arc feedback 2026-10-15: `holdCycle`, the
+// cycle of approved repairs each held at its candidate by a finding another of them owns (src/schedule/scheduler.ts).
+import { type FindingId, type UnitId, canonicalIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { PlanUnit } from '../input/plan.ts';
 
@@ -72,6 +73,16 @@ export function findCycle(graph: ReadonlyMap<UnitId, readonly UnitId[]>): readon
     if (cycle !== null) return cycle;
   }
   return null;
+}
+
+/**
+ * Arc feedback 2026-10-15: the findings of a cycle of finding holds, in canonical order, or null. `blocked`: each approved
+ * repair waiting at its candidate that an active P1 holds (G10), with that finding and its owner, the repair fixing it on
+ * its branch. A cycle (each unit held by a finding the next one owns) can only publish together: the findings along it.
+ */
+export function holdCycle(blocked: ReadonlyMap<UnitId, Readonly<{ finding: FindingId; owner: UnitId }>>): readonly FindingId[] | null {
+  const cycle = findCycle(new Map([...blocked].map(([u, b]) => [u, [b.owner]])));
+  return cycle === null ? null : canonicalIds(cycle.slice(0, -1).map((u) => blocked.get(u)!.finding));
 }
 
 /**

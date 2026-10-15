@@ -13,7 +13,8 @@
 //                        (older by `compareRank`). Vacuous when no waiter was promoted (listed not exercised)
 //   cleanup-survival     a cleanup failed on the live path and one in recovery's cleanup of a killed holder; each
 //                        residue: on the live path its stage parked retryable on that instance, in recovery its
-//                        killed attempt has no outcome; the residue's attempt's `retry` holder reclaimed and
+//                        killed attempt has no outcome but the startup's uncharged recovery hold (`interrupted`,
+//                        cause `recovery`, 1.0.0-dev.10, src/pipeline/unit.ts `holdAbandoned`); the residue's attempt's `retry` holder reclaimed and
 //                        released it, a probe pass covers the park (live) or the residue's fail seq (recovery),
 //                        the host index disposes it `cleaned`, the unit ran the stage again and merged (or its
 //                        lineage did); nothing is left undisposed or cleanup-failed; the respawn after the driver's
@@ -270,7 +271,9 @@ function cleanupSurvival(run: Run): Verdict {
         }
         covered = park.seq;
       } else {
-        if (park !== undefined) problems.push(`${where}: the killed attempt has an outcome (${JSON.stringify(park)})`);
+        // 1.0.0-dev.10 (arc feedback 2026-10-15): the startup closes the killed attempt with a recovery hold, and nothing else.
+        const recoveryHold = park?.outcome === 'interrupted' && park.class === 'hold' && !park.chargeable && park.cause?.type === 'recovery';
+        if (park !== undefined && !recoveryHold) problems.push(`${where}: the killed attempt has an outcome other than its recovery hold (${JSON.stringify(park)})`);
         covered = parseOpId(f.op).seq;
       }
       const retry = all.filter((i) => i.seq > f.seq && i.expect.holder.type === 'retry' && i.expect.resources.includes(r.resource));

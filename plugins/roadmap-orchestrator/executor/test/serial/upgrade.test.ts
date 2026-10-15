@@ -10,7 +10,8 @@
 // HEAD's CLI and fakes directly. The previous release (1.0.0-dev.7, the only one adopted: OR-L4) scheduled a DAG
 // and kept every M3 and M4a record, so its arcs run on HEAD as they ran on it; an arc it started without the holistic
 // layer runs with M2 semantics and no new spend unless the architect opts in, and (M4b) every arc it started keeps the
-// dev.7 role set: no flow seat, no flow loop, its routing revs unchanged. Its starts and spawns carry no pressure (M4b
+// dev.7 role set: no flow seat, no flow loop; its routing revs move only with HEAD's seat table (OR-L3: the efficient
+// judgment seats of 1.0.0-dev.10), and status aliases the ones it recorded. Its starts and spawns carry no pressure (M4b
 // rev 3) and read with the defaults; HEAD's record this host's schedstat cpu wait.
 //
 // A crashed previous release: its executor is armed with a crash trigger (src/core/crash.ts), and its supervisor
@@ -64,8 +65,9 @@
 //   upgrade.target-kind-fixed  an apply cannot switch the adopted arc to a corpus target (`target-kind-changed`).
 //   upgrade.dev7-flow-off      (M4b, R5) stopped mid-build, `page-id` left held; on HEAD the architect's `apply` (a new
 //                              `direction`) and `resume page-id`: every revision, dev.7's and HEAD's, records no role
-//                              set; HEAD resolves the arc's routing to the rev dev.7 recorded and seats no flow; no
-//                              flow fact or flow call; `status` spend resolves every metered call.
+//                              set; under the seats dev.7 hashed HEAD resolves the rev dev.7 recorded, and under its own
+//                              (efficient judgment, 1.0.0-dev.10) another, re-pinned without a park; it seats no flow; no
+//                              flow fact or flow call; `status` spend resolves every metered call (the dev.7 rev aliased).
 //
 // Not covered: a backend parked on a usage limit, the Claude-only profile.
 import assert from 'node:assert/strict';
@@ -79,8 +81,8 @@ import { isAlive, statOf } from '../../src/contain/proc.ts';
 import type { Event, Fact } from '../../src/core/events.ts';
 import { arcId, commandId, invocationId, opId, resourceName, unitId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
-import { canonicalJson } from '../../src/core/json.ts';
-import { spawnPressureOf, startPressureOf } from '../../src/core/upgrade.ts';
+import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
+import { PRE_DEV10_BUILTIN_SEATS, spawnPressureOf, startPressureOf } from '../../src/core/upgrade.ts';
 import type { ProcIdentity } from '../../src/core/records.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
@@ -95,7 +97,7 @@ import { overCapacity } from '../../src/resources/pool.ts';
 import { bytesSha256, loadSpec } from '../../src/spec/spec.ts';
 import { CONTINUE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { meterOf } from '../../src/meter.ts';
-import { provenanceStack, resolveRouting, seatsInForce } from '../../src/routing/layers.ts';
+import { provenanceStack, resolveRouting, resolveRoutingUnder, seatsInForce } from '../../src/routing/layers.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import { corpusTarget } from '../fixtures/corpus-target.ts';
 import type { CheckResult } from '../../evals/m1/check.ts';
@@ -239,7 +241,7 @@ async function preparePrevious(
   const fakeDir = join(dir, 'fake-previous');
   mkdirSync(fakeDir, { recursive: true });
   const m1File = join(fakeDir, 'm1.json');
-  writeFileSync(m1File, JSON.stringify({ steps: (typeof m1 === 'function' ? m1(l) : m1) }));
+  writeFileSync(m1File, JSON.stringify({ steps: (typeof m1 === 'function' ? m1(l) : m1).map(previousStep) }));
   const { fakeSteps, readScenario, writeShims } = previous.modules;
   const scenario = join(fakeDir, 'scenario.json');
   writeFileSync(scenario, JSON.stringify({ steps: [...fakeSteps(readScenario(m1File), 'default'), ...extra] }, null, 2));
@@ -248,6 +250,16 @@ async function preparePrevious(
   const cli = (args: readonly string[], timeoutMs = CLI_MS, extraEnv: Readonly<Record<string, string>> = {}): Promise<Exit> =>
     runUntilExit(process.execPath, [join(previous.root, 'test', 'fixtures', 'exec-cli.ts'), host, ...args], { env: { ...env, ...extraEnv }, timeoutMs });
   return { dir, l, host, fakeDir, cli, run: ['--repo', l.repo, '--arc', l.arc] };
+}
+
+/**
+ * A step as the previous release answers it: its plan-check schema predates `scopeGrowth` (1.0.0-dev.10) and admits no
+ * other key, so a plan-check answer the previous release reads carries none (HEAD's carry it, as clean.json's do).
+ */
+function previousStep(step: M1Step): M1Step {
+  if (step.role !== 'planCheck') return step;
+  const { scopeGrowth: _, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
+  return { ...step, answer };
 }
 
 /** HEAD's `roadmap` CLI against the fixture's host dir. */
@@ -528,7 +540,7 @@ async function assertAcceptsApply(p: Phase1, f: Finished): Promise<void> {
   writeFileSync(p.l.plan, JSON.stringify({ ...plan, units: [...plan.units, { ...last, id: 'extra', spec: 'extra.json', after: [] }] }));
   const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
   assert.equal(dry.code, 0, dry.stderr);
-  assert.deepEqual(JSON.parse(dry.stdout), { dryRun: true, kind: 'accepted', rev: 2, nextRev: 3, changes: [{ type: 'unit-added', unit: 'extra' }], smoke: [] });
+  assert.deepEqual(JSON.parse(dry.stdout), { dryRun: true, kind: 'accepted', rev: 2, nextRev: 3, changes: [{ type: 'unit-added', unit: 'extra' }], smoke: [], advisories: [] });
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -993,7 +1005,7 @@ test('upgrade.target-kind-fixed: an apply cannot switch an adopted architecture-
 // ---------------------------------------------------------------------------------------------------
 // M4b: an arc 1.0.0-dev.7 started keeps the dev.7 role set (R5)
 
-test('upgrade.dev7-flow-off: a dev.7 arc runs on HEAD with no role set: its revisions record none, its routing revs stay dev.7\'s, no flow seat, fact or call; spend resolves', T, async () => {
+test('upgrade.dev7-flow-off: a dev.7 arc runs on HEAD with no role set: its revisions record none, its routing rev moves only by HEAD\'s seat table and re-pins without a park, no flow seat, fact or call; spend resolves', T, async () => {
   const { p, head } = await stoppedMidBuild(clean(), undefined, false);
   const before = journalOf(p).events;
   const [rev1] = factsOf(before, 'plan-applied');
@@ -1018,10 +1030,16 @@ test('upgrade.dev7-flow-off: a dev.7 arc runs on HEAD with no role set: its revi
   const [rev2, ...more] = factsOf(f.after, 'plan-applied');
   assert.ok(rev2 !== undefined && more.length === 0);
   assert.equal(rev2.routingProvenance.arcRoles, undefined, 'HEAD\'s revision of the dev.7 arc carries no role set');
-  const resolved = resolveRouting(provenanceStack(rev2.routingProvenance, 'none', null));
-  assert.ok(dev7Revs.has(resolved.rev), 'HEAD resolves the arc\'s routing to the rev dev.7 recorded');
+  const stack = provenanceStack(rev2.routingProvenance, 'none', null);
+  const resolved = resolveRouting(stack);
+  // The dev.7 role set hashes no flow seat; the seat table HEAD binds every revision through (OR-L3) moved the low-risk
+  // judgments to the efficient class (1.0.0-dev.10), so the rev moved, and the seats dev.7 hashed reproduce its rev.
+  assert.ok(dev7Revs.has(resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, stack).rev), 'under the seats dev.7 hashed, HEAD resolves the rev dev.7 recorded');
+  assert.ok(!dev7Revs.has(resolved.rev), 'HEAD\'s seat table moved the rev');
   assert.ok(!seatsInForce(resolved).some((s) => s.role === 'flow'), 'no flow seat in force');
-  for (const ji of factsOf(f.after, 'judgment-inputs')) assert.ok(dev7Revs.has(ji.routingRev), `${ji.unit} ${ji.stage}: judged under the dev.7 rev`);
+  const judged = factsOf(f.after, 'judgment-inputs');
+  for (const ji of judged) assert.ok(dev7Revs.has(ji.routingRev) || ji.routingRev === resolved.rev, `${ji.unit} ${ji.stage}: judged under the dev.7 rev or HEAD's`);
+  assert.ok(judged.some((ji) => ji.routingRev === resolved.rev), 'HEAD judged under its own rev, the unit re-pinned');
   assert.deepEqual(factsOf(f.after, 'stage-outcome').filter((o) => o.outcome === 'routing-changed'), [], 'no routing-changed');
   assert.deepEqual(f.events.flatMap((e) => (e.type === 'fact' && e.fact.kind.startsWith('flow-') ? [e.fact.kind] : [])), [], 'no flow fact');
   const flowCalls = f.after.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose === 'arc-backend' && e.expect.subject.role === 'flow' ? [e.op] : []));

@@ -151,6 +151,35 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **The fast suite is not a flow lever at the lanes stage** (2026-10-15). A fast suite lane's time counts as
+  `stage:lanes` service, but a suite-lane lever targets only the integration slot or host cpu, so a slow lane left
+  `fast` that makes lanes the constraint has no proposal. Trigger: a flow verdict naming `stage:lanes` while fast suite
+  spawns dominate its service time; then let the suite-lane lever target the lanes stage (or propose moving it to
+  `estate`).
+- **Paid m4a early abort ignores the plant lane's tier** (2026-10-15). `plantLaneOf` in the m4a driver does not check
+  that the root agent declared the slow suite lane `estate`; a `fast` one makes lanes the constraint and fails
+  `flow-constraint` only hours in. Trigger: the next paid m4a run; add the tier to the early-abort check before it.
+- **The fast suite at the lanes stage** (2026-10-15 batch, deferred while unproven). Each lanes attempt runs the fast
+  suite afresh: no reuse of an earlier certified pass (F1a covers spec lanes only), a base check's verdict lives in
+  memory for the run (a restart runs it again; a candidate's tip-alone run is never read as one), and a plan known
+  defect matches spec lanes only, so a fast suite red naming one charges. Triggers: the fast suite's share of
+  `stage:lanes` service time shows on the flow chart; a restart re-running base checks costs measurably; a known defect
+  whose lane is a suite lane. Then: reuse by lane identity as F1a does, journal the base verdict, extend `knownDefectHit`.
+- **Hold cycles beyond the first blocker** (arc feedback 2026-10-15). The cycle graph follows each waiting repair's
+  first blocking P1 only (`findingBlock`); a member that a second P1, owned outside the cycle, also holds leaves the
+  cycle unbatched, waiting as before. Trigger: an arc whose repairs wait at their candidates with no cycle batch while
+  every blocker's owner is approved; then follow every blocker and batch the closure.
+- **The dev.9 resume crash** (arc feedback 2026-10-15). The stuck unit's crash on `resume` was not reproduced: the
+  startup's recovery hold closes its attempt, and a resumed held unit re-runs from its decision as an abandoned
+  attempt always did. Trigger: a resume of a recovery-held unit that still throws; read the throw site from its
+  stderr.
+- **Scope growth beyond the uniform plan-check** (2026-10-15). Deferred: (a) the in-session assessment of a frontier or
+  summit builder under `planCheck.shape: by-builder` proposes no `scopeGrowth` (it makes no plan-check call); (b) a
+  builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own;
+  (c) `start` writes Phase-0 row 10's advisories to the executor's stderr only (`phase0 check` and `apply` print them).
+  Trigger: a unit under `by-builder` needs growth its assessment cannot propose, or a gate escalation that a held
+  proposal would have saved.
+
 - **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
   threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging
   (steps 0–9): it decides the bundle invalid and records it, so a restart never replays it. A deterministic throw in
@@ -268,6 +297,12 @@ None.
   reads.json without `denied` reads as none refused. With it, `denied` becomes required.
 - `buildFinalDefault` (src/core/upgrade.ts), once no build an executor before the report rule (2026-10-11) launched is
   unconsumed: a build answer without `final` reads as final. With it, `final` becomes required in `buildOutputFor`.
+- `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth
+  (2026-10-15) launched is unconsumed: a plan-check answer without `scopeGrowth` reads as none proposed. With it,
+  `scopeGrowth` becomes required in `planCheckOutput`.
+- `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) with status's `preDev10RevAlias` and `resolveRoutingUnder`
+  (src/routing/layers.ts), once no arc started on 1.0.0-dev.9 is in flight: the built-in seats before the efficient
+  class took the low-risk judgments (2026-10-15), kept only so `status` joins an earlier executor's recorded routing revs.
 - `lensPatchMutantDefault` (src/core/upgrade.ts) and `LensMutant`'s `kind: patch` arm with `admitMutant`'s `checkPatch`
   branch, once no audit an executor before paid M4b run 3's fix started is running: a recorded lens answer's mutant
   `{patch, lane}` (a hand-written diff) reads as written. With it, a lens mutant is edits only.

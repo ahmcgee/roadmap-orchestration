@@ -11,7 +11,7 @@
 //   lane         a spec lane holding estate#1 (cm-pin.ts; A's own estate lane takes #2);
 //   teardown     the teardown of B's build resource `slow` (cm-pin.ts as its teardown);
 //   publication  waiting in memory for the publication slot, which a third unit C (u3) holds while its
-//                candidate's suite lane parks at c-pin (cm-pin.ts); B starts once C holds it (`b-go`), A once B
+//                candidate's estate suite lane parks at c-pin (cm-pin.ts); B starts once C holds it (`b-go`), A once B
 //                waits for it;
 //   residue      a retryable park on estate#1: B's build teardown failed, and so did the first probe's
 //                reclaim (the estate fake fails two teardowns), so the next probe is a minute away.
@@ -133,7 +133,8 @@ export function layoutConcurrent(t: Owner, peer: Peer): Concurrent {
       ...(peer === 'lane' || peer === 'residue' ? [estatePool] : []),
       ...(peer === 'teardown' ? [{ name: 'slow', probe: command([process.execPath, fixture('res-tool.ts'), 'probe', stateDir, 'slow']), teardown: command([process.execPath, CM_PIN, barriers, PIN]) }] : []),
     ];
-    if (peer === 'publication') plan.suite.lanes.push(lane({ id: 'c-pin', argv: [process.execPath, CM_PIN, barriers, C_PIN] }));
+    // Estate: only a candidate runs it (C's, holding the slot), never a unit's lanes stage.
+    if (peer === 'publication') plan.suite.lanes.push(lane({ id: 'c-pin', tier: 'estate', argv: [process.execPath, CM_PIN, barriers, C_PIN] }));
     for (const u of plan.units) {
       if (u.id === A) {
         u['resources'] = ['db'];

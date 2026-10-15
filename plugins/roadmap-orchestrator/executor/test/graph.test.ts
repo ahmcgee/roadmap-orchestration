@@ -2,8 +2,8 @@
 // (src/schedule/types.ts, F17).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type UnitId, unitId } from '../src/core/ids.ts';
-import { type GraphUnit, effectiveGraph, findCycle, lineageHead } from '../src/schedule/graph.ts';
+import { type UnitId, findingId, unitId } from '../src/core/ids.ts';
+import { type GraphUnit, effectiveGraph, findCycle, holdCycle, lineageHead } from '../src/schedule/graph.ts';
 import { type Rank, compareRank } from '../src/schedule/types.ts';
 
 const g = (id: string, after: readonly string[] = [], reenters?: string): GraphUnit => ({
@@ -29,6 +29,19 @@ describe('graph', () => {
     const cyclic = new Map<UnitId, readonly UnitId[]>([[unitId('a'), [unitId('b')]], [unitId('b'), [unitId('c')]], [unitId('c'), [unitId('a')]]]);
     assert.deepEqual(findCycle(cyclic), ['a', 'b', 'c', 'a']);
     assert.throws(() => effectiveGraph([g('old'), g('x', [], 'old'), g('y', [], 'old')]), /both re-enter old/);
+  });
+});
+
+describe('hold cycles (arc feedback 2026-10-15)', () => {
+  const held = (...rows: readonly (readonly [string, string, string])[]) =>
+    new Map(rows.map(([u, finding, owner]) => [unitId(u), { finding: findingId(finding), owner: unitId(owner) }] as const));
+
+  it('graph.hold-cycle: repairs each held by a finding another owns form a cycle of those findings, in canonical order; a chain is none', () => {
+    assert.deepEqual(holdCycle(held(['r1', 'F-10', 'r2'], ['r2', 'F-9', 'r1'])), ['F-9', 'F-10']);
+    // r3 waits on the cycle without being in it: only the cycle's findings.
+    assert.deepEqual(holdCycle(held(['r1', 'F-2', 'r2'], ['r2', 'F-3', 'r3'], ['r3', 'F-1', 'r1'], ['r4', 'F-2', 'r2'])), ['F-1', 'F-2', 'F-3']);
+    assert.equal(holdCycle(held(['r1', 'F-2', 'r2'], ['r2', 'F-3', 'r3'])), null);
+    assert.equal(holdCycle(held()), null);
   });
 });
 

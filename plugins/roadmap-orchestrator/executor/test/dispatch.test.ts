@@ -4,7 +4,7 @@
 // started (an effort-only change resumes the session with the new effort, R4/OR-L3), and a park (never a crash) when
 // the change moves the backend or model of an implementer whose session already exists. M4a named tests:
 // dispatch.seat-triples, dispatch.effort-only-repins-resumes, dispatch.model-change-parks, dispatch.packreview-role-no-park,
-// dispatch.dev6-decoder.
+// dispatch.dev6-decoder; dispatch.dev9-adopted (efficient judgment, 1.0.0-dev.10).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DispatchRecord } from '../src/core/records.ts';
@@ -14,7 +14,8 @@ import {
 } from '../src/pipeline/dispatch.ts';
 import { build, planCheck } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
-import { type RoutingStack, arcStack, parseRepoConfig, resolveRouting } from '../src/routing/layers.ts';
+import { type RoutingStack, arcStack, parseRepoConfig, resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
+import { PRE_DEV10_BUILTIN_SEATS } from '../src/core/upgrade.ts';
 import {
   CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, MODEL_IDS, RISK_TIERS, type RoutingLayer, type Triple, routingLayer,
 } from '../src/routing/types.ts';
@@ -222,4 +223,38 @@ test('dispatch.dev6-decoder: a dev.6-shaped record reads back its triple; fronti
   const parked = await step(under(moved, { ...rebound({}, { build: { high: 'efficient' } }), arcScope: 'architecture-doc' }), moved.unit);
   assert.ok(parked.kind === 'parked');
   assert.equal(parked.needsUser.reason, 'routing-changed');
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Efficient judgment (owner ruling 2026-10-15, 1.0.0-dev.10): the built-in seats moved the low-risk judgments, the lenses
+// and flow to the efficient class; the builds did not move.
+
+test('dispatch.dev9-adopted: a unit dispatched and built under the built-in seats before 1.0.0-dev.10 re-pins under HEAD\'s, its build resumes, and its plan-check moves to Sonnet high', T, async () => {
+  const run = setupUnit({
+    steps: [
+      planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [MALFORMED] },
+      { as: 'codex', expect: { argv: ['exec', 'resume'], argvLacks: ['-C'] }, acts: [{ type: 'emit', value: BUILD_REPORT }] },
+    ],
+  });
+  for (const profile of ['default', 'claude-only'] as const) {
+    const before = resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, arcStack(profile, null, null));
+    assert.notEqual(before.rev, resolveRouting(arcStack(profile, null, null)).rev, `${profile}: the seat table moved the rev`);
+    assert.deepEqual(before.table.build, resolveRouting(arcStack(profile, null, null)).table.build, `${profile}: no build seat moved`);
+  }
+  const dev9Routing = resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, arcStack('default', null, null));
+  const dev9: StageContext = { ...run.ctx, routing: () => dev9Routing };
+  assert.deepEqual(dev9Routing.table.planCheck.med, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'dev.9 plan-checked med on frontier');
+  started(await planCheck(dev9, run.unit));
+  assert.equal(started(await build(dev9, run.unit, { kind: 'fresh' })).outcome.kind, 'malformed');
+  const head = under(run, arcStack('default', null, null));
+  const s = await step(head, run.unit);
+  assert.equal(s.kind, 'continue', `the resumed build ran: ${JSON.stringify(s)}`);
+  const [first, repinned, ...more] = dispatches(run);
+  assert.deepEqual(more, [], 'one re-pin');
+  assert.equal(first?.routingRev, dev9Routing.rev);
+  assert.equal(repinned?.routingRev, head.routing(null).rev);
+  assert.equal(repinned?.implementerSeatRev, first?.implementerSeatRev, 'the implementer seat is unchanged');
+  assert.notEqual(run.journal.view.unit(U1).decided?.outcome, 'routing-changed');
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'plan-check')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' });
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'gate.med stays frontier');
 });

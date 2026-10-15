@@ -101,6 +101,7 @@ import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
+import { SCOPE_GROWTH_BLOCKER } from '../prompts/directives.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.candidate-${attempt}`));
@@ -745,10 +746,12 @@ function preemptible(ctx: StageContext, unit: UnitId, parent: StageParent): Pree
 /**
  * The first active P1 finding (by id) over an obligation the unit's approval selects, or its approved commit selects at
  * the integration tip now (one a sibling's publication added, which does not void the approval: `fingerprintHolds`),
- * that its spec does not repair (a finding repair repairs its obligation), or null (G10): src/holistic/findings.ts
- * `p1Blocking` over the fold's findings, read at this moment (so a P1 opened while the candidate ran blocks its ff).
+ * that `repaired` does not name, or null (G10): src/holistic/findings.ts `p1Blocking` over the fold's findings, read at
+ * this moment (so a P1 opened while the candidate ran blocks its ff). `repaired`: what the candidate publishing the unit
+ * repairs, which the brake grades held on it: its spec's repairs (a finding repair repairs its obligation), or, for a
+ * repair batch's member, every member's (`batchRepairs`: the batch candidate carries all their fixes).
  */
-export function findingBlocking(ctx: StageContext, unit: PlanUnit): FindingBlock | null {
+export function findingBlocking(ctx: StageContext, unit: PlanUnit, repaired: ReadonlySet<ObligationId> = repairedObligations(ctx, unit)): FindingBlock | null {
   const approval = ctx.journal.view.unit(unit.id).approval;
   if (approval === null) throw new Error(`unit ${unit.id}: eligibility is checked only for an approved unit`);
   const chosen = new Set([
@@ -756,8 +759,12 @@ export function findingBlocking(ctx: StageContext, unit: PlanUnit): FindingBlock
     ...selected(ctx, unit, integrationTip(ctx), approval.fingerprint.unitCommit).map((o) => o.id),
   ]);
   if (chosen.size === 0) return null;
-  return p1Blocking(ctx.journal.view.holistic().findings, chosen, repairedObligations(ctx, unit));
+  return p1Blocking(ctx.journal.view.holistic().findings, chosen, repaired);
 }
+
+/** What a repair batch of `members` repairs: the union of their specs' repairs (`repairedObligations`). */
+export const batchRepairs = (ctx: StageContext, members: readonly PlanUnit[]): ReadonlySet<ObligationId> =>
+  new Set(members.flatMap((u) => [...repairedObligations(ctx, u)]));
 
 /** The re-check recovery's `ff` redo takes (ops.ts `integrationFfOp`): the approval at the tip now, and eligibility. */
 export function unitRedo(ctx: StageContext, unit: PlanUnit): (fingerprint: ApprovalFingerprint) => boolean {
@@ -776,13 +783,14 @@ export function latestCandidate(ctx: StageContext, unit: UnitId): IntentOf<'cand
 /**
  * The fix round's directives for a transient refusal. A path a lane's `evidenceGlobs` entry matches is named with the
  * lane and the entry: it may be the unit's own work under a spec that mislabels it as lane output (M4b run 3), which
- * the builder must keep and report, never delete. Every other path is removed or reported as a scope growth.
+ * the builder must keep and report, never delete. Every other path is removed, or (an out-of-scope path the work needs) named in
+ * the report's blockers as a scope growth only the root agent grants (`SCOPE_GROWTH_BLOCKER`).
  */
 export function transientDirectives(violations: readonly TransientViolation[]): readonly string[] {
   const declared = violations.flatMap((v) => (v.rule === 'lane-evidence' ? [v] : []));
   const other = violations.filter((v) => v.rule !== 'lane-evidence');
   return [
-    ...(other.length === 0 ? [] : [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, say so in your report as a scope growth instead of keeping it.`]),
+    ...(other.length === 0 ? [] : [`The candidate merge was refused: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, ${SCOPE_GROWTH_BLOCKER} instead of keeping it.`]),
     ...(declared.length === 0 ? [] : [`The candidate merge was refused: these paths match a lane's declared evidenceGlobs, which name the files that lane's run writes (its outputs) and never reach integration: ${declared.map((v) => `${v.path} (lane ${v.lane}, entry \`${v.glob}\`)`).join(', ')}. Remove from the branch only a path that is lane output. A path that is the unit's own work (its source or tests) is not: keep it, change nothing for it, and say in your report that lane ${[...new Set(declared.map((v) => v.lane))].join(', ')}'s evidenceGlobs cover the unit's work, so the spec's entry needs correcting by the architect.`]),
   ];
 }
@@ -878,11 +886,14 @@ async function publish(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff
 //
 // All approved units repairing one finding publish as one candidate: `publishBatch` takes `integration-slot` under
 // `batch{finding, attempt}` (first of every unit waiter, as a repair ranks first, R6) for the batch's durable job
-// `batch-<n>` (one per finding until it publishes; each attempt reuses it), chains the members as `--no-ff` merges on
+// `batch-<n>` (one per finding until it publishes; each attempt reuses it). Arc feedback 2026-10-15: a batch may repair
+// several findings (approved repairs each held by a finding another of them owns, src/schedule/scheduler.ts); it is
+// keyed by the lowest of them (`finding` in the holder, its attempts and its job). It chains the members as `--no-ff` merges on
 // the candidate ref (src/git/candidate.ts `planBatchCandidate`), and runs the plan's suite and the arc lanes of the
 // members' selected obligations as a journey series under `job{batch-<n>}` (its residues job-owned, reclaimed by the
 // job's own holder, G4). It grades like a unit candidate (the brake, known regressions, the tip alone); green, it
-// re-checks every member's approval fingerprint at the tip and eligibility (G10), then `ff{subject: batch}`: the fold
+// re-checks every member's approval fingerprint at the tip and eligibility (G10, against every member's repairs: the
+// candidate carries all their fixes and the brake graded each held), then `ff{subject: batch}`: the fold
 // retires every member on that one ff. Then the latches, the snapshot, the slot released (`finishBatch`).
 //
 // Red: `red{attributable}` names the members whose own selection holds a red obligation (a fix round each), none when
@@ -1015,21 +1026,32 @@ const withSuite = (g: TreeGrade, runs: readonly JourneyRun[], standIns: Readonly
   ({ ...g, unexplained: [...new Set([...g.unexplained, ...runs.filter((r) => (r.record === null || standIns.has(r.lane)) && journeyRed(r)).map((r) => r.lane)])].sort() });
 
 /**
- * Publishes the approved `members` (at least two) repairing `finding` as one batch candidate. A batch whose ff published
- * but was cut short is finished first.
+ * Publishes the approved `members` (at least two) repairing `findings` (canonical order, non-empty; the first is the
+ * batch's key) as one batch candidate: every member repairs one of them, and each is repaired by a member. A batch whose
+ * ff published but was cut short is finished first.
  */
-export async function publishBatch(ctx: BatchContext, finding: FindingId, members: readonly PlanUnit[]): Promise<BatchOutcome> {
+export async function publishBatch(ctx: BatchContext, findings: readonly FindingId[], members: readonly PlanUnit[]): Promise<BatchOutcome> {
   if (heldBatch(ctx.journal.view) !== null) return finishBatch(ctx);
-  if (members.length < 2) throw new Error(`a batch of ${members.length} member for ${finding}: a batch has at least two`);
+  const finding = findings[0];
+  if (finding === undefined || canonicalIds(findings).join() !== findings.join()) throw new Error(`a batch repairs findings in canonical order, not ${JSON.stringify(findings)}`);
+  if (members.length < 2) throw new Error(`a batch of ${members.length} member for ${findings.join(', ')}: a batch has at least two`);
   const view = ctx.journal.view;
-  const f = view.holistic().findings.find((x) => x.id === finding);
-  if (f === undefined) throw new Error(`batch for ${finding}: no such finding`);
+  const states = findings.map((id) => {
+    const f = view.holistic().findings.find((x) => x.id === id);
+    if (f === undefined) throw new Error(`batch for ${findings.join(', ')}: no finding ${id}`);
+    return f;
+  });
   const sorted = [...members].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const memberRepairs = new Map(sorted.map((u) => [u.id, specRepairs(loadUnitSpec(ctx, u).spec)] as const));
+  const repairsOf = (u: UnitId, f: (typeof states)[number]): boolean => {
+    const repairs = memberRepairs.get(u)!;
+    return repairs.includes(f.id) || (f.obligation !== null && repairs.includes(f.obligation));
+  };
   for (const u of sorted) {
-    if (view.unit(u.id).approval === null) throw new Error(`batch for ${finding}: member ${u.id} is not approved`);
-    const repairs = specRepairs(loadUnitSpec(ctx, u).spec);
-    if (!repairs.includes(finding) && (f.obligation === null || !repairs.includes(f.obligation))) throw new Error(`batch for ${finding}: member ${u.id} does not repair it`);
+    if (view.unit(u.id).approval === null) throw new Error(`batch for ${findings.join(', ')}: member ${u.id} is not approved`);
+    if (!states.some((f) => repairsOf(u.id, f))) throw new Error(`batch for ${findings.join(', ')}: member ${u.id} repairs none of them`);
   }
+  for (const f of states) if (!sorted.some((u) => repairsOf(u.id, f))) throw new Error(`batch for ${findings.join(', ')}: no member repairs ${f.id}`);
   const reserves = batchReserves(view, finding);
   const earlier = reserves.at(-1);
   const job = earlier === undefined || batchPublished(view, earlier.job) ? view.nextJobId('batch') : earlier.job;
@@ -1049,7 +1071,7 @@ export async function publishBatch(ctx: BatchContext, finding: FindingId, member
   const approvals = new Map(sorted.map((u) => [u.id, approvalOf(ctx, u.id)] as const));
   const decision = planBatchCandidate(ctx.repo, {
     arc: plan.arc, job, integration, worktree: batchCheckout(plan.worktreeRoot, plan.arc, job, 'candidate', attempt), identity: executorIdentity(),
-    message: `roadmap ${plan.arc}: batch ${job} repairing ${finding} (${sorted.map((u) => u.id).join(', ')})\n`,
+    message: `roadmap ${plan.arc}: batch ${job} repairing ${findings.join(', ')} (${sorted.map((u) => u.id).join(', ')})\n`,
     members: sorted.map((u) => {
       const fingerprint = approvals.get(u.id)!;
       const head = unitTip(ctx, u.id);
@@ -1066,7 +1088,7 @@ export async function publishBatch(ctx: BatchContext, finding: FindingId, member
   // The claims: the union of every member's selection (each over its own diff and closure), completions over all members.
   const { obligations } = holisticInForce(ctx);
   const ids = canonicalIds(sorted.flatMap((u) => selected(ctx, u, tip, approvals.get(u.id)!.unitCommit).map((o) => o.id)));
-  const repairs = new Set(sorted.flatMap((u) => [...repairedObligations(ctx, u)]));
+  const repairs = batchRepairs(ctx, sorted);
   const claims = claimsOf(ctx, obligations, sorted.map((u) => u.id), ids, repairs);
   const owner = { type: 'job', job, acquireFirst: ctx.acquireFirst } as const;
   // F6: a suite lane identical to a claimed arc lane runs once, in the suite's place, as both.
@@ -1112,17 +1134,17 @@ export async function publishBatch(ctx: BatchContext, finding: FindingId, member
       case 'base-red':
         return close({ kind: 'base-red', job, needsUser: {
           blocking: true, subject: { type: 'arc' }, reason: 'base-red',
-          summary: `On ${plan.integrationBranch} at ${tip} alone, without batch ${job} repairing ${finding}: ${baseRedAccount(claims === null ? verdict.base : withWitnessLanes(verdict.base, claims.obligations))}. The base is broken, not the batch. Merges halt.`,
+          summary: `On ${plan.integrationBranch} at ${tip} alone, without batch ${job} repairing ${findings.join(', ')}: ${baseRedAccount(claims === null ? verdict.base : withWitnessLanes(verdict.base, claims.obligations))}. The base is broken, not the batch. Merges halt.`,
           recommendation: `Repair ${plan.integrationBranch} (or the suite), then acknowledge this item: the batch runs again.`,
           options: [], evidence: [jobEvidenceRoot(ctx.runDir, job)],
         } });
     }
   }
 
-  // Green: every member's approval at the tip, then eligibility (G10), then the ff.
+  // Green: every member's approval at the tip, then eligibility (G10, against what the batch repairs), then the ff.
   const blocked = (): BatchOutcome | null => {
     for (const u of sorted) {
-      const block = findingBlocking(ctx, u);
+      const block = findingBlocking(ctx, u, repairs);
       if (block !== null) return { kind: 'finding-blocked', job, unit: u.id, block };
     }
     return null;

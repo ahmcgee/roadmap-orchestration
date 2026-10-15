@@ -15,7 +15,10 @@
 // tree effects) but whose stage-outcome fact is missing (the fold's `open` attempt) is recorded from that
 // call, never dispatched again; a judgment's against its recorded `judgment-inputs` (`consumeJudgment`, F1).
 // Any other cut short attempt (no call yet, a lost call, a stage without one) runs again as a new,
-// uncharged attempt. The executor records these at startup, right after recovery.
+// uncharged attempt. The executor records these at startup, right after recovery; there, an admission-stage attempt
+// nothing consumes is closed by a recovery hold (`holdAbandoned`, arc feedback 2026-10-15), so a paused unit is held
+// (cut, re-entered, respecified or resumed like any held unit) instead of keeping a dead attempt open; a chain stage's
+// runs again at once, pause or not.
 //
 // A held unit (an interrupted stage) re-runs that stage when the driver is called again: calling it is
 // the resume. An interrupted build is not restarted: its re-run is a `continue` round (rounds.ts) of the
@@ -45,6 +48,9 @@
 // witnesses (D1), smoke survivors (D2), or a witness check whose own checkout was left dirty. A resume round quotes why
 // the answer it follows was malformed (I3); the retry of a malformed in-session assessment assesses again, fresh (E).
 //
+// Scope growth (2026-10-15): a fix round after a salvage that reverted the build's out-of-scope edits carries the executor's
+// directive naming them (`withReverted`).
+//
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
 import { existsSync } from 'node:fs';
@@ -61,7 +67,9 @@ import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { buildOutputFor } from '../prompts/schemas.ts';
 import { type InvocationId, type OpId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
-import type { EntryPoint, UnitState } from '../core/state.ts';
+import { type EntryPoint, type UnitState, openAttempt } from '../core/state.ts';
+import { NO_PARK_FACTS } from '../park/table.ts';
+import { ADMISSION_STAGES } from '../schedule/types.ts';
 import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
@@ -85,9 +93,10 @@ import {
   witnessCheckoutFixRound, witnessFixRound,
 } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec, planCheck,
-  quiesce, record, recordedCall, salvage, teardown,
+  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
+  planCheck, quiesce, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
+import { revertedPathsDirective } from '../prompts/directives.ts';
 import { requiredAt } from './witnesscheck.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
@@ -209,7 +218,7 @@ function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Reado
   const batch = memberBatchCandidate(view, at);
   if (batch !== null) return { fix: batchMemberFix(ctx, unit, batch), suite: [] };
   // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
-  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
   // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
   const survived = mutantFix(ctx, at);
   if (survived !== null) return { fix: survived, suite };
@@ -280,13 +289,19 @@ function stillRequired(refs: readonly TestRef[], required: readonly RequiredWitn
   return refs.filter((r) => keys.has(testRefKey(r)));
 }
 
-/** The fix round after lanes attempt `f` (red, not certified, witnesses missing, smoke survivors), from what it recorded. */
+/**
+ * The fix round after lanes attempt `f` (red, not certified, witnesses missing, smoke survivors), from what it recorded. A
+ * red or dirty series is the spec series' or the fast suite's at the salvage SHA (stages.ts `fastSuite`): both are read.
+ */
 function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, tip: Sha): DecidedRound {
   const view = ctx.journal.view;
   const { spec } = loadUnitSpec(ctx, unit);
   const parent = stageParent(f);
   const root = specSeriesRoot(ctx.runDir, parent);
-  const ledger = seriesLedger(ctx, parent, spec.lanes, tip, root);
+  const ledger = seriesLedger(ctx, parent, spec.lanes, 'spec', tip, root);
+  const suiteRoot = fastSuiteRoot(ctx.runDir, parent, 'suite');
+  const series = [...ledger, ...seriesLedger(ctx, parent, ctx.plan().suite.lanes, 'suite', tip, suiteRoot)];
+  const dirty = [...seriesDirty(view, root), ...seriesDirty(view, suiteRoot)];
   switch (f.outcome) {
     case 'witnesses-missing': {
       if (f.detail?.kind !== 'witnesses-missing') throw new Error(`unit ${unit.id}: lanes#${f.attempt} witnesses-missing without its detail`);
@@ -304,8 +319,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return smokeFixRound(survived, required, smokeEvidence(ctx, parent), ledger, tip);
     }
     case 'not-certified': {
-      const dirty = seriesDirty(view, root);
-      if (dirty.length > 0) return laneFixRound(ledger, dirty, tip);
+      if (dirty.length > 0) return laneFixRound(series, dirty, tip);
       // D1: the witness lanes left their own checkout dirty or moved (the spec series was clean).
       const witnessRoot = absPath(join(evidenceRoot(ctx.runDir, parent), 'journey'));
       const dest = absPath(join(witnessRoot, `_dirty-${basename(witnessWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt))}`));
@@ -313,7 +327,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return witnessCheckoutFixRound(snap === undefined ? [] : snap.expect.globs.map(patternPath), [...witnessEvidence(ctx, parent), ...(snap === undefined ? [] : [dest])], ledger, tip);
     }
     default:
-      return laneFixRound(ledger, seriesDirty(view, root), tip);
+      return laneFixRound(series, dirty, tip);
   }
 }
 
@@ -343,13 +357,13 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       return lanesFixRound(ctx, unit, f, tip);
     case 'gate': {
       const parent = specSeries();
-      return gateReviseRound(gateDirectives(ctx, stageParent(f)), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
+      return gateReviseRound(gateDirectives(ctx, stageParent(f)), seriesLedger(ctx, parent, spec.lanes, 'spec', tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
     }
     case 'candidate': {
       const parent = specSeries();
       const verification = verificationOf(parent);
       if (f.outcome === 'transient-violation') {
-        return candidateFixRound(candidateRefusalFix(ctx, unit), seriesLedger(ctx, parent, spec.lanes, tip, specSeriesRoot(ctx.runDir, parent)), verification, tip);
+        return candidateFixRound(candidateRefusalFix(ctx, unit), seriesLedger(ctx, parent, spec.lanes, 'spec', tip, specSeriesRoot(ctx.runDir, parent)), verification, tip);
       }
       const red = candidateRed(ctx, unit, stageParent(f));
       return candidateFixRound(red.fix, red.suite, verification, tip);
@@ -364,7 +378,19 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
  * since, the continue of that attempt's last invocation (a hold is only ever recorded from a call's result).
  */
 function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): RoundInput {
-  return continued(ctx, unit, decidedInput(ctx, unit, round, f));
+  return continued(ctx, unit, withReverted(ctx, unit, decidedInput(ctx, unit, round, f)));
+}
+
+/**
+ * Scope growth (2026-10-15, A): a fix round after a salvage that reverted out-of-scope edits tells the builder so (the paths
+ * still outside the scope, and where their content is kept), so a needed path is reported, never silently lost.
+ */
+function withReverted(ctx: StageContext, unit: PlanUnit, round: DecidedRound): DecidedRound {
+  if (round.kind !== 'fix') return round;
+  const latest = salvageRejections(ctx, unit.id).at(-1);
+  const paths = latest === undefined ? [] : stillOutside(ctx, unit.id, latest.paths);
+  if (latest === undefined || paths.length === 0) return round;
+  return { ...round, fix: { ...round.fix, directives: [...round.fix.directives, revertedPathsDirective(paths, latest.dir)] } };
 }
 
 /** `of`, or the continue of its attempt an interruption held since (a hold is only ever recorded from a call's result). */
@@ -529,6 +555,23 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
 export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
   const recorded = await consumeRecorded(ctx, unit, ctx.journal.view.unit(unit.id).decided);
   return recorded === null ? null : after(ctx, unit, recorded);
+}
+
+/**
+ * Closes the unit's admission-stage attempt a crash cut short that `consume` did not record (no call yet, a lost call, an
+ * in-session assessment, a stage without a call) with an uncharged `interrupted` hold, `cause: recovery`: the unit is
+ * held while a pause covers it, else stays active, and its next attempt re-runs the stage from the decision before (the
+ * fold leaves `decided` and `interrupted` alone, so the crash readers still find the abandoned attempt by number:
+ * stages.ts `crashedAssessment`, rounds.ts `crashLostDeadline`). The executor calls it for every unit at startup, after
+ * `consume` (arc feedback 2026-10-15); no-op when nothing is open or the open attempt is a chain stage's (it runs again at
+ * the start, whatever pause says). A running attempt here is a bug: nothing runs before the scheduler.
+ */
+export function holdAbandoned(ctx: StageContext, unit: PlanUnit): void {
+  const open = openAttempt(ctx.journal.view, unit.id);
+  if (open === null || !(ADMISSION_STAGES as readonly Stage[]).includes(open.stage)) return;
+  if (open.live) throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is running before the scheduler started`);
+  const parent = { type: 'stage', unit: unit.id, stage: open.stage as (typeof ADMISSION_STAGES)[number], attempt: open.attempt } as const;
+  record(ctx, parent, 'interrupted', null, NO_PARK_FACTS, { type: 'recovery' });
 }
 
 /**

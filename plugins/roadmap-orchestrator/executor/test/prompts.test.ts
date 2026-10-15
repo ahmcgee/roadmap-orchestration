@@ -112,7 +112,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, acceptance: null, priorInvalid: null,
+      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] },
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -130,17 +130,21 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         delivered: [{ obligation: obligationId('I-7'), statement: 'A cancelled booking frees its berth.', lane: laneId('journey'), testIds: ['cancel > frees the berth'] }],
       },
       priorInvalid: 'PRIOR-INVALID-B',
+      scopeGrowth: {
+        references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
+        rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
+      },
     },
   ],
   build: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
+      planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
       scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
-      planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
+      planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
       assess: { risk: 'high', vision: vision(2, 'VISION-B') },
@@ -152,7 +156,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
       diff: { base: SHA_A, head: SHA_B, text: 'DIFF-A' },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
-      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
+      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -162,7 +166,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
         ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
-      evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')] },
+      evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
         directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null }],
         premises: [premise('PREMISE-B', 'src/b/x.ts')], fixPaths: [repoPath('src/b/x.ts')], changedPremiseFiles: ['src/b/x.ts'],
@@ -245,6 +249,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   planCheck: {
     decision: 'redirect', reasons: ['A1 contradicts C-1'], risk: 'med', notes: '', premises: [{ claim: 'parse.ts exists', evidence: [{ path: 'src/a/parse.ts', line: 1 }] }],
     visionConflict: [{ clauses: ['V-1'], note: 'A2 makes rounding permissive, against V-1.' }],
+    scopeGrowth: [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }],
     patch: [
       { op: 'replace', section: 'lanes', item: { id: 'unit', argv: ['npm', 'test'], cwd: '.', env: { set: [{ name: 'CI', value: '1' }], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'add', section: 'decisions', item: { id: 'R2', text: 'Use the existing parser.' } },
@@ -370,6 +375,12 @@ describe('prompts', () => {
     for (const role of ROLES) for (const model of MODEL_IDS) {
       const s = PROMPTS[role][model];
       if (s.type === 'inherits') assert.equal(PROMPTS[role][s.from].type, 'prompt', `${role}/${model}: inherits a real module`);
+    }
+    // Sonnet 5.5 judges on the efficient class (2026-10-15): every judgment role reads a Claude module, reviewed for it.
+    for (const role of ROLES.filter((r) => r !== 'build')) {
+      const s = PROMPTS[role]['claude-sonnet-5-5'];
+      assert.ok(s.type === 'inherits' && s.reviewed.startsWith('2026-10-15: Sonnet 5.5 migration guidance'), `${role}/sonnet: ${JSON.stringify(s)}`);
+      assert.equal(promptFor(role, 'claude-sonnet-5-5'), promptFor(role, s.from));
     }
   });
 
@@ -509,15 +520,18 @@ describe('output validators', () => {
 });
 
 describe('M3 prompts: the vision and the arc roles', () => {
-  const ARC_MODELS = ['claude-opus-5-5', 'claude-fable-5-1'] as const;
+  /** Every Claude model: Opus and Fable have written modules, Sonnet reads them (owner ruling 2026-10-15, efficient judgment). */
+  const ARC_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'] as const;
 
-  it('the arc roles are supported on Opus and Fable: lens/Opus and checkpoint/Fable written, the other inherits; Sonnet and Codex unsupported', () => {
+  it('the arc roles are supported on every Claude model: lens/Opus and checkpoint/Fable written, the others inherit; Codex unsupported', () => {
     assert.equal(PROMPTS.lens['claude-opus-5-5'].type, 'prompt');
     assert.equal(PROMPTS.checkpoint['claude-fable-5-1'].type, 'prompt');
     assert.equal(promptFor('lens', 'claude-fable-5-1'), promptFor('lens', 'claude-opus-5-5'));
+    assert.equal(promptFor('lens', 'claude-sonnet-5-5'), promptFor('lens', 'claude-opus-5-5'));
     assert.equal(promptFor('checkpoint', 'claude-opus-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
+    assert.equal(promptFor('checkpoint', 'claude-sonnet-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
     for (const role of ['lens', 'checkpoint'] as const) {
-      for (const model of ['claude-sonnet-5-5', 'gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.throws(() => promptFor(role, model), UnsupportedPromptError);
+      for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.throws(() => promptFor(role, model), UnsupportedPromptError);
       for (const model of ARC_MODELS) {
         const s = PROMPTS[role][model];
         if (s.type === 'inherits') assert.match(s.reviewed, /^\d{4}-\d{2}-\d{2}: /, `${role}/${model}: a dated review`);
@@ -652,6 +666,35 @@ describe('M3 prompts: the vision and the arc roles', () => {
     // visionConflict is required.
     const { visionConflict: _v, ...without } = ok;
     assert.throws(() => validatePlanCheckOutput(without), SchemaError);
+  });
+
+  it('prompts.scope-growth: plan-check sweeps for references and proposes scopeGrowth from <scope_references>, never a rejected proposal; the gate reads the reverted paths', () => {
+    for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+      const mod = promptFor('planCheck', model);
+      assert.match(mod.system, /sweep for references/, model);
+      assert.match(mod.system, /scopeGrowth/, model);
+      assert.match(mod.system, /<rejected_scope_growth>/, model);
+      const a = mod.render(SAMPLES.planCheck[0]);
+      assert.match(a, /<scope_references>\n\(none: the spec declares no removes, or nothing outside the envelope names them\)\n<\/scope_references>/, model);
+      assert.doesNotMatch(a, /<rejected_scope_growth>/, `${model}: no rejected block without a rejection`);
+      const b = mod.render(SAMPLES.planCheck[1]);
+      assert.match(b, /- `REMOVED-B` is still named by: test\/b\/old\.test\.ts/, model);
+      assert.match(b, /<rejected_scope_growth>\n- `docs\/b\/\*\*`: proposed because GROWTH-REASON-B; rejected because REJECTION-B\n<\/rejected_scope_growth>/, model);
+      const gate = promptFor('gate', model);
+      assert.match(gate.system, /A path listed as reverted/, model);
+      assert.match(gate.render(SAMPLES.gate[1]), /<scope_reverted>\n- test\/b\/REVERTED-B\.test\.ts\n<\/scope_reverted>/, model);
+      assert.match(gate.render(SAMPLES.gate[0]), /<scope_reverted>\n\(none: the build edited nothing outside the envelope\)\n<\/scope_reverted>/, model);
+    }
+    assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
+    assert.ok((PLAN_CHECK_ACCEPTANCE_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
+    const ok = OUTPUTS.planCheck as Record<string, unknown>;
+    assert.deepEqual(validatePlanCheckOutput(ok).scopeGrowth, [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }]);
+    for (const bad of [[{ patterns: [], reason: 'r' }], [{ patterns: ['a'] }], [{ patterns: [''], reason: 'r' }]]) {
+      assert.throws(() => validatePlanCheckOutput({ ...ok, scopeGrowth: bad }), SchemaError, JSON.stringify(bad));
+    }
+    // An answer a dev.9 executor launched has no scopeGrowth: read as none proposed (scaffolding, `planCheckScopeGrowthDefault`).
+    const { scopeGrowth: _g, ...dev9 } = ok;
+    assert.deepEqual(validatePlanCheckOutput(dev9).scopeGrowth, []);
   });
 
   it('the gate (R17) never receives the vision: its selected obligations, without the clauses they serve', () => {
@@ -840,7 +883,19 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     }
   });
 
-  it('prompts.build-assess-directive: a read-only first invocation answered as planAssessment, the pinned floor, the vision as context', () => {
+  it('prompts.build-suite-lanes: the plan\'s fast suite lanes as exact commands run beside the fast lanes, reported as experiments; nothing without them', () => {
+    for (const model of BUILDERS) {
+      const mod = promptFor('build', model);
+      assert.doesNotMatch(mod.render(SAMPLES.build[0]), /[Ss]uite lanes?/, `${model}: no suite section without suite lanes`);
+      const text = mod.render({ ...SAMPLES.build[1], assess: null, fixRound: null });
+      assert.match(text, /- eslint \(expects exit 0\):\n {2}cd \/wt\/b && env CI=1 npx eslint \./, `${model}: the exact command`);
+      for (const needle of [/after your fast lanes/, /fix round/, /after your last change/, /experiments/, /suite:<id>/, /never in lanesRun/]) {
+        assert.match(text, needle, `build/${model}: ${needle}`);
+      }
+    }
+  });
+
+  it('prompts.build-assess-directive:a read-only first invocation answered as planAssessment, the pinned floor, the vision as context', () => {
     for (const model of BUILDERS) {
       const mod = promptFor('build', model);
       assert.doesNotMatch(mod.render(SAMPLES.build[0]), /planAssessment|assessment/, `${model}: no assessment in a build`);

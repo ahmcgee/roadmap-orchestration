@@ -113,9 +113,9 @@ const scopeCovers = (scope: CommandScope, unit: UnitId): boolean =>
 
 /**
  * The active P1 that holds `unit`'s candidate admission (G10): over an obligation its approval selects that its spec
- * does not repair; null when none does or it has no approval.
+ * does not repair; null when none does or it has no approval. The scheduler's hold cycles read it too.
  */
-function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlySet<ObligationId>): Extract<AdmissionConstraint, { type: 'finding-blocked' }> | null {
+export function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlySet<ObligationId>): Extract<AdmissionConstraint, { type: 'finding-blocked' }> | null {
   const approval = view.unit(unit).approval;
   if (approval === null) return null;
   const block = p1Blocking(view.holistic().findings, new Set(obligationRevsOf(approval.fingerprint).map((r) => r.id)), repairs);

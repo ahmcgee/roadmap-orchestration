@@ -4,8 +4,9 @@
 // The scenario: u1's estate lane (cm-pin.ts) holds estate#1 at a barrier when the executor is SIGKILLed. The
 // supervisor's respawn adopts the lane, and recovery's cleanup of the dead lanes holder runs estate#1's
 // teardown, which the estate fake fails (its per-instance counted marker). estate#1 goes cleanup-failed with a
-// residue, and the killed lanes attempt gets no stage outcome, so nothing parks. The unit runs its lanes again
-// on estate#2 and merges; the residue is the prober's.
+// residue, and the killed lanes attempt gets only the startup's recovery hold (uncharged `interrupted`, `cause:
+// recovery`, arc feedback 2026-10-15), so nothing parks. The unit runs its lanes again on estate#2 and merges; the
+// residue is the prober's.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -81,7 +82,10 @@ async function killHolder(l: Laid, failures: number): Promise<ReturnType<typeof 
   return run;
 }
 
-/** The failed cleanup recovery recorded: one fail of estate#1, by the killed lanes attempt, parked by no outcome. */
+/**
+ * The failed cleanup recovery recorded: one fail of estate#1, by the killed lanes attempt, parked by no outcome: the
+ * attempt's one outcome is the startup's recovery hold (src/pipeline/unit.ts `holdAbandoned`).
+ */
 function recoveryFail(r: ExecRun): IntentOf<'resource.transition'> {
   const fails = transitions(r).filter((i) => i.expect.edge.type === 'fail');
   assert.equal(fails.length, 1, 'one failed cleanup');
@@ -90,8 +94,9 @@ function recoveryFail(r: ExecRun): IntentOf<'resource.transition'> {
   assert.ok(holder.type === 'stage' && holder.unit === U1 && holder.stage === 'lanes', JSON.stringify(holder));
   assert.ok(edge.type === 'fail' && edge.residues.length === 1 && edge.residues[0]!.resource === ESTATE1, JSON.stringify(edge));
   assert.deepEqual(fail.parent, { type: 'arc' }, 'recovery\'s cleanup of the dead holder');
-  const outcome = facts(r).find((f) => f.kind === 'stage-outcome' && f.unit === U1 && f.stage === 'lanes' && f.attempt === holder.attempt);
-  assert.equal(outcome, undefined, 'the killed lanes attempt has no stage outcome: nothing parked');
+  const recorded = facts(r).filter((f) => f.kind === 'stage-outcome' && f.unit === U1 && f.stage === 'lanes' && f.attempt === holder.attempt);
+  assert.deepEqual(recorded, [{ kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: holder.attempt, outcome: 'interrupted', class: 'hold', chargeable: false, cause: { type: 'recovery' } }],
+    'the killed lanes attempt has only its recovery hold: nothing parked');
   return fail;
 }
 
