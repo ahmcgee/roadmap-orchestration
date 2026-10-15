@@ -1,7 +1,8 @@
 // The targeted probe (`npm run probe`): the production argv builder, runner and adapter against the real,
 // authenticated CLIs, through src/preflight/smoke.ts. Pennies per run. Checks:
 //
-//   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it
+//   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it (Claude: planCheck.low, the efficient
+//                       class's judgment binding, claude-sonnet-5-5 high)
 //   codex.fresh/resume  gpt-5.6-luna, effort low, strict schema; the resume continues the fresh thread
 //   shell.lane          a real shell command through the runner, graded on exit code and stdout
 //   claude.judgment     claude-opus-5-5 (effort high) judgment argv: --system-prompt, and --add-dir reading an evidence
@@ -23,12 +24,12 @@
 //                       must carry the token, which only the killed conversation holds
 //   codex.killed-resume the same with gpt-5.6-luna, effort low: killed after thread.started and the file;
 //                       the resume uses the thread id the adapter read into result.json
-//   m3.lens             lens.arc seat (claude-opus-5-5): the real lens prompt module and LENS_SCHEMA over a tiny
+//   m3.lens             lens.arc seat (efficient: claude-sonnet-5-5 high): the real lens prompt module and LENS_SCHEMA over a tiny
 //                       fixture (2-clause vision, one obligation, a trivial diff), inputs built as production
 //                       does; the adapter must return success and validateLensOutput must accept it
 //   m3.checkpoint       checkpoint.arc seat (claude-fable-5-1): the real checkpoint module and its per-call closed schema (checkpointSchemaFor)
 //                       over a tiny input set; the output must validate (a no-op is expected)
-//   m3.plan-check       planCheck.med seat with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
+//   m3.plan-check       planCheck.med seat (efficient: claude-sonnet-5-5 high) with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
 //                       the output must validate and carry a visionConflict array
 //   forge.*             (M4a) the executor's own src/forge functions against the real ahmcgee/roadmap-orchestration, read-only:
 //                       resolveRepo, queryPolicy + trusted, the REST issues and comments shapes (pull_request entries,
@@ -40,7 +41,7 @@
 //   m4a3.assess         (M4a rev 3, E) frontier (claude-opus-5-5 medium) in-session assessment: the real build prompt module
 //                       with `assess` set, PLAN_ASSESSMENT_SCHEMA, in a git worktree; the answer must validate
 //                       (validatePlanAssessment) and HEAD, tracked and untracked state must be unchanged
-//   m4a3.plan-check-acceptance  the acceptance-shape plan-check (planCheck.med, PLAN_CHECK_ACCEPTANCE_SCHEMA, next witness id
+//   m4a3.plan-check-acceptance  the acceptance-shape plan-check (planCheck.med, Sonnet high, PLAN_CHECK_ACCEPTANCE_SCHEMA, next witness id
 //                       W-1): validatePlanCheckAcceptanceOutput accepts it and its redirect adds witness items
 //   m4a3.checkpoint-targets  the checkpoint (corpus arc, summit seat) told to admit one unit: the answer validates and the
 //                       admit carries `targets`
@@ -52,7 +53,7 @@
 //                       told to start a 20 s command with Monitor and end its turn to wait: stdout must hold an interim
 //                       `final: false` result, then the final `final: true` one; the answer must validate with ready.txt and
 //                       hello.txt written, and the invocation end as `exited` or `reported`
-//   m4b.flow            (M4b) flow.arc (frontier, the default table with the m4b role set): the real flow prompt module over a
+//   m4b.flow            (M4b) flow.arc (efficient: Sonnet high, the default table with the m4b role set): the real flow prompt module over a
 //                       small synthetic FlowInputs (the integration slot the constraint, its suite lane serial); the answer
 //                       must validate (ROLE_VALIDATORS.flow); the detail names the proposal and code's argv-shape verdict on it
 //   m4b.proof           (M4b) the production suite-lane proof (runProof) on a tiny product of two 2 s timer test files: suite

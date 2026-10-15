@@ -30,12 +30,13 @@ node evals/probe.ts [--profile default|claude-only]
 Runs the production argv builder, runner and adapter against the real `claude` and `codex` (both must be on
 PATH and logged in): the backend smoke, Codex fresh and resume, a real shell lane, the Claude judgment and
 implementer argvs, the Fable id pin, and (M3) one real call each of the lens, checkpoint and vision-aware plan-check
-prompt modules over tiny fixtures on their own seats; (M4a) the forge functions read-only against the real repository
+prompt modules over tiny fixtures on their own seats (since 1.0.0-dev.10 the lens and med plan-check seats are the efficient
+class, Sonnet 5.5 high, as is the Claude smoke on planCheck.low); (M4a) the forge functions read-only against the real repository
 (identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
 call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) the in-session assessment (frontier Opus medium,
 read-only, the worktree unchanged), the acceptance-shape plan-check (witness items through the patch channel), a checkpoint admit
 carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
-medium build under the per-call build schema (`experiments`); (M4b) a real flow call on the flow seat (frontier, the m4b role
+medium build under the per-call build schema (`experiments`); (M4b) a real flow call on the flow seat (efficient, Sonnet 5.5 high, the m4b role
 set) over a small synthetic `FlowInputs`, validated by the flow role's reader, and a real suite-lane proof (`runProof`) on a tiny
 two-file product, `--test-concurrency=1` to `=2` under the node-test reporter: `preserved`, equal records, the new side faster. Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
 its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies. `--profile claude-only` (default `default`, unchanged)

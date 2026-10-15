@@ -292,6 +292,9 @@ None.
 - `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth
   (2026-10-15) launched is unconsumed: a plan-check answer without `scopeGrowth` reads as none proposed. With it,
   `scopeGrowth` becomes required in `planCheckOutput`.
+- `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) with status's `preDev10RevAlias` and `resolveRoutingUnder`
+  (src/routing/layers.ts), once no arc started on 1.0.0-dev.9 is in flight: the built-in seats before the efficient
+  class took the low-risk judgments (2026-10-15), kept only so `status` joins an earlier executor's recorded routing revs.
 - `lensPatchMutantDefault` (src/core/upgrade.ts) and `LensMutant`'s `kind: patch` arm with `admitMutant`'s `checkPatch`
   branch, once no audit an executor before paid M4b run 3's fix started is running: a recorded lens answer's mutant
   `{patch, lane}` (a hand-written diff) reads as written. With it, a lens mutant is edits only.

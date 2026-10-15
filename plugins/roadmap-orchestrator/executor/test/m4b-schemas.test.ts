@@ -261,7 +261,7 @@ describe('m4b routing: arcRoles gates the flow seat', () => {
     assert.notEqual(m4b.rev, dev7.rev, 'the flow seat is hashed');
     assert.ok(!seatsInForce(dev7).some((s) => s.role === 'flow'));
     assert.deepEqual(seatsInForce(m4b).filter((s) => s.role === 'flow'), [{ role: 'flow', tier: 'arc' }]);
-    assert.deepEqual(m4b.classes.flow, { arc: 'frontier' });
+    assert.deepEqual(m4b.classes.flow, { arc: 'efficient' }, 'the flow seat on efficient (owner ruling 2026-10-15)');
     for (const scope of ['architecture-doc', 'corpus'] as const) {
       assert.notEqual(routingRevOf(m4b.table, scope, 'm4b'), routingRevOf(m4b.table, scope, null), scope);
       assert.ok(seatsInForce(resolveRouting({ ...arcStack('default', null, null), arcScope: scope, arcRoles: 'm4b' })).some((s) => s.role === 'flow'), scope);

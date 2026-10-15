@@ -25,7 +25,7 @@ import { type StartChecks, type StartInput, gitCommonDir, runChecks, smokeCheck 
 import { resolveArgv0 } from '../src/preflight/argv0.ts';
 import type { SmokeReport } from '../src/preflight/smoke.ts';
 import { type StartupRejection, type StartupRejectionKind, exitCodeFor, startupRejection } from '../src/preflight/startup.ts';
-import { git, makeRepo, revParse, tmpDir } from './helpers/repo.ts';
+import { commitAll, git, makeRepo, revParse, tmpDir } from './helpers/repo.ts';
 import { type Step, writeScenario } from './helpers/scenario.ts';
 import { FAILED, claimRecord, residueEntry } from './fixtures/host-records.ts';
 
@@ -323,9 +323,14 @@ describe('startup.rejections', () => {
 
   it('unsupported-routing: a Codex judgment seat, named by seat, layer and class, never by model (78)', T, async () => {
     const s = setup();
-    write({ ...s, plan: { ...s.plan, routing: { planCheck: { low: 'efficient' } } } });
+    // Every class judges on Claude in the catalogue: only a repo rebind to Codex puts Codex at a judgment seat.
+    // Committed, as Phase-0 row 9 requires; the baseline moves to the commit.
+    mkdirSync(join(s.repo, '.roadmap'), { recursive: true });
+    writeFileSync(join(s.repo, '.roadmap', 'config.json'), JSON.stringify({ routing: { classes: { summit: { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' } } } }));
+    commitAll(s.repo, 'rebind summit');
+    write({ ...s, plan: { ...s.plan, baseline: revParse(s.repo, 'HEAD'), routing: { planCheck: { low: 'summit' } } } });
     const [r] = refusedWith(await allChecks(input(s)), 'unsupported-routing', 78);
-    assert.deepEqual(r, { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'plan', class: 'efficient', unit: null, why: 'codex-judgment' });
+    assert.deepEqual(r, { kind: 'unsupported-routing', role: 'planCheck', tier: 'low', layer: 'plan', class: 'summit', unit: null, why: 'codex-judgment' });
   });
 
   it('undispositioned-residue (78)', T, async () => {

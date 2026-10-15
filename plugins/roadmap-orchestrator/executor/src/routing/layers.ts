@@ -8,9 +8,10 @@
 //
 // Every layer names a model CLASS per seat, never a model. The built-in seats (profiles.ts) are a full table; each layer
 // above them is a partial one, and a seat takes its class from the highest layer that names it. Each class
-// then binds to a triple: the profile's class catalogue (classes.ts), unless the repo config rebinds it. The resolved table of
-// triples is hashed into the RoutingRev that records carry instead of model ids, so a rebind changes the
-// rev exactly as a seat edit does.
+// then binds to a triple: the profile's class catalogue (classes.ts), which binds a class's build seats and its judgment
+// seats separately, unless the repo config rebinds it, which binds the class at every seat that names it (so a class
+// rebound to Codex at a judgment seat is refused `codex-judgment`). The resolved table of triples is hashed into the
+// RoutingRev that records carry instead of model ids, so a rebind changes the rev exactly as a seat edit does.
 //
 // Seats: build has `low | med | high`; planCheck and gate also have `escalation`, where route-ups and risk
 // triggers go (transitions.ts). A unit's risk is never `escalation`. The arc roles `lens`, `checkpoint` (M3),
@@ -39,7 +40,8 @@
 //   common dir (src/flow/givens.ts).
 //
 //   Classes: `efficient | frontier | summit`. A seat value that is a triple is refused: triples are bound
-//   only under `classes`, which is repo-level (a plan cannot rebind a class). A binding's effort is one its
+//   only under `classes`, which is repo-level (a plan cannot rebind a class). A rebind is one triple for the class at
+//   build and judgment seats alike; a Codex one refuses any judgment seat in force that names the class. A binding's effort is one its
 //   model lists in models.ts: a Claude model low | medium | high | xhigh | max, a Codex model low | medium | high. Unknown
 //   keys are refused. `{"routing": {"profile": "claude-only"}}` is the one config line that selects the
 //   Claude-only profile. The profile is chosen by an explicit `start --profile`, else this file's
@@ -53,7 +55,7 @@ import { dev7ArcRolesDefault } from '../core/upgrade.ts';
 import type { PlanM1, PlanTargetKind } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import { support } from '../prompts/index.ts';
-import { CLASS_CATALOGUE } from './classes.ts';
+import { CLASS_CATALOGUE, boundAt } from './classes.ts';
 import { BUILTIN_SEATS } from './profiles.ts';
 import {
   type ArcRole, type ArcRoleSet, type ClassBindings, type ClassSource, type ClassTable, MODEL_CLASSES, type ModelClass, type ProfileName, type Role,
@@ -179,19 +181,28 @@ const LAYERS = [['unit', 'unit'], ['plan', 'plan'], ['repo-config', 'repoConfig'
 
 /**
  * Resolves every seat through the stack to a class, and every class to its binding in the class catalogue (OR-L3: no
- * routing generations, so every revision binds through `CLASS_CATALOGUE`).
+ * routing generations, so every revision binds through `CLASS_CATALOGUE` and the built-in seats): a repo rebind at
+ * every seat naming the class, else the catalogue's build triple at a build seat and its judgment triple at any other.
  */
 export function resolveRouting(stack: RoutingStack): ResolvedRouting {
-  const bound = (c: ModelClass): Triple => stack.classes?.[c] ?? CLASS_CATALOGUE[stack.profile][c];
+  return resolveRoutingUnder(BUILTIN_SEATS, stack);
+}
+
+/**
+ * `resolveRouting` with `builtin` as the lowest layer. Only `status` passes another table: the built-in seats an
+ * earlier release hashed, to alias its recorded revs (`PRE_DEV10_BUILTIN_SEATS`, src/core/upgrade.ts; scaffolding).
+ */
+export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): ResolvedRouting {
+  const bound = (c: ModelClass, seat: SeatRef): Triple => stack.classes?.[c] ?? boundAt(CLASS_CATALOGUE[stack.profile][c], seat.role);
   const named = (seat: SeatRef): readonly [ModelClass, RoutingLayerName] => {
     for (const [name, key] of LAYERS) {
       const c = (stack[key]?.[seat.role] as Readonly<Partial<Record<string, ModelClass>>> | undefined)?.[seat.tier];
       if (c !== undefined) return [c, name];
     }
-    return [atSeat(BUILTIN_SEATS, seat), 'builtin'];
+    return [atSeat(builtin, seat), 'builtin'];
   };
   const classes = seatTable((s) => named(s)[0]);
-  const table = seatTable((s) => bound(atSeat(classes, s)));
+  const table = seatTable((s) => bound(atSeat(classes, s), s));
   const bindings = Object.fromEntries(MODEL_CLASSES.map((c) => [c, stack.classes?.[c] === undefined ? 'builtin' : 'repo-config'])) as ResolvedRouting['bindings'];
   const arcScope = stack.arcScope ?? 'none';
   const arcRoles = stack.arcRoles ?? null;
@@ -217,8 +228,8 @@ export function seatsInForce(resolved: ResolvedRouting): readonly SeatRef[] {
 
 /**
  * The startup row for routing: every seat in force (`seatsInForce`: the arc seats of its scope only, G20)
- * whose bound model has no usable prompt. A Codex model at a judgment seat is `codex-judgment`; any other
- * unsupported pair is `no-prompt`. Names the seat, the layer that chose its class and the class, never the model.
+ * whose bound model has no usable prompt. A Codex model at a judgment seat (only a repo's Codex rebind of a class a
+ * judgment seat names puts one there) is `codex-judgment`; any other unsupported pair is `no-prompt`. Names the seat, the layer that chose its class and the class, never the model.
  */
 export function unsupportedSeats(resolved: ResolvedRouting, unit: UnitId | null): StartupRejection[] {
   const out: StartupRejection[] = [];

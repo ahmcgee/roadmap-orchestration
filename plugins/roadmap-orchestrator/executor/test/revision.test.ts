@@ -36,6 +36,7 @@ import { type DivergenceDraft, laneRevOf, parseObligations, parseRulingSidecar }
 import { rulingContextAt } from '../src/pipeline/publish.ts';
 import { consistencyRevs } from '../src/spec/rulings.ts';
 import { commandScope } from '../src/input/classify.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
 import {
   RENDER_INPUT, type RoutingBase, inForceFiles, keptInput, keptPayload, readInputFiles, recordPlan, requirePlanInForce, revisionInForce,
   unitRouting,
@@ -275,7 +276,18 @@ test('apply.route-unsupported: a unit layer seating an unsupported triple (a Cod
   const r = contextFor(d);
   try {
     editPlan(d, (p) => void (p.units[0]!['routing'] = { planCheck: { med: 'efficient' } }));
-    assert.match(reasonOf((await command(r, applyBody(d))).outcome), /"kind":"unsupported-routing".*"role":"planCheck".*"unit":"u1".*"why":"codex-judgment"/);
+    // The catalogue judges every class on Claude: a Codex judgment needs a repo that rebinds the efficient class to Codex
+    // (its built-in judgment seats moved to frontier), so a layer naming efficient at a judgment seat seats Codex there.
+    const config = parseRepoConfig({
+      routing: {
+        seats: { planCheck: { low: 'frontier', med: 'frontier' }, gate: { low: 'frontier' } },
+        classes: { efficient: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' } },
+      },
+    });
+    const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d));
+    const reason = reasonOf(await applyCommand({ ...ctxOf(r), routingBase: { ...BASE, config } }, file));
+    assert.match(reason, /"kind":"unsupported-routing".*"role":"planCheck".*"tier":"med".*"unit":"u1".*"why":"codex-judgment"/);
+    assert.doesNotMatch(reason, /"tier":"(low|high|escalation)"/, 'only the unit layer\'s seat');
   } finally {
     r.journal.close();
   }

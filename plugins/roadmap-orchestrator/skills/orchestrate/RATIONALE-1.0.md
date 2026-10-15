@@ -207,7 +207,8 @@ ruling broke cookie isolation (Obs §4.5).
 
 **Decision.** Obligations are every checkable claim extracted from the target-state document, approved by
 the owner. Each names a witness that emits per-test records; no record means `unwitnessed`, never passed.
-A `must-hold` obligation that goes red makes a candidate red, in code. Frontier-class lenses report; a summit-class
+A `must-hold` obligation that goes red makes a candidate red, in code. Lenses report (frontier class, efficient since
+1.0.0-dev.10); a summit-class
 checkpoint then rules toward the target, not the original plan. Its authority is bounded by the delegation
 envelope: it may amend implementation contracts, respec, re-route or cut. The vision is the root record
 (owner ruling OR-V): the checkpoint may also weaken an obligation when it cites active vision clauses and
@@ -309,7 +310,10 @@ unattended week is only safe if the owner can see, in one place, everything deci
   many starts may pass without one, and only the owner changes K. The root agent never merges `main`; the owner
   merges the stack with merge commits.
 - **Routing.** OR-Q17 and L3: the frontier and summit classes bind one model at different efforts, retroactively,
-  with no routing generations; an effort-only change of a build seat re-pins and resumes its session.
+  with no routing generations; an effort-only change of a build seat re-pins and resumes its session. 2026-10-15
+  (1.0.0-dev.10): a class binds a build triple and a Claude judgment triple; the efficient class judges low-risk
+  plan-checks and gates, the lenses and flow, because independence is a clean context and the cheaper Claude model is
+  capable there; the stronger classes stay where risk or an escalation is.
 - **Efficiency waits for M4b** (§19). M4a only measures stage timings; the root agent reports slowdowns as
   observations and changes nothing that grades the work.
 
