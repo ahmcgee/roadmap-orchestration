@@ -12,7 +12,7 @@
 //   transient rules its candidate runs under (`transientRules: 'm3'`, H15). A `limits` or scope-growth revision
 //   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules`.
 // - A routing change mid-unit (a new routingRev at a later dispatch; lead ruling, arc-1 feedback item 7):
-//   every judgment is a fresh session, so a judgment seat may change harmlessly; the implementer's session
+//   every judgment is a fresh session (a repair turn resumes only its own judgment's), so a judgment seat may change harmlessly; the implementer's session
 //   resumes, so its session key (`implementerSessionKey`: backend and model, R4) may not change. The unit is re-pinned
 //   under the new rev (a new dispatch fact, scope and floor unchanged) when no build has started for it or its
 //   implementer seat keeps its key under both revs (an effort-only change re-pins, and the session resumes with the new
@@ -54,7 +54,7 @@ import {
   STDOUT_FILE, type NeedsUserContent, boundsOfRecord,
 } from '../core/records.ts';
 import { type AbsPath, type BranchName, type IsoTime, type RefName, type RepoPattern, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
-import { inputPath, keepInput } from '../input/inforce.ts';
+import { type RoutingBase, inputPath, keepInput } from '../input/inforce.ts';
 import { type PlanUnit, boundsOf } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
 import { instanceEnv } from '../resources/pool.ts';
@@ -84,6 +84,12 @@ export type StageContext = ResourceContext & Readonly<{
   hostEnv: Readonly<Record<string, string | undefined>>;
   /** The plan file's directory: unit spec paths and the rulings ledger are relative to it. */
   planDir: AbsPath;
+  /**
+   * The plan file and the arc's routing base (profile, repo config, arc roles): what a stage needs to evaluate a proposal
+   * through the apply core (`evaluateRevision`; 2026-10-15, a plan-check redirect's patch).
+   */
+  planFile: AbsPath;
+  routingBase: RoutingBase;
   /**
    * How a stage takes a reservation (its entry reservation, a lane's set, a publication): the scheduler's
    * arbiter (`createArbiter(...).acquire`), or in a test `reserveNow` (lanes.ts), which grants at once and fails
@@ -494,17 +500,20 @@ export type ArcCallSpec = Readonly<{
   cwd: AbsPath;
   evidenceDirs: readonly AbsPath[];
   deadlineAt: IsoTime;
+  /** A fresh session, or (2026-10-15, the checkpoint's repair turn) the refused answer's own, resumed. */
+  session: JudgmentSession;
 }>;
 
 /**
- * An arc-role call through `invoke`: a fresh read-only session on the judgment profile (the unit judgments' argv),
+ * An arc-role call through `invoke`: a read-only session on the judgment profile (the unit judgments' argv), fresh but for
+ * the checkpoint's repair turn,
  * spawned as `arc-backend{role, tier: arc, routingRev, job, attempt}` under `job{job}`, so its usage is metered to the
  * job by role and routingRev, never a model. Its workload env is `backendEnv` alone (a judgment holds no resource).
  * A call lost with its runner is retried once, uncharged, as the op's next invocation, as a unit judgment's is.
  */
 export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise<BackendCallOutcome> {
   const { seat, triple, routingRev } = arcSeat(ctx, spec.role);
-  const session = freshJudgmentSession();
+  const { session } = spec;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
   const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, system: spec.system, evidenceDirs: spec.evidenceDirs };

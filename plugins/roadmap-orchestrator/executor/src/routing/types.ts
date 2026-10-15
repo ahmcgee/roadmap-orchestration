@@ -46,6 +46,14 @@ export type JudgmentRole = 'planCheck' | 'gate';
 export type ImplementerRole = 'build';
 /** Every role that runs a fresh read-only session on the judgment profile: the unit judgments and the arc roles. */
 export type FreshRole = JudgmentRole | ArcRole;
+/**
+ * The judgment roles whose answer the executor validates beyond its schema and may send back once, in the same session
+ * (the repair turn, 2026-10-15 arc feedback #3): plan-check and the checkpoint. Their fresh call persists its session so
+ * the repair turn can resume it; every other judgment session is fresh and unpersisted.
+ */
+export const REPAIR_ROLES = ['planCheck', 'checkpoint'] as const satisfies readonly FreshRole[];
+export type RepairRole = (typeof REPAIR_ROLES)[number];
+export const isRepairRole = (role: FreshRole): role is RepairRole => (REPAIR_ROLES as readonly FreshRole[]).includes(role);
 
 /** A unit's risk. Never `escalation`: that seat is a judgment role's route-up target, not a risk. */
 export const RISK_TIERS = ['low', 'med', 'high'] as const;

@@ -83,8 +83,13 @@ export function readScenario(path: string): M1Scenario {
 const BUILD_REPORT: JsonValue = { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true };
 const SMOKE_OK: JsonValue = { ok: true };
 
-/** A judgment call: read-only tools, a fresh session id, never a resume or a permission mode. */
-const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] };
+/**
+ * A judgment call: read-only tools, a fresh session id, never a resume or a permission mode. A gate's session is not
+ * persisted; a plan-check's is (2026-10-15: its repair turn may resume it).
+ */
+const judgment = (role: string): Expect => (role === 'planCheck'
+  ? { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] }
+  : { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] });
 
 /** The smoke `roadmap start` runs first: Claude, then Codex under `default` (BACKENDS order); Claude alone under `claude-only`. */
 function smokeSteps(profile: ProfileName): readonly Step[] {
@@ -102,7 +107,7 @@ function buildExpect(profile: ProfileName, round: 'fresh' | 'resume'): Expect {
 export function fakeSteps(scenario: M1Scenario, profile: ProfileName): readonly Step[] {
   const steps = scenario.steps.map((s): Step => {
     const stdin: Expect = s.stdinContains === undefined ? {} : { stdinContains: s.stdinContains };
-    if (s.role !== 'build') return { as: 'claude', expect: { ...JUDGMENT, ...stdin }, acts: [{ type: 'emit', value: s.answer }] };
+    if (s.role !== 'build') return { as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: 'emit', value: s.answer }] };
     const acts = [...s.acts, { type: 'emit', value: BUILD_REPORT } as const];
     const expect = { ...buildExpect(profile, s.round), ...stdin };
     return profile === 'default' ? { as: 'codex', expect, acts } : { as: 'claude', expect, acts };

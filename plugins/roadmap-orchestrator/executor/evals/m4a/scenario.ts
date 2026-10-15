@@ -58,7 +58,7 @@ const HOLD_MS = 20 * 60_000;
 
 const planCheck = (reason: string): M1Step => ({
   role: 'planCheck',
-  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'low', notes: '', premises: [], visionConflict: [] },
+  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'low', notes: '', premises: [], visionConflict: [], scopeGrowth: [] },
 });
 const build = (message: string, unit: string): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files: filesOf(join(FILES, 'units', unit)) }] });
 const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({

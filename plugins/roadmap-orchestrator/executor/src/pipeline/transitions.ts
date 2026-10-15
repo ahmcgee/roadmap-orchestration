@@ -202,6 +202,9 @@ export const TABLE: Table = {
     infeasible: park('escalation', 'design'),
     // The assessment raised the risk floor onto another implementer seat: a fresh build there, uncharged.
     'risk-raised': go(build('fresh')),
+    // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
+    // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.
+    'witness-lane-missing': park('witness-lane-missing', 'env'),
   },
   quiesce: { empty: go(at('evidence')) },
   evidence: { captured: go(at('salvage')) },
@@ -233,6 +236,8 @@ export const TABLE: Table = {
     // A fast suite lane red at the salvage SHA and on the unit's diff base alone: the base's red, not the unit's. Uncharged,
     // on to the gate; the candidate's suite on the tip then decides (its own `base-red` halts merges while the tip is red).
     'base-red': go(at('gate')),
+    // 2026-10-15: as at build.
+    'witness-lane-missing': park('witness-lane-missing', 'env'),
   },
   gate: {
     approve: go(at('candidate')),

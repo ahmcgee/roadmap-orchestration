@@ -555,7 +555,8 @@ export function readOnlyContexts(x: Readonly<{
   };
   const containment: Containment = { mode: 'session', launch: refuse('launched'), members: refuse('scanned'), kill: refuse('killed'), empty: refuse('scanned') };
   const stage: StageContext = {
-    journal, containment, runDir: x.runDir, repo: x.repo, hostDir: x.hostDir, plan: x.plan, planDir: absPath(dirname(x.planFile)), hostEnv: x.hostEnv,
+    journal, containment, runDir: x.runDir, repo: x.repo, hostDir: x.hostDir, plan: x.plan, planDir: absPath(dirname(x.planFile)), planFile: x.planFile, routingBase: x.routingBase,
+    hostEnv: x.hostEnv,
     routing: refuse('resolved routing'), acquire: refuse('reserved'), rank: refuse('ranked'), signal: new AbortController().signal,
   };
   const arbiter: Arbiter = { acquire: refuse('reserved'), acquireFirst: refuse('reserved'), wake: refuse('woke the arbiter'), waiting: refuse('read waiters'), waitingFirst: refuse('read waiters') };

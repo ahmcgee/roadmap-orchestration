@@ -8,8 +8,10 @@
 // Headings inside fenced code blocks are not headings. An anchor matching no place, or more than one, is refused.
 //
 // A contract op `{path, anchor, oldText, newText}` replaces the one occurrence of `oldText` in its anchor's section.
-// The ops of one ruling on one document must not have overlapping sections (their order would matter), and every
-// edited document's first line cites the ruling: `<!-- revised by C-3, C-7 -->` (added, or extended).
+// The ops of one ruling on one document must not replace overlapping text: each matched range `[at, at + oldText.length)`
+// is disjoint from every other (2026-10-15, arc feedback #3: two ops in one section are fine when their ranges are), so
+// their order cannot matter; they apply from the last range to the first. Every edited document's first line cites the
+// ruling: `<!-- revised by C-3, C-7 -->` (added, or extended).
 import type { RulingId } from '../core/ids.ts';
 import type { RepoPath } from '../core/values.ts';
 import type { ContractOp } from '../holistic/types.ts';
@@ -95,7 +97,7 @@ export function applyContractOps(
       reasons.push(`contract op on ${path}: no such document at the tip`);
       continue;
     }
-    const placed: { op: ContractOp; section: Section; at: number }[] = [];
+    const placed: { op: ContractOp; at: number }[] = [];
     for (const op of ops.filter((o) => o.path === path)) {
       const section = anchorSection(doc, op.anchor);
       if (typeof section === 'string') {
@@ -108,10 +110,12 @@ export function applyContractOps(
         reasons.push(`contract op on ${path}: old text ${JSON.stringify(op.oldText)} occurs ${first === -1 ? 'nowhere' : 'more than once'} under anchor ${JSON.stringify(op.anchor)} (exactly once needed)`);
         continue;
       }
-      placed.push({ op, section, at: section.start + first });
+      placed.push({ op, at: section.start + first });
     }
     placed.forEach((a, i) => placed.slice(i + 1).forEach((b) => {
-      if (a.section.start < b.section.end && b.section.start < a.section.end) reasons.push(`contract ops on ${path} overlap: anchors ${JSON.stringify(a.op.anchor)} and ${JSON.stringify(b.op.anchor)}`);
+      if (a.at < b.at + b.op.oldText.length && b.at < a.at + a.op.oldText.length) {
+        reasons.push(`contract ops on ${path} overlap: the old text ${JSON.stringify(a.op.oldText)} under anchor ${JSON.stringify(a.op.anchor)} and ${JSON.stringify(b.op.oldText)} under ${JSON.stringify(b.op.anchor)} share characters`);
+      }
     }));
     if (reasons.length > 0) continue;
     const text = [...placed].sort((a, b) => b.at - a.at).reduce((t, p) => t.slice(0, p.at) + p.op.newText + t.slice(p.at + p.op.oldText.length), doc);

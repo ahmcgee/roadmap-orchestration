@@ -20,7 +20,8 @@
         "risk": "med",
         "notes": "",
         "premises": [],
-        "visionConflict": []
+        "visionConflict": [],
+        "scopeGrowth": []
       }
     },
     {
@@ -34,7 +35,8 @@
         "risk": "med",
         "notes": "",
         "premises": [],
-        "visionConflict": []
+        "visionConflict": [],
+        "scopeGrowth": []
       },
       "stdinContains": [
         "slugify has no special case for an empty result; pageId owns the empty slug (contract one)."
@@ -96,7 +98,8 @@
         "risk": "med",
         "notes": "",
         "premises": [],
-        "visionConflict": []
+        "visionConflict": [],
+        "scopeGrowth": []
       }
     },
     {

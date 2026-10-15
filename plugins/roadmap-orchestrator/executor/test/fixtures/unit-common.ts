@@ -130,6 +130,8 @@ export function contextFor(d: ArcDescriptor): ArcRun {
     routing: () => routing,
     hostEnv: { ...process.env, PATH: `${d.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(join(d.planPath, '..')),
+    planFile: absPath(d.planPath),
+    routingBase: { profile: 'default', config: null, arcRoles: 'm4b' },
     ...serialRuntime(resources),
   };
   const unit = (id: string): PlanUnit => {
@@ -146,8 +148,8 @@ export function contextFor(d: ArcDescriptor): ArcRun {
  */
 export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): CommandContext {
   return {
-    ...stage, hostEnv: backendEnv(stage.hostEnv), laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing(null) }),
-    routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET,
+    ...stage, hostEnv: backendEnv(stage.hostEnv), laneEnv: stage.hostEnv, routing: () => ({ profile: 'default', resolved: stage.routing(null) }),
+    docs: DOCS_NOT_YET,
     probes: testProbes(stage),
   };
 }

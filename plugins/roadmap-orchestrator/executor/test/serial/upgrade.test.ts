@@ -79,7 +79,7 @@ import { isAlive, statOf } from '../../src/contain/proc.ts';
 import type { Event, Fact } from '../../src/core/events.ts';
 import { arcId, commandId, invocationId, opId, resourceName, unitId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
-import { canonicalJson } from '../../src/core/json.ts';
+import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
 import { spawnPressureOf, startPressureOf } from '../../src/core/upgrade.ts';
 import type { ProcIdentity } from '../../src/core/records.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
@@ -239,7 +239,7 @@ async function preparePrevious(
   const fakeDir = join(dir, 'fake-previous');
   mkdirSync(fakeDir, { recursive: true });
   const m1File = join(fakeDir, 'm1.json');
-  writeFileSync(m1File, JSON.stringify({ steps: (typeof m1 === 'function' ? m1(l) : m1) }));
+  writeFileSync(m1File, JSON.stringify({ steps: (typeof m1 === 'function' ? m1(l) : m1).map(previousStep) }));
   const { fakeSteps, readScenario, writeShims } = previous.modules;
   const scenario = join(fakeDir, 'scenario.json');
   writeFileSync(scenario, JSON.stringify({ steps: [...fakeSteps(readScenario(m1File), 'default'), ...extra] }, null, 2));
@@ -248,6 +248,16 @@ async function preparePrevious(
   const cli = (args: readonly string[], timeoutMs = CLI_MS, extraEnv: Readonly<Record<string, string>> = {}): Promise<Exit> =>
     runUntilExit(process.execPath, [join(previous.root, 'test', 'fixtures', 'exec-cli.ts'), host, ...args], { env: { ...env, ...extraEnv }, timeoutMs });
   return { dir, l, host, fakeDir, cli, run: ['--repo', l.repo, '--arc', l.arc] };
+}
+
+/**
+ * A step as the previous release answers it: its plan-check schema predates `scopeGrowth` (1.0.0-dev.10) and admits no
+ * other key, so a plan-check answer the previous release reads carries none (HEAD's carry it, as clean.json's do).
+ */
+function previousStep(step: M1Step): M1Step {
+  if (step.role !== 'planCheck') return step;
+  const { scopeGrowth: _, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
+  return { ...step, answer };
 }
 
 /** HEAD's `roadmap` CLI against the fixture's host dir. */

@@ -57,7 +57,10 @@ export function requiredAt(ctx: StageContext, unit: PlanUnit, at: Sha): readonly
   return requiredWitnesses(ctx.journal.view, obligations, unit.id, loadUnitSpec(ctx, unit).spec, { sha: at, isAncestor: (c) => isAncestor(ctx.repo, c, at) });
 }
 
-/** The arc lanes in force that `required` names, ascending by id; a required lane not in force is a bug. */
+/**
+ * The arc lanes in force that `required` names, ascending by id; a required lane not in force is a bug: the classifier
+ * refuses one at every revision, and the stages park a unit whose spec in force still holds one first (`witnessLanePark`).
+ */
 export function requiredLanes(ctx: StageContext, required: readonly RequiredWitness[]): readonly ArcLaneDef[] {
   const { obligations } = holisticInForce(ctx);
   const ids = [...new Set(required.map((r) => r.lane))].sort();

@@ -196,7 +196,7 @@ started on dev.7). Every change is additive; the one scaffolding default is `dev
 | Facts (scope growth) | `+ scope-decided{unit, attempt, command, decision: accepted \| rejected, reason}` | none |
 | `CommandBody`, `NeedsUserReason` (scope growth) | `+ scope-decide{unit, decision: accept \| reject, reason}` (scope {u}); `+ scope-growth` (blocking) | none |
 | `UnitState` (fold, scope growth) | `+ scopeDecisions: [{attempt, command, decision, proposals, reason}]` | derived (`[]`) |
-| Plan-check answer (scope growth) | `+ scopeGrowth: [{patterns: string[] (non-empty), reason}]` (`PLAN_CHECK_SCHEMA` and `PLAN_CHECK_ACCEPTANCE_SCHEMA` require it) | absent: none proposed (`planCheckScopeGrowthDefault`, warned once; scaffolding): a plan-check call a dev.9 executor launched |
+| Plan-check answer (scope growth) | `+ scopeGrowth: [{patterns: string[] (non-empty), reason}]` (`PLAN_CHECK_SCHEMA` and every `planCheckAcceptanceSchemaFor` schema require it) | absent: none proposed (`planCheckScopeGrowthDefault`, warned once; scaffolding): a plan-check call a dev.9 executor launched |
 | `spec.json` (scope growth) | `+ removes?: string[]` (non-empty, unique, each one line: a path, route or symbol the unit removes or renames) | absent: none (`specRemoves`; lasting) |
 | `phase0 check` report, `apply --dry-run`, an applied `apply` receipt (scope growth) | `+ advisories: ScopeReference[]` (Phase-0 row 10, never a refusal); the receipt's `advisory: <json>` lines | none: output only |
 | dev.6 checkpoint answers, dev.6 rev alias | deleted (M4a's dev.6 layer, with no dev.6 arc adopted) | refused: a checkpoint answer needs `corpusAmendments`, `issueIntake` and each split child's `rule` |
@@ -211,6 +211,17 @@ is closed by its next start's recovery hold.
 | `HoldCause` (`stage-outcome.cause`) | `+ recovery{}`: the startup's hold of a crash-abandoned admission-stage attempt nothing consumes (`holdAbandoned`) | none (absent: a pause or stop, as before) |
 | `UnitState` (fold) | a recovery hold leaves `decided` and `interrupted`; `status` `held` under a pause, else `active`; a prepare hold does not mark the lineage prepared | derived |
 | `Holder.batch{finding, attempt}`, `batch-<n>` job, batch items | `finding` is the key (lowest, canonical order) of the findings the batch repairs, one for a single-finding batch, several for a hold cycle | none: a dev.9 holder names the one finding its batch repaired, which is its key |
+
+**1.0.0-dev.9 → next (2026-10-15 arc feedback #3: judges' output validated once, repaired in session).** `SCHEMA_VERSION`
+stays 1; every change is additive. The one scaffolding default is `checkpointRulingTextDefault` in `src/core/upgrade.ts`.
+
+| Record | Change | Read-time default for dev.9 state |
+|---|---|---|
+| `launch.json` `terminal.session` (`JudgmentSession`) | `mode: fresh \| resume`: `resume` only for a `REPAIR_ROLES` role (`planCheck`, `checkpoint`), the repair turn; the reader refuses it on any other role. A repair role's fresh call runs without `--no-session-persistence` | none: dev.9 records hold `fresh` only, which reads as written |
+| `stage-outcome` build and lanes, `NeedsUserReason` | `+ witness-lane-missing` (a required witness item names no arc lane in force; park `env`, blocking) | none: dev.9 records never hold it |
+| Checkpoint answer (`CheckpointOutput`, the recorded call's `result.json`) | `rulings`: objects `S_RULING` constrains (the model-owned sidecar fields; `ruledBy`, `consistency` stamped), read into canonical JSON text | a ruling recorded as JSON text reads as written (`checkpointRulingTextDefault`, warned once; scaffolding) |
+| Plan-check acceptance answer | per-call schema `planCheckAcceptanceSchemaFor(<arc lanes in force>)`: a witness item's `lane` an enum of the arc lanes; the call's shape is read from its kept schema (`isAcceptanceSchema`) | a dev.9 call's schema (any lane) reads as the acceptance shape as before |
+| `Proposer` (classifier input, not persisted) | `+ plan-check{unit}`: a redirect's patched spec validated through `evaluateRevision`, never committed | none |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -595,8 +606,9 @@ StructuredOutput call at every turn end, so a turn ended to wait answers the sch
 deadline stays the backstop. Every other schema (judgments, the assessment, the smoke) is never watched.
 
 `terminal` = `backend{purpose: backend|smoke, role, routingRev, schemaPath, outputPath, session}` \|
-`command{purpose: lane|teardown|probe|smoke, expectedExit}`. Sessions: a judgment role takes only
-`{backend:'claude', mode:'fresh', id: JudgmentSessionId}`; `build` takes `claude{fresh|resume, id}` \|
+`command{purpose: lane|teardown|probe|smoke, expectedExit}`. Sessions: a judgment role takes
+`{backend:'claude', mode:'fresh', id: JudgmentSessionId}`, and (2026-10-15) a repair role (`REPAIR_ROLES`: `planCheck`,
+`checkpoint`) also `mode:'resume'` with the id of its refused answer's session, its one repair turn; `build` takes `claude{fresh|resume, id}` \|
 `codex{fresh}` (Codex mints its thread id) \| `codex{resume, id}`, ids `ImplementerSessionId`.
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
@@ -753,8 +765,9 @@ gate `{decision, findings, directives, reasons, premises}`, `premises: [{claim, 
 premises the decision relies on, the next round's handoff). A plan-check's `notes` go to the architect on escalate
 or infeasible; on approve they are facts for the build and the gate, which receive the approving plan-check's
 notes. A plan-check after its own applied redirect gets `priorRound {patch, reasons, premises, patchedRev,
-changedPremiseFiles}`; a plan-check whose previous answer's redirect was refused for the census (its patch re-applied
-to the spec still in force adds a mismatch) gets `priorInvalid` (the unit, item, rule and fix); a gate after its own revise gets `priorRound {directives, findings, premises, fixPaths,
+changedPremiseFiles}`; a plan-check whose previous answer was refused (since 2026-10-15 by the one validator, every
+reason: its schema, its cites, its patch through `evaluateRevision`; the latest call's, its repair turn's when it made
+one) gets `priorInvalid` (every reason, `; `-joined); a gate after its own revise gets `priorRound {directives, findings, premises, fixPaths,
 changedPremiseFiles}`. Changed premise files compare blobs between the commits the prior round read (a plan-check's
 checkouts from its `worktree.create` intents; a gate's verification checkout from its launch cwd) and the current
 ones; a premise path that names no repository file counts as changed.
@@ -1447,7 +1460,7 @@ owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, in
 divergences[{id, type, what}], contracts, rulings, index, architecture, direction}`. Outputs (strict; every key
 required): `LensOutput = {findings: [{severity: P1|P2|P3, obligation|null, visionClauses, claim, cause, evidence:
 [{path, line}], mutant: {lane, edits: [{path, old, new}] (non-empty)}|null}], reasons, premises}` (M4b; was `{patch, lane}`); `CheckpointOutput = {decision: no-op|bundle,
-reasons, ops: BundleOp[] (empty exactly on a no-op), rulings: string[] (sidecars as JSON text; none on a no-op),
+reasons, ops: BundleOp[] (empty exactly on a no-op), rulings: string[] (sidecars as canonical JSON text, read from the objects `S_RULING` constrains since 2026-10-15; none on a no-op),
 findingDispositions[{finding, disposition, reason}], interpretations[{clauses, situation, reading}], cites{vision,
 observations, findings}, premises}`, `BundleOp = (admit{unit{id, risk, scope, after, origin: checkpoint|repair},
 spec (spec.json text)} | patch-spec{unit, patch} | reenter{unit, reenters, enterAt|null, reset|null} | cut{unit,
@@ -2973,12 +2986,14 @@ sections and marks converted amendments.
     inconclusive; any survivor is `smoke-survived`, otherwise (inconclusive ones included) the stage goes on green.
 13. **Plan-check shape and the in-session assessment (N3, E, R40, R55, R59; src/pipeline/stages.ts).** `planCheckShape`:
     `uniform` unless `by-builder` in a corpus arc with arc lanes; then `build.<floor>`'s class decides (`efficient` →
-    `acceptance`, else `in-session`, recorded without a call). An acceptance call writes `PLAN_CHECK_ACCEPTANCE_SCHEMA`;
-    its witness items must name arc lanes. Its prompt lists the witnesses of the obligations the unit delivers at the tip
+    `acceptance`, else `in-session`, recorded without a call). An acceptance call writes
+    `planCheckAcceptanceSchemaFor(<arc lanes in force>)` (2026-10-15: a witness item's lane an enum of them); its witness
+    items must name arc lanes. Its prompt lists the witnesses of the obligations the unit delivers at the tip
     (`PlanCheckAcceptance.delivered`: `requiredAt`'s target obligation rows); a witness item the patch adds or changes
     that names an `obligation` must name a delivered one and that witness's lane and one of its test ids exactly, else
-    the patch is refused like a census or evidence refusal (`witnessReuseRefusal` in `patchRefusal`: `malformed`, the
-    retry told why; paid M4b run 6). A `witnesses-missing` fix round lists every required test id after the missing and
+    the patch is refused like a census or evidence refusal (paid M4b run 6; since 2026-10-15 a classifier row every
+    proposer runs, `witnessReuseReasons`: a plan-check patch goes through `evaluateRevision`, its repair turn and then its
+    retry told why). A `witnesses-missing` fix round lists every required test id after the missing and
     failing ones, so a rename that trades one id for another is visible to the builder. The fresh build after `in-session` first calls a read-only session answering
     `PLAN_ASSESSMENT_SCHEMA`: a changed tree, a conflict citing an inactive vision clause, or a floor below the pin is
     `malformed` (its retry assesses again); conflicts open P3 findings `source: stage{build}`; `feasible: false` is
@@ -3038,8 +3053,9 @@ sections and marks converted amendments.
     obligation whose rule's census state is not `obligation` naming it or a split ancestor, or an active acceptance
     clause naming (`T-n` in its text) an `out-of-slice` rule. Run 10 (C): an active witness item too (its test id or
     skeleton), and the one predicate (`specCensusMismatches`, src/holistic/rederive.ts) runs in the classifier on every
-    revision ("Run 10, round 1") and on a plan-check redirect's patch, which is then `malformed` and not applied; the
-    retry reads why in `priorInvalid`.
+    revision ("Run 10, round 1") and on a plan-check redirect's patch (through `evaluateRevision`, proposer
+    `plan-check`, since 2026-10-15), which its repair turn is told of and, refused again, is `malformed` and not applied;
+    the retry reads why in `priorInvalid`.
 
 **Readings of step N6:**
 
@@ -3479,7 +3495,8 @@ envelope (`withinEnvelope`), matching a file at the tip the check read, covered 
 never a pattern rejected for the unit; a proposal keeps its passing patterns, one with none is dropped. A verified
 proposal records plan-check `scope-growth` (class `hold`, uncharged, `detail: scope-growth{proposals}`), whatever the
 decision, after the vision conflicts' findings and the risk-lowered check and before any patch or risk raise (nothing else
-of the answer applies), with a blocking `scope-growth` item naming the proposals, what code dropped, and the two commands.
+of the answer applies: the one validator, `judgePlanCheck`, then judges neither its patch nor the patch's cites, so no
+repair turn is spent on a patch never applied; a pattern code drops is named, never a reason to refuse the answer), with a blocking `scope-growth` item naming the proposals, what code dropped, and the two commands.
 
 `roadmap scope accept|reject <unit> --reason <text>` queues `scope-decide{unit, decision, reason}` (mutation, scope {u};
 src/commands/scope.ts). Refused unless the unit is held by its plan-check's `scope-growth`. Accept, each step only where

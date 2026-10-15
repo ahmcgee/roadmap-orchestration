@@ -19,6 +19,7 @@
 //   parented by the job (`settleFlowItems` raises an item a crash left unraised).
 // Crash points `flow.after-started` (inputs kept, before the call), `flow.after-call` (before `flow-ended`) and
 // `flow.after-ended` (the item not raised).
+import { freshJudgmentSession } from '../backends/argv.ts';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { Parent } from '../core/events.ts';
@@ -200,7 +201,7 @@ async function call(ctx: FlowJobContext, inputs: FlowInputs, attempt: number, re
   await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, jobParent(job), { path: checkout, checkout: { type: 'detached', at: integrationHeadNow(ctx) } });
   const called = await withCpu(ctx, job, () => callArcRole(ctx, {
     job, role: 'flow', attempt, system: p.system, rendered: p.text, schema: p.schema, cwd: checkout, evidenceDirs: [],
-    deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
+    deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
   }));
   await removeCheckout(ctx, job, checkout);
   return called;

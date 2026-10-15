@@ -3,7 +3,10 @@
 // travels on stdin; argv[0] is the bare CLI name, resolved through PATH (which is how test shims stand in).
 //
 // Illegal combinations are unrepresentable: a judgment call is Claude only (Codex judgment is unsupported
-// in M1) and takes a `JudgmentSession`, whose only mode is `fresh`, so a resumed judgment cannot be built.
+// in M1) and takes a `JudgmentSession`. A judgment is fresh, except a repair role's repair turn (2026-10-15:
+// plan-check and the checkpoint, `REPAIR_ROLES`), which resumes the session its refused answer came from, once. A
+// repair role's fresh call therefore persists its session (no `--no-session-persistence`); every other judgment
+// runs unpersisted, and a resume on it is refused here (and by the launch reader).
 //
 // Codex resume flags, verified against `codex exec resume --help` (codex-cli 0.157.0, 2026-09-25): resume
 // accepts `-c`, `-m`, `--json`, `-o` and `--output-schema`, and `--skip-git-repo-check`; it has no `-s` and
@@ -53,10 +56,10 @@
 //   operator's file would fork it at the first OAuth refresh and leave the operator's login dead. An isolated
 //   dir would need a `claude setup-token` token passed as CLAUDE_CODE_OAUTH_TOKEN, which the CLI never refreshes.
 import { randomUUID } from 'node:crypto';
-import { implementerSessionId, judgmentSessionId } from '../core/ids.ts';
+import { type JudgmentSessionId, implementerSessionId, judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
-import type { FreshRole, Triple } from '../routing/types.ts';
+import { type FreshRole, type Triple, isRepairRole } from '../routing/types.ts';
 
 export type CodexTriple = Extract<Triple, { backend: 'codex' }>;
 export type ClaudeTriple = Extract<Triple, { backend: 'claude' }>;
@@ -69,7 +72,7 @@ export const JUDGMENT_TOOLS = 'Read,Grep,Glob';
 export type BackendCall =
   | Readonly<{
     kind: 'claude-judgment';
-    /** A unit judgment (plan-check, gate) or an arc role (a lens, the checkpoint; M3): every fresh read-only session. */
+    /** A unit judgment (plan-check, gate) or an arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. */
     role: FreshRole;
     triple: ClaudeTriple;
     session: JudgmentSession;
@@ -110,12 +113,16 @@ const CLAUDE_COMMON = ['--output-format', 'stream-json', '--verbose', '--strict-
 
 export function backendArgv(call: BackendCall): Argv {
   switch (call.kind) {
-    case 'claude-judgment':
+    case 'claude-judgment': {
+      const repairable = isRepairRole(call.role);
+      if (call.session.mode === 'resume' && !repairable) throw new Error(`a ${call.role} judgment never resumes`);
+      const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
         'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', '', '--json-schema', call.schemaText, '--model', call.triple.model,
-        '--effort', call.triple.effort, '--tools', JUDGMENT_TOOLS, '--session-id', call.session.id, '--no-session-persistence',
+        '--effort', call.triple.effort, '--tools', JUDGMENT_TOOLS, ...session, ...(repairable ? [] : ['--no-session-persistence']),
         '--system-prompt', call.system, ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
+    }
     case 'claude-build': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
@@ -153,9 +160,14 @@ export function promptBytes(call: BackendCall, rendered: string): string {
   }
 }
 
-/** A judgment session id is minted per call and never reused: judgment never resumes. */
+/** A judgment session id is minted per fresh call; only a repair turn resumes one (`resumedJudgmentSession`). */
 export function freshJudgmentSession(): JudgmentSession {
   return { backend: 'claude', mode: 'fresh', id: judgmentSessionId(randomUUID()) };
+}
+
+/** A repair turn's session: the refused answer's own, resumed (`REPAIR_ROLES` only). */
+export function resumedJudgmentSession(id: JudgmentSessionId): JudgmentSession {
+  return { backend: 'claude', mode: 'resume', id };
 }
 
 export function freshClaudeImplementerSession(): ClaudeImplementerSession {

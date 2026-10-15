@@ -45,6 +45,7 @@
 // second. The ids opened, merged or corroborated and the suppressed count become `audit-ended{findings, suppressed}`.
 // A specs-only drift audit (every trigger `drift{specsOnly}`, H2) runs the vision lens alone with `LensInputs.specsOnly`.
 // `gateHadPassed`: a unit had published before the audit started (the defect passed some gate).
+import { freshJudgmentSession } from '../backends/argv.ts';
 import { basename, isAbsolute, join, relative } from 'node:path';
 import type { AuditInputs, LensRefusal, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
@@ -471,7 +472,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
       const rendered = prompt.render(inputs);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
         job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
-        deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
+        deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
       }));
     }
     return readLens(ctx, job, called);

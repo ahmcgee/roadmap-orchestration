@@ -31,6 +31,7 @@
 //   current key has an open item (src/needsuser.ts `supersededPackItems`: a later review's end supersedes every earlier
 //   review's item, which then holds nothing). An `apply` that fixes the pack makes a new key and so a superseding review; an ack
 //   releases. From the first admission on, no review runs and no key is required.
+import { freshJudgmentSession } from '../backends/argv.ts';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence } from '../core/fence.ts';
@@ -336,7 +337,7 @@ async function ask(ctx: CheckpointContext, inputs: PackReviewInputs, delta: Pack
     const rendered = prompt.render(promptInputs(ctx, inputs, delta));
     const called = await withCpu(ctx, job, () => callArcRole(ctx, {
       job, role: 'packReview', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [],
-      deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
+      deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
     }));
     await removeCheckout(ctx, job, checkout);
     return read(ctx, job, called, delta);

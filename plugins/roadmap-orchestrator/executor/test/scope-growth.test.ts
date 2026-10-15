@@ -8,6 +8,8 @@
 //   re-pins the wider scope before any build, and the build's edit there is salvaged.
 // scope.reject: the hold released, no revision; the plan-check runs again told what was rejected, and a proposal of the
 //   rejected pattern no longer holds it. A decision on a unit not held is rejected.
+// scope.hold-before-patch: a verified proposal holds the unit whatever its redirect patch: the patch is neither judged nor
+//   sent to a repair turn (nothing else of a growth answer applies).
 // scope.reverted-visible: an out-of-scope edit salvage reverts reaches the gate (<scope_reverted>) and the next fix round's
 //   directives, with where its content is kept.
 // scope.references-row: Phase-0 row 10 lists the files outside a unit's scope that name what its spec `removes`, as an
@@ -152,6 +154,21 @@ test('scope.reject: the hold released with no revision; the plan-check runs agai
 
     const late = await command(r, decide('accept', 'too late'));
     assert.ok(late.outcome.kind === 'rejected' && /scope accept u1: the unit is active.*not held for a scope-growth proposal/.test(late.outcome.reason), JSON.stringify(late.outcome));
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('scope.hold-before-patch: a verified proposal holds the unit though its redirect patch would be refused: the patch is neither judged nor sent to a repair turn', T, async () => {
+  // A cite of no ledger ruling and a strike of no clause: either alone is a refusal (the repair turn) outside a hold.
+  const patch = [{ op: 'cite', contracts: [], rulings: ['C-99'] }, { op: 'strike', id: 'A9' }] as const;
+  const d = setupArc({ steps: [planCheckStep({ decision: 'redirect', patch, scopeGrowth: GROWTH })] });
+  const r = contextFor(d);
+  try {
+    await holdU1(r);
+    assert.deepEqual(outcomes(d), ['plan-check:scope-growth']);
+    assert.equal(readCalls(d.scenarioPath).length, 1, 'no repair turn');
+    assert.equal(r.journal.view.unit(U1).spec?.rev, 1, 'nothing of the answer applied');
   } finally {
     r.journal.close();
   }
