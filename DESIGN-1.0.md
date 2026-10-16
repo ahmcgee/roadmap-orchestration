@@ -303,7 +303,7 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 | `route` | the unit's routing layer `unit.routing` (§4), a new `routingRev`; an edit class of `apply`. Risk may rise; a moved implementer seat once the build started parks the unit (`routing-changed`, §4). `--adversarial` is withdrawn: a unit routing layer expresses it (A12) | risk below the Phase-0 floor without a ruling; an unsupported triple |
 | `limits` | arc (`plan.limits`) or unit (`unit.limits`) bounds, in place of the built-in constants; an edit class of `apply` | lowering a counter below what is spent |
 | `obligation add\|split\|witness` | obligation edits (§2.8), edit classes of `apply`, published like a revision (§2.6). `waive`, `defer` and `retire` are not edits: they are a ruling's `obligationDispositions`, applied by `rule` or by a checkpoint bundle | unsupported reporter; a weakening without a ruling in force naming the id; an architect split whose children drop parent text; a withdrawn `V-n` cited |
-| vision | clauses `V-n` and open questions `Q-n` (§2.8); an edit class of `apply`, from an architect `apply` only (A14), as is the plan's `holistic.advances` | a vision or `advances` diff from any other source; a reused id; an `advances` naming a withdrawn or unknown clause, or no world clause |
+| vision | clauses `V-n` and open questions `Q-n` (§2.8); an edit class of `apply`, from an architect `apply` only (A14), as is the plan's `holistic.advances`; the apply declares it (`--vision-edit`, owner ruling 2026-10-16), so a next-arc vision committed mid-arc never rides along with an unrelated apply | a vision or `advances` diff from any other source; a vision diff in an apply that does not declare it (`vision-leak`, naming `_next/vision.md`); a reused id; an `advances` naming a withdrawn or unknown clause, or no world clause |
 | `reverse <D-n>` | builds a fresh compensating revision from the divergence's preimage, restoring the recorded revisions of exactly the artifacts it touched, and validates it like any revision (§2.8, A10) | a `repair-unit` divergence (a verified repair unit reverses a product effect); a conflicting later revision (with reasons; the architect then uses `apply`); an unknown id |
 | `sweep [--resource]` | declared teardown for resources with no live holder, incl. indexed residues | anything a live session holds |
 | `gc --repo <path> [--keep K] [--dry-run]` | a CLI act under the host lock, not a queued command: prunes sealed arcs (§2.9) | a busy host; an arc not sealed (§2.10) |
@@ -902,6 +902,13 @@ owner sets (owner rulings OR-Q19/20).
   that the stack merges with merge commits; `roadmap pr` re-targets a PR whose base merged and flags a squash-merged
   base as needs-rebase in the brief. Nothing merges `main`: the owner merges the stack.
 - **One arc per host.** Arc N's executor exits at completion before arc N+1 starts (host lock, §2).
+- **Next-arc staging (owner ruling 2026-10-16).** `<repo>/../roadmap-inputs/_next/` holds `vision.md`, the owner's
+  working draft of the next vision, and `notes.md`, work for later. A mid-arc owner thought that changes what the
+  running arc must deliver is applied or ruled at once; anything else goes to `_next/`. The executor never reads it;
+  `.roadmap/vision.*` changes only in the between-arc window (an undeclared vision diff is `vision-leak`). At the
+  boundary the root agent reads `_next/` beside the amendments, the `finding-deferred` debt and the open questions,
+  confirms the draft through the vision skill's playback, commits it in the between-arc commit, plans, and hands
+  `_next/` to the next arc's input directory.
 - **Stop.** The session stops at `chain-invalid{limit}` or when the vision is silent: no `sliceCandidates`
   (§3 Phase 0) the architect can justify from active clauses.
 

@@ -39,6 +39,14 @@ log is the one channel. `status`, the brief and `chain status` list every record
 Always ask first, whatever autonomy you hold: anything irreversible outside the sandbox, anything that may cost
 the owner more than $10, anything with legal ramifications. A checkpoint's `owner-request` item is one of these.
 
+**Owner thoughts while an arc runs** are triaged once. One that changes what this arc must deliver (a `P-n` answer,
+a defect, a correction inside the slice) you apply or rule now. Everything else goes to the next-arc staging dir
+`<repo>/../roadmap-inputs/_next/`: `vision.md`, the owner's working draft of the next vision (edit it with them
+there), and `notes.md`, work for later, deferred rulings and ideas (append). The executor never reads `_next/`.
+`.roadmap/vision.json` and the vision document change only between arcs: a running arc's `apply` refuses a vision
+file that differs from the vision in force (`vision-leak`). `apply --vision-edit` is only for a vision change the
+owner orders for the running arc.
+
 ## Bootstrap (once)
 
 Bootstrap happens when the product repo has no `.roadmap/corpus.md` or no `chain.k` in `.roadmap/config.json`.
@@ -352,16 +360,25 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
    check-in is the final one. `k-unset`: ask K ("Bootstrap" step 4); on resume, write it in the between-arc commit.
 3. Check in ("Check-ins"), ending with the next action, or with the stop. Everything below runs after you are
    resumed.
-4. Choose the next slice from the census, per the vision: `sliceCandidates` from `phase0 check`, ranked by the
+4. **Read what waits** for the next arc: `<repo>/../roadmap-inputs/_next/` (`vision.md`, `notes.md`) beside
+   `status.amendments`, the `finding-deferred` debt and the chain's open questions.
+5. **The vision.** When `_next/vision.md` differs from the confirmed vision document, run the `vision` skill's
+   Calibrate on that draft: its changes reach the vision document only through playback and the owner's
+   confirmation, compiled to `.roadmap/vision.json` and committed in the between-arc commit (step 7).
+6. Choose the next slice from the census, per the vision: `sliceCandidates` from `phase0 check`, ranked by the
    vision's trade-offs. When no candidate is one you can justify from active clauses, stop with reason
    `vision-silent`. Otherwise report the slice and why at the next check-in; do not wait for approval.
-5. **The between-arc commit.** `git switch -c work/<next arc> <completed head>` (`status.completion.head`). Every
+7. **The between-arc commit.** `git switch -c work/<next arc> <completed head>` (`status.completion.head`). Every
    corpus edit of the next Phase 0 (amendments, curation, answered questions, the previous arc's mid-arc answers)
    and any change to
    `.roadmap/{vision.json, corpus.md, config.json}` goes into exactly one non-merge commit on that head; amend it
    as Phase 0 goes, and commit it empty (`--allow-empty`) if nothing changed. It touches nothing else. It is the
    next arc's baseline.
-6. Phase 0 for the next arc, with `chain: {previousArc, previousHead: <completed head>}` in its plan.
+8. Phase 0 for the next arc, with `chain: {previousArc, previousHead: <completed head>}` in its plan; `notes.md`
+   items it takes on become units, rulings or questions there.
+9. **Hand `_next/` over** when the next arc starts: move it to `<repo>/../roadmap-inputs/<next arc>/next/` and start
+   a fresh `_next/`: `vision.md` a copy of the confirmed vision document (the base of the next draft) and an empty
+   `notes.md`.
 
 **Stop.** One final message: the check-in, the request to merge the stacked PRs in order, first into `main`, each
 with a merge commit, then exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,

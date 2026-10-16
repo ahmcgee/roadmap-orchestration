@@ -88,7 +88,10 @@ export type StartupRejection =
   // `.roadmap/{vision.json, corpus.md, config.json}` in the working tree differ from their blobs at HEAD (K18).
   | Readonly<{ kind: 'tree-uncommitted'; paths: readonly RepoPath[] }>
   // A fresh arc's holistic plan names an architecture doc (H4, R17): a new holistic arc targets a corpus.
-  | Readonly<{ kind: 'holistic-needs-corpus' }>;
+  | Readonly<{ kind: 'holistic-needs-corpus' }>
+  // An apply's vision file differs from the vision in force and the apply declares no vision edit (`--vision-edit`;
+  // src/phase0/rows.ts `visionLeak`): a next-arc draft belongs in `draft` (`_next/vision.md`) until the between-arc window.
+  | Readonly<{ kind: 'vision-leak'; inForce: Sha256Hex | null; committed: Sha256Hex | null; draft: AbsPath }>;
 
 /** Why a declared command (a lane, a probe, a teardown) cannot run on this host. */
 export type CommandProblem = Readonly<{ type: 'argv0-unresolvable'; argv0: string }> | Readonly<{ type: 'env-missing'; name: string }>;
@@ -120,6 +123,7 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'issue-policy-untrusted':
     case 'tree-uncommitted':
     case 'holistic-needs-corpus':
+    case 'vision-leak':
       return EXIT_REFUSED;
   }
 }
@@ -250,6 +254,10 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
     kind: f.get('kind', literal('tree-uncommitted')), paths: f.get('paths', sortedBy((v, p): RepoPath => repoPath(v, p), (x) => x, { nonEmpty: true })),
   })),
   'holistic-needs-corpus': object((f): StartupRejection => ({ kind: f.get('kind', literal('holistic-needs-corpus')) })),
+  'vision-leak': object((f): StartupRejection => ({
+    kind: f.get('kind', literal('vision-leak')), inForce: f.get('inForce', nullable(sha256R)), committed: f.get('committed', nullable(sha256R)),
+    draft: f.get('draft', (v, p): AbsPath => absPath(v, p)),
+  })),
 });
 
 export const rejectionFile: Read<RejectionFile> = object((f) => {

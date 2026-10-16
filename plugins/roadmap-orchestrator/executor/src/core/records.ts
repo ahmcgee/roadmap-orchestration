@@ -1280,9 +1280,10 @@ export type CommandBody =
    * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
    * or null to apply over whatever is in force. A mutation. M4a rev 3 (I2): `rulings`, the ruling sidecar files of
    * `--ruling` (each hashed like a `rule` record, in the order given; absent: none, lasting), landed with the edits as one
-   * revision.
+   * revision. `visionEdit` (`--vision-edit`, owner ruling 2026-10-16): the apply declares a vision edit, the one way a
+   * running arc's vision changes (absent: it declares none, and a changed vision file is refused as `vision-leak`).
    */
-  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: RevisionManifest; rulings?: readonly HashedFile[] }>
+  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: RevisionManifest; rulings?: readonly HashedFile[]; visionEdit?: true }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
@@ -1355,7 +1356,8 @@ export const commandBody: Read<CommandBody> = tagged('type', {
       manifest: f.get('manifest', applyManifest),
     };
     const rulings = f.optional('rulings', arrayOf(hashedFile, { nonEmpty: true }));
-    return rulings === undefined ? out : { ...out, rulings };
+    const visionEdit = f.optional('visionEdit', literal(true));
+    return { ...out, ...(rulings === undefined ? {} : { rulings }), ...(visionEdit === undefined ? {} : { visionEdit }) };
   }),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),

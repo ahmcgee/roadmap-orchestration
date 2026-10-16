@@ -43,9 +43,10 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
 - `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item; `--choice` names one of its `options`.
 - `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
-- `roadmap apply [--expect-rev <n>] [--dry-run] [--ruling <file>]`: put the edited plan, specs and other revisioned
+- `roadmap apply [--expect-rev <n>] [--dry-run] [--ruling <file>] [--vision-edit]`: put the edited plan, specs and other revisioned
   inputs in force at the next stage boundary. Each `--ruling` (repeatable) is a ruling sidecar validated as `rule`
-  validates it and landed with the edits as one revision. `--dry-run` always exits 0 and prints `kind`:
+  validates it and landed with the edits as one revision. `--vision-edit` declares a vision edit: without it an apply
+  whose vision file differs from the vision in force is refused `vision-leak` (a next-arc draft belongs in `_next/`). `--dry-run` always exits 0 and prints `kind`:
   `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke, advisories}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
   files outside a unit's scope that still name what its spec `removes`. They never refuse. A revision
@@ -139,7 +140,9 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
 `plan.json`, `specs/<unit>.json`, the rulings ledger, `obligations.json` (with its census), and for a corpus arc
 the pin (`corpus pin --out`), the Phase-0 record and the issue capture (`issues --out`). The executor keeps each by
 hash at `start` and `apply`; editing them later changes nothing until `apply`. Beside the arcs' directories, the
-operator log `skill-feedback.md` ("The operator log").
+operator log `skill-feedback.md` ("The operator log") and the next-arc staging dir `_next/`: `vision.md` (the owner's
+working draft of the next vision) and `notes.md` (work for later, deferred rulings, ideas). The executor never reads
+`_next/`; the Chaining step reads it and hands it to the next arc's directory.
 
 **In-tree `.roadmap/`** holds exactly: `contracts/`, `constraints.md`, `invariants.md` (with the `json roadmap-rules`
 registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the executor; and `config.json`,
@@ -358,6 +361,7 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 | `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K. `chain status` `nextStart` answers `limit`, `k-unset` and `previous-incomplete` before you compose the plan |
 | `issue-policy-untrusted{visibility, policy}` | anyone can open issues | the owner restricts issue creation to collaborators or disables issues |
 | `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |
+| `vision-leak{inForce, committed, draft}` (`apply` only) | the vision file differs from the vision in force and the apply declares no vision edit | move the draft to `draft` (`<inputs>/_next/vision.md`) and restore `.roadmap/vision.json` and the vision document to the vision in force (commit, re-pin); `--vision-edit` only for a vision change the owner ordered for this arc |
 
 **`apply` rejections** (in the receipt or `--dry-run`): every row above that applies to the edit, plus
 `target-kind-changed` (an `architecture-doc` arc never becomes a corpus arc, nor the reverse), `chain-immutable`

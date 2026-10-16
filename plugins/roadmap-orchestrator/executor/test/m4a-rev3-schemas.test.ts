@@ -318,6 +318,15 @@ describe('m4a-rev3 apply body (I2, step N3)', () => {
     assert.throws(() => commandBody({ ...plain, rulings: [] }, 'b'), /rulings/);
     assert.throws(() => commandBody({ ...plain, rulings: [{ path: 'relative.json', sha256: H }] }, 'b'), /path/);
   });
+
+  it('apply.body-vision-edit: `visionEdit: true` round-trips; absent reads as undeclared (a queued dev.10 apply); false is refused', () => {
+    const H = 'a'.repeat(64);
+    const plain = { type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H } };
+    const declared = { ...plain, visionEdit: true };
+    assert.deepEqual(commandBody(declared, 'b'), declared);
+    assert.equal('visionEdit' in commandBody(plain, 'b'), false);
+    assert.throws(() => commandBody({ ...plain, visionEdit: false }, 'b'), /visionEdit/);
+  });
 });
 
 describe('m4a-rev3 role schemas', () => {
@@ -443,8 +452,9 @@ describe('cli.m4a-rev3', () => {
     assert.deepEqual(parseCommand(['witness-check', '--lane-file', 'w.json']), { command: 'witness-check', laneFile: 'w.json' });
     assert.deepEqual(parseCommand(['resume-arc', '--repo', '.']), { command: 'resume-arc', repo: '.' });
     assert.deepEqual(parseCommand(['inputs', 'export', '--repo', '.', '--arc', 'arc-1', '--out', 'x']), { command: 'inputs-export', repo: '.', arc: 'arc-1', out: 'x' });
-    assert.deepEqual(parseCommand(['apply', '--ruling', 'a.json', '--ruling', 'b.json']), { command: 'apply', expectRev: null, dryRun: false, rulings: ['a.json', 'b.json'], run: { type: 'host' } });
-    assert.deepEqual(parseCommand(['apply']), { command: 'apply', expectRev: null, dryRun: false, rulings: [], run: { type: 'host' } });
+    assert.deepEqual(parseCommand(['apply', '--ruling', 'a.json', '--ruling', 'b.json']), { command: 'apply', expectRev: null, dryRun: false, rulings: ['a.json', 'b.json'], visionEdit: false, run: { type: 'host' } });
+    assert.deepEqual(parseCommand(['apply']), { command: 'apply', expectRev: null, dryRun: false, rulings: [], visionEdit: false, run: { type: 'host' } });
+    assert.deepEqual(parseCommand(['apply', '--vision-edit']), { command: 'apply', expectRev: null, dryRun: false, rulings: [], visionEdit: true, run: { type: 'host' } });
     const refuses = (argv: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(argv), (e: unknown) => e instanceof CliError && message.test(e.message), argv.join(' '));
     refuses(['witness-check'], /--lane-file <file> is required/);
     refuses(['resume-arc', '--repo', '.', 'x'], /unexpected argument/);

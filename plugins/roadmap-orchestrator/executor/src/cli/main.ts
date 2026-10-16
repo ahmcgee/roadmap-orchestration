@@ -102,7 +102,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       // M4a rev 3 (I2): each `--ruling` sidecar hashed like a `rule` record, in the order given.
       const rulings = command.rulings.map((f) => hashedFile('apply --ruling', f));
       if (command.dryRun) {
-        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, command.expectRev, rulings))}\n`);
+        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, command.expectRev, rulings, command.visionEdit))}\n`);
         return;
       }
       let manifest: ReturnType<typeof revisionManifestOf>;
@@ -113,7 +113,9 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
         throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
       }
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
-      return submit(command.run, hostDir, { type: 'apply', expectRev: command.expectRev, manifest, ...(rulings.length === 0 ? {} : { rulings }) });
+      return submit(command.run, hostDir, {
+        type: 'apply', expectRev: command.expectRev, manifest, ...(rulings.length === 0 ? {} : { rulings }), ...(command.visionEdit ? { visionEdit: true as const } : {}),
+      });
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
@@ -281,11 +283,11 @@ function startOf(run: Run): RunStart {
 }
 
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
-async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null, rulings: readonly HashedFile[]): Promise<unknown> {
+async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null, rulings: readonly HashedFile[], visionEdit: boolean): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
     runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
-    laneEnv: process.env, manifest: null, expectRev, rulings,
+    laneEnv: process.env, manifest: null, expectRev, rulings, visionEdit,
   });
   switch (verdict.kind) {
     case 'rejected':

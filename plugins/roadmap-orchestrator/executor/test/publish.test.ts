@@ -135,7 +135,7 @@ test('apply.ruling-for-added-unit (paid M4b run 3, OP-2): `apply --ruling` with 
     const rulings = [{ path: absPath(path), sha256: bytesSha256(bytes) }];
     const c = w.commands;
     const dry = await evaluateApply({
-      runDir: c.runDir, view: r.journal.view, hostDir: c.hostDir, repo: c.repo, planFile: c.planFile, routingBase: c.routingBase, laneEnv: c.laneEnv, manifest: null, expectRev: null, rulings,
+      runDir: c.runDir, view: r.journal.view, hostDir: c.hostDir, repo: c.repo, planFile: c.planFile, routingBase: c.routingBase, laneEnv: c.laneEnv, manifest: null, expectRev: null, rulings, visionEdit: false,
     });
     assert.equal(dry.kind, 'accepted', JSON.stringify(dry));
     const tip = head(d);

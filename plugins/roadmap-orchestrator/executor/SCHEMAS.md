@@ -913,7 +913,7 @@ passes, read by `status` for the repo and plan file); `status.rejection.json` (`
 
 | File (run dir) | Type | Content |
 |---|---|---|
-| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: ApplyManifest} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") |
+| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: ApplyManifest, rulings?: HashedFile[], visionEdit?: true} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
@@ -2453,7 +2453,9 @@ capture-missing | capture-foreign{expected, actual} | question-reused{id} | answ
 row 5a only: `start` of a new arc and `phase0 check --plan`))[]}`; `chain-invalid{problem: limit{k,
 unacked} | baseline{baseline: previous-head-mismatch | merge-commit | parent-mismatch | paths{paths}} |
 previous-incomplete{arc} | k-unset}`; `issue-policy-untrusted{visibility, policy}`; `tree-uncommitted{paths}`;
-`holistic-needs-corpus`.
+`holistic-needs-corpus`; `vision-leak{inForce: Sha256Hex|null, committed: Sha256Hex|null, draft: AbsPath}` (an
+`apply` only, row 11 of src/phase0/rows.ts: its vision file differs from the vision in force and its body carries no
+`visionEdit: true`; `draft` is `_next/vision.md` beside the arc's input dir).
 
 **Config** (`.roadmap/config.json`, `src/routing/layers.ts`): `+ chain?: {k: positive}`; nothing about issues (OR-L6).
 

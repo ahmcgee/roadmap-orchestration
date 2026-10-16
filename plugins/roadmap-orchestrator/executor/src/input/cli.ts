@@ -49,8 +49,9 @@ export type Command =
   /**
    * Put the edited plan.json and specs in force; `dryRun` classifies them read-only and queues nothing. `rulings` (M4a
    * rev 3, I2): ruling sidecar files (`--ruling`, repeatable, in the order given) landed with the edits as one revision.
+   * `visionEdit` (`--vision-edit`): the apply declares a vision edit (src/phase0/rows.ts `visionLeak`).
    */
-  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; rulings: readonly string[]; run: RunLocator }>
+  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; rulings: readonly string[]; visionEdit: boolean; run: RunLocator }>
   /** A contingent edge's condition is met, on the architect's evidence (M2). */
   | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
   /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
@@ -263,13 +264,15 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, resource: r === undefined ? null : arg(command, '--resource', resourceName, r), run: locator(p, command) };
     }
     case 'apply': {
-      const p = parseRest(rest, { ...LOCATOR, 'expect-rev': 'value', 'dry-run': 'switch', ruling: 'many' }, command);
+      const p = parseRest(rest, { ...LOCATOR, 'expect-rev': 'value', 'dry-run': 'switch', ruling: 'many', 'vision-edit': 'switch' }, command);
       positionals(p, command, 0);
       const rev = value(p, 'expect-rev');
       if (rev !== undefined && !/^[1-9][0-9]*$/.test(rev)) throw new CliError(`apply: --expect-rev takes a plan revision (a positive integer), got ${JSON.stringify(rev)}`);
       const rulings = values(p, 'ruling');
       if (new Set(rulings).size !== rulings.length) throw new CliError('apply: a --ruling file given twice');
-      return { command, expectRev: rev === undefined ? null : planRev(Number(rev)), dryRun: p.flags.has('dry-run'), rulings, run: locator(p, command) };
+      return {
+        command, expectRev: rev === undefined ? null : planRev(Number(rev)), dryRun: p.flags.has('dry-run'), rulings, visionEdit: p.flags.has('vision-edit'), run: locator(p, command),
+      };
     }
     case 'resolve-edge': {
       const p = parseRest(rest, { ...LOCATOR, evidence: 'value' }, command);
