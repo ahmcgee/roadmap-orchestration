@@ -39,7 +39,7 @@ import { auditArc, auditContext, factsOf, mapped, moduleFiles, unitSteps } from 
 import { VISION, obligationsJson } from './fixtures/brake-common.ts';
 import { API_OP, barrierSuite, closedAs, ruleRecord, submitRule } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll } from './fixtures/stage-common.ts';
-import { type ArcRun, applyBody, contextFor, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcRun, applyBody, contextFor, stepUntil, visionApplyBody } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Lens = 'invariants' | 'drift' | 'vacuity' | 'vision';
@@ -518,7 +518,7 @@ describe('coverage', () => {
       const visionFile = join(d.planPath, '..', 'vision.json');
       const vision = JSON.parse(readFileSync(visionFile, 'utf8')) as typeof VISION;
       writeFileSync(visionFile, JSON.stringify({ ...vision, rev: 2, clauses: [...vision.clauses, { id: 'V-3', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }] }));
-      const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
+      const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, visionApplyBody(d)));
       assert.equal(applied.kind, 'applied', JSON.stringify(applied));
       const base = coverageBase(ctx, S2)!;
       assert.deepEqual([base.head, base.visionSha256], [S, r.journal.view.planApplied()!.visionSha256], 'the arc\'s base, and the vision now in force');

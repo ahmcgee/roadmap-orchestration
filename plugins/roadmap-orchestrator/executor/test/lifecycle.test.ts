@@ -119,6 +119,7 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
 
     editSpec(r, (s) => void (s['rev'] = 2));
     assert.deepEqual((await resume(r)).outcome, noRevision, 'a revision edited but not applied re-opens nothing');
+    assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'the unapplied edit is not read: the unit stays parked');
     assert.equal((await apply(r)).outcome.kind, 'applied');
     assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'an applied revision of a parked unit waits for the resume');
     const reopened = await resume(r);

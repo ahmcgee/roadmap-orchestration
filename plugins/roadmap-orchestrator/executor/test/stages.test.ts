@@ -76,8 +76,9 @@ test('stages.redirect-then-approve: a redirect patches the spec (rev+1), a fresh
   const first = started(await planCheck(run.ctx, run.unit));
   assert.equal(first.outcome.kind, 'redirect');
   assert.equal(show(first.next), 'plan-check@med');
-  const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; decisions: readonly { id: string; state: string }[] };
-  assert.equal(spec.rev, 2);
+  assert.equal((JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number }).rev, 1, 'the owner\'s spec file is never written');
+  const { spec } = loadUnitSpec(run.ctx, run.unit);
+  assert.equal(spec.rev, 2, 'the patched spec is in force');
   assert.deepEqual(spec.decisions.map((d) => [d.id, d.state]), [['D1', 'active']]);
   const patches = intents(run.runDir, 'spec.patch');
   assert.equal(patches.length, 1);
@@ -583,8 +584,9 @@ test('plan-check.cites: a redirect may add a ledger ruling to the cites, which t
   assert.equal(unknown.outcome.kind, 'malformed', 'a cite naming no plan contract');
   const cited = started(await planCheck(run.ctx, run.unit));
   assert.equal(cited.outcome.kind, 'redirect');
-  const spec = JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number; cites: unknown };
-  assert.equal(spec.rev, 2);
+  assert.equal((JSON.parse(readFileSync(run.specPath, 'utf8')) as { rev: number }).rev, 1, 'the owner\'s spec file is never written');
+  const { spec } = loadUnitSpec(run.ctx, run.unit);
+  assert.equal(spec.rev, 2, 'the patched spec is in force');
   assert.deepEqual(spec.cites, { contracts: ['contracts/api.md'], rulings: ['C-1', 'C-2'] });
   assert.equal((started(await planCheck(run.ctx, run.unit))).outcome.kind, 'approve');
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null), 'the index, then the full text');

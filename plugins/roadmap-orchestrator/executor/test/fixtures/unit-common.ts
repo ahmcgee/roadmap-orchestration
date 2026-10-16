@@ -155,11 +155,14 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
 }
 
 /** An `apply` of the plan and specs as the files hold them now (what `roadmap apply [--base]` submits). */
-export function applyBody(d: ArcDescriptor, base: RevisionManifest | null = null): CommandBody {
+export function applyBody(d: ArcDescriptor, base: RevisionManifest | null = null): Extract<CommandBody, { type: 'apply' }> {
   const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath), absPath(d.repo)));
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
   return { type: 'apply', base, manifest };
 }
+
+/** An `apply` that declares a vision edit (`roadmap apply --vision-edit`): a changed vision file is otherwise `vision-leak`. */
+export const visionApplyBody = (d: ArcDescriptor): CommandBody => ({ ...applyBody(d), visionEdit: true });
 
 export const U1: UnitId = unitId('u1');
 export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPath(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, unit));

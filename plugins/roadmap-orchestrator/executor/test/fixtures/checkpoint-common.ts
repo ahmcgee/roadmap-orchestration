@@ -15,7 +15,7 @@ import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { admitSpecWire, lensStep } from '../helpers/holistic.ts';
 import { type AuditArcOptions, auditArc, auditContext, factsOf } from './audit-common.ts';
-import { type ArcDescriptor, type ArcRun, applyBody } from './unit-common.ts';
+import { type ArcDescriptor, type ArcRun, applyBody, visionApplyBody } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -62,12 +62,12 @@ export async function applyPlanEdit(r: ArcRun, w: Wired, edit: (plan: Json) => v
   assert.equal(out.kind, 'applied', JSON.stringify(out));
 }
 
-/** Rewrites the vision file with `clauses` added at the next rev and applies it (owner-only: an architect apply). */
+/** Rewrites the vision file with `clauses` added at the next rev and applies it (owner-only: an architect apply declaring the vision edit). */
 export async function applyVision(r: ArcRun, w: Wired, clauses: readonly Json[]): Promise<void> {
   const file = join(r.d.planPath, '..', 'vision.json');
   const vision = JSON.parse(readFileSync(file, 'utf8')) as Json & { rev: number; clauses: Json[] };
   writeFileSync(file, JSON.stringify({ ...vision, rev: vision.rev + 1, clauses: [...vision.clauses, ...clauses] }));
-  const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(r.d)));
+  const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, visionApplyBody(r.d)));
   assert.equal(out.kind, 'applied', JSON.stringify(out));
 }
 
