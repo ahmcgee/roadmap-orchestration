@@ -145,6 +145,15 @@ at triage stay in git history.
   the system prompt. Gated on an A/B of one real plan-check under both layouts showing the same verdicts. The one
   item that spends less of the weekly Claude limit directly.
 
+- **Auto-ingest PR review and CI into fix units** (owner ruling 2026-10-16, deferred). Post-completion PR fixes are
+  first-class (a reopened arc, or priority units of the next arc with `roadmap pr --supersede-previous`), but the root
+  agent turns a red CI run or an owner's review request into fix units by hand. Wanted once that path is proven: the
+  executor reads the arc PR's CI status and review threads and proposes the fix units itself.
+- **Pack-review advisory on critical-path length** (arc feedback 2026-10-15, item 5, deferred). The pack review
+  judges the pack's content, not its shape: a plan whose `after` chain is long serialises the arc whatever the
+  capacity. Wanted: a code-computed critical-path length (units and median stage time) beside the pack review's
+  notes, as an advisory the architect may act on before admission, never a refusal.
+
 ## Do soon (small fixes)
 
 None.

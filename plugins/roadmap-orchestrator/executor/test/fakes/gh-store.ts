@@ -43,6 +43,7 @@ export type GhPull = Readonly<{
 export type GhMutation =
   | Readonly<{ call: number; kind: 'pr-create'; number: number; base: string; head: string; title: string }>
   | Readonly<{ call: number; kind: 'pr-edit'; number: number; fields: Readonly<Record<string, string>> }>
+  | Readonly<{ call: number; kind: 'pr-close'; number: number; comment: string | null }>
   | Readonly<{ call: number; kind: 'label-create'; name: string }>
   | Readonly<{ call: number; kind: 'labels-add' | 'labels-remove'; number: number; labels: readonly string[] }>;
 

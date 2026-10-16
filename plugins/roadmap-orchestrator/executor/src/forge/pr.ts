@@ -11,21 +11,26 @@ import type { RepoIdentity } from './types.ts';
 export const PULL_STATES = ['OPEN', 'MERGED', 'CLOSED'] as const;
 export type PullState = (typeof PULL_STATES)[number];
 
-export type Pull = Readonly<{ number: number; url: string; state: PullState; base: string; head: string; mergeCommit: Sha | null }>;
+/** `supersedes`: the URL of the previous arc's PR this one supersedes (its body's `Supersedes <url>` line), or null. */
+export type Pull = Readonly<{ number: number; url: string; state: PullState; base: string; head: string; mergeCommit: Sha | null; supersedes: string | null }>;
 
-const PULL_FIELDS = 'number,url,state,baseRefName,headRefName,mergeCommit';
+const PULL_FIELDS = 'number,url,state,baseRefName,headRefName,mergeCommit,body';
+
+/** The body line that records a supersession (`pullBody`): the forge is the only record of it. */
+const SUPERSEDES = /^Supersedes (\S+) /m;
 
 function pullOf(raw: unknown): Pull {
-  const r = raw as { number?: unknown; url?: unknown; state?: unknown; baseRefName?: unknown; headRefName?: unknown; mergeCommit?: { oid?: unknown } | null };
+  const r = raw as { number?: unknown; url?: unknown; state?: unknown; baseRefName?: unknown; headRefName?: unknown; mergeCommit?: { oid?: unknown } | null; body?: unknown };
   const bad = (what: string): never => {
     throw new GhError(['pr', 'list'], 0, `a pull request with ${what}: ${JSON.stringify(raw)}`);
   };
-  if (typeof r.number !== 'number' || typeof r.url !== 'string' || typeof r.baseRefName !== 'string' || typeof r.headRefName !== 'string') return bad('missing fields');
+  if (typeof r.number !== 'number' || typeof r.url !== 'string' || typeof r.baseRefName !== 'string' || typeof r.headRefName !== 'string' || typeof r.body !== 'string') return bad('missing fields');
   if (!(PULL_STATES as readonly unknown[]).includes(r.state)) return bad('an unknown state');
   const oid = r.mergeCommit?.oid;
   const mergeCommit = typeof oid === 'string' ? sha(oid, `pull ${r.number}.mergeCommit.oid`) : null;
   if (r.state === 'MERGED' && mergeCommit === null) return bad('state MERGED and no merge commit');
-  return { number: r.number, url: r.url, state: r.state as PullState, base: r.baseRefName, head: r.headRefName, mergeCommit };
+  const supersedes = SUPERSEDES.exec(r.body)?.[1] ?? null;
+  return { number: r.number, url: r.url, state: r.state as PullState, base: r.baseRefName, head: r.headRefName, mergeCommit, supersedes };
 }
 
 /** Every PR whose head is `head`, in any state. */
@@ -68,6 +73,16 @@ export function retargetPull(cwd: AbsPath, repo: RepoIdentity, number: number, b
   ghPr(cwd, repo, 'edit', [String(number), '--base', base]);
 }
 
+/** Re-targets the PR and replaces its body (a supersession rewrites the code-rendered body). */
+export function rewritePull(cwd: AbsPath, repo: RepoIdentity, number: number, base: string, body: string): void {
+  withBodyFile(body, (file) => ghPr(cwd, repo, 'edit', [String(number), '--base', base, '--body-file', file]));
+}
+
+/** Closes the PR unmerged with a comment saying why. */
+export function closePull(cwd: AbsPath, repo: RepoIdentity, number: number, comment: string): void {
+  ghPr(cwd, repo, 'close', [String(number), '--comment', comment]);
+}
+
 // ---------------------------------------------------------------------------------------------------
 // The body (code-rendered)
 
@@ -79,6 +94,8 @@ export type PullBodyInput = Readonly<{
   previousArc: ArcId | null;
   /** `<arc>/M-n` and its rules, proposal and why, ascending by id: the corpus amendments arc `arc` derived (OR-L7). */
   amendments: readonly Readonly<{ ref: string; rules: readonly string[]; proposal: string; why: string }>[];
+  /** The previous arc's PR this one supersedes (`roadmap pr --supersede-previous`), or null. */
+  supersedes: Readonly<{ url: string; arc: ArcId }> | null;
 }>;
 
 export const MERGE_COMMIT_LINE = 'Merge this stack with merge commits, never squash or rebase: each arc\'s PR is based on the previous arc\'s branch, and a squash or rebase merge leaves the PRs stacked on it needing a rebase.';
@@ -90,7 +107,9 @@ export function pullTitle(arc: ArcId): string {
 export function pullBody(input: PullBodyInput): string {
   const lines = [
     `Roadmap arc \`${input.arc}\`: integration branch \`${input.branch}\` at ${input.head}.`,
-    input.previousArc === null ? 'The first arc of its chain, based on `main`.' : `Stacked on arc \`${input.previousArc}\`'s pull request; merge that one first.`,
+    input.supersedes !== null
+      ? `Supersedes ${input.supersedes.url} (arc \`${input.supersedes.arc}\`): this branch carries that arc's commits and the fixes its review or CI asked for; merge this one in its place.`
+      : input.previousArc === null ? 'The first arc of its chain, based on `main`.' : `Stacked on arc \`${input.previousArc}\`'s pull request; merge that one first.`,
     '',
     MERGE_COMMIT_LINE,
     '',

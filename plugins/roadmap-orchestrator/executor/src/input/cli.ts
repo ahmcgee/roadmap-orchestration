@@ -75,8 +75,8 @@ export type Command =
   | Readonly<{ command: 'corpus-pin'; repo: string; commit: string; baseline: Sha; out: string }>
   /** `brief`: everything since the last ack across the chain (`json`: the payload, else its Markdown); `ack` acknowledges one brief. */
   | Readonly<{ command: 'brief'; repo: string; json: boolean; ack: BriefId | null }>
-  /** `pr`: open or update the arc's stacked pull request. */
-  | Readonly<{ command: 'pr'; repo: string; arc: ArcId }>
+  /** `pr`: open or update the arc's stacked pull request; `supersedePrevious` (`--supersede-previous`): it supersedes the previous arc's open PR. */
+  | Readonly<{ command: 'pr'; repo: string; arc: ArcId; supersedePrevious: boolean }>
   /** `issues`: the canonical issue capture, to stdout or (`out`) a file by atomic rename. */
   | Readonly<{ command: 'issues'; repo: string; out: string | null }>
   /** `chain status`: the chain derived from refs, the ack log and K. */
@@ -363,9 +363,11 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, repo: required(p, command, 'repo', '<path>'), json: p.flags.has('json'), ack: ack === undefined ? null : arg(command, '--ack', briefId, ack) };
     }
     case 'pr': {
-      const p = parseRest(rest, { repo: 'value', arc: 'value' }, command);
+      const p = parseRest(rest, { repo: 'value', arc: 'value', 'supersede-previous': 'switch' }, command);
       positionals(p, command, 0);
-      return { command, repo: required(p, command, 'repo', '<path>'), arc: arg(command, '--arc', arcId, required(p, command, 'arc', '<arc>')) };
+      return {
+        command, repo: required(p, command, 'repo', '<path>'), arc: arg(command, '--arc', arcId, required(p, command, 'arc', '<arc>')), supersedePrevious: p.flags.has('supersede-previous'),
+      };
     }
     case 'issues': {
       const p = parseRest(rest, { repo: 'value', out: 'value' }, command);

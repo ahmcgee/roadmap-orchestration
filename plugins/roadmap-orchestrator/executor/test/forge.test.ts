@@ -2,7 +2,7 @@
 // fake `gh` (test/fakes/fake-gh.ts, first on PATH) and local bare origins. Named tests: trust.matrix,
 // issues.untrusted-refused, issues.repo-identity-once, issues.capture-canonical, issues.comment-filter,
 // issues.pull-requests-dropped, pr.stacked-bases, pr.body-merge-commits, pr.retarget-and-squash-flag,
-// pr.idempotent-rerun, push.lease, push.never-main.
+// pr.idempotent-rerun, pr.supersede-previous, push.lease, push.never-main.
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -272,8 +272,8 @@ describe('pr', () => {
     const a2 = await sealArc(s, 'arc-2', a1.head, a1);
     using(s.forge);
     try {
-      const pr1 = await openPr({ repo: s.repo, arc: a1.arc });
-      const pr2 = await openPr({ repo: s.repo, arc: a2.arc });
+      const pr1 = await openPr({ repo: s.repo, arc: a1.arc, supersedePrevious: false });
+      const pr2 = await openPr({ repo: s.repo, arc: a2.arc, supersedePrevious: false });
       assert.deepEqual({ base: pr1.base, created: pr1.created, retargeted: pr1.retargeted, needsRebase: pr1.needsRebase }, { base: 'main', created: true, retargeted: false, needsRebase: false });
       assert.deepEqual({ base: pr2.base, created: pr2.created, needsRebase: pr2.needsRebase }, { base: a1.branch, created: true, needsRebase: false });
       assert.equal(pullOf(s.forge, a1.branch).baseRefName, 'main');
@@ -301,10 +301,10 @@ describe('pr', () => {
     const a2 = await sealArc(s, 'arc-2', a1.head, a1);
     using(s.forge);
     try {
-      const first = [await openPr({ repo: s.repo, arc: a1.arc }), await openPr({ repo: s.repo, arc: a2.arc })];
+      const first = [await openPr({ repo: s.repo, arc: a1.arc, supersedePrevious: false }), await openPr({ repo: s.repo, arc: a2.arc, supersedePrevious: false })];
       const mutations = s.forge.read().mutations.length;
       const branches = originBranches(s.origin);
-      const again = [await openPr({ repo: s.repo, arc: a1.arc }), await openPr({ repo: s.repo, arc: a2.arc })];
+      const again = [await openPr({ repo: s.repo, arc: a1.arc, supersedePrevious: false }), await openPr({ repo: s.repo, arc: a2.arc, supersedePrevious: false })];
       assert.deepEqual(again, first.map((p) => ({ ...p, created: false })));
       assert.equal(s.forge.read().mutations.length, mutations, 'no forge mutation');
       assert.equal(s.forge.read().pulls.length, 2);
@@ -321,25 +321,77 @@ describe('pr', () => {
       const a2 = await sealArc(s, 'arc-2', a1.head, a1);
       using(s.forge);
       try {
-        const pr1 = await openPr({ repo: s.repo, arc: a1.arc });
-        await openPr({ repo: s.repo, arc: a2.arc });
+        const pr1 = await openPr({ repo: s.repo, arc: a1.arc, supersedePrevious: false });
+        await openPr({ repo: s.repo, arc: a2.arc, supersedePrevious: false });
         const oid = mergeOnOrigin(s.origin, 'main', a1.branch, method);
         s.forge.setPullState(pr1.number, 'MERGED', oid);
-        const after = await openPr({ repo: s.repo, arc: a2.arc });
+        const after = await openPr({ repo: s.repo, arc: a2.arc, supersedePrevious: false });
         if (method === 'merge') {
           assert.deepEqual({ base: after.base, retargeted: after.retargeted, needsRebase: after.needsRebase, created: after.created }, { base: 'main', retargeted: true, needsRebase: false, created: false });
           assert.equal(pullOf(s.forge, a2.branch).baseRefName, 'main');
-          const again = await openPr({ repo: s.repo, arc: a2.arc });
+          const again = await openPr({ repo: s.repo, arc: a2.arc, supersedePrevious: false });
           assert.equal(again.retargeted, false, 'a second run finds it re-targeted');
         } else {
           assert.deepEqual({ base: after.base, retargeted: after.retargeted, needsRebase: after.needsRebase }, { base: a1.branch, retargeted: false, needsRebase: true });
           assert.equal(pullOf(s.forge, a2.branch).baseRefName, a1.branch);
         }
-        const merged = await openPr({ repo: s.repo, arc: a1.arc });
+        const merged = await openPr({ repo: s.repo, arc: a1.arc, supersedePrevious: false });
         assert.deepEqual({ number: merged.number, created: merged.created, base: merged.base }, { number: pr1.number, created: false, base: 'main' });
       } finally {
         restorePath();
       }
+    }
+  });
+
+  it('pr.supersede-previous: arc 2 carrying arc 1\'s PR fixes supersedes its open PR (created or rewritten): it targets main, its body names PR 1, PR 1 is closed with a comment; reruns keep it, a stacked arc 3 walks past it, and the refusals', T, async () => {
+    const s = newStack();
+    const a1 = await sealArc(s, 'arc-1', 'main', null);
+    const a2 = await sealArc(s, 'arc-2', a1.head, a1);
+    const a3 = await sealArc(s, 'arc-3', a2.head, a2);
+    using(s.forge);
+    const pr = (arc: Sealed, supersedePrevious = false) => openPr({ repo: s.repo, arc: arc.arc, supersedePrevious });
+    try {
+      await assert.rejects(pr(a1, true), (e: unknown) => e instanceof CliError && /first of its chain/.test(e.message));
+      await assert.rejects(pr(a2, true), (e: unknown) => e instanceof CliError && /arc-1 has no open PR/.test(e.message));
+      const pr1 = await pr(a1);
+      // Created superseding: arc 2's PR is new.
+      const pr2 = await pr(a2, true);
+      assert.deepEqual({ base: pr2.base, created: pr2.created, supersedes: pr2.supersedes }, { base: 'main', created: true, supersedes: pr1.url });
+      assert.ok(pullOf(s.forge, a2.branch).body.startsWith(`Roadmap arc \`arc-2\``), 'the code-rendered body');
+      assert.match(pullOf(s.forge, a2.branch).body, new RegExp(`^Supersedes ${pr1.url} \\(arc \`arc-1\`\\)`, 'm'));
+      assert.equal(pullOf(s.forge, a1.branch).state, 'CLOSED');
+      const close = s.forge.read().mutations.filter((m) => m.kind === 'pr-close');
+      assert.deepEqual(close.map((m) => m.kind === 'pr-close' && [m.number, m.comment?.includes(pr2.url)]), [[pr1.number, true]], 'closed once, naming its successor');
+      const mutations = s.forge.read().mutations.length;
+      assert.deepEqual(await pr(a2), { ...pr2, created: false }, 'a plain rerun keeps the supersession');
+      assert.deepEqual(await pr(a2, true), { ...pr2, created: false }, 'a flagged rerun changes nothing');
+      assert.equal(s.forge.read().mutations.length, mutations, 'no forge mutation on rerun');
+      await assert.rejects(pr(a1), (e: unknown) => e instanceof CliError && /closed unmerged; when a later arc's PR superseded it/.test(e.message));
+      // Arc 3 stacks on arc 2; once arc 2 merges with a merge commit, the walk passes arc 2 and the arc 1 it superseded.
+      assert.equal((await pr(a3)).base, a2.branch);
+      s.forge.setPullState(pr2.number, 'MERGED', mergeOnOrigin(s.origin, 'main', a2.branch, 'merge'));
+      assert.deepEqual(await pr(a3).then((p) => [p.base, p.retargeted]), ['main', true]);
+      await assert.rejects(pr(a3, true), (e: unknown) => e instanceof CliError && /arc-2's PR .* merged already/.test(e.message));
+    } finally {
+      restorePath();
+    }
+
+    // Rewritten superseding: arc 2's PR was open on arc 1's branch first.
+    const t = newStack();
+    const b1 = await sealArc(t, 'arc-1', 'main', null);
+    const b2 = await sealArc(t, 'arc-2', b1.head, b1);
+    using(t.forge);
+    try {
+      const q1 = await openPr({ repo: t.repo, arc: b1.arc, supersedePrevious: false });
+      const q2 = await openPr({ repo: t.repo, arc: b2.arc, supersedePrevious: false });
+      assert.equal(q2.base, b1.branch);
+      const again = await openPr({ repo: t.repo, arc: b2.arc, supersedePrevious: true });
+      assert.deepEqual({ number: again.number, base: again.base, retargeted: again.retargeted, supersedes: again.supersedes }, { number: q2.number, base: 'main', retargeted: true, supersedes: q1.url });
+      assert.equal(pullOf(t.forge, b2.branch).baseRefName, 'main');
+      assert.match(pullOf(t.forge, b2.branch).body, /^Supersedes /m);
+      assert.equal(pullOf(t.forge, b1.branch).state, 'CLOSED');
+    } finally {
+      restorePath();
     }
   });
 
@@ -348,10 +400,10 @@ describe('pr', () => {
     const a1 = await sealArc(s, 'arc-1', 'main', null);
     using(s.forge);
     try {
-      await assert.rejects(openPr({ repo: s.repo, arc: arcId('arc-9') }), (e: unknown) => e instanceof CliError && /no refs\/roadmap\/arc-9/.test(e.message));
-      const pr1 = await openPr({ repo: s.repo, arc: a1.arc });
+      await assert.rejects(openPr({ repo: s.repo, arc: arcId('arc-9'), supersedePrevious: false }), (e: unknown) => e instanceof CliError && /no refs\/roadmap\/arc-9/.test(e.message));
+      const pr1 = await openPr({ repo: s.repo, arc: a1.arc, supersedePrevious: false });
       s.forge.setPullState(pr1.number, 'CLOSED');
-      await assert.rejects(openPr({ repo: s.repo, arc: a1.arc }), (e: unknown) => e instanceof CliError && /closed unmerged/.test(e.message));
+      await assert.rejects(openPr({ repo: s.repo, arc: a1.arc, supersedePrevious: false }), (e: unknown) => e instanceof CliError && /closed unmerged/.test(e.message));
     } finally {
       restorePath();
     }

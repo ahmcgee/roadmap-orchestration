@@ -30,6 +30,10 @@
 // Before the Phase-0 rows, a start (not a respawn) finishes every brief ack a crash left pending (`finishPendingAcks`,
 // crash row BRIEF_ACK), so the chain rows read the acks the architect gave.
 //
+// A start of an arc with a plan in force is also a reopen (owner ruling 2026-10-16: a completed arc's life ends when its
+// PR merges; fix units added to its plan and a start run it again): refused `arc-superseded{by}` once another arc
+// started on its head (src/chain.ts `successorOf`), whose PR then carries the fixes.
+//
 // A supervisor's respawn checks the plan in force and its kept specs, not the files (`StartInput.respawn`).
 //
 // `runChecks` is groups 1 to 4. Group 5, `smokeCheck` (backend-smoke for the resolved profile), is last and
@@ -64,7 +68,7 @@ import {
 } from '../input/inforce.ts';
 import { CORPUS_VISION_FILE, type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason, visionFile } from '../input/plan.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { finishPendingAcks } from '../chain.ts';
+import { finishPendingAcks, successorOf } from '../chain.ts';
 import { FRESH_START, RESTART, holisticNeedsCorpus, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
@@ -592,6 +596,8 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     finishPendingAcks(input.repo);
     const log = arcLog(context);
     const fresh = log !== 'corrupt' && log.planApplied() === null;
+    const by = fresh ? null : successorOf(input.repo, plan.arc);
+    if (by !== null) return refused([{ kind: 'arc-superseded', by }]);
     const p0 = phase0Rows(phase0InputOf(source.files, readRepoConfig(input.repo)), fresh ? FRESH_START : RESTART);
     const rows = [...(fresh ? holisticNeedsCorpus(source.files.plan) : []), ...p0.rows];
     if (rows.length > 0) return refused(rows);

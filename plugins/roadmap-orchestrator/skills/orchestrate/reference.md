@@ -99,9 +99,13 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   with `--json`). Exits 64 while no arc of the repo has published a snapshot.
 - `roadmap brief --repo <path> --ack <briefId>`: acknowledge that brief: prints `{acked, commands}` (one queued `ack`
   per item it covers), or `{stale: {expected, actual}}` (78, nothing written) when the brief changed.
-- `roadmap pr --repo <path> --arc <arc>`: push the completed arc's branch (a leased fast-forward, never `main`) and
-  open or update its PR. Prints `{number, url, base, created, retargeted, needsRebase}`. Idempotent. Exits 64 for an arc
-  whose ref holds no completion, or whose PR was closed unmerged.
+- `roadmap pr --repo <path> --arc <arc> [--supersede-previous]`: push the completed arc's branch (a leased fast-forward,
+  never `main`) and open or update its PR. Prints `{number, url, base, created, retargeted, needsRebase, supersedes}`.
+  Idempotent; a reopened arc's new completion fast-forwards the same PR. `--supersede-previous`: this arc carries
+  fixes the previous arc's still-open PR needed, so its PR supersedes that one: it targets the previous PR's base, its
+  body opens with `Supersedes <url>`, and the previous PR is closed with a comment naming it (`supersedes` is that
+  URL; later runs keep it, with or without the flag). Exits 64 for an arc whose ref holds no completion, whose PR was
+  closed unmerged, or for `--supersede-previous` with no previous arc, a merged previous PR or none open.
 - `roadmap chain status --repo <path>`: `{arcs: [{arc, previousArc, acked, pr}], k, unackedStarts, nextStart}`, oldest
   first. Exits 64 before any snapshot. `nextStart` answers whether a start chained on the head would pass `start`'s own
   chain rows that need no plan: `{allowed: true, reason: within-k, k, unacked}` or `{allowed: false, reason}` with reason
@@ -119,7 +123,8 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78).
 - `roadmap resume-arc --repo <path>`: when this repo's arc holds the host and its owner is dead, relaunches the
   supervisor as `start` would (prints its line and exit code). Otherwise `{resumed: false, reason}` (exit 0), reason
-  `no-claim`, `other-repo`, `alive`, `complete`, `refused` or `already-resumed`. "Recovery" has the boot hook.
+  `no-claim`, `other-repo`, `alive`, `refused` or `already-resumed`. A claim on a `complete` arc is a reopening start
+  that died, and is relaunched. "Recovery" has the boot hook.
 - `roadmap inputs export --repo <path> --arc <arc> --out <dir>`: read-only; writes the arc's current inputs into a
   new directory and prints `export.json` `{planRev, specRevs}` ("Recovery").
 - `roadmap flow accept|reject <proposal> --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). Your
@@ -361,6 +366,7 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 | `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K. `chain status` `nextStart` answers `limit`, `k-unset` and `previous-incomplete` before you compose the plan |
 | `issue-policy-untrusted{visibility, policy}` | anyone can open issues | the owner restricts issue creation to collaborators or disables issues |
 | `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |
+| `arc-superseded{by}` | a start of an arc with a plan in force (a reopen) after arc `by` started on its head | put the fixes in arc `by` as priority units; at its completion, `pr --supersede-previous` for arc `by` |
 | `vision-leak{inForce, committed, draft}` (`apply` only) | the vision file differs from the vision in force and the apply declares no vision edit | move the draft to `draft` (`<inputs>/_next/vision.md`) and restore `.roadmap/vision.json` and the vision document to the vision in force (commit, re-pin); `--vision-edit` only for a vision change the owner ordered for this arc |
 
 **`apply` rejections** (in the receipt or `--dry-run`): every row above that applies to the edit, plus

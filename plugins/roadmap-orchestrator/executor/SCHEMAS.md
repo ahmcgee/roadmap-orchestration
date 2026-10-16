@@ -2455,7 +2455,8 @@ unacked} | baseline{baseline: previous-head-mismatch | merge-commit | parent-mis
 previous-incomplete{arc} | k-unset}`; `issue-policy-untrusted{visibility, policy}`; `tree-uncommitted{paths}`;
 `holistic-needs-corpus`; `vision-leak{inForce: Sha256Hex|null, committed: Sha256Hex|null, draft: AbsPath}` (an
 `apply` only, row 11 of src/phase0/rows.ts: its vision file differs from the vision in force and its body carries no
-`visionEdit: true`; `draft` is `_next/vision.md` beside the arc's input dir).
+`visionEdit: true`; `draft` is `_next/vision.md` beside the arc's input dir); `arc-superseded{by: ArcId}` (a start
+of an arc with a plan in force, a reopen, after arc `by` started on its head: src/chain.ts `successorOf`).
 
 **Config** (`.roadmap/config.json`, `src/routing/layers.ts`): `+ chain?: {k: positive}`; nothing about issues (OR-L6).
 

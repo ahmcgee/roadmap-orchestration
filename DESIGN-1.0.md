@@ -901,6 +901,15 @@ owner sets (owner rulings OR-Q19/20).
   PR 1 targets `main`, PR N+1 targets arc N's branch. The body lists the amendments derived from the arc and states
   that the stack merges with merge commits; `roadmap pr` re-targets a PR whose base merged and flags a squash-merged
   base as needs-rebase in the brief. Nothing merges `main`: the owner merges the stack.
+- **PR fixes after completion (owner ruling 2026-10-16).** An arc's life ends when its PR merges, not at
+  `arc-completed`; CI failures and the owner's review requests on its PR become fix units. While no arc has started
+  on its head, the one canonical reopen is fix units added to its plan and `start` run again (the start's revision
+  admits them, invalidating the completion; `resume-arc` relaunches a claim a dying reopen left on a completed arc),
+  and `roadmap pr` fast-forwards the same PR at the new completion. Once arc N+1 started on N's head, a start of N is
+  refused `arc-superseded{by}`: the fixes are priority units of N+1, and `roadmap pr --arc <N+1>
+  --supersede-previous` makes N+1's PR supersede N's (it targets N's base, its body opens `Supersedes <url>`, N's PR
+  is closed with a comment; the forge stays the only record, and the base walk passes a superseded PR). Auto-ingesting
+  PR reviews and CI into fix units is deferred (BACKLOG).
 - **One arc per host.** Arc N's executor exits at completion before arc N+1 starts (host lock, §2).
 - **Next-arc staging (owner ruling 2026-10-16).** `<repo>/../roadmap-inputs/_next/` holds `vision.md`, the owner's
   working draft of the next vision, and `notes.md`, work for later. A mid-arc owner thought that changes what the

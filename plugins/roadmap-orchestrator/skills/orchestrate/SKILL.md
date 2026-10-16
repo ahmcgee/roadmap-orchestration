@@ -354,7 +354,7 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 
 1. `roadmap pr --repo <repo> --arc <arc>`: pushes the arc branch and opens or updates its PR. The first arc's PR
    targets `main`, each later one the previous arc's branch; the body lists the arc's amendments and says to merge
-   with merge commits.
+   with merge commits. The arc's PR may still need fixes after this ("PR fixes after completion").
 2. `roadmap chain status --repo <repo>` and read `nextStart`, the executor's own answer for the next start. Never
    work it out from `k` and `unackedStarts`. `allowed`: you continue. `limit`: stop with reason `k-limit`; this
    check-in is the final one. `k-unset`: ask K ("Bootstrap" step 4); on resume, write it in the between-arc commit.
@@ -383,6 +383,24 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 **Stop.** One final message: the check-in, the request to merge the stacked PRs in order, first into `main`, each
 with a merge commit, then exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,
 `vision-silent` or `owner` (the owner told you to stop, or an executor defect stopped the arc: "Handling parks").
+
+## PR fixes after completion
+
+An arc's life ends when its PR merges, not at `arc-completed`. A red CI run on an open arc PR, or the owner asking
+for changes on it, becomes fix units, never a hand edit of the branch:
+
+- **The next arc has not started:** reopen the arc. Add the fix units (`"priority": "high"`) to that arc's own plan
+  and specs, then `roadmap start --repo <repo> --plan <that arc's plan>`: the same start puts them in force, the
+  completion no longer holds, and the arc runs again (restart its watch with `--from`). At its new completion,
+  `roadmap pr --arc <arc>` fast-forwards the same PR. A between-arc branch already cut for the next arc is now on
+  the old head: cut it again from the new `completion.head`.
+- **The next arc has started** on this arc's head: starting this arc again is refused `arc-superseded{by}`. The
+  fixes go into the next arc as priority units (`apply`), and at its completion
+  `roadmap pr --arc <next arc> --supersede-previous`: its PR targets the old PR's base, says it supersedes it, and the
+  old PR is closed with a comment naming the new one. Tell the owner at the next check-in.
+
+Read the CI log or the review in full first; a fix unit's spec cites what it fixes. Never push to an arc branch
+yourself, and never squash the fix into the PR by hand.
 
 ## Scope growth
 

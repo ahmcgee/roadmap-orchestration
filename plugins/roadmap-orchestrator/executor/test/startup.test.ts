@@ -30,6 +30,7 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'issue-policy-untrusted': { kind: 'issue-policy-untrusted', visibility: 'PUBLIC', policy: 'ALL' },
   'tree-uncommitted': { kind: 'tree-uncommitted', paths: [repoPath('.roadmap/vision.json')] },
   'holistic-needs-corpus': { kind: 'holistic-needs-corpus' },
+  'arc-superseded': { kind: 'arc-superseded', by: arcId('arc-2') },
   'vision-leak': { kind: 'vision-leak', inForce: sha256('a'.repeat(64)), committed: sha256('b'.repeat(64)), draft: absPath('/w/roadmap-inputs/_next/vision.md') },
 };
 

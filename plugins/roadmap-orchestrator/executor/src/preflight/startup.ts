@@ -91,7 +91,10 @@ export type StartupRejection =
   | Readonly<{ kind: 'holistic-needs-corpus' }>
   // An apply's vision file differs from the vision in force and the apply declares no vision edit (`--vision-edit`;
   // src/phase0/rows.ts `visionLeak`): a next-arc draft belongs in `draft` (`_next/vision.md`) until the between-arc window.
-  | Readonly<{ kind: 'vision-leak'; inForce: Sha256Hex | null; committed: Sha256Hex | null; draft: AbsPath }>;
+  | Readonly<{ kind: 'vision-leak'; inForce: Sha256Hex | null; committed: Sha256Hex | null; draft: AbsPath }>
+  // A start of an arc with a plan in force (a reopen) after arc `by` started on its head (src/chain.ts `successorOf`):
+  // its PR's fixes are priority units of `by`, whose PR supersedes its own (`roadmap pr --supersede-previous`).
+  | Readonly<{ kind: 'arc-superseded'; by: ArcId }>;
 
 /** Why a declared command (a lane, a probe, a teardown) cannot run on this host. */
 export type CommandProblem = Readonly<{ type: 'argv0-unresolvable'; argv0: string }> | Readonly<{ type: 'env-missing'; name: string }>;
@@ -124,6 +127,7 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'tree-uncommitted':
     case 'holistic-needs-corpus':
     case 'vision-leak':
+    case 'arc-superseded':
       return EXIT_REFUSED;
   }
 }
@@ -258,6 +262,7 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
     kind: f.get('kind', literal('vision-leak')), inForce: f.get('inForce', nullable(sha256R)), committed: f.get('committed', nullable(sha256R)),
     draft: f.get('draft', (v, p): AbsPath => absPath(v, p)),
   })),
+  'arc-superseded': object((f): StartupRejection => ({ kind: f.get('kind', literal('arc-superseded')), by: f.get('by', (v, p): ArcId => arcId(v, p)) })),
 });
 
 export const rejectionFile: Read<RejectionFile> = object((f) => {

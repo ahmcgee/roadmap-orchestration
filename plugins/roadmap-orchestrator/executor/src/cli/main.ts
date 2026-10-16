@@ -194,7 +194,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     }
     case 'pr':
-      process.stdout.write(`${canonicalJson(await openPr({ repo: repoOf(command.repo), arc: command.arc }))}\n`);
+      process.stdout.write(`${canonicalJson(await openPr({ repo: repoOf(command.repo), arc: command.arc, supersedePrevious: command.supersedePrevious }))}\n`);
       return;
     case 'issues': {
       const outcome = await captureIssues({ repo: repoOf(command.repo), out: command.out === null ? null : absPath(resolve(command.out)) });
