@@ -24,7 +24,7 @@ import { arcHolds, holisticContexts } from '../src/schedule/scheduler.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { TRUSTED_POLICY, UNTRUSTED_POLICY } from './helpers/forge.ts';
 import { withForge } from './helpers/corpusarc.ts';
-import { VALID_OP, checkpointAnswer, checkpointRepairStep, checkpointStep, intakeOutcome, lensStep } from './helpers/holistic.ts';
+import { VALID_OP, checkpointAnswer, jobRepairStep, checkpointStep, intakeOutcome, lensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { type CorpusSpec, SAMPLE_DOCS } from './helpers/corpus.ts';
@@ -156,9 +156,9 @@ test('intake.acted-ops-validated: an acted outcome names ops of the same output 
   });
   const x = await arcWith([
     // 2026-10-15: each refused answer takes its repair turn (here repeating it) before it is decided.
-    checkpointStep('ckpt-1', intake(intakeOutcome.actedOps([1]))), checkpointRepairStep('ckpt-1', intake(intakeOutcome.actedOps([1])), ['through op index 1']),
+    checkpointStep('ckpt-1', intake(intakeOutcome.actedOps([1]))), jobRepairStep('ckpt-1', intake(intakeOutcome.actedOps([1])), ['through op index 1']),
     checkpointStep('ckpt-2', intake({ type: 'acted', on: { type: 'units', ids: ['u1'] } })),
-    checkpointRepairStep('ckpt-2', intake({ type: 'acted', on: { type: 'units', ids: ['u1'] } }), ['issueIntake[0].outcome: matches no anyOf branch']),
+    jobRepairStep('ckpt-2', intake({ type: 'acted', on: { type: 'units', ids: ['u1'] } }), ['issueIntake[0].outcome: matches no anyOf branch']),
   ]);
   try {
     const first = await withForge(x.a.forge, () => runCheckpoint(x.ctx));
@@ -193,7 +193,7 @@ test('intake.one-outcome-per-issue: a missing, a second or an unknown issue\'s o
       { issue: 'issue-9', outcome: intakeOutcome.none('never captured') },
     ],
   });
-  const x = await arcWith([checkpointStep('ckpt-1', answer), checkpointRepairStep('ckpt-1', answer, ['issueIntake gives issue-2 no outcome'])]);
+  const x = await arcWith([checkpointStep('ckpt-1', answer), jobRepairStep('ckpt-1', answer, ['issueIntake gives issue-2 no outcome'])]);
   try {
     const out = await withForge(x.a.forge, () => runCheckpoint(x.ctx));
     assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
@@ -362,7 +362,7 @@ const splitOp = (rule: string): JsonValue => ({
 test('bundle.split-rule-anchored: a split child anchored at a rule takes its hash from the pin in force and is counted through its parent\'s census entry; an unpinned rule is invalid', T, async () => {
   const x = await arcWith([
     checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [splitOp('T-99')] })),
-    checkpointRepairStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [splitOp('T-99')] }), ['T-99']),
+    jobRepairStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [splitOp('T-99')] }), ['T-99']),
     checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [splitOp('T-1')] })),
   ], { seed: false });
   const { a, r, ctx } = x;

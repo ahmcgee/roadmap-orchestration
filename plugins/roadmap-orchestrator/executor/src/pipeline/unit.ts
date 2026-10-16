@@ -65,7 +65,7 @@ import { SchemaError } from '../core/validate.ts';
 import { patternPath } from '../git/evidence.ts';
 import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
-import { buildOutputFor } from '../prompts/schemas.ts';
+import { DECISIONS_FILE, buildOutputFor } from '../prompts/schemas.ts';
 import { type InvocationId, type OpId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
 import { type EntryPoint, type UnitState, openAttempt } from '../core/state.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
@@ -94,7 +94,7 @@ import {
 } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
-  nowInside, planCheck, quiesce, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
+  nowInside, planCheck, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
 import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
 import type { Role } from '../routing/types.ts';
@@ -252,7 +252,8 @@ export function candidateRedCause(ctx: StageContext, unit: PlanUnit, at: StagePa
 
 /**
  * I3 (F25): why the build answer that decided `f` (a malformed build) did not validate, for the resume round to quote: the
- * schema error of its recorded answer, or the uncommitted merge of a resolve round; null when the call left no answer.
+ * schema error of its recorded answer, its decisions.json's (dev.12), or the uncommitted merge of a resolve round, in
+ * `buildRead`'s order; null when the call left no answer.
  */
 function malformedError(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): string | null {
   const called = recordedCall(ctx, stageParent(f));
@@ -266,6 +267,8 @@ function malformedError(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact):
     if (error instanceof SchemaError) return error.message;
     throw error;
   }
+  const decisions = readDecisions(absPath(join(workDir(ctx.runDir, stageParent(f)), DECISIONS_FILE)));
+  if (typeof decisions === 'string') return `the report validated, but ${decisions}. Write ${DECISIONS_FILE} again, complete, in the evidence directory`;
   return 'the report claimed success, but the merge of the integration branch is not committed on the unit branch';
 }
 

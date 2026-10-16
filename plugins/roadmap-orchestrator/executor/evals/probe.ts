@@ -484,7 +484,7 @@ async function main(): Promise<void> {
       },
       inlined: [{ path: repoPath('convert.ts'), kind: 'new-source', representation: 'line', full: null }], text: MINI_DIFF, omitted: { shown: [], more: 0 }, notInlined: [],
     } }, owners: [], priorFindings: [],
-    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir, specsOnly: null, retry: null,
+    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir, specsOnly: null,
   };
   await backend(ctx, 'm3.lens', seatCall(holistic, 'lens', 'arc', { role: 'planCheck', tier: 'high' }, 'm3-lens', m3Dir, lensInputs),
     validates("m3.lens", "lens", () => true));

@@ -49,7 +49,8 @@
 //   quiesce     the build invocation's workload is empty (invoke already guarantees it; asserted).
 //   evidence    `evidence.snapshot` of the build's stdout, stderr and evidence dir, and the fast lanes'
 //               declared outputs in the worktree; then the implementer's decisions.json is appended to
-//               the spec's decisions (spec.patch by the executor).
+//               the spec's decisions (spec.patch by the executor). A decisions.json that does not validate makes
+//               a build that reported success malformed (dev.12): its resume round quotes why.
 //   salvage     `salvage.commit` under the pinned scope; a plan contract, the architecture doc or its
 //               digest in the unit's merge-base diff is a risk trigger; a merge left in progress parks. A
 //               failed salvage cleans the build's reservation, and the instances that cleanup failed join the
@@ -765,10 +766,33 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
  * the answer is unusable, together (its schema, then the vision clauses its conflicts cite, the contracts and rulings its
  * patch cites, and its patch: applied to the spec it judged and validated through the apply core). `answered`: usable.
  */
-type PlanCheckJudged =
+type PlanCheckJudged = Exclude<Judged<PlanCheckOutput>, Readonly<{ kind: 'answered' }>> | Readonly<{ kind: 'answered'; out: PlanCheckOutput; acceptance: boolean }>;
+
+/**
+ * A judgment call's answer against its schema, the first check of every role's repair turn (`repairTurnOf`, dispatch.ts).
+ * `unanswered`: the call gave no answer to judge (lost, a refusal, a fault, an interruption, a backend park: `verdictOf`
+ * reads it). `refused`: why the answer is off its schema (the adapter's check, then the role's validator). `answered`: the
+ * validated answer, which the role may still refuse for its own reasons.
+ */
+export type Judged<T> =
   | Readonly<{ kind: 'unanswered' }>
   | Readonly<{ kind: 'refused'; reasons: readonly string[] }>
-  | Readonly<{ kind: 'answered'; out: PlanCheckOutput; acceptance: boolean }>;
+  | Readonly<{ kind: 'answered'; out: T }>;
+
+export function judgedAnswer<T>(called: BackendCallOutcome, validate: (value: unknown) => T): Judged<T> {
+  if (called.kind !== 'result') return { kind: 'unanswered' };
+  const { outcome, backendErrors } = called.result;
+  // A usage limit or capacity error is a backend park whatever else the call left (`verdictOf`).
+  if (backendErrors.some((e) => (BACKEND_PARK_CLASSES as readonly string[]).includes(e.class))) return { kind: 'unanswered' };
+  if (outcome.kind === 'malformed') return { kind: 'refused', reasons: [`the answer does not match its schema: ${outcome.detail}`] };
+  if (outcome.kind !== 'success') return { kind: 'unanswered' };
+  try {
+    return { kind: 'answered', out: validate(outcome.value) };
+  } catch (error) {
+    if (error instanceof SchemaError) return { kind: 'refused', reasons: [`the answer is malformed: ${error.message}`] };
+    throw error;
+  }
+}
 
 /**
  * Judges plan-check call `called` of `unit`. `judged`: the spec it judged and the tip it read, for its patch; null when
@@ -776,21 +800,11 @@ type PlanCheckJudged =
  * proposing growth code verifies is a hold, nothing else of it applied, so its patch (and the patch's cites) is not judged.
  */
 function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOutcome, judged: Readonly<{ spec: SpecM1; tip: Sha }> | null): PlanCheckJudged {
-  if (called.kind !== 'result') return { kind: 'unanswered' };
-  const { outcome, backendErrors } = called.result;
-  // A usage limit or capacity error is a backend park whatever else the call left (`verdictOf`).
-  if (backendErrors.some((e) => (BACKEND_PARK_CLASSES as readonly string[]).includes(e.class))) return { kind: 'unanswered' };
-  if (outcome.kind === 'malformed') return { kind: 'refused', reasons: [`the answer does not match its schema: ${outcome.detail}`] };
-  if (outcome.kind !== 'success') return { kind: 'unanswered' };
-  const acceptance = isAcceptanceCall(ctx, called.inv);
-  let out: PlanCheckOutput;
-  try {
-    // E (R59): the acceptance shape's answer may only add or replace witness items and facts, and cite.
-    out = acceptance ? validatePlanCheckAcceptanceOutput(outcome.value) : validatePlanCheckOutput(outcome.value);
-  } catch (error) {
-    if (error instanceof SchemaError) return { kind: 'refused', reasons: [`the answer is malformed: ${error.message}`] };
-    throw error;
-  }
+  // E (R59): the acceptance shape's answer may only add or replace witness items and facts, and cite.
+  const acceptance = called.kind === 'result' && called.result.outcome.kind === 'success' && isAcceptanceCall(ctx, called.inv);
+  const answer = judgedAnswer(called, acceptance ? validatePlanCheckAcceptanceOutput : validatePlanCheckOutput);
+  if (answer.kind !== 'answered') return answer;
+  const out: PlanCheckOutput = answer.out;
   const reasons = [...visionCiteReasons(ctx, out)];
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const holds = judged !== null && verifiedGrowth(ctx, unit, judged.spec, effectiveScope(pinned), judged.tip, out.scopeGrowth).proposals.length > 0;
@@ -1354,6 +1368,9 @@ export async function buildRead(
       malformed = true;
     }
   }
+  // dev.12: a decisions.json that does not validate is part of a malformed report: the resume round quotes why
+  // (src/pipeline/unit.ts `malformedError`), so the implementer rewrites it instead of the decisions being lost.
+  if (v.kind === 'success' && !malformed) malformed = typeof readDecisions(absPath(join(workDir(ctx.runDir, parent), DECISIONS_FILE))) === 'string';
   // A resolve round must end with the merge committed: HEAD with parents [old, T] (mergeinCompleted). A
   // report of success without it does not describe the tree, so it is read as a malformed report.
   if (v.kind === 'success' && !malformed && round === 'resolve') malformed = !mergeinResolved(ctx, unit.id);
@@ -1418,23 +1435,36 @@ export async function evidence(ctx: StageContext, unit: PlanUnit, run: BuildRun)
 }
 
 /**
+ * The implementer's decisions.json at `file`: its validated content, null when it was not written, or why it does not
+ * validate (a build whose report validates but whose decisions.json does not is malformed: `buildRead`).
+ */
+export function readDecisions(file: AbsPath): DecisionsFile | string | null {
+  if (!existsSync(file)) return null;
+  try {
+    return validateDecisionsFile(JSON.parse(readFileSync(file, 'utf8')));
+  } catch (error) {
+    if (!(error instanceof SyntaxError || error instanceof SchemaError)) throw error;
+    return `${DECISIONS_FILE} does not validate: ${error.message}`;
+  }
+}
+
+/**
  * The implementer's decisions.json, as captured by the snapshot, appended to the spec's decisions section
  * (lead ruling, step 12): one `spec.patch` by the executor, so the gate grades against every decision taken
  * and the new revision is part of the approval fingerprint. A new id is added, a decision restated with new
- * text replaces the active one, a decision restated verbatim is already there. A file that does not
- * validate, or an entry naming an item that is not an active decision, is not appended: it stays in the
- * build's evidence dir, which the gate reads. Nor is anything appended while the architect's revision of the
- * spec is pending (`UnitState.pendingRevision`): the unit re-opens on that revision at its next boundary that
- * allows it, and its next build writes its decisions again.
+ * text replaces the active one, a decision restated verbatim is already there. An entry naming an item that is
+ * not an active decision is not appended: it stays in the build's evidence dir, which the gate reads. A file that
+ * does not validate reaches here only from a build with no report to refuse (lost with tree effects) or one a
+ * previous release read (`buildRead` makes any other malformed): it is not appended, and a stderr line names it.
+ * Nor is anything appended while the architect's revision of the spec is pending (`UnitState.pendingRevision`): the
+ * unit re-opens on that revision at its next boundary that allows it, and its next build writes its decisions again.
  */
 async function appendDecisions(ctx: StageContext, unit: PlanUnit, run: BuildRun, file: AbsPath, parent: StageParent): Promise<void> {
-  if (!existsSync(file)) return;
-  let decisions: DecisionsFile;
-  try {
-    decisions = validateDecisionsFile(JSON.parse(readFileSync(file, 'utf8')));
-  } catch (error) {
-    if (error instanceof SyntaxError || error instanceof SchemaError) return;
-    throw error;
+  const decisions = readDecisions(file);
+  if (decisions === null) return;
+  if (typeof decisions === 'string') {
+    process.stderr.write(`roadmap: ${unit.id} ${parent.stage}#${parent.attempt}: ${file} not appended to the spec: ${decisions}\n`);
+    return;
   }
   if (ctx.journal.view.unit(unit.id).pendingRevision !== null) return;
   const { path, spec, sha256 } = loadUnitSpec(ctx, unit);

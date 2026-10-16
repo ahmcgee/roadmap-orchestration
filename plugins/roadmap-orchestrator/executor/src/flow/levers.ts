@@ -13,7 +13,7 @@
 // load (`concurrency` cpu down, a pool's size down, a suite lane's cpu or `--test-concurrency` down) or `host` advice is
 // kept, anything else is dropped `direction`.
 import {
-  type Sha256Hex, type StationId, type UnitId, HOST_CPU_STATION, SLOT_COMPONENTS, SLOT_STATION, SLOT_WAIT_STATION, parseStationId, stationId,
+  type Sha256Hex, type StationId, type UnitId, HOST_CPU_STATION, SLOT_STATION, SLOT_WAIT_STATION, parseStationId, stationId,
 } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type PlanM1, visionFile } from '../input/plan.ts';
@@ -21,8 +21,8 @@ import { laneCpu } from '../resources/pool.ts';
 import { BUILTIN_SEATS } from '../routing/profiles.ts';
 import { MODEL_CLASSES, ROLES, type RiskTier } from '../routing/types.ts';
 import {
-  type ClosedVerdict, type CodeConstraint, type FlowAction, type FlowDropReason, type FlowDropped, type FlowLever, type FlowMetric, type FlowPreimage,
-  type FlowProposal, type FlowWindow, type GivenInForce, type HostFingerprint, type JudgedConstraint, type LeverState, type Rejection, type RejectionKey,
+  type FlowAction, type FlowDropReason, type FlowDropped, type FlowLever, type FlowMetric, type FlowPreimage,
+  type FlowProposal, type FlowWindow, type GivenInForce, type HostFingerprint, type LeverState, type Rejection, type RejectionKey,
   type TocStep, leverTargetOf,
 } from './types.ts';
 
@@ -258,28 +258,25 @@ export function rejectionKeyText(key: RejectionKey): string {
 
 /**
  * What the checks read (B1 assembles it from the run's inputs and the log): the plan in force; this host's fingerprint;
- * code's constraint and the role's reading; the lever catalogue (a build tier's class in force and built-in floor); the
- * givens in force; the open window (or an accepted proposal not yet closed, which B1 counts as one); this arc's closed
- * verdicts; the rejection memory; whether a repair unit is ready or waiting; the units a flow `sequence` set `high` that
- * have not merged.
+ * the lever catalogue (a build tier's class in force and built-in floor); the givens in force; the open window (or an
+ * accepted proposal not yet closed, which B1 counts as one); the rejection memory; whether a repair unit is ready or
+ * waiting; the units a flow `sequence` set `high` that have not merged. Which station to target and in what focusing-step
+ * order is the role's method (dev.12 dropped the constraint-target and elevate-early checks); code keeps the fence.
  */
 export type ProposalContext = Readonly<{
   plan: PlanM1;
   host: HostFingerprint;
-  constraint: CodeConstraint | null;
-  judged: JudgedConstraint;
   levers: readonly LeverState[];
   givens: readonly GivenInForce[];
   window: FlowWindow | null;
-  verdicts: readonly ClosedVerdict[];
   rejections: readonly Rejection[];
   repairWaiting: boolean;
   flowHigh: readonly UnitId[];
 }>;
 
 /** Code's checks after the schema, in `FLOW_DROP_REASONS` order: the first that drops the proposal, or null. */
-export function checkProposal(proposal: FlowProposal, context: ProposalContext): FlowDropped | null {
-  const drop = (reason: FlowDropReason, detail: string): FlowDropped => ({ proposal, reason, detail });
+export function checkProposal(proposal: FlowProposal, context: ProposalContext): (FlowDropped & Readonly<{ reason: FlowDropReason }>) | null {
+  const drop = (reason: FlowDropReason, detail: string) => ({ proposal, reason, detail });
   const { action } = proposal;
 
   const target = targetProblem(proposal, context);
@@ -293,11 +290,6 @@ export function checkProposal(proposal: FlowProposal, context: ProposalContext):
   if (before !== undefined) return drop('rejected-before', `${key} was remembered from ${before.proposal} (${before.cause})`);
 
   if (context.window !== null && action.lever !== 'host') return drop('verdict-open', `the window of ${context.window.proposal} is open; only host advice meanwhile`);
-
-  if (stepOf(action.lever, proposal.target) === 'elevate' && action.lever !== 'host') {
-    const earlier = context.verdicts.some((v) => v.target === proposal.target && stepOf(v.lever, v.target) !== 'elevate');
-    if (!earlier) return drop('elevate-early', `no exploit or subordinate verdict closed on ${proposal.target} this arc`);
-  }
 
   if (atHostCpu(proposal.target) && action.lever !== 'host') {
     const direction = directionProblem(action, context);
@@ -366,23 +358,14 @@ function directionProblem(action: Exclude<FlowAction, { lever: 'host' }>, contex
 export const builtinBuildClass = (tier: RiskTier) => BUILTIN_SEATS.build[tier];
 
 /**
- * The target rule (G7): the station is code's constraint, one of its components, or the role's disputed station (or one
- * of its components), never `held` or `wait:finding` (diagnostic: the finding's repair moves it, no lever does); a suite-lane action targets its lane's station or the slot; the action names what the plan has
- * (a suite lane, a pooled resource, a unit not cut) and changes something.
+ * The target rule (G7): the station is never `held` or `wait:finding` (diagnostic: the finding's repair moves it, no lever
+ * does); a suite-lane action targets its lane's station, the slot or `host:cpu`; the action names what the plan has (a
+ * suite lane, a pooled resource, a unit not cut) and changes something.
  */
 function targetProblem(proposal: FlowProposal, context: ProposalContext): string | null {
   const { target, action } = proposal;
   if (parseStationId(target).type === 'held') return 'held time is never a target';
   if (parseStationId(target).type === 'finding-wait') return 'wait:finding is diagnostic (an open P1 holds the candidate); no lever targets it';
-  const allowed = new Set<string>();
-  const admit = (s: StationId): void => {
-    allowed.add(s);
-    if (s === SLOT_STATION) for (const c of slotComponents(context.plan)) allowed.add(c);
-  };
-  if (context.constraint !== null) admit(context.constraint.station);
-  if (!context.judged.agree) admit(context.judged.station);
-  if (!allowed.has(target)) return `${target} is neither the constraint${context.constraint === null ? '' : ` ${context.constraint.station}`}, a component of it, nor the disputed station`;
-
   const plan = context.plan;
   switch (action.lever) {
     case 'suite-lane':
@@ -401,11 +384,6 @@ function targetProblem(proposal: FlowProposal, context: ProposalContext): string
   }
   if (action.lever !== 'host' && diffPaths(plan, flowRevision(plan, action)).length === 0) return 'the action changes nothing';
   return null;
-}
-
-/** The slot's component stations: one per suite lane, then the fixed components. */
-function slotComponents(plan: PlanM1): readonly StationId[] {
-  return [...plan.suite.lanes.map((l) => stationId(`suite:${l.id}`)), ...SLOT_COMPONENTS.map((c) => stationId(c))];
 }
 
 const CONCURRENCY = /^--test-concurrency=([1-9][0-9]*)$/;

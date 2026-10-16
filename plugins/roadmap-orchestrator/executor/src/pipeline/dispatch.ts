@@ -14,7 +14,7 @@
 //   transient rules its candidate runs under (`transientRules: 'm3'`, H15). A `limits` or scope-growth revision
 //   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules`.
 // - A routing change mid-unit (a new routingRev at a later dispatch; lead ruling, arc-1 feedback item 7):
-//   every judgment is a fresh session (a repair turn resumes only its own judgment's), so a judgment seat may change harmlessly; the implementer's session
+//   every judgment is a fresh session (its repair turn resumes only its own), so a judgment seat may change harmlessly; the implementer's session
 //   resumes, so its session key (`implementerSessionKey`: backend and model, R4) may not change. The unit is re-pinned
 //   under the new rev (a new dispatch fact, scope and floor unchanged) when no build has started for it or its
 //   implementer seat keeps its key under both revs (an effort-only change re-pins, and the session resumes with the new
@@ -43,7 +43,7 @@
 //   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes } from '../backends/argv.ts';
+import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
 import {
   BACKEND_PARK_CLASSES, type BackendParkClass, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
 } from '../core/events.ts';
@@ -530,14 +530,49 @@ export type ArcCallSpec = Readonly<{
   cwd: AbsPath;
   evidenceDirs: readonly AbsPath[];
   deadlineAt: IsoTime;
-  /** A fresh session, or (2026-10-15, the checkpoint's repair turn) the refused answer's own, resumed. */
+  /** A fresh session, or (the repair turn, `repairTurnOf`) the refused answer's own, resumed. */
   session: JudgmentSession;
 }>;
 
+/** What a repair turn reuses of its refused call: its session (resumed), its schema and its cwd. */
+export type RepairTurn = Readonly<{ session: JudgmentSession; schema: JsonValue; cwd: AbsPath }>;
+
+function judgmentLaunch(runDir: AbsPath, inv: InvocationId) {
+  const launch = runnerFiles(invocationDir(runDir, inv), inv).read('launch.json');
+  if (launch === null || launch.terminal.type !== 'backend' || launch.terminal.role === 'build') throw new Error(`${inv}: a judgment call without its judgment launch.json`);
+  return { ...launch, terminal: launch.terminal };
+}
+
+/** Whether judgment call `inv` is the repair turn of call `of`: its session is `of`'s, resumed. */
+export function isRepairTurnOf(runDir: AbsPath, inv: InvocationId, of: InvocationId): boolean {
+  const session = judgmentLaunch(runDir, inv).terminal.session;
+  return session.mode === 'resume' && session.id === judgmentLaunch(runDir, of).terminal.session.id;
+}
+
+/**
+ * The judgment repair turn (dev.12, one for every judgment role; 2026-10-15 plan-check and the checkpoint): an answer the
+ * executor refuses (off its schema, or refused by the role's own validator) goes back once, in its own session, resumed,
+ * with every reason (`judgmentRepairDirective`), the call's own schema and in its own cwd (a resumed Claude session is
+ * found by its cwd, so the caller makes that checkout again first when it removed it). The repair turn's answer is the
+ * role's answer; refused again it is the role's malformed or invalid outcome. What a repair turn of judgment call `inv`
+ * reuses from its launch, or null when it takes none: `inv` is itself a repair turn (a resumed session), or (adoption,
+ * scaffolding) an earlier release's unpersisted session (`--no-session-persistence`: a gate, lens, pack-review or flow
+ * call made before 1.0.0-dev.12), whose refusal then stands, with a warning on stderr.
+ */
+export function repairTurnOf(runDir: AbsPath, inv: InvocationId): RepairTurn | null {
+  const launch = judgmentLaunch(runDir, inv);
+  const { session, schemaPath } = launch.terminal;
+  if (session.mode === 'resume') return null;
+  if (launch.argv.includes('--no-session-persistence')) {
+    process.stderr.write(`roadmap: ${inv}: its ${launch.terminal.role} session was not persisted (an earlier release's call), so its refused answer takes no repair turn\n`);
+    return null;
+  }
+  return { session: resumedJudgmentSession(session.id), schema: JSON.parse(readFileSync(schemaPath, 'utf8')) as JsonValue, cwd: launch.cwd };
+}
+
 /**
  * An arc-role call through `invoke`: a read-only session on the judgment profile (the unit judgments' argv), fresh but for
- * the checkpoint's repair turn,
- * spawned as `arc-backend{role, tier: arc, routingRev, job, attempt}` under `job{job}`, so its usage is metered to the
+ * a repair turn (`repairTurnOf`), spawned as `arc-backend{role, tier: arc, routingRev, job, attempt}` under `job{job}`, so its usage is metered to the
  * job by role and routingRev, never a model. Its workload env is `backendEnv` alone (a judgment holds no resource).
  * A call lost with its runner is retried once, uncharged, as the op's next invocation, as a unit judgment's is.
  */

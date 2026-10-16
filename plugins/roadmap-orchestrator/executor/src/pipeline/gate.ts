@@ -1,6 +1,6 @@
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
 //
-// A fresh judgment session (never a resume) on the gate role's seat, which a pending risk promotion or a
+// A fresh judgment session (resumed only for its repair turn) on the gate role's seat, which a pending risk promotion or a
 // route-up moves to the escalation seat (judgmentDispatch). Its inputs, snapshotted at the integration tip
 // T the gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full
 // and an index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
@@ -15,7 +15,8 @@
 //
 // Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
 // (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
-// before any call (park) · refusal, malformed and faults as at plan-check.
+// before any call (park) · refusal, malformed and faults as at plan-check. An answer off its schema takes the one judgment
+// repair turn first (dev.12, `repairTurnOf` in dispatch.ts): its own session resumed with why; refused again, `malformed`.
 //
 // The approval fingerprint (R2) = {unitCommit, specRev, contractRevs, rulingRevs, obligationRevs, corpus}: contractRevs
 // are the blob ids at T of every cited contract, the architecture doc and its digest when the plan names one,
@@ -48,7 +49,7 @@
 // ff then finds a contract another unit's publication changed, or a ruling a docs publication superseded
 // (`fingerprint-invalid`, a re-gate).
 import { join, matchesGlob } from 'node:path';
-import { freshJudgmentSession } from '../backends/argv.ts';
+import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
 import { normalizeText } from '../corpus/rules.ts';
 import { mintDebt } from '../debt/mint.ts';
@@ -57,7 +58,7 @@ import type { IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type ObligationRev, effectiveScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
+import { type ApprovalFingerprint, type JudgmentSession, type ObligationRev, effectiveScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
@@ -67,6 +68,7 @@ import { boundedDiff } from '../git/boundeddiff.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import { type PlanUnit, derivedOf, targetDocumentPaths } from '../input/plan.ts';
+import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
 import type { GateChecks, GatePriorRound } from '../prompts/inputs.ts';
 import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
@@ -85,7 +87,7 @@ import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  salvageRejections, stillOutside, writeJudgmentInputs,
+  judgedAnswer, salvageRejections, stillOutside, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -358,12 +360,14 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
   if (isCancelled(entered)) return entered;
   const { fingerprint, seat } = captured;
   const session = freshJudgmentSession();
-  const called = await callBackend(ctx, {
-    unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session, evidenceDirs: [...captured.evidence, ledgerDir(ctx), ...captured.dirs] },
-    system: captured.system, rendered: captured.rendered, schema: captured.schema, cwd: captured.cwd,
+  const call = (s: JudgmentSession, text: string): Promise<BackendCallOutcome> => callBackend(ctx, {
+    unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session: s, evidenceDirs: [...captured.evidence, ledgerDir(ctx), ...captured.dirs] },
+    system: captured.system, rendered: text, schema: captured.schema, cwd: captured.cwd,
     deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(ctx.journal.view, unit.id))),
   });
-  return gateRead(ctx, unit, parent, called, session.id, fingerprint);
+  const called = await call(session, captured.rendered);
+  // A refused answer goes back once, in the same session, with every reason (the repair turn), before anything is recorded.
+  return gateRead(ctx, unit, parent, called, session.id, fingerprint, (reasons) => call(resumedJudgmentSession(session.id), judgmentRepairDirective(reasons)));
 }
 
 /**
@@ -371,11 +375,19 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
  * never asked again). `fingerprint` is the one captured with the inputs it judged (its `unitCommit` the head it
  * read): an approval records exactly it, and ff re-checks it against the inputs then in force. An approval fact
  * this attempt already recorded is kept, not recorded twice.
+ *
+ * `repair` is the live attempt's repair turn (dev.12, as at plan-check): an answer off its schema goes back once, in the
+ * same session, with every reason, before anything is recorded; the repair turn's answer is then read as the attempt's,
+ * and refused again it is `malformed`. A call consumed after a crash gets none (`repair` null).
  */
 export async function gateRead(
   ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'gate' }>, called: BackendCallOutcome, session: JudgmentSessionId,
-  fingerprint: ApprovalFingerprint,
+  fingerprint: ApprovalFingerprint, repair: ((reasons: readonly string[]) => Promise<BackendCallOutcome>) | null = null,
 ): Promise<GateDone> {
+  if (repair !== null) {
+    const first = judgedAnswer(called, validateGateOutput);
+    if (first.kind === 'refused') return gateRead(ctx, unit, parent, await repair(first.reasons), session, fingerprint);
+  }
   // The session has ended: its @cpu goes before anything is recorded.
   await releaseJudgment(ctx, parent);
   const done = (d: StageDone<'gate'>, fingerprint: ApprovalFingerprint | null = null): GateDone => ({ ...d, session, fingerprint });

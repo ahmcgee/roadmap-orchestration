@@ -48,7 +48,7 @@
 //   run-ended (complete), units-settled (merged, or cut or superseded by a bundle), head-is-publication (the head is the last publication's commit: a unit's
 //   tested candidate or the docs commit), diff-product-and-docs (units' scopes plus the living `.roadmap/` docs,
 //   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens,
-//   checkpoint and pack-review calls; a plan-check's or checkpoint's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
+//   checkpoint and pack-review calls; a judgment's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
 // reproduction, batch repair, per-identity bound, owner-request, draining, real go, literal partial bundle. The paid
@@ -693,8 +693,8 @@ function judgmentFresh(run: Run): Verdict {
     roles.add(role);
     const { inv, launch } = launchOf(run, i);
     const t = launch.terminal;
-    // 2026-10-15: a plan-check's or checkpoint's repair turn resumes its own earlier fresh session, once.
-    if (t.type === 'backend' && t.role !== 'build' && t.session.mode === 'resume' && (role === 'planCheck' || role === 'checkpoint')) {
+    // A judgment's repair turn (2026-10-15 plan-check and the checkpoint; dev.12 every role) resumes its own earlier fresh session, once.
+    if (t.type === 'backend' && t.role !== 'build' && t.session.mode === 'resume') {
       if (seen.get(t.session.id) === undefined) problems.push(`${inv}: a repair turn resumes ${t.session.id}, no earlier fresh judgment session`);
       if (repaired.has(t.session.id)) problems.push(`${inv}: a second repair turn of ${t.session.id}`);
       repaired.add(t.session.id);

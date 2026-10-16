@@ -233,7 +233,7 @@ export type PlanCheckAnswer = Readonly<{
 
 /** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
 export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
-  // 2026-10-15: a plan-check's fresh session persists (no --no-session-persistence) so its repair turn can resume it.
+  // A judgment's fresh session persists (no --no-session-persistence) so its repair turn can resume it (dev.12: every role).
   const argv = ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id', ...(expect.argv ?? [])];
   return {
     as: 'claude',

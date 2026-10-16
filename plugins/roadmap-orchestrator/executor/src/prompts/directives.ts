@@ -9,7 +9,7 @@
 //   CONTINUE_DIRECTIVE    the continue of an interrupted build
 //   STEER_DIRECTIVE       the architect's steer brief follows
 //   ASSESSED_DIRECTIVE    the implementing invocation after an in-session assessment (E)
-//   judgmentRepairDirective  a plan-check's or checkpoint's repair turn: the refused answer's reasons (2026-10-15)
+//   judgmentRepairDirective  every judgment role's one repair turn: the refused answer's reasons (2026-10-15; all roles dev.12)
 //   stalledLaneDirective, flakyLaneDirective, dirtyLanesDirective, movedHeadDirective   a failing or uncertified series
 //   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series, then every required id
 //   smokeFixDirectives    D2: target witness tests that still pass with the unit's production change reverted
@@ -56,8 +56,9 @@ export function restoredPathsDirective(paths: readonly string[], kept: string): 
 }
 
 /**
- * 2026-10-15 (arc feedback #3): the repair turn of a plan-check or checkpoint whose answer the executor refused (its schema,
- * or its validator): the same session resumed once with every reason, so the judge corrects its own answer.
+ * 2026-10-15 (arc feedback #3; dev.12 every judgment role, `repairTurnOf` in src/pipeline/dispatch.ts): the repair turn of a
+ * judgment whose answer the executor refused (its schema, or the role's validator): the same session resumed once with every
+ * reason, so the judge corrects its own answer.
  */
 export function judgmentRepairDirective(reasons: readonly string[]): string {
   if (reasons.length === 0) throw new Error('judgmentRepairDirective: a repair turn names why the answer was refused');

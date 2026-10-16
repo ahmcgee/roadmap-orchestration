@@ -5,7 +5,7 @@
 // brief (the deleted Astra-era template skills/orchestrate/templates/phase0-review-brief.md, tag v0.20.0 and git history): a review of the pack before anything is admitted,
 // reporting what the units' builders would trip over; read-only; the hunt in order (contradictions, units that cannot be
 // built as specified, decomposition cuts with a concrete cost, lanes that cannot prove what they claim, questions the
-// code cannot answer); capped and worst first; an empty report is legitimate; judge the pack as drafted, never propose
+// code cannot answer); worst first; an empty report is legitimate; judge the pack as drafted, never propose
 // another product; everything reported is adjudicated by the architect, never applied by the reviewer. Dropped with the
 // template: the cross-family framing (the seat is a routing decision now), running the brief's commands (a judgment
 // session is read-only; the executor runs lanes) and the per-field character budgets (findings carry one claim each).
@@ -19,10 +19,7 @@
 import { canonicalJson } from '../../core/json.ts';
 import type { PackReviewPromptInputs, PromptModule } from '../inputs.ts';
 import { documentsXml, packReviewDeltaText, rulesIndexText, visionText } from '../inputs.ts';
-import { MAX_PREMISES, PACK_REVIEW_SCHEMA } from '../schemas.ts';
-
-/** The finding cap the prompt states (it bounds reporting, never reading). Not enforced. */
-const MAX_PACK_FINDINGS = 12;
+import { PACK_REVIEW_SCHEMA } from '../schemas.ts';
 
 const system = `You review the work pack of a roadmap build before its first unit is admitted, and report what the engineers who build its units would trip over. You change nothing. Everything you report goes to the architect who drafted the pack, who adjudicates it: a blocking finding holds the arc's first admission until the architect fixes the pack or acknowledges the finding; a note goes to the architect's brief.
 
@@ -51,13 +48,13 @@ Read the whole pack first, then the code the specs describe. Hunt, in this order
 5. The census and the slice: an active rule whose census state is wrong (an obligation state for a rule nothing in this arc tests, out-of-slice for a rule the slice needs, untestable for a rule a lane could check); a clause the slice advances that no obligation serves. Cross-check each spec through its rules to the census: an obligation a spec declares whose rule's census state is not obligation for it (or its split parent), and an acceptance clause naming a rule the census marks out-of-slice.
 6. The Phase-0 record: a question the code could answer, an assumption the pack contradicts, a disposition or intake outcome the plan does not carry out.
 
-A finding is blocking when the pack cannot run as written: a contradiction, a unit that cannot be built, an obligation or census state that is wrong. Everything else is a note. Each finding names its target: a unit by id, an obligation (I-n), a census entry or a rule by T-n, or the plan as a whole; one plain sentence in claim saying what is wrong and where; and the files and lines you read in evidence. At most ${MAX_PACK_FINDINGS} findings, worst first; never one defect twice under two targets. An empty report is legitimate and better than a manufactured finding: report what is there, not what would make the report look thorough.
+A finding is blocking when the pack cannot run as written: a contradiction, a unit that cannot be built, an obligation or census state that is wrong. Everything else is a note. Each finding names its target: a unit by id, an obligation (I-n), a census entry or a rule by T-n, or the plan as a whole; one plain sentence in claim saying what is wrong and where; and the files and lines you read in evidence. Findings worst first; never one defect twice under two targets. An empty report is legitimate and better than a manufactured finding: report what is there, not what would make the report look thorough.
 
 # A re-review
 When the message holds <delta>, review what changed against the frame, and give every earlier finding listed in <previous_findings> exactly one disposition, naming it by its job and index: resolved when the pack as it stands now no longer has the problem, still-open when it still does, withdrawn when on reading it again it was never a problem. A still-open blocking finding keeps holding the first admission, so do not report it again as a new finding; report as findings only problems that are new. Judge a resolution by the changed files, not by the change's intent.
 
 # Output
-findings as above. dispositions: on a re-review one entry per earlier finding in <previous_findings>, none missing and none twice; on a first review it is empty. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, at most ${MAX_PREMISES}, each with the file and line you read it at. Write every claim and reason as plain, literal sentences.`;
+findings as above. dispositions: on a re-review one entry per earlier finding in <previous_findings>, none missing and none twice; on a first review it is empty. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, each with the file and line you read it at, or is empty. Write every claim and reason as plain, literal sentences.`;
 
 export const PROMPT: PromptModule<'packReview'> = {
   system,

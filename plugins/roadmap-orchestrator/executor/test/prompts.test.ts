@@ -223,7 +223,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null, retry: null,
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
     },
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
@@ -234,7 +234,6 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
       specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
-      retry: { refused: [{ claim: 'RETRY-CLAIM-B', cause: 'RETRY-CAUSE-B', reason: 'RETRY-REASON-B' }], recorded: [{ claim: 'RECORDED-CLAIM-B', cause: 'RECORDED-CAUSE-B' }] },
     },
   ],
   checkpoint: [
@@ -539,7 +538,9 @@ describe('output validators', () => {
     assert.throws(() => validatePlanCheckOutput(dupEnv), SchemaError);
   });
 
-  it('planCheck and gate: premises are required; a cite op names at least one document', () => {
+  it('planCheck and gate: the premises key is required (strict schema) but may be empty; a cite op names at least one document', () => {
+    validatePlanCheckOutput({ ...ok.planCheck, premises: [] });
+    validateGateOutput({ ...ok.gate, premises: [] });
     const { premises: _p, ...noPremises } = ok.planCheck;
     assert.throws(() => validatePlanCheckOutput(noPremises), SchemaError);
     const { premises: _g, ...gateNoPremises } = ok.gate;
@@ -681,16 +682,16 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
     assert.equal(briefs.size, LENS_KINDS.length);
     assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vision' }), /P2 or P3, never P1/);
-    // M4b: the mutant is exact replacements, never a hand-written diff; a retry names each refused draft and why.
+    // M4b: the mutant is exact replacements, never a hand-written diff (a refused draft goes to the repair turn, dev.12).
     assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /edits, one or more exact replacements[\s\S]*occurs exactly once/);
-    assert.doesNotMatch(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff|<previous_report>/);
-    assert.match(mod.render(SAMPLES.lens[1]), /<previous_report>[\s\S]*claim: RETRY-CLAIM-B\n  cause: RETRY-CAUSE-B\n  refused: RETRY-REASON-B[\s\S]*claim: RECORDED-CLAIM-B\n  cause: RECORDED-CAUSE-B[\s\S]*<\/previous_report>/);
+    assert.doesNotMatch(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff/);
   });
 
   it('the lens keeps the anti-spiral rules: the finding bar, prior findings not repeated, no reasoning field, nobody will answer', () => {
     const sys = promptFor('lens', 'claude-opus-5-5').system;
     for (const needle of [/Under-reporting a real defect and over-reporting a non-defect are both failures/, /An empty report is legitimate/, /Do not report one again/,
-      /Nobody will answer a question/, /not a transcript of your reasoning/, /At most 8 findings, worst first/]) assert.match(sys, needle);
+      /Nobody will answer a question/, /not a transcript of your reasoning/, /Findings worst first/]) assert.match(sys, needle);
+    assert.doesNotMatch(sys, /[Aa]t most \d+ (findings|premises)/, 'no unenforced reporting cap (W4)');
     for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
     const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
     assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
@@ -871,7 +872,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
       /before its first unit is admitted/, /You change nothing/, /adjudicates it/, /holds the arc's first admission/, /Nobody will answer a question/, /fresh session/,
       /Read-only: write no code, create no files, make no commit and edit nothing/, /Judge the pack as drafted/, /Never answer an open question yourself/,
       /1\. Contradictions[^]*2\. Units that cannot be built[^]*3\. Cuts[^]*4\. Lanes and obligations[^]*5\. The census and the slice[^]*6\. The Phase-0 record/,
-      /At most 12 findings, worst first/, /An empty report is legitimate/, /not a transcript of your reasoning/,
+      /Findings worst first/, /An empty report is legitimate/, /not a transcript of your reasoning/,
     ]) assert.match(mod.system, needle);
     const text = mod.render(SAMPLES.packReview[1]);
     assert.ok(text.startsWith('<vision>\nVision revision 2\n'), 'the vision first');
@@ -893,7 +894,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
       /common-cause variation: noise, not a signal, and a change made to answer it is tampering/, /diagnostics only, never a goal/,
       /The ruler is out of reach/, /you must not argue around them/, /Prefer exploit and subordinate before elevate/,
       /may change only the value of one --test-concurrency=<n> element, in place/, /The lane's cpu must cover its concurrency/,
-      /never held, never wait:finding/, /Exactly one of proposal and noAction/,
+      /whose target is held or wait:finding/, /Exactly one of proposal and noAction/,
     ]) assert.match(mod.system, needle);
     const a = mod.render(SAMPLES.flow[0]);
     assert.match(a, /No chart yet/);

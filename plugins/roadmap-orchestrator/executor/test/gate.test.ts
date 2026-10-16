@@ -5,7 +5,7 @@
 // gate.obligations-selected, plan-check.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
 // gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
 // voids nothing): gate.read-surface, plan-check.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
-// context-exceeded.plan-check, context-exceeded.build.
+// context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -24,11 +24,11 @@ import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
 import { git } from './helpers/repo.ts';
-import { type CallRecord, readCalls } from './helpers/scenario.ts';
+import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
 import { events } from './fixtures/invoke-specs.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import type { Gate } from '../src/pipeline/unit.ts';
-import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateRepairStep, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { BASE, editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -173,6 +173,29 @@ test('gate.empty-diff: a unit whose branch adds nothing is refused at the gate w
 // surface is the repository and the run dir (dispatch.ts `judgmentReadDirs`), and a refused read is recorded, voiding nothing.
 const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((t, i) => (c.argv[i - 1] === '--add-dir' ? [t] : []));
+
+test('gate.repair-turn (dev.12): an answer off the gate\'s schema goes back once in its own session with why; the repaired answer is the attempt\'s; refused again, the attempt is malformed', T, async () => {
+  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'] } }] };
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), offSchema, gateRepairStep({ decision: 'approve' }, ['premises'])] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:')), ['gate:approve'], 'no malformed attempt: the repair turn settled it');
+    const [fresh, repair] = readCalls(d.scenarioPath).filter(isGate);
+    assert.equal(repair!.argv[repair!.argv.indexOf('--resume') + 1], sessionOf(fresh!), 'the repair turn resumes the refused answer\'s session');
+    assert.equal(r.journal.view.unit(U1).counters.retries.gate, 0);
+  } finally {
+    r.journal.close();
+  }
+  const twice = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), offSchema, { ...offSchema, expect: { argv: ['--resume'] } }, gateStep({ decision: 'approve' })] });
+  const r2 = contextFor(twice);
+  try {
+    assert.deepEqual(await runUnit(r2.ctx, r2.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(twice).filter((o) => o.startsWith('gate:')), ['gate:malformed', 'gate:approve'], 'refused again: malformed, and the retry is a fresh gate');
+  } finally {
+    r2.journal.close();
+  }
+});
 
 test('gate.read-surface: the gate reads the repository and the run dir; an approve from a session refused a read is an approval, the refusal on record', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), deniedGate()] });

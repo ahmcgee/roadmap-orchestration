@@ -246,6 +246,18 @@ started on dev.10 whose obligations declare no witness files is read as undeclar
 | `routingRev` (dispatch facts, spawn subjects, meter facts, `judgment-inputs`, `launch.json` terminal), `status.routing` (efficient judgment, owner ruling 2026-10-15) | no shape change: the built-in seats put planCheck.low/med, gate.low, `lens.arc` and `flow.arc` on efficient, whose judgment binding is Sonnet 5.5 high in both profiles (`ClassBinding{build, judgment}`), so every resolved table and rev moves; `status.routing.seats` names the new classes | none read: OR-L3 binds every revision through HEAD's seats, so an adopted dev.9 arc resolves to new revs and each unit re-pins at its next dispatch with its implementer seat unchanged (no build seat moved): nothing parks `routing-changed`. `status` aliases a dev.9 rev to its revision's current table (`preDev10RevAlias` over `PRE_DEV10_BUILTIN_SEATS`; scaffolding), so its spend resolves, attributed to today's bindings |
 | `PROMPTS` (not persisted) | Sonnet 5.5 `inherits` for every judgment role (planCheck, gate, lens, packReview, flow from Opus; checkpoint from Fable) | none |
 
+**1.0.0-dev.11 → 1.0.0-dev.12 (one judgment repair turn, W4).** `SCHEMA_VERSION` stays 1; no record changes shape.
+Every judgment role's refused answer (its schema, or the role's validator) takes one repair turn in its own session
+(DESIGN-1.0.md §2.1), so every judgment's fresh call persists its session. The scaffolding is in `repairTurnOf` and
+`isRepairTurnOf` (src/pipeline/dispatch.ts) and the lens loop (src/holistic/audit.ts): an arc started on dev.11 is
+adopted, a running audit, flow run or pack review included.
+
+| Record | Change | Read-time default for dev.11 state |
+|---|---|---|
+| `launch.json` `terminal.session` (`JudgmentSession`) | `mode: resume` on every judgment role (its repair turn); no judgment argv carries `--no-session-persistence` | a dev.11 call launched with `--no-session-persistence` (a gate, lens, pack-review or flow call) takes no repair turn: its refusal stands (`repairTurnOf`, warned on stderr; scaffolding) |
+| arc-backend `attempt` (lens, flow, pack review) | a repair turn is the refused call's next attempt (a lens's: the next number after every lens's first) | a dev.11 fresh re-ask recorded there (a lens's refused draft, a flow answer) is consumed as the repair turn's answer; after a malformed lens report dev.11 asked nothing, so a call recorded at that number that is not its repair (`isRepairTurnOf`) is another's, and the report takes none (scaffolding) |
+| `LensInputs` (not persisted) | `- retry` | none |
+
 **1.0.0-dev.10 → next (arc feedback 2026-10-16: re-entry names its failure; the checkpoint aimed and rarer; the apply
 rebase and `--vision-edit`).** `SCHEMA_VERSION` stays 1; every change is additive. The scaffolding is
 `reenterFixesDefault`, `applyExpectRevDefault` and `applyVisionEditDefault` in `src/core/upgrade.ts`. An arc started on
@@ -255,11 +267,11 @@ again, its recorded checkpoint answers re-enter as recorded, and the applies its
 | Record | Change | Read-time default for dev.10 state |
 |---|---|---|
 | `FailureRef` (src/core/records.ts) | new: `<unit>/<stage>#<attempt>` (a failure outcome: a `stage-outcome` that parked or stopped the unit or was charged) or `<unit>/lanes#<attempt>/<lane>` (a lane failure, src/pipeline/failures.ts); `parseFailureRef`, `failureRefOf` | none |
-| `plan.json` `reenters` | `+ fixes?: FailureRef`: the classifier requires it of a re-entry an apply adds once its lineage recorded a failure, resolves it, and refuses an unchanged retry of a design failure (`fixesReasons`) | absent: a re-entry already in force stays as recorded (lasting: the plan file reads it optional) |
-| Checkpoint answer, `reenter` op | `+ fixes: FailureRef \| null` (the schema requires the key; null only for a lineage with no failure) | the discriminator is the key: absent (only a dev.10 answer lacks it) reads as `unrecorded` (`reenterFixesDefault`, warned once; scaffolding), never as null. Such an op is adopted as recorded, applied or not: the bundle proposer's `fixesUnrecorded` names its unit, and `fixesReasons` (the requirement and the unchanged-retry refusal) does not bind it; it enters the plan without `fixes` |
+| `plan.json` `reenters` | `+ fixes?: FailureRef`: the classifier requires it of a re-entry an apply adds once its lineage recorded a failure, and resolves it (`fixesReasons`; dev.12 dropped the dev.11 refusal of an unchanged retry of a design failure) | absent: a re-entry already in force stays as recorded (lasting: the plan file reads it optional) |
+| Checkpoint answer, `reenter` op | `+ fixes: FailureRef \| null` (the schema requires the key; null only for a lineage with no failure) | the discriminator is the key: absent (only a dev.10 answer lacks it) reads as `unrecorded` (`reenterFixesDefault`, warned once; scaffolding), never as null. Such an op is adopted as recorded, applied or not: the bundle proposer's `fixesUnrecorded` names its unit, and `fixesReasons` (the requirement) does not bind it; it enters the plan without `fixes` |
 | `CommandBody` `apply` (apply rebase) | `- expectRev`, `+ base: RevisionManifest \| null` | `expectRev` present (a dev.10 CLI's body): base null (`applyExpectRevDefault`, warned once; scaffolding) |
 | `CommandBody` `apply` (`--vision-edit`) | `+ visionEdit: boolean`, written on every body (`false` included); row 12 (`vision-leak`) refuses a changed vision only when it is false | absent (a dev.10 CLI's body): true, a declared vision edit (`applyVisionEditDefault`, warned once; scaffolding): the previous release's queued command is adopted, never refused as `vision-leak` |
-| `UnitState` (fold) | `+ failures: [{seq, fact, park, spec, dispatch{scope, routingRev}\|null, planRev}]`: each failure outcome with what it ran under (`scope`: the effective scope, ascending) | derived |
+| `UnitState` (fold) | `+ failures: [{seq, fact, park}]`: each failure outcome (dev.12 dropped what it ran under, `spec`, `dispatch`, `planRev`, which only the unchanged-retry refusal read) | derived |
 | `LaneFailure`, `status.units[].failures[]` | `+ ref: FailureRef` | derived |
 | Facts | `+ checkpoint-skipped{audit, generation, visionSha256, carried: FindingId[]}`: a completed audit found nothing new, so no checkpoint ran (src/holistic/checkpoint.ts `nothingNew`, and in a corpus arc every open issue already seen by a settled checkpoint, src/holistic/intake.ts `unseenIssues`); its generation is quiescent (`quiescentGenerations`) | none: dev.10 logs never hold it |
 | `status.decisionsSince[].kind` | `+ checkpoint-skipped` (ruled by the executor) | none |
@@ -688,8 +700,9 @@ deadline stays the backstop. Every other schema (judgments, the assessment, the 
 
 `terminal` = `backend{purpose: backend|smoke, role, routingRev, schemaPath, outputPath, session}` \|
 `command{purpose: lane|teardown|probe|smoke, expectedExit}`. Sessions: a judgment role takes
-`{backend:'claude', mode:'fresh', id: JudgmentSessionId}`, and (2026-10-15) a repair role (`REPAIR_ROLES`: `planCheck`,
-`checkpoint`) also `mode:'resume'` with the id of its refused answer's session, its one repair turn; `build` takes `claude{fresh|resume, id}` \|
+`{backend:'claude', mode:'fresh', id: JudgmentSessionId}`, or `mode:'resume'` with the id of its refused answer's session,
+its one repair turn (2026-10-15 `planCheck` and `checkpoint`; dev.12 every judgment role, `repairTurnOf` in
+src/pipeline/dispatch.ts; every judgment's fresh call persists its session); `build` takes `claude{fresh|resume, id}` \|
 `codex{fresh}` (Codex mints its thread id) \| `codex{resume, id}`, ids `ImplementerSessionId`.
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
@@ -807,7 +820,10 @@ Every stored item adds `state: active | struck | deferred`; ids are never delete
 `SpecPatch = {expectRev, by: {role:'planCheck', routingRev, inv} | {role:'executor', inv}, ops (non-empty)}`; `by`
 is a plan-check redirect's judgment invocation, or the executor appending the build invocation `inv`'s
 `decisions.json` to the decisions section after the evidence snapshot (lead ruling, step 12; not while an applied
-revision of the spec is pending: the unit re-opens on it, and its next build writes its decisions again); ops `add{section, item} |
+revision of the spec is pending: the unit re-opens on it, and its next build writes its decisions again). A `decisions.json` that does
+not validate (`readDecisions`) makes a build that reported success `malformed` (dev.12), the resume round quoting why;
+one still read at evidence (a build lost with tree effects, or read by a previous release) is not appended and a stderr
+line names it. Ops `add{section, item} |
 replace{section, item} | strike{id} | defer{id} | cite{contracts, rulings}`, sections `lanes | acceptance |
 decisions | facts`. `cite` adds to `cites` (at least one entry; a repeated cite is already there) and nothing
 removes one; a plan-check redirect citing no plan contract or no ledger ruling is `malformed`, and so (run 10, C) is
@@ -849,7 +865,11 @@ carries only the manifests, never the files.
 
 **Judgment outputs** (`src/prompts/schemas.ts`): plan-check `{decision, reasons, patch, risk, notes, premises}`,
 gate `{decision, findings, directives, reasons, premises}`, `premises: [{claim, evidence: [{path, line}]}]` (the
-premises the decision relies on, the next round's handoff). A plan-check's `notes` go to the architect on escalate
+premises the decision relies on, the next round's handoff). Reasoning structure is method, not invariant (W4,
+2026-10-16): every key is present (strict schemas), but `premises` and a checkpoint's `interpretations` may be empty and
+nothing caps a list (no premise, directive or finding cap); a reason need not cite anything; a cite that is given
+(a `visionConflict` or op's `V-n`, an interpretation's clauses, a decision's observations and findings, a `cite` op's
+contracts and rulings) must still resolve, and decisions stay closed enums. A plan-check's `notes` go to the architect on escalate
 or infeasible; on approve they are facts for the build and the gate, which receive the approving plan-check's
 notes. A plan-check after its own applied redirect gets `priorRound {patch, reasons, premises, patchedRev,
 changedPremiseFiles}`; a plan-check whose previous answer was refused (since 2026-10-15 by the one validator, every
@@ -1555,14 +1575,14 @@ one is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why: no-pr
 inherits every judgment module, "Routing types"; only Codex is refused, as `codex-judgment`). Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses, questions, advances} (`visionInputOf`;
 `advances` from the plan at the revision the inputs were captured at),
 lens, obligations: ObligationView[] ({obligation, exempt, observation{key, verdict}|null}), range{from, to, diff},
-owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout, specsOnly, retry:
-{refused: [{claim, cause, reason}], recorded: [{claim, cause}]}|null}` (M4b: `retry` on a lens asked again);
+owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout, specsOnly}`
+(M4b's `retry`, on a lens asked again, is gone in dev.12: a refused draft goes to the lens's repair turn);
 `CheckpointInputs = {vision, trigger, head, plan (rendered), findings, obligations, coverage: VisionCoverage,
 divergences[{id, type, what}], contracts, rulings, index, architecture, direction}`. Outputs (strict; every key
 required): `LensOutput = {findings: [{severity: P1|P2|P3, obligation|null, visionClauses, claim, cause, evidence:
 [{path, line}], mutant: {lane, edits: [{path, old, new}] (non-empty)}|null}], reasons, premises}` (M4b; was `{patch, lane}`); `CheckpointOutput = {decision: no-op|bundle,
 reasons, ops: BundleOp[] (empty exactly on a no-op), rulings: string[] (sidecars as canonical JSON text, read from the objects `S_RULING` constrains since 2026-10-15; none on a no-op),
-findingDispositions[{finding, disposition, reason}], interpretations[{clauses, situation, reading}], cites{vision,
+findingDispositions[{finding, disposition, reason}], interpretations[{clauses (non-empty), situation, reading}] (may be empty), cites{vision,
 observations, findings}, premises}`, `BundleOp = (admit{unit{id, risk, scope, after, origin: checkpoint|repair},
 spec (spec.json text)} | patch-spec{unit, patch} | reenter{unit, reenters, enterAt|null, reset|null} | cut{unit,
 reason} | route{unit, seats[{role, tier, class}]} | limits{unit|null, limits[{field, value}]} |
@@ -2088,8 +2108,8 @@ supersede the A4 items they name):
 
 1. **One lens module for the four lenses**: the standing rules in the system prompt, the lens's own brief in the
    message's `<lens_brief>`, whose first line is the one marker `lens: <kind>` (what the fake backend keys on).
-2. **`MAX_LENS_FINDINGS` (8)** is stated in the prompt as the reporting bound, worst first; the reader does not
-   enforce it (an anti-spiral bound on reporting, never on reading).
+2. **No finding cap** (W4, 2026-10-16; was `MAX_LENS_FINDINGS` 8, stated in the prompt and never enforced): findings
+   worst first; the finding bar and the dedupe key bound reporting.
 3. **Routing**: lens/Opus and checkpoint/Fable are modules; lens/Fable and checkpoint/Opus inherit them (reviewed
    2026-09-30); Sonnet and Codex are unsupported for both ("Prompts" above; Sonnet inherits since 1.0.0-dev.10).
 
@@ -2741,8 +2761,10 @@ filter keys it across arcs). Crash row ANSWER_RECORD (`answer.after-publish`): a
    ended one is superseded: it neither blocks completion (`openBlocking`) nor holds admission, and `status.packReview`
    shows it `superseded`. It is not open (`openNeedsUser`, run 10 round 2): `status.needsUser` and `watch --actionable`
    leave it out.
-3. **An abandoned review**: a call that gives no valid report (a refusal, a malformed answer, a fault, lost twice: a call
-   recovery closed lost is asked again once, as a checkpoint's is, D0) ends `pack-review-ended{abandoned, findings: []}` with one blocking `pack-review` item saying so; the architect fixes the pack
+3. **An abandoned review**: an answer off its schema or its dispositions first takes the one judgment repair turn
+   (dev.12: its session resumed with why, as the next attempt). A call that gives no valid report (a refusal, a malformed
+   answer after its repair turn, a fault, lost twice: a call recovery closed lost is asked again once, as a checkpoint's
+   is, D0) ends `pack-review-ended{abandoned, findings: []}` with one blocking `pack-review` item saying so; the architect fixes the pack
    (a new key: a superseding review) or acknowledges it.
 4. **The census and splits**: a checkpoint's split never edits the census (Phase 0's); a split child anchored at its
    parent's rule is counted through the ancestor the census names (one state per rule).
@@ -3156,10 +3178,11 @@ sections and marks converted amendments.
     always parses and applies to the audited tree. A recorded pre-M4b answer's `patch` is still checked by `checkPatch`.
     A draft whose mutant cannot be made (a path naming no regular file, `old` absent, repeated or empty, an edit that
     changes nothing, a corrupt recorded patch) or names no arc lane is refused: nothing opened, nothing kept, the reason
-    recorded in `audit-ended.refused{lens, attempt, claim, cause, reason}` and written to the executor's stderr. The lens
-    is then asked once more (a fresh call, `attempt` after every lens's first, numbered in order), its prompt's
-    `<previous_report>` naming each refused draft with its reason and the report's admitted findings; it counts as
-    reported (covered) only when the retry's report is admitted whole, else the audit ends `abandoned` and stays owed.
+    recorded in `audit-ended.refused{lens, attempt, claim, cause, reason}` and written to the executor's stderr. The lens's
+    session then takes its repair turn (dev.12; M4b asked a fresh call with a `<previous_report>` block): resumed as the
+    next `attempt` after every lens's first, numbered in order, told each refused draft's claim, cause and reason, the
+    report's other findings already recorded; it counts as reported (covered) only when the repair turn's report is
+    admitted whole, else the audit ends `abandoned` and stays owed. A report off its schema takes the repair turn too.
     (Run 3's audit-4: the lens's hand-written diff claimed 7 old lines in a 6-line hunk, git refused it as corrupt, the
     finding went to stderr only, and `vacuity` was still reported covered.) `patchedTree` returns `corrupt`; reproduce
     treats it as inapplicable and smoke as inconclusive, so no `mutant.apply` names one.
@@ -3362,10 +3385,14 @@ proposal, cause: rejected | worse | changed | unprovable}`. The prompt renders `
 **The flow role's output** (strict; `FLOW_SCHEMA` in src/prompts/schemas.ts, reader `flowOutput`): `{constraint: {station,
 agree, reason}, diagnosis, proposal: {target, action, rationale, risks} | null, noAction: string | null}`, exactly one of
 `proposal` and `noAction`. The model writes no proposal id. Every key is present (strict mode): a suite-lane action's
-unused `argv`, `reporter` or `cpu` is null and reads as absent. A schema failure is `invalid`. Code's checks after the
+unused `argv`, `reporter` or `cpu` is null and reads as absent. A schema failure takes the one judgment repair turn
+(dev.12; M4b asked a fresh call, the retry told why); refused again, the run is `invalid`. Code's checks after the
 schema drop the proposal with a reason (`FLOW_DROP_REASONS`): `target`, `given`, `rejected-before`, `verdict-open`,
-`elevate-early`, `argv-shape`, `lane-cpu`, `concurrency-cpus`, `sequence-repair-waiting`, `sequence-high-set`,
-`build-class-step`.
+`direction`, `argv-shape`, `lane-cpu`, `concurrency-cpus`, `sequence-repair-waiting`, `sequence-high-set`,
+`build-class-step`. dev.12 dropped `elevate-early` and the constraint half of `target` (a target station is the
+role's method; `target` keeps held, `wait:finding`, a suite-lane action off its lane, the slot or `host:cpu`, a missing
+lane, pool or live unit, and an action that changes nothing). A recorded drop reads `RECORDED_DROP_REASONS`, which adds
+`elevate-early` for a dev.11 `flow-ended` (scaffolding). `ProposalContext` lost `constraint`, `judged` and `verdicts`.
 
 **Proofs and verdicts.** `PROOF_OUTCOMES = preserved | changed | unprovable | red`. `FLOW_GUARDS = lead | rework |
 first-run-reds | obligation | cost`; a verdict's `guards` are breaches `{guard, detail}`, each guard once, in that order.
@@ -3523,7 +3550,7 @@ under 5 s read up to 0.88 at concurrency 8 (process start-up), which is why they
 | `StationId` | `+ host:cpu` (`HOST_CPU_STATION`, parts `{type: host-cpu}`) | the host's cpu: internal, never a key of a point's `minutes`; `waitInFrontOf` refuses it (its levers' metric is pressure) |
 | `CodeConstraint` | `station: host:cpu` with `internal: true`, `component: null` | ahead of the wait and service rules when the window's mean pressure ≥ `PRESSURE_SATURATED` (H1) |
 | `FLOW_TRIGGERS` | `+ host-pressure`, after `yellow-worsening` | with units in flight, a host-pressure hold since the last run's start (its stage outcome's time, `pressureHoldTimes` over the log; recalibration: was 10 min of PSI avg60 ≥ the threshold, which a healthy busy host reaches) |
-| `FLOW_DROP_REASONS` | `+ direction`, after `elevate-early` | an increase at `host:cpu` (only decreases or `host` advice) |
+| `FLOW_DROP_REASONS` | `+ direction`, after `elevate-early` (dropped in dev.12) | an increase at `host:cpu` (only decreases or `host` advice) |
 | `FlowMetric` | `+ pressure{}` | RC-12: a lever at `host:cpu` is measured by the pressure of the units admitted after (a unit without one is no sample); lead stays a guard. Its step is `subordinate` (`stepOf`) |
 | `HoldCause` | `+ host-pressure{inv}` | RC-11: a unit whose run `inv` was starved, or red under pressure with its rerun pending, held until a minute of ticks since the hold shows the host's cpu wait < `PRESSURE_SATURATED` or 30 min pass (H2; see "Charging") |
 | `Starved` (src/host/pressure.ts) | `{kind: starved, inv, pressure}` | RC-11: a lane run or stage invocation ended by `deadline` or `stall` with its own pressure ≥ `PRESSURE_SATURATED`: no product verdict, not chargeable, no fix round; after `STARVED_MAX` host-pressure holds of one unit, today's handling (H2) |

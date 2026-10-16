@@ -198,6 +198,22 @@ at triage stay in git history.
   reads the last. Watch for a judge whose deadline kills it while it waits on a background subagent: then tell judges to
   run subagents in the foreground, or treat the last interim answer as the call's.
 
+- **`proofJudgment` → execution evidence** (dev.12 gate method redesign, deferred). An obligation's `proofJudgment` is
+  graded by a judge reading the proof; the owner's philosophy (code owns invariants, models own method, evals own trust)
+  wants it backed by something executed (a witness run, a mutant) with a role eval measuring the judge. Trigger: the
+  role-eval harness (evals/roles/) covers a judgment role beyond the gate.
+- **Builder prompt trim** (dev.12, deferred). The builder prompt still carries method instructions accreted run by run;
+  trim it to responsibility, resources and the report contract. Trigger: a builder role eval exists to show the trim
+  does not cost quality.
+- **Lens chunking removal** (dev.12, deferred; the lens-range fix of 2026-10-16). With the bounded diff and readable
+  `<not_inlined>` files, one lens call may cover a whole range. Trigger: a lens role eval shows a reader covers a whole
+  range in one call; then delete `nextChunk`/`chunkEnd` and the chunk numbering in src/holistic/audit.ts.
+- **A checkpoint op's non-empty `cites` and `evidence`** (W4, 2026-10-16). W4 dropped the per-reason cite rule, the
+  unenforced reporting caps and any mandate on `premises`/`interpretations`, but kept the per-op requirement (every bundle op
+  cites at least one active `V-n` and non-empty evidence; DESIGN §2.8 checkpoint authority, the traceability the owner
+  audits). The evidence strings are not verified, so the requirement is partly method. Trigger: a repair turn or refused
+  bundle whose only fault is an op's empty `cites` or `evidence`; then make both may-be-empty and keep resolution only.
+
 - **Apply rebase merges arrays of plain values whole** (2026-10-16). `merge3` merges objects per key and arrays of
   keyed objects per element, but an array of strings (scope patterns, `holistic.advances`, cites, a lane's argv) both
   sides changed is a conflict, never a set merge (an argv's order is its meaning). Trigger: conflicts on id lists such as
@@ -264,10 +280,11 @@ at triage stay in git history.
   The fake story asserts it; a paid run only shows it as a nudge turn. Trigger: a paid run with a nudge after a check-in.
 
 - **A lens that answers invalid abandons its audit, retried only after `wallClockMin`** (run 10 round 2, R-16 review):
-  `runAudit` asks the remaining lenses, ends `abandoned`, and the cadence's `retry` waits the period (default 360 min),
-  a final audit included, then asks every owed lens again, those that reported on the same (head, vision, obligations)
-  included. Not seen in run 10 (every audit completed). Trigger: an `abandoned` audit in a paid run; then retry the
-  invalid lens once with its reasons inside the audit, and drop from a retry the lenses whose key is unchanged.
+  since dev.12 an invalid report first takes its repair turn inside the audit; refused again, `runAudit` asks the
+  remaining lenses, ends `abandoned`, and the cadence's `retry` waits the period (default 360 min), a final audit
+  included, then asks every owed lens again, those that reported on the same (head, vision, obligations) included. Not
+  seen in run 10 (every audit completed). Trigger: an `abandoned` audit in a paid run; then drop from a retry the lenses
+  whose key is unchanged.
 - **The checkpoint capture wait bound** (`CAPTURE_WAIT_MAX_MIN`, 15 min, R-15) is a guess from run 10's gate-to-ff of
   about 1 min. Trigger: a paid run where a checkpoint waited the full bound, or captured stale with the bound spent.
 
@@ -355,6 +372,13 @@ at triage stay in git history.
 - `gateDiffShownOf`'s absent arm (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a gate's
   `judgment-inputs` recorded without `diffShown` reads as nothing recorded. With it, `diffShown` becomes required on a
   gate's (src/core/events.ts).
+- The dev.11 adoption arms of the one judgment repair turn (dev.12), once no arc started on 1.0.0-dev.11 is in flight:
+  `repairTurnOf`'s `--no-session-persistence` arm (src/pipeline/dispatch.ts: a dev.11 gate, lens, pack-review or flow
+  call's unpersisted session takes no repair turn) and the lens loop's recorded-call rule (src/holistic/audit.ts: a
+  recorded dev.11 fresh re-ask of a refused draft is consumed as the repair turn's answer; after a malformed report a
+  call recorded at the next number that is not its repair, `isRepairTurnOf`, is another's). With them, a recorded call at
+  a repair turn's number is always its repair turn.
+
 - `auditDiffBudgetOf`'s absent arm (src/core/upgrade.ts) with `nextChunk`'s unchunked branch (src/holistic/audit.ts),
   once no audit a dev.10 executor started is running: such an audit reads each range in one call. With it,
   `audit-started.diffBudget` becomes required.
@@ -368,6 +392,9 @@ at triage stay in git history.
   started on 1.0.0-dev.10 is in flight (every later checkpoint reads the arc's applied answers): a checkpoint `reenter`
   op recorded without `fixes` is adopted as recorded. With it, `fixes` becomes required in `bundleOp`. (`plan.json`'s
   `reenters.fixes` stays optional: re-entries in force before it are lasting records.)
+- `RECORDED_DROP_REASONS`' `elevate-early` (src/flow/types.ts), once no arc started on 1.0.0-dev.11 is in flight: a
+  dev.11 `flow-ended` may record that drop reason, which dev.12 no longer writes. With it, `flowDropped` reads
+  `FLOW_DROP_REASONS` and `checkProposal` returns a plain `FlowDropped`.
 
 - The 1.0.0-dev.7 → M4b default in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.7 is in flight:
   `dev7ArcRolesDefault` and `arcRolesInForce`'s null arm (src/routing/layers.ts): a routing provenance without

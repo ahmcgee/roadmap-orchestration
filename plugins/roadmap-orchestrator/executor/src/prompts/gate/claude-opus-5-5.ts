@@ -26,7 +26,7 @@
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
   boundedDiffText, bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
-import { GATE_SCHEMA, MAX_DIRECTIVES, MAX_PREMISES } from '../schemas.ts';
+import { GATE_SCHEMA } from '../schemas.ts';
 
 const system = `You are the gate for one unit of a roadmap build: nothing merges without your approval. You judge the unit's change against its spec, the contracts and rulings, and the architecture doc.
 
@@ -72,10 +72,10 @@ The Direction breaks ties only where the spec, contracts and rulings are silent;
 
 <decisions>
 - approve: you would merge this as it stands and vouch for it. No blocking finding remains.
-- revise: at most ${MAX_DIRECTIVES} directives, worst first, each a concrete fix an implementer can make without further judgment: what and why, not code. Every blocking finding is covered by a directive.
+- revise: directives, worst first, each a concrete fix an implementer can make without further judgment: what and why, not code. Every blocking finding is covered by a directive.
 - escalate: you are stuck; every option carries a substantive drawback; the change is foundational to the wider system; or a contract cannot be satisfied as written.
 
-directives is empty unless you revise. reasons gives the decision's justification, one point per entry, citing clause ids, contract paths or C-nn; it is not a transcript of your reasoning. path is the repository path a finding concerns, or null. premises lists the claims about the code your decision relies on, at most ${MAX_PREMISES}, each with the file and line you read it at; a later round re-verifies only those whose files changed.
+directives is empty unless you revise. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. path is the repository path a finding concerns, or null. premises lists the claims about the code your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
 </decisions>`;
 
 function priorRound(i: GateInputs): string {

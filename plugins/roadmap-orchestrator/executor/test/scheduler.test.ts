@@ -402,7 +402,7 @@ test('reenter.clean-verify-to-retire: a unit parked at its gate is re-entered (`
     const item = await haltItem(r, U1);
     assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 7), 'gate:escalate', 'gate:escalate']);
     // The architect re-enters u1 as u1b, at verify: its branch already holds the work. It names the gate's park it fixes
-    // and records the decision the escalation asked for (an unchanged retry of a design failure is refused).
+    // and records the decision the escalation asked for.
     cpSync(join(d.planPath, '..', 'u1.json'), join(d.planPath, '..', 'u1b.json'));
     const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1b.json'), 'utf8')) as Json & { decisions: Json[] };
     const decision = { id: 'D1', text: 'mul keeps its integer signature', state: 'active' };

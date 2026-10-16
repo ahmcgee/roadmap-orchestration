@@ -29,11 +29,14 @@
 //      which the call may read. An audit an earlier executor started (no `diffBudget`)
 //      reviews each range in one call, as its recorded calls did. A resumed job consumes a call it already made
 //      (`recordedArcCall`) and asks again only for one lost: a lens's first call is numbered by its place in the run
-//      order, every further call (a later chunk, a retry) after every lens's first, in order, and the chunks are found
-//      again from git and the recorded inputs. Each report's findings are opened at once. A report with a draft refused
-//      at admission (below) asks that lens once more over the same chunk (M4b, paid run 3), its prompt naming each
-//      refused draft with the reason (`LensInputs.retry`); the chunk counts as reported only when the retry's report is
-//      admitted whole.
+//      order, every further call (a later chunk, a repair turn) after every lens's first, in order, and the chunks are
+//      found again from git and the recorded inputs. Each report's findings are opened at once. A report off its schema,
+//      or with a draft refused at admission (below), takes the one judgment repair turn (dev.12, `repairTurnOf` in
+//      src/pipeline/dispatch.ts; M4b paid run 3 asked a fresh session again): its own session resumed with every reason
+//      (each refused draft's claim, cause and why, its other findings already recorded); the chunk counts as reported only
+//      when the repair turn's report is admitted whole. An audit an earlier release started keeps its recorded calls: its
+//      fresh retry of a refused draft is consumed as the repair turn's answer, and a malformed report it asked nothing
+//      after takes none (`isRepairTurnOf`), nor does a refused answer whose session it did not persist.
 //   5. The lens checkout removed, citing an evidence snapshot of it; then `audit-ended{covered, findings, suppressed,
 //      outcome, refused}`: `completed` when every lens reported every chunk, else `abandoned` (a lens failed, a draft was
 //      refused again, or its backend parked: the rest are not asked). Coverage (coverage.ts) is each lens's range from
@@ -73,12 +76,13 @@ import { advancesOf, derivedOf, parsePlan } from '../input/plan.ts';
 import { DEFAULT_BOUNDS } from '../core/records.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
-  type BackendCallOutcome, type JobParent, type StageContext, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, unitBranch, verdictOf,
+  type BackendCallOutcome, type JobParent, type RepairTurn, type StageContext, arcSeat, callArcRole, isRepairTurnOf, minutesMs, recordedArcCall, repairTurnOf, runOp, unitBranch, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { type JourneyEnd, arcJourneyLane, dirtyPaths, jobSeriesCheckout, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
+import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
-import { type FindingView, type LensInputs, type LensRetry, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
+import { type FindingView, type LensInputs, type RenderedSpec, visionInputOf } from '../prompts/inputs.ts';
 import { renderSpec } from '../spec/render.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { type LensFinding, type LensOutput, validateLensOutput } from '../prompts/schemas.ts';
@@ -302,9 +306,7 @@ const lensDiffDir = (ctx: StageContext, job: JobId, attempt: number): AbsPath =>
  * this call covers and the owners' branch diffs, each attached within the budget (the owners sharing theirs), their
  * unshown files written under `diffDir`.
  */
-function lensInputs(
-  ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, retry: LensRetry | null, diffDir: AbsPath,
-): LensInputs {
+function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, diffDir: AbsPath): LensInputs {
   const sha = s.integrationSha;
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
   const budget = budgetOf(s);
@@ -324,7 +326,6 @@ function lensInputs(
     checkout,
     // M4a rev 3 (H2, R61): an audit every trigger of which is a specs-only drift reads those units' specs.
     specsOnly: changedSpecs(ctx, s),
-    retry,
   };
 }
 
@@ -385,7 +386,8 @@ function lensDraft(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, f
 
 type LensRead =
   | Readonly<{ kind: 'reported'; output: LensOutput }>
-  | Readonly<{ kind: 'failed'; detail: string }>
+  /** No report; `refused`: the report was off its schema, so it may take its repair turn. */
+  | Readonly<{ kind: 'failed'; detail: string; refused?: true }>
   /** Its backend parked (a usage limit or capacity): no further lens is asked. */
   | Readonly<{ kind: 'parked'; detail: string }>;
 
@@ -397,9 +399,11 @@ function readLens(ctx: StageContext, job: JobId, called: BackendCallOutcome): Le
       try {
         return { kind: 'reported', output: validateLensOutput(v.value) };
       } catch (error) {
-        if (error instanceof SchemaError) return { kind: 'failed', detail: `malformed report: ${error.message}` };
+        if (error instanceof SchemaError) return { kind: 'failed', detail: `malformed report: ${error.message}`, refused: true };
         throw error;
       }
+    case 'malformed':
+      return { kind: 'failed', detail: `malformed report: ${v.detail}`, refused: true };
     case 'interrupted': {
       if (v.needsUser !== null) {
         const parent: Parent = { type: 'op', op: parseInvocationId(called.inv).op };
@@ -507,23 +511,29 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   const covered: LensKind[] = [];
   let outcome: 'completed' | 'abandoned' = 'completed';
   const order = runOrder(s.lenses);
-  /** One call of `lens` as `attempt` over `chunk`: the recorded one consumed, else asked (lazily making the checkout). */
-  const ask = async (lens: LensKind, attempt: number, chunk: Chunk, retry: LensRetry | null): Promise<LensRead> => {
+  /**
+   * One call of `lens` as `attempt` over `chunk`: the recorded one consumed, else asked (lazily making the checkout): fresh,
+   * or the repair turn `repair` (its refused call's session resumed, told every reason).
+   */
+  const ask = async (lens: LensKind, attempt: number, chunk: Chunk, repair: Readonly<{ turn: RepairTurn; reasons: readonly string[] }> | null): Promise<Readonly<{ read: LensRead; called: BackendCallOutcome }>> => {
     let called = recordedArcCall(ctx, job, 'lens', attempt);
     if (called === null || called.kind === 'lost') {
       if (!made) {
         await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, { path: checkout, checkout: { type: 'detached', at: s.integrationSha } });
         made = true;
       }
+      if (repair !== null && repair.turn.cwd !== checkout) throw new Error(`${job}: a refused lens call ran in ${repair.turn.cwd}, not the audit's checkout ${checkout}`);
       const diffDir = lensDiffDir(ctx, job, attempt);
-      const inputs = lensInputs(ctx, s, r, lens, chunk, checkout, retry, diffDir);
-      const rendered = prompt.render(inputs);
+      const inputs = lensInputs(ctx, s, r, lens, chunk, checkout, diffDir);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
-        job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), diffDir, ...targetDirs(inputs.target)],
-        deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
+        job, role: 'lens', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [ledgerDir(ctx), diffDir, ...targetDirs(inputs.target)],
+        deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
+        ...(repair === null
+          ? { rendered: prompt.render(inputs), schema: prompt.schema, session: freshJudgmentSession() }
+          : { rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
       }));
     }
-    return readLens(ctx, job, called);
+    return { read: readLens(ctx, job, called), called };
   };
   /** Admits a report's drafts (each finding opened at once); returns the refused ones, recorded in the tally. */
   const admitReport = (lens: LensKind, attempt: number, output: LensOutput): readonly LensRefusal[] => {
@@ -540,10 +550,9 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     t.refused.push(...refused);
     return refused;
   };
-  // A lens reviews its range chunk by chunk (`nextChunk`), each a call; a report with a draft refused is asked once more
-  // over the same chunk, told why (M4b, paid run 3). A lens's first call is numbered by its place in the run order, every
-  // further call (a retry, a later chunk) after every lens's first, in order, so a resumed audit finds each recorded call
-  // again (an audit started before chunking numbers its retries the same way).
+  // A lens reviews its range chunk by chunk (`nextChunk`), each a call. A lens's first call is numbered by its place in the
+  // run order, every further call (a repair turn, a later chunk) after every lens's first, in order, so a resumed audit
+  // finds each recorded call again (an audit started before chunking numbers its retries the same way).
   const heads = new Set(publishedHeads(ctx.journal.view).map((h) => h.head));
   /** How far each lens's reported chunks reach. */
   const reached = new Map<LensKind, Sha>();
@@ -554,15 +563,35 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     let read: LensRead;
     for (;;) {
       const chunk = nextChunk(ctx, s, r, from, heads);
-      read = await ask(lens, attempt, chunk, null);
+      const first = await ask(lens, attempt, chunk, null);
+      read = first.read;
+      // The repair turn's reasons: the schema violation, or each draft admission refused (the report's others recorded).
+      let reasons: readonly string[] = [];
+      if (read.kind === 'failed' && read.refused === true) reasons = [read.detail];
       if (read.kind === 'reported') {
         const refused = admitReport(lens, attempt, read.output);
         if (refused.length > 0) {
-          const again = order.length + ++further;
-          const recorded = read.output.findings.filter((f) => !refused.some((x) => x.claim === f.claim && x.cause === f.cause)).map((f) => ({ claim: f.claim, cause: f.cause }));
-          const retried = await ask(lens, again, chunk, { refused, recorded });
+          reasons = [
+            ...refused.map((x) => `finding "${x.claim}" (cause: ${x.cause}) could not be admitted: ${x.reason}`),
+            'the report\'s other findings are recorded, so report only the refused ones again, corrected (leave out one you cannot support)',
+          ];
+          read = { kind: 'failed', detail: 'a draft was refused' };
+        }
+      }
+      if (reasons.length > 0) {
+        const again = order.length + further + 1;
+        const recordedAgain = recordedArcCall(ctx, job, 'lens', again);
+        // An earlier release's fresh retry of a refused draft is this repair turn's answer; after a malformed report it
+        // asked nothing, so a call recorded at the next number is another's (adoption).
+        const drafts = first.read.kind === 'reported';
+        const taken = recordedAgain === null || drafts || isRepairTurnOf(ctx.runDir, recordedAgain.inv, first.called.inv);
+        // A repair turn recorded with its result is consumed; one not made, or lost with its runner, is asked.
+        const turn = taken && recordedAgain?.kind !== 'result' ? repairTurnOf(ctx.runDir, first.called.inv) : null;
+        if (taken && (recordedAgain?.kind === 'result' || turn !== null)) {
+          further++;
+          const repaired = await ask(lens, again, chunk, turn === null ? null : { turn, reasons });
           // A chunk is covered only once a report is admitted whole: a draft refused again leaves it outstanding.
-          read = retried.kind === 'reported' && admitReport(lens, again, retried.output).length > 0 ? { kind: 'failed', detail: 'a draft was refused again' } : retried;
+          read = repaired.read.kind === 'reported' && admitReport(lens, again, repaired.read.output).length > 0 ? { kind: 'failed', detail: 'a draft was refused again' } : repaired.read;
         }
       }
       if (read.kind !== 'reported') break;

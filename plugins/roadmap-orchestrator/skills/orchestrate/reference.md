@@ -390,9 +390,7 @@ lineage merged or cut, or the apply cuts a fixer an entry still names), `known-d
 the lane) and `known-defect-cycle` (the `after` edges plus the holds form a cycle, named). A re-entry whose scope
 leaves its lineage's envelope is refused unless its spec cites an active ruling for it naming exactly the added
 patterns. A re-entry the apply adds is refused without `fixes` (once its lineage recorded a failure) or with one that names no failure of its lineage (the
-refusal lists the lineage's failures), and as an unchanged retry: its cited failure is a design failure of the unit, it
-has no `reset`, and its spec content, effective scope (derived outputs included), suite lanes and resolved routing are all as the failure ran under (the
-refusal names each). Priority, known-defect and plan-check-shape edits drain nothing.
+refusal lists the lineage's failures); a re-entry that changes nothing the cited failure ran under is accepted. Priority, known-defect and plan-check-shape edits drain nothing.
 
 ## Needs-user reasons
 

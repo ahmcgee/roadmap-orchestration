@@ -1425,7 +1425,7 @@ test('upgrade.corpus-witnesses-undeclared: a corpus arc the previous release sta
 
 test('upgrade.checkpoint-answer-unapplied: a park checkpoint\'s answer the previous release recorded but did not apply (it crashed after the call), re-entering page-id without `fixes` and changing nothing, is adopted on HEAD: decided from the recorded answer with no new call, applied, the re-entry merged', T, async () => {
   const c = clean();
-  // A bare re-entry of the infeasible park: HEAD refuses it from an answer of its own (no `fixes`, an unchanged retry).
+  // A bare re-entry of the infeasible park: HEAD refuses it from an answer of its own (no `fixes`).
   const reenter = { op: 'reenter', unit: REENTRY, reenters: 'page-id', enterAt: null, reset: null, cites: ['V-1'], evidence: ['page-id parked infeasible: it starts over'] };
   const { p, gh } = await corpusArc([...c.slug, INFEASIBLE, INFEASIBLE], (prev) => [prev.checkpointStep('ckpt-1', prev.checkpointAnswer({ decision: 'bundle', ops: [reenter] }))]);
   await crashPrevious(p, { label: 'checkpoint.after-call', occurrence: 1 }, async () => {}, { PATH: corpusPath(p, gh) });
