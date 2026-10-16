@@ -9,11 +9,10 @@
 // the build's evidence (decisions.json), the pinned scope envelope and the diff's paths outside it (and, scope growth
 // 2026-10-15, the out-of-scope paths the unit's salvages reverted, which no diff shows), and on
 // a later round the prior round's handoff: its directives, findings and premises, the paths the fix changed
-// and the premise files whose blobs changed since (items 25, 29). The session reads the green verification
-// checkout, read-only, and the rulings ledger's directory.
+// and the premise files whose blobs changed since (items 25, 29). The session runs in the green verification
+// checkout and reads the repository and the run dir besides (dispatch.ts `judgmentReadDirs`), read-only.
 //
-// Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome; an approve from a session
-// the CLI refused a read is `read-denied` instead, an uncharged retry: paid M4b run 5) · revise
+// Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
 // (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
 // before any call (park) · refusal, malformed and faults as at plan-check.
 //
@@ -84,7 +83,7 @@ import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  readRefused, salvageRejections, stillOutside, writeJudgmentInputs,
+  salvageRejections, stillOutside, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -368,7 +367,6 @@ export async function gateRead(
     bankGateNotes(ctx, unit.id, parent.attempt, out.findings);
     return done(record(ctx, parent, 'approve'), approved.fingerprint);
   }
-  if (readRefused(called)) return done(record(ctx, parent, 'read-denied'));
   const head = unitTip(ctx, unit.id);
   if (head !== fingerprint.unitCommit) throw new Error(`gate of ${unit.id}: the unit branch moved from ${fingerprint.unitCommit} to ${head} during the gate`);
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint });

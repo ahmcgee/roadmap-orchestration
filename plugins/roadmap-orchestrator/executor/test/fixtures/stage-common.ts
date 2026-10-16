@@ -234,7 +234,7 @@ export type PlanCheckAnswer = Readonly<{
 /** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
 export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   // 2026-10-15: a plan-check's fresh session persists (no --no-session-persistence) so its repair turn can resume it.
-  const argv = ['-p', '--tools', 'Read,Grep,Glob', '--session-id', ...(expect.argv ?? [])];
+  const argv = ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id', ...(expect.argv ?? [])];
   return {
     as: 'claude',
     expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] },
@@ -254,7 +254,7 @@ export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
 export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly string[] = [], before: readonly ClaudeAct[] = []): Step {
   return {
     as: 'claude',
-    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
+    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
     acts: [...before, { type: 'emit', value: planCheckAnswer(a) }],
   };
 }

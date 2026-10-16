@@ -6,7 +6,6 @@ import { adapt, writeResult } from '../src/backends/adapter.ts';
 import { type BackendCall, backendArgv, freshClaudeImplementerSession, freshJudgmentSession, resumedJudgmentSession } from '../src/backends/argv.ts';
 import { readClaude } from '../src/backends/claude.ts';
 import { judgmentSessionId } from '../src/core/ids.ts';
-import { readsDeniedOf } from '../src/core/upgrade.ts';
 import { RUNNER_FILE_READERS } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { BACKEND_FIXTURES, CLAUDE_USAGE_LIMIT, capturedClaudeResult, editClaudeResult, fixtureInvocation } from './helpers/scenario.ts';
@@ -123,14 +122,13 @@ describe('claude', () => {
       }));
       assert.equal(r.type === 'backend' ? r.outcome.kind : null, 'malformed');
     });
-    it('a reads.json an earlier executor wrote, without denied, reads as written and as none refused', () => {
+    it('a reads.json an earlier executor wrote, without denied, reads as written', () => {
       const invDir = fixtureInvocation('claude-judgment', EXIT0);
       writeResult(invDir);
       const raw = JSON.parse(readFileSync(join(invDir, 'reads.json'), 'utf8')) as Record<string, unknown>;
       delete raw['denied'];
       const reads = RUNNER_FILE_READERS['reads.json'](raw, 'reads.json');
       assert.equal('denied' in reads, false);
-      assert.deepEqual(readsDeniedOf(reads), []);
     });
     it('Codex writes no reads.json', () => {
       const invDir = fixtureInvocation('codex-fresh', EXIT0);
@@ -177,7 +175,7 @@ describe('claude', () => {
       assert.equal(argv[argv.indexOf('--session-id') + 1], a.id);
       assert.equal(argv.includes('--resume'), false);
       assert.equal(argv.includes('--no-session-persistence'), true);
-      assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Grep,Glob');
+      assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Grep,Glob,Agent');
     });
     it('a repair role (plan-check, checkpoint) persists its fresh session and resumes it with --resume; any other judgment resuming is refused', () => {
       const id = judgmentSessionId('18b3bbf3-98ce-4ced-87c2-639d61b25ef1');

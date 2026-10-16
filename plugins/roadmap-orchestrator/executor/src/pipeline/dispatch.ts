@@ -455,7 +455,23 @@ function isJsonLine(line: string): boolean {
  * recovery table); the outcome is the retry's. An implementer call that may have changed the tree is not
  * retried: its work is salvaged and verified (`lost-tree-effects`).
  */
-export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Promise<BackendCallOutcome> {
+/**
+ * A judgment session's read surface (2026-10-16): the repository and the run dir, then each of `extra` (the dirs its role
+ * names: evidence, the rulings ledger, a corpus, a branch checkout) not already inside one of them, in order; the tree it
+ * judges is its cwd. Read-only: a judgment's tools (argv.ts `JUDGMENT_TOOLS`) and its subagents' write nothing. A read
+ * outside the surface is refused by the CLI and recorded (reads.json `denied`); it no longer voids an approval.
+ */
+export function judgmentReadDirs(ctx: Readonly<{ repo: AbsPath; runDir: AbsPath }>, extra: readonly AbsPath[]): readonly AbsPath[] {
+  const out: AbsPath[] = [ctx.repo, ctx.runDir];
+  const covered = (dir: AbsPath): boolean => out.some((d) => dir === d || dir.startsWith(`${d}/`));
+  for (const dir of extra) if (!covered(dir)) out.push(dir);
+  return out;
+}
+
+export async function callBackend(ctx: StageContext, given: BackendCallSpec): Promise<BackendCallOutcome> {
+  const spec: BackendCallSpec = given.request.kind === 'judgment'
+    ? { ...given, request: { ...given.request, evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) } }
+    : given;
   const r = spec.request;
   const seat: UnitSeatRef = r.kind === 'judgment' ? { role: r.dispatch.role, tier: r.dispatch.tier } : { role: 'build', tier: r.dispatch.tier };
   const role: Role = seat.role;
@@ -530,7 +546,9 @@ export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise
   const { session } = spec;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
-  const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, system: spec.system, evidenceDirs: spec.evidenceDirs };
+  const c: BackendCall = {
+    kind: 'claude-judgment', role: spec.role, triple, session, schemaText, system: spec.system, evidenceDirs: judgmentReadDirs(ctx, spec.evidenceDirs),
+  };
   const stdin = inputFile(ctx.runDir, promptBytes(c, spec.rendered), 'prompt.txt');
   const env = backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({

@@ -98,7 +98,6 @@ import {
   type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, specRemoves,
   specWitnesses,
 } from '../core/records.ts';
-import { readsDeniedOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, matchesPattern, repoPath, repoPattern,
@@ -862,27 +861,6 @@ function planCheckPriorInvalid(ctx: StageContext, planUnit: PlanUnit, spec: Spec
   return judged.kind === 'refused' ? judged.reasons.join('; ') : null;
 }
 
-/** Whether the CLI refused a read of any call of a judgment attempt (its first call and a repair turn share one session). */
-function attemptReadRefused(ctx: StageContext, parent: StageParent): boolean {
-  return attemptOps(ctx, parent, 'proc.spawn').some((i) => {
-    if (i.expect.subject.purpose !== 'backend') return false;
-    const c = spawnCall(ctx, i);
-    return c?.kind === 'result' && readRefused(c);
-  });
-}
-
-/**
- * Whether the CLI refused any read of a judgment's session (reads.json `denied`; paid M4b run 5): an approve after one
- * may rest on evidence the session never opened, so a gate or plan-check records `read-denied` in its place (one
- * uncharged retry, then an `env` park). A judgment runs on Claude only, and the adapter writes a Claude call's reads.json
- * before its result.json, so a missing one is a loud error.
- */
-export function readRefused(called: BackendCallOutcome): boolean {
-  const reads = runnerFiles(called.invDir, called.inv).read('reads.json');
-  if (reads === null) throw new Error(`${called.inv}: a judgment call's result without its reads.json`);
-  return readsDeniedOf(reads).length > 0;
-}
-
 /**
  * Records a plan-check attempt from its call: the live one, or one recovery closed after a crash (consumed
  * by the driver, never asked again). Re-entrant: a spec patch or risk raise this attempt already made is
@@ -931,8 +909,6 @@ export async function planCheckRead(
   if (judged.kind === 'refused') return done(record(ctx, parent, 'malformed'));
   if (judged.kind === 'unanswered') throw new Error(`${called.inv}: a successful plan-check call without an answer to judge`);
   const { out, acceptance } = judged;
-  // Paid M4b run 5: an approve from a session the CLI refused a read (in either of the attempt's calls) is no approval.
-  if (out.decision === 'approve' && attemptReadRefused(ctx, parent)) return done(record(ctx, parent, 'read-denied'));
   // R17: each vision conflict opens a P3 finding for the checkpoint (a re-read merges into it), whatever the decision; it
   // is never a redirect by itself.
   for (const c of out.visionConflict) openFinding(ctx.journal, visionConflictDraft({ unit: unit.id, attempt: parent.attempt, clauses: c.clauses, note: c.note }));

@@ -417,7 +417,7 @@ export const STAGE_OUTCOME_KINDS = {
   reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed'],
   // M4a rev 3 (E): `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check call, the
   // build assesses in session).
-  // Paid M4b run 5: `read-denied`, as at the gate.
+  // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
   // Scope growth (2026-10-15): `scope-growth` (the answer proposed scope growth code verified: a hold until the root agent's
   // `scope accept|reject <unit>`, src/commands/scope.ts).
   'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'in-session', 'read-denied', 'scope-growth'],
@@ -442,8 +442,10 @@ export const STAGE_OUTCOME_KINDS = {
     'witness-lane-missing', 'plan-defect', 'scope-growth',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
-  // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry,
-  // `readRefused`, src/pipeline/stages.ts).
+  // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
+  // TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): no longer recorded since 2026-10-16, when the judge's read
+  // surface widened to the repository and the run dir and a refused read stopped voiding an approval; kept, with its
+  // transition row, so a 1.0.0-dev.11 log whose latest gate or plan-check outcome is one still folds and retries.
   gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied'],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).

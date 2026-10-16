@@ -545,10 +545,10 @@ export type ToolRead =
   | Readonly<{ tool: 'Read'; path: string }>
   | Readonly<{ tool: 'Grep' | 'Glob'; pattern: string; path: string | null }>;
 /**
- * What a Claude session read, in call order, from its stream-json stdout, and the reads the CLI refused (`denied`:
- * the result event's `permission_denials` of Read, Grep and Glob, a path outside the cwd and every `--add-dir`). A
- * gate's or plan-check's approve binds `denied`: one from a session refused a read is not an approval (`read-denied`,
- * `readRefused`, src/pipeline/stages.ts). `denied` is absent from a reads.json an executor before it wrote (`readsDeniedOf`).
+ * What a Claude session read, in call order, from its stream-json stdout (its subagents' reads included), and the reads
+ * the CLI refused (`denied`: the result event's `permission_denials` of Read, Grep and Glob, a path outside the cwd and
+ * every `--add-dir`). An audit and eval record (2026-10-16): no judgment is decided on it. `denied` is absent from a
+ * reads.json an executor before paid M4b run 5 wrote.
  */
 export type ReadsFile = InvocationBinding & Readonly<{ reads: readonly ToolRead[]; denied?: readonly ToolRead[] }>;
 
@@ -1487,6 +1487,7 @@ export const NEEDS_USER_REASONS = [
   // changed by the root agent's `apply` after the first admission (G11).
   'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
   // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
+  // No longer raised since 2026-10-16 (a refused read voids nothing); kept so a 1.0.0-dev.11 item still reads (scaffolding).
   'read-denied',
   // Scope growth (2026-10-15), blocking: a plan-check proposed scope growth code verified; the unit is held until the root
   // agent's `scope accept | reject <unit>`.

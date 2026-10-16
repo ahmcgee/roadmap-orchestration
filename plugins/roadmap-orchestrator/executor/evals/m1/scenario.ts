@@ -88,8 +88,8 @@ const SMOKE_OK: JsonValue = { ok: true };
  * persisted; a plan-check's is (2026-10-15: its repair turn may resume it).
  */
 const judgment = (role: string): Expect => (role === 'planCheck'
-  ? { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] }
-  : { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] });
+  ? { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] }
+  : { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] });
 
 /** The smoke `roadmap start` runs first: Claude, then Codex under `default` (BACKENDS order); Claude alone under `claude-only`. */
 function smokeSteps(profile: ProfileName): readonly Step[] {
