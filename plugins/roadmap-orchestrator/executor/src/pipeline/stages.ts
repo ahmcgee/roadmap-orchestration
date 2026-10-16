@@ -762,10 +762,33 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
  * the answer is unusable, together (its schema, then the vision clauses its conflicts cite, the contracts and rulings its
  * patch cites, and its patch: applied to the spec it judged and validated through the apply core). `answered`: usable.
  */
-type PlanCheckJudged =
+type PlanCheckJudged = Exclude<Judged<PlanCheckOutput>, Readonly<{ kind: 'answered' }>> | Readonly<{ kind: 'answered'; out: PlanCheckOutput; acceptance: boolean }>;
+
+/**
+ * A judgment call's answer against its schema, the first check of every role's repair turn (`repairTurnOf`, dispatch.ts).
+ * `unanswered`: the call gave no answer to judge (lost, a refusal, a fault, an interruption, a backend park: `verdictOf`
+ * reads it). `refused`: why the answer is off its schema (the adapter's check, then the role's validator). `answered`: the
+ * validated answer, which the role may still refuse for its own reasons.
+ */
+export type Judged<T> =
   | Readonly<{ kind: 'unanswered' }>
   | Readonly<{ kind: 'refused'; reasons: readonly string[] }>
-  | Readonly<{ kind: 'answered'; out: PlanCheckOutput; acceptance: boolean }>;
+  | Readonly<{ kind: 'answered'; out: T }>;
+
+export function judgedAnswer<T>(called: BackendCallOutcome, validate: (value: unknown) => T): Judged<T> {
+  if (called.kind !== 'result') return { kind: 'unanswered' };
+  const { outcome, backendErrors } = called.result;
+  // A usage limit or capacity error is a backend park whatever else the call left (`verdictOf`).
+  if (backendErrors.some((e) => (BACKEND_PARK_CLASSES as readonly string[]).includes(e.class))) return { kind: 'unanswered' };
+  if (outcome.kind === 'malformed') return { kind: 'refused', reasons: [`the answer does not match its schema: ${outcome.detail}`] };
+  if (outcome.kind !== 'success') return { kind: 'unanswered' };
+  try {
+    return { kind: 'answered', out: validate(outcome.value) };
+  } catch (error) {
+    if (error instanceof SchemaError) return { kind: 'refused', reasons: [`the answer is malformed: ${error.message}`] };
+    throw error;
+  }
+}
 
 /**
  * Judges plan-check call `called` of `unit`. `judged`: the spec it judged and the tip it read, for its patch; null when
@@ -773,21 +796,11 @@ type PlanCheckJudged =
  * proposing growth code verifies is a hold, nothing else of it applied, so its patch (and the patch's cites) is not judged.
  */
 function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOutcome, judged: Readonly<{ spec: SpecM1; tip: Sha }> | null): PlanCheckJudged {
-  if (called.kind !== 'result') return { kind: 'unanswered' };
-  const { outcome, backendErrors } = called.result;
-  // A usage limit or capacity error is a backend park whatever else the call left (`verdictOf`).
-  if (backendErrors.some((e) => (BACKEND_PARK_CLASSES as readonly string[]).includes(e.class))) return { kind: 'unanswered' };
-  if (outcome.kind === 'malformed') return { kind: 'refused', reasons: [`the answer does not match its schema: ${outcome.detail}`] };
-  if (outcome.kind !== 'success') return { kind: 'unanswered' };
-  const acceptance = isAcceptanceCall(ctx, called.inv);
-  let out: PlanCheckOutput;
-  try {
-    // E (R59): the acceptance shape's answer may only add or replace witness items and facts, and cite.
-    out = acceptance ? validatePlanCheckAcceptanceOutput(outcome.value) : validatePlanCheckOutput(outcome.value);
-  } catch (error) {
-    if (error instanceof SchemaError) return { kind: 'refused', reasons: [`the answer is malformed: ${error.message}`] };
-    throw error;
-  }
+  // E (R59): the acceptance shape's answer may only add or replace witness items and facts, and cite.
+  const acceptance = called.kind === 'result' && called.result.outcome.kind === 'success' && isAcceptanceCall(ctx, called.inv);
+  const answer = judgedAnswer(called, acceptance ? validatePlanCheckAcceptanceOutput : validatePlanCheckOutput);
+  if (answer.kind !== 'answered') return answer;
+  const out: PlanCheckOutput = answer.out;
   const reasons = [...visionCiteReasons(ctx, out)];
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const holds = judged !== null && verifiedGrowth(ctx, unit, judged.spec, effectiveScope(pinned), judged.tip, out.scopeGrowth).proposals.length > 0;
@@ -863,7 +876,7 @@ function planCheckPriorInvalid(ctx: StageContext, planUnit: PlanUnit, spec: Spec
 }
 
 /** Whether the CLI refused a read of any call of a judgment attempt (its first call and a repair turn share one session). */
-function attemptReadRefused(ctx: StageContext, parent: StageParent): boolean {
+export function attemptReadRefused(ctx: StageContext, parent: StageParent): boolean {
   return attemptOps(ctx, parent, 'proc.spawn').some((i) => {
     if (i.expect.subject.purpose !== 'backend') return false;
     const c = spawnCall(ctx, i);

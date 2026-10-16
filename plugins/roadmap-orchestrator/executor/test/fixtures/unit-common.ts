@@ -170,7 +170,7 @@ export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPa
 // ---------------------------------------------------------------------------------------------------
 // Scenario steps
 
-const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] };
+const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] };
 
 export type GateAnswer = Readonly<{
   decision: 'approve' | 'revise' | 'escalate';
@@ -184,9 +184,23 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
   return {
     as: 'claude',
     expect: { ...JUDGMENT, ...expect, argv: [...(JUDGMENT.argv ?? []), ...(expect.argv ?? [])] },
-    acts: [...before, { type: 'emit', value: {
-      decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-    } as JsonValue }],
+    acts: [...before, { type: 'emit', value: gateAnswer(a) }],
+  };
+}
+
+const gateAnswer = (a: GateAnswer): JsonValue => ({
+  decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+}) as JsonValue;
+
+/**
+ * dev.12: a gate's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which the stdin
+ * carries (`stdinContains` adds to the directive's opening).
+ */
+export function gateRepairStep(a: GateAnswer, stdinContains: readonly string[] = []): Step {
+  return {
+    as: 'claude',
+    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
+    acts: [{ type: 'emit', value: gateAnswer(a) }],
   };
 }
 

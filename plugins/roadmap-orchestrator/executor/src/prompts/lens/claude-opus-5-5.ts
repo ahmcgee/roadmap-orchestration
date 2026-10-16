@@ -18,14 +18,14 @@
 // lens-agnostic, since one audit merges findings across lenses on paths, obligation and cause (H7, R62); a specs-only
 // drift runs the vision lens over the changed specs alone (H2, R61).
 // M4b (paid run 3, reviewed 2026-10-09 against the same guides): the vacuity mutant is exact old/new replacements, not a
-// hand-written unified diff (its hunk counts were miscounted and git refused it); a lens whose draft was refused is asked
-// once more with <previous_report> naming each refused draft and why.
+// hand-written unified diff (its hunk counts were miscounted and git refused it). dev.12: a refused draft goes back in
+// the lens's own session (the one judgment repair turn, src/prompts/directives.ts), not a <previous_report> block.
 // 2026-10-16 (lens-range fix, reviewed against the same guides): the range and owner diffs are bounded; a file not shown
 // is listed under <not_inlined> with the exact command that prints it, and the report covers only what the lens was
 // shown or read (<reading_the_range>); a long outstanding range is reviewed one chunk of publications per call.
 import type { LensInputs, PromptModule } from '../inputs.ts';
 import {
-  boundedDiffText, documentsXml, findingViewsText, lensRetryText, obligationsText, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
+  boundedDiffText, documentsXml, findingViewsText, obligationsText, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
 import type { LensKind } from '../../holistic/types.ts';
 import { LENS_SCHEMA, MAX_LENS_FINDINGS, MAX_PREMISES } from '../schemas.ts';
 
@@ -91,7 +91,7 @@ function owners(i: LensInputs): string {
 export const PROMPT: PromptModule<'lens'> = {
   system,
   schema: LENS_SCHEMA,
-  fields: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly', 'retry'],
+  fields: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   render: (i) => `<vision>
 ${visionText(i.vision)}
 </vision>
@@ -130,7 +130,7 @@ ${owners(i)}
 ${findingViewsText(i.priorFindings)}
 </prior_findings>
 
-<checkout>${i.checkout} (your working directory, at ${i.range.audited})</checkout>${specsOnlyText(i.specsOnly)}${lensRetryText(i.retry)}
+<checkout>${i.checkout} (your working directory, at ${i.range.audited})</checkout>${specsOnlyText(i.specsOnly)}
 
 Audit the tree at ${i.range.audited} through the ${i.lens} lens, against the vision first, then return your report.`,
 };

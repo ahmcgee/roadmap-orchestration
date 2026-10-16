@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { adapt, writeResult } from '../src/backends/adapter.ts';
 import { type BackendCall, backendArgv, freshClaudeImplementerSession, freshJudgmentSession, resumedJudgmentSession } from '../src/backends/argv.ts';
 import { readClaude } from '../src/backends/claude.ts';
-import { judgmentSessionId } from '../src/core/ids.ts';
+import { type InvocationId, judgmentSessionId } from '../src/core/ids.ts';
+import { absPath } from '../src/core/values.ts';
+import { repairTurnOf } from '../src/pipeline/dispatch.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { tmpDir } from './helpers/repo.ts';
 import { readsDeniedOf } from '../src/core/upgrade.ts';
 import { RUNNER_FILE_READERS } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
@@ -169,28 +173,25 @@ describe('claude', () => {
   });
 
   describe('claude.fresh-session-id', () => {
-    it('every judgment session is freshly minted, launched with --session-id and never resumed', () => {
+    it('every judgment session is freshly minted and launched with --session-id, persisted for its repair turn', () => {
       const a = freshJudgmentSession();
       const b = freshJudgmentSession();
       assert.notEqual(a.id, b.id);
       const argv = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: TRIPLE, session: a, schemaText: '{}', system: 'S', evidenceDirs: [] });
       assert.equal(argv[argv.indexOf('--session-id') + 1], a.id);
       assert.equal(argv.includes('--resume'), false);
-      assert.equal(argv.includes('--no-session-persistence'), true);
+      assert.equal(argv.includes('--no-session-persistence'), false);
       assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Grep,Glob');
     });
-    it('a repair role (plan-check, checkpoint) persists its fresh session and resumes it with --resume; any other judgment resuming is refused', () => {
+    it('every judgment role (dev.12) persists its fresh session and resumes it with --resume for its repair turn', () => {
       const id = judgmentSessionId('18b3bbf3-98ce-4ced-87c2-639d61b25ef1');
-      for (const role of ['planCheck', 'checkpoint'] as const) {
+      for (const role of ['planCheck', 'gate', 'lens', 'checkpoint', 'packReview', 'flow'] as const) {
         const fresh = backendArgv({ kind: 'claude-judgment', role, triple: TRIPLE, session: { backend: 'claude', mode: 'fresh', id }, schemaText: '{}', system: 'S', evidenceDirs: [] });
         assert.equal(fresh[fresh.indexOf('--session-id') + 1], id);
         assert.equal(fresh.includes('--no-session-persistence'), false, `${role}: its session persists for the repair turn`);
         const repair = backendArgv({ kind: 'claude-judgment', role, triple: TRIPLE, session: resumedJudgmentSession(id), schemaText: '{}', system: 'S', evidenceDirs: [] });
         assert.equal(repair[repair.indexOf('--resume') + 1], id);
         assert.equal(repair.includes('--session-id'), false);
-      }
-      for (const role of ['gate', 'lens', 'packReview', 'flow'] as const) {
-        assert.throws(() => backendArgv({ kind: 'claude-judgment', role, triple: TRIPLE, session: resumedJudgmentSession(id), schemaText: '{}', system: 'S', evidenceDirs: [] }), /never resumes/);
       }
     });
     it('a Codex judgment call is unrepresentable', () => {
@@ -201,17 +202,35 @@ describe('claude', () => {
       };
       assert.equal(call.kind, 'claude-judgment');
     });
-    it('launch.json refuses a judgment terminal whose session resumes, but a repair role\'s', () => {
+    it('launch.json reads a judgment terminal whose session resumes (its repair turn) on every judgment role, and refuses another mode', () => {
       const invDir = fixtureInvocation('claude-judgment', EXIT0);
       const launch = JSON.parse(readFileSync(join(invDir, 'launch.json'), 'utf8')) as { terminal: { role: string; session: { mode: string } } };
-      launch.terminal.session.mode = 'resume';
-      launch.terminal.role = 'gate';
+      launch.terminal.session.mode = 'continue';
       assert.throws(() => RUNNER_FILE_READERS['launch.json'](launch, 'launch.json'), SchemaError);
-      for (const role of ['planCheck', 'checkpoint']) {
+      launch.terminal.session.mode = 'resume';
+      for (const role of ['planCheck', 'gate', 'lens', 'checkpoint', 'packReview', 'flow']) {
         launch.terminal.role = role;
         const read = RUNNER_FILE_READERS['launch.json'](launch, 'launch.json');
         assert.ok(read.terminal.type === 'backend' && read.terminal.session.backend === 'claude' && read.terminal.session.mode === 'resume');
       }
+    });
+    it('repairTurnOf: a persisted fresh judgment call takes a repair turn (its session resumed, its schema and cwd); a dev.11 unpersisted one and a repair turn itself take none', () => {
+      const runDir = absPath(tmpDir('run'));
+      const src = fixtureInvocation('claude-judgment', EXIT0);
+      const launchPath = join(src, 'launch.json');
+      const launch = JSON.parse(readFileSync(launchPath, 'utf8')) as { inv: InvocationId; argv: string[]; cwd: string; terminal: { session: { mode: string; id: string } } };
+      const place = (): void => cpSync(src, invocationDir(runDir, launch.inv), { recursive: true });
+      assert.ok(launch.argv.includes('--no-session-persistence'), 'the dev.11 capture ran unpersisted');
+      place();
+      assert.equal(repairTurnOf(runDir, launch.inv), null, 'an earlier release\'s unpersisted session takes no repair turn');
+      writeFileSync(launchPath, JSON.stringify({ ...launch, argv: launch.argv.filter((a) => a !== '--no-session-persistence') }));
+      place();
+      const turn = repairTurnOf(runDir, launch.inv);
+      assert.deepEqual(turn === null ? null : [turn.session, turn.cwd], [resumedJudgmentSession(judgmentSessionId(launch.terminal.session.id)), launch.cwd]);
+      assert.deepEqual(turn!.schema, JSON.parse(readFileSync(join(BACKEND_FIXTURES, 'schema.json'), 'utf8')));
+      writeFileSync(launchPath, JSON.stringify({ ...launch, argv: launch.argv.filter((a) => a !== '--no-session-persistence'), terminal: { ...launch.terminal, session: { ...launch.terminal.session, mode: 'resume' } } }));
+      place();
+      assert.equal(repairTurnOf(runDir, launch.inv), null, 'a repair turn takes no further one');
     });
     it('a judgment result carries the launched session id', () => {
       const r = adapt(fixtureInvocation('claude-judgment', EXIT0));

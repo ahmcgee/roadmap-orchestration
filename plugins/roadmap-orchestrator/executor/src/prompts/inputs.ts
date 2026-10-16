@@ -304,8 +304,6 @@ export type LensInputs = Readonly<{
    * judges these against the vision; the code range is not its subject); null: a full audit.
    */
   specsOnly: readonly RenderedSpec[] | null;
-  /** M4b (paid run 3): this lens asked again because drafts of its previous report on this tree were refused; null: a first call. */
-  retry: LensRetry | null;
 }>;
 
 /** A file of a range a lens was not shown: a plan-declared derived output, or over what the budget left (src/holistic/lensdiff.ts). */
@@ -323,12 +321,6 @@ export type BoundedDiff = Readonly<{
   inlined: string;
   omitted: readonly OmittedFile[];
   unlisted: number;
-}>;
-
-/** A lens asked again: the drafts refused with why, and the claims and causes of the previous report's admitted findings. */
-export type LensRetry = Readonly<{
-  refused: readonly Readonly<{ claim: string; cause: string; reason: string }>[];
-  recorded: readonly Readonly<{ claim: string; cause: string }>[];
 }>;
 
 /**
@@ -492,7 +484,7 @@ export const ROLE_INPUTS = {
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
     'checks',
   ],
-  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly', 'retry'],
+  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
     'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis',
@@ -755,14 +747,6 @@ export function packReviewDeltaText(delta: PackReviewDelta | null): string {
 export function specsOnlyText(specsOnly: readonly RenderedSpec[] | null): string {
   if (specsOnly === null) return '';
   return `\n\n<specs_only>\nThis audit runs because a plan revision changed only these units' specs; the product code is unchanged since the code lenses last read it, and only the vision lens runs. Judge what these specs now ask for against the vision. Do not audit the code again.\n${documentsXml(specsOnly.map((s) => ({ source: `spec of unit ${s.unit}, revision ${s.rev} (changed by the revision this audit follows)`, content: s.markdown })))}\n</specs_only>`;
-}
-
-/** M4b (paid run 3): a lens asked again, told which drafts of its previous report were refused and why. */
-export function lensRetryText(retry: LensRetry | null): string {
-  if (retry === null) return '';
-  const refused = retry.refused.map((x) => `- claim: ${x.claim}\n  cause: ${x.cause}\n  refused: ${x.reason}`).join('\n');
-  const recorded = retry.recorded.length === 0 ? '(none)' : retry.recorded.map((x) => `- claim: ${x.claim}\n  cause: ${x.cause}`).join('\n');
-  return `\n\n<previous_report>\nThis lens already reported on this tree. The executor could not admit these findings of that report, so they are not recorded:\n${refused}\nReport each of them again with the defect corrected, under the same cause: copy each edit's old text exactly from the file at the audited SHA, with enough lines that it occurs exactly once, and name a lane from the obligations. These findings of that report are recorded; do not report them again:\n${recorded}\nReport anything else your lens finds as usual.\n</previous_report>`;
 }
 
 /** A path as one shell word (single-quoted). */

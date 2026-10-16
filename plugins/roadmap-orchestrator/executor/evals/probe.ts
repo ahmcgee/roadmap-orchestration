@@ -452,7 +452,7 @@ async function main(): Promise<void> {
 
   const lensInputs: LensInputs = {
     vision: MINI_VISION, lens: 'vision', obligations: MINI_OBLIGATIONS, range: { audited: HEAD, diff: { from: TREE, to: HEAD, stat: { text: ' convert.ts | 2 ++\n 1 file changed, 2 insertions(+)\n', full: true }, inlined: MINI_DIFF, omitted: [], unlisted: 0 } }, owners: [], priorFindings: [],
-    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir, specsOnly: null, retry: null,
+    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir, specsOnly: null,
   };
   await backend(ctx, 'm3.lens', seatCall(holistic, 'lens', 'arc', { role: 'planCheck', tier: 'high' }, 'm3-lens', m3Dir, lensInputs),
     validates("m3.lens", "lens", () => true));

@@ -188,7 +188,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null, retry: null,
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
     },
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
@@ -199,7 +199,6 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
       specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
-      retry: { refused: [{ claim: 'RETRY-CLAIM-B', cause: 'RETRY-CAUSE-B', reason: 'RETRY-REASON-B' }], recorded: [{ claim: 'RECORDED-CLAIM-B', cause: 'RECORDED-CAUSE-B' }] },
     },
   ],
   checkpoint: [
@@ -646,10 +645,9 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
     assert.equal(briefs.size, LENS_KINDS.length);
     assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vision' }), /P2 or P3, never P1/);
-    // M4b: the mutant is exact replacements, never a hand-written diff; a retry names each refused draft and why.
+    // M4b: the mutant is exact replacements, never a hand-written diff (a refused draft goes to the repair turn, dev.12).
     assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /edits, one or more exact replacements[\s\S]*occurs exactly once/);
-    assert.doesNotMatch(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff|<previous_report>/);
-    assert.match(mod.render(SAMPLES.lens[1]), /<previous_report>[\s\S]*claim: RETRY-CLAIM-B\n  cause: RETRY-CAUSE-B\n  refused: RETRY-REASON-B[\s\S]*claim: RECORDED-CLAIM-B\n  cause: RECORDED-CAUSE-B[\s\S]*<\/previous_report>/);
+    assert.doesNotMatch(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff/);
   });
 
   it('the lens keeps the anti-spiral rules: the finding bar, prior findings not repeated, no reasoning field, nobody will answer', () => {

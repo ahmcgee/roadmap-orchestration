@@ -21,7 +21,7 @@ import { recover } from '../src/recover/recover.ts';
 import { status } from '../src/status.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { FlowLog, PLAN_A, commandAt, inputs, planOf } from './helpers/flowlog.ts';
-import { INVALID_FLOW_ANSWER, flowAction, flowAnswer, flowStep } from './helpers/holistic.ts';
+import { INVALID_FLOW_ANSWER, flowAction, flowAnswer, flowStep, jobRepairStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -112,21 +112,22 @@ test('flow.host-and-dropped: host advice raises flow-host; a proposal off the co
   }
 });
 
-test('flow.invalid-retry: an answer the reader refuses is asked once more, told why; a second refusal ends invalid with a flow-invalid item', T, async () => {
+test('flow.invalid-repair: an answer the reader refuses takes the repair turn in its own session, told why; refused again, the run ends invalid with a flow-invalid item', T, async () => {
   const { d, r, ctx } = arc([
-    flowStep('flow-1', INVALID_FLOW_ANSWER), flowStep('flow-1', flowAnswer()),
-    flowStep('flow-2', INVALID_FLOW_ANSWER), flowStep('flow-2', INVALID_FLOW_ANSWER),
+    flowStep('flow-1', INVALID_FLOW_ANSWER), jobRepairStep('flow-1', flowAnswer()),
+    flowStep('flow-2', INVALID_FLOW_ANSWER), jobRepairStep('flow-2', INVALID_FLOW_ANSWER),
   ]);
   try {
     assert.deepEqual(await runFlowJob(ctx, ['requested'], null), { kind: 'ended', job: 'flow-1', outcome: 'done' });
-    const [first, retry] = flowCalls(d);
-    assert.doesNotMatch(first!.stdin, /previous_answer_refused/);
-    assert.match(retry!.stdin, /<previous_answer_refused>[^]*refused by the report's reader/);
+    const [first, repair] = flowCalls(d);
+    assert.doesNotMatch(first!.stdin, /Your answer was refused/);
+    assert.equal(repair!.argv[repair!.argv.indexOf('--resume') + 1], first!.argv[first!.argv.indexOf('--session-id') + 1], 'the repair turn resumes the refused answer\'s session');
+    assert.match(repair!.stdin, /^Your answer was refused: /);
     assert.deepEqual(itemsOf(r, 'flow-invalid'), [], 'a noAction raises nothing');
     assert.deepEqual(await runFlowJob(ctx, ['requested'], null), { kind: 'ended', job: 'flow-2', outcome: 'invalid' });
     const ended = flowFacts(r, 'flow-ended')[1]!;
     assert.deepEqual([ended.proposal, ended.dropped, ended.constraint.judged], [null, null, null]);
-    assert.equal(flowCalls(d).length, 4, 'one retry each, no third call');
+    assert.equal(flowCalls(d).length, 4, 'one repair turn each, no third call');
     const [item] = itemsOf(r, 'flow-invalid');
     assert.match(readNeedsUser(r.ctx.runDir, item!)!.summary, /Flow run flow-2 gave no valid report twice/);
   } finally {

@@ -84,12 +84,10 @@ const BUILD_REPORT: JsonValue = { summary: 'Did the work.', changedPaths: [], la
 const SMOKE_OK: JsonValue = { ok: true };
 
 /**
- * A judgment call: read-only tools, a fresh session id, never a resume or a permission mode. A gate's session is not
- * persisted; a plan-check's is (2026-10-15: its repair turn may resume it).
+ * A judgment call: read-only tools, a fresh session id, never a resume or a permission mode. Its session persists (dev.12:
+ * every judgment's repair turn may resume it).
  */
-const judgment = (role: string): Expect => (role === 'planCheck'
-  ? { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] }
-  : { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] });
+const judgment = (_role: string): Expect => ({ argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] });
 
 /** The smoke `roadmap start` runs first: Claude, then Codex under `default` (BACKENDS order); Claude alone under `claude-only`. */
 function smokeSteps(profile: ProfileName): readonly Step[] {

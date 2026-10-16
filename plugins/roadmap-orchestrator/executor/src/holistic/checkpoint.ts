@@ -54,7 +54,8 @@
 //      checkpoint, on unchanged grounds, are not listed (`issuesUnchangedSince`, src/holistic/intake.ts `issueReuse`). A resumed job consumes a
 //      call it made; a call interrupted (a pause, a stop, a backend park) leaves the job running and a later run asks
 //      again as the next attempt. A refusal or fault is an invalid decision. 2026-10-15: an answer off its schema, or
-//      whose bundle the activation finds invalid, first takes one repair turn: its own session resumed (`repairCall`)
+//      whose bundle the activation finds invalid, first takes the one judgment repair turn (dev.12 every judgment role's,
+//      `repairTurnOf` in src/pipeline/dispatch.ts): its own session resumed (`repairCall`)
 //      with every reason, as the next attempt, whose answer is decided (refused again: invalid). A repair turn the job
 //      already made is consumed in place of the answer it repaired (`madeRepair`).
 //   4b. Drift (paid M4b run 3). A decision is checked at its activation against the arc as it is then, strictly; what
@@ -73,13 +74,12 @@
 //
 // OR-Q1: `designParkRoute` tells the scheduler what a design park waits for: the checkpoint (its park item is held
 // back), the owner (`respec-second`, raised here), or its own park item (the checkpoint decided nothing applicable).
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
+import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
 import { type CheckpointIssues, type Parent, type TestRef, testRefKey } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type JsonValue, canonicalJson } from '../core/json.ts';
+import { canonicalJson } from '../core/json.ts';
 import { type FindingId, type InvocationId, type JobId, type LaneId, type Sha, type Sha256Hex, type UnitId, INTEGRATION_SLOT, invocationId, parseInvocationId, canonicalIds } from '../core/ids.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -97,7 +97,7 @@ import {
 import { DEFAULT_CONVERGENCE_K, type PlanM1, advancesOf, parsePlan } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
-  type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, verdictOf,
+  type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, repairTurnOf, runOp, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { arcJourneyLane, jobSeriesCheckout, laneEnvId, observations, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
@@ -824,8 +824,8 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
 }
 
 /**
- * 2026-10-15 (arc feedback #3): the repair turn of the answer call `inv` gave as attempt `of`: the same session resumed once
- * (`--resume`; the checkpoint's fresh call persists it) with every reason the answer was refused (its schema, or the
+ * 2026-10-15 (arc feedback #3; dev.12 the one judgment repair turn, `repairTurnOf`): the repair turn of the answer call
+ * `inv` gave as attempt `of`: the same session resumed once with every reason the answer was refused (its schema, or the
  * bundle's validation), in the checkout of the captured head made again (a resumed Claude session is found by its cwd),
  * with the call's own schema. The next attempt after `of`; an interrupted one is asked again as the one after.
  */
@@ -838,18 +838,17 @@ async function repairCall(ctx: CheckpointContext, s: Captured, inv: InvocationId
     if (superseded !== null) return { kind: 'superseded', detail: superseded };
     const skip = checkpointSkip(ctx);
     if (skip !== null) return { kind: 'skipped', reason: skip };
-    const launch = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('launch.json');
-    if (launch === null || launch.terminal.type !== 'backend' || launch.terminal.role !== 'checkpoint') throw new Error(`${inv}: a checkpoint call without its checkpoint launch.json`);
-    const { schemaPath, session } = launch.terminal;
-    if (session.backend !== 'claude' || session.mode !== 'fresh') throw new Error(`${inv}: a checkpoint repair turn follows a fresh Claude session, not ${canonicalJson(session)}`);
+    const turn = repairTurnOf(ctx.runDir, inv);
+    if (turn === null) throw new Error(`${inv}: a checkpoint's fresh call persists its session for its repair turn`);
     const prompt = promptFor('checkpoint', arcSeat(ctx, 'checkpoint').triple.model);
     const checkout = checkpointCheckout(ctx, s.job);
+    if (turn.cwd !== checkout) throw new Error(`${inv}: its session ran in ${turn.cwd}, not the job's checkout ${checkout}`);
     await removeJobCheckouts(ctx, s.job);
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${s.job}`, jobParent(s.job), { path: checkout, checkout: { type: 'detached', at: s.headSha } });
     const called = await withCpu(ctx, s.job, () => supersedable(ctx, s, () => callArcRole(ctx, {
-      job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered: judgmentRepairDirective(reasons), schema: JSON.parse(readFileSync(schemaPath, 'utf8')) as JsonValue,
+      job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered: judgmentRepairDirective(reasons), schema: turn.schema,
       cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(architecture(ctx, s.headSha))],
-      deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: resumedJudgmentSession(session.id),
+      deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: turn.session,
     })));
     await removeCheckout(ctx, s.job, checkout);
     if (called.kind === 'result' && called.result.outcome.kind === 'cancelled' && called.result.outcome.reason === 'supersede') continue;

@@ -246,6 +246,18 @@ started on dev.10 whose obligations declare no witness files is read as undeclar
 | `routingRev` (dispatch facts, spawn subjects, meter facts, `judgment-inputs`, `launch.json` terminal), `status.routing` (efficient judgment, owner ruling 2026-10-15) | no shape change: the built-in seats put planCheck.low/med, gate.low, `lens.arc` and `flow.arc` on efficient, whose judgment binding is Sonnet 5.5 high in both profiles (`ClassBinding{build, judgment}`), so every resolved table and rev moves; `status.routing.seats` names the new classes | none read: OR-L3 binds every revision through HEAD's seats, so an adopted dev.9 arc resolves to new revs and each unit re-pins at its next dispatch with its implementer seat unchanged (no build seat moved): nothing parks `routing-changed`. `status` aliases a dev.9 rev to its revision's current table (`preDev10RevAlias` over `PRE_DEV10_BUILTIN_SEATS`; scaffolding), so its spend resolves, attributed to today's bindings |
 | `PROMPTS` (not persisted) | Sonnet 5.5 `inherits` for every judgment role (planCheck, gate, lens, packReview, flow from Opus; checkpoint from Fable) | none |
 
+**1.0.0-dev.11 → 1.0.0-dev.12 (one judgment repair turn, W4).** `SCHEMA_VERSION` stays 1; no record changes shape.
+Every judgment role's refused answer (its schema, or the role's validator) takes one repair turn in its own session
+(DESIGN-1.0.md §2.1), so every judgment's fresh call persists its session. The scaffolding is in `repairTurnOf` and
+`isRepairTurnOf` (src/pipeline/dispatch.ts) and the lens loop (src/holistic/audit.ts): an arc started on dev.11 is
+adopted, a running audit, flow run or pack review included.
+
+| Record | Change | Read-time default for dev.11 state |
+|---|---|---|
+| `launch.json` `terminal.session` (`JudgmentSession`) | `mode: resume` on every judgment role (its repair turn); no judgment argv carries `--no-session-persistence` | a dev.11 call launched with `--no-session-persistence` (a gate, lens, pack-review or flow call) takes no repair turn: its refusal stands (`repairTurnOf`, warned on stderr; scaffolding) |
+| arc-backend `attempt` (lens, flow, pack review) | a repair turn is the refused call's next attempt (a lens's: the next number after every lens's first) | a dev.11 fresh re-ask recorded there (a lens's refused draft, a flow answer) is consumed as the repair turn's answer; after a malformed lens report dev.11 asked nothing, so a call recorded at that number that is not its repair (`isRepairTurnOf`) is another's, and the report takes none (scaffolding) |
+| `LensInputs` (not persisted) | `- retry` | none |
+
 **1.0.0-dev.10 → next (arc feedback 2026-10-16: re-entry names its failure; the checkpoint aimed and rarer; the apply
 rebase and `--vision-edit`).** `SCHEMA_VERSION` stays 1; every change is additive. The scaffolding is
 `reenterFixesDefault`, `applyExpectRevDefault` and `applyVisionEditDefault` in `src/core/upgrade.ts`. An arc started on
@@ -649,8 +661,9 @@ deadline stays the backstop. Every other schema (judgments, the assessment, the 
 
 `terminal` = `backend{purpose: backend|smoke, role, routingRev, schemaPath, outputPath, session}` \|
 `command{purpose: lane|teardown|probe|smoke, expectedExit}`. Sessions: a judgment role takes
-`{backend:'claude', mode:'fresh', id: JudgmentSessionId}`, and (2026-10-15) a repair role (`REPAIR_ROLES`: `planCheck`,
-`checkpoint`) also `mode:'resume'` with the id of its refused answer's session, its one repair turn; `build` takes `claude{fresh|resume, id}` \|
+`{backend:'claude', mode:'fresh', id: JudgmentSessionId}`, or `mode:'resume'` with the id of its refused answer's session,
+its one repair turn (2026-10-15 `planCheck` and `checkpoint`; dev.12 every judgment role, `repairTurnOf` in
+src/pipeline/dispatch.ts; every judgment's fresh call persists its session); `build` takes `claude{fresh|resume, id}` \|
 `codex{fresh}` (Codex mints its thread id) \| `codex{resume, id}`, ids `ImplementerSessionId`.
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
@@ -1507,8 +1520,8 @@ one is refused `unsupported-routing{role: lens|checkpoint, tier: arc, why: no-pr
 inherits every judgment module, "Routing types"; only Codex is refused, as `codex-judgment`). Inputs (vision first, A14): `LensInputs = {vision: VisionInput{rev, clauses, questions, advances} (`visionInputOf`;
 `advances` from the plan at the revision the inputs were captured at),
 lens, obligations: ObligationView[] ({obligation, exempt, observation{key, verdict}|null}), range{from, to, diff},
-owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout, specsOnly, retry:
-{refused: [{claim, cause, reason}], recorded: [{claim, cause}]}|null}` (M4b: `retry` on a lens asked again);
+owners[{unit, head, diff}], priorFindings: FindingView[], contracts, rulings, index, architecture, checkout, specsOnly}`
+(M4b's `retry`, on a lens asked again, is gone in dev.12: a refused draft goes to the lens's repair turn);
 `CheckpointInputs = {vision, trigger, head, plan (rendered), findings, obligations, coverage: VisionCoverage,
 divergences[{id, type, what}], contracts, rulings, index, architecture, direction}`. Outputs (strict; every key
 required): `LensOutput = {findings: [{severity: P1|P2|P3, obligation|null, visionClauses, claim, cause, evidence:
@@ -2693,8 +2706,10 @@ filter keys it across arcs). Crash row ANSWER_RECORD (`answer.after-publish`): a
    ended one is superseded: it neither blocks completion (`openBlocking`) nor holds admission, and `status.packReview`
    shows it `superseded`. It is not open (`openNeedsUser`, run 10 round 2): `status.needsUser` and `watch --actionable`
    leave it out.
-3. **An abandoned review**: a call that gives no valid report (a refusal, a malformed answer, a fault, lost twice: a call
-   recovery closed lost is asked again once, as a checkpoint's is, D0) ends `pack-review-ended{abandoned, findings: []}` with one blocking `pack-review` item saying so; the architect fixes the pack
+3. **An abandoned review**: an answer off its schema or its dispositions first takes the one judgment repair turn
+   (dev.12: its session resumed with why, as the next attempt). A call that gives no valid report (a refusal, a malformed
+   answer after its repair turn, a fault, lost twice: a call recovery closed lost is asked again once, as a checkpoint's
+   is, D0) ends `pack-review-ended{abandoned, findings: []}` with one blocking `pack-review` item saying so; the architect fixes the pack
    (a new key: a superseding review) or acknowledges it.
 4. **The census and splits**: a checkpoint's split never edits the census (Phase 0's); a split child anchored at its
    parent's rule is counted through the ancestor the census names (one state per rule).
@@ -3108,10 +3123,11 @@ sections and marks converted amendments.
     always parses and applies to the audited tree. A recorded pre-M4b answer's `patch` is still checked by `checkPatch`.
     A draft whose mutant cannot be made (a path naming no regular file, `old` absent, repeated or empty, an edit that
     changes nothing, a corrupt recorded patch) or names no arc lane is refused: nothing opened, nothing kept, the reason
-    recorded in `audit-ended.refused{lens, attempt, claim, cause, reason}` and written to the executor's stderr. The lens
-    is then asked once more (a fresh call, `attempt` after every lens's first, numbered in order), its prompt's
-    `<previous_report>` naming each refused draft with its reason and the report's admitted findings; it counts as
-    reported (covered) only when the retry's report is admitted whole, else the audit ends `abandoned` and stays owed.
+    recorded in `audit-ended.refused{lens, attempt, claim, cause, reason}` and written to the executor's stderr. The lens's
+    session then takes its repair turn (dev.12; M4b asked a fresh call with a `<previous_report>` block): resumed as the
+    next `attempt` after every lens's first, numbered in order, told each refused draft's claim, cause and reason, the
+    report's other findings already recorded; it counts as reported (covered) only when the repair turn's report is
+    admitted whole, else the audit ends `abandoned` and stays owed. A report off its schema takes the repair turn too.
     (Run 3's audit-4: the lens's hand-written diff claimed 7 old lines in a 6-line hunk, git refused it as corrupt, the
     finding went to stderr only, and `vacuity` was still reported covered.) `patchedTree` returns `corrupt`; reproduce
     treats it as inapplicable and smoke as inconclusive, so no `mutant.apply` names one.
@@ -3314,7 +3330,8 @@ proposal, cause: rejected | worse | changed | unprovable}`. The prompt renders `
 **The flow role's output** (strict; `FLOW_SCHEMA` in src/prompts/schemas.ts, reader `flowOutput`): `{constraint: {station,
 agree, reason}, diagnosis, proposal: {target, action, rationale, risks} | null, noAction: string | null}`, exactly one of
 `proposal` and `noAction`. The model writes no proposal id. Every key is present (strict mode): a suite-lane action's
-unused `argv`, `reporter` or `cpu` is null and reads as absent. A schema failure is `invalid`. Code's checks after the
+unused `argv`, `reporter` or `cpu` is null and reads as absent. A schema failure takes the one judgment repair turn
+(dev.12; M4b asked a fresh call, the retry told why); refused again, the run is `invalid`. Code's checks after the
 schema drop the proposal with a reason (`FLOW_DROP_REASONS`): `target`, `given`, `rejected-before`, `verdict-open`,
 `elevate-early`, `argv-shape`, `lane-cpu`, `concurrency-cpus`, `sequence-repair-waiting`, `sequence-high-set`,
 `build-class-step`.
