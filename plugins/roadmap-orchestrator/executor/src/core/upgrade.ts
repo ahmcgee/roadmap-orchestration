@@ -207,6 +207,16 @@ export function planCheckScopeGrowthDefault(): readonly never[] {
   return [];
 }
 
+/**
+ * A checkpoint `reenter` op's `fixes` (arc feedback 2026-10-16): absent on an answer recorded before it; read as none, so a
+ * bundle of such an answer not yet applied is refused (a re-entry an apply adds names its failure), while an applied one
+ * stays as recorded. Delete once no arc started on 1.0.0-dev.10 is in flight.
+ */
+export function reenterFixesDefault(): null {
+  warnDefaulted('checkpoint.reenter.fixes', 'a reenter op without fixes (a checkpoint answer written before 2026-10-16); read as none');
+  return null;
+}
+
 // Efficient judgment (owner ruling 2026-10-15, 1.0.0-dev.10): the built-in seat table moved planCheck.low/med, gate.low,
 // lens.arc and flow.arc to the efficient class. Records carry a `routingRev`, never a table, and OR-L3 binds every revision
 // through HEAD's seats and catalogue, so a rev an earlier executor recorded is one HEAD no longer rebuilds. Delete (with

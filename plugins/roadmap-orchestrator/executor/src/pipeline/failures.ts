@@ -20,7 +20,8 @@ import { join } from 'node:path';
 import type { IntentOf } from '../core/events.ts';
 import { type LaneId, type UnitId, invocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { type CommandVerdict, isRed } from '../core/records.ts';
+import { type CommandVerdict, type FailureRef, failureRefOf, isRed, parseFailureRef } from '../core/records.ts';
+import type { FailedOutcome } from '../core/state.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import type { StageParent } from './dispatch.ts';
 import { type HostSuspected, dev6RedClass, specSeriesRoot } from './lanes.ts';
@@ -28,7 +29,8 @@ import { type RedClass, readRedClass } from './redlane.ts';
 
 export const FAILURE_CLASSES = ['red', 'flaky', 'repeat'] as const;
 export type FailureClass = (typeof FAILURE_CLASSES)[number];
-export type LaneFailure = Readonly<{ stage: 'lanes'; attempt: number; lane: LaneId; class: FailureClass; hostSuspected: HostSuspected | null }>;
+/** One lane failure; `ref` is how a re-entry cites it (`fixes`, arc feedback 2026-10-16). */
+export type LaneFailure = Readonly<{ ref: FailureRef; stage: 'lanes'; attempt: number; lane: LaneId; class: FailureClass; hostSuspected: HostSuspected | null }>;
 
 /** A done lane spawn's verdict as its done record states it (a lost runner: `process-fault`); null while not done. */
 function verdictOf(view: JournalView, spawn: IntentOf<'proc.spawn'>): CommandVerdict | null {
@@ -66,7 +68,9 @@ function laneFailure(view: JournalView, runDir: AbsPath, parent: StageParent, la
 
 /** A red lane's failure line by its class (null: none was written, so no rerun ran) and its rerun's verdict; null when not listed. */
 function classified(parent: StageParent, lane: LaneId, cls: RedClass | null, rerunVerdict: CommandVerdict | undefined): LaneFailure | null {
-  const out = (c: FailureClass, hostSuspected: HostSuspected | null): LaneFailure => ({ stage: 'lanes', attempt: parent.attempt, lane, class: c, hostSuspected });
+  const out = (c: FailureClass, hostSuspected: HostSuspected | null): LaneFailure => ({
+    ref: failureRefOf({ type: 'lane', unit: parent.unit, attempt: parent.attempt, lane }), stage: 'lanes', attempt: parent.attempt, lane, class: c, hostSuspected,
+  });
   switch (cls?.kind) {
     case undefined:
       // Red, and a crash before its class was written: no rerun ran.
@@ -109,4 +113,53 @@ export function failuresText(failures: readonly LaneFailure[]): string {
   const one = (f: LaneFailure): string => `lanes#${f.attempt} ${f.lane} ${f.class}${f.hostSuspected === null ? ''
     : ` host-suspected (${f.hostSuspected.signatures.join(', ')}${f.hostSuspected.busy ? '; host busy' : ''})`}`;
   return `Lane failures: ${failures.map(one).join('; ')}.`;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// A re-entry's citation (arc feedback 2026-10-16): `fixes` names a failure of the lineage it re-enters.
+
+/**
+ * A cited failure resolved. `ranUnder`: the failure outcome whose spec, scope, routing and plan the re-entry is compared
+ * with: the outcome cited, or a cited lane failure's lanes outcome (null when that attempt recorded no failure outcome).
+ * `exempt`: why an unchanged retry may cite it, or null for a design failure of the unit's own, for which a re-entry must
+ * change something: a flaky or host-suspected lane, or an outcome that is not the unit's design failure (a retryable park,
+ * an operator environment park, a stop).
+ */
+export type CitedFailure = Readonly<{ ref: FailureRef; text: string; ranUnder: FailedOutcome | null; exempt: string | null }>;
+
+/** Why a failure outcome asks a re-entry to change nothing, or null for a design failure. */
+function outcomeExempt(f: FailedOutcome): string | null {
+  if (f.fact.chargeable) return null;
+  if (f.park === null) return f.fact.class === 'stop' ? 'it stopped the arc, not a design failure of the unit' : null;
+  if (f.park.class === 'retryable') return 'it is a retryable park (host, backend or resource)';
+  return f.park.kind === 'env' ? 'it is an environment park, not a design failure of the unit' : null;
+}
+
+/** A failure outcome as a reference and a phrase. */
+export const outcomeRef = (f: FailedOutcome): FailureRef => failureRefOf({ type: 'outcome', unit: f.fact.unit, stage: f.fact.stage, attempt: f.fact.attempt });
+export const outcomeText = (f: FailedOutcome): string =>
+  `${f.fact.stage} attempt ${f.fact.attempt} ended ${f.fact.outcome}${f.fact.chargeable ? ' (charged)' : ''}${f.park === null ? '' : `, parked ${f.park.class === 'operator' ? f.park.kind : 'retryable'}`}`;
+
+/**
+ * `ref` resolved against the failures of `lineage` (the re-entered unit, then each unit it re-entered), or why it does not
+ * resolve: its unit is not of the lineage, or that unit recorded no such failure.
+ */
+export function citedFailure(
+  ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, lineage: readonly UnitId[], ref: FailureRef,
+): CitedFailure | string {
+  const p = parseFailureRef(ref);
+  if (!lineage.includes(p.unit)) return `${ref} names unit ${p.unit}, which is not of the re-entered lineage (${lineage.join(', ')})`;
+  const failed = ctx.journal.view.unit(p.unit).failures;
+  const at = (stage: string, attempt: number): FailedOutcome | null => failed.find((f) => f.fact.stage === stage && f.fact.attempt === attempt) ?? null;
+  if (p.type === 'outcome') {
+    const f = at(p.stage, p.attempt);
+    if (f === null) return `${ref} names no failure outcome of ${p.unit} (its failure outcomes: ${failed.length === 0 ? 'none' : failed.map(outcomeRef).join(', ')})`;
+    return { ref, text: outcomeText(f), ranUnder: f, exempt: outcomeExempt(f) };
+  }
+  const lanes = laneFailures(ctx, { id: p.unit });
+  const lane = lanes.find((l) => l.ref === ref);
+  if (lane === undefined) return `${ref} names no lane failure of ${p.unit} (its lane failures: ${lanes.length === 0 ? 'none' : lanes.map((l) => l.ref).join(', ')})`;
+  const exempt = lane.class === 'flaky' ? 'the lane is flaky (its diagnostic rerun went green)'
+    : lane.hostSuspected === null ? null : `the lane is host-suspected (${lane.hostSuspected.signatures.join(', ')})`;
+  return { ref, text: `lanes attempt ${p.attempt}: lane ${p.lane} ${lane.class}`, ranUnder: at('lanes', p.attempt), exempt };
 }

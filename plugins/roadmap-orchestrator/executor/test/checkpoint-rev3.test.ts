@@ -26,6 +26,7 @@ import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { evidenceDiffers, numericId, numericRulingIds } from '../src/holistic/bundle.ts';
 import { CAPTURE_WAIT_MAX_MIN, publishing, runCheckpoint } from '../src/holistic/checkpoint.ts';
+import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import type { Observation } from '../src/holistic/observe.ts';
 import type { WitnessRecord } from '../src/holistic/types.ts';
 import { requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
@@ -36,7 +37,7 @@ import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { withForge } from './helpers/corpusarc.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
-import { VALID_OP, checkpointAnswer, checkpointRepairStep, checkpointStep, intakeOutcome, lensStep } from './helpers/holistic.ts';
+import { VALID_OP, checkpointAnswer, checkpointRepairStep, checkpointStep, intakeOutcome, lensStep, noteLensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -227,7 +228,7 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
       planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
       lensStep('audit-2', 'vision', [{ severity: 'P2', visionClauses: ['V-3'], claim: 'mul frees no berth', cause: 'mul: no pool', evidence: [{ path: 'src/mul.js', line: 1 }] }]),
       checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [repairOf(a, 'fix1')] })),
-      lensStep('audit-3', 'vision'),
+      noteLensStep('audit-3'),
       checkpointStep('ckpt-3', checkpointAnswer({ decision: 'bundle', ops: [repairOf(a, 'fix2')] })),
     ]);
     const r = contextFor(a.d);
@@ -613,19 +614,28 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
     }
   });
 
-  test('checkpoint.closeout-delta-when-unchanged: after a no-op, a checkpoint on an unchanged arc renders a closeout without findings or specs', T, async () => {
+  test('checkpoint.skipped-nothing-new (arc feedback 2026-10-16): after a settled checkpoint, an audit that finds nothing new has no checkpoint call: checkpoint-skipped records why, its generation is quiescent and status lists it; an audit opening a finding has its checkpoint again', T, async () => {
     const x = await arc([
-      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })), lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
+      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })), lensStep('audit-2', 'vision'), noteLensStep('audit-3'),
+      checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
     ]);
     try {
       assert.ok((await run(x)).kind === 'decided');
       await completedAudit(x.r, x.ctx);
-      const second = await run(x);
-      assert.ok(second.kind === 'decided' && second.decision.kind === 'no-op', JSON.stringify(second));
-      assert.doesNotMatch(callOf(x, 'ckpt-1').stdin, /<closeout/);
-      const stdin = callOf(x, 'ckpt-2').stdin;
-      assert.match(stdin, /<closeout since="ckpt-1">/);
-      assert.equal(tagOf(stdin, 'unit_specs'), '(no unit specs)');
+      assert.deepEqual(await run(x), { kind: 'not-needed', audit: 'audit-2', carried: [] });
+      const view = x.r.journal.view;
+      const vision = view.planApplied()!.visionSha256!;
+      const generation = view.holistic().audits.find((a) => a.started.job === 'audit-2')!.started.generation;
+      assert.deepEqual(factsOfKind(x.r, 'checkpoint-skipped').map(({ audit, generation: g, visionSha256, carried }) => [audit, g, visionSha256, carried]), [['audit-2', generation, vision, []]]);
+      assert.ok(quiescentGenerations(view, vision).has(generation), 'settled as a no-op would');
+      assert.deepEqual(await run(x), { kind: 'none' }, 'the skipped audit is due no more');
+      assert.deepEqual(factsOfKind(x.r, 'checkpoint-inputs').map((f) => f.job), ['ckpt-1'], 'no capture, no call');
+      const s = await withForge(x.a.forge, () => status(x.r.ctx.runDir, x.r.journal.view.arc, x.r.ctx.hostDir));
+      assert.deepEqual(s.decisionsSince.filter((d) => d.kind === 'checkpoint-skipped').map((d) => [d.id, d.oneLine, d.ruledBy.type]), [['audit-2', 'no checkpoint after audit-2: it found nothing new', 'executor']]);
+      await completedAudit(x.r, x.ctx);
+      const third = await run(x);
+      assert.ok(third.kind === 'decided' && third.job === 'ckpt-2' && third.trigger.type === 'audit' && third.trigger.job === 'audit-3', JSON.stringify(third));
+      assert.match(tagOf(callOf(x, 'ckpt-2').stdin, 'findings'), /audit-3 notes a gap in the arc/);
     } finally {
       x.r.journal.close();
     }
@@ -640,7 +650,7 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
         appendSteps(x.a.d, [
           checkpointStep('ckpt-1', dishonest), checkpointRepairStep('ckpt-1', dishonest),
           checkpointStep('ckpt-2', dishonest), checkpointRepairStep('ckpt-2', dishonest),
-          lensStep('audit-2', 'vision'),
+          noteLensStep('audit-2'),
           checkpointStep('ckpt-3', checkpointAnswer({ decision: 'no-op' })),
         ]);
         await run(x);
@@ -667,7 +677,7 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
     }
   });
 
-  test('checkpoint.final-always-full: the final audit\'s checkpoint renders in full even after a no-op on an unchanged arc', T, async () => {
+  test('checkpoint.final-always-full: the final audit\'s checkpoint runs, in full, even after a no-op on an unchanged arc', T, async () => {
     const x = await arc([checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' }))]);
     try {
       assert.ok((await run(x)).kind === 'decided');
@@ -676,8 +686,8 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
       x.r.journal.fact({ ...started, job: 'audit-2' as never, generation: started.generation + 1, triggers: [{ type: 'final' }] });
       x.r.journal.fact({ kind: 'audit-ended', job: 'audit-2' as never, covered: [], findings: [], suppressed: 0, outcome: 'completed' });
       assert.ok((await run(x)).kind === 'decided');
+      assert.deepEqual(factsOfKind(x.r, 'checkpoint-skipped'), [], 'the final audit is never skipped');
       const stdin = callOf(x, 'ckpt-2').stdin;
-      assert.doesNotMatch(stdin, /<closeout/);
       assert.match(tagOf(stdin, 'unit_specs'), /spec of unit u1/);
     } finally {
       x.r.journal.close();
@@ -696,7 +706,7 @@ describe('issue reuse (H5, F27)', () => {
   });
 
   test('intake.unchanged-capture-reuses-dispositions: unchanged issues are not listed; the output omits them; their outcomes carry forward', T, async () => {
-    const x = await arc([checkpointStep('ckpt-1', first), lensStep('audit-2', 'vision')], { before: seed });
+    const x = await arc([checkpointStep('ckpt-1', first), noteLensStep('audit-2')], { before: seed });
     try {
       assert.ok((await run(x)).kind === 'decided');
       x.a.forge.addComment(1, { body: 'Still seen on berth 4.', association: 'OWNER', author: 'harbourmaster' });
@@ -717,7 +727,7 @@ describe('issue reuse (H5, F27)', () => {
 
   test('intake.changed-ground-relists: a changed ground (the obligations) lists every issue again, and each needs an outcome', T, async () => {
     const relisted = checkpointAnswer({ decision: 'no-op', issueIntake: [{ issue: 'issue-1', outcome: intakeOutcome.none('still fixed') }] });
-    const x = await arc([checkpointStep('ckpt-1', first), lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', relisted)], { before: seed });
+    const x = await arc([checkpointStep('ckpt-1', first), noteLensStep('audit-2'), checkpointStep('ckpt-2', relisted)], { before: seed });
     try {
       assert.ok((await run(x)).kind === 'decided');
       const file = join(x.a.planDir, 'obligations.json');

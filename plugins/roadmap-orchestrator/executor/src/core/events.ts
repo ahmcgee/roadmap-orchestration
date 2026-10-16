@@ -761,6 +761,13 @@ export type HolisticFact =
     findings: readonly FindingId[]; observations: readonly ObservationKey[]; issues?: CheckpointIssues; corpusSha256?: Sha256Hex;
   }>
   | Readonly<{ kind: 'bundle-decided'; job: JobId; outcome: BundleOutcome }>
+  /**
+   * Arc feedback 2026-10-16: the checkpoint after a completed audit is not run, because the audit found nothing new: it is
+   * not the final one, a checkpoint already settled under the vision in force, and every active finding no unit owns was
+   * captured by such a checkpoint (src/holistic/checkpoint.ts `nothingNew`). `carried`: the findings the audit reported.
+   * `generation` is the audit's, quiescent under `visionSha256` (src/holistic/convergence.ts).
+   */
+  | Readonly<{ kind: 'checkpoint-skipped'; audit: JobId; generation: number; visionSha256: Sha256Hex; carried: readonly FindingId[] }>
   /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
   | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
   /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
@@ -1825,6 +1832,10 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     return { ...out, ...(issues === undefined ? {} : { issues }), ...(corpusSha256 === undefined ? {} : { corpusSha256 }) };
   }),
   'bundle-decided': object((f): Fact => ({ kind: f.get('kind', literal('bundle-decided')), job: f.get('job', ckptJobR), outcome: f.get('outcome', bundleOutcome) })),
+  'checkpoint-skipped': object((f): Fact => ({
+    kind: f.get('kind', literal('checkpoint-skipped')), audit: f.get('audit', auditJobR), generation: f.get('generation', positive), visionSha256: f.get('visionSha256', sha256R),
+    carried: f.get('carried', findingSet),
+  })),
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
   'divergence-digest': object((f): Fact => ({
     kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),

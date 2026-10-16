@@ -13,7 +13,7 @@ import { brief } from '../src/commands/brief.ts';
 import { arcId, laneId, sha, unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import type { LaneDef } from '../src/core/records.ts';
+import { type LaneDef, failureRef } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { git, gitRun, lsTree } from '../src/git/git.ts';
 import { snapshotRef, snapshotRequestOf, verifySnapshot } from '../src/git/snapshot.ts';
@@ -88,8 +88,8 @@ describe('lane failures (F3)', () => {
     redOutcome(2);
 
     const expected: readonly LaneFailure[] = [
-      { stage: 'lanes', attempt: 1, lane: laneId('flaky'), class: 'flaky', hostSuspected: null },
-      { stage: 'lanes', attempt: 2, lane: laneId('oom'), class: 'red', hostSuspected: { signatures: ['oom-kill'], busy: true } },
+      { ref: failureRef('u1/lanes#1/flaky', 'ref'), stage: 'lanes', attempt: 1, lane: laneId('flaky'), class: 'flaky', hostSuspected: null },
+      { ref: failureRef('u1/lanes#2/oom', 'ref'), stage: 'lanes', attempt: 2, lane: laneId('oom'), class: 'red', hostSuspected: { signatures: ['oom-kill'], busy: true } },
     ];
     assert.deepEqual(laneFailures(run.ctx, run.unit), expected);
     const s = status(run.runDir, run.journal.view.arc, run.ctx.hostDir);
@@ -122,8 +122,8 @@ describe('lane failures (F3)', () => {
 // 8a: the re-entry text
 
 test('needsuser.reentry-text-prepare-creates-branch: a park recommends a re-entering unit whose prepare creates its branch at the parked tip, never by hand', () => {
-  const text = reentryRecommendation(unitId('u3'), 'lanes', 'roadmap/arc-1/u3');
-  assert.match(text, /re-enters u3 \(`"reenters": \{"unit": "u3"\}`/);
+  const text = reentryRecommendation(unitId('u3'), 'lanes', 2, 'roadmap/arc-1/u3');
+  assert.match(text, /re-enters u3 \(`"reenters": \{"unit": "u3", "fixes": "u3\/lanes#2"\}`/);
   assert.match(text, /the new unit's prepare creates its branch roadmap\/<arc>\/<new id> at the tip of roadmap\/arc-1\/u3\. Never create that branch by hand\./);
   assert.doesNotMatch(text, /create that unit's branch/);
 });

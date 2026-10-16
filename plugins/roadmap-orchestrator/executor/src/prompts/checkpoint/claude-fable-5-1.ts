@@ -28,15 +28,18 @@
 // one follow-up per opportunity, LR-k; code converts the rest to corpus amendments, R35); the failure matrix before a
 // transaction-ordering repair, with the earlier repairs of the same transaction (retro F03, H1); the evidence note for a
 // moving head (C6); the input manifest, read instead of any live roadmap-inputs (F08); every unit's spec embedded with the
-// item ids it holds, add vs replace (F21); ruling ids from the ledger's next id, no padding (C3); the closeout delta and
-// unchanged issues (F11, F27).
+// item ids it holds, add vs replace (F21); ruling ids from the ledger's next id, no padding (C3); unchanged
+// issues (F27; the closeout delta of F11 went 2026-10-16: such an audit now has no checkpoint).
 // Paid M4b runs 3 and 5 (2026-10-10): arc lanes are the owner's; the schema lists them for a split child's witness (and
 // the obligations a split or dispose may name); an opportunity comes with its witness on an arc lane in force or goes to
 // corpusAmendments; an opportunity clause no obligation serves is shown apart and is not a gap to close. Owner ruling
 // (2026-10-10): an opportunity without its witness converts `unwitnessed`.
+// Arc feedback 2026-10-16 (a re-entry without the cause, one more doomed try): a park trigger's diagnosis from the
+// executor's records goes right after the trigger; a reenter op cites the failure it fixes and changes what that failure
+// ran under, or the bundle is invalid.
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
-  checkpointSpecsText, closeoutText, coverageText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
+  checkpointSpecsText, coverageText, diagnosisText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
   priorRejectedText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
 } from '../inputs.ts';
 import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
@@ -65,7 +68,7 @@ You may amend the implementation contracts, the unit specs, routing, limits and 
 - admit: a new unit. spec is its complete spec.json as an object, in the schema of the plan's unit specs: schema roadmap/spec-m1, unit its id, rev 1, every item with its state (active), a lane item's env.set a list of {name, value}, obligations and repairs [] when it declares none. It holds no witness items; a later patch adds them. origin is repair for a unit that repairs findings, else checkpoint. targets lists the corpus rules (T-n) the unit adds or changes behaviour for; leave it empty only for pure test, witness or documentation work. A rule the spec merely mentions or must keep holding is not a target.
 - patch-spec: patch ops against a unit's current spec, the same ops a plan-check redirect uses. Every unit's spec is in <unit_specs> in full, with the item ids it holds: add needs an id the spec does not hold, and replace an id it holds. A lane item's env.set is a list of {name, value}.
 A lane's evidenceGlobs (in an admit or a patch) name only the files that lane's run writes, its outputs (logs, reports, coverage), never the unit's source or tests: a matched file is never committed or merged. An entry that matches a literal path of the unit's scope, or equals one of its scope patterns, makes the bundle invalid. Paths a lane reads go in its inputs.
-- reenter: a new unit that re-enters a parked or held unit (reenters), from plan-check, build or verify (enterAt, or null for the default); reset names a ruling that resets its chargeable failures, or is null.
+- reenter: a new unit that re-enters a parked or held unit (reenters), from plan-check, build or verify (enterAt, or null for the default); reset names a ruling that resets its chargeable failures, or is null. fixes names the failure the re-entry fixes, by its reference in <diagnosis> (<unit>/<stage>#<attempt> for a failure outcome, <unit>/lanes#<attempt>/<lane> for a lane failure); it is null only for a unit whose lineage recorded no failure. The new unit starts from the re-entered unit's spec, scope and routing: unless the cited failure is a flaky or host-suspected lane, or a park that is not the unit's design failure, the same bundle must change what it ran under (a patch-spec of the new unit, its route, or a ruling's reset), or the bundle is invalid. Re-running a design failure unchanged only fails again; find its cause in the diagnosis first, and when you cannot, cut the unit or request the owner's decision instead.
 - cut: a unit leaves the plan, with the reason.
 - route: a unit's seats, by model class (efficient, frontier, summit).
 - limits: bounds for one unit, or for the arc when unit is null (convergenceK is arc-wide).
@@ -135,7 +138,7 @@ export const PROMPT: PromptModule<'checkpoint'> = {
   schema: CHECKPOINT_SCHEMA,
   fields: [
     'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
+    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis',
   ],
   render: (i) => `<vision>
 ${visionText(i.vision)}
@@ -143,7 +146,7 @@ ${visionText(i.vision)}
 
 <trigger>
 This checkpoint runs because ${triggerText(i.trigger)} The integration head is ${i.head}.
-</trigger>${priorRejectedText(i.priorRejected)}${refusedText(i.refused)}${closeoutText(i.closeout)}
+</trigger>${diagnosisText(i.diagnosis)}${priorRejectedText(i.priorRejected)}${refusedText(i.refused)}
 
 <vision_coverage>
 ${coverageText(i.coverage)}

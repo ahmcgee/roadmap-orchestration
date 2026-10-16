@@ -77,6 +77,7 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
     headSha: A, visionSha256: H, findings: ['F-1'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }],
   },
   'bundle-decided': { kind: 'bundle-decided', job: 'ckpt-1', outcome: { kind: 'rejected', reason: 'stale', detail: 'the plan moved to rev 5' } },
+  'checkpoint-skipped': { kind: 'checkpoint-skipped', audit: 'audit-1', generation: 1, visionSha256: H, carried: ['F-1'] },
   divergence: { kind: 'divergence', id: 'D-1', index: 0, ...draft },
   'divergence-digest': { kind: 'divergence-digest', needsUser: 'nu-40', ids: ['D-1', 'D-2'] },
   steered: { kind: 'steered', unit: U1, command: CMD, brief: H, budgetMin: 30, resume: false },

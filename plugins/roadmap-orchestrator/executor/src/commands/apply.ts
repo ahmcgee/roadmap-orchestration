@@ -355,7 +355,7 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
   if (!(JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)) {
     return {
       kind: 'rejected',
-      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, a design park no revision re-opens there; re-enter it: a new unit with \`reenters: {unit: ${unitId}}\`, then \`roadmap apply\``,
+      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, a design park no revision re-opens there; re-enter it: a new unit with \`reenters: {unit: ${unitId}, fixes: ${unitId}/${f.stage}#${f.attempt}}\` that changes what that park ran under, then \`roadmap apply\``,
     };
   }
   const known = u.spec;

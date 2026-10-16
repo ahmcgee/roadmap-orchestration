@@ -120,6 +120,14 @@ export function lensStep(job: string | undefined, lens: LensKindName, findings: 
   return { ...step({ ...(job === undefined ? {} : { unit: job }), lens }, [...extra, { type: 'emit', value: lensAnswer(findings) }]), expect: { stdinContains } };
 }
 
+/**
+ * A lens call of job `job` reporting one new P3 finding. After a settled checkpoint an audit with nothing new has no
+ * checkpoint (arc feedback 2026-10-16, `checkpoint-skipped`), so a later audit whose checkpoint a test drives finds this.
+ */
+export function noteLensStep(job: string, lens: LensKindName = 'vision'): Step {
+  return lensStep(job, lens, [{ severity: 'P3', claim: `${job} notes a gap in the arc`, cause: `${job}: a noted gap` }]);
+}
+
 /** A checkpoint call of job `job` (a `ckpt-n`) answers `answer`. */
 export function checkpointStep(job: string | undefined, answer: JsonValue, extra: readonly ClaudeAct[] = []): Step {
   return step(job === undefined ? {} : { unit: job }, [...extra, { type: 'emit', value: answer }]);

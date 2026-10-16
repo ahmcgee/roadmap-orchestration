@@ -10,7 +10,7 @@ import type { OutcomeStage, TestRef } from '../core/events.ts';
 import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
+import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
 import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
 import type { Argv0 } from '../preflight/argv0.ts';
 import type { RiskTier, Role } from '../routing/types.ts';
@@ -324,6 +324,47 @@ export type TriggerView =
   | Readonly<{ type: 'audit'; job: JobId }>
   | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>;
 
+/**
+ * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding why it failed): what the executor's records say
+ * about a parked unit's lineage, the parked unit first, then each unit it re-entered. Each failure carries the reference a
+ * re-entry cites in `fixes`. `reverted`: the paths salvage reverted as outside the pinned scope, with how many salvages
+ * did; `witnesses`: the required witness tests a lanes attempt found missing or failing, the latest attempt per test.
+ */
+export type ParkDiagnosis = Readonly<{
+  units: readonly Readonly<{
+    unit: UnitId;
+    outcomes: readonly Readonly<{ ref: FailureRef; text: string }>[];
+    lanes: readonly Readonly<{ ref: FailureRef; class: string; hostSuspected: readonly string[] | null }>[];
+    reverted: readonly Readonly<{ path: RepoPath; salvages: number }>[];
+    witnesses: readonly Readonly<{ test: TestRef; reason: 'missing' | 'failed'; attempt: number }>[];
+  }>[];
+  /** The lineage's re-entries, oldest first, each with the failure it cited (null: applied before `fixes`). */
+  reentries: readonly Readonly<{ unit: UnitId; reenters: UnitId; fixes: FailureRef | null }>[];
+}>;
+
+/** The diagnosis, rendered for the checkpoint ahead of everything but the vision and the trigger; empty when none. */
+export function diagnosisText(d: ParkDiagnosis | null): string {
+  if (d === null) return '';
+  const unit = (u: ParkDiagnosis['units'][number]): string => {
+    const lines = [
+      ...u.outcomes.map((o) => `- ${o.ref}: ${o.text}`),
+      ...u.lanes.map((l) => `- ${l.ref}: lane failure, ${l.class}${l.hostSuspected === null ? '' : `, host-suspected (${l.hostSuspected.join(', ')})`}`),
+      ...(u.reverted.length === 0 ? [] : [`- Edits outside the pinned scope that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
+      ...u.witnesses.map((w) => `- Required witness ${w.test.lane}/${w.test.testId} ${w.reason} at lanes attempt ${w.attempt}`),
+    ];
+    return [`Unit ${u.unit}:`, ...(lines.length === 0 ? ['- no failure recorded'] : lines)].join('\n');
+  };
+  const reentries = d.reentries.map((r) => `- ${r.unit} re-entered ${r.reenters}${r.fixes === null ? ' (it cited no failure)' : ` to fix ${r.fixes}`}`);
+  return `\n\n<diagnosis>
+The executor's records of the parked unit's lineage, the parked unit first. A repeated failure, a lane the build keeps failing,
+edits salvage keeps reverting, or a witness test that is never found points at the cause; address it. A reenter op cites one of
+these references in fixes and must change what that failure ran under (the spec, the scope, the lanes or the routing), or reset
+its chargeable failures under a ruling: an unchanged retry of a design failure is refused. Only a flaky or host-suspected lane
+failure, or a park that is not the unit's design failure, may be retried unchanged.
+${d.units.map(unit).join('\n')}${reentries.length === 0 ? '' : `\nEarlier re-entries of this lineage:\n${reentries.join('\n')}`}
+</diagnosis>`;
+}
+
 /** A checkpoint decision the executor refused: rejected invalid, or sent to the owner as not applicable as proposed. */
 export type RefusedProposal = Readonly<{ job: JobId; outcome: 'rejected-invalid' | 'owner-request'; reasons: string }>;
 
@@ -362,10 +403,10 @@ export type CheckpointInputs = Readonly<{
   specs: readonly CheckpointSpec[];
   /** M4a rev 3 (C3, H4): the ledger's next ruling id (numeric, no padding); several rulings take consecutive ids from it. */
   nextRulingId: RulingId;
-  /** M4a rev 3 (H5, R65): a delta-only closeout since the no-op checkpoint `since`; null: a full checkpoint. */
-  closeout: Readonly<{ since: JobId }> | null;
   /** M4a rev 3 (H5, F27): the issues and their grounds are unchanged since that checkpoint's dispositions; null: listed. */
   issuesUnchangedSince: JobId | null;
+  /** Arc feedback 2026-10-16: a park trigger's code-produced diagnosis of the parked lineage; null for an audit's trigger. */
+  diagnosis: ParkDiagnosis | null;
 }>;
 
 /** What a checkpoint manifest entry names (H4). */
@@ -434,7 +475,7 @@ export const ROLE_INPUTS = {
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly', 'retry'],
   checkpoint: [
     'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'closeout', 'issuesUnchangedSince',
+    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
@@ -555,7 +596,7 @@ export function laneLedgerText(ledger: readonly LaneLedgerEntry[]): string {
 
 // ---------------------------------------------------------------------------------------------------
 // M4a rev 3: the executable checks, witness commands, in-session assessment, specs-only drift and the checkpoint's
-// manifest, embedded specs, closeout and issue reuse, as the prompts read them.
+// manifest, embedded specs and issue reuse, as the prompts read them.
 
 const refsText = (refs: readonly TestRef[]): string => (refs.length === 0 ? 'none' : refs.map((r) => `${r.lane} ${r.testId}`).join('; '));
 
@@ -715,12 +756,6 @@ export function checkpointSpecsText(specs: CheckpointInputs['specs']): string {
   return documentsXml(specs.map((s) => ({
     source: `spec of unit ${s.unit}, revision ${s.rev}; item ids it holds: ${s.occupied.length === 0 ? 'none' : s.occupied.join(', ')}`, content: s.markdown,
   })));
-}
-
-/** A closeout's notice (H5, R65), or nothing for a full checkpoint. */
-export function closeoutText(c: CheckpointInputs['closeout']): string {
-  if (c === null) return '';
-  return `\n\n<closeout since="${c.since}">\nThe previous checkpoint, ${c.since}, decided no-op, and nothing it weighed has changed since its capture: the findings and their states, the obligations, the ledger, the specs, the issues and the observations' verdicts are as it saw them, except what this message shows. Weigh only what changed. Decide no-op unless it needs an op; the output schema is the same.\n</closeout>`;
 }
 
 /** Issue reuse (H5, F27): the issues not listed are unchanged, on unchanged grounds, since that checkpoint's dispositions. */

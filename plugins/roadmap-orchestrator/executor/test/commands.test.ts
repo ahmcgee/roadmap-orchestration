@@ -317,7 +317,7 @@ describe('resume.per-class: resume <unit> of a parked unit follows its park\'s c
     journal.fact({ kind: 'stage-outcome', unit: UNIT, stage: 'candidate', attempt: 1, outcome: 'red', class: 'park', chargeable: false, park: { class: 'operator', kind: 'design' } });
     const { receipt } = await resumeU1(ctx);
     assert.equal(receipt?.state === 'rejected' && receipt.reason,
-      'unit u1 is parked (candidate-red) at candidate, a design park no revision re-opens there; re-enter it: a new unit with `reenters: {unit: u1}`, then `roadmap apply`');
+      'unit u1 is parked (candidate-red) at candidate, a design park no revision re-opens there; re-enter it: a new unit with `reenters: {unit: u1, fixes: u1/candidate#1}` that changes what that park ran under, then `roadmap apply`');
     assert.equal(journal.view.unit(UNIT).status, 'park-pending');
     assert.deepEqual(unitFacts(ctx, 'unparked'), []);
     journal.close();
