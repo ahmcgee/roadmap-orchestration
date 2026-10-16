@@ -68,15 +68,25 @@ export type WorldAct =
    * Write `<dir>/<file>` with `text`, where `pattern` (a regex source with one capture group) finds `dir`
    * in stdin: how a fake implementer writes into the evidence dir its prompt names (decisions.json).
    */
-  | Readonly<{ type: 'writeToPrompt'; pattern: string; file: string; text: string }>;
+  | Readonly<{ type: 'writeToPrompt'; pattern: string; file: string; text: string }>
+  /**
+   * Commit the tree of commit `sha` (already in the repository's object store) onto the cwd's branch, with `message`:
+   * the index and working tree become exactly that tree, deletions included. How a fake implementer lays down a
+   * generated unit commit (the role evals, evals/roles/).
+   */
+  | Readonly<{ type: 'checkoutTree'; sha: string; message: string }>;
 
 /**
  * Claude reports a stop reason; Codex has no refusal signal, so a Codex refusal is unrepresentable.
  * `globAboveAddDir` (paid M4b run 5): a Glob two levels above the call's first `--add-dir` (a gate's: the unit's
  * evidence root `evidence/<unit>` above `<attempt>-lanes/<lane>`), under the CLI's read rule: a path outside the cwd
  * and every `--add-dir` is refused, and the result lists it in `permission_denials`.
+ * `real` (the role evals, evals/roles/): run the real `claude` (the first one on PATH after the shims' own dir) with the
+ * call's exact argv, stdin, cwd and environment, its stdout and stderr passed through and its exit status the fake's.
+ * Nothing after it runs. The production prompt, capture, tools and add-dirs reach the real model byte for byte, with no
+ * test seam in production code.
  */
-export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }>;
+export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real' }>;
 /**
  * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on
  * stderr, exit 1). `threadStarted`: print the `thread.started` event now, as the real CLI does first, so a

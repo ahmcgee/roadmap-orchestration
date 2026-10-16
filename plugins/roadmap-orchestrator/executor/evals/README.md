@@ -17,6 +17,8 @@ A change is not done until the ladder passes, in order, from `executor/`:
    the previous release's executor (`PREVIOUS_RELEASE`, extracted with `git archive`), stops, parks or crashes it
    mid-arc and finishes it on HEAD.
 3. `node evals/probe.ts`: the targeted probe against the real, authenticated CLIs.
+3.5. Role evals, `node evals/roles/run.ts gate --set dev --n 3` (below): paid and path-triggered (`node evals/roles/triggers.ts
+   <base>`), once per merged batch, never per worktree agent; the holdout set only at acceptance.
 4. The paid fixtures, `evals/m1/`, `evals/m2/`, `evals/m3/` and (M4a's acceptance) `evals/m4a/`: once per merged batch,
    never per worktree agent. M4a's delegated adjudication (`evals/m4a/adjudicate.ts`) is acceptance, not a rung: once,
    after the M4a paid run.
@@ -38,7 +40,11 @@ read-only, the worktree unchanged), the acceptance-shape plan-check (witness ite
 carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
 medium build under the per-call build schema (`experiments`); (M4b) a real flow call on the flow seat (efficient, Sonnet 5.5 high, the m4b role
 set) over a small synthetic `FlowInputs`, validated by the flow role's reader, and a real suite-lane proof (`runProof`) on a tiny
-two-file product, `--test-concurrency=1` to `=2` under the node-test reporter: `preserved`, equal records, the new side faster. Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
+two-file product, `--test-concurrency=1` to `=2` under the node-test reporter: `preserved`, equal records, the new side faster; (dev.12,
+`gate.bounded`) one real gate through the production gate stage as the gate role eval drives it (below), on a tiny generated repo whose
+regenerated golden (a derived output) is not inlined: the answer validates, a not-inlined file is read or grepped in the main session or a
+subagent, the init event lists Agent, `result.modelUsage` is present and sums to `total_cost_usd` (it needs the merged dev.12 tree: the bounded
+gate diff and the Agent tool; an Opus medium gate over a 50 KB prompt, about $0.35). Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
 its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies. `--profile claude-only` (default `default`, unchanged)
 is for hosts without Codex: every Codex check (`smoke.codex`, `codex.fresh`, `codex.resume`, `codex.killed-resume`,
 `effort.codex.*`) prints `NOT RUN (claude-only profile) <check>`, which is neither a pass nor a fail; the exit status ignores
@@ -460,6 +466,98 @@ by the frozen FLOW_SCHEMA reader.
 `NOT EXERCISED` by the paid run (each has a fake integrated test): other-repo and checkout corpus sources,
 `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n, the
 vision-silent stop.
+
+## Role evals (rung 3.5)
+
+A role eval measures one judgment role on its own, many trials per scenario cell, against planted defects whose answer key
+no session can read. It complements the fixtures: they show an arc converges, a role eval shows how often a role catches
+what it must and how often it cries wolf, at what cost. The gate is the first role (dev.12: the bounded gate diff and the
+Agent tool).
+
+```sh
+node evals/roles/run.ts gate --set dev --n 3 [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] [--out <dir>]
+node evals/roles/run.ts gate --set holdout --n 3 --compare <dev run>/summary.json      # acceptance only
+node evals/roles/triggers.ts <base>                                                    # from executor/: the roles a branch triggers
+```
+
+**When.** Paid, path-triggered: `triggers.ts` maps the paths a batch changed (relative to `executor/`) to roles; the gate's
+are its prompt modules, `src/prompts/inputs.ts` and `schemas.ts`, `src/git/boundeddiff.ts`, `src/pipeline/gate.ts`,
+`src/routing/**`, `src/backends/argv.ts` and `claude.ts`, and `evals/roles/**`. Once per merged batch, never per worktree
+agent; the dev set at N=3; the holdout set only at acceptance. No role triggered, the rung is skipped.
+
+**The harness** (`gate/arc.ts`) drives the production `gate(ctx, unit)` through the unit driver over the arc harness of
+the gate tests (`test/fixtures/unit-common.ts`): plan-check and build are fake steps (the build's `checkoutTree` act commits
+the generated unit tree), the lanes run for real and must be green, and the gate step is the fake backend's `real` act,
+which execs the real `claude` (the first on PATH after the shims) with the call's argv, stdin, cwd and environment and
+passes its stdout and exit status through. So the eval tests the production prompt, capture, bounded diff, tools and
+add-dirs byte for byte, with no test seam in production code. A repair turn or a retry gets up to two more real calls.
+Each trial runs in its own worker process (`trial.ts`) under a 60-minute timeout; `--risk` sets the plan's and the
+plan-check's risk, which picks the gate's seat (`low` efficient, `med` and `high` frontier).
+
+**The fixture** (`gen/`): a seeded synthetic TypeScript monorepo (`gen/tsrepo.ts`, word-list names,
+`packages/<pkg>/src/<mod>.ts`, a tenth under `legacy/`, a shared `measure.ts` with a helper and its same-signature sibling,
+per-package `<pkg>-base.ts`, node --test tests over about fifty modules, goldens written only by `tools/gen-goldens.ts`,
+which is `gen/golden-script.ts` byte for byte, one long JSON line per package, and a deprecated package), about `--size`
+files (2,000 to 5,000 for a real gate). Sweeps are codemods, never a model: the shared helper renamed everywhere,
+legacy/ moved to core/, the test assertions migrated, the deprecated package removed (declared in the spec), goldens
+regenerated (`goldens/**` is the plan's derived output); or, for G0, one package's local helper renamed. Commits go in
+through `git fast-import` with a fixed identity and date: the same seed gives the same tree hash. The spec states the sweep
+so that every collateral change falls outside it (until the spec grows a `removes` field, the declared removals are an
+acceptance clause).
+
+**Plants** (`gen/plant.ts`) apply after the sweep's source edits (before the goldens are regenerated, so the goldens agree)
+or, for a hand-edited golden, after. Each is lane-invisible (only in code no test covers, a golden no lane reads, an
+assertion weakened but passing, a deletion nothing tested imports) and randomised per trial: the file uniform over the
+eligible files minus the first and last tenth in path order, the symbol and surface form from templates. A cell's
+placement (`inlined`, `omitted`, `any`) is predicted with the production bounded diff at `INLINE_BUDGET`
+(`gate/fixture.ts`, an estimate of the gate's own budget until W1 exports it) and read back from the prompt the gate was
+really given: a plant whose `diff --git` header is in the prompt was inlined. A trial whose plant landed on the other side
+is void (`placement-miss`).
+
+**Cells** (`gate/cells.ts`): G0 small diff + logic edit (calibration); G1 full sweep, clean; G2a/b one use renamed to the
+same-signature sibling (inlined / not); G3a/b a collateral logic edit in a renamed file (inlined / not); G4 a hand-edited
+golden, G4c its clean twin (both carry a declared, consistent golden change as a decoy); G5 a weakened assertion in the
+test sweep, G5c clean; G6 a deletion outside the declared removals, G6c clean (both declare the removal of a live-looking
+file). A family's cells share the sweep, the decoy, the spec and the commit message. The holdout set is untracked
+(`evals/roles/holdout/cells.ts`, gitignored, exporting `HOLDOUT_CELLS`): one defect class the dev cells lack and a mixed
+sweep, so no prompt is tuned against it.
+
+**Grading** (`gate/grade.ts`). Caught: revise or escalate with a blocking finding localised to the plant's path. Looked
+at: the plant inlined, or a Read of its file or `.diff` in the main session or any subagent (stream-json events carry
+`parent_tool_use_id`), or a Grep whose output carried the planted text; a deletion is looked at when the prompt names it.
+A catch without a look is `lucky`, a failure. Other blocking findings are spurious. On a clean cell any decision but
+approve is a false positive. Coverage: of the changed files the prompt did not inline, the share the session read or
+grepped. The answer key (`<trial>/key.json`) lives only in the eval run dir, outside every dir the gate can read; the
+transcript's tool traffic is scanned for the run dir, the trial dir, `evals/roles` and this repository's paths
+(`evals/m4a/transcript.ts scanTranscript`), and any hit voids the trial (`needle`).
+
+**Criteria** (`gate/summary.ts`, PASS|FAIL lines; exit 1 on any FAIL): planted detection at least 80% (Wilson interval
+reported); zero lucky; clean false positives at most 1/12; precision (blocking findings localised to the plant, on planted
+trials) at least 50%; voids at most a quarter of the trials; every call's per-model costs summing to its `total_cost_usd`;
+with `--compare`, holdout detection within 15 points of dev. Coverage (median, target 90%) and method (tools by name,
+subagents with model and tokens, time to the first Read and Agent) are reported, never failed.
+
+**Cost.** Per model from `result.modelUsage` (subagents included; the top-level `usage` excludes them), cross-checked
+against `total_cost_usd`: CELL lines carry the median and p90 cost, the cost per caught defect, wall time and turns; COST
+lines the median and p90 per cell and model; USAGE lines the totals per model.
+
+**Early inspection and brakes.** Every 30 s a running trial prints a TRACE line (tools by name, subagents with model and
+tokens, time to the first Read and Agent, coverage so far, token load, denials, calls of unavailable tools). The harness,
+never the gate, brakes a trial as `runaway` (the session killed, the trial void): no Read, Grep or Agent in 3 minutes while
+the prompt left files out;
+coverage flat over 8 tool turns; token load over 3x the cell's median so far (token load stands in for cost, which the CLI
+reports only at the end).
+
+**Output.** `<out>/trials.jsonl` (a row per trial as it finishes), `<out>/summary.json`, and per trial `key.json`,
+`prompt.txt`, `gate-<n>.jsonl` (each call's raw stdout), `transcript.jsonl`, `answer.json` and `row.json`. The trials'
+repos and arc dirs are scratch, removed when the worker exits.
+
+**Free tier.** `test/roles-gen.test.ts` (determinism, plants inside the diff and away from the ends, twins identical,
+omitted placement really omitted, lanes green on every planted tree, goldens consistent with the generator except a hand
+edit) and `test/roles-gate.test.ts` (run.ts end to end on degenerate fake gates via `--fake`: approve-all catches nothing,
+revise-all is 100% false positives and fails precision, cite-every-path fails precision; a gate citing a not-inlined plant
+without reading it is lucky; the transcript and cost parser on a captured subagent run; the `real` and `checkoutTree`
+acts; the triggers). `--fake <kind>` runs the same harness on a degenerate gate for free.
 
 ## The run observer
 

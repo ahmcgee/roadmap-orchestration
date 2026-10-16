@@ -6,9 +6,9 @@
 // with fields replaced,
 // Codex's event stream follows the captured event vocabulary, so what the fake emits is what the adapter
 // was pinned against.
-import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LensKindName } from '../../src/core/records.ts';
 import { unitBarrierName, waitAtBarrier } from '../helpers/barrier.ts';
@@ -182,6 +182,30 @@ function claudeUsageLimit(session: string): never {
   process.exit(1);
 }
 
+/** The real `claude`: the first executable `claude` on PATH outside the shims' own dir (`<scenario dir>/bin`). */
+function realClaude(scenarioDir: string): string {
+  const shims = resolve(scenarioDir, 'bin');
+  for (const entry of (process.env['PATH'] ?? '').split(delimiter)) {
+    if (entry === '' || resolve(entry) === shims) continue;
+    const candidate = join(entry, 'claude');
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // not in this PATH entry
+    }
+  }
+  throw new Error(`fake claude: a real act found no claude on PATH outside ${shims}`);
+}
+
+/** The `real` act: the real CLI with the call's argv, stdin, cwd and environment; its exit status ends the fake. */
+function runReal(call: Call, scenarioDir: string): never {
+  const r = spawnSync(realClaude(scenarioDir), [...call.argv], { cwd: call.cwd, env: process.env, input: call.stdin, stdio: ['pipe', 'inherit', 'inherit'] });
+  if (r.error !== undefined) throw r.error;
+  if (r.signal !== null) process.kill(process.pid, r.signal);
+  process.exit(r.status ?? 1);
+}
+
 // ---------------------------------------------------------------------------------------------------
 
 function paths(files: FileSet): string[] {
@@ -229,6 +253,12 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     }
     case 'exitZeroNoop':
       process.exit(0);
+    case 'real':
+      runReal(call, scenarioDir);
+    case 'checkoutTree':
+      git(call.cwd, 'read-tree', '-u', '--reset', act.sha);
+      git(call.cwd, 'commit', '--quiet', '--message', act.message);
+      return;
     case 'commit':
       writeFiles(call.cwd, act.files);
       git(call.cwd, 'add', '--all', '--', ...paths(act.files));

@@ -1181,6 +1181,11 @@ read-time `status.timings`).
 3. **targeted probe** — real calls: both Claude profiles and Codex fresh/resume against real schemas (M1 gate);
    since M4a also the `gh` read-only shapes (repo identity, GraphQL policy fields, REST issues with pull-request
    entries, comment author association) and a session resumed with a changed effort, for Claude and Codex.
+3.5. **role evals** (dev.12, `evals/roles/`) — one judgment role measured on its own: N trials per scenario cell of planted,
+   lane-invisible defects in a seeded synthetic monorepo, the production stage driven with fake neighbours and the real
+   CLI behind the fake backend's `real` act (no production seam), graded on catches localised to the plant and backed by a
+   look at it, false positives on clean twins, coverage of what the prompt left out, and per-model cost from `modelUsage`.
+   Paid and path-triggered (`triggers.ts`), once per merged batch; an untracked holdout set at acceptance. The gate first.
 4. **paid** — per-slice fixtures (§10), once per merged batch, offline in file mode, the M1 fixture also under
    `claude-only`; the issue fixture (D6) is part of `evals/m4a`. A property a model's output cannot be forced to
    show is asserted at the unit tier instead: M3's literal partial-bundle rejection is asserted by the fake fixture

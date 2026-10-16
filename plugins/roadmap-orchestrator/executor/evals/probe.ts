@@ -59,6 +59,12 @@
 //   m4b.proof           (M4b) the production suite-lane proof (runProof) on a tiny product of two 2 s timer test files: suite
 //                       argv `node --test --test-concurrency=1 'test/unit/*.test.js'` to `=2`, the node-test reporter, real
 //                       node in clean checkouts: the outcome must be `preserved` with equal kept records, the new side faster
+//   gate.bounded        (dev.12) one real gate through the production gate stage, as the gate role eval drives it
+//                       (evals/roles/: fake plan-check and build, real lanes, the real claude behind the fake's `real` act)
+//                       on a tiny generated repo (G0's small rename at size 100, no plant) whose regenerated golden, a
+//                       plan-declared derived output, is not inlined: the answer validates, a not-inlined file is read or
+//                       grepped (main session or subagent), the init event lists Agent, result.modelUsage is present and
+//                       its per-model costs sum to total_cost_usd. Needs the merged dev.12 tree (W1 bounded diff, W2 Agent)
 //   effort.*            (OI-2) a session started at one effort, resumed at another: claude (high then medium), codex
 //                       (low then medium); reports whether each CLI accepts the change
 //
@@ -112,6 +118,8 @@ import { commitAll, writeFiles } from '../test/helpers/repo.ts';
 import { wire } from '../test/fixtures/publish-common.ts';
 import { followingContext } from '../test/fixtures/steer-common.ts';
 import { contextFor, setupArc } from '../test/fixtures/unit-common.ts';
+import { runGateTrial } from './roles/gate/arc.ts';
+import { DEV_CELLS } from './roles/gate/cells.ts';
 
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } as const;
@@ -795,6 +803,26 @@ async function main(): Promise<void> {
     } finally {
       r.journal.close();
     }
+  });
+
+  // dev.12 (role evals): one real gate through the production gate stage, as the gate eval runs it (evals/roles/, the fake
+  // backend's `real` act), on a tiny generated repo whose diff holds a file the bounded diff does not inline (its regenerated
+  // golden, a plan-declared derived output). Needs the merged dev.12 tree: the bounded gate diff (W1) and the Agent tool (W2).
+  await rev3('gate.bounded', async () => {
+    const g0 = DEV_CELLS.find((c) => c.id === 'G0')!;
+    const row = await runGateTrial({
+      set: 'dev', cell: { ...g0, id: 'probe', plant: null }, trial: 0, seed: 'probe', size: 100, gate: 'real', risk: 'med',
+      out: join(root, 'gate-bounded'), medianLoad: null, log: (l) => process.stdout.write(`${l}\n`),
+    });
+    const cov = row.graded?.coverage ?? null;
+    report(row.void === null && row.decision !== null, 'gate.bounded.validates', `outcome=${row.outcome} decision=${row.decision} void=${JSON.stringify(row.void)} dir=${row.dir}`);
+    report(cov !== null && cov.omitted > 0 && cov.covered > 0, 'gate.bounded.omitted-read', cov === null ? 'no graded answer'
+      : cov.omitted === 0 ? 'every changed file was inlined (needs the bounded gate diff, dev.12 W1)'
+      : `${cov.covered}/${cov.omitted} not-inlined files read or grepped; subagents=${JSON.stringify(row.method.subagents)} tools=${JSON.stringify(row.method.tools)}`);
+    report(row.method.available.includes('Agent') || row.method.available.includes('Task'), 'gate.bounded.agent', `init tools=${JSON.stringify(row.method.available)} (Agent: dev.12 W2)`);
+    const u = row.usage;
+    report(u !== null && Object.keys(u.byModel).length > 0, 'gate.bounded.model-usage', JSON.stringify(u?.byModel ?? null));
+    report(u !== null && u.check === 'ok', 'gate.bounded.cost-check', `total_cost_usd=${u?.totalUsd ?? null} per-model sum=${u === null ? null : Object.values(u.byModel).reduce((a, m) => a + m.costUsd, 0)}`);
   });
 
   // Effort-changed resume (OI-2): the same session, a different effort.

@@ -1,0 +1,7 @@
+subagent-stream.jsonl   2026-10-16, Claude Code 2.1.301: a claude -p --output-format stream-json --verbose run on
+                        claude-sonnet-5-5 whose main session delegated three Reads to a custom subagent on
+                        claude-haiku-5-5 (the Agent tool; subagent events carry parent_tool_use_id). Trimmed: hook,
+                        rate-limit and task progress events dropped, the init event's tool list cut to the judgment set
+                        plus Agent (no MCP or skills), and the scratch paths replaced by /repo and /state. Every
+                        assistant, user and result event is otherwise as captured; result.modelUsage holds both models
+                        and their costs sum to total_cost_usd.
