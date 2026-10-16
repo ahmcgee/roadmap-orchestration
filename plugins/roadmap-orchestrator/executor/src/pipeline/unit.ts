@@ -94,9 +94,9 @@ import {
 } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
-  planCheck, quiesce, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
+  nowInside, planCheck, quiesce, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
-import { revertedPathsDirective } from '../prompts/directives.ts';
+import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
 import { requiredAt } from './witnesscheck.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
@@ -383,14 +383,21 @@ function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { 
 
 /**
  * Scope growth (2026-10-15, A): a fix round after a salvage that reverted out-of-scope edits tells the builder so (the paths
- * still outside the scope, and where their content is kept), so a needed path is reported, never silently lost.
+ * still outside the scope, and where their content is kept), so a needed path is reported, never silently lost. Plan
+ * defects (2026-10-16): a fix round, or a reopen's fresh round, after a scope accept took some of those paths in tells the
+ * builder to restore them from the kept content.
  */
 function withReverted(ctx: StageContext, unit: PlanUnit, round: DecidedRound): DecidedRound {
-  if (round.kind !== 'fix') return round;
+  if (round.kind !== 'fix' && round.kind !== 'fresh') return round;
   const latest = salvageRejections(ctx, unit.id).at(-1);
-  const paths = latest === undefined ? [] : stillOutside(ctx, unit.id, latest.paths);
-  if (latest === undefined || paths.length === 0) return round;
-  return { ...round, fix: { ...round.fix, directives: [...round.fix.directives, revertedPathsDirective(paths, latest.dir)] } };
+  if (latest === undefined) return round;
+  const outside = round.kind === 'fix' ? stillOutside(ctx, unit.id, latest.paths) : [];
+  const inside = nowInside(ctx, unit.id, latest.paths);
+  const added = [...(outside.length === 0 ? [] : [revertedPathsDirective(outside, latest.dir)]), ...(inside.length === 0 ? [] : [restoredPathsDirective(inside, latest.dir)])];
+  if (added.length === 0) return round;
+  return round.kind === 'fix'
+    ? { ...round, fix: { ...round.fix, directives: [...round.fix.directives, ...added] } }
+    : { ...round, directives: [...(round.directives ?? []), ...added] };
 }
 
 /** `of`, or the continue of its attempt an interruption held since (a hold is only ever recorded from a call's result). */
@@ -643,7 +650,8 @@ export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResul
  */
 export function reentryAllowed(u: UnitState): boolean {
   if (u.status !== 'active' || u.open !== null || u.entry !== null) return false;
-  if (u.interrupted !== null && !(JUDGMENT_STAGES as readonly Stage[]).includes(u.interrupted.stage)) return false;
+  // A held build continues its session; a held lanes attempt (a pause, a scope-growth hold) starts from a clean worktree.
+  if (u.interrupted !== null && !(JUDGMENT_STAGES as readonly Stage[]).includes(u.interrupted.stage) && u.interrupted.stage !== 'lanes') return false;
   if (u.decided === null) return true;
   const d = decidedBy(u.decided);
   if (d.kind !== 'stage') return false;

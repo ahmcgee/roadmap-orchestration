@@ -610,7 +610,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(byId(FITS_WITNESS.parent)?.state, { type: 'split', children: [FITS_WITNESS.restated, FITS_WITNESS.child.id] });
     assert.deepEqual(
       [byId(FITS_WITNESS.child.id)?.witness, byId(FITS_WITNESS.child.id)?.deliveredBy, byId(FITS_WITNESS.child.id)?.serves],
-      [{ lane: 'berths', testIds: [FITS_WITNESS.child.test] }, ['fits'], ['V-5', 'V-7']],
+      [{ lane: 'berths', testIds: [FITS_WITNESS.child.test], files: ['journeys/berths.journey.js'] }, ['fits'], ['V-5', 'V-7']],
     );
     assert.deepEqual(obligations.census?.find((e) => e.rule === FITS_WITNESS.child.rule)?.state, { type: 'obligation', id: FITS_WITNESS.child.id });
     assert.ok(factsOf(arc2, 'obligation-latched').some((f) => f.obligation === FITS_WITNESS.child.id), 'fits\' publication latched its witness');

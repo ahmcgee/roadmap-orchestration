@@ -64,6 +64,7 @@
 //                               unit declaring an entry's lane, outside the fixer's lineage, to the fixer's head)
 //                               is acyclic (`known-defect-cycle`, the cycle named)
 //   plan-check shape (E)        `plan-check-shape` (no drain)
+//   derived files (2026-10-16)  `derived` (no drain; the dispatch check re-pins each unit's widening, src/input/derived.ts)
 //
 // M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
 // it may touch:
@@ -142,7 +143,7 @@ import {
 } from './inforce.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
-  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, knownDefectsOf, parsePlan, planCheckShapeOf, planFieldValue, priorityOf, reservedUnitIdReason,
+  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, knownDefectsOf, parsePlan, planCheckShapeOf, planFieldValue, priorityOf, reservedUnitIdReason,
 } from './plan.ts';
 
 /**
@@ -713,6 +714,7 @@ export function classify(input: ClassifyInput): Classified {
   }
   // M4a rev 3 (E): the plan-check shape.
   if (planCheckShapeOf(cur) !== planCheckShapeOf(plan)) changes.push({ type: 'plan-check-shape' });
+  if (!same(derivedOf(cur), derivedOf(plan))) changes.push({ type: 'derived' });
 
   // Routing: the plan's layer, then each unit's (`route`, M3).
   const routings: ResolvedRouting[] = [];
@@ -1178,6 +1180,7 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'unit-priority':
       case 'known-defects':
       case 'plan-check-shape':
+      case 'derived':
         break;
       case 'unit-added':
       case 'unit-removed':

@@ -9,6 +9,10 @@
 // reservation `occupied` / `cleanup-failed`); a checkout the lanes left dirty or moved is `not-certified`; otherwise
 // `missingWitnesses` (the one comparator the stage and `roadmap witness-check` share) decides: nothing missing or failing
 // is `green`, anything else `witnesses-missing{missing, failed}`, a charged fix round naming each id (no gate call).
+// Plan defects (2026-10-16): before that round is charged, code asks why each missing id of an obligation's witness is
+// missing (`missingWitnessDefects`): a declared witness file its lane never runs (src/holistic/witnessfiles.ts
+// `laneMisses`), or one absent at the salvage SHA and outside the unit's effective scope, so no build of the unit could
+// create it. Any such defect makes the outcome `plan-defect{defects}`: an uncharged park naming them, never a fix round.
 //
 // Implementer side (R56): before the build call the executor publishes, write-once, one lane file per fast required
 // witness lane, `<evidenceDir>/witness/<lane>.json` (`WitnessLaneFile`), and gives the build the exact command that runs
@@ -21,20 +25,22 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crashPoint } from '../core/crash.ts';
-import type { TestRef } from '../core/events.ts';
+import { type TestRef, testRefKey } from '../core/events.ts';
 import { durableMkdir, exclusivePublish } from '../core/fsx.ts';
 import type { LaneId, ResourceInstance, Sha } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import type { NeedsUserContent } from '../core/records.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type NeedsUserContent, effectiveScope } from '../core/records.ts';
+import { type AbsPath, type RepoPath, absPath, matchesPattern } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { isAncestor } from '../git/ff.ts';
 import { type RequiredWitness, missingWitnesses, requiredWitnesses } from '../holistic/required.ts';
-import type { ArcLaneDef, WitnessLaneFile } from '../holistic/types.ts';
+import { type ArcLaneDef, type PlanDefect, type WitnessLaneFile, planDefectText } from '../holistic/types.ts';
+import { laneMisses } from '../holistic/witnessfiles.ts';
+import { gitRun } from '../git/git.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { GateChecks, WitnessCheckCommand } from '../prompts/inputs.ts';
 import { arcScopeOf } from '../routing/layers.ts';
-import { type StageContext, type StageParent, witnessWorktree } from './dispatch.ts';
+import { type StageContext, type StageParent, dispatchOf, witnessWorktree } from './dispatch.ts';
 import { type LaneRuntime, arcJourneyLane, intact, runJourneySeries } from './lanes.ts';
 import type { LaneCancel } from './redlane.ts';
 import { holisticInForce, loadUnitSpec } from './stages.ts';
@@ -114,6 +120,7 @@ export type WitnessPresence =
   | Readonly<{ kind: 'skip' }>
   | Readonly<{ kind: 'green'; required: readonly RequiredWitness[] }>
   | Readonly<{ kind: 'witnesses-missing'; required: readonly RequiredWitness[]; missing: readonly TestRef[]; failed: readonly TestRef[] }>
+  | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[]; needsUser: NeedsUserContent }>
   | Readonly<{ kind: 'not-certified' }>
   | Readonly<{ kind: 'blocked' }>
   | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>
@@ -146,7 +153,48 @@ export async function witnessPresence(ctx: StageContext, unit: PlanUnit, parent:
   if (!intact(series)) return { kind: 'not-certified' };
   const records = series.runs.flatMap((r) => (r.record === null ? [] : [r.record]));
   const { missing, failed } = missingWitnesses(records, required);
-  return missing.length === 0 && failed.length === 0 ? { kind: 'green', required } : { kind: 'witnesses-missing', required, missing, failed };
+  if (missing.length === 0 && failed.length === 0) return { kind: 'green', required };
+  const defects = missingWitnessDefects(ctx, unit, salvaged, missing, required);
+  if (defects.length > 0) return { kind: 'plan-defect', defects, needsUser: planDefectNeedsUser(unit, salvaged, defects) };
+  return { kind: 'witnesses-missing', required, missing, failed };
+}
+
+/**
+ * The plan defects behind `missing` (plan defects, 2026-10-16): per obligation whose witness requires a missing id and
+ * declares its files, each file its lane never runs (`witness-not-in-lane`), and each absent at `salvaged` and outside the
+ * unit's effective scope (`witness-file-unreachable`, the unit named). Empty when every missing id is the build's to add.
+ */
+export function missingWitnessDefects(ctx: StageContext, unit: PlanUnit, salvaged: Sha, missing: readonly TestRef[], required: readonly RequiredWitness[]): readonly PlanDefect[] {
+  const { obligations } = holisticInForce(ctx);
+  if (obligations === null) return [];
+  const keys = new Set(missing.map(testRefKey));
+  const ids = new Set(required.flatMap((r) => (keys.has(testRefKey(r)) && r.source.type === 'obligation' ? [r.source.id] : [])));
+  const scope = effectiveScope(dispatchOf(ctx.journal.view, unit.id));
+  const present = (file: RepoPath): boolean => gitRun(ctx.repo, ['cat-file', '-e', `${salvaged}:${file}`], { okCodes: [0, 128] }).code === 0;
+  return obligations.obligations.filter((o) => ids.has(o.id)).flatMap((o) => {
+    const w = o.witness;
+    if (w === null || w.files === undefined) return [];
+    const lane = obligations.lanes.find((l) => l.id === w.lane);
+    return w.files.flatMap((file): PlanDefect[] => {
+      const misses = lane === undefined ? null : laneMisses(lane, file);
+      if (misses !== null) return [{ type: 'witness-not-in-lane', obligation: o.id, lane: w.lane, file, missing: misses }];
+      if (!present(file) && !scope.some((p) => matchesPattern(file, p))) return [{ type: 'witness-file-unreachable', obligation: o.id, file, units: [unit.id] }];
+      return [];
+    });
+  });
+}
+
+/** The blocking item of a `plan-defect` park: the defects in sentences, and what fixes them. */
+function planDefectNeedsUser(unit: PlanUnit, salvaged: Sha, defects: readonly PlanDefect[]): NeedsUserContent {
+  return {
+    blocking: true,
+    subject: { type: 'unit', unit: unit.id },
+    reason: 'plan-defect',
+    summary: `Unit ${unit.id}: its required witnesses are missing at ${salvaged} for a reason no build round can fix: ${defects.map(planDefectText).join(' ')} The unit is parked, uncharged.`,
+    recommendation: `Fix the plan with \`roadmap apply\` (the lane's argv or testPaths, the witness's files or lane, or the obligation's deliveredBy), then \`roadmap resume ${unit.id}\` re-runs its lanes; or re-enter the unit with a scope that holds the witness file.`,
+    options: [],
+    evidence: [],
+  };
 }
 
 /** The gate's `checks.witnesses` at the head it judges: null where the checks do not apply (a gate runs only after a green check). */

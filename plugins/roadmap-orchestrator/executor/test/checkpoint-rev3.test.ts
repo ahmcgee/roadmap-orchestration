@@ -348,7 +348,7 @@ const ruleOp = (id: string): JsonValue => ({ op: 'rule', ruling: id, cites: ['V-
 
 const splitTo = (rule: string): JsonValue => ({
   op: 'obligation-split', obligation: 'I-1', cites: ['V-1'], evidence: ['audit-1 found I-1 too coarse'],
-  children: [{ id: 'I-2', statement: 'A berth is never double-booked.', docRef: null, rule, witness: { lane: 'journey', testIds: ['t1'] }, activation: 'must-hold', deliveredBy: [] }],
+  children: [{ id: 'I-2', statement: 'A berth is never double-booked.', docRef: null, rule, witness: { lane: 'journey', testIds: ['t1'], files: [] }, activation: 'must-hold', deliveredBy: [] }],
 });
 const census = (r: ArcRun) => revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).obligations!.value.census;
 
@@ -418,7 +418,7 @@ describe('rulings and split census (C2–C4)', () => {
   });
   test('checkpoint.schema-closed-ids (paid M4b run 5, ckpt-4): the call\'s schema enumerates the arc lanes and obligations, so a split child on a lane that is no arc lane is a schema violation of the answer, never a bundle', T, async () => {
     const op = splitTo('T-2') as { children: Json[] } & Json;
-    const draught = { ...op, children: [{ ...op.children[0]!, witness: { lane: 'w-draught', testIds: ['t1'] } }] } as JsonValue;
+    const draught = { ...op, children: [{ ...op.children[0]!, witness: { lane: 'w-draught', testIds: ['t1'], files: [] } }] } as JsonValue;
     const x = await arc([]);
     try {
       // 2026-10-15: the answer off its schema takes its repair turn, told the violation; repeating it, it is invalid.

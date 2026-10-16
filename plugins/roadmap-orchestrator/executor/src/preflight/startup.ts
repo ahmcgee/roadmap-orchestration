@@ -14,6 +14,7 @@ import {
 import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, version } from '../core/validate.ts';
 import { type AbsPath, type IsoTime, type PlanPath, type RefName, type RepoPath, absPath, isoTime, planPath, refName, repoPath } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
+import { type PlanDefect, planDefect } from '../holistic/types.ts';
 import type { PlanM1, PlanUnit } from '../input/plan.ts';
 import type { OverCapacity } from '../resources/pool.ts';
 import {
@@ -88,7 +89,10 @@ export type StartupRejection =
   // `.roadmap/{vision.json, corpus.md, config.json}` in the working tree differ from their blobs at HEAD (K18).
   | Readonly<{ kind: 'tree-uncommitted'; paths: readonly RepoPath[] }>
   // A fresh arc's holistic plan names an architecture doc (H4, R17): a new holistic arc targets a corpus.
-  | Readonly<{ kind: 'holistic-needs-corpus' }>;
+  | Readonly<{ kind: 'holistic-needs-corpus' }>
+  // Plan defects (2026-10-16): what code can tell no build round could fix (witness files outside their lane or out of
+  // reach of their deliverers, undeclared test paths or witness files, derived outputs on the corpus or another unit).
+  | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>;
 
 /** Why a declared command (a lane, a probe, a teardown) cannot run on this host. */
 export type CommandProblem = Readonly<{ type: 'argv0-unresolvable'; argv0: string }> | Readonly<{ type: 'env-missing'; name: string }>;
@@ -120,6 +124,7 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'issue-policy-untrusted':
     case 'tree-uncommitted':
     case 'holistic-needs-corpus':
+    case 'plan-defect':
       return EXIT_REFUSED;
   }
 }
@@ -250,6 +255,7 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
     kind: f.get('kind', literal('tree-uncommitted')), paths: f.get('paths', sortedBy((v, p): RepoPath => repoPath(v, p), (x) => x, { nonEmpty: true })),
   })),
   'holistic-needs-corpus': object((f): StartupRejection => ({ kind: f.get('kind', literal('holistic-needs-corpus')) })),
+  'plan-defect': object((f): StartupRejection => ({ kind: f.get('kind', literal('plan-defect')), defects: f.get('defects', arrayOf(planDefect, { nonEmpty: true })) })),
 });
 
 export const rejectionFile: Read<RejectionFile> = object((f) => {

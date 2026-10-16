@@ -475,7 +475,7 @@ describe('M3 judgment outputs', () => {
       { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 2 }] },
       {
         op: 'obligation-split', obligation: 'I-2',
-        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'] }, activation: 'must-hold', deliveredBy: [] }],
+        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'], files: [] }, activation: 'must-hold', deliveredBy: [] }],
       },
       { op: 'obligation-dispose', obligation: 'I-3', disposition: 'deferred', ruling: 'C-9' },
       { op: 'invalidate-approval', unit: 'u1' },

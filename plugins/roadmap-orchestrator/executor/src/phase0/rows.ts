@@ -34,6 +34,17 @@
 //                  the branch exists), the hits inside the unit's scope (plan and spec) or under `.roadmap/` dropped:
 //                  `scope-references-outside{unit, removed, referrers}`, the referrers being the patterns its scope lacks
 //                  (`scopeReferences`, which plan-check reads too).
+//  11. plan defects (every mode; plan defects 2026-10-16) `plan-defect{defects}`, what no build round could fix:
+//                  - derived files (every arc): an output inside the scope of a unit that covers none of its entry's
+//                    sources (`derived-output-owned`); for a same-repo corpus, an output that may reach the corpus file
+//                    set (`derived-overlaps-corpus`).
+//                  - witnesses (a corpus arc's binding obligations): each declared witness file inside its lane
+//                    (`witness-not-in-lane`, src/holistic/witnessfiles.ts `laneMisses`), and present at the integration
+//                    tip (the baseline before the branch exists) or inside the effective scope of a deliverer or a unit
+//                    a deliverer runs after, transitively (`witness-file-unreachable`). At a fresh start every arc lane
+//                    declares `testPaths` and every binding witness `files` (`lane-test-paths-undeclared`,
+//                    `witness-files-undeclared`), and so must an arc whose witnesses declare any files; an arc started
+//                    before 2026-10-16 that declares none is read as undeclared, with a logged warning.
 // A record that names something absent (a debt disposition of no open item, a promote to a unit the plan does not
 // hold, a resolve by a ruling the ledger does not hold active, an intake act on an unknown unit or rule, an amendment
 // disposition of no amendment) is `plan-invalid{schema}` naming it.
@@ -61,11 +72,14 @@ import { type IssueCapture, parseIssueCapture, sameRepo } from '../forge/types.t
 import { git, gitCommonDir, gitRun } from '../git/git.ts';
 import { censusProblems, specCensusMismatches } from '../holistic/rederive.ts';
 import {
-  type Obligations, type Vision, parseObligations, parseVision,
+  type Obligations, type PlanDefect, type Vision, isExempt, parseObligations, parseVision,
 } from '../holistic/types.ts';
+import { laneMisses } from '../holistic/witnessfiles.ts';
+import { laneTestPathsUndeclared, witnessFilesUndeclared } from '../core/upgrade.ts';
+import { coversSource, derivedWidening } from '../input/derived.ts';
 import { visionUnconfirmed } from '../holistic/vision.ts';
 import { mayOverlap } from '../input/classify.ts';
-import type { PlanM1 } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, derivedOf } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import type { RepoConfig } from '../routing/layers.ts';
 import { type Ruling, type RulingCorpus, parseRulings } from '../spec/rulings.ts';
@@ -75,16 +89,19 @@ import { type ChainProblem, type CorpusProblem, type Phase0Problem, type Phase0R
 
 type Row<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
-/** Which live rows run: the answers (5a) and the chain (8), a fresh start's; the forge (7) and the tree (9). Rows 1-6 always run. */
-export type Phase0Mode = Readonly<{ forge: boolean; chain: boolean; answers: boolean; tree: boolean }>;
+/**
+ * Which live rows run: the answers (5a) and the chain (8), a fresh start's; the forge (7) and the tree (9). Rows 1-6 and
+ * 10-11 always run; `fresh` makes row 11 require declared test paths and witness files.
+ */
+export type Phase0Mode = Readonly<{ forge: boolean; chain: boolean; answers: boolean; tree: boolean; fresh: boolean }>;
 /** `start` of a fresh arc and `phase0 check --plan`: everything. */
-export const FRESH_START: Phase0Mode = { forge: true, chain: true, answers: true, tree: true };
+export const FRESH_START: Phase0Mode = { forge: true, chain: true, answers: true, tree: true, fresh: true };
 /** `start` of an arc with a plan in force: no chain or answer rows (it is not a new start). */
-export const RESTART: Phase0Mode = { forge: true, chain: false, answers: false, tree: true };
+export const RESTART: Phase0Mode = { forge: true, chain: false, answers: false, tree: true, fresh: false };
 /** `apply`: no forge, no chain, no answers (an answer that comes mid-arc is applied by an apply, not refused by one). */
-export const APPLY: Phase0Mode = { forge: false, chain: false, answers: false, tree: true };
+export const APPLY: Phase0Mode = { forge: false, chain: false, answers: false, tree: true, fresh: false };
 /** `phase0 check --from-ref`: the recorded closure alone (K20). */
-export const FROM_REF: Phase0Mode = { forge: false, chain: false, answers: false, tree: false };
+export const FROM_REF: Phase0Mode = { forge: false, chain: false, answers: false, tree: false, fresh: false };
 
 /** What the rows read of a plan's inputs: bytes as the files (or a ref) hold them, null when absent. */
 export type Phase0Input = Readonly<{
@@ -153,7 +170,11 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   if (mode.tree) rows.push(...treeUncommitted(input.repo));
   const { plan } = input;
   const advisories = referenceRows(input);
-  if (plan.target !== 'corpus') return { rows, opened: null, pin: null, advisories };
+  const defects: PlanDefect[] = [...derivedOwned(plan)];
+  if (plan.target !== 'corpus') {
+    if (defects.length > 0) rows.push({ kind: 'plan-defect', defects });
+    return { rows, opened: null, pin: null, advisories };
+  }
   const where = (what: string): string => `${input.where} (${what})`;
   if (plan.holistic.obligations === undefined) rows.push(schemaRow('plan.holistic.obligations', 'a corpus arc names its obligations file (the census lives there)'));
   const pin = load(rows, 'plan.corpus', where('the corpus pin'), input.pin, parseCorpusPin);
@@ -173,7 +194,10 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     const re = rederivePin(input.repo, pin, read, registryAt(input.repo, plan.baseline) ?? EMPTY_REGISTRY);
     if (re.kind === 'refused') corpus.push(...re.problems);
     else opened = re.opened;
-    if (guide !== null && guide.source.kind === 'same-repo') corpus.push(...overlapProblems(plan, pin, guide));
+    if (guide !== null && guide.source.kind === 'same-repo') {
+      corpus.push(...overlapProblems(plan, pin, guide));
+      defects.push(...derivedOnCorpus(plan, corpusFileSet(pin, guide)));
+    }
   }
   // 2-3. The census.
   if (pin !== null && obligations !== null) {
@@ -183,6 +207,8 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
       p0.push(...specCensusMismatches(parsedSpecs(input), obligations, obligations.census));
     }
   }
+  // 11. The witnesses against their lanes and deliverers.
+  if (obligations !== null) defects.push(...witnessDefects(input, obligations, mode.fresh));
   // 4-5. Debt, questions, amendments, intake.
   const previous = plan.chain === undefined ? null : chainBack(input.repo, plan.chain.previousArc);
   let capture: IssueCapture | null = null;
@@ -214,6 +240,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
     if (capture !== null && !sameRepo(capture.repo, identity)) p0.push({ type: 'capture-foreign', expected: identity, actual: capture.repo });
   }
   if (p0.length > 0) rows.push({ kind: 'phase0-invalid', problems: p0 });
+  if (defects.length > 0) rows.push({ kind: 'plan-defect', defects });
   // 8. The chain, at a fresh start.
   if (mode.chain) {
     const c = chainRow(input, guide, previous?.arcs ?? [], previous?.missing ?? null);
@@ -294,6 +321,72 @@ function referenceRows(input: Phase0Input): readonly ScopeReference[] {
     if (unit === undefined) throw new Error(`a parsed spec of ${spec.unit}, which the plan does not hold`);
     return scopeReferences(input.repo, at, unit.id, [...unit.scope, ...spec.scope], specRemoves(spec));
   });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 11. Plan defects (2026-10-16)
+
+/** A unit's effective scope as its dispatch would pin it: its plan scope and the derived outputs it takes in. */
+const unitEffectiveScope = (plan: PlanM1, u: PlanUnit): readonly RepoPattern[] => [...u.scope, ...derivedWidening(plan, u.scope)];
+
+/** Each derived output inside the scope of a unit that covers none of its entry's sources. */
+function derivedOwned(plan: PlanM1): readonly PlanDefect[] {
+  return derivedOf(plan).flatMap((d) => d.outputs.flatMap((output) => plan.units
+    .filter((u) => !coversSource(u.scope, d) && u.scope.some((s) => mayOverlap(s, output)))
+    .map((u): PlanDefect => ({ type: 'derived-output-owned', output, unit: u.id }))));
+}
+
+/** Each derived output that may reach a same-repo corpus file set. */
+const derivedOnCorpus = (plan: PlanM1, set: ReturnType<typeof corpusFileSet>): readonly PlanDefect[] =>
+  [...new Set(derivedOf(plan).flatMap((d) => d.outputs))].filter((o) => scopeOverlapsCorpus(set, o)).map((output) => ({ type: 'derived-overlaps-corpus', output }));
+
+/** `units` and every unit they run after, transitively. */
+function withDependencies(plan: PlanM1, units: readonly UnitId[]): readonly PlanUnit[] {
+  const seen = new Set<UnitId>();
+  const visit = (id: UnitId): void => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    for (const d of plan.units.find((u) => u.id === id)?.after ?? []) visit(d);
+  }
+  units.forEach(visit);
+  return plan.units.filter((u) => seen.has(u.id));
+}
+
+/** Row 11's witness half over the obligations (binding ones: active, not exempt). */
+function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boolean): readonly PlanDefect[] {
+  const { plan } = input;
+  const binding = obligations.obligations.filter((o) => o.state.type === 'active' && !isExempt(o) && o.witness !== null);
+  const declared = fresh || binding.some((o) => o.witness?.files !== undefined);
+  const out: PlanDefect[] = [];
+  for (const lane of obligations.lanes) {
+    if (lane.testPaths !== undefined) continue;
+    if (declared) out.push({ type: 'lane-test-paths-undeclared', lane: lane.id });
+    else laneTestPathsUndeclared(lane.id);
+  }
+  let tip: ReadonlySet<string> | null = null;
+  const atTip = (file: RepoPath): boolean => {
+    tip ??= new Set(git(input.repo, ['ls-tree', '-r', '-z', '--name-only', referenceCommit(input.repo, plan)]).split('\0').filter((f) => f !== ''));
+    return tip.has(file);
+  };
+  for (const o of binding) {
+    const w = o.witness!;
+    if (w.files === undefined) {
+      if (declared) out.push({ type: 'witness-files-undeclared', obligation: o.id });
+      else witnessFilesUndeclared(o.id);
+      continue;
+    }
+    // A witness on no arc lane is the classifier's refusal (every revision), not this row's.
+    const lane = obligations.lanes.find((l) => l.id === w.lane);
+    const reach = withDependencies(plan, o.deliveredBy).map((u) => unitEffectiveScope(plan, u));
+    for (const file of w.files) {
+      const missing = lane === undefined ? null : laneMisses(lane, file);
+      if (missing !== null) out.push({ type: 'witness-not-in-lane', obligation: o.id, lane: w.lane, file, missing });
+      if (!atTip(file) && !reach.some((scope) => scope.some((p) => matchesPattern(file, p)))) {
+        out.push({ type: 'witness-file-unreachable', obligation: o.id, file, units: o.deliveredBy });
+      }
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -65,6 +65,11 @@
 // 2026-10-15: a spec in force from a 1.0.0-dev.9 arc whose active witness item names no arc lane parks the unit
 // `witness-lane-missing` at build or lanes (`witnessLanePark`): its lane file cannot be published nor its lane run.
 //
+// Plan defects (2026-10-16): a lanes attempt whose unit's last two salvages both reverted the same out-of-scope path holds
+// `scope-growth` before anything runs (`repeatedReverts`), the hold a plan-check's proposal raises, with those paths as
+// the one proposal: the builder keeps needing a path its scope lacks, so the root agent decides instead of another fix
+// round. Every bound of what a unit may change reads its dispatch record's `effectiveScope` (scope + derived outputs).
+//
 // M4a rev 3 (E, R55): under `planCheck.shape: by-builder` in a corpus arc with arc lanes (`planCheckShape`), a frontier or
 // summit builder's plan-check records `in-session` without a call, and its fresh build makes two invocations in one
 // attempt: the assessment (a fresh read-only session answering PLAN_ASSESSMENT_SCHEMA: vision conflicts open findings, a
@@ -90,7 +95,8 @@ import {
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, specRemoves, specWitnesses,
+  type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, specRemoves,
+  specWitnesses,
 } from '../core/records.ts';
 import { readsDeniedOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -719,7 +725,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     const target = architecture(ctx, checkouts.tip.at);
     const rendered = prompt.render({
       spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, ...library(ctx, now.spec, checkouts.tip.at), target,
-      direction: ctx.plan().direction, scope: pinned.scope, risk: pinned.riskFloor, checkouts,
+      direction: ctx.plan().direction, scope: effectiveScope(pinned), risk: pinned.riskFloor, checkouts,
       lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
       priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
       // R17: the vision in force, read-only context (the module marks it non-directive).
@@ -727,7 +733,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       // E (R59): an efficient builder's check under `by-builder` maps acceptance clauses to witness items.
       acceptance: shape === 'acceptance' ? acceptanceOf(ctx, unit, now.spec, checkouts.tip.at) : null,
       priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
-      scopeGrowth: planCheckScopeGrowth(ctx, unit.id, pinned.scope, now.spec, checkouts.tip.at),
+      scopeGrowth: planCheckScopeGrowth(ctx, unit.id, effectiveScope(pinned), now.spec, checkouts.tip.at),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
     return { checkouts, rendered, target };
@@ -784,7 +790,7 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
   }
   const reasons = [...visionCiteReasons(ctx, out)];
   const pinned = dispatchOf(ctx.journal.view, unit.id);
-  const holds = judged !== null && verifiedGrowth(ctx, unit, judged.spec, pinned.scope, judged.tip, out.scopeGrowth).proposals.length > 0;
+  const holds = judged !== null && verifiedGrowth(ctx, unit, judged.spec, effectiveScope(pinned), judged.tip, out.scopeGrowth).proposals.length > 0;
   if (!holds) reasons.push(...unknownCiteReasons(ctx, out.patch));
   if (out.patch !== null && judged !== null && !holds) {
     const by = { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv } as const;
@@ -934,7 +940,7 @@ export async function planCheckRead(
   if (riskAbove(pinned.riskFloor, out.risk)) return done(record(ctx, parent, 'risk-lowered'));
   // Scope growth (2026-10-15): a proposal code verifies holds the unit for the root agent, whatever the decision; nothing
   // else of the answer is applied (the plan-check runs again once the root agent has ruled).
-  const growth = verifiedGrowth(ctx, unit, spec, pinned.scope, captured.tip, out.scopeGrowth);
+  const growth = verifiedGrowth(ctx, unit, spec, effectiveScope(pinned), captured.tip, out.scopeGrowth);
   if (growth.proposals.length > 0) {
     const detail = { kind: 'scope-growth', proposals: growth.proposals } as const;
     return done(record(ctx, parent, 'scope-growth', scopeGrowthNeedsUser(ctx, unit, called, growth), NO_PARK_FACTS, undefined, detail));
@@ -1048,9 +1054,46 @@ export function salvageRejections(ctx: Readonly<{ journal: Readonly<{ view: Jour
   });
 }
 
-/** The paths of `paths` still outside the unit's pinned scope (a scope accept since may have taken some in), ascending. */
+/**
+ * Plan defects (2026-10-16): the paths both of the unit's last two salvages reverted as out of scope that could land as
+ * scope growth (still outside the effective scope, never rejected by the root agent for the unit, covered by no lane's
+ * `evidenceGlobs`, clear of a same-repo corpus), as one proposal with its blocking item; null when there are none.
+ */
+function repeatedReverts(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Readonly<{ proposal: ScopeGrowthProposal; needsUser: NeedsUserContent }> | null {
+  const salvages = salvageRejections(ctx, unit.id);
+  if (salvages.length < 2) return null;
+  const [previous, latest] = salvages.slice(-2) as [(typeof salvages)[number], (typeof salvages)[number]];
+  const rejected = new Set<string>(ctx.journal.view.unit(unit.id).scopeDecisions.filter((d) => d.decision === 'rejected').flatMap((d) => d.proposals.flatMap((p) => p.patterns)));
+  const corpus = ctx.plan().target === 'corpus' ? corpusSet(ctx) : null;
+  const paths = stillOutside(ctx, unit.id, latest.paths).filter((p) => previous.paths.includes(p) && !rejected.has(p)
+    && evidenceScopeConflicts(unit.id, [repoPattern(p)], spec).length === 0 && (corpus === null || !scopeOverlapsCorpus(corpus, repoPattern(p))));
+  if (paths.length === 0) return null;
+  const reason = `salvage reverted the unit's edits to ${paths.join(', ')} on its last two build rounds (outside its scope)`;
+  const { path } = loadUnitSpec(ctx, unit);
+  return {
+    proposal: { patterns: paths.map((p) => repoPattern(p)), reason },
+    needsUser: {
+      blocking: true,
+      subject: { type: 'unit', unit: unit.id },
+      reason: 'scope-growth',
+      summary: `Unit ${unit.id}: ${reason}, so its build needs ${paths.length === 1 ? 'that path' : 'those paths'} (spec ${path} at rev ${spec.rev}; the reverted versions are kept under ${latest.dir}/files).`,
+      recommendation: `\`roadmap scope accept ${unit.id} --reason <text>\` lands the growth as one ruled revision and re-opens the unit at plan-check on it (its builder is told to restore the reverted versions); `
+        + `\`roadmap scope reject ${unit.id} --reason <text>\` keeps the scope: the lanes run, and the build is told again that the paths are outside it.`,
+      options: [],
+      evidence: [latest.dir],
+    },
+  };
+}
+
+/** The paths of `paths` now inside the unit's effective scope (a scope accept took them in since), ascending. */
+export const nowInside = (ctx: StageContext, unit: UnitId, paths: readonly RepoPath[]): readonly RepoPath[] => {
+  const scope = effectiveScope(dispatchOf(ctx.journal.view, unit));
+  return [...new Set(paths.filter((p) => scope.some((s) => matchesPattern(p, s))))].sort();
+};
+
+/** The paths of `paths` still outside the unit's effective scope (a scope accept since may have taken some in), ascending. */
 export const stillOutside = (ctx: StageContext, unit: UnitId, paths: readonly RepoPath[]): readonly RepoPath[] => {
-  const scope = dispatchOf(ctx.journal.view, unit).scope;
+  const scope = effectiveScope(dispatchOf(ctx.journal.view, unit));
   return [...new Set(paths.filter((p) => !scope.some((s) => matchesPattern(p, s))))].sort();
 };
 
@@ -1268,7 +1311,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const render = (fixRound: RoundCall['fixRound'], assess: BuildAssess | null): string => prompt.render({
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
-    fastLanes: activeFastLanes(spec), suiteLanes: fastSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: pinned.scope,
+    fastLanes: activeFastLanes(spec), suiteLanes: fastSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
     fixRound, witnessChecks, assess,
   });
   const callFor = (call: RoundCall): BackendCallSpec => ({
@@ -1441,7 +1484,7 @@ export async function salvage(ctx: StageContext, unit: PlanUnit, run: BuildRun):
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const parent = at(start(ctx, unit.id, 'salvage'), 'salvage');
   const rules: SalvageRules = {
-    scope: pinned.scope,
+    scope: effectiveScope(pinned),
     excluded: unique(spec.lanes.flatMap((l) => l.evidenceGlobs)),
     rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)),
   };
@@ -1554,6 +1597,8 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
       return { kind: 'green' };
     case 'witnesses-missing':
       return { kind: 'witnesses-missing', detail: { kind: 'witnesses-missing', missing: d1.missing, failed: d1.failed } };
+    case 'plan-defect':
+      return { kind: 'plan-defect', detail: { kind: 'plan-defect', defects: d1.defects }, needsUser: d1.needsUser };
     case 'not-certified':
     case 'blocked':
       return { kind: d1.kind };
@@ -1702,6 +1747,11 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // 2026-10-15: a required witness on no arc lane in force can never be checked; the unit parks before anything runs.
   const lanePark = witnessLanePark(ctx, unit, spec);
   if (lanePark !== null) return { ...record(ctx, parent, 'witness-lane-missing', lanePark), at: salvaged, ledger: [], verification: null, fix: null };
+  // Plan defects (2026-10-16): the same out-of-scope path reverted on two build rounds running holds the unit for the root agent.
+  const reverted = repeatedReverts(ctx, unit, spec);
+  if (reverted !== null) {
+    return { ...record(ctx, parent, 'scope-growth', reverted.needsUser, NO_PARK_FACTS, undefined, { kind: 'scope-growth', proposals: [reverted.proposal] }), at: salvaged, ledger: [], verification: null, fix: null };
+  }
   const entry = seriesEntry(ctx, order);
   const entered = await enter(ctx, stageHolder(parent), entry);
   if (isCancelled(entered)) return entered;

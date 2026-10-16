@@ -83,8 +83,8 @@ export const limitsOp = (field: string, value: number, evidence: readonly string
 export const witnessSplit = (unit: string, clause: string): JsonValue => ({
   op: 'obligation-split', obligation: 'I-1', cites: ['V-1', clause], evidence: [`${unit} brings its witness`],
   children: [
-    { id: 'I-2', statement: 'I-1, restated.', docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'] }, activation: 'must-hold', deliveredBy: [] },
-    { id: 'I-3', statement: `${unit} delivers ${clause}.`, docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'] }, activation: 'future', deliveredBy: [unit] },
+    { id: 'I-2', statement: 'I-1, restated.', docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'], files: [] }, activation: 'must-hold', deliveredBy: [] },
+    { id: 'I-3', statement: `${unit} delivers ${clause}.`, docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'], files: [] }, activation: 'future', deliveredBy: [unit] },
   ],
 });
 

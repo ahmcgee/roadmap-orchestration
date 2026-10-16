@@ -143,7 +143,10 @@ After a green spec series that wrote its clean certificate, the lanes stage comp
 (the witnesses of the obligations it completes or repairs and its spec's witness items as targets, its declared
 must-holds as preservation) and runs each required arc lane once at the salvage SHA in its own checkout, reusing only
 observations of a certified series. A required id absent, zero-selected, skipped, malformed or failing is
-`witnesses-missing`: a charged fix round listing them, no gate call. Then mutation smoke, for a `med` or `high` unit
+`witnesses-missing`: a charged fix round listing them, no gate call, unless code finds a plan defect behind a missing
+id (plan defects, 2026-10-16): a declared witness file its lane never runs, or one absent at the salvage SHA and outside
+the unit's effective scope, makes it `plan-defect`, an uncharged park (`env`: `resume` re-runs the lanes after an
+`apply` fixes the plan) whose item names each defect. Then mutation smoke, for a `med` or `high` unit
 whose targets' lanes declare `testPaths` and whose diff touches production paths: the production diff reverted in a
 detached worktree (a mutant that never certifies), the targets run, each killed, survived or inconclusive (a binary or
 renamed path, or a patch that does not apply, is inconclusive). A survivor is one bounded fix round (`smokeRounds`,
@@ -311,7 +314,7 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 | `steer <unit> --brief <f> --budget <min> [--class <efficient\|frontier\|summit>] [--resume]` | alternate implementer-stage entry for a **parked** or `preparing` unit; `--class` enters as a per-unit routing layer (a new `routingRev`), so the steer record names the role: pre-steer state saved, approvals invalidated, `steered`, one uncharged steer round, then normal salvage → lanes → review/gate exit. Non-green parks; green parks unless `--resume` (R11); minutes (lanes excluded) and usage recorded. Unblocked arc 1's launcher and estate | unit not parked or preparing; `budget ≤ 0`; widening the envelope |
 | `scope accept\|reject <unit> --reason <text>` | (scope growth, 2026-10-15) the root agent's decision on the scope growth a unit's plan-check proposed and code verified, which holds the unit at plan-check (`scope-growth`, a blocking item). `accept` builds and commits the ruled growth itself, the one canonical way a dispatched unit's scope grows: a new ruling naming exactly the added patterns, the unit's plan scope widened and its spec at rev + 1 with them and the ruling cited, validated and evaluated as an `apply --ruling`, written back to the files; the unit re-opens at plan-check on it, whose dispatch check re-pins the wider scope. `reject` keeps the scope: the plan-check runs again told so and decides within it. Both acknowledge the item and release the hold (`scope-decided`) | a unit not held for a proposal; for `accept`, any reason the ruled revision is refused (the unit stays held) |
 | `audit [--lens]` | §2.5 on demand (`audit-requested`). `explore` is deferred (A11, §8) | holistic off |
-| `phase0 check --repo (--plan <f> \| --from-ref <arc>)` | a CLI act, not queued: read-only, no host lock, deterministic; the startup rows as JSON, exit 0 or 78, plus `sliceCandidates` (§3 Phase 0) and the advisories that never refuse (row 10, `scope-references-outside`: files outside a unit's scope naming what its spec `removes`). `--from-ref` resolves every input by the digests the arc's ref recorded and omits the live rows (forge, host, tree) | — |
+| `phase0 check --repo (--plan <f> \| --from-ref <arc>)` | a CLI act, not queued: read-only, no host lock, deterministic; the startup rows as JSON, exit 0 or 78, plus `sliceCandidates` (§3 Phase 0) and the advisories that never refuse (row 10, `scope-references-outside`: files outside a unit's scope naming what its spec `removes`). Row 11, `plan-defect` (2026-10-16), refuses what no build round could fix (§2.8 Plan defects). `--from-ref` resolves every input by the digests the arc's ref recorded and omits the live rows (forge, host, tree) | — |
 | `corpus pin --repo --baseline <sha> --commit <ref> --out <f>` | a CLI act: reads the guide and rules registry at the baseline, resolves the guide's source at the commit, parses rules blocks, diffs them against the baseline's rules registry and writes the pin (§2.8) | a reused or reappearing `T-n`; a rules block in the vision doc; a source remote that differs from the checkout's `remote.json` |
 | `brief [--json] [--ack <briefId>]` | a CLI act: the brief and its ack (§2) | a stale `briefId` |
 | `pr --repo --arc` | a CLI act, idempotent, the forge its only record: pushes the arc branch with a lease and opens or re-targets its stacked PR (§2.11) | — (a forge failure is a CLI error) |
@@ -776,6 +779,25 @@ opportunity's split child or drops the citation. The checkpoint writes an admit'
 A pack re-review after a required review reads the changed pack files and the previous review's unresolved findings,
 giving each a disposition (`resolved`, `still-open`, `withdrawn`); the first review stays full.
 
+**Plan defects (2026-10-16, arc feedback: units ran 21 to 41 attempts against tests their lane never ran, or a bundle
+outside their scope; a pack review found 29 obligations credited to units that run before their tests exist).** A plan
+defect code can check is refused at Phase 0; one that surfaces at run time parks uncharged with a code-produced
+diagnosis instead of charging fix rounds. Test ids are names (node's name path, go's test name, a wrapper's own), so no
+reporter maps an id to its file; the sound rule is that a witness declares its `files` (required at a fresh start, with
+every arc lane's `testPaths`), and code checks the declaration, never infers it. Shared Phase-0 row 11, `plan-defect`,
+in every mode: each witness file of a binding obligation inside its lane (matched by its `testPaths`, and named by its
+argv when the argv names test paths: an element equal to it, a directory above it or a glob matching it, resolved
+against the lane's `cwd`; an argv naming none, `npm test`, leaves selection to the runner), and present at the
+integration tip or inside the effective scope of a deliverer or a unit a deliverer runs `after`; derived outputs off
+the corpus and out of the scope of a unit covering none of their sources. The same lane predicate diagnoses a missing
+witness at run time (§2.1). Plan `derived: [{sources, outputs}]` names files the build regenerates: a unit whose scope
+covers a source takes the outputs into its effective scope, pinned on its dispatch record (`derived`, shown in
+`status`), which salvage, the gate, the candidate's transient check and recovery read. Salvage reverting the same
+out-of-scope path on two build rounds running holds the unit at lanes with the scope-growth hold and that path as the
+proposal (`scope accept|reject`); an accept re-opens it at plan-check, and its builder is told to restore the reverted
+version. An arc started on dev.10 declares no witness files: it is read as undeclared (nothing checked), with a logged
+warning, until an apply declares them.
+
 ### 2.9 Artifacts
 
 The integration branch carries product changes and living docs only: in-tree
@@ -1012,7 +1034,7 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 | Refusals | Stop reason → `refusal`, routed up. |
 
 **Salvage** classifies staged, unstaged, untracked and ignored content separately and commits an explicit
-approved path set (inside the pinned scope; never `.roadmap/`, declared evidence/state or ignored paths) through
+approved path set (inside the effective scope: the pinned scope and its derived outputs; never `.roadmap/`, declared evidence/state or ignored paths) through
 a controlled temporary index, so pre-staged content cannot ride along; rejected content is preserved outside the
 tree, and (scope growth, 2026-10-15) its out-of-scope paths are named to the gate and the next fix round; unmerged
 entries or a failed commit → park, tree preserved. Verification runs in a clean worktree at the

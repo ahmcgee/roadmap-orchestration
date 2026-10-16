@@ -175,10 +175,20 @@ None.
   stderr.
 - **Scope growth beyond the uniform plan-check** (2026-10-15). Deferred: (a) the in-session assessment of a frontier or
   summit builder under `planCheck.shape: by-builder` proposes no `scopeGrowth` (it makes no plan-check call); (b) a
-  builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own;
+  builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own,
+  unless salvage reverted that path on its last two build rounds (plan defects, 2026-10-16: then the unit holds at lanes
+  with that path as the proposal); a blocker naming a path the builder never edited still waits for the gate;
   (c) `start` writes Phase-0 row 10's advisories to the executor's stderr only (`phase0 check` and `apply` print them).
   Trigger: a unit under `by-builder` needs growth its assessment cannot propose, or a gate escalation that a held
   proposal would have saved.
+- **Plan defects beyond Phase 0** (2026-10-16). (a) A checkpoint's split child is checked against its lane (its
+  declared files, required when the parent declared them), not for reach: a child whose file no deliverer can create is
+  caught by the next `apply`'s row 11 or by the run-time `plan-defect` park. (b) A flow lever that rewrites an arc
+  lane's argv is not re-checked against the witness files of that lane; the run-time diagnosis catches the first
+  witness it hides. (c) Spec witness items (`W-n`) declare no file: only obligations' witnesses are checked. (d) Derived
+  outputs widen a dispatched unit's scope with no ruling and no classifier rule on later `derived` edits. Triggers: a
+  `plan-defect` park whose cause one of these would have refused earlier; a flow proposal that moves a witness out of
+  its lane; a spec witness item that is never run; a `derived` edit that hands a unit someone else's file.
 
 - **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
   threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging
@@ -300,6 +310,9 @@ None.
 - `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth
   (2026-10-15) launched is unconsumed: a plan-check answer without `scopeGrowth` reads as none proposed. With it,
   `scopeGrowth` becomes required in `planCheckOutput`.
+- `laneTestPathsUndeclared` and `witnessFilesUndeclared` (src/core/upgrade.ts) with Phase-0 row 11's undeclared arm
+  (src/phase0/rows.ts `witnessDefects`), once no arc started on 1.0.0-dev.10 is in flight: obligations that declare no
+  witness files read as undeclared. With them, `testPaths` and `files` become required in the readers.
 - `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) with status's `preDev10RevAlias` and `resolveRoutingUnder`
   (src/routing/layers.ts), once no arc started on 1.0.0-dev.9 is in flight: the built-in seats before the efficient
   class took the low-risk judgments (2026-10-15), kept only so `status` joins an earlier executor's recorded routing revs.

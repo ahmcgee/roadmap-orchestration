@@ -14,6 +14,10 @@
 //   directives, with where its content is kept.
 // scope.references-row: Phase-0 row 10 lists the files outside a unit's scope that name what its spec `removes`, as an
 //   advisory, and the plan-check reads the same scan.
+// scope.revert-repeat-holds (plan defects, 2026-10-16): salvage reverting one path on two build rounds running holds the
+//   unit at lanes (`lanes scope-growth`), uncharged; an accept re-opens it, and its builder is told to restore the path.
+// scope.derived-outputs (plan defects, 2026-10-16): a unit covering a `derived` source pins the outputs on its dispatch
+//   record, and salvage keeps an output it regenerated while still reverting what lies outside.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -34,6 +38,7 @@ import { raisedFor } from '../src/needsuser.ts';
 import { fakeDocs } from './fixtures/docs-fake.ts';
 import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
 import { followingContext, unitInForce } from './fixtures/steer-common.ts';
+import { editPlan } from './fixtures/route-common.ts';
 import { type ArcDescriptor, type ArcRun, MUL, U1, applyBody, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
 import { git } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
@@ -206,4 +211,54 @@ test('scope.references-row: Phase-0 row 10 lists, as an advisory, the files outs
   assert.deepEqual(out.rows, [], 'an advisory never refuses');
   assert.deepEqual(out.advisories, [{ kind: 'scope-references-outside', unit: unitId('u1'), removed: 'src/add.js', referrers: ['ARCHITECTURE.md'] }],
     'contracts/api.md names `add(a, b)` inside the scope; nothing names the third');
+});
+
+test('scope.revert-repeat-holds (plan defects, 2026-10-16): salvage reverting the same out-of-scope path on two rounds running holds the unit at lanes, uncharged; an accept re-opens it and its builder is told to restore the path', T, async () => {
+  const dirty = codexStep([{ type: 'dirty', files: { 'package.json': PACKAGE } }, { type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'] });
+  const dirtyAgain = codexStep([{ type: 'dirty', files: { 'package.json': PACKAGE } }], { argv: ['exec', 'resume'] });
+  const d = setupArc({
+    steps: [planCheckStep({ decision: 'approve' }), dirty, gateStep({ decision: 'revise', directives: ['name the helper better'] }), dirtyAgain, planCheckStep({ decision: 'approve' }), codexStep([], { argv: ['exec', 'resume'] })],
+  });
+  const r = contextFor(d);
+  try {
+    const held = await runUnit(r.ctx, r.unit('u1'), async () => true);
+    assert.ok(held.kind === 'held' && held.needsUser?.reason === 'scope-growth', JSON.stringify(held));
+    assert.deepEqual(outcomes(d).slice(6), ['lanes:green', 'gate:revise', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:scope-growth']);
+    assert.match(held.needsUser.summary, /salvage reverted the unit's edits to package\.json on its last two build rounds/);
+    const u = r.journal.view.unit(U1);
+    assert.deepEqual(u.interrupted?.detail, { kind: 'scope-growth', proposals: [{ patterns: ['package.json'], reason: 'salvage reverted the unit\'s edits to package.json on its last two build rounds (outside its scope)' }] });
+    assert.equal(u.counters.chargeableFailures, 1, 'the gate revise charged; the hold charges nothing');
+    const f = followingContext(r);
+    raiseResult(f, U1, held);
+
+    const accepted = await command(r, decide('accept', 'the build needs the script'));
+    assert.equal(accepted.outcome.kind, 'applied', JSON.stringify(accepted.outcome));
+    assert.equal(r.journal.view.unit(U1).scopeDecisions.at(-1)?.stage, 'lanes');
+    const ran = await runUnit(f, unitInForce(f, 'u1'), until('lanes'));
+    assert.equal(ran.kind, 'held', JSON.stringify(ran));
+    assert.deepEqual(outcomes(d).slice(14), ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'], 'the accept re-opened the unit at plan-check');
+    assert.ok((dispatchOf(r.journal.view, U1).scope as readonly string[]).includes('package.json'));
+    const restore = readCalls(d.scenarioPath).at(-1)!.stdin;
+    assert.match(restore, /The unit's scope now includes these paths, whose edits the executor reverted after your last round: package\.json\. Your versions are kept under \S+\/rejected\/u1\/[0-9a-f]{64}\/files/);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('scope.derived-outputs (plan defects, 2026-10-16): a unit covering a derived source pins its outputs, and salvage keeps a regenerated output', T, async () => {
+  // Left uncommitted, so salvage decides both paths.
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild({}, [{ type: 'dirty', files: { 'dist/bundle.js': 'export const bundled = 1;\n', 'out-of-scope.txt': 'no\n' } }])] });
+  editPlan(d, (p) => void (p['derived'] = [{ sources: ['src/**'], outputs: ['dist/bundle.js'] }]));
+  const r = contextFor(d);
+  try {
+    const ran = await runUnit(r.ctx, r.unit('u1'), until('lanes'));
+    assert.equal(ran.kind, 'held', JSON.stringify(ran));
+    const pinned = dispatchOf(r.journal.view, U1);
+    assert.deepEqual([pinned.scope, pinned.derived], [['contracts/**', 'src/**', 'test/**'], ['dist/bundle.js']], 'the widening recorded beside the scope');
+    const branch = unitBranch(r.ctx.plan().arc, U1);
+    assert.equal(git(d.repo, 'show', `${branch}:dist/bundle.js`), 'export const bundled = 1;');
+    assert.throws(() => git(d.repo, 'show', `${branch}:out-of-scope.txt`), 'a path outside the effective scope is still reverted');
+  } finally {
+    r.journal.close();
+  }
 });

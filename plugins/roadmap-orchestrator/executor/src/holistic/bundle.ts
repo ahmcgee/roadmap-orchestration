@@ -115,9 +115,10 @@ import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
 import { type Observation, keyOf, observedVerdict, reuse } from './observe.ts';
 import {
   type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
-  type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar,
+  type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar, planDefectText,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
+import { laneMisses } from './witnessfiles.ts';
 
 /**
  * What a checkpoint needs beyond an audit's context: the revision core's plan file, routing base, docs publisher and lane
@@ -592,6 +593,19 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
           const lane = obligationsNow.lanes.find((l) => l.id === c.witness.lane);
           if (lane === undefined) {
             reasons.push(`${at}: child ${c.id}'s witness lane ${c.witness.lane} is not an arc lane`);
+            return [];
+          }
+          // Plan defects (2026-10-16): a child of a parent whose witness declares files declares its own, each in its lane.
+          if (parent.witness?.files !== undefined && c.witness.files === undefined) {
+            reasons.push(`${at}: child ${c.id}'s witness declares no files (the test files holding its test ids)`);
+            return [];
+          }
+          const outside = (c.witness.files ?? []).flatMap((file) => {
+            const missing = laneMisses(lane, file);
+            return missing === null ? [] : [planDefectText({ type: 'witness-not-in-lane', obligation: c.id, lane: lane.id, file, missing })];
+          });
+          if (outside.length > 0) {
+            reasons.push(...outside.map((t) => `${at}: ${t}`));
             return [];
           }
           const anchor = splitChildAnchor(c, pinned);

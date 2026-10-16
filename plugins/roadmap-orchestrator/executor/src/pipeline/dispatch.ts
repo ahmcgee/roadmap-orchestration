@@ -5,7 +5,9 @@
 //   unit's routingRev in force and the hash of the implementer seat's triple (`implementerSeatRev`). A plan-check
 //   that raises the risk re-pins it with a new fact (same scope, higher floor); nothing lowers it. The scope grows
 //   only by a ruled scope-growth apply (src/input/classify.ts), which the next dispatch check re-pins; the fold
-//   refuses any other change of it.
+//   refuses any other change of it. Plan defects (2026-10-16): the record also pins `derived`, the outputs of the plan's
+//   `derived` entries whose sources the scope covers (src/input/derived.ts), re-pinned whenever the plan changes them;
+//   everything that bounds what the unit may change reads `effectiveScope` (scope + derived).
 // - M3: the routing is the unit's (`StageContext.routing(unit)`: the arc's stack with the unit's `route` or
 //   `steer --class` layer on top, src/routing/layers.ts). Every record since 1.0.0-dev.6 pins the unit's bounds
 //   (`bounds`: `boundsOf` its plan `limits`, the transition table's counters and the backend windows) and the
@@ -55,6 +57,7 @@ import {
 } from '../core/records.ts';
 import { type AbsPath, type BranchName, type IsoTime, type RefName, type RepoPattern, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
 import { type RoutingBase, inputPath, keepInput } from '../input/inforce.ts';
+import { derivedWidening } from '../input/derived.ts';
 import { type PlanUnit, boundsOf } from '../input/plan.ts';
 import { backendEnv, CODEX_OUTPUT_FILE } from '../preflight/smoke.ts';
 import { instanceEnv } from '../resources/pool.ts';
@@ -200,14 +203,21 @@ export function repin(journal: Journal, routing: ResolvedRouting, record: Dispat
  * What a re-pin changes besides the routing: the bounds a `limits` revision set, a ruled scope growth, a risk the plan
  * raised above the floor (`route`: risk may rise).
  */
-export type PinUpdate = Readonly<{ bounds?: Bounds; scope?: readonly RepoPattern[]; riskFloor?: RiskTier }>;
+export type PinUpdate = Readonly<{ bounds?: Bounds; scope?: readonly RepoPattern[]; riskFloor?: RiskTier; derived?: readonly RepoPattern[] }>;
+
+/** `derived` as a dispatch record holds it: absent when empty. */
+const withDerived = (record: DispatchRecord, derived: readonly RepoPattern[]): DispatchRecord => {
+  const { derived: _was, ...rest } = record;
+  return derived.length === 0 ? rest : { ...rest, derived };
+};
 
 /** Records `record` re-pinned under `routing` with `update` (a new dispatch fact), whatever its implementer seat. */
 function pin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate): DispatchRecord {
   const riskFloor = update.riskFloor ?? record.riskFloor;
-  const next: DispatchRecord = {
-    ...record, ...update, routingRev: routing.rev, implementerSeatRev: implementerSeatRev(routing, riskFloor), at: now(),
-  };
+  const { derived, ...rest } = update;
+  const next: DispatchRecord = withDerived({
+    ...record, ...rest, routingRev: routing.rev, implementerSeatRev: implementerSeatRev(routing, riskFloor), at: now(),
+  }, derived ?? record.derived ?? []);
   journal.fact({ kind: 'dispatch', record: next });
   return next;
 }
@@ -227,13 +237,16 @@ function pinUpdate(ctx: StageContext, record: DispatchRecord): PinUpdate {
   if (record.scope.some((p) => !scope.includes(p))) {
     throw new Error(`unit ${record.unit}: the plan in force scopes it ${scope.join(', ')}, which drops part of its pinned scope ${record.scope.join(', ')}`);
   }
+  const derived = derivedWidening(ctx.plan(), scope);
   return {
     ...(same(bounds, boundsOfRecord(record)) ? {} : { bounds }), ...(same(scope, record.scope) ? {} : { scope }),
     ...(riskAbove(unit.risk, record.riskFloor) ? { riskFloor: unit.risk } : {}),
+    ...(same(derived, record.derived ?? []) ? {} : { derived }),
   };
 }
 
-const unchanged = (update: PinUpdate): boolean => update.bounds === undefined && update.scope === undefined && update.riskFloor === undefined;
+const unchanged = (update: PinUpdate): boolean =>
+  update.bounds === undefined && update.scope === undefined && update.riskFloor === undefined && update.derived === undefined;
 
 /** `record` under the plan and routing in force: itself when neither changed it; else re-pinned, or the park. */
 function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchRecord> {
@@ -263,10 +276,11 @@ export function pinDispatch(ctx: StageContext, unit: PlanUnit, spec: SpecState):
  */
 export function firstPin(ctx: StageContext, unit: PlanUnit, spec: SpecState, riskFloor: RiskTier): DispatchRecord {
   const routing = ctx.routing(unit.id);
-  return {
-    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope: [...unit.scope].sort(), riskFloor, routingRev: routing.rev,
+  const scope = [...unit.scope].sort();
+  return withDerived({
+    unit: unit.id, specRev: spec.rev, specSha256: spec.sha256, scope, riskFloor, routingRev: routing.rev,
     implementerSeatRev: implementerSeatRev(routing, riskFloor), at: now(), transientRules: 'm3', bounds: boundsOf(ctx.plan(), unit),
-  };
+  }, derivedWidening(ctx.plan(), scope));
 }
 
 /** The pinned record, which every stage after plan-check requires. */

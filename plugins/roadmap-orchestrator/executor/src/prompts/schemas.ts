@@ -20,7 +20,7 @@ import { BOUND_FIELDS, type Bounds, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, ty
 import {
   Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
-import { type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
+import { type RepoPath, type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
   ACTIVATIONS, type Activation, DOC_RELATIONS, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
   OWNER_ONLY_CLASSES, PACK_DISPOSITIONS, PACK_SEVERITIES, type DocRef, type PackDisposition, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
@@ -592,9 +592,12 @@ const ISSUE_FINDING_SEVERITIES = ['P2', 'P3'] as const;
 const opSchema = (op: BundleOpKind, fields: { readonly [key: string]: Schema }): Schema =>
   sObj({ op: sEnum([op]), ...fields, cites: S_IDS, evidence: sArr(S_STR) });
 const S_DOC_REF = sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR });
-/** A split child (M4a): exactly one of `docRef` and `rule` is non-null; its witness lane one of `arcLanes`. */
+/**
+ * A split child (M4a): exactly one of `docRef` and `rule` is non-null; its witness lane one of `arcLanes`; its witness
+ * `files` (plan defects, 2026-10-16) the test files holding its test ids, [] for none declared.
+ */
 const sSplitChild = (arcLanes: Schema): Schema => sObj({
-  id: S_STR, statement: S_STR, docRef: sNullable(S_DOC_REF), rule: sNullable(S_STR), witness: sObj({ lane: arcLanes, testIds: S_IDS }), activation: sEnum(ACTIVATIONS),
+  id: S_STR, statement: S_STR, docRef: sNullable(S_DOC_REF), rule: sNullable(S_STR), witness: sObj({ lane: arcLanes, testIds: S_IDS, files: S_IDS }), activation: sEnum(ACTIVATIONS),
   deliveredBy: S_IDS,
 });
 
@@ -716,7 +719,11 @@ const splitChild: Read<SplitChild> = object((g) => {
     statement: g.get('statement', str),
     docRef,
     rule: g.get('rule', nullable((v, p) => ruleId(v, p))),
-    witness: g.get('witness', object((h) => ({ lane: h.get('lane', (v, p): LaneId => laneId(v, p)), testIds: h.get('testIds', uniqueIds(str, { nonEmpty: true })) }))),
+    witness: g.get('witness', object((h): WitnessRef => {
+      // Plan defects (2026-10-16): absent on an answer recorded before; [] declares none.
+      const files = [...(h.optional('files', uniqueIds((v, p): RepoPath => repoPath(v, p))) ?? [])].sort();
+      return { lane: h.get('lane', (v, p): LaneId => laneId(v, p)), testIds: h.get('testIds', uniqueIds(str, { nonEmpty: true })), ...(files.length === 0 ? {} : { files }) };
+    })),
     activation: g.get('activation', oneOf(ACTIVATIONS)),
     deliveredBy: g.get('deliveredBy', answerSet(unitR, (u) => u, (a, b) => (a < b ? -1 : a > b ? 1 : 0))),
   };
