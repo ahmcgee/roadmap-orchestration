@@ -19,7 +19,9 @@
 //      checkpoint seat's backend is parked or the arc is paused or stopped.
 //   1a. Arc feedback 2026-10-16 (checkpoints ran too often, not aimed at the blocker): a completed audit's first job is not
 //      made when the audit found nothing new (`nothingNew`: not the final audit, a checkpoint already settled under the
-//      vision in force, and every active finding no unit owns captured by such a checkpoint). Code writes `checkpoint-skipped{audit, generation,
+//      vision in force, and every active finding no unit owns captured by such a checkpoint; in a corpus arc, also every
+//      open issue, fetched just before, held byte-equal by such a checkpoint's capture, `unseenIssues` in
+//      src/holistic/intake.ts, whose forge failure keeps the checkpoint). Code writes `checkpoint-skipped{audit, generation,
 //      visionSha256, carried}` instead of a call; it settles the audit's generation as a no-op would. A park trigger's prompt
 //      carries the code-produced diagnosis of the parked lineage (`parkDiagnosis`), and a reenter op cites the failure it
 //      fixes (src/input/classify.ts refuses an unchanged retry of a design failure).
@@ -118,7 +120,7 @@ import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
 import { uncoveredDivergences } from './divergence.ts';
 import { isActive } from './findings.ts';
-import { captureCheckpointIssues, issueReuse, issuesInputOf } from './intake.ts';
+import { captureCheckpointIssues, issueReuse, issuesInputOf, unseenIssues } from './intake.ts';
 import { keyOf, reuse } from './observe.ts';
 import { type ArcLaneDef, type BusyAttempt, type CheckpointTrigger, type ObligationDef, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
@@ -344,19 +346,25 @@ function dueTrigger(ctx: CheckpointContext): Due | null {
  * decision under the vision in force (applied, no-op or requested; so the arc's first checkpoint, which weighs the coverage
  * gaps and the obligations, and the first after a vision revision always run); and every active finding no unit owns
  * (one this audit opened, merged into or corroborated, or one opened elsewhere: a plan-check's vision conflict) was
- * captured by such a checkpoint. `carried`: the findings the audit reported.
+ * captured by such a checkpoint. `carried`: the findings the audit reported. A corpus arc's open issues are weighed after
+ * this, by `runCheckpoint` (`unseenIssues`: the forge is no journal view).
  */
 export function nothingNew(view: JournalView, job: JobId): readonly FindingId[] | null {
   const fold = view.holistic();
   const audit = fold.audits.find((a) => a.started.job === job);
   if (audit?.ended === null || audit === undefined) throw new Error(`${job} is no ended audit`);
   if (audit.started.triggers.some((t) => t.type === 'final')) return null;
-  const vision = view.planApplied()?.visionSha256;
-  const settled = fold.checkpoints.filter((c) => c.decided !== null && c.decided.kind !== 'rejected' && c.inputs.visionSha256 === vision);
+  const settled = settledUnderVision(view);
   if (settled.length === 0) return null;
-  const weighed = new Set(settled.flatMap((c) => c.inputs.findings));
+  const weighed = new Set(settled.flatMap((c) => c.findings));
   const unweighed = fold.findings.some((f) => isActive(f) && f.state !== 'owned' && f.state !== 'fixed-on-branch' && !weighed.has(f.id));
   return unweighed ? null : audit.ended.findings;
+}
+
+/** The captures of the checkpoints that settled a decision (applied, no-op or requested) under the vision in force. */
+function settledUnderVision(view: JournalView): readonly Captured[] {
+  const vision = view.planApplied()?.visionSha256;
+  return view.holistic().checkpoints.filter((c) => c.decided !== null && c.decided.kind !== 'rejected' && c.inputs.visionSha256 === vision).map((c) => c.inputs);
 }
 
 /** Why a due checkpoint does not start now, or null. */
@@ -944,7 +952,13 @@ export async function runCheckpoint(ctx: CheckpointContext): Promise<CheckpointO
   if (s === null) {
     const due = dueTrigger(ctx);
     if (due === null) return { kind: 'none' };
-    const carried = due.trigger.type === 'audit' && due.prev === null ? nothingNew(ctx.journal.view, due.trigger.job) : null;
+    let carried = due.trigger.type === 'audit' && due.prev === null ? nothingNew(ctx.journal.view, due.trigger.job) : null;
+    // An issue no settled checkpoint saw is new too (src/holistic/intake.ts `unseenIssues`).
+    if (carried !== null && ctx.plan().target === 'corpus') {
+      const issues = unseenIssues(ctx, settledUnderVision(ctx.journal.view));
+      if (issues === 'held') return { kind: 'skipped', reason: 'issue-policy-untrusted' };
+      if (issues === 'unseen') carried = null;
+    }
     if (carried !== null && due.trigger.type === 'audit') {
       const visionSha256 = ctx.journal.view.planApplied()?.visionSha256;
       if (visionSha256 === undefined) throw new Error('a holistic arc whose plan in force records no vision');
