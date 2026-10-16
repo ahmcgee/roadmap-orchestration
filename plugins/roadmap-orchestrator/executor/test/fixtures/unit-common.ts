@@ -65,7 +65,8 @@ export type ArcDescriptor = Readonly<{
   scenarioDir: string;
 }>;
 
-function laneJson(l: LaneJson): Record<string, unknown> {
+/** A lane as plan and spec files carry it, defaults filled. */
+export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [], ...(l.inputs === undefined ? {} : { inputs: l.inputs }),

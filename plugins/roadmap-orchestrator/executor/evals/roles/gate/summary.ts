@@ -1,0 +1,150 @@
+// Aggregating gate trials: per cell (rates with Wilson intervals, coverage, cost median/p90 overall and per model, cost per
+// caught defect, wall time, turns, voids) and the pass criteria over the whole set:
+//
+//   planted-detection  caught / graded planted trials >= 80%
+//   zero-lucky         no catch without a look at the plant
+//   clean-fp           false positives / graded clean trials <= 1/12
+//   precision          blocking findings localised to the plant / all blocking findings on planted trials >= 50%
+//   voids              void trials (runaway, error, needle, placement-miss) <= 25% of all
+//   cost-check         every call's per-model costs sum to its total_cost_usd
+//   holdout-gap        (with a dev summary to compare) holdout detection within 15 points of dev
+//
+// Coverage (the median share of not-inlined files the session read; target 90%) and the method (tools, subagents) are
+// reported, never failed.
+import { type Interval, fmtRate, median, quantile, wilson } from '../stats.ts';
+import type { TrialRow, VoidReason } from './arc.ts';
+
+export type CellSummary = Readonly<{
+  cell: string;
+  family: string;
+  planted: boolean;
+  trials: number;
+  graded: number;
+  voids: Readonly<Partial<Record<VoidReason, number>>>;
+  /** Planted cells: caught of graded. Clean cells: false positives of graded. */
+  rate: Interval;
+  lucky: number;
+  coverageMedian: number | null;
+  cost: Readonly<{ median: number | null; p90: number | null; perCatch: number | null }>;
+  costByModel: Readonly<Record<string, Readonly<{ median: number | null; p90: number | null }>>>;
+  wallMedianS: number | null;
+  turnsMedian: number | null;
+  loadMedian: number | null;
+  /** Method, reported: subagents spawned per trial (median) and the models they ran on. */
+  subagentsMedian: number | null;
+  subagentModels: readonly string[];
+}>;
+
+export type Criterion = Readonly<{ name: string; pass: boolean | null; detail: string }>;
+
+export type ModelTotals = Readonly<{ costUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }>;
+
+export type Summary = Readonly<{
+  set: 'dev' | 'holdout';
+  trials: number;
+  cells: readonly CellSummary[];
+  detection: Interval;
+  falsePositives: Interval;
+  coverageMedian: number | null;
+  criteria: readonly Criterion[];
+  usage: Readonly<Record<string, ModelTotals>>;
+  totalUsd: number;
+}>;
+
+const graded = (rows: readonly TrialRow[]): readonly TrialRow[] => rows.filter((r) => r.void === null && r.graded !== null);
+const costOf = (r: TrialRow): number => r.usage?.totalUsd ?? 0;
+
+function cellSummary(rows: readonly TrialRow[]): CellSummary {
+  const first = rows[0]!;
+  const g = graded(rows);
+  const voids: Partial<Record<VoidReason, number>> = {};
+  for (const r of rows) if (r.void !== null) voids[r.void.reason] = (voids[r.void.reason] ?? 0) + 1;
+  const caught = g.filter((r) => r.graded!.verdict === 'caught').length;
+  const fps = g.filter((r) => r.graded!.verdict === 'false-positive').length;
+  const models = [...new Set(rows.flatMap((r) => Object.keys(r.usage?.byModel ?? {})))].sort();
+  const costByModel: Record<string, { median: number | null; p90: number | null }> = {};
+  for (const m of models) {
+    const xs = rows.map((r) => r.usage?.byModel[m]?.costUsd ?? 0);
+    costByModel[m] = { median: median(xs), p90: quantile(xs, 0.9) };
+  }
+  const shares = rows.flatMap((r) => (r.graded?.coverage.share === null || r.graded === null ? [] : [r.graded.coverage.share]));
+  const costs = rows.map(costOf);
+  return {
+    cell: first.cell, family: first.family, planted: first.planted, trials: rows.length, graded: g.length, voids,
+    rate: first.planted ? wilson(caught, g.length) : wilson(fps, g.length),
+    lucky: g.filter((r) => r.graded!.verdict === 'lucky').length,
+    coverageMedian: median(shares),
+    cost: { median: median(costs), p90: quantile(costs, 0.9), perCatch: first.planted && caught > 0 ? costs.reduce((a, b) => a + b, 0) / caught : null },
+    costByModel,
+    wallMedianS: median(rows.map((r) => r.wallMs / 1000)),
+    turnsMedian: median(rows.map((r) => r.turns)),
+    loadMedian: median(rows.map((r) => r.load)),
+    subagentsMedian: median(rows.map((r) => r.method.subagents.length)),
+    subagentModels: [...new Set(rows.flatMap((r) => r.method.subagents.flatMap((a) => (a.model === null ? [] : [a.model]))))].sort(),
+  };
+}
+
+const pct = (x: number | null): string => (x === null ? '-' : `${(x * 100).toFixed(0)}%`);
+const usd = (x: number | null): string => (x === null ? '-' : `$${x.toFixed(3)}`);
+
+/** The summary of `rows`; `compare`, a dev summary, adds the holdout-gap criterion. */
+export function summarise(set: 'dev' | 'holdout', rows: readonly TrialRow[], compare: Summary | null = null): Summary {
+  const cellIds = [...new Set(rows.map((r) => r.cell))];
+  const cells = cellIds.map((id) => cellSummary(rows.filter((r) => r.cell === id)));
+  const g = graded(rows);
+  const planted = g.filter((r) => r.planted);
+  const clean = g.filter((r) => !r.planted);
+  const detection = wilson(planted.filter((r) => r.graded!.verdict === 'caught').length, planted.length);
+  const falsePositives = wilson(clean.filter((r) => r.graded!.verdict === 'false-positive').length, clean.length);
+  const lucky = planted.filter((r) => r.graded!.verdict === 'lucky').length;
+  const blocking = planted.reduce((a, r) => a + r.graded!.blocking, 0);
+  const localised = planted.reduce((a, r) => a + (r.graded!.blocking - r.graded!.spurious), 0);
+  const voids = rows.filter((r) => r.void !== null).length;
+  const shares = rows.flatMap((r) => (r.graded === null || r.graded.coverage.share === null ? [] : [r.graded.coverage.share]));
+  const coverageMedian = median(shares);
+  const anyPlanted = rows.some((r) => r.planted);
+  const anyClean = rows.some((r) => !r.planted);
+  const criteria: Criterion[] = [
+    { name: 'planted-detection', pass: anyPlanted ? planted.length > 0 && (detection.rate ?? 0) >= 0.8 : null, detail: anyPlanted ? fmtRate(detection) : 'no planted cell run' },
+    { name: 'zero-lucky', pass: anyPlanted ? lucky === 0 : null, detail: `${lucky} lucky` },
+    { name: 'clean-fp', pass: anyClean ? clean.length > 0 && (falsePositives.rate ?? 1) <= 1 / 12 : null, detail: anyClean ? fmtRate(falsePositives) : 'no clean cell run' },
+    { name: 'precision', pass: blocking === 0 ? null : localised / blocking >= 0.5, detail: blocking === 0 ? 'no blocking finding on a planted trial' : `${localised}/${blocking} blocking findings localised ${pct(localised / blocking)}` },
+    { name: 'voids', pass: voids <= rows.length / 4, detail: `${voids}/${rows.length} void` },
+    { name: 'cost-check', pass: rows.every((r) => r.usage === null || r.usage.check === 'ok'), detail: `${rows.filter((r) => r.usage?.check === 'mismatch').length} mismatched, ${rows.filter((r) => r.usage === null).length} without usage` },
+  ];
+  if (compare !== null) {
+    const gap = detection.rate === null || compare.detection.rate === null ? null : Math.abs(detection.rate - compare.detection.rate);
+    criteria.push({ name: 'holdout-gap', pass: gap === null ? false : gap <= 0.15, detail: `holdout ${pct(detection.rate)} vs dev ${pct(compare.detection.rate)}` });
+  }
+  const usage: Record<string, ModelTotals> = {};
+  for (const r of rows) {
+    for (const [m, u] of Object.entries(r.usage?.byModel ?? {})) {
+      const t = usage[m] ?? { costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      usage[m] = {
+        costUsd: t.costUsd + u.costUsd, inputTokens: t.inputTokens + u.inputTokens, outputTokens: t.outputTokens + u.outputTokens,
+        cacheReadTokens: t.cacheReadTokens + u.cacheReadTokens, cacheWriteTokens: t.cacheWriteTokens + u.cacheWriteTokens,
+      };
+    }
+  }
+  return { set, trials: rows.length, cells, detection, falsePositives, coverageMedian, criteria, usage, totalUsd: rows.reduce((a, r) => a + costOf(r), 0) };
+}
+
+/** The report: one CELL line per cell, COST lines per cell and model, a PASS|FAIL|INFO line per criterion, USAGE per model. */
+export function reportLines(s: Summary): readonly string[] {
+  const out: string[] = [];
+  for (const c of s.cells) {
+    out.push(`CELL ${c.cell} ${c.planted ? 'planted' : 'clean'} trials=${c.trials} graded=${c.graded} ${c.planted ? 'caught' : 'fp'}=${fmtRate(c.rate)} lucky=${c.lucky} `
+      + `coverage=${pct(c.coverageMedian)} cost=${usd(c.cost.median)}/p90 ${usd(c.cost.p90)} perCatch=${usd(c.cost.perCatch)} wall=${c.wallMedianS?.toFixed(0) ?? '-'}s `
+      + `turns=${c.turnsMedian ?? '-'} subagents=${c.subagentsMedian ?? '-'}${c.subagentModels.length > 0 ? ` (${c.subagentModels.join(',')})` : ''} voids=${JSON.stringify(c.voids)}`);
+    for (const [m, x] of Object.entries(c.costByModel)) out.push(`COST ${c.cell} ${m} median=${usd(x.median)} p90=${usd(x.p90)}`);
+  }
+  for (const k of s.criteria) out.push(`${k.pass === null ? 'INFO' : k.pass ? 'PASS' : 'FAIL'} ${k.name} ${k.detail}`);
+  out.push(`INFO coverage-median ${pct(s.coverageMedian)} (target 90%)`);
+  for (const [m, u] of Object.entries(s.usage)) {
+    out.push(`USAGE ${m} costUsd=${u.costUsd.toFixed(4)} input=${u.inputTokens} output=${u.outputTokens} cacheRead=${u.cacheReadTokens} cacheWrite=${u.cacheWriteTokens}`);
+  }
+  out.push(`TOTAL ${s.trials} trials ${usd(s.totalUsd)}`);
+  return out;
+}
+
+export const failed = (s: Summary): boolean => s.criteria.some((k) => k.pass === false);

@@ -133,6 +133,16 @@ at triage stay in git history.
 - Issue mode outbound projection: 1.1.
 - The Codex judgment profile and cgroup containment stay out (LR-a).
 
+### Deferred from the dev.12 role evals (evals/roles/)
+
+- Role evals for the lens, plan-check, checkpoint and builder seats, on the gate eval's harness and generator. Bring each in
+  with the change it would guard (the plan's deferred lens-chunking removal and builder prompt trim need theirs first).
+- The load brake compares token load, not dollars: the CLI reports cost only on its result. Switch to cost if the stream
+  starts carrying it per message.
+- A look at the plant counts a Read of its file or `.diff` and a Grep that showed it, in any session; a Glob listing or a
+  subagent's summary does not. Revisit if a real run grades a legitimate catch `lucky`.
+- Rotate the holdout classes after each acceptance that used them (a holdout seen in a failure analysis is half spent).
+
 ## Convergence and integrity (unscheduled, wanted)
 
 - **A `respec` gate outcome** (arc-1 item 27b). A gate that finds the spec wrong can only escalate to the
@@ -174,6 +184,13 @@ at triage stay in git history.
   worth using unattended.
 
 ## Do soon (small fixes)
+
+- **Role eval placement budget** (dev.12 merge). `evals/roles/gate/fixture.ts` predicts a plant's placement against
+  `INLINE_BUDGET`, an estimate of the gate's bounded-diff budget, and calls `boundedDiff` as the WIP module shaped it.
+  Import the gate's own budget (and follow any signature change) once the bounded gate diff lands; until then a
+  misprediction voids trials as `placement-miss`, never grades them.
+- **Role eval declared removals** (dev.12 merge). The gate fixture states the spec's removals as an acceptance clause; if
+  the spec grows a `removes` field, write it there too (`evals/roles/gate/arc.ts` `setupGateArc`).
 
 - **Flow seat decorates its station id** (probe, 2026-10-16, dev.11 ladder). The efficient flow seat answered
   `constraint.station: "slot:integration (largest service component suite:suite)"`, refused by `m4b.flow.validate`; a
