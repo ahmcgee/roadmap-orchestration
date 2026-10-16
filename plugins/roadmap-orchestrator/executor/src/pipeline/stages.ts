@@ -84,7 +84,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
 import {
-  BACKEND_PARK_CLASSES, type HoldCause, type IntentOf, type OpKind, type OutcomeStage, type ScopeGrowthProposal, type StageOutcomeDetail, type StageOutcomeKind,
+  BACKEND_PARK_CLASSES, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OutcomeStage, type ScopeGrowthProposal, type StageOutcomeDetail, type StageOutcomeKind,
 } from '../core/events.ts';
 import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence, holdFence } from '../core/fence.ts';
@@ -121,7 +121,7 @@ import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, BuildAssess, Checkout, CorpusInput, DeliveredWitness, DocText, FastLane, GateTargetInput, PlanCheckAcceptance, PlanCheckCheckouts, PlanCheckPriorRound,
+  ArchitectureInput, BuildAssess, Checkout, CorpusInput, DeliveredWitness, DocText, EscalationInput, FastLane, GateTargetInput, PlanCheckAcceptance, PlanCheckCheckouts, PlanCheckPriorRound,
   PlanCheckScopeGrowth, ReferenceIndex,
   RulingText,
   TargetInput, VisionInput,
@@ -134,7 +134,7 @@ import {
 import { ASSESSED_DIRECTIVE, judgmentRepairDirective } from '../prompts/directives.ts';
 import { type ParkFacts, NO_PARK_FACTS, repeatNeedsUser, stageOutcomeFact } from '../park/table.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
-import type { JudgmentRole } from '../routing/types.ts';
+import type { JudgmentRole, JudgmentSeat } from '../routing/types.ts';
 import { buildCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, fastLanes, heldReservation, holderUnits, run } from '../resources/reserve.ts';
@@ -586,6 +586,21 @@ export function judgmentOutput<T>(ctx: StageContext, intent: IntentOf<'proc.spaw
 }
 
 /**
+ * W3 (2026-10-16): why a judgment of `stage` runs at the escalation seat, for its prompt (null below that seat). A route-up
+ * carries the seat below's latest answer (null when that spawn gave none: a refusal); otherwise a risk trigger promoted it.
+ */
+export function escalationOf(
+  ctx: StageContext, unit: UnitId, stage: JudgmentStage, tier: JudgmentSeat, validate: (value: unknown) => Readonly<{ decision: string; reasons: readonly string[] }>,
+): EscalationInput | null {
+  if (tier !== 'escalation') return null;
+  if (!ctx.journal.view.unit(unit).routedUp.includes(stage)) return { kind: 'risk-trigger' };
+  const below = judgmentSpawns(ctx, unit, stage === 'gate' ? 'gate' : 'planCheck').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.tier !== 'escalation').at(-1);
+  if (below === undefined) throw new Error(`${unit}: the ${stage} routed up with no spawn below the escalation seat`);
+  const out = judgmentOutput(ctx, below, validate);
+  return { kind: 'route-up', first: out === null ? null : { decision: out.decision, reasons: out.reasons } };
+}
+
+/**
  * The round handoff of a plan-check after its own redirect: the unit's latest plan-check answer, when it
  * redirected and its patch was applied (a redirect beyond the bound escalates unpatched, and the next
  * check starts fresh). Changed premise files compare the prior attempt's checkouts with `now`'s.
@@ -734,6 +749,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       acceptance: shape === 'acceptance' ? acceptanceOf(ctx, unit, now.spec, checkouts.tip.at) : null,
       priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
       scopeGrowth: planCheckScopeGrowth(ctx, unit.id, effectiveScope(pinned), now.spec, checkouts.tip.at),
+      escalation: escalationOf(ctx, unit.id, 'plan-check', seat.tier, validatePlanCheckOutput),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
     return { checkouts, rendered, target };

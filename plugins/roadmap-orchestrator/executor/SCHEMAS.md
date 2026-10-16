@@ -265,6 +265,13 @@ again, its recorded checkpoint answers re-enter as recorded, and the applies its
 | `status.decisionsSince[].kind` | `+ checkpoint-skipped` (ruled by the executor) | none |
 | `CheckpointInputs` (not persisted) | `+ diagnosis: ParkDiagnosis \| null` (a park trigger's lineage: failures with refs, reverted out-of-scope paths, missing witnesses, earlier re-entries); `- closeout` (H5's delta render: such an audit now has no checkpoint) | none: rendered per call |
 
+**1.0.0-dev.11 → next (gate method redesign, W3 seat prompts).** No persisted record changes.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| `GateInputs`, `PlanCheckInputs` (not persisted) | `+ escalation: EscalationInput \| null` = `{kind: route-up, first: {decision, reasons} \| null} \| {kind: risk-trigger}`: at the escalation seat only, from the unit's `routedUp` and the latest answer of a spawn below that seat (`escalationOf`, src/pipeline/stages.ts); rendered as `<escalation>` before the ask | none: rendered per call from the journal |
+| `PROMPTS` (not persisted) | Sonnet 5.5 is a `prompt` row for every judgment role: the role's Opus module with `SONNET_THINK_FIRST` ending its system prompt; its build still inherits the Opus brief. The Fable gate and plan-check modules are deleted, the checkpoint module is `checkpoint/claude-opus-5-5.ts`, and Fable inherits Opus for every judgment role. `MAX_LENS_FINDINGS` is deleted (unenforced) | none |
+
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
@@ -918,8 +925,8 @@ judgment claude-sonnet-5-5 high (both); `frontier` → claude-opus-5-5 medium, `
 both profiles). Built-in seats (1.0.0-dev.10): planCheck `{low: efficient, med: efficient, high: frontier, escalation:
 summit}`, build `{low: efficient, med: efficient, high: frontier}`, gate `{low: efficient, med: frontier, high: frontier,
 escalation: summit}`, lens and flow efficient, packReview frontier, checkpoint summit. A repo rebind (`ClassBindings`) binds
-its one triple at every seat that names the class. `PROMPTS[role]['claude-sonnet-5-5']` inherits a Claude module for every
-judgment role (2026-10-15 review). `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
+its one triple at every seat that names the class. `PROMPTS[role]['claude-sonnet-5-5']` is, for every
+judgment role, the Opus module with `SONNET_THINK_FIRST` ending its system prompt (W3; inherited unchanged 2026-10-15 to dev.11). `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
 SeatTable<ModelClass>` (the built-in seats, shared by both profiles); `RoutingLayer` = a class at any subset of seats (a named role needs
 ≥ 1 seat; a triple is refused); `ClassBindings` = a triple for any subset of classes (repo config only; a
 binding's effort must be one `models.ts` lists for its model: Claude low|medium|high|xhigh|max, Codex low|medium|high); `RoutingLayerName = builtin | repo-config | plan
@@ -2041,7 +2048,8 @@ supersede the A4 items they name):
 1. **One lens module for the four lenses**: the standing rules in the system prompt, the lens's own brief in the
    message's `<lens_brief>`, whose first line is the one marker `lens: <kind>` (what the fake backend keys on).
 2. **`MAX_LENS_FINDINGS` (8)** is stated in the prompt as the reporting bound, worst first; the reader does not
-   enforce it (an anti-spiral bound on reporting, never on reading).
+   enforce it (an anti-spiral bound on reporting, never on reading). Deleted in W3 (dev.12): the lens reports every
+   finding that clears its bar.
 3. **Routing**: lens/Opus and checkpoint/Fable are modules; lens/Fable and checkpoint/Opus inherit them (reviewed
    2026-09-30); Sonnet and Codex are unsupported for both ("Prompts" above; Sonnet inherits since 1.0.0-dev.10).
 

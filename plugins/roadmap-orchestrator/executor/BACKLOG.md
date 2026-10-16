@@ -161,6 +161,18 @@ at triage stay in git history.
   capacity. Wanted: a code-computed critical-path length (units and median stage time) beside the pack review's
   notes, as an advisory the architect may act on before admission, never a refusal.
 
+- **Builder prompt trim, after the builder eval** (W3, 2026-10-16, deferred). The build briefs restate rules code already
+  backs; trim each once a builder eval shows the outcome holds without it. Candidates: the scope paragraph's "the
+  executor keeps only changes to paths matching them" (salvage enforces it and the fix round names reverted paths); the
+  Opus brief's <lanes> "repeat after fixing until each exits with its expected code" and the Luna success criterion it
+  mirrors (the lanes stage reruns them and a red lane comes back as a fix round); "Estate lanes are not yours" (the
+  executor runs them, and the unit policy forbids the clusters); the <witnesses> paragraph's lookup by exact id (D1 checks
+  it before the gate and the fix directive restates it); "Committing is optional" (salvage commits). W3 dropped only the
+  one plain duplicate, <safety>'s "do not kill processes you did not start", which UNIT_POLICY states.
+- **Delegation for the Codex builder** (W3, deferred). The Luna/Sol build brief carries no subagent guidance: the role
+  prompts' text names Claude Code's Agent tool, which `codex exec` does not have. Revisit if Codex gains a subagent tool
+  worth using unattended.
+
 ## Do soon (small fixes)
 
 - **Flow seat decorates its station id** (probe, 2026-10-16, dev.11 ladder). The efficient flow seat answered

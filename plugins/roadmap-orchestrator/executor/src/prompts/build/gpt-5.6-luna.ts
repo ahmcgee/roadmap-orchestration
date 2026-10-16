@@ -17,6 +17,8 @@
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): a success criterion that every acceptance clause and witness
 // item maps to a test by its exact id (retro F05); the per-lane witness check commands (D1, R56); negative witnesses
 // through the real entry point (F20); `experiments` in the output; the read-only in-session assessment (E, R55).
+// W3 (2026-10-16): Host no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". No delegation
+// text: the Claude role prompts' guidance names the Agent tool, which `codex exec` does not have.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
 import { UNIT_POLICY, assessText, bullets, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
@@ -46,7 +48,7 @@ Make every acceptance clause in the spec hold, with every fast lane passing, and
 - A negative witness (a test that something does not happen) drives the real entry point, the command or call a user makes, with its fixture injected the way production reads it, never a helper called directly.
 - Tests: never weaken, skip or delete a test to get green; never write a test asserting behaviour you believe is wrong; no hard-coded answers shaped to the tests.
 - Git: do not push, rebase, reset --hard, checkout --, switch or delete branches, or amend and rewrite commits. Never revert changes you did not make. Committing is optional; the executor commits in-scope work after you exit. If you commit, commit on the current branch.
-- Host: sibling units and the orchestrator run here. Do not kill processes you did not start. Do not run estate lanes or start the clusters, containers or services they use. Work only in the worktree and the evidence directory.
+- Host: sibling units and the orchestrator run here. Do not run estate lanes or start the clusters, containers or services they use. Work only in the worktree and the evidence directory.
 - ${DECISIONS_FILE}: a JSON object {"decisions": [{"id": "...", "text": "..."}]} at the root of the evidence directory, rewritten complete each time. id starts with a letter, uses letters, digits, _ . or -, and is new to the spec and the file. text states the choice and the alternative not taken.
 
 # Tools

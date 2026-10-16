@@ -119,6 +119,15 @@ export type GatePriorRound = Readonly<{
   changedPremiseFiles: readonly string[];
 }>;
 
+/**
+ * W3 (2026-10-16): why a unit judgment runs at its role's escalation seat (summit), rendered only there. `route-up`: the
+ * seat below routed the unit up, `first` that seat's latest answer (its decision and reasons; null when it gave none, a
+ * refusal); `risk-trigger`: a runtime risk trigger (a contract path touched, scope growth) promoted the judgment.
+ */
+export type EscalationInput =
+  | Readonly<{ kind: 'route-up'; first: Readonly<{ decision: string; reasons: readonly string[] }> | null }>
+  | Readonly<{ kind: 'risk-trigger' }>;
+
 export type PlanCheckInputs = Readonly<{
   spec: RenderedSpec;
   /** The cited contracts and active rulings, in full; the rest in `index`. */
@@ -153,6 +162,8 @@ export type PlanCheckInputs = Readonly<{
    * reads) and the unit's earlier proposals the root agent rejected (never proposed again).
    */
   scopeGrowth: PlanCheckScopeGrowth;
+  /** W3: why this check runs at the escalation seat; null below it. */
+  escalation: EscalationInput | null;
 }>;
 
 /** What a plan-check reads for its scope-growth proposals. */
@@ -247,6 +258,8 @@ export type GateInputs = Readonly<{
   priorRound: GatePriorRound | null;
   /** M4a rev 3: the executable checks' results (`GateChecks`). */
   checks: GateChecks;
+  /** W3: why this gate runs at the escalation seat; null below it. */
+  escalation: EscalationInput | null;
 }>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -485,12 +498,12 @@ export type RoleInputs = {
 export const ROLE_INPUTS = {
   planCheck: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
-    'scopeGrowth',
+    'scopeGrowth', 'escalation',
   ],
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks',
+    'checks', 'escalation',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly', 'retry'],
   checkpoint: [
@@ -690,6 +703,25 @@ export function planCheckPriorInvalidText(reason: string | null): string {
 <prior_attempt>
 Your previous answer on this unit was refused, so nothing of it was applied and the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
 </prior_attempt>`;
+}
+
+/**
+ * W3: the escalation seat's preface (empty below it): this judgment is an escalation, why, and what the seat below said.
+ * `role` names the judgment ("plan-check" or "gate") in the text.
+ */
+export function escalationText(e: EscalationInput | null, role: 'plan-check' | 'gate'): string {
+  if (e === null) return '';
+  const why = e.kind === 'risk-trigger'
+    ? `A runtime risk trigger (a contract path touched, or scope growth) moved this ${role} straight to the escalation seat.`
+    : e.first === null
+      ? `The ${role} below this seat gave no answer (its session was refused), so the unit was routed up.`
+      : `The ${role} below this seat decided ${e.first.decision}, and the unit was routed up. Its reasons:\n${bullets(e.first.reasons, '(none given)')}`;
+  return `
+
+<escalation>
+This ${role} is an escalation: a judgment at the seat below could not settle the unit, so it is yours, with more effort behind it. ${why}
+Weigh the earlier reasons as another reviewer's claims, not as facts, and decide on the evidence yourself. There is no seat above this one: escalating again parks the unit until its spec is revised, so do it only when the unit cannot go on without that.
+</escalation>`;
 }
 
 /**

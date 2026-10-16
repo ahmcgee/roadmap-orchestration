@@ -77,7 +77,8 @@ const addClause = (spec: Record<string, unknown>): void => {
 test('reopen.plan-check-park: resume is rejected until a revision of the spec (the next rev) is applied, then re-opens the unit at plan-check (its item acknowledged), which runs to merge on the new spec', T, async () => {
   const d = setupArc({
     steps: [
-      planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }),
+      // W3: the check at the escalation seat reads the first check's decision and reasons.
+      planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }, { stdinContains: ['<escalation>', 'decided escalate, and the unit was routed up'] }),
       planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
     ],
   });
@@ -185,7 +186,8 @@ test('reopen.gate-park-keeps-session: a unit parked at the gate re-opens after a
     steps: [
       planCheckStep({ decision: 'approve' }),
       { ...codexStep([{ type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'] }), threadId: thread } as Step,
-      gateStep({ decision: 'escalate' }), gateStep({ decision: 'escalate' }),
+      // W3: the gate at the escalation seat reads the first gate's decision and reasons.
+      gateStep({ decision: 'escalate' }), gateStep({ decision: 'escalate' }, { stdinContains: ['<escalation>', 'decided escalate, and the unit was routed up', '- A1 holds'] }),
       planCheckStep({ decision: 'approve' }),
       codexStep([], { argv: ['exec', 'resume', thread], stdinContains: [RESPEC_DIRECTIVE, 'mul(0, 5) is 0'] }),
       gateStep({ decision: 'approve' }),

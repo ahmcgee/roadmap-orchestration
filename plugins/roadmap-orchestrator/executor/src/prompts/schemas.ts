@@ -470,8 +470,6 @@ export type LensFinding = Readonly<{
   mutant: LensMutant | null;
 }>;
 export type LensOutput = Readonly<{ findings: readonly LensFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
-/** The finding cap the lens prompt states (anti-spiral: it bounds reporting, never reading). Not enforced. */
-export const MAX_LENS_FINDINGS = 8;
 
 export const LENS_SCHEMA: Schema = sObj({
   findings: sArr(sObj({

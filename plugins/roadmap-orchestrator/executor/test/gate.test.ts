@@ -90,7 +90,8 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     steps: [
       planCheckStep({ decision: 'approve' }),
       mulBuild({ 'contracts/api.md': '# API contract\n\nAlso `mul(a, b)`.\n' }),
-      gateStep({ decision: 'approve' }),
+      // W3: the escalation seat's preface says why the gate sits there.
+      gateStep({ decision: 'approve' }, { stdinContains: ['<escalation>', 'A runtime risk trigger'] }),
     ],
   });
   const r = contextFor(d);
@@ -103,6 +104,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
     assert.ok(planCall!.argv.includes('claude-sonnet-5-5'), 'plan-check sat on the unit\'s med seat (efficient: Sonnet)');
     assert.ok(gateCall!.argv.includes('xhigh'), 'the gate sat on the escalation seat');
+    assert.ok(!planCall!.stdin.includes('<escalation>'), 'no preface below the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
