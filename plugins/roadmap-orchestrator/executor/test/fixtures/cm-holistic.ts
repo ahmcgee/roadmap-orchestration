@@ -10,8 +10,9 @@
 //            arc-wide limits op: the revision, its divergence, the digest item). The builds are released once the digest
 //            is raised (the bundle's last record), or when a crashed executor's successor has started (its recovery
 //            adopts a pinned runner by waiting for it); each unit's spec lane then parks (cm-pin.ts) until the drift
-//            audit audit-2's no-op checkpoint ckpt-2 is decided, so no unit publishes before the jobs' story is over,
-//            crashed or not. Then both merge, the final audit audit-3 and ckpt-3 (no-ops), the close-out, completion.
+//            audit audit-2, which finds nothing new, has its checkpoint skipped (checkpoint-skipped), so no unit
+//            publishes before the jobs' story is over, crashed or not. Then both merge, the final audit audit-3 and
+//            ckpt-2 (a no-op), the close-out, completion.
 //   batch    u3 parked in a live build runner while an `audit` command runs audit-1, whose lens opens F-1 (a P1 over
 //            I-2), and ckpt-1 decides a no-op; then the architect admits the repair units u1 and u2 (each repairing F-1)
 //            with an `apply`; both approved, they publish as one batch (batch-1: its slot, the chained candidate, its
@@ -159,8 +160,9 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
       ...keyed('u1', [approve, build(MUL, 'build'), gateStep({ decision: 'approve', findings: [gateNote('mul')] })]),
       ...keyed('u2', [approve, build(TWO, 'build'), gateStep({ decision: 'approve', findings: [gateNote('two')] })]),
       lensStep('audit-1', 'vision'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
-      lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP),
-      lensStep('audit-3', 'vision'), checkpointStep('ckpt-3', NOOP),
+      // audit-2 finds nothing new after the settled ckpt-1: no checkpoint (checkpoint-skipped); the final audit-3's is ckpt-2.
+      lensStep('audit-2', 'vision'),
+      lensStep('audit-3', 'vision'), checkpointStep('ckpt-2', NOOP),
     ]);
     const pinned = (u: string): boolean => existsSync(join(r.scenarioDir, `${u}.build.reached`));
     const hooks: readonly Hook[] = [
@@ -169,7 +171,7 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
         release(r.scenarioDir, 'u1.build');
         release(r.scenarioDir, 'u2.build');
       }),
-      once('release-lanes', () => factsNow(r, 'bundle-decided').some((f) => f['job'] === 'ckpt-2'), () => {
+      once('release-lanes', () => factsNow(r, 'checkpoint-skipped').some((f) => f['audit'] === 'audit-2'), () => {
         release(barriers, 'u1-lanes');
         release(barriers, 'u2-lanes');
       }),

@@ -14,16 +14,17 @@
 //           and a note (gate-note debt). audit-1's vision lens opens a P3 with no obligation; ckpt-1 defers it
 //           (finding-deferred debt), proposes an amendment (T-11: confirm cancellations by text) and takes in both
 //           issues (#1 none, #2 an amendment). Then the six read-outs (one module each: plan-check, build, gate), with
-//           audit-2..audit-5 and their checkpoints, no-op, the last the final one.
+//           audit-2..audit-5; audit-2..audit-4 find nothing new and have no checkpoint (checkpoint-skipped), and the
+//           final audit-5's checkpoint, ckpt-2, no-ops.
 //   arc 2   review-1 waits at the `policy-flip` barrier until the driver has flipped the forge to PUBLIC + ALL (the
 //           mid-arc flip, OR-L6); then cutoff builds; audit-1 waits at the `blocked-seen` barrier until the root agent
 //           has had the run's blocked wake (notice behind the run-only limit), so its checkpoint capture's blocking
 //           item is always a wake of its own; once the owner restored the policy and the root agent acked, ckpt-1
 //           takes in both issues and admits `fits` (the opportunity O-1, V-7, with its witness: I-4 split into I-13 and
 //           fits' I-14 on the berths journey, golden.ts `FITS_WITNESS`) and a day view (V-6, over the budget: converted
-//           into an amendment); the bundle's drift audit-2 and ckpt-2 run while the run-only limit still holds
-//           every unit; then notice builds (the root agent pauses it in its hung `slow` lane and resumes it), audit-3
-//           and ckpt-3, fits builds after notice, audit-4 (cadence and final) and ckpt-4.
+//           into an amendment); the bundle's drift audit-2 (noting a new gap) and ckpt-2 run while the run-only limit
+//           still holds every unit; then notice builds (the root agent pauses it in its hung `slow` lane and resumes
+//           it), audit-3 (nothing new: no checkpoint), fits builds after notice, audit-4 (cadence and final) and ckpt-3.
 //
 // M4b (the flow loop): every checkpoint also takes in issue #4 (drop the soak test: none, T-16). Arc 1, in both scripts,
 // has the six read-outs after confirm (golden.ts `READOUTS`, one unit each), and run-only holds every unit after
@@ -32,7 +33,7 @@
 // bypass, RC-5): flow-1 proposes the bait, the witness-lane fake `replay` at `--test-concurrency=6` (accepted; its proof
 // is `changed`); flow-2 the plant lane `suite` at six files a time (accepted; proof `preserved`, applied, then the other
 // five read-outs are its verdict window's suite runs). `vision-silent`: the third merge's constraint-shift run, flow-1,
-// answers noAction. Arc 1's eight publications owe audit-1..audit-5, each with its checkpoint. Arc 2 carries arc 1's
+// answers noAction. Arc 1's eight publications owe audit-1..audit-5; ckpt-1 and the final ckpt-2 run. Arc 2 carries arc 1's
 // suite lanes; the root agent requests one flow run right after the start (flow-1: a build-class step it rejects on its
 // item's wake), so its cooldown covers the arc. The flow calls are judgment steps keyed by job id (`flow-<n>`), each
 // answer checked by the frozen reader (FLOW_SCHEMA).
@@ -40,7 +41,7 @@ import type { JsonValue } from '../../src/core/json.ts';
 import { ASSESSED_DIRECTIVE } from '../../src/prompts/directives.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import { validateFlowOutput } from '../../src/prompts/schemas.ts';
-import { admitSpecWire, checkpointAnswer, checkpointStep, intakeOutcome, lensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, intakeOutcome, lensStep, noteLensStep, packReviewStep, packTargetOf } from '../../test/helpers/holistic.ts';
 import type { ClaudeAct, Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
 import { FILES, FITS_WITNESS, LANES, OBLIGATIONS, OPPORTUNITY, READOUTS, REPLAY_LANE, SHARD, SUITE_LANE, filesOf, specOf } from './golden.ts';
@@ -159,12 +160,12 @@ const JOBS_1: readonly Step[] = [
       soakIntake,
     ],
   })),
+  // The read-outs' publications owe four more cadence audits, the last the final one. audit-2..audit-4 find nothing new
+  // after the settled ckpt-1, so they have no checkpoint (checkpoint-skipped); the final audit's is ckpt-2.
   lensStep('audit-2', 'vision'),
-  checkpointStep('ckpt-2', NO_OP_1),
-  // The read-outs' publications owe three more cadence audits, the last the final one.
-  lensStep('audit-3', 'vision'), checkpointStep('ckpt-3', NO_OP_1),
-  lensStep('audit-4', 'vision'), checkpointStep('ckpt-4', NO_OP_1),
-  lensStep('audit-5', 'vision'), checkpointStep('ckpt-5', NO_OP_1),
+  lensStep('audit-3', 'vision'),
+  lensStep('audit-4', 'vision'),
+  lensStep('audit-5', 'vision'), checkpointStep('ckpt-2', NO_OP_1),
 ];
 
 const NO_OP_2 = checkpointAnswer({ decision: 'no-op', issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1') });
@@ -202,12 +203,16 @@ const JOBS_2: readonly Step[] = [
     decision: 'bundle', ops: [admitOp('fits'), admitOp('dayview'), fitsWitnessOp()],
     issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1'),
   })),
-  lensStep('audit-2', 'vision'),
-  checkpointStep(DRIFT_CHECKPOINT, NO_OP_2),
+  // The drift audit notes a new gap (F-1), so its checkpoint runs (the root agent waits on it) and dismisses it, leaving no
+  // debt; audit-3 finds nothing new after it (checkpoint-skipped), and the final audit-4's checkpoint is ckpt-3.
+  noteLensStep('audit-2'),
+  checkpointStep(DRIFT_CHECKPOINT, checkpointAnswer({
+    decision: 'no-op', issueIntake: intakeNone('fixed in arc 1 (I-1)', 'deferred at Phase 0 as an amendment of arc 1'),
+    findingDispositions: [{ finding: 'F-1', disposition: 'dismissed', reason: 'The noted gap is not this slice\'s.' }],
+  })),
   lensStep('audit-3', 'vision'),
-  checkpointStep('ckpt-3', NO_OP_2),
   lensStep('audit-4', 'vision'),
-  checkpointStep('ckpt-4', NO_OP_2),
+  checkpointStep('ckpt-3', NO_OP_2),
 ];
 
 // ---------------------------------------------------------------------------------------------------
