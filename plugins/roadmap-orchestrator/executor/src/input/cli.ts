@@ -37,9 +37,10 @@ export type Command =
   | Readonly<{ command: 'status'; run: RunLocator }>
   /**
    * `actionable` (`--actionable`): only what the architect acts on (src/watch.ts `ActionableFilter`), null for every
-   * event; its `heartbeatMin` (`--heartbeat-min <n>`, only with `--actionable`) is null for the default (HEARTBEAT_MIN).
+   * event; its `heartbeatMin` (`--heartbeat-min <n>`, only with `--actionable`) is null for the default (HEARTBEAT_MIN);
+   * its `from` (`--from <seq>`, only with `--actionable`) the cursor a restarted stream starts at, null for none.
    */
-  | Readonly<{ command: 'watch'; actionable: Readonly<{ heartbeatMin: number | null }> | null; run: RunLocator }>
+  | Readonly<{ command: 'watch'; actionable: Readonly<{ heartbeatMin: number | null; from: number | null }> | null; run: RunLocator }>
   | Readonly<{ command: 'stop'; run: RunLocator }>
   | Readonly<{ command: 'pause'; target: PauseTarget; run: RunLocator }>
   | Readonly<{ command: 'ack'; id: NeedsUserId; choice: string | null; run: RunLocator }>
@@ -213,11 +214,16 @@ export function parseCommand(argv: readonly string[]): Command {
     case 'start':
       return { command: 'start', args: parseStartArgs(rest) };
     case 'watch': {
-      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch', 'heartbeat-min': 'value' }, command);
+      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch', 'heartbeat-min': 'value', from: 'value' }, command);
       positionals(p, command, 0);
       const heartbeat = value(p, 'heartbeat-min');
+      const from = value(p, 'from');
       if (heartbeat !== undefined && !p.flags.has('actionable')) throw new CliError('watch: --heartbeat-min goes with --actionable');
-      const actionable = p.flags.has('actionable') ? { heartbeatMin: heartbeat === undefined ? null : positiveInt(command, '--heartbeat-min', heartbeat, 'minutes') } : null;
+      if (from !== undefined && !p.flags.has('actionable')) throw new CliError('watch: --from goes with --actionable');
+      if (from !== undefined && !/^(0|[1-9][0-9]*)$/.test(from)) throw new CliError(`watch: --from takes a log seq (a non-negative integer), got ${JSON.stringify(from)}`);
+      const actionable = p.flags.has('actionable')
+        ? { heartbeatMin: heartbeat === undefined ? null : positiveInt(command, '--heartbeat-min', heartbeat, 'minutes'), from: from === undefined ? null : Number(from) }
+        : null;
       return { command, actionable, run: locator(p, command) };
     }
     case 'status':

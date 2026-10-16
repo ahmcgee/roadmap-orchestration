@@ -1118,7 +1118,9 @@ move: parks or own-arc residues being probed, run-only, an unresolved edge, a de
 
 `roadmap watch` streams `needs-user`, `ack` and `owner` events and `{event: units, run: <run.state>, units:
 {<unit>: <compact state>}}` on change (`running:build#3`, `waiting:deps=u1`, `waiting:resources`,
-`awaiting-admission:drain`, `held:paused`, `parked:retryable`, `merged`, …).
+`awaiting-admission:drain`, `held:paused`, `parked:retryable`, `merged`, …). Every line carries `seq`, the log's
+high-water its poll derived the view at; `--actionable --from <seq>` starts the filter from the log at that seq
+(src/watch.ts `cursorAt`: the items raised by then seen, the units' baseline their fold state then).
 
 ## Cross-module interfaces (`src/core/interfaces.ts`)
 

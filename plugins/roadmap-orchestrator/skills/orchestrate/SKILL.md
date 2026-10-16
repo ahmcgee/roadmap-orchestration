@@ -180,8 +180,12 @@ corpus arc (`holistic-needs-corpus`). An arc started on an older release keeps i
 Wait only on `roadmap watch --actionable`, one long-lived watch per arc, or end your turn. It prints only the wakes
 ("Supervising the executor"). With a Monitor tool, start the watch once in the background, appending to
 `<repo>/../roadmap-inputs/<arc>/watch.jsonl`, and Monitor `tail -n 0 -F` of that file at the Monitor's maximum
-timeout; on its expiry re-arm only the tail (the watch keeps running, so nothing is printed twice). Never restart or
-re-arm on a short timer, never wait on plain `roadmap watch`, never poll `status` in a loop. Without a Monitor tool,
+timeout; on its expiry re-arm only the tail (the watch keeps running, so nothing is printed twice). Every line carries
+`seq`, the event log's position. Whenever you (re)start the watch process (the first start of an arc's watch, a resumed
+session, a host restart, `resume-arc`, a reopened arc), start it with `--from <seq of the last line in watch.jsonl>`,
+or without `--from` when the file is empty: it replays exactly the wakes since that line, merges and parks included,
+so nothing that happened while no watch ran is lost. Never restart or re-arm on a short timer, never wait on plain
+`roadmap watch`, never poll `status` in a loop. Without a Monitor tool,
 end your turn while the arc runs; the harness resumes you on the next wake. Every wake costs a model turn (about
 $0.30), so the wakes are few by design.
 

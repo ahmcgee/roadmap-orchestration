@@ -32,9 +32,10 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
 - `roadmap status`: the run as one JSON object ("status" below).
-- `roadmap watch [--actionable [--heartbeat-min <n>]]`: one JSON line per event until killed; `--actionable` prints
-  only the wakes. Wait on one `roadmap watch --actionable` per arc, started once in the background into a file that a
-  Monitor tails (SKILL.md "Running an arc"; "watch" below).
+- `roadmap watch [--actionable [--heartbeat-min <n>] [--from <seq>]]`: one JSON line per event until killed, each with
+  its `seq`; `--actionable` prints only the wakes, and `--from` replays the wakes since that seq. Wait on one
+  `roadmap watch --actionable` per arc, started in the background into a file that a Monitor tails, and started again
+  with `--from` the last line's seq (SKILL.md "Running an arc"; "watch" below).
 - `roadmap stop`: park everything, tear down, release the host lock.
 - `roadmap pause (<unit> | --all)`: kill and tear down; commits and worktree stay as left; the unit holds at its stage.
 - `roadmap resume [<unit> | --backend claude|codex]`: no argument clears pauses and holds (a held build continues
@@ -323,11 +324,15 @@ units: {<unit>: <state>}}` with compact states (`running:build#3`, `waiting:deps
 the wakes, the key transitions: a `needs-user` line for an item not seen before and not already acknowledged or
 superseded; an `answer` line not seen before; the `units` line in which a unit is newly `merged` or newly parked (`parked:*`), in which `run` is newly
 `held`, `blocked` or `draining`, or in which `run` reaches `complete`, `refused` or `no-owner` (once each). Plus a fixed
-heartbeat, `{"event":"heartbeat","everyMin":<n>}`, every n minutes from the watch's start whatever happened
+heartbeat, `{"event":"heartbeat","everyMin":<n>,"seq":<s>}`, every n minutes from the watch's start whatever happened
 (`--heartbeat-min <n>`, a positive integer, default 30; only with `--actionable`). Owner, ack, superseded and every
 other `units` line are dropped. `status.needsUser` lists open items only: a superseded one shows under `packReview`
-alone. A fresh `--actionable` process starts with nothing seen: it prints the open items and a terminal or constrained
-run again, and takes its first view of the units as the baseline (no unit wake for what already merged or parked).
+alone. Every line carries `seq`, the event log's high-water when it was seen. A fresh `--actionable` process starts
+with nothing seen: it prints the open items and a terminal or constrained run again, and takes its first view of the
+units as the baseline (no unit wake for what already merged or parked). With `--from <seq>` (only with
+`--actionable`) it starts from the log as it stood at that seq instead: a unit merged or parked since then wakes at
+once, and an item raised by then counts as seen; a standing terminal or constrained run, an open `sup-*` or `host-*`
+item and an unapplied answer are printed again. A seq past the log's end is refused.
 
 ## Refusals
 

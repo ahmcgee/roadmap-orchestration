@@ -955,12 +955,12 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   };
 }
 
-/** The run's state and each unit's, compactly: what `watch` streams. */
-export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[] }> {
+/** The run's state and each unit's, compactly, and the log's high-water they were derived at (`seq`): what `watch` streams. */
+export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[]; seq: number }> {
   const d = derive(runDir, arc, hostDir);
   const units: Record<string, string> = {};
   for (const l of d.units) units[l.unit] = compactState(l);
-  return { run: d.state, units, superseded: [...supersededPackItems(d.view)].sort() };
+  return { run: d.state, units, superseded: [...supersededPackItems(d.view)].sort(), seq: d.view.highWater() };
 }
 
 /** `running:build#3`, `waiting:deps=u1,u2`, `waiting:resources`, `awaiting-admission:paused,drain`, `parked:retryable`, or the bare state. */

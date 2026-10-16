@@ -121,7 +121,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => stop.abort());
       const emit = (line: string): void => void process.stdout.write(`${line}\n`);
       if (command.actionable === null) await watch(run.runDir, run.arc, hostDir, emit, stop.signal);
-      else await watchActionable(run.runDir, run.arc, hostDir, command.actionable.heartbeatMin ?? HEARTBEAT_MIN, emit, stop.signal);
+      else await watchActionable(run.runDir, run.arc, hostDir, command.actionable.heartbeatMin ?? HEARTBEAT_MIN, command.actionable.from, emit, stop.signal);
       return;
     }
     case 'start': {

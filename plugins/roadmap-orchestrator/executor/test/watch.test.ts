@@ -1,4 +1,5 @@
-// `roadmap watch` (src/watch.ts): needs-user items, acknowledgements, owner liveness and the parallel view as JSON lines.
+// `roadmap watch` (src/watch.ts): needs-user items, acknowledgements, owner liveness and the parallel view as JSON lines,
+// each with its seq, and `--actionable --from <seq>`'s replay across a restart.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -7,18 +8,28 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { identityOf, readBootId } from '../src/contain/proc.ts';
 import { atomicJson, canonicalJson, exclusiveCreate } from '../src/core/fsx.ts';
-import { arcId, commandId } from '../src/core/ids.ts';
+import { arcId, commandId, unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
+import { CliError } from '../src/input/cli.ts';
 import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { HOST_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
 import { publishOwner } from '../src/host/owner.ts';
 import { needsUserAckPath, raiseNeedsUser } from '../src/needsuser.ts';
-import { HEARTBEAT_MIN, WATCH_POLL_MS, watch, watchActionable } from '../src/watch.ts';
+import { HEARTBEAT_MIN, WATCH_POLL_MS, cursorAt, watch, watchActionable } from '../src/watch.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { claimRecord } from './fixtures/host-records.ts';
+import { LANES_BLOCKED, parkUnit } from './fixtures/probe-common.ts';
+import { contextFor, setupArc } from './fixtures/unit-common.ts';
 
 type Line = Record<string, unknown>;
+
+/** A line without its `seq` (the poll's high-water, which a test cannot pin to one poll); fails unless it carries one. */
+function bare(l: Line): Line {
+  const { seq, ...rest } = l;
+  assert.ok(Number.isSafeInteger(seq) && (seq as number) >= 0, `a line carries its seq: ${JSON.stringify(l)}`);
+  return rest;
+}
 
 /** Waits until `pred` holds for some emitted line, at most `ms`. */
 async function until(lines: readonly Line[], pred: (l: Line) => boolean, ms: number, what: string): Promise<Line> {
@@ -59,16 +70,16 @@ test('watch.emits-needs-user: a raised needs-user and its ack appear within 2 s;
     const raisedAt = Date.now();
     const raised = await until(lines, (l) => l['event'] === 'needs-user', 2_000, 'the raised needs-user');
     assert.ok(Date.now() - raisedAt < 2_000);
-    assert.deepEqual(raised, { event: 'needs-user', id, blocking: true, reason: 'usage-limit', subject: { type: 'arc' }, summary: 'codex is parked' });
+    assert.deepEqual(bare(raised), { event: 'needs-user', id, blocking: true, reason: 'usage-limit', subject: { type: 'arc' }, summary: 'codex is parked' });
 
     const command = commandId('cmd-00000000000000aa');
     exclusiveCreate(needsUserAckPath(runDir, id), canonicalJson({ v: SCHEMA_VERSION, id, command, choice: null, at: isoTimeOf(new Date()) }));
-    assert.deepEqual(await until(lines, (l) => l['event'] === 'ack', 2_000, 'the ack'), { event: 'ack', id, command, choice: null });
+    assert.deepEqual(bare(await until(lines, (l) => l['event'] === 'ack', 2_000, 'the ack')), { event: 'ack', id, command, choice: null });
 
     executor.kill('SIGKILL');
     await exited;
     const diedAt = Date.now();
-    assert.deepEqual(await until(lines, (l) => l['event'] === 'owner' && l['state'] === 'dead', 2_000, 'owner dead'), { event: 'owner', state: 'dead', generation: claim.generation, pid });
+    assert.deepEqual(bare(await until(lines, (l) => l['event'] === 'owner' && l['state'] === 'dead', 2_000, 'owner dead')), { event: 'owner', state: 'dead', generation: claim.generation, pid });
     assert.ok(Date.now() - diedAt < 2_000);
     // Each item once, the owner once per change.
     const others = lines.filter((l) => l['event'] !== 'units');
@@ -102,7 +113,7 @@ test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-
     }, { type: 'arc' }));
     journal.close();
     for (const [i, [reason, blocking]] of kinds.entries()) {
-      assert.deepEqual(await until(lines, (l) => l['event'] === 'needs-user' && l['id'] === ids[i], 2_000, reason), {
+      assert.deepEqual(bare(await until(lines, (l) => l['event'] === 'needs-user' && l['id'] === ids[i], 2_000, reason)), {
         event: 'needs-user', id: ids[i], blocking, reason, subject: { type: 'arc' }, summary: reason,
       });
     }
@@ -136,7 +147,7 @@ test('watch.actionable: `--actionable` prints only the open items not seen, each
 
   const lines: Line[] = [];
   const stop = new AbortController();
-  const watching = watchActionable(runDir, arc, hostDir, HEARTBEAT_MIN, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
+  const watching = watchActionable(runDir, arc, hostDir, HEARTBEAT_MIN, null, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
   try {
     await until(lines, (l) => l['id'] === open, 2_000, 'the open item');
     const later = raise('raised while watching');
@@ -152,5 +163,69 @@ test('watch.actionable: `--actionable` prints only the open items not seen, each
     stop.abort();
     await watching;
     if (executor.exitCode === null && executor.signalCode === null) executor.kill('SIGKILL');
+  }
+});
+
+test('watch.cursor-replay: a watch restarted with --from <the last seq read> replays exactly the key transitions since: the item raised and the unit parked while no watch ran, not the item read before; without a cursor the park is baselined away', { timeout: 30_000 }, async () => {
+  const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2' }] });
+  const r = contextFor(d);
+  const runDir = absPath(d.runDir);
+  const arc = arcId(d.arc);
+  const executor = spawn('sleep', ['300'], { stdio: 'ignore' });
+  assert.ok(executor.pid !== undefined);
+  const exited = new Promise((resolve) => executor.once('exit', resolve));
+  const claim = { ...claimRecord({ supervisor: { pid: process.pid, start: identityOf(process.pid).start }, bootId: readBootId(), arc }), runDir };
+  atomicJson(hostPath(r.ctx.hostDir, HOST_LOCK), claim);
+  publishOwner(r.ctx.hostDir, claim, { pid: identityOf(executor.pid).pid, start: identityOf(executor.pid).start });
+  const raise = (summary: string) => raiseNeedsUser(r.journal, runDir, {
+    blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary, recommendation: 'look', options: [], evidence: [],
+  }, { type: 'arc' });
+  /** One actionable watch, from `from`, until `done` holds of its lines, plus three polls for anything further. */
+  const session = async (from: number | null, done: (lines: readonly Line[]) => boolean): Promise<readonly Line[]> => {
+    const lines: Line[] = [];
+    const stop = new AbortController();
+    const watching = watchActionable(runDir, arc, r.ctx.hostDir, HEARTBEAT_MIN, from, (l) => lines.push(JSON.parse(l) as Line), stop.signal);
+    try {
+      await until(lines, () => done(lines), 5_000, 'the expected lines');
+      await sleep(3 * WATCH_POLL_MS);
+      return lines;
+    } finally {
+      stop.abort();
+      await watching;
+    }
+  };
+  const shape = (lines: readonly Line[]): readonly string[] =>
+    lines.map((l) => (l['event'] === 'needs-user' ? String(l['id']) : `${String(l['event'])} ${String(l['run'])} ${JSON.stringify(l['units'])}`));
+  try {
+    const read = raise('read before the restart');
+    const first = await session(null, (ls) => ls.some((l) => l['id'] === read));
+    assert.deepEqual(shape(first), [read], 'the open item; the units baseline wakes nothing');
+    const cursor = first.at(-1)!['seq'] as number;
+    assert.ok(cursor >= r.journal.view.highWater() - 1, `the line carries the poll's high-water (${cursor})`);
+
+    // No watch runs: u1 parks and a new item is raised.
+    const parkSeq = parkUnit(r.journal, unitId('u1'), LANES_BLOCKED, 1, [{ type: 'host' }]);
+    const later = raise('raised while no watch ran');
+    const replay = await session(cursor, (ls) => ls.some((l) => l['event'] === 'units'));
+    assert.deepEqual(shape(replay), [later, 'units running {"u1":"parked:retryable","u2":"ready"}'], 'exactly what happened since the cursor, each once');
+    assert.ok(replay.every((l) => (l['seq'] as number) >= parkSeq), 'replayed lines carry the seq they were seen at');
+
+    // A cursor at the latest line replays nothing; no cursor baselines the park away.
+    const last = replay.at(-1)!['seq'] as number;
+    const quiet: Line[] = [];
+    const stop = new AbortController();
+    const watching = watchActionable(runDir, arc, r.ctx.hostDir, HEARTBEAT_MIN, last, (l) => quiet.push(JSON.parse(l) as Line), stop.signal);
+    await sleep(4 * WATCH_POLL_MS);
+    stop.abort();
+    await watching;
+    assert.deepEqual(quiet, [], 'nothing since the latest line');
+    const fresh = await session(null, (ls) => ls.filter((l) => l['event'] === 'needs-user').length === 2);
+    assert.deepEqual(shape(fresh), [read, later], 'a fresh watch re-emits the open items and absorbs the park');
+
+    assert.throws(() => cursorAt(runDir, arc, r.journal.view.highWater() + 1), (e: unknown) => e instanceof CliError && /past arc .* high-water/.test(e.message));
+  } finally {
+    r.journal.close();
+    executor.kill('SIGKILL');
+    await exited;
   }
 });
