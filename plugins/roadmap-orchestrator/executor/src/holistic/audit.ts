@@ -24,8 +24,9 @@
 //      pin readable beside the checkout, `targetDirs`). The lens-range fix (2026-10-16, src/holistic/lensdiff.ts): a
 //      range is reviewed in chunks, one call each, from the watermark to the furthest published head whose diff attaches
 //      whole within `diffBudget` (at least one publication), until the audited SHA, all within this job, so one audit
-//      always drains every range it runs; each chunk's diff and the owners' (sharing one budget) are attached bounded,
-//      a file not shown listed with the command that prints it. An audit an earlier executor started (no `diffBudget`)
+//      always drains every range it runs; each chunk's diff and the owners' (sharing one budget) are attached bounded
+//      (src/git/boundeddiff.ts), each file not shown written under the job's evidence dir (`diffs/lens-<attempt>/`),
+//      which the call may read. An audit an earlier executor started (no `diffBudget`)
 //      reviews each range in one call, as its recorded calls did. A resumed job consumes a call it already made
 //      (`recordedArcCall`) and asks again only for one lost: a lens's first call is numbered by its place in the run
 //      order, every further call (a later chunk, a retry) after every lens's first, in order, and the chunks are found
@@ -88,7 +89,8 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { parseRulings } from '../spec/rulings.ts';
 import { type Cadence, type Clock, cadence, integrationHeadNow, runOrder, specsOnlyOf } from './cadence.ts';
 import { coverageBase, lensCoverage, publishedHeads } from './coverage.ts';
-import { LENS_DIFF_BUDGET, boundedDiff, chunkEnd } from './lensdiff.ts';
+import { LENS_DIFF_BUDGET, chunkEnd } from './lensdiff.ts';
+import { boundedDiff } from '../git/boundeddiff.ts';
 import { type FindingDraft, admitMutant, corroborateFinding, crossKey, openFinding, witnessFindingDraft } from './findings.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import {
@@ -292,21 +294,28 @@ function findingViews(findings: readonly FindingState[], ids: readonly FindingId
   });
 }
 
+/** Where lens call `attempt` of an audit has its attached diffs' unshown files written (readable to the call). */
+const lensDiffDir = (ctx: StageContext, job: JobId, attempt: number): AbsPath => absPath(join(jobEvidenceRoot(ctx.runDir, job), 'diffs', `lens-${attempt}`));
+
 /**
  * A lens's inputs from the recorded ones: the vision first, then the tree at the audited SHA, the chunk of the range
- * this call covers and the owners' branch diffs, each attached within the budget (the owners sharing theirs).
+ * this call covers and the owners' branch diffs, each attached within the budget (the owners sharing theirs), their
+ * unshown files written under `diffDir`.
  */
-function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, retry: LensRetry | null): LensInputs {
+function lensInputs(
+  ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, retry: LensRetry | null, diffDir: AbsPath,
+): LensInputs {
   const sha = s.integrationSha;
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
   const budget = budgetOf(s);
   const share = Math.floor(budget / Math.max(1, s.owners.length));
+  const attach = (from: Sha, to: Sha, bytes: number, dir: string) => boundedDiff(ctx.repo, from, to, { budget: bytes, derived: r.derived, removes: null, dir: absPath(join(diffDir, dir)) });
   return {
     vision: visionInputOf(r.vision, r.advances),
     lens,
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, sha),
-    range: { audited: sha, diff: boundedDiff(ctx.repo, chunk.from, chunk.to, budget, r.derived) },
-    owners: s.owners.map((o) => ({ unit: o.unit, head: o.head, diff: boundedDiff(ctx.repo, diffBase(ctx.repo, sha, o.head), o.head, share, r.derived) })),
+    range: { audited: sha, diff: attach(chunk.from, chunk.to, budget, 'range') },
+    owners: s.owners.map((o) => ({ unit: o.unit, head: o.head, diff: attach(diffBase(ctx.repo, sha, o.head), o.head, share, `owner-${o.unit}`) })),
     priorFindings: findingViews(ctx.journal.view.holistic().findings, s.priorFindings),
     contracts: ctx.plan().contracts.map((c) => docAt(ctx, sha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
@@ -506,10 +515,11 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
         await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, { path: checkout, checkout: { type: 'detached', at: s.integrationSha } });
         made = true;
       }
-      const inputs = lensInputs(ctx, s, r, lens, chunk, checkout, retry);
+      const diffDir = lensDiffDir(ctx, job, attempt);
+      const inputs = lensInputs(ctx, s, r, lens, chunk, checkout, retry, diffDir);
       const rendered = prompt.render(inputs);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
-        job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
+        job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), diffDir, ...targetDirs(inputs.target)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
       }));
     }

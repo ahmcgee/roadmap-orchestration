@@ -599,7 +599,16 @@ export type JudgmentInputs = Readonly<{
    * fence; an approval records exactly it. Present exactly on a gate's.
    */
   fingerprint?: ApprovalFingerprint;
+  /**
+   * 1.0.0-dev.12: what the gate's attached diff inlined and what it did not (src/git/boundeddiff.ts: files with changed
+   * content not inlined and deleted files; a pure move is neither), each ascending. Only on a gate's; absent on one a
+   * dev.11 executor recorded: read through `gateDiffShownOf`.
+   */
+  diffShown?: DiffShown;
 }>;
+
+/** The paths a gate's attached diff inlined and did not (`JudgmentInputs.diffShown`). */
+export type DiffShown = Readonly<{ inlined: readonly RepoPath[]; notInlined: readonly RepoPath[] }>;
 
 export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
@@ -1940,9 +1949,12 @@ export const fact: Read<Fact> = tagged('kind', {
     if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);
     const fingerprint = f.optional('fingerprint', approvalFingerprint);
     if ((fingerprint !== undefined) !== (out.stage === 'gate')) throw new SchemaError(`${f.path}.fingerprint`, out.stage === 'gate' ? 'the gate\'s approval fingerprint' : 'absent on a plan-check', fingerprint);
+    const paths = sortedBy((v, p) => repoPath(v, p), (x) => x);
+    const diffShown = f.optional('diffShown', object((g): DiffShown => ({ inlined: g.get('inlined', paths), notInlined: g.get('notInlined', paths) })));
+    if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a plan-check', diffShown);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
-    return { ...out, fingerprint };
+    return { ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }) };
   }),
   'edge-resolved': object((f): Fact => ({
     kind: f.get('kind', literal('edge-resolved')), edge: f.get('edge', (v, p) => edgeId(v, p)), command: f.get('command', cmdR), evidence: f.get('evidence', str),

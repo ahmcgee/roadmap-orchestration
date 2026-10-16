@@ -5,7 +5,8 @@
 // T the gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full
 // and an index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
 // approving plan-check's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
-// after a merge-in the base is T), the lane ledger of the unit's latest spec series and its evidence dirs,
+// after a merge-in the base is T; attached within `GATE_DIFF_BUDGET` by src/git/boundeddiff.ts, what it does not inline
+// written beside the attempt's evidence and readable, and what it inlined recorded on `judgment-inputs`), the lane ledger of the unit's latest spec series and its evidence dirs,
 // the build's evidence (decisions.json), the pinned scope envelope and the diff's paths outside it (and, scope growth
 // 2026-10-15, the out-of-scope paths the unit's salvages reverted, which no diff shows), and on
 // a later round the prior round's handoff: its directives, findings and premises, the paths the fix changed
@@ -47,7 +48,7 @@
 // after a crash is consumed against those inputs (`consumeJudgment`): its approval records the captured fingerprint;
 // ff then finds a contract another unit's publication changed, or a ruling a docs publication superseded
 // (`fingerprint-invalid`, a re-gate).
-import { matchesGlob } from 'node:path';
+import { join, matchesGlob } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
 import { normalizeText } from '../corpus/rules.ts';
@@ -57,15 +58,16 @@ import type { IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type ObligationRev, effectiveScope, obligationRevsOf, specObligations, specRepairs } from '../core/records.ts';
+import { type ApprovalFingerprint, type ObligationRev, effectiveScope, obligationRevsOf, specObligations, specRemoves, specRepairs, specWitnesses } from '../core/records.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, repoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
+import { boundedDiff } from '../git/boundeddiff.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
-import { type PlanUnit, targetDocumentPaths } from '../input/plan.ts';
+import { type PlanUnit, derivedOf, targetDocumentPaths } from '../input/plan.ts';
 import { promptFor } from '../prompts/index.ts';
 import type { GateChecks, GatePriorRound } from '../prompts/inputs.ts';
 import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
@@ -74,7 +76,7 @@ import { runnerFiles } from '../runner/files.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 import {
-  type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, cancelledNow, dispatchOf, isCancelled, judgmentDeadlineMs,
+  type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, cancelledNow, dispatchOf, evidenceRoot, isCancelled, judgmentDeadlineMs,
   judgmentDispatch, unitBranch, verdictOf, verificationWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
@@ -247,6 +249,16 @@ function priorRound(ctx: StageContext, unit: UnitId, head: Sha): GatePriorRound 
 
 export type GateDone = StageDone<'gate'> & Readonly<{ session: JudgmentSessionId | null; fingerprint: ApprovalFingerprint | null }>;
 
+/**
+ * The byte budget of the gate's attached diff (src/git/boundeddiff.ts): the diff is the gate's whole subject, so it gets
+ * three lens attachments' worth (about 110K tokens), while the spec, contracts, architecture doc and the session's own
+ * reads keep most of the gate seats' 1M-token window; what does not fit is read from the attachment's files.
+ */
+export const GATE_DIFF_BUDGET = 393_216;
+
+/** Where a gate attempt's attached diff writes what it does not inline: beside the attempt's evidence, readable to the gate. */
+const gateDiffDir = (ctx: StageContext, parent: StageParent): AbsPath => absPath(join(evidenceRoot(ctx.runDir, parent), 'diff'));
+
 /** The build evidence dirs of the unit's latest evidence stage (stdout, stderr, decisions.json, lane outputs). */
 function buildEvidence(ctx: StageContext, unit: UnitId): readonly AbsPath[] {
   const snaps = ctx.journal.view.opsOf('evidence.snapshot').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && i.parent.stage === 'evidence');
@@ -301,18 +313,31 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     if (seated.kind !== 'pinned') return { kind: 'routing-changed', needsUser: seated.needsUser };
     const pinned = dispatchOf(ctx.journal.view, unit.id);
     const laneLedger = seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series));
-    const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id)];
+    // The attached diff's files (what it does not inline) are listed and readable as evidence.
+    const diffDir = gateDiffDir(ctx, parent);
+    const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id), diffDir];
     const base = diffBase(ctx.repo, tip, head);
     const scope = effectiveScope(pinned);
     const growth = paths.filter((p) => !scope.some((g) => matchesGlob(p, g)));
     const seat = seated.dispatch;
     const prompt = promptFor('gate', seat.triple.model);
     const target = gateTarget(ctx, tip);
+    const chosen = selected(ctx, unit, tip, head);
+    const bounded = boundedDiff(ctx.repo, base, head, {
+      budget: GATE_DIFF_BUDGET, derived: [...new Set(derivedOf(ctx.plan()).flatMap((d) => d.outputs))].sort(), removes: specRemoves(spec), dir: diffDir,
+    });
     const rendered = prompt.render({
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), target,
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
-      obligations: observedViews(ctx, holisticInForce(ctx).obligations, selected(ctx, unit, tip, head), tip),
-      diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
+      obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen, tip),
+      diff: {
+        bounded,
+        claims: {
+          acceptance: spec.acceptance.filter((a) => a.state === 'active').map((a) => a.id),
+          witnesses: specWitnesses(spec).filter((w) => w.state === 'active').map((w) => w.id),
+          obligations: chosen.map((o) => o.id),
+        },
+      },
       // Scope growth (2026-10-15): every out-of-scope path a salvage of the unit reverted (in no diff), still outside the scope.
       laneLedger, evidence, scope: { patterns: scope, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
       priorRound: priorRound(ctx, unit.id, head),
@@ -320,7 +345,10 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       checks: gateChecks(ctx, unit, series, head),
     });
     const fingerprint = fingerprintAt(ctx, unit, tip);
-    writeJudgmentInputs(ctx, parent, { tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint });
+    writeJudgmentInputs(ctx, parent, {
+      tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint,
+      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined },
+    });
     return { kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, cwd: tree.path, dirs: targetDirs(target) };
   });
   if (captured.kind !== 'captured') {

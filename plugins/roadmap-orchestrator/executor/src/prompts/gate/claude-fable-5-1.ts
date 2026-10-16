@@ -20,7 +20,7 @@
 // Scope growth (2026-10-15; same guides): as the Opus gate, the paths salvage reverted as out of scope (<scope_reverted>).
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
+  boundedDiffText, bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
 import { GATE_SCHEMA, MAX_DIRECTIVES, MAX_PREMISES } from '../schemas.ts';
 
 const system = `You are operating autonomously as the gate for one unit of a roadmap build, usually one a first gate escalated or a risk trigger promoted. Nothing merges without your approval. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision.
@@ -96,8 +96,9 @@ export const PROMPT: PromptModule<'gate'> = {
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
     targetDocument(i.target),
-    { source: `implementer diff ${i.diff.base}..${i.diff.head} (data under review)`, content: i.diff.text },
   ])}
+
+${boundedDiffText('diff', i.diff.bounded, i.diff.claims)}
 
 <rulings>
 ${rulingsText(i.rulings)}
@@ -139,5 +140,5 @@ ${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
 ${bullets(i.scope.rejected, '(none: the build edited nothing outside the envelope)')}
 </scope_reverted>${gateChecksText(i.checks)}${priorRound(i)}
 
-Gate unit ${i.spec.unit} at head ${i.diff.head}, spec revision ${i.spec.rev}. Grade every acceptance clause, then return your decision.`,
+Gate unit ${i.spec.unit} at head ${i.diff.bounded.to}, spec revision ${i.spec.rev}. Grade every acceptance clause, then return your decision.`,
 };

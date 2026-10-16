@@ -170,6 +170,15 @@ at triage stay in git history.
 
 ## Watch (act only on the trigger)
 
+- **Bounded diff heuristics** (1.0.0-dev.12, src/git/boundeddiff.ts). A file's kind is read from its path (test and
+  fixture directories and names, a fixed list of source extensions); a package is a top-level directory or two levels
+  under a monorepo container, not the nearest manifest; a deletion matches a `removes` entry only as the path, a
+  directory above it, or the file name without its extension (a route string or symbol never matches a path). Trigger:
+  a gate eval (evals/roles/) or a paid run showing a reviewer misled by a wrong kind, spread or label.
+- **Lens chunks fit by the dev.11 measure** (1.0.0-dev.12). `fitsWhole` (src/holistic/lensdiff.ts) still sizes a chunk by
+  the `--no-renames`, three-line-context diff so a resumed dev.11 audit finds its chunks again; the attachment is the
+  smaller bounded diff, so chunks are shorter than they need be. Trigger: once no audit a dev.11 executor started is
+  running, size chunks by the bounded diff itself (recording the measure on `audit-started` if it must stay stable).
 - **Apply rebase merges arrays of plain values whole** (2026-10-16). `merge3` merges objects per key and arrays of
   keyed objects per element, but an array of strings (scope patterns, `holistic.advances`, cites, a lane's argv) both
   sides changed is a conflict, never a set merge (an argv's order is its meaning). Trigger: conflicts on id lists such as
@@ -324,6 +333,9 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- `gateDiffShownOf`'s absent arm (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a gate's
+  `judgment-inputs` recorded without `diffShown` reads as nothing recorded. With it, `diffShown` becomes required on a
+  gate's (src/core/events.ts).
 - `auditDiffBudgetOf`'s absent arm (src/core/upgrade.ts) with `nextChunk`'s unchunked branch (src/holistic/audit.ts),
   once no audit a dev.10 executor started is running: such an audit reads each range in one call. With it,
   `audit-started.diffBudget` becomes required.
