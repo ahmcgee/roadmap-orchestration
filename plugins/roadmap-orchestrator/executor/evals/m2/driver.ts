@@ -35,7 +35,8 @@
 //               longer waits; a lane run again passes), then `run-only base left right top urgent`
 //   reentry     once `urgent` is merged: `git merge-tree` must show `right`'s branch and integration conflicting
 //               on the shared file; then the driver writes right2.json, appends `right2 {reenters: {unit:
-//               right, enterAt: verify}}` to the plan and runs `roadmap apply`
+//               right, enterAt: verify, fixes?}}` to the plan (`fixes`: right's latest failure outcome, when the
+//               teardown device parked it) and runs `roadmap apply`
 //   unlimited   once the apply's receipt is `applied`: `run-only --clear`
 //
 // A device whose check fails (no conflict, a rejected apply) stops the run: `endedBy: device-failed` with the
@@ -51,11 +52,13 @@ import { terminalReceipt } from '../../src/commands/queue.ts';
 import { isAlive, statOf } from '../../src/contain/proc.ts';
 import { readJson } from '../../src/core/fsx.ts';
 import { arcId, commandId, unitId } from '../../src/core/ids.ts';
+import { readJournal } from '../../src/core/log.ts';
 import { type ProcIdentity, executorExitReason } from '../../src/core/records.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { EXIT_REASON_FILE, type ExitReason } from '../../src/executor.ts';
 import { HOST_DIR, hostPath } from '../../src/host/hostdir.ts';
 import { unitBranch } from '../../src/pipeline/dispatch.ts';
+import { outcomeRef } from '../../src/pipeline/failures.ts';
 import { type ProfileName, profileName } from '../../src/routing/types.ts';
 import type { ArcState, Status, UnitStatusLine } from '../../src/status.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
@@ -252,11 +255,24 @@ function mergeTree(l: Layout): NonNullable<Devices['mergeTree']> {
   return { conflict: r.code === 1, paths, right, integration };
 }
 
-/** Appends `right2` (re-entering `right` at verify) to the plan, as the architect would, and writes its spec. */
+/**
+ * The failure the re-entry names (`fixes`, arc feedback 2026-10-16): `right`'s latest failure outcome, or null when it
+ * recorded none. Whether it has one depends on which unit held estate #2 when the teardown device fired (a retryable
+ * `cleanup-failed` park, which a re-entry may retry unchanged).
+ */
+function rightFixes(l: Layout): string | null {
+  const failures = readJournal(absPath(l.runDir), arcId(l.arc)).view.unit(unitId('right')).failures;
+  const last = failures.at(-1);
+  return last === undefined ? null : outcomeRef(last);
+}
+
+/** Appends `right2` (re-entering `right` at verify, naming the failure it fixes) to the plan, as the architect would, and writes its spec. */
 function writeReentry(l: Layout): void {
   writeFileSync(join(l.input, reentryUnit.spec), json(reentrySpec(l)), { flag: 'wx' });
   const plan = JSON.parse(readFileSync(l.plan, 'utf8')) as { units: object[] };
-  writeFileSync(l.plan, json({ ...plan, units: [...plan.units, reentryUnit] }));
+  const fixes = rightFixes(l);
+  const unit = fixes === null ? reentryUnit : { ...reentryUnit, reenters: { ...reentryUnit.reenters, fixes } };
+  writeFileSync(l.plan, json({ ...plan, units: [...plan.units, unit] }));
 }
 
 /**

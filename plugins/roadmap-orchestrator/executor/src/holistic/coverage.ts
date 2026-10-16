@@ -8,12 +8,15 @@
 //   the next audit of each lens at X covers everything up to X, exactly as a first audit would. No merged range can
 //   survive a vision change unaudited, and it costs no extra call.
 // - A lens's watermark starts at the base and follows, from wherever it stands, each range an audit under the current
-//   vision covered for that lens (`audit-ended.covered`: from the lens's watermark at the audit's capture to the audited
-//   SHA, never beyond it) and each docs-only edge (`docs-covered{U→D}`, A17, H8). An edge extends the watermark only
-//   once it reaches U; until then it is kept, and applies when the gap closes. Nothing else moves a watermark. A docs
+//   vision covered for that lens (`audit-ended.covered`: from the lens's watermark at the audit's capture as far as its
+//   reported chunks reached, never beyond the audited SHA; the lens-range fix, audit.ts) and each docs-only edge
+//   (`docs-covered{U→D}`, A17, H8). An edge extends the watermark only once it reaches U; until then it is kept, and
+//   applies when the gap closes. Nothing else moves a watermark. A docs
 //   edge the watermark passed without following it (an audit's range ran across it) is subsumed, never pending: its D
 //   was published before the watermark's head was, which the log orders (an audit's range ends at the head its
-//   `audit-started` read, a docs edge's at the head its `docs-covered` follows).
+//   `audit-started` read, a docs edge's at the head its `docs-covered` follows). A range a failed chunk cut short of the
+//   audited SHA still counts from its audit's start, so a docs edge published between its end and that start shows as
+//   subsumed rather than pending; the lens's range stays outstanding from its end, and the next audit reviews it.
 // - A lens has an outstanding range while its watermark is not the integration head.
 //
 // The integration history is read from the published `integration.ff`s: a docs publication's at its intent's seq (it

@@ -1087,7 +1087,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
           return out.kind === 'incomplete' ? { kind: 'no-verdict', job, detail: endDetail(out.end) } : PROGRESS;
         });
       } else if (checkpointPending(h.checkpoint) || respecSecondDue()) {
-        trackRetrying('holistic:checkpoint', 'holistic', async () => ((await runCheckpoint(h.checkpoint)).kind === 'decided' ? PROGRESS : WAIT));
+        trackRetrying('holistic:checkpoint', 'holistic', async () => (['decided', 'not-needed'].includes((await runCheckpoint(h.checkpoint)).kind) ? PROGRESS : WAIT));
       } else if (auditPending(h.audit)) {
         trackRetrying('holistic:audit', 'holistic', async () => {
           const out = await runAudit(h.audit);

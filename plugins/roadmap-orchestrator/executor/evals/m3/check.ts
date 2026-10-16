@@ -463,7 +463,9 @@ function driftAudit(run: Run): Verdict {
   if (!ran.includes('vision') || !fits) problems.push(`${audit.job} (${JSON.stringify(audit.triggers)}) ran ${JSON.stringify(audit.lenses)}, not what its triggers require (${exact ? '' : 'at least '}${JSON.stringify(floor)})`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === audit.job)?.outcome !== 'completed') problems.push(`${audit.job} did not complete`);
   const ck = checkpointOf(run, audit.job);
-  return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran ${audit.lenses.join(', ')}, as its triggers require; ${ck?.job} ${ck?.decision}`);
+  // Nothing new since a settled checkpoint: the audit has none (`checkpoint-skipped`, arc feedback 2026-10-16).
+  const after = ck === null ? 'its checkpoint skipped' : `${ck.job} ${ck.decision}`;
+  return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran ${audit.lenses.join(', ')}, as its triggers require; ${after}`);
 }
 
 function finalAudit(run: Run): Verdict {

@@ -143,7 +143,10 @@ After a green spec series that wrote its clean certificate, the lanes stage comp
 (the witnesses of the obligations it completes or repairs and its spec's witness items as targets, its declared
 must-holds as preservation) and runs each required arc lane once at the salvage SHA in its own checkout, reusing only
 observations of a certified series. A required id absent, zero-selected, skipped, malformed or failing is
-`witnesses-missing`: a charged fix round listing them, no gate call. Then mutation smoke, for a `med` or `high` unit
+`witnesses-missing`: a charged fix round listing them, no gate call, unless code finds a plan defect behind a missing
+id (plan defects, 2026-10-16): a declared witness file its lane never runs, or one absent at the salvage SHA and outside
+the unit's effective scope, makes it `plan-defect`, an uncharged park (`env`: `resume` re-runs the lanes after an
+`apply` fixes the plan) whose item names each defect. Then mutation smoke, for a `med` or `high` unit
 whose targets' lanes declare `testPaths` and whose diff touches production paths: the production diff reverted in a
 detached worktree (a mutant that never certifies), the targets run, each killed, survived or inconclusive (a binary or
 renamed path, or a patch that does not apply, is inconclusive). A survivor is one bounded fix round (`smokeRounds`,
@@ -292,26 +295,26 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 |---|---|---|
 | `start` / `status` / `ack <id>` | launch or recover / §2.4 / acknowledge a `needs-user` item | a live owner or undispositioned residue; any `phase0 check` row (§3 Phase 0) / — / unknown id |
 | `pause <unit>\|--all`, `resume [<unit>\|--backend <name>]` | park (kill, teardown, commits intact) / unpark at the earliest invalidated stage (§3 Git truth): a retryable park is probed now, an operator-env park re-runs its stage (`unparked`), an operator-design park reopens on an applied revision; `--backend` clears that backend's current park after a passing smoke. M1: `resume <unit>` of a unit parked at plan-check or gate re-opens it at plan-check once the architect has applied (`apply`) a revision of its spec to the next rev, keeping its branch and implementer session | discarding commits; pausing mid-ff; `--backend` when the smoke fails; M1: a parked unit with no revision applied, or parked at any other stage |
-| `apply [--expect-rev <n>] [--dry-run]` | (owner ruling 2026-09-29) the edited plan and specs, hashed by the CLI into a manifest, become the plan in force at the next safe point: re-verified, every change classified against the plan in force and what each unit has done, the startup rows re-run over what changed, a newly seated backend smoked, the bytes kept content-addressed, then a `plan-applied{rev}` fact. The plan in force is a fold of the log, never the live files; a respawn runs it, and a `start` whose files differ goes through the same rules. Nothing live is killed: an in-flight unit takes a spec revision at its next stage boundary that allows re-entry and re-enters plan-check on it. `admit`, `patch-spec`, `reenter`, `cut`, `route`, `limits`, `obligation add\|split\|witness` and the vision below are edit classes of `apply` (adding units and edges; revising a unit's spec; `reenters`; `cut`; a unit routing layer; bounds; obligation edits; vision clauses), not separate commands, and so are pool, `capacity`, mapping and `holistic` edits (lead ruling LR-c, A1). M4a adds two, from an architect `apply` only, each a `PlanChange` arm carrying its hashes: `corpus{pinSha256, guideSha256}`, a re-pin (§2.8), which triggers a drift audit, re-gates every approval through the fingerprint's `corpus` and, before first admission, a pack review; and `phase0{sha256, issuesSha256}`, an edit of the Phase-0 record (dispositions, answered questions, intake, capture), which triggers only that pack review. `plan.chain` is fixed at revision 1. A file watcher is rejected (no command path, no expected revision, reads files mid-write). The manifest also hashes the ledger, the obligations file and the vision; the ledger is only compared (A3) | a stale `--expect-rev`; `vision-unconfirmed`; `tree-uncommitted`; a changed target variant (`target-kind-changed`); a changed `plan.chain` (`chain-immutable`); a `phase0` edit promoting debt while `draining`; no `--expect-rev` when a revision since the caller's last `apply` came from a non-architect source (a bundle or the executor; stale files would silently revert its act, A4); a ledger file differing from the ledger in force (A3); removing `holistic`; files changed since hashed; any refused edit (all or nothing, every reason listed): removing a started unit, reordering started units, a dispatched unit's lower risk, resources, spec path or new `after`, or its scope growth without a cited ruling naming exactly the added patterns, a spec edit other than evidence globs at its rev or the next rev, a spec edit of a stopped or finally-parked unit, any edit of an approved or merged unit, a held resource's declaration, suite lanes while a unit is at a candidate, a pool resized or removed while an instance is held, waited on or named by a residue, a request over capacity, the arc, integration branch, baseline or worktree root |
+| `apply [--base <export.json>] [--dry-run] [--ruling <sidecar>]` | (owner ruling 2026-09-29) the edited plan and specs, hashed by the CLI into a manifest, become the plan in force at the next safe point: re-verified, rebased onto the files in force (apply rebase, 2026-10-16: a three-way merge per input file from the edit's base, `--base` an export's manifest or else the owner's files of their latest applied revision, recorded as the payload's `owner`; ours unchanged takes the arc's, the arc's unchanged takes ours, both changed merge per JSON key and per keyed element, a spec's `rev` rebased to the arc's rev plus the owner's step, the ledger and sidecars by append-union; the merge runs again under the fence, and an arc that moved re-evaluates the apply), every change classified against the plan in force and what each unit has done, the startup rows re-run over what changed, a newly seated backend smoked, the bytes kept content-addressed, then a `plan-applied{rev}` fact. The plan in force is a fold of the log, never the live files; a respawn runs it, and a `start` rebases its files the same way (files unchanged since their latest apply are the plan in force). The executor never writes into the owner's files: after `start`, the log and the kept inputs are the only truth, and `inputs export` the one way to get the files in force. Nothing live is killed: an in-flight unit takes a spec revision at its next stage boundary that allows re-entry and re-enters plan-check on it. `admit`, `patch-spec`, `reenter`, `cut`, `route`, `limits`, `obligation add\|split\|witness` and the vision below are edit classes of `apply` (adding units and edges; revising a unit's spec; `reenters`; `cut`; a unit routing layer; bounds; obligation edits; vision clauses), not separate commands, and so are pool, `capacity`, mapping and `holistic` edits (lead ruling LR-c, A1). M4a adds two, from an architect `apply` only, each a `PlanChange` arm carrying its hashes: `corpus{pinSha256, guideSha256}`, a re-pin (§2.8), which triggers a drift audit, re-gates every approval through the fingerprint's `corpus` and, before first admission, a pack review; and `phase0{sha256, issuesSha256}`, an edit of the Phase-0 record (dispositions, answered questions, intake, capture), which triggers only that pack review. `plan.chain` is fixed at revision 1. A file watcher is rejected (no command path, no recorded base, reads files mid-write). The manifest also hashes the ledger, the obligations file and the vision; the ledger merges by append-union and is then only compared (A3) | a conflict (the owner and the arc changed one JSON path differently since the base, each named with its file); an owner spec older than its base (the files predate the base: applying them would revert an executor act); `vision-unconfirmed`; `tree-uncommitted`; a changed target variant (`target-kind-changed`); a changed `plan.chain` (`chain-immutable`); a `phase0` edit promoting debt while `draining`; a ledger or sidecar edit of the owner's (A3); removing `holistic`; files changed since hashed; any refused edit (all or nothing, every reason listed): removing a started unit, reordering started units, a dispatched unit's lower risk, resources, spec path or new `after`, or its scope growth without a cited ruling naming exactly the added patterns, a spec edit other than evidence globs at its rev or the next rev, a spec edit of a stopped or finally-parked unit, any edit of an approved or merged unit, a held resource's declaration, suite lanes while a unit is at a candidate, a pool resized or removed while an instance is held, waited on or named by a residue, a request over capacity, the arc, integration branch, baseline or worktree root |
 | `run-only <ids>` / `--clear` | dispatch allowlist checked at admission (arc 1's `dispatchOnly`, used W29–34); a command, not an `apply` edit, because it records a runtime fact | ids outside the plan |
-| `rule <record.json>` | C-nn plus contract ops (anchor-exact, rev bump, header cites it) and obligation dispositions: the sidecar is validated against old revisions (its `consistency` fresh, G21), then the docs publication (§2.6), then the commit through the revision fence; invalidates citing approvals. The ledger's only writer after `start` (A3): it writes back to the live ledger file only while that file still holds the previous bytes | editing a C-nn (supersede only); missing `docRefs`; `deviates` without ops, or on a rule ref; a rule ref not in the pin; a contract op on a corpus file; anchor ≠ one match at the tip; stale `consistency`; a vision effect; a withdrawn `V-n` cited |
+| `rule <record.json>` | C-nn plus contract ops (anchor-exact, rev bump, header cites it) and obligation dispositions: the sidecar is validated against old revisions (its `consistency` fresh, G21), then the docs publication (§2.6), then the commit through the revision fence; invalidates citing approvals. The ledger's only writer after `start` (A3), besides a ruling landed with an `apply --ruling`; it writes nothing into the owner's files. A record whose id is `C-?` takes the ledger's next C-n when it lands, and the receipt names it (2026-10-16) | editing a C-nn (supersede only); missing `docRefs`; `deviates` without ops, or on a rule ref; a rule ref not in the pin; a contract op on a corpus file; anchor ≠ one match at the tip; stale `consistency`; a vision effect; a withdrawn `V-n` cited |
 | `patch-spec <unit> <patch.json>` | id-targeted patch with expected revision (§2.7); since the 2026-09-29 ruling, an edit class of `apply` | merged units; stale revision; scope growth without a cited ruling naming exactly the added patterns (the unit is then re-pinned, and the transient check allows exactly those paths) |
 | `admit <units+edges.json>` | adds units/edges; since the 2026-09-29 ruling, an edit class of `apply` | no spec or plan-check; unknown endpoint; cycle; duplicate id; a new prerequisite on a merged target, or on a dispatched one without `--force-park` (quiescence and invalidation first); a checkpoint admit while `draining` (a `bundle-request` instead); declared obligations narrower than the impact mapping (prefix-conservative) |
 | `resolve-edge <edge> --evidence` | contingent edge → resolved (`edge-resolved`, a runtime fact, so a command) | unknown or resolved edge |
-| `reenter` | a new unit with `reenters{unit, enterAt?: plan-check\|build\|verify, reset?{ruling}}`, entering through a durable preparation (§4 Re-entry); a retry resumes it; since the 2026-09-30 lead ruling, an edit class of `apply` | old unit not parked or held, or merged, cut or already superseded; scope outside the lineage's original envelope; risk below its floor; `reset` without a ruling; a cycle in the effective graph (each superseded unit replaced by its head) |
+| `reenter` | a new unit with `reenters{unit, fixes, enterAt?: plan-check\|build\|verify, reset?{ruling}}`, `fixes` naming the failure it fixes (arc feedback 2026-10-16: `<unit>/<stage>#<attempt>`, a failure outcome of the lineage, or `<unit>/lanes#<attempt>/<lane>`, one of its `status.units[].failures`), entering through a durable preparation (§4 Re-entry); a retry resumes it; since the 2026-09-30 lead ruling, an edit class of `apply` | old unit not parked or held, or merged, cut or already superseded; scope outside the lineage's original envelope; risk below its floor; `reset` without a ruling; no `fixes` while the lineage recorded a failure (a unit only held by a pause has none to name), or one that names no failure of the lineage; an unchanged retry: the cited failure is a design failure of the unit (not a flaky or host-suspected lane, a retryable or environment park, or a stop), no `reset`, and the spec content, effective scope (with its derived outputs), suite lanes and resolved routing are all as the failure ran under (the refusal names each); a cycle in the effective graph (each superseded unit replaced by its head). Re-entries applied before `fixes` stay as recorded |
 | `cut` | unit `cut{reason, ruling?}`: `inScope:false`; since the 2026-09-30 lead ruling, an edit class of `apply` | a unit in a task or merged; a direct dependent neither cut in the same apply nor dropping its `after` |
 | `route` | the unit's routing layer `unit.routing` (§4), a new `routingRev`; an edit class of `apply`. Risk may rise; a moved implementer seat once the build started parks the unit (`routing-changed`, §4). `--adversarial` is withdrawn: a unit routing layer expresses it (A12) | risk below the Phase-0 floor without a ruling; an unsupported triple |
 | `limits` | arc (`plan.limits`) or unit (`unit.limits`) bounds, in place of the built-in constants; an edit class of `apply` | lowering a counter below what is spent |
 | `obligation add\|split\|witness` | obligation edits (§2.8), edit classes of `apply`, published like a revision (§2.6). `waive`, `defer` and `retire` are not edits: they are a ruling's `obligationDispositions`, applied by `rule` or by a checkpoint bundle | unsupported reporter; a weakening without a ruling in force naming the id; an architect split whose children drop parent text; a withdrawn `V-n` cited |
-| vision | clauses `V-n` and open questions `Q-n` (§2.8); an edit class of `apply`, from an architect `apply` only (A14), as is the plan's `holistic.advances` | a vision or `advances` diff from any other source; a reused id; an `advances` naming a withdrawn or unknown clause, or no world clause |
+| vision | clauses `V-n` and open questions `Q-n` (§2.8); an edit class of `apply`, from an architect `apply` only (A14), as is the plan's `holistic.advances`; the apply declares it (`--vision-edit`, owner ruling 2026-10-16), so a next-arc vision committed mid-arc never rides along with an unrelated apply | a vision or `advances` diff from any other source; a vision diff in an apply that does not declare it (`vision-leak`, naming `_next/vision.md`); a reused id; an `advances` naming a withdrawn or unknown clause, or no world clause |
 | `reverse <D-n>` | builds a fresh compensating revision from the divergence's preimage, restoring the recorded revisions of exactly the artifacts it touched, and validates it like any revision (§2.8, A10) | a `repair-unit` divergence (a verified repair unit reverses a product effect); a conflicting later revision (with reasons; the architect then uses `apply`); an unknown id |
 | `sweep [--resource]` | declared teardown for resources with no live holder, incl. indexed residues | anything a live session holds |
 | `gc --repo <path> [--keep K] [--dry-run]` | a CLI act under the host lock, not a queued command: prunes sealed arcs (§2.9) | a busy host; an arc not sealed (§2.10) |
 | `merge-in <unit>` | a `merge-tree` plan of the integration head into the unit branch; a clean merge acts (a `mergein.prepare` operation), writes `merged-in`, and the unit re-enters at lanes | a unit in a task; a conflict (rejected with no act) |
 | `steer <unit> --brief <f> --budget <min> [--class <efficient\|frontier\|summit>] [--resume]` | alternate implementer-stage entry for a **parked** or `preparing` unit; `--class` enters as a per-unit routing layer (a new `routingRev`), so the steer record names the role: pre-steer state saved, approvals invalidated, `steered`, one uncharged steer round, then normal salvage → lanes → review/gate exit. Non-green parks; green parks unless `--resume` (R11); minutes (lanes excluded) and usage recorded. Unblocked arc 1's launcher and estate | unit not parked or preparing; `budget ≤ 0`; widening the envelope |
-| `scope accept\|reject <unit> --reason <text>` | (scope growth, 2026-10-15) the root agent's decision on the scope growth a unit's plan-check proposed and code verified, which holds the unit at plan-check (`scope-growth`, a blocking item). `accept` builds and commits the ruled growth itself, the one canonical way a dispatched unit's scope grows: a new ruling naming exactly the added patterns, the unit's plan scope widened and its spec at rev + 1 with them and the ruling cited, validated and evaluated as an `apply --ruling`, written back to the files; the unit re-opens at plan-check on it, whose dispatch check re-pins the wider scope. `reject` keeps the scope: the plan-check runs again told so and decides within it. Both acknowledge the item and release the hold (`scope-decided`) | a unit not held for a proposal; for `accept`, any reason the ruled revision is refused (the unit stays held) |
+| `scope accept\|reject <unit> --reason <text>` | (scope growth, 2026-10-15) the root agent's decision on the scope growth a unit's plan-check proposed and code verified, which holds the unit at plan-check (`scope-growth`, a blocking item). `accept` builds and commits the ruled growth itself, the one canonical way a dispatched unit's scope grows: a new ruling naming exactly the added patterns, the unit's plan scope widened and its spec at rev + 1 with them and the ruling cited, validated and evaluated as an `apply --ruling` (nothing written into the owner's files); the unit re-opens at plan-check on it, whose dispatch check re-pins the wider scope. `reject` keeps the scope: the plan-check runs again told so and decides within it. Both acknowledge the item and release the hold (`scope-decided`) | a unit not held for a proposal; for `accept`, any reason the ruled revision is refused (the unit stays held) |
 | `audit [--lens]` | §2.5 on demand (`audit-requested`). `explore` is deferred (A11, §8) | holistic off |
-| `phase0 check --repo (--plan <f> \| --from-ref <arc>)` | a CLI act, not queued: read-only, no host lock, deterministic; the startup rows as JSON, exit 0 or 78, plus `sliceCandidates` (§3 Phase 0) and the advisories that never refuse (row 10, `scope-references-outside`: files outside a unit's scope naming what its spec `removes`). `--from-ref` resolves every input by the digests the arc's ref recorded and omits the live rows (forge, host, tree) | — |
+| `phase0 check --repo (--plan <f> \| --from-ref <arc>)` | a CLI act, not queued: read-only, no host lock, deterministic; the startup rows as JSON, exit 0 or 78, plus `sliceCandidates` (§3 Phase 0) and the advisories that never refuse (row 10, `scope-references-outside`: files outside a unit's scope naming what its spec `removes`). Row 11, `plan-defect` (2026-10-16), refuses what no build round could fix (§2.8 Plan defects). `--from-ref` resolves every input by the digests the arc's ref recorded and omits the live rows (forge, host, tree) | — |
 | `corpus pin --repo --baseline <sha> --commit <ref> --out <f>` | a CLI act: reads the guide and rules registry at the baseline, resolves the guide's source at the commit, parses rules blocks, diffs them against the baseline's rules registry and writes the pin (§2.8) | a reused or reappearing `T-n`; a rules block in the vision doc; a source remote that differs from the checkout's `remote.json` |
 | `brief [--json] [--ack <briefId>]` | a CLI act: the brief and its ack (§2) | a stale `briefId` |
 | `pr --repo --arc` | a CLI act, idempotent, the forge its only record: pushes the arc branch with a lease and opens or re-targets its stacked PR (§2.11) | — (a forge failure is a CLI error) |
@@ -324,8 +327,8 @@ compaction at `start` (§2.9).
 
 **M4a rev 3 commands (A-M4-25).** `resume-arc --repo` (a CLI act for a boot hook: restarts the supervisor of the repo's
 arc whose owner died, a no-op otherwise); `witness-check --lane-file` (the implementer's witness comparator, §2.1);
-`inputs export --repo --arc --out` (read-only: the arc's current inputs, every spec at its current rev, for an edit and
-`apply --expect-rev`); `apply --ruling <sidecar>` (repeatable: rulings and the edits that depend on them land as one
+`inputs export --repo --arc --out` (read-only: the arc's current inputs, every spec at its current rev, and `export.json`
+`{planRev, specRevs, base}`, for an edit and `apply --base <out>/export.json`); `apply --ruling <sidecar>` (repeatable: rulings and the edits that depend on them land as one
 revision). `apply` gains the edit classes `unit-priority`, `known-defects` and `plan-check-shape` (none drains), and a
 re-entry may widen its lineage's scope envelope on an active ruling naming exactly the added patterns. A spec edit of a
 unit whose attempt is running is refused until its stage boundary; an attempt a crash cut short never refuses it (the
@@ -364,7 +367,7 @@ gates had passed; drift in four of six audits; eight vacuity rows). The fourth, 
 product serves the vision, whether anything is faithful to its letter but wrong for it, and where the vision
 does not anticipate what happened; it opens P2 or P3 findings citing `V-n`. `holistic.audit.lenses` is the arc's
 **required lens set L** (default: all four); coverage, owed audits and completion are measured per lens in L
-(H9). Audits run only when the holistic layer is on (§2.8). The lenses report; the checkpoint that follows
+(H9). Audits run only when the holistic layer is on (§2.8). The lenses report; the checkpoint that follows (when they found something new, §2.8 "Aimed and rarer")
 them acts (§2.8).
 
 - **Triggers**: every N publications (D3; unit, batch, and rule-with-contract-ops publications); a publication
@@ -374,7 +377,7 @@ them acts (§2.8).
   `audit [--lens]`; **final**: at the final head, every lens in L with an outstanding range (H9). Triggers
   coalesce, one audit runs at a time, and each records its causal generation (§2.8).
 - **Immutable inputs**: `audit-started{job, triggers, generation, lenses, integrationSha, planRev,
-  ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater}`, captured under the revision
+  ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater, diffBudget}`, captured under the revision
   fence (§2.6, A19): owners are the branch SHAs of parked or in-flight owners (the w33 P1s were already fixed on
   a blocked branch), prior findings carry dispositions (w35–37 repeated one note thrice). A detached worktree,
   so merges continue.
@@ -384,6 +387,15 @@ them acts (§2.8).
   P1s are re-witnessed on the current head. A failed job-lane cleanup leaves a residue owned by `job{…}`,
   probed and reclaimed like any other; the job re-runs the lane. A job whose lane gives no verdict is retried on
   the retryable-park backoff, and at 6 h raises one non-blocking `park-escalated` (lead ruling 2026-09-30).
+- **Bounded ranges (2026-10-16).** A lens's range is reviewed in chunks by publication: each call covers its
+  watermark to the furthest published integration head whose diff attaches whole within the recorded `diffBudget`
+  (at least one publication), and the job asks again from there until the audited SHA, so one audit drains every
+  range it runs and no range can outgrow a lens call (a dev.10 arc's range did, and every audit was abandoned).
+  Every attachment, the chunk's and the owners' branch diffs, is bounded: the stat, then per-file diffs in path
+  order while they fit; a file not inlined (over what remains, or a plan-declared `derived` output) is listed with
+  the exact `git diff` that prints it, which the lens runs in its checkout. The prompt makes a report the lens's
+  statement that it read every file of its range. Coverage records exactly the chunks reported: a lens that fails a
+  later chunk keeps the earlier ones, and its rest stays outstanding for the next audit.
 - **Coverage**: per lens, a contiguous watermark over the integration history; results are observations keyed by
   the audited SHA. A docs-only publication (the executor-rendered `.roadmap/` files, rendered by code from
   in-force records) covers its own edge U→D by construction (`docs-covered`, A17, H8): a lens's watermark
@@ -430,16 +442,18 @@ provenance only, so a merge that leaves those untouched keeps it fresh; doc refs
 regardless; lead ruling 2026-09-30); semantic consistency is the model judgment `consistency` records. Rulings are checked
 against the code before landing (plan-check readings overturned three arc-1 drafts).
 
-**Ledger ownership (OR-Q5, A3).** After `start` the ledger is executor-owned and `rule` is its only writer (a
-checkpoint ruling reaches it through a bundle's activation). An `apply` whose ledger file differs from the
-ledger in force is refused. Write-back to the live ledger file happens only while it still holds the previous
-bytes.
+**Ledger ownership (OR-Q5, A3).** After `start` the ledger is executor-owned: `rule` and `apply --ruling` land the
+owner's rulings (a checkpoint ruling reaches it through a bundle's activation). An `apply` merges the ledger by
+append-union from its base, so a ledger without the arc's later rulings is no edit; an owner's own ledger or sidecar
+edit is refused. Nothing is written back into the owner's files (2026-10-16): `inputs export` writes the ledger in
+force. An owner's ruling record may carry the id `C-?`: it takes the ledger's next C-n when it lands (after the
+records before it in one `apply --ruling`), and the receipt names the id; a numbered record must name exactly that id.
 
 **Revisions and activation (A2, G1).** The revisioned set is the plan, the specs, the ledger with its sidecars,
 the obligations with their mapping and census, the vision, and in a corpus arc the corpus pin (with the guide
 bytes and every pinned file) and the Phase-0 record (with its issue capture); `plan-applied` records each hash. Every revision has one
 activation record, payload first, whatever its source: `start | command{id} | bundle{job} | executor{inv}`.
-`evaluate(proposal, source)` builds the proposal (`apply` from the files; a bundle from the plan in force plus
+`evaluate(proposal, source)` builds the proposal (`apply` from the owner's files rebased onto the files in force; a bundle from the plan in force plus
 its ops; `rule` from ledger plus sidecar; `reverse` from a divergence's preimage; the executor's `spec.patch` from
 its patch), takes the revision fence and evaluates again synchronously (a differing result → `stale`). Then
 `activate(payload)`: the full evaluated payload is kept content-addressed as `inputs/<sha>.revision.json`
@@ -689,8 +703,8 @@ deadline; P1s never bank; while `draining`, a new P1 or P2 raises a blocking `ne
 `{lens, severity, gateHadPassed, disposition, merged, timeToResolve}` is recorded, so arc 2 measures whether the
 checkpoint works.
 
-**Checkpoint authority.** After every completed audit (§2.5), and on every operator-design park, the checkpoint
-seat **rules**, steering toward the vision rather than the original plan: amend implementation contracts,
+**Checkpoint authority.** After every completed audit (§2.5) that found something new, and on every operator-design
+park, the checkpoint seat **rules**, steering toward the vision rather than the original plan: amend implementation contracts,
 respec, `reenter`, `cut`, `admit`, re-route, set limits, rule, split or dispose obligations, invalidate
 approvals. A design park goes to the checkpoint for a respec, re-entry or cut first; a `no-op` raises the park's
 `needs-user`, and a second design park on the same lineage raises a blocking `respec-second` (OR-Q1). The
@@ -702,7 +716,22 @@ it. Where the vision does not anticipate a situation, it takes the most optimist
 it in `interpretations`. Its inputs, captured under the revision fence as `checkpoint-inputs`, are the vision
 first, the revision vector `{plan, spec:<u>, obligations, ledger, vision, corpus, contract:<path>}`, the head,
 findings, observations, vision coverage, open vision-conflict findings and the issues captured just before (§4
-Issue mode). Brakes in code:
+Issue mode); a park trigger's prompt also carries, right after the trigger, the code-produced diagnosis of the parked
+lineage: each unit's failure outcomes and lane failures with the references a re-entry cites (`fixes`, §2.3), the paths
+salvage reverted as outside the pinned scope, the required witness tests found missing or failing, and the lineage's
+earlier re-entries with the failures they cited.
+
+**Aimed and rarer (arc feedback 2026-10-16: eleven checkpoints, mostly small spec patches, $78 before anything
+merged).** A completed audit that found nothing new has no checkpoint: it is not the final audit, a checkpoint already
+settled a decision (applied, no-op or requested) under the vision in force, and every active finding no unit owns was
+captured by such a checkpoint; in a corpus arc, every open intake issue, fetched from the forge just before the
+decision (free, nothing recorded), is also held unchanged by such a checkpoint's issue capture (byte-equal, as issue
+reuse compares). A forge failure there keeps the checkpoint, whose own capture then records `unavailable` as ever, and an
+untrusted issue policy holds it as a capture does. Code records `checkpoint-skipped{audit, generation, visionSha256, carried}` instead of a
+call (shown in `decisionsSince`), and the audit's generation is quiescent as after a `no-op`. So the arc's first
+checkpoint and the first after a vision revision always run (they weigh coverage gaps and obligations), a final audit's
+always runs, a new or changed owner issue reaches the next audit's checkpoint, and a bundle's drift audit that finds
+nothing ends the loop instead of feeding another bundle. Brakes in code:
 
 - **Bundles.** A decision is one action bundle, activated as a mutation job scoped to its ops; affected dispatch
   waits meanwhile. In order: validate schema, identity, rulings (their `consistency` included) and cites (active
@@ -728,7 +757,7 @@ Issue mode). Brakes in code:
   <D-n>` (§2.3) builds and validates a fresh compensating revision at request time, or the architect uses
   `apply`. A published product effect (`repair-unit`) is reversed only by a verified repair unit.
 - **Generations.** A checkpoint takes its trigger's generation; an applied bundle's drift audit starts g+1. A
-  `no-op` makes its generation quiescent, unless the vision changed since.
+  `no-op`, or an audit skipped for finding nothing new, makes its generation quiescent, unless the vision changed since.
 - **Convergence bound (OR-Q2/3, A9).** Material ops (cut-and-replace, respec, scope expansion, budget reset,
   re-route, a spec patch changing lanes or acceptance) count per causal identity `(finding or obligation id,
   lineage root)`; a second → `convergence-identity`. Each applied bundle increments an arc counter, cleared by a
@@ -763,9 +792,9 @@ ids are read in numeric form; a split child anchored at an out-of-slice rule mov
 slice, and is refused with the fix otherwise. A bundle touching a unit's running or crash-abandoned attempt is
 rejected `busy` (not counted toward the invalid brake) and decided again only after the attempt's boundary. The
 checkpoint reads an immutable, content-addressed manifest of its inputs (never `roadmap-inputs`) with every unit's
-spec embedded with its occupied item ids and the ledger's next ruling id; after a no-op, a checkpoint whose relevant
-inputs are unchanged renders only the deltas (never the final one), and unchanged issues on unchanged grounds keep
-their dispositions. Before admitting or approving a repair that reorders a transaction, the checkpoint and plan-check
+spec embedded with its occupied item ids and the ledger's next ruling id; unchanged issues on unchanged grounds keep
+their dispositions. (The delta-only closeout render after a no-op on an unchanged arc is gone, 2026-10-16: such an
+audit now has no checkpoint at all.) Before admitting or approving a repair that reorders a transaction, the checkpoint and plan-check
 write its failure matrix (each step × process death).
 
 **Phase 0 (A-M4-28).** The shared Phase-0 rows gain `spec-census-mismatch`: a pack spec's declared obligation whose
@@ -775,6 +804,25 @@ it for an `apply` and a bundle alike) and on a plan-check redirect's patch (refu
 opportunity's split child or drops the citation. The checkpoint writes an admit's spec as a schema-constrained object.
 A pack re-review after a required review reads the changed pack files and the previous review's unresolved findings,
 giving each a disposition (`resolved`, `still-open`, `withdrawn`); the first review stays full.
+
+**Plan defects (2026-10-16, arc feedback: units ran 21 to 41 attempts against tests their lane never ran, or a bundle
+outside their scope; a pack review found 29 obligations credited to units that run before their tests exist).** A plan
+defect code can check is refused at Phase 0; one that surfaces at run time parks uncharged with a code-produced
+diagnosis instead of charging fix rounds. Test ids are names (node's name path, go's test name, a wrapper's own), so no
+reporter maps an id to its file; the sound rule is that a witness declares its `files` (required at a fresh start, with
+every arc lane's `testPaths`), and code checks the declaration, never infers it. Shared Phase-0 row 11, `plan-defect`,
+in every mode: each witness file of a binding obligation inside its lane (matched by its `testPaths`, and named by its
+argv when the argv names test paths: an element equal to it, a directory above it or a glob matching it, resolved
+against the lane's `cwd`; an argv naming none, `npm test`, leaves selection to the runner), and present at the
+integration tip or inside the effective scope of a deliverer or a unit a deliverer runs `after`; derived outputs off
+the corpus and out of the scope of a unit covering none of their sources. The same lane predicate diagnoses a missing
+witness at run time (§2.1). Plan `derived: [{sources, outputs}]` names files the build regenerates: a unit whose scope
+covers a source takes the outputs into its effective scope, pinned on its dispatch record (`derived`, shown in
+`status`), which salvage, the gate, the candidate's transient check and recovery read. Salvage reverting the same
+out-of-scope path on two build rounds running holds the unit at lanes with the scope-growth hold and that path as the
+proposal (`scope accept|reject`); an accept re-opens it at plan-check, and its builder is told to restore the reverted
+version. An arc started on dev.10 declares no witness files: it is read as undeclared (nothing checked), with a logged
+warning, until an apply declares them.
 
 ### 2.9 Artifacts
 
@@ -901,7 +949,23 @@ owner sets (owner rulings OR-Q19/20).
   PR 1 targets `main`, PR N+1 targets arc N's branch. The body lists the amendments derived from the arc and states
   that the stack merges with merge commits; `roadmap pr` re-targets a PR whose base merged and flags a squash-merged
   base as needs-rebase in the brief. Nothing merges `main`: the owner merges the stack.
+- **PR fixes after completion (owner ruling 2026-10-16).** An arc's life ends when its PR merges, not at
+  `arc-completed`; CI failures and the owner's review requests on its PR become fix units. While no arc has started
+  on its head, the one canonical reopen is fix units added to its plan and `start` run again (the start's revision
+  admits them, invalidating the completion; `resume-arc` relaunches a claim a dying reopen left on a completed arc),
+  and `roadmap pr` fast-forwards the same PR at the new completion. Once arc N+1 started on N's head, a start of N is
+  refused `arc-superseded{by}`: the fixes are priority units of N+1, and `roadmap pr --arc <N+1>
+  --supersede-previous` makes N+1's PR supersede N's (it targets N's base, its body opens `Supersedes <url>`, N's PR
+  is closed with a comment; the forge stays the only record, and the base walk passes a superseded PR). Auto-ingesting
+  PR reviews and CI into fix units is deferred (BACKLOG).
 - **One arc per host.** Arc N's executor exits at completion before arc N+1 starts (host lock, §2).
+- **Next-arc staging (owner ruling 2026-10-16).** `<repo>/../roadmap-inputs/_next/` holds `vision.md`, the owner's
+  working draft of the next vision, and `notes.md`, work for later. A mid-arc owner thought that changes what the
+  running arc must deliver is applied or ruled at once; anything else goes to `_next/`. The executor never reads it;
+  `.roadmap/vision.*` changes only in the between-arc window (an undeclared vision diff is `vision-leak`). At the
+  boundary the root agent reads `_next/` beside the amendments, the `finding-deferred` debt and the open questions,
+  confirms the draft through the vision skill's playback, commits it in the between-arc commit, plans, and hands
+  `_next/` to the next arc's input directory.
 - **Stop.** The session stops at `chain-invalid{limit}` or when the vision is silent: no `sliceCandidates`
   (§3 Phase 0) the architect can justify from active clauses.
 
@@ -1002,7 +1066,7 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 | Unit policy | Every build prompt carries an executor-owned policy that overrides the repository's agent-instruction files: no cloud resources or CLIs, no sudo or system package installs, no killing processes the unit did not start, no network beyond the lanes' needs (arc-1 feedback item 20). The unit policy is a prompt: with containment, it is what bounds an implementer build. The owner-only check (§2.8) governs checkpoint revisions only (H10); code-level enforcement beyond these is backlog (§8). |
 | Consults, findings | The consult seat reads evidence, spec, diff and C-nn directly; the Sonnet dossier goes. Findings dedupe by finding+cause with a disposition; a dismissed one is not re-raised without new evidence (sf16, w35–37). |
 | Wave-tail roles | → §2.5 + §2.8; an operator-design park goes to the checkpoint for a respec, re-entry or cut first, a second on the same lineage → `respec-second` (OR-Q1); explorer and reconciler are backlog (§8). |
-| Re-entry | `reenter` replaces `adopt`. A preparation is the durable stage `prepare`: `worktree.create` (branch `roadmap/<arc>/<new>` at the old tip), `dispatch`, `mergein.prepare` of integration (§3.23), `evidence.snapshot` of the prepared worktree; outcomes `clean-plan-check \| clean-build \| clean-verify \| conflicted`. Budgets, attempts, counters (`chargeableFailures` reset only by a ruled `reset`), risk floor, dispositions and the lineage's original scope envelope **inherit**; approvals and evidence are **invalidated**; sessions do not inherit; the old unit becomes `superseded`. A conflicted preparation keeps `MERGE_HEAD` (the M1 conflict precedent) and enters at a `resolve` round in a fresh session. Replacement edges, cycle-checked at `apply`, activate at the first `prepare` outcome that is not a park. `retire` cites the latest snapshot of the unit's `evidence` or `prepare` stage. Resets need a ruling. |
+| Re-entry | `reenter` replaces `adopt`. A preparation is the durable stage `prepare`: `worktree.create` (branch `roadmap/<arc>/<new>` at the old tip), `dispatch`, `mergein.prepare` of integration (§3.23), `evidence.snapshot` of the prepared worktree; outcomes `clean-plan-check \| clean-build \| clean-verify \| conflicted`. Budgets, attempts, counters (`chargeableFailures` reset only by a ruled `reset`), risk floor, dispositions and the lineage's original scope envelope **inherit**; approvals and evidence are **invalidated**; sessions do not inherit; the old unit becomes `superseded`. A conflicted preparation keeps `MERGE_HEAD` (the M1 conflict precedent) and enters at a `resolve` round in a fresh session. Replacement edges, cycle-checked at `apply`, activate at the first `prepare` outcome that is not a park. `retire` cites the latest snapshot of the unit's `evidence` or `prepare` stage. Resets need a ruling. A re-entry names the failure it fixes (`fixes`) and must change what that failure ran under unless it is flaky, host-suspected or not the unit's design failure (arc feedback 2026-10-16: a checkpoint re-entered a unit without finding the cause, one more doomed try; §2.3 `reenter`). |
 | Plan-load validation | Every `edge.contract` path exists (sf18); `argv[0]` and env prerequisites resolve for spec lanes and `must-hold` arc lanes (`future` ones at activation); no request over capacity; worktree root not on tmpfs; routing supported, judgment roles on the judgment profile; every obligation not held on the base names `deliveredBy`; every arc lane declares a supported reporter (R1), and a `node-test` lane does not set `NODE_OPTIONS`; the plan target is one closed variant (§2.8); no plan contract or unit scope overlaps a same-repo corpus file set. |
 | Measurement | Per lane per invocation `{start, end, exitCode}`, per unit `{dispatchedAt, terminalAt, mergeSha, mergedAt}`, every upper-tier call's tokens keyed by `{role, routingRev}`, every escalation, checkpoint lane duration and per-finding instrumentation (§2.8). Arc 1 recorded almost none of this; defaults are marked unmeasured and re-derived after arc 2. |
 | State | The event log is authoritative and write-ahead; its envelope is frozen before M1: every operation has an arc-scoped id, parent command or stage id, invocation ordinal, expected inputs and postconditions; op kinds include `mergein.prepare` (integration merged into the unit branch in its worktree; postcondition `clean-merged | conflicted | completed`) and `evidence.snapshot` (a completion manifest of paths and sha256, required before teardown or retire); a complete durable intent precedes every act; `state.json` is derived (`atomic()`). A truncated final record is discarded; earlier corruption → `needs-user`. Every operation kind (resource states, spawns, commands, publications — the latter by second-parent test or activation postcondition) has a reconstruction rule pinned by a crash-boundary fixture. Deadlines are absolute; attempts monotonic across re-entry; run state reaches git only via `refs/roadmap/<arc>`. |
@@ -1012,7 +1076,7 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 | Refusals | Stop reason → `refusal`, routed up. |
 
 **Salvage** classifies staged, unstaged, untracked and ignored content separately and commits an explicit
-approved path set (inside the pinned scope; never `.roadmap/`, declared evidence/state or ignored paths) through
+approved path set (inside the effective scope: the pinned scope and its derived outputs; never `.roadmap/`, declared evidence/state or ignored paths) through
 a controlled temporary index, so pre-staged content cannot ride along; rejected content is preserved outside the
 tree, and (scope growth, 2026-10-15) its out-of-scope paths are named to the gate and the next fix round; unmerged
 entries or a failed commit → park, tree preserved. Verification runs in a clean worktree at the

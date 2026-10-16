@@ -99,7 +99,7 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
     assert.equal(readFileSync(keptSpecPath(r.ctx, r.unit('u1')), 'utf8'), readFileSync(specPath, 'utf8'), 'unedited so far: the same bytes');
     const item = raiseParked(r, U1, parked.needsUser);
 
-    const noRevision = { kind: 'rejected', reason: `unit u1 is parked (escalation); edit its spec ${specPath} (rev 1), set rev 2, run \`roadmap apply\`, then resume` };
+    const noRevision = { kind: 'rejected', reason: `unit u1 is parked (escalation); revise its spec ${specPath} (in force at rev 1; \`roadmap inputs export\` shows it): the revision takes your file's rev + 1; run \`roadmap apply\`, then resume` };
     assert.deepEqual((await resume(r)).outcome, noRevision);
     // Evidence plumbing may change at the same rev (applied at once); it is still not a revision resume can re-open on.
     editSpec(r, (s) => void (s['lanes'] = (s['lanes'] as Record<string, unknown>[]).map((l) => ({ ...l, evidenceGlobs: ['out/**'], evidenceExcludes: ['out/secret/**'] }))));
@@ -118,9 +118,8 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
     assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'a rejected apply or resume changes nothing');
 
     editSpec(r, (s) => void (s['rev'] = 2));
-    assert.deepEqual((await resume(r)).outcome, {
-      kind: 'rejected', reason: `unit u1 is parked (escalation); its spec ${specPath} is at rev 2 but not applied: run \`roadmap apply\`, then resume`,
-    }, 'a revision edited but not applied: the rejection says to apply it');
+    assert.deepEqual((await resume(r)).outcome, noRevision, 'a revision edited but not applied re-opens nothing');
+    assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'the unapplied edit is not read: the unit stays parked');
     assert.equal((await apply(r)).outcome.kind, 'applied');
     assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'an applied revision of a parked unit waits for the resume');
     const reopened = await resume(r);
@@ -158,7 +157,7 @@ test('reopen.paused-and-parked: one resume of a unit both paused and parked clea
     assert.equal(unpaused.outcome.kind, 'applied');
     const receipt = readReceipt(r.ctx.runDir, commandId(unpaused.id), 'applied');
     assert.deepEqual(receipt?.state === 'applied' ? receipt.verified : receipt, [
-      'unit u1 unpaused', `unit u1 still parked: unit u1 is parked (escalation); edit its spec ${specPath} (rev 1), set rev 2, run \`roadmap apply\`, then resume`,
+      'unit u1 unpaused', `unit u1 still parked: unit u1 is parked (escalation); revise its spec ${specPath} (in force at rev 1; \`roadmap inputs export\` shows it): the revision takes your file's rev + 1; run \`roadmap apply\`, then resume`,
     ]);
     assert.deepEqual(r.journal.view.control().pausedUnits, []);
     assert.equal(r.journal.view.unit(U1).status, 'park-pending');

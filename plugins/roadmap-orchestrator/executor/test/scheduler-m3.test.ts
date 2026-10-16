@@ -34,7 +34,7 @@ import { holisticInForce } from '../src/pipeline/stages.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { checkpointAnswer, checkpointStep, lensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
+import { checkpointAnswer, checkpointStep, lensStep, noteLensStep, twoOpBundleSecondInvalid } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -383,7 +383,8 @@ describe('holistic jobs in the scheduler', () => {
 
   test('sched.audit-job-one-at-a-time: an audit requested while one runs waits for it; each runs its own triggers, never two at once', T, async () => {
     const barrier = { type: 'barrier', name: 'lens', timeoutMs: 120_000 } as const;
-    const d = checkpointArc([lensStep('audit-1', 'vision', [], [barrier]), checkpointStep('ckpt-1', NOOP), lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP)]);
+    // audit-2 finds something new: an audit with nothing new after a settled checkpoint has none (checkpoint-skipped).
+    const d = checkpointArc([lensStep('audit-1', 'vision', [], [barrier]), checkpointStep('ckpt-1', NOOP), noteLensStep('audit-2'), checkpointStep('ckpt-2', NOOP)]);
     const r = contextFor(d);
     // u1 stays paused: only the requested audits run.
     submit(r, { type: 'pause', target: { type: 'unit', unit: unitId('u1') } });

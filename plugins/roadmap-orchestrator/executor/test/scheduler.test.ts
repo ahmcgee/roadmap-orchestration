@@ -401,12 +401,16 @@ test('reenter.clean-verify-to-retire: a unit parked at its gate is re-entered (`
     const s = startScheduler(r);
     const item = await haltItem(r, U1);
     assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 7), 'gate:escalate', 'gate:escalate']);
-    // The architect re-enters u1 as u1b, at verify: its branch already holds the work.
+    // The architect re-enters u1 as u1b, at verify: its branch already holds the work. It names the gate's park it fixes
+    // and records the decision the escalation asked for (an unchanged retry of a design failure is refused).
     cpSync(join(d.planPath, '..', 'u1.json'), join(d.planPath, '..', 'u1b.json'));
-    const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1b.json'), 'utf8')) as Json;
-    writeFileSync(join(d.planPath, '..', 'u1b.json'), JSON.stringify({ ...spec, unit: 'u1b' }));
+    const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1b.json'), 'utf8')) as Json & { decisions: Json[] };
+    const decision = { id: 'D1', text: 'mul keeps its integer signature', state: 'active' };
+    writeFileSync(join(d.planPath, '..', 'u1b.json'), JSON.stringify({ ...spec, unit: 'u1b', decisions: [...spec.decisions, decision] }));
+    const park = r.journal.view.unit(U1).decided!;
+    assert.equal(park.stage, 'gate');
     const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Json & { units: Json[] };
-    plan.units.push({ ...plan.units[0]!, id: 'u1b', spec: 'u1b.json', reenters: { unit: 'u1', enterAt: 'verify' } });
+    plan.units.push({ ...plan.units[0]!, id: 'u1b', spec: 'u1b.json', reenters: { unit: 'u1', enterAt: 'verify', fixes: `u1/gate#${park.attempt}` } });
     writeFileSync(d.planPath, JSON.stringify(plan));
     const { applyBody } = await import('./fixtures/unit-common.ts');
     const applied = await receiptOf(r, submit(r, applyBody(d)));

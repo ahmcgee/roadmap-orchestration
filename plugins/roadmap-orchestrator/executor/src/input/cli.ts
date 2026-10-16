@@ -2,8 +2,8 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PhaseQuestionId, type PlanRev, type ProposalId, type ResourceName, type Sha,
-  type UnitId, arcId, briefId, divergenceId, edgeId, needsUserId, phaseQuestionId, planRev, proposalId, resourceName, sha, unitId,
+  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PhaseQuestionId, type ProposalId, type ResourceName, type Sha,
+  type UnitId, arcId, briefId, divergenceId, edgeId, needsUserId, phaseQuestionId, proposalId, resourceName, sha, unitId,
 } from '../core/ids.ts';
 import { FLOW_LEVERS, type FlowLever } from '../flow/types.ts';
 import { LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
@@ -37,19 +37,23 @@ export type Command =
   | Readonly<{ command: 'status'; run: RunLocator }>
   /**
    * `actionable` (`--actionable`): only what the architect acts on (src/watch.ts `ActionableFilter`), null for every
-   * event; its `heartbeatMin` (`--heartbeat-min <n>`, only with `--actionable`) is null for the default (HEARTBEAT_MIN).
+   * event; its `heartbeatMin` (`--heartbeat-min <n>`, only with `--actionable`) is null for the default (HEARTBEAT_MIN);
+   * its `from` (`--from <seq>`, only with `--actionable`) the cursor a restarted stream starts at, null for none.
    */
-  | Readonly<{ command: 'watch'; actionable: Readonly<{ heartbeatMin: number | null }> | null; run: RunLocator }>
+  | Readonly<{ command: 'watch'; actionable: Readonly<{ heartbeatMin: number | null; from: number | null }> | null; run: RunLocator }>
   | Readonly<{ command: 'stop'; run: RunLocator }>
   | Readonly<{ command: 'pause'; target: PauseTarget; run: RunLocator }>
   | Readonly<{ command: 'ack'; id: NeedsUserId; choice: string | null; run: RunLocator }>
   | Readonly<{ command: 'resume'; target: ResumeTarget; run: RunLocator }>
   | Readonly<{ command: 'sweep'; resource: ResourceName | null; run: RunLocator }>
   /**
-   * Put the edited plan.json and specs in force; `dryRun` classifies them read-only and queues nothing. `rulings` (M4a
-   * rev 3, I2): ruling sidecar files (`--ruling`, repeatable, in the order given) landed with the edits as one revision.
+   * Put the edited plan.json and specs in force, rebased onto the files in force; `dryRun` classifies them read-only and
+   * queues nothing. `base`: the `export.json` of the export the edit started from (`--base`; null: the owner's files of
+   * their latest apply). `rulings` (M4a rev 3, I2): ruling sidecar files (`--ruling`, repeatable, in the order given)
+   * landed with the edits as one revision. `visionEdit` (`--vision-edit`): the apply declares a vision edit
+   * (src/phase0/rows.ts `visionLeak`).
    */
-  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; rulings: readonly string[]; run: RunLocator }>
+  | Readonly<{ command: 'apply'; base: string | null; dryRun: boolean; rulings: readonly string[]; visionEdit: boolean; run: RunLocator }>
   /** A contingent edge's condition is met, on the architect's evidence (M2). */
   | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
   /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
@@ -73,8 +77,8 @@ export type Command =
   | Readonly<{ command: 'corpus-pin'; repo: string; commit: string; baseline: Sha; out: string }>
   /** `brief`: everything since the last ack across the chain (`json`: the payload, else its Markdown); `ack` acknowledges one brief. */
   | Readonly<{ command: 'brief'; repo: string; json: boolean; ack: BriefId | null }>
-  /** `pr`: open or update the arc's stacked pull request. */
-  | Readonly<{ command: 'pr'; repo: string; arc: ArcId }>
+  /** `pr`: open or update the arc's stacked pull request; `supersedePrevious` (`--supersede-previous`): it supersedes the previous arc's open PR. */
+  | Readonly<{ command: 'pr'; repo: string; arc: ArcId; supersedePrevious: boolean }>
   /** `issues`: the canonical issue capture, to stdout or (`out`) a file by atomic rename. */
   | Readonly<{ command: 'issues'; repo: string; out: string | null }>
   /** `chain status`: the chain derived from refs, the ack log and K. */
@@ -213,11 +217,16 @@ export function parseCommand(argv: readonly string[]): Command {
     case 'start':
       return { command: 'start', args: parseStartArgs(rest) };
     case 'watch': {
-      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch', 'heartbeat-min': 'value' }, command);
+      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch', 'heartbeat-min': 'value', from: 'value' }, command);
       positionals(p, command, 0);
       const heartbeat = value(p, 'heartbeat-min');
+      const from = value(p, 'from');
       if (heartbeat !== undefined && !p.flags.has('actionable')) throw new CliError('watch: --heartbeat-min goes with --actionable');
-      const actionable = p.flags.has('actionable') ? { heartbeatMin: heartbeat === undefined ? null : positiveInt(command, '--heartbeat-min', heartbeat, 'minutes') } : null;
+      if (from !== undefined && !p.flags.has('actionable')) throw new CliError('watch: --from goes with --actionable');
+      if (from !== undefined && !/^(0|[1-9][0-9]*)$/.test(from)) throw new CliError(`watch: --from takes a log seq (a non-negative integer), got ${JSON.stringify(from)}`);
+      const actionable = p.flags.has('actionable')
+        ? { heartbeatMin: heartbeat === undefined ? null : positiveInt(command, '--heartbeat-min', heartbeat, 'minutes'), from: from === undefined ? null : Number(from) }
+        : null;
       return { command, actionable, run: locator(p, command) };
     }
     case 'status':
@@ -257,13 +266,11 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, resource: r === undefined ? null : arg(command, '--resource', resourceName, r), run: locator(p, command) };
     }
     case 'apply': {
-      const p = parseRest(rest, { ...LOCATOR, 'expect-rev': 'value', 'dry-run': 'switch', ruling: 'many' }, command);
+      const p = parseRest(rest, { ...LOCATOR, base: 'value', 'dry-run': 'switch', ruling: 'many', 'vision-edit': 'switch' }, command);
       positionals(p, command, 0);
-      const rev = value(p, 'expect-rev');
-      if (rev !== undefined && !/^[1-9][0-9]*$/.test(rev)) throw new CliError(`apply: --expect-rev takes a plan revision (a positive integer), got ${JSON.stringify(rev)}`);
       const rulings = values(p, 'ruling');
       if (new Set(rulings).size !== rulings.length) throw new CliError('apply: a --ruling file given twice');
-      return { command, expectRev: rev === undefined ? null : planRev(Number(rev)), dryRun: p.flags.has('dry-run'), rulings, run: locator(p, command) };
+      return { command, base: value(p, 'base') ?? null, dryRun: p.flags.has('dry-run'), rulings, visionEdit: p.flags.has('vision-edit'), run: locator(p, command) };
     }
     case 'resolve-edge': {
       const p = parseRest(rest, { ...LOCATOR, evidence: 'value' }, command);
@@ -354,9 +361,11 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, repo: required(p, command, 'repo', '<path>'), json: p.flags.has('json'), ack: ack === undefined ? null : arg(command, '--ack', briefId, ack) };
     }
     case 'pr': {
-      const p = parseRest(rest, { repo: 'value', arc: 'value' }, command);
+      const p = parseRest(rest, { repo: 'value', arc: 'value', 'supersede-previous': 'switch' }, command);
       positionals(p, command, 0);
-      return { command, repo: required(p, command, 'repo', '<path>'), arc: arg(command, '--arc', arcId, required(p, command, 'arc', '<arc>')) };
+      return {
+        command, repo: required(p, command, 'repo', '<path>'), arc: arg(command, '--arc', arcId, required(p, command, 'arc', '<arc>')), supersedePrevious: p.flags.has('supersede-previous'),
+      };
     }
     case 'issues': {
       const p = parseRest(rest, { repo: 'value', out: 'value' }, command);

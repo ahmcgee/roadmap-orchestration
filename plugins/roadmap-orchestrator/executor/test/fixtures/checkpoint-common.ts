@@ -13,9 +13,9 @@ import { runAudit } from '../../src/holistic/audit.ts';
 import type { CheckpointContext } from '../../src/holistic/checkpoint.ts';
 import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { admitSpecWire, lensStep } from '../helpers/holistic.ts';
+import { admitSpecWire, lensStep, noteLensStep } from '../helpers/holistic.ts';
 import { type AuditArcOptions, auditArc, auditContext, factsOf } from './audit-common.ts';
-import { type ArcDescriptor, type ArcRun, applyBody } from './unit-common.ts';
+import { type ArcDescriptor, type ArcRun, applyBody, visionApplyBody } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -52,6 +52,8 @@ export async function completedAudit(r: ArcRun, ctx: CheckpointContext): Promise
 
 /** The vision lens step of each of `jobs`. */
 export const visionLenses = (...jobs: readonly string[]): readonly Step[] => jobs.map((j) => lensStep(j, 'vision'));
+/** The vision lens step of each of `jobs`, each reporting a new P3 finding (`noteLensStep`): each audit has its checkpoint. */
+export const noteLenses = (...jobs: readonly string[]): readonly Step[] => jobs.map((j) => noteLensStep(j));
 
 /** Edits plan.json in place and applies it (an architect's `roadmap apply`). */
 export async function applyPlanEdit(r: ArcRun, w: Wired, edit: (plan: Json) => void): Promise<void> {
@@ -62,12 +64,12 @@ export async function applyPlanEdit(r: ArcRun, w: Wired, edit: (plan: Json) => v
   assert.equal(out.kind, 'applied', JSON.stringify(out));
 }
 
-/** Rewrites the vision file with `clauses` added at the next rev and applies it (owner-only: an architect apply). */
+/** Rewrites the vision file with `clauses` added at the next rev and applies it (owner-only: an architect apply declaring the vision edit). */
 export async function applyVision(r: ArcRun, w: Wired, clauses: readonly Json[]): Promise<void> {
   const file = join(r.d.planPath, '..', 'vision.json');
   const vision = JSON.parse(readFileSync(file, 'utf8')) as Json & { rev: number; clauses: Json[] };
   writeFileSync(file, JSON.stringify({ ...vision, rev: vision.rev + 1, clauses: [...vision.clauses, ...clauses] }));
-  const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(r.d)));
+  const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, visionApplyBody(r.d)));
   assert.equal(out.kind, 'applied', JSON.stringify(out));
 }
 
@@ -83,8 +85,8 @@ export const limitsOp = (field: string, value: number, evidence: readonly string
 export const witnessSplit = (unit: string, clause: string): JsonValue => ({
   op: 'obligation-split', obligation: 'I-1', cites: ['V-1', clause], evidence: [`${unit} brings its witness`],
   children: [
-    { id: 'I-2', statement: 'I-1, restated.', docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'] }, activation: 'must-hold', deliveredBy: [] },
-    { id: 'I-3', statement: `${unit} delivers ${clause}.`, docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'] }, activation: 'future', deliveredBy: [unit] },
+    { id: 'I-2', statement: 'I-1, restated.', docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'], files: [] }, activation: 'must-hold', deliveredBy: [] },
+    { id: 'I-3', statement: `${unit} delivers ${clause}.`, docRef: null, rule: 'T-1', witness: { lane: 'journey', testIds: ['t1'], files: [] }, activation: 'future', deliveredBy: [unit] },
   ],
 });
 

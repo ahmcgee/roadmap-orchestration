@@ -3,7 +3,7 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
-  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ProposalId, type ResourceInstance,
+  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type ProposalId, type ResourceInstance,
   type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, type WitnessItemId, arcId, clauseId,
   commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
   obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
@@ -15,11 +15,11 @@ import {
   repoPath, repoPattern,
 } from './values.ts';
 import {
-  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
+  type Brand, type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
-import { dev6SmokeBounds } from './upgrade.ts';
+import { applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
   type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, isRepairRole, modelClass,
@@ -72,6 +72,36 @@ export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
 export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
 export type Stage = (typeof STAGES)[number];
 export const stage: Read<Stage> = oneOf(STAGES);
+
+/**
+ * A re-entry's `fixes` (arc feedback 2026-10-16): the failure record of the re-entered lineage it names. `<unit>/<stage>#<attempt>`
+ * names a stage outcome of that unit (its park, or a charged failure); `<unit>/lanes#<attempt>/<lane>` names one entry of
+ * the unit's lane failures (`status.units[].failures`, src/pipeline/failures.ts). The classifier resolves it against the log.
+ */
+export type FailureRef = Brand<string, 'FailureRef'>;
+export type FailureRefParts =
+  | Readonly<{ type: 'outcome'; unit: UnitId; stage: Exclude<Stage, 'retire'>; attempt: number }>
+  | Readonly<{ type: 'lane'; unit: UnitId; attempt: number; lane: LaneId }>;
+// The unit is a slug and the lane a LaneId (their forms in src/core/ids.ts); the stage is checked against STAGES.
+const FAILURE_REF = /^([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)\/([a-z-]+)#([1-9][0-9]{0,14})(?:\/([A-Za-z][A-Za-z0-9_.-]{0,63}))?$/;
+const FAILURE_REF_FORM = '<unit>/<stage>#<attempt> or <unit>/lanes#<attempt>/<lane>';
+export function parseFailureRef(value: unknown, path = 'FailureRef'): FailureRefParts {
+  const m = typeof value === 'string' ? FAILURE_REF.exec(value) : null;
+  const s = m?.[2];
+  if (m === null || s === undefined || !(STAGES as readonly string[]).includes(s) || s === 'retire' || (m[4] !== undefined && s !== 'lanes')) {
+    throw new SchemaError(path, `a failure reference (${FAILURE_REF_FORM})`, value);
+  }
+  const unit = unitId(m[1]);
+  const attempt = Number(m[3]);
+  return m[4] === undefined ? { type: 'outcome', unit, stage: s as Exclude<Stage, 'retire'>, attempt } : { type: 'lane', unit, attempt, lane: laneId(m[4]) };
+}
+export const failureRef: Read<FailureRef> = (value, path) => {
+  parseFailureRef(value, path);
+  return value as FailureRef;
+};
+/** The reference naming `parts`. */
+export const failureRefOf = (p: FailureRefParts): FailureRef =>
+  (p.type === 'outcome' ? `${p.unit}/${p.stage}#${p.attempt}` : `${p.unit}/lanes#${p.attempt}/${p.lane}`) as FailureRef;
 
 export const RESOURCE_STATES = ['free', 'reserved', 'running', 'cleaning', 'cleanup-failed'] as const;
 export type ResourceState = (typeof RESOURCE_STATES)[number];
@@ -728,10 +758,20 @@ export type DispatchRecord = Readonly<{
   transientRules: TransientRules;
   /** M3 (`limits`): the unit's bounds in force since this pin; absent: `DEFAULT_BOUNDS` (`boundsOfRecord`). */
   bounds?: BoundsRecord;
+  /**
+   * Plan defects (2026-10-16): the derived outputs the plan's `derived` entries add to `scope` (src/input/derived.ts
+   * `derivedWidening`), ascending, non-empty when present; absent: none (a plan without `derived`, lasting). Read only
+   * through `effectiveScope`.
+   */
+  derived?: readonly RepoPattern[];
 }>;
+
+/** What a unit may change: its pinned scope and its derived outputs. Salvage, the gate, the candidate and recovery read it. */
+export const effectiveScope = (record: DispatchRecord): readonly RepoPattern[] => [...record.scope, ...(record.derived ?? [])];
 
 export const dispatchRecord: Read<DispatchRecord> = object((f) => {
   const b = f.optional('bounds', bounds);
+  const derived = f.optional('derived', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true }));
   return {
     unit: f.get('unit', unit),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
@@ -743,6 +783,7 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
     at: f.get('at', time),
     transientRules: f.get('transientRules', oneOf(TRANSIENT_RULES)),
     ...(b === undefined ? {} : { bounds: b }),
+    ...(derived === undefined ? {} : { derived }),
   };
 });
 
@@ -1276,13 +1317,17 @@ export type CommandBody =
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
   /**
-   * `roadmap apply`: make the plan and specs the manifest hashes the plan in force (the executor re-reads the
-   * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
-   * or null to apply over whatever is in force. A mutation. M4a rev 3 (I2): `rulings`, the ruling sidecar files of
-   * `--ruling` (each hashed like a `rule` record, in the order given; absent: none, lasting), landed with the edits as one
-   * revision.
+   * `roadmap apply`: the owner's files the manifest hashes (the executor re-reads them and requires these hashes), rebased
+   * onto the files in force and put in force (src/input/rebase.ts). `base`: the files the edit started from, an export's
+   * (`--base <export.json>`), or null for the owner's files of the latest revision applied from them. A mutation. M4a rev 3
+   * (I2): `rulings`, the ruling sidecar files of `--ruling` (each hashed like a `rule` record, in the order given; absent:
+   * none, lasting), landed with the edits as one revision. A command queued before 2026-10-16 carries `expectRev` instead
+   * of `base`: read as base null (`applyExpectRevDefault`). `visionEdit` (`--vision-edit`, owner ruling 2026-10-16): whether
+   * the apply declares a vision edit, the one way a running arc's vision changes (false: a rebased vision that differs
+   * from the vision in force is refused as `vision-leak`). The CLI always writes it; a body without it was queued by an
+   * earlier CLI, which had no such flag, and reads as declared (`applyVisionEditDefault`).
    */
-  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: RevisionManifest; rulings?: readonly HashedFile[] }>
+  | Readonly<{ type: 'apply'; base: RevisionManifest | null; manifest: RevisionManifest; rulings?: readonly HashedFile[]; visionEdit: boolean }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
@@ -1349,13 +1394,15 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   resume: object((f): CommandBody => ({ type: f.get('type', literal('resume')), target: f.get('target', resumeTarget) })),
   sweep: object((f): CommandBody => ({ type: f.get('type', literal('sweep')), resource: f.get('resource', nullable(resource)) })),
   apply: object((f): CommandBody => {
+    const legacy = f.optional('expectRev', nullable((v, p) => planRev(v, p)));
     const out = {
       type: f.get('type', literal('apply')),
-      expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
+      base: legacy !== undefined ? applyExpectRevDefault() : f.get('base', nullable(applyManifest)),
       manifest: f.get('manifest', applyManifest),
     };
     const rulings = f.optional('rulings', arrayOf(hashedFile, { nonEmpty: true }));
-    return rulings === undefined ? out : { ...out, rulings };
+    const visionEdit = f.optional('visionEdit', bool) ?? applyVisionEditDefault();
+    return { ...out, ...(rulings === undefined ? {} : { rulings }), visionEdit };
   }),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
@@ -1446,6 +1493,8 @@ export const NEEDS_USER_REASONS = [
   'scope-growth',
   // 2026-10-15 (arc feedback #3), blocking: a unit's required witness item names no arc lane in force (build or lanes).
   'witness-lane-missing',
+  // Plan defects (2026-10-16), blocking: a unit's missing witness is a plan defect code diagnosed (lanes `plan-defect`).
+  'plan-defect',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

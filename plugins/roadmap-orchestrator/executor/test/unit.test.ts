@@ -13,6 +13,7 @@ import { EVENTS_FILE, STATE_FILE } from '../src/core/log.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { latestCandidate } from '../src/pipeline/integrate.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { killWorkload } from '../src/pipeline/invoke.ts';
 import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
@@ -94,8 +95,9 @@ describe('unit: one unit merged first time', () => {
   });
 
   test('unit.decisions-appended: decisions.json reaches the spec by an executor patch, and the approval carries the new rev', () => {
-    const spec = JSON.parse(readFileSync(join(r.ctx.planDir, 'u1.json'), 'utf8')) as { rev: number; decisions: readonly { id: string; text: string; state: string }[] };
-    assert.equal(spec.rev, 2);
+    assert.equal((JSON.parse(readFileSync(join(r.ctx.planDir, 'u1.json'), 'utf8')) as { rev: number }).rev, 1, 'the owner\'s spec file is never written');
+    const { spec } = loadUnitSpec(r.ctx, r.unit('u1'));
+    assert.equal(spec.rev, 2, 'the patched spec is in force');
     assert.deepEqual(spec.decisions, [{ id: 'D1', text: 'mul multiplies with the * operator.', state: 'active' }]);
     const patches = intents(r.d.runDir, 'spec.patch');
     assert.equal(patches.length, 1);

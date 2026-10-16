@@ -11,6 +11,11 @@
 //   4. Trusted: the open intake issues fetched (src/forge/issues.ts), kept as `inputs/<sha>.issues.json` (in the snapshot
 //      closure, K11), then `issues-captured{job, sha256, repo, filtered}`; the checkpoint-inputs names that sha.
 //   A forge failure (`GhError`) is non-fatal (R21): the checkpoint-inputs records `issues: unavailable{reason}`.
+// Arc feedback 2026-10-16 (`unseenIssues`): before an audit's checkpoint is skipped for finding nothing new
+// (src/holistic/checkpoint.ts `nothingNew`), steps 2–3 fetch the open issues, recording nothing. An issue no settled
+// checkpoint saw (none of their kept captures holds it byte-equal, as issue reuse compares below) keeps the checkpoint,
+// as do a capture already recorded for the next job and a forge failure (the checkpoint then captures as above, and
+// records `unavailable` if the forge still fails); an untrusted policy holds the checkpoint as step 3 does.
 // An `architecture-doc` arc captures nothing (its checkpoint-inputs carries no `issues`, read as none), and neither does
 // an owner-approved enactment, which makes no call.
 //
@@ -61,13 +66,37 @@ export type CaptureResult = Readonly<{ kind: 'issues'; issues: CheckpointIssues 
 
 /** Steps 1–4 of the header, for the job the next `checkpoint-inputs` opens. */
 export function captureCheckpointIssues(ctx: CheckpointContext): CaptureResult {
-  const view = ctx.journal.view;
-  const job = view.nextJobId('ckpt');
-  const recorded = view.holistic().captures.find((c) => c.job === job);
+  const job = ctx.journal.view.nextJobId('ckpt');
+  const recorded = ctx.journal.view.holistic().captures.find((c) => c.job === job);
   if (recorded !== undefined) return { kind: 'issues', issues: { type: 'captured', sha256: recorded.sha256 } };
-  const open = openPolicyItem(view, ctx.runDir);
+  const fetched = fetchTrusted(ctx);
+  if (fetched.kind !== 'capture') return fetched;
+  const { capture } = fetched;
+  const sha256 = keepInput(ctx.runDir, Buffer.from(captureBytes(capture), 'utf8'), ISSUES_INPUT);
+  crashPoint('issues.after-keep');
+  ctx.journal.fact({ kind: 'issues-captured', job, sha256, repo: capture.repo, filtered: capture.filtered });
+  return { kind: 'issues', issues: { type: 'captured', sha256 } };
+}
+
+/**
+ * Arc feedback 2026-10-16 (see the header): whether the issues keep an audit's checkpoint that `nothingNew` would skip:
+ * `held` (an untrusted policy), `unseen` (an open issue none of `settled`'s captures holds byte-equal, a capture already
+ * recorded for the next job, or a forge failure), or `seen`. Records nothing but an untrusted policy's item.
+ */
+export function unseenIssues(ctx: CheckpointContext, settled: readonly Captured[]): 'held' | 'unseen' | 'seen' {
+  const job = ctx.journal.view.nextJobId('ckpt');
+  if (ctx.journal.view.holistic().captures.some((c) => c.job === job)) return 'unseen';
+  const fetched = fetchTrusted(ctx);
+  if (fetched.kind === 'held') return 'held';
+  if (fetched.kind === 'issues') return 'unseen';
+  const seen = new Set(settled.flatMap((s) => (s.issues?.type === 'captured' ? keptCapture(ctx.runDir, s.issues.sha256).issues.map((i) => canonicalJson(i)) : [])));
+  return fetched.capture.issues.every((i) => seen.has(canonicalJson(i))) ? 'seen' : 'unseen';
+}
+
+/** Steps 2–3 of the header and the fetch, recording nothing but an untrusted policy's item: the capture, `held`, or `unavailable`. */
+function fetchTrusted(ctx: CheckpointContext): CaptureResult | Readonly<{ kind: 'capture'; capture: IssueCapture }> {
+  const open = openPolicyItem(ctx.journal.view, ctx.runDir);
   if (open !== null) return { kind: 'held', needsUser: open };
-  let capture: IssueCapture;
   try {
     const repo = resolveRepo(ctx.repo);
     const trust = trusted(queryPolicy(ctx.repo, repo));
@@ -85,15 +114,11 @@ export function captureCheckpointIssues(ctx: CheckpointContext): CaptureResult {
       }, { type: 'arc' });
       return { kind: 'held', needsUser };
     }
-    capture = fetchIssueCapture(ctx.repo, repo, trust);
+    return { kind: 'capture', capture: fetchIssueCapture(ctx.repo, repo, trust) };
   } catch (error) {
     if (error instanceof GhError) return { kind: 'issues', issues: { type: 'unavailable', reason: error.message } };
     throw error;
   }
-  const sha256 = keepInput(ctx.runDir, Buffer.from(captureBytes(capture), 'utf8'), ISSUES_INPUT);
-  crashPoint('issues.after-keep');
-  ctx.journal.fact({ kind: 'issues-captured', job, sha256, repo: capture.repo, filtered: capture.filtered });
-  return { kind: 'issues', issues: { type: 'captured', sha256 } };
 }
 
 /** The kept capture `sha256` names. */

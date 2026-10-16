@@ -57,7 +57,7 @@ import type { IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type ApprovalFingerprint, type ObligationRev, obligationRevsOf, specObligations, specRepairs } from '../core/records.ts';
+import { type ApprovalFingerprint, type ObligationRev, effectiveScope, obligationRevsOf, specObligations, specRepairs } from '../core/records.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
@@ -303,7 +303,8 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const laneLedger = seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series));
     const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id)];
     const base = diffBase(ctx.repo, tip, head);
-    const growth = paths.filter((p) => !pinned.scope.some((g) => matchesGlob(p, g)));
+    const scope = effectiveScope(pinned);
+    const growth = paths.filter((p) => !scope.some((g) => matchesGlob(p, g)));
     const seat = seated.dispatch;
     const prompt = promptFor('gate', seat.triple.model);
     const target = gateTarget(ctx, tip);
@@ -313,7 +314,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, selected(ctx, unit, tip, head), tip),
       diff: { base, head, text: git(ctx.repo, ['diff', '--no-color', '--no-renames', base, head]) },
       // Scope growth (2026-10-15): every out-of-scope path a salvage of the unit reverted (in no diff), still outside the scope.
-      laneLedger, evidence, scope: { patterns: pinned.scope, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
+      laneLedger, evidence, scope: { patterns: scope, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
       priorRound: priorRound(ctx, unit.id, head),
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head),

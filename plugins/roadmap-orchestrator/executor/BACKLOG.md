@@ -107,7 +107,14 @@ at triage stay in git history.
 - Spec-lane levers (RC-3: spec lanes are planner-authored per unit; they often repeat the suite argv).
 - `flow revert` (RC-6: a `worse` verdict raises `flow-worse` with the preimage; the root reverts by `apply`).
 - A rope (WIP) lever (RC-7: drum-buffer-rope's rope is diagnosed only).
-- Judgment-cost levers (RC-1: checkpoint triggering and lens cadence are ruler).
+- Judgment-cost levers (RC-1: checkpoint triggering and lens cadence are ruler). Partly addressed in code, not as a flow
+  lever (arc feedback 2026-10-16: eleven checkpoints, $78, mostly small spec patches): an audit that finds nothing new
+  after a settled checkpoint has none (`checkpoint-skipped`), and a design park's checkpoint is aimed by the executor's
+  diagnosis of the lineage, its re-entries citing the failure they fix. Lens cadence and the flow role's view of
+  judgment cost stay ruler. Still open:
+  - A park checkpoint's diagnosis names salvage's reverted paths but not the lane command a red test belongs to, nor
+    whether a red test is in any lane the unit runs (the u1a pattern: 21 attempts against tests its lane never runs).
+    Phase 0's witness-in-lane row is the first defence; add it to the diagnosis when a park still shows the pattern.
 - Journalled resource waits (the arbiter's waits are in memory; the series reads stage and slot spans only).
 - A cost chart and SPC run rule 4.
 - Ranking pools by utilisation.
@@ -145,11 +152,31 @@ at triage stay in git history.
   the system prompt. Gated on an A/B of one real plan-check under both layouts showing the same verdicts. The one
   item that spends less of the weekly Claude limit directly.
 
+- **Auto-ingest PR review and CI into fix units** (owner ruling 2026-10-16, deferred). Post-completion PR fixes are
+  first-class (a reopened arc, or priority units of the next arc with `roadmap pr --supersede-previous`), but the root
+  agent turns a red CI run or an owner's review request into fix units by hand. Wanted once that path is proven: the
+  executor reads the arc PR's CI status and review threads and proposes the fix units itself.
+- **Pack-review advisory on critical-path length** (arc feedback 2026-10-15, item 5, deferred). The pack review
+  judges the pack's content, not its shape: a plan whose `after` chain is long serialises the arc whatever the
+  capacity. Wanted: a code-computed critical-path length (units and median stage time) beside the pack review's
+  notes, as an advisory the architect may act on before admission, never a refusal.
+
 ## Do soon (small fixes)
 
-None.
+- **Flow seat decorates its station id** (probe, 2026-10-16, dev.11 ladder). The efficient flow seat answered
+  `constraint.station: "slot:integration (largest service component suite:suite)"`, refused by `m4b.flow.validate`; a
+  rerun passed. In an arc the dev.10 repair turn catches it, at the cost of a call. Tighten the flow prompt: the station is
+  a bare StationId, the reasoning goes in `reason`.
 
 ## Watch (act only on the trigger)
+
+- **Apply rebase merges arrays of plain values whole** (2026-10-16). `merge3` merges objects per key and arrays of
+  keyed objects per element, but an array of strings (scope patterns, `holistic.advances`, cites, a lane's argv) both
+  sides changed is a conflict, never a set merge (an argv's order is its meaning). Trigger: conflicts on id lists such as
+  `advances` or `cites.rulings` in an arc's apply receipts; then set-merge the canonical-order id lists only.
+- **`rule` does not rebase under the fence** (2026-10-16). A ruling that another revision overtakes while `rule` waits
+  for the fence is rejected (`the arc moved`), and its `consistency` is stale anyway (G21). Trigger: an owner `rule`
+  rejected that way; then rebuild its proposal under the fence as `apply` does (`commitRebased`).
 
 - **The fast suite is not a flow lever at the lanes stage** (2026-10-15). A fast suite lane's time counts as
   `stage:lanes` service, but a suite-lane lever targets only the integration slot or host cpu, so a slow lane left
@@ -175,10 +202,20 @@ None.
   stderr.
 - **Scope growth beyond the uniform plan-check** (2026-10-15). Deferred: (a) the in-session assessment of a frontier or
   summit builder under `planCheck.shape: by-builder` proposes no `scopeGrowth` (it makes no plan-check call); (b) a
-  builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own;
+  builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own,
+  unless salvage reverted that path on its last two build rounds (plan defects, 2026-10-16: then the unit holds at lanes
+  with that path as the proposal); a blocker naming a path the builder never edited still waits for the gate;
   (c) `start` writes Phase-0 row 10's advisories to the executor's stderr only (`phase0 check` and `apply` print them).
   Trigger: a unit under `by-builder` needs growth its assessment cannot propose, or a gate escalation that a held
   proposal would have saved.
+- **Plan defects beyond Phase 0** (2026-10-16). (a) A checkpoint's split child is checked against its lane (its
+  declared files, required when the parent declared them), not for reach: a child whose file no deliverer can create is
+  caught by the next `apply`'s row 11 or by the run-time `plan-defect` park. (b) A flow lever that rewrites an arc
+  lane's argv is not re-checked against the witness files of that lane; the run-time diagnosis catches the first
+  witness it hides. (c) Spec witness items (`W-n`) declare no file: only obligations' witnesses are checked. (d) Derived
+  outputs widen a dispatched unit's scope with no ruling and no classifier rule on later `derived` edits. Triggers: a
+  `plan-defect` park whose cause one of these would have refused earlier; a flow proposal that moves a witness out of
+  its lane; a spec witness item that is never run; a `derived` edit that hands a unit someone else's file.
 
 - **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
   threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging
@@ -287,6 +324,20 @@ None.
 
 ## Scaffolding to delete
 
+- `auditDiffBudgetOf`'s absent arm (src/core/upgrade.ts) with `nextChunk`'s unchunked branch (src/holistic/audit.ts),
+  once no audit a dev.10 executor started is running: such an audit reads each range in one call. With it,
+  `audit-started.diffBudget` becomes required.
+- `applyExpectRevDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.10 is in flight: an apply command
+  queued before the apply rebase carries `expectRev` and reads as base null. With it, `base` is the only field read.
+- `applyVisionEditDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.10 is in flight: an apply command
+  queued before `--vision-edit` carries no `visionEdit` and reads as a declared vision edit. With it, `visionEdit` becomes
+  required.
+- `reenterFixesDefault` and `FIXES_UNRECORDED` (src/core/upgrade.ts), with the bundle proposer's `fixesUnrecorded`
+  (src/holistic/bundle.ts `proposerOf`, src/input/classify.ts `Proposer`, `fixesReasons`' first line), once no arc
+  started on 1.0.0-dev.10 is in flight (every later checkpoint reads the arc's applied answers): a checkpoint `reenter`
+  op recorded without `fixes` is adopted as recorded. With it, `fixes` becomes required in `bundleOp`. (`plan.json`'s
+  `reenters.fixes` stays optional: re-entries in force before it are lasting records.)
+
 - The 1.0.0-dev.7 → M4b default in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.7 is in flight:
   `dev7ArcRolesDefault` and `arcRolesInForce`'s null arm (src/routing/layers.ts): a routing provenance without
   `arcRoles` reads as the dev.7 role set (no `flow`), the flow loop off (`off-dev7`). With it, `arcRoles` becomes required.
@@ -300,6 +351,9 @@ None.
 - `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth
   (2026-10-15) launched is unconsumed: a plan-check answer without `scopeGrowth` reads as none proposed. With it,
   `scopeGrowth` becomes required in `planCheckOutput`.
+- `laneTestPathsUndeclared` and `witnessFilesUndeclared` (src/core/upgrade.ts) with Phase-0 row 11's undeclared arm
+  (src/phase0/rows.ts `witnessDefects`), once no arc started on 1.0.0-dev.10 is in flight: obligations that declare no
+  witness files read as undeclared. With them, `testPaths` and `files` become required in the readers.
 - `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) with status's `preDev10RevAlias` and `resolveRoutingUnder`
   (src/routing/layers.ts), once no arc started on 1.0.0-dev.9 is in flight: the built-in seats before the efficient
   class took the low-risk judgments (2026-10-15), kept only so `status` joins an earlier executor's recorded routing revs.

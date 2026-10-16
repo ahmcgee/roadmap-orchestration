@@ -63,7 +63,8 @@
 //   divergences   every divergence no acknowledged digest covers (H11), with what differed, the clauses cited,
 //                 evidence, its bundle and its compensation hint (H13)
 //   decisionsSince  what was decided since the architect last acknowledged a divergence digest (the whole arc
-//                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences and reversals
+//                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals and the audits
+//                 whose checkpoint was not run because they found nothing new (`checkpoint-skipped`)
 //   convergence   K, the applied bundles counted against it since the counter last cleared, the open brake items
 //   findings      the active findings and `findingMetrics` (B3)
 //   audit         per lens in L: its watermark and the docs edges pending a gap (B5 `coverageOf`), the uncovered
@@ -127,7 +128,7 @@ import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type Revisi
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
-import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
+import { type AbsPath, type IsoTime, type RepoPattern, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededPackItems } from './needsuser.ts';
 import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
@@ -284,6 +285,8 @@ export type UnitStatusLine = Readonly<{
   supersededBy: UnitId | null;
   /** The implementer's seat tier (A11), a tier, never a model; null before the first dispatch. */
   buildTier: RiskTier | null;
+  /** Plan defects (2026-10-16): the derived outputs its dispatch record adds to its scope, ascending; empty before a dispatch. */
+  derived: readonly RepoPattern[];
   running: UnitRunning | null;
   /** M4a rev 3 (F3): its lanes attempts' red, flaky and repeat lanes, host-suspected ones marked (src/pipeline/failures.ts). */
   failures: readonly LaneFailure[];
@@ -394,7 +397,7 @@ export type DivergenceView = Readonly<{
   digest: NeedsUserId | null;
 }>;
 
-export const DECISION_KINDS = ['ruling', 'bundle', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse'] as const;
+export const DECISION_KINDS = ['ruling', 'bundle', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse', 'checkpoint-skipped'] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 /** Who decided: the architect (a command, or a start's edited files: null), a checkpoint job, plan-check's redirect, or the executor. */
 export type RuledBy =
@@ -833,6 +836,7 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
     lineage: u.lineage,
     supersededBy: u.supersededBy,
     buildTier: u.buildTier,
+    derived: view.dispatchOf(unit.id)?.derived ?? [],
     running: state === 'running' || state === 'preparing' ? runningOf(view, u, times, holds, now) : null,
   };
 }
@@ -955,12 +959,12 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Derived {
   };
 }
 
-/** The run's state and each unit's, compactly: what `watch` streams. */
-export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[] }> {
+/** The run's state and each unit's, compactly, and the log's high-water they were derived at (`seq`): what `watch` streams. */
+export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[]; seq: number }> {
   const d = derive(runDir, arc, hostDir);
   const units: Record<string, string> = {};
   for (const l of d.units) units[l.unit] = compactState(l);
-  return { run: d.state, units, superseded: [...supersededPackItems(d.view)].sort() };
+  return { run: d.state, units, superseded: [...supersededPackItems(d.view)].sort(), seq: d.view.highWater() };
 }
 
 /** `running:build#3`, `waiting:deps=u1,u2`, `waiting:resources`, `awaiting-admission:paused,drain`, `parked:retryable`, or the bare state. */
@@ -1312,6 +1316,12 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
       });
     }
     if (f.kind === 'divergence') out.push({ seq: e.seq, kind: 'divergence', id: f.id, oneLine: `${f.type}: ${f.what}`, ruledBy: { type: 'checkpoint', job: f.job } });
+    if (f.kind === 'checkpoint-skipped') {
+      out.push({
+        seq: e.seq, kind: 'checkpoint-skipped', id: f.audit,
+        oneLine: `no checkpoint after ${f.audit}: it found nothing new${f.carried.length === 0 ? '' : ` (${f.carried.join(', ')} already weighed, inactive or owned)`}`, ruledBy: { type: 'executor' },
+      });
+    }
   }
   return out;
 }

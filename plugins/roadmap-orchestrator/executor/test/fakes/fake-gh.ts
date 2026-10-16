@@ -297,6 +297,13 @@ function pr(argv: readonly string[]): void {
     editPull(p);
     return;
   }
+  if (sub === 'close') {
+    const p = parseFlags(rest, [...PR_COMMON, '--comment', '-c'], ['--delete-branch', '-d']);
+    pullRepo(p);
+    touched.kind = 'pr-close';
+    closePull(p);
+    return;
+  }
   unknown(`pr ${sub}`);
 }
 
@@ -354,6 +361,18 @@ function editPull(p: Parsed): void {
     if (names.length > 0) op(store.issues.find((i) => i.number === found.number) as GhIssue, names);
   }
   out(`${found.url}\n`);
+}
+
+/** `gh pr close <n> [--comment <text>]`: an open PR closed unmerged, as on GitHub. */
+function closePull(p: Parsed): void {
+  const found = findPull(p.positional[0]);
+  if (found.state !== 'OPEN') throw new GhFail(`Pull request #${found.number} (${found.title}) is already ${found.state === 'MERGED' ? 'merged' : 'closed'}`);
+  save({
+    pulls: store.pulls.map((x) => (x.number === found.number ? { ...x, state: 'CLOSED' as const } : x)),
+    issues: store.issues.map((i) => (i.number === found.number ? { ...i, state: 'closed' as const } : i)),
+  });
+  mutate({ kind: 'pr-close', number: found.number, comment: one(p, '--comment') ?? one(p, '-c') ?? null });
+  out(`✓ Closed pull request ${found.url}\n`);
 }
 
 function label(argv: readonly string[]): void {

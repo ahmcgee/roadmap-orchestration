@@ -77,6 +77,7 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
     headSha: A, visionSha256: H, findings: ['F-1'], observations: [{ treeSha: A, lane: 'journey', laneRev: LANE_REV, envId: ENV }],
   },
   'bundle-decided': { kind: 'bundle-decided', job: 'ckpt-1', outcome: { kind: 'rejected', reason: 'stale', detail: 'the plan moved to rev 5' } },
+  'checkpoint-skipped': { kind: 'checkpoint-skipped', audit: 'audit-1', generation: 1, visionSha256: H, carried: ['F-1'] },
   divergence: { kind: 'divergence', id: 'D-1', index: 0, ...draft },
   'divergence-digest': { kind: 'divergence-digest', needsUser: 'nu-40', ids: ['D-1', 'D-2'] },
   steered: { kind: 'steered', unit: U1, command: CMD, brief: H, budgetMin: 30, resume: false },
@@ -378,13 +379,18 @@ describe('M3 file records', () => {
       { type: 'audit', lenses: ['drift', 'vision'] },
       { type: 'audit', lenses: null },
       { type: 'close-admissions' },
-      { type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 } },
+      { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 }, visionEdit: false },
+      {
+        type: 'apply', base: { planSha256: H2, specs: { u1: H2 }, rulings: { ledgerSha256: H2, sidecars: {} }, obligations: null, vision: H },
+        manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 }, visionEdit: true,
+      },
     ];
     for (const b of bodies) assert.deepEqual(commandBody(b, 'b'), b);
     assert.throws(() => commandBody({ type: 'steer', unit: 'u1', brief: { path: '/r/b', sha256: H }, budgetMin: 0, class: null, resume: false }, 'b'), /budgetMin/);
     assert.throws(() => commandBody({ type: 'audit', lenses: ['vision', 'drift'] }, 'b'), /lenses/);
-    assert.throws(() => commandBody({ type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} } } }, 'b'), /obligations/);
-    assert.throws(() => commandBody({ type: 'apply', expectRev: 3, manifest: { planSha256: H, specs: { u1: H } } }, 'b'), /rulings/);
+    assert.throws(() => commandBody({ type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} } } }, 'b'), /obligations/);
+    assert.throws(() => commandBody({ type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H } } }, 'b'), /rulings/);
+    assert.throws(() => commandBody({ type: 'apply', manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 } }, 'b'), /base/);
   });
 
   it('spec: obligations and repairs, absent when none', () => {
@@ -475,7 +481,7 @@ describe('M3 judgment outputs', () => {
       { op: 'limits', unit: null, limits: [{ field: 'convergenceK', value: 2 }] },
       {
         op: 'obligation-split', obligation: 'I-2',
-        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'] }, activation: 'must-hold', deliveredBy: [] }],
+        children: [{ id: 'I-5', statement: 's', docRef: { path: 'docs/t.md', anchor: '#a', quotedText: 'q' }, rule: null, witness: { lane: 'journey', testIds: ['t'], files: [] }, activation: 'must-hold', deliveredBy: [] }],
       },
       { op: 'obligation-dispose', obligation: 'I-3', disposition: 'deferred', ruling: 'C-9' },
       { op: 'invalidate-approval', unit: 'u1' },
@@ -484,6 +490,12 @@ describe('M3 judgment outputs', () => {
     ].map((o) => ({ ...o, cites: ['V-1'], evidence: ['e'] }));
     const out = validateCheckpointOutput({ ...ckpt, ops: more });
     assert.equal(out.ops.length, more.length);
+    // A reenter op's `fixes`: absent (an answer a dev.10 executor recorded) is `unrecorded`, never the explicit null.
+    const fixesOf = (o: object): unknown => {
+      const [r] = validateCheckpointOutput({ ...ckpt, ops: [{ ...more[1], ...o }] }).ops;
+      return r?.op === 'reenter' ? r.fixes : assert.fail('a reenter op');
+    };
+    assert.deepEqual([fixesOf({}), fixesOf({ fixes: null }), fixesOf({ fixes: 'u1/gate#1' })], ['unrecorded', null, 'u1/gate#1']);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'arc', class: 'summit' }] }] }), /tier/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[9], class: 'anything' }] }), /class/);
   });

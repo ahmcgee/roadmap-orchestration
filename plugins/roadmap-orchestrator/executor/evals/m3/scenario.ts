@@ -11,17 +11,18 @@
 //              answers the repair admit followed by an invalid op (`twoOpBundleSecondInvalid`), and its repair turn
 //              (2026-10-15: the same session resumed with the reasons) answers it again: rejected invalid, nothing
 //              applied; its one re-evaluation (ckpt-3) admits the repair alone. Then audit-2 (drift: the
-//              vision lens) and ckpt-4 no-op, audit-3 (final: both lenses of L) and ckpt-5 no-op.
+//              vision lens), whose checkpoint is skipped (nothing new since the settled ckpt-3), and audit-3 (final:
+//              both lenses of L) and ckpt-4 no-op.
 //   prevented  branch P, after paid run 3: tidy's plan-check twice answers `infeasible` with a V-2 vision conflict
 //              (one P3 finding), so tidy parks for design; the park's checkpoint ckpt-1 is held and rejected stale,
 //              its re-evaluation ckpt-2 cuts tidy and admits the repair (repairing the P3). Then audit-1 (drift: the
-//              vision lens) and ckpt-3 no-op; report and the repair merge; audit-2 (final: both lenses) and ckpt-4
-//              no-op.
+//              vision lens), its checkpoint skipped (nothing new); report and the repair merge; audit-2 (final: both
+//              lenses) and ckpt-3 no-op.
 //   latent     branch L, after paid run 9: tidy's build rounds through formatAmount before formatDisplay, so I-2's
 //              witness holds on S while `format` still renders through a binary Number (large amounts lose cents).
 //              audit-1's invariants lens opens a P1 over I-2 (F-1); ckpt-1, held, is rejected stale; ckpt-2 admits the
-//              repair (repairing F-1) and leaves the P1 undispositioned. Then audit-2 (drift: the vision lens) and ckpt-3
-//              no-op; report and the repair merge; audit-3 (final: both lenses) and ckpt-4 no-op.
+//              repair (repairing F-1) and leaves the P1 undispositioned. Then audit-2 (drift: the vision lens), its
+//              checkpoint skipped (nothing new); report and the repair merge; audit-3 (final: both lenses) and ckpt-3 no-op.
 //
 // M4b (branches R and L): once three units merged with the repair still to flow, the flow loop's first run (`flow-1`,
 // constraint-shift) is called once and answers noAction. The fake repair build waits at `fake/flow.hold` (FAKE_FLOW_HOLD)
@@ -95,10 +96,9 @@ const JOB_STEPS_R: readonly Step[] = [
   checkpointRepairStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
   checkpointStep('ckpt-3', REPAIR_BUNDLE),
   lensStep('audit-2', 'vision'),
-  checkpointStep('ckpt-4', NO_OP),
   lensStep('audit-3', 'invariants'),
   lensStep('audit-3', 'vision'),
-  checkpointStep('ckpt-5', NO_OP),
+  checkpointStep('ckpt-4', NO_OP),
 ];
 
 /** tidy's plan-check in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */
@@ -129,10 +129,9 @@ const JOB_STEPS_P: readonly Step[] = [
   checkpointStep('ckpt-1', PREVENT_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
   checkpointStep('ckpt-2', PREVENT_BUNDLE),
   lensStep('audit-1', 'vision'),
-  checkpointStep('ckpt-3', NO_OP),
   lensStep('audit-2', 'invariants'),
   lensStep('audit-2', 'vision'),
-  checkpointStep('ckpt-4', NO_OP),
+  checkpointStep('ckpt-3', NO_OP),
 ];
 
 /** The unit calls of branch L's story: tidy's build keeps I-2's witness held; report builds on that tidy. */
@@ -156,10 +155,9 @@ const JOB_STEPS_L: readonly Step[] = [
   checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
   checkpointStep('ckpt-2', REPAIR_BUNDLE),
   lensStep('audit-2', 'vision'),
-  checkpointStep('ckpt-3', NO_OP),
   lensStep('audit-3', 'invariants'),
   lensStep('audit-3', 'vision'),
-  checkpointStep('ckpt-4', NO_OP),
+  checkpointStep('ckpt-3', NO_OP),
 ];
 
 export const STORIES = ['story', 'prevented', 'latent'] as const;

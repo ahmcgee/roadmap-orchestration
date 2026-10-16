@@ -16,7 +16,7 @@ import { reconcileSpecPatch } from '../src/recover/spec.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../src/spec/patch.ts';
 import { renderSpec } from '../src/spec/render.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
-import { bytesSha256, fileSha256, loadSpec, parseSpec, specBytes, writeSpec } from '../src/spec/spec.ts';
+import { bytesSha256, fileSha256, loadSpec, parseSpec, specBytes } from '../src/spec/spec.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -91,12 +91,8 @@ describe('spec load and write', () => {
     assert.notEqual(bytesSha256(specBytes(changed)), bytesSha256(specBytes(pretty)));
     // The revision is the file's; a patch moves it by exactly one.
     assert.equal(applySpecPatch(pretty, REDIRECT).rev, 2);
-    // writeSpec writes exactly the canonical bytes, and they load back to the same value.
-    const out = absPath(join(dir, 'written.json'));
-    writeSpec(out, pretty);
-    assert.ok(readFileSync(out).equals(specBytes(pretty)));
-    assert.equal(fileSha256(out), bytesSha256(specBytes(pretty)));
-    assert.deepEqual(loadSpec(out), pretty);
+    // The canonical bytes load back to the same value.
+    assert.deepEqual(parseSpec(specBytes(pretty), absPath(join(dir, 'canonical.json'))), pretty);
   });
 
   it('refuses an invalid spec file naming the field', () => {
@@ -299,11 +295,13 @@ describe('spec.patch op and reconciler', () => {
     return intent as IntentOf<'spec.patch'>;
   }
 
-  it('a clean run patches the file to the recorded hash and closes the op', async () => {
+  it('a clean run keeps the patched spec at the recorded hash, never writes the owner\'s file, and closes the op', async () => {
     const s = scenario();
     await runChild(s, undefined);
-    assert.equal(fileSha256(s.path), s.newSha);
-    assert.equal(loadSpec(s.path).rev, 2);
+    assert.equal(fileSha256(s.path), s.oldSha, 'the owner\'s spec file is never written');
+    const kept = keptInput(absPath(s.runDir), sha256(s.newSha), SPEC_INPUT);
+    assert.ok(kept !== null);
+    assert.equal(parseSpec(kept, s.path).rev, 2);
     const j = openJournal(absPath(s.runDir), ARC);
     const derived = j.derived();
     assert.equal(j.view.openIntents().length, 0);
@@ -318,10 +316,10 @@ describe('spec.patch op and reconciler', () => {
   });
 
   describe('spec.patch-crash-cells (matrix: spec.patch)', () => {
-    // Per label: the disposition recovery must reach, and the hash the crash leaves on disk.
-    const ORACLE: Record<string, { disposition: 'redo' | 'done'; onDisk: 'old' | 'new' }> = {
-      'spec.patch.before-write': { disposition: 'redo', onDisk: 'old' },
-      'spec.patch.after-write': { disposition: 'done', onDisk: 'new' },
+    // Per label: the disposition recovery must reach, and whether the crash left the patched spec kept.
+    const ORACLE: Record<string, { disposition: 'redo' | 'done'; kept: boolean }> = {
+      'spec.patch.before-write': { disposition: 'redo', kept: false },
+      'spec.patch.after-write': { disposition: 'done', kept: true },
     };
     const cells = crashCells(SPEC_PATCH);
     it('the oracle covers exactly the matrix cells', () => {
@@ -332,8 +330,7 @@ describe('spec.patch op and reconciler', () => {
         const s = scenario();
         await runChild(s, writeTrigger(tmpDir('spec-trigger'), { label: cell.label, occurrence: 1 }));
         const expected = ORACLE[cell.label]!;
-        const onDisk = fileSha256(s.path);
-        assert.equal(onDisk, expected.onDisk === 'old' ? s.oldSha : s.newSha);
+        assert.equal(keptInput(absPath(s.runDir), sha256(s.newSha), SPEC_INPUT) !== null, expected.kept);
 
         const intent = openSpecIntent(s.runDir);
         const j = openJournal(absPath(s.runDir), ARC);
@@ -347,9 +344,10 @@ describe('spec.patch op and reconciler', () => {
         }
         assert.equal(j.view.openIntents().length, 0);
         j.close();
-        assert.equal(fileSha256(s.path), s.newSha);
-        assert.deepEqual(loadSpec(s.path), applySpecPatch(SPEC, REDIRECT));
-        assert.ok(keptInput(absPath(s.runDir), sha256(s.newSha), SPEC_INPUT) !== null, 'the patched spec is kept by its hash');
+        assert.equal(fileSha256(s.path), s.oldSha, 'the owner\'s spec file is never written');
+        const kept = keptInput(absPath(s.runDir), sha256(s.newSha), SPEC_INPUT);
+        assert.ok(kept !== null, 'the patched spec is kept by its hash');
+        assert.deepEqual(parseSpec(kept, s.path), applySpecPatch(SPEC, REDIRECT));
       });
     }
   });

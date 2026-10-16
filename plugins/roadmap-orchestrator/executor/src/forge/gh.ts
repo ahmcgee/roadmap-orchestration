@@ -56,7 +56,7 @@ export function ghApi(cwd: AbsPath, repo: RepoIdentity, args: readonly string[])
 }
 
 /** `gh pr <sub> -R <owner>/<name> <args...>` with `GH_HOST=<host>`, its stdout. */
-export function ghPr(cwd: AbsPath, repo: RepoIdentity, sub: 'list' | 'create' | 'edit', args: readonly string[]): string {
+export function ghPr(cwd: AbsPath, repo: RepoIdentity, sub: 'list' | 'create' | 'edit' | 'close', args: readonly string[]): string {
   return run(cwd, ['pr', sub, '-R', `${repo.owner}/${repo.name}`, ...args], repo.host);
 }
 

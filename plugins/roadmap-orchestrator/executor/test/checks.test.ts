@@ -82,6 +82,36 @@ describe('D1 witness presence', () => {
     }
   });
 
+  test('witnesscheck.plan-defect-unreachable: a missing witness whose declared file is gone at the salvage SHA and outside the unit\'s scope parks it uncharged with the defect named; no fix round, no gate', T, async () => {
+    // Phase 0 passed (the file was at the tip); then the tip lost it, out of the unit's reach.
+    const a = await checksArc({
+      steps: [planCheckStep({ decision: 'approve' }), mulBuild()], testPaths: ['e2e'], files: ['e2e/i1.test.js'], tipFiles: { 'e2e/i1.test.js': '// I-1\n' },
+      trees: { '*': { outcomes: { t2: 'pass' } } },
+    });
+    const r = contextFor(a.d);
+    try {
+      git(a.d.repo, 'rm', '-q', 'e2e/i1.test.js');
+      git(a.d.repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'the e2e suite moves away');
+      await stepUntil(r, 'u1', (x) => x.stage === 'lanes');
+      const f = lanesFacts(a.d).at(-1)!;
+      assert.deepEqual([f.outcome, f.class, f.chargeable, f.park], ['plan-defect', 'park', false, { class: 'operator', kind: 'env' }]);
+      assert.deepEqual(f.detail, { kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: 'I-1', file: 'e2e/i1.test.js', units: ['u1'] }] });
+      const u = r.journal.view.unit(unitId('u1'));
+      assert.deepEqual([u.status, u.counters.chargeableFailures], ['park-pending', 0]);
+      assert.equal(gateCalls(a.d).length, 0, 'the gate is not called');
+      assert.equal(readCalls(a.d.scenarioPath).length, 2, 'no fix round: plan-check and the build only');
+    } finally {
+      r.journal.close();
+    }
+    // Inside the unit's scope the file is the build's to add: the charged fix round, as before.
+    const own = await lanesOf({ steps: [planCheckStep({ decision: 'approve' }), mulBuild()], testPaths: ['test'], files: ['test/add.test.js'], trees: { '*': { outcomes: { t2: 'pass' } } } });
+    try {
+      assert.equal(lanesFacts(own.a.d).at(-1)!.outcome, 'witnesses-missing');
+    } finally {
+      own.r.journal.close();
+    }
+  });
+
   test('witnesscheck.failed-and-zero-selected: a failing required id is failed, a zero-selected one missing', T, async () => {
     const { a, r } = await lanesOf({ steps: [planCheckStep({ decision: 'approve' }), mulBuild()], testIds: ['t1', 't2'], trees: { '*': { outcomes: { t1: 'fail', t2: 'zero-selected' } } } });
     try {

@@ -11,7 +11,7 @@ import { type SpecM1, type SpecPatch, type SpecPatchOp, type SpecSection, specWi
 import type { AbsPath } from '../core/values.ts';
 import { reconcileSpecPatch } from '../recover/spec.ts';
 import { SPEC_INPUT, keepInput, keptInput } from '../input/inforce.ts';
-import { bytesSha256, fileSha256, parseSpec, specBytes, writeSpec } from './spec.ts';
+import { bytesSha256, fileSha256, parseSpec, specBytes } from './spec.ts';
 
 export class SpecPatchStaleError extends Error {
   readonly expectRev: number;
@@ -153,9 +153,8 @@ function patchedSpec(runDir: AbsPath, path: AbsPath, oldSha256: Sha256Hex, patch
 /**
  * The `spec.patch` op of a run dir, shaped like `GitOp` (which is typed to git kinds only). The spec in force
  * is kept content-addressed (`inputs/<sha256>.spec.json`), so the patch reads the old spec from there and
- * keeps the new one there: that is the op's effect and its postcondition. The unit's spec file is rewritten
- * too while it still holds the old spec, so the architect edits the patched revision; a file the architect
- * has changed since (an edit not applied yet) is left alone. `prepare` computes every recorded value; `act`
+ * keeps the new one there: that is the op's effect and its postcondition. The owner's spec file is never written
+ * (2026-10-16): an apply of it rebases onto the patch (src/input/rebase.ts). `prepare` computes every recorded value; `act`
  * recomputes the same bytes from the intent (so a redo needs nothing but the intent) and writes them durably;
  * `verify` re-hashes the kept bytes.
  */
@@ -186,7 +185,6 @@ export function specPatchOp(runDir: AbsPath): Readonly<{
         throw new SpecPatchPostconditionError(path, `patched bytes hash to ${actual}, the intent expects ${intent.post.newSha256}`);
       }
       crashPoint('spec.patch.before-write', parentUnit(intent.parent));
-      if (existsSync(path) && fileSha256(path) === oldSha256) writeSpec(path, next);
       keepInput(runDir, bytes, SPEC_INPUT);
       crashPoint('spec.patch.after-write', parentUnit(intent.parent));
     },

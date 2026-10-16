@@ -9,7 +9,7 @@
 // `supervisor.<token>.err` in the host dir).
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { MutantOf, RevisionSource } from './events.ts';
-import type { FindingId, LaneId } from './ids.ts';
+import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ReadsFile, ToolRead } from './records.ts';
 import type { ClassTable } from '../routing/types.ts';
@@ -207,6 +207,21 @@ export function planCheckScopeGrowthDefault(): readonly never[] {
   return [];
 }
 
+/** A `reenter` op whose answer was recorded before `fixes` existed (`reenterFixesDefault`): distinct from an explicit null. */
+export const FIXES_UNRECORDED = 'unrecorded';
+
+/**
+ * A checkpoint `reenter` op's `fixes` (arc feedback 2026-10-16): absent (not null: the schema requires the key, null for a
+ * lineage with no failure) on an answer recorded before it, so the previous release recorded it. Read as `unrecorded`: the
+ * re-entry is adopted as recorded, applied or not; the classifier's `fixes` rows (the requirement and the unchanged-retry
+ * refusal) do not bind it (src/input/classify.ts `fixesReasons`, through the bundle proposer's `fixesUnrecorded`), and it
+ * enters the plan without `fixes`. Delete once no arc started on 1.0.0-dev.10 is in flight (BACKLOG "Scaffolding to delete").
+ */
+export function reenterFixesDefault(): typeof FIXES_UNRECORDED {
+  warnDefaulted('checkpoint.reenter.fixes', 'a reenter op without fixes (a checkpoint answer written before 2026-10-16); adopted as recorded, its fixes unchecked');
+  return FIXES_UNRECORDED;
+}
+
 // Efficient judgment (owner ruling 2026-10-15, 1.0.0-dev.10): the built-in seat table moved planCheck.low/med, gate.low,
 // lens.arc and flow.arc to the efficient class. Records carry a `routingRev`, never a table, and OR-L3 binds every revision
 // through HEAD's seats and catalogue, so a rev an earlier executor recorded is one HEAD no longer rebuilds. Delete (with
@@ -228,3 +243,51 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   packReview: { arc: 'frontier' },
   flow: { arc: 'frontier' },
 };
+
+// Plan defects (2026-10-16, 1.0.0-dev.11): a fresh arc's arc lanes declare `testPaths` and its witnesses `files`, and
+// Phase 0 checks every witness file against its lane and its deliverers (src/phase0/rows.ts). Obligations an arc started
+// on 1.0.0-dev.10 recorded may lack both; they read as undeclared (nothing to check) until an apply declares them. Delete,
+// with the undeclared arm of the rows, once no arc started on 1.0.0-dev.10 is in flight.
+
+/** An arc lane without `testPaths` in the obligations of an arc started before plan defects: its witness files go unchecked. */
+export function laneTestPathsUndeclared(lane: LaneId): void {
+  warnDefaulted('obligations.lanes.testPaths', `arc lane ${lane} declares no testPaths (an arc started before 2026-10-16); its witness files are not checked`);
+}
+
+/** A witness without `files` in the obligations of an arc started before plan defects: its files go unchecked. */
+export function witnessFilesUndeclared(obligation: ObligationId): void {
+  warnDefaulted('obligations.witness.files', `obligation ${obligation}'s witness declares no files (an arc started before 2026-10-16); its files are not checked`);
+}
+
+// Apply rebase (2026-10-16): an apply command carries the `base` it rebases from. One an earlier CLI queued
+// carries `expectRev` instead (the plan rev it expected in force). Delete once no arc started on 1.0.0-dev.10 is in flight
+// (BACKLOG "Scaffolding to delete"); `base` then becomes required alone.
+
+/** A queued apply with `expectRev` (queued before the rebase): read as base null, the owner's files of their latest apply. */
+export function applyExpectRevDefault(): null {
+  warnDefaulted('apply.expectRev', 'an apply command with expectRev (queued before the apply rebase): rebased from the default base');
+  return null;
+}
+
+/**
+ * A queued apply without `visionEdit` (queued by a CLI before the flag, owner ruling 2026-10-16): read as a declared vision
+ * edit, so the previous release's command is adopted, never refused as `vision-leak` (CLAUDE.md: its runtime state is never
+ * refused). Every body the CLI writes now carries the field, `false` included. Delete once no arc started on 1.0.0-dev.10
+ * is in flight (BACKLOG "Scaffolding to delete"); `visionEdit` then becomes required.
+ */
+export function applyVisionEditDefault(): true {
+  warnDefaulted('apply.visionEdit', 'an apply command without visionEdit (queued before --vision-edit): read as a declared vision edit');
+  return true;
+}
+
+/**
+ * An `audit-started`'s `diffBudget` (the lens-range fix, 2026-10-16): absent on an audit an executor before it started
+ * (1.0.0-dev.10), resumed now. Read as null: each of its lenses reviews its whole range in one call, as its recorded
+ * calls did, so their attempt numbers stay its own; the attachments keep within today's budget. The next audit chunks.
+ * Scaffolding: deleted once no audit an executor before the fix started is running; `diffBudget` then becomes required.
+ */
+export function auditDiffBudgetOf(s: Readonly<{ job: string; diffBudget?: number }>): number | null {
+  if (s.diffBudget !== undefined) return s.diffBudget;
+  warnDefaulted('audit-started.diffBudget', `${s.job}: an audit started before the lens-range fix; its lenses read their whole range in one call`);
+  return null;
+}

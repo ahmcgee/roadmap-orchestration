@@ -16,7 +16,7 @@ import {
   edgeId, knownDefectId, laneId, resourceName, rulingId, sha, unitId, visionClauseId, idList,
 } from '../core/ids.ts';
 import {
-  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
+  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
 } from '../core/records.ts';
 import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
@@ -56,8 +56,13 @@ export type ContingentEdge = Readonly<{ id: EdgeId; condition: string }>;
 /** Where a re-entry's prepared worktree enters (M2): absent, the preparation decides from the merge. */
 export const REENTRY_POINTS = ['plan-check', 'build', 'verify'] as const;
 export type ReentryPoint = (typeof REENTRY_POINTS)[number];
-/** `reenters` (M2): this unit re-enters `unit`, which it supersedes; `reset` (with a ruling) resets its chargeable failures. */
-export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ ruling: RulingId }> }>;
+/**
+ * `reenters` (M2): this unit re-enters `unit`, which it supersedes; `reset` (with a ruling) resets its chargeable failures.
+ * `fixes` (arc feedback 2026-10-16): the failure of the lineage this re-entry fixes. The file reads it as optional, since
+ * re-entries applied before it carry none; the classifier requires it of every re-entry an apply adds whose lineage
+ * recorded a failure.
+ */
+export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ ruling: RulingId }>; fixes?: FailureRef }>;
 /** `cut` (M2): the unit is out of scope; a ruling may back the reason. */
 export type Cut = Readonly<{ reason: string; ruling?: RulingId }>;
 
@@ -138,6 +143,16 @@ export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch;
 export const PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
 export type PlanCheckShape = (typeof PLAN_CHECK_SHAPES)[number];
 
+/**
+ * Plan defects (2026-10-16): files the build derives from others (a bundle from its sources). A unit whose scope covers a
+ * source pattern takes the outputs into its effective scope (`derivedWidening`, src/input/derived.ts, pinned on its
+ * dispatch record as `derived`), so salvage keeps, and the gate and candidate allow, a regenerated output.
+ */
+export type DerivedFiles = Readonly<{ sources: readonly RepoPattern[]; outputs: readonly RepoPattern[] }>;
+
+/** The plan's derived files; none when absent. */
+export const derivedOf = (plan: PlanM1): readonly DerivedFiles[] => plan.derived ?? [];
+
 /** The plan's known defects; none when absent. */
 export const knownDefectsOf = (plan: PlanM1): readonly KnownDefect[] => plan.knownDefects ?? [];
 /** The plan's plan-check shape (R40: a non-holistic arc always runs `uniform`, the caller's rule); `uniform` when absent. */
@@ -191,6 +206,8 @@ type PlanBase = Readonly<{
   knownDefects?: readonly KnownDefect[];
   /** M4a rev 3 (E): the plan-check shape (absent: `uniform`, lasting; `planCheckShapeOf`). */
   planCheck?: Readonly<{ shape: PlanCheckShape }>;
+  /** Plan defects (2026-10-16): derived files (absent: none, lasting; `derivedOf`). */
+  derived?: readonly DerivedFiles[];
 }>;
 export type PlanM1 = PlanBase & PlanTarget;
 
@@ -310,7 +327,10 @@ const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 const reentry: Read<Reentry> = object((f) => {
   const enterAt = f.optional('enterAt', oneOf(REENTRY_POINTS));
   const reset = f.optional('reset', object((g) => ({ ruling: g.get('ruling', rulingR) })));
-  return { unit: f.get('unit', (v, p) => unitId(v, p)), ...(enterAt === undefined ? {} : { enterAt }), ...(reset === undefined ? {} : { reset }) };
+  const fixes = f.optional('fixes', failureRef);
+  return {
+    unit: f.get('unit', (v, p) => unitId(v, p)), ...(enterAt === undefined ? {} : { enterAt }), ...(reset === undefined ? {} : { reset }), ...(fixes === undefined ? {} : { fixes }),
+  };
 });
 
 const cut: Read<Cut> = object((f) => {
@@ -345,6 +365,13 @@ const planUnit: Read<PlanUnit> = object((f) => {
     ...(priority === undefined ? {} : { priority }),
   };
 });
+
+const patterns: Read<readonly RepoPattern[]> = (value, path) => {
+  const out = arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })(value, path);
+  assertUnique(out, (x) => x, path);
+  return out;
+};
+const derivedFiles: Read<DerivedFiles> = object((f) => ({ sources: f.get('sources', patterns), outputs: f.get('outputs', patterns) }));
 
 const knownDefect: Read<KnownDefect> = object((f) => ({
   id: f.get('id', (v, p) => knownDefectId(v, p)),
@@ -404,6 +431,7 @@ export function parsePlan(value: unknown): PlanM1 {
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
     const planCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(PLAN_CHECK_SHAPES)) })));
+    const derived = f.optional('derived', arrayOf(derivedFiles));
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', (v, p) => arcId(v, p)),
@@ -422,6 +450,7 @@ export function parsePlan(value: unknown): PlanM1 {
       ...(chain === undefined ? {} : { chain }),
       ...(knownDefects === undefined ? {} : { knownDefects }),
       ...(planCheck === undefined ? {} : { planCheck }),
+      ...(derived === undefined ? {} : { derived }),
       ...target,
     };
     out.suite.lanes.forEach((l, i) => refuseLaneInputs(l, `plan.suite.lanes[${i}]`, 'suite'));

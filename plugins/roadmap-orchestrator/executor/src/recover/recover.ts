@@ -33,7 +33,7 @@ import type { IntentOf, IntentRecord, OpKind, OpOutcome, Parent } from '../core/
 import { type InvocationId, type OpId, invocationId } from '../core/ids.ts';
 import type { Disposition, DispositionKind, Journal, JournalView } from '../core/interfaces.ts';
 import { LogCorruptError, type LogSnapshot, openJournal, readJournal } from '../core/log.ts';
-import type { HostLockClaim, NeedsUserContent } from '../core/records.ts';
+import { type HostLockClaim, type NeedsUserContent, effectiveScope } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { refTarget } from '../git/git.ts';
 import type { SalvageRules } from '../git/salvage.ts';
@@ -94,11 +94,11 @@ function unitOf(ctx: StageContext, intent: IntentRecord): PlanUnit {
   return unit;
 }
 
-/** The salvage rules, rebuilt exactly as the salvage stage binds them: the pinned scope, the spec's evidence globs. */
+/** The salvage rules, rebuilt exactly as the salvage stage binds them: the effective scope, the spec's evidence globs. */
 function salvageRules(ctx: StageContext, unit: PlanUnit): SalvageRules {
   const { spec } = loadUnitSpec(ctx, unit);
   return {
-    scope: dispatchOf(ctx.journal.view, unit.id).scope,
+    scope: effectiveScope(dispatchOf(ctx.journal.view, unit.id)),
     excluded: [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort(),
     rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)),
   };

@@ -95,7 +95,7 @@ const decide = (r: ArcRun, proposal: ProposalId, decision: 'accept' | 'reject', 
 const SUITE_ARGV: FlowAction = { lever: 'suite-lane', lane: LANE, argv: PARALLEL, reporter: 'node-test', cpu: 3 };
 
 describe('suite-lane proofs (RC-4) and the apply', () => {
-  test('flow.proof-preserved-applied: =1 → =3 over three timer files is preserved (equal records, faster), then applied under the fence and written back', T, async () => {
+  test('flow.proof-preserved-applied: =1 → =3 over three timer files is preserved (equal records, faster), then applied under the fence; the owner\'s plan file is never written', T, async () => {
     const { d, r } = flowArc(TIMERS);
     try {
       const { proposal, item } = propose(r, 1, SUITE_ARGV);
@@ -137,7 +137,7 @@ describe('suite-lane proofs (RC-4) and the apply', () => {
       }]);
       assert.deepEqual(phaseOf(r, proposal.id), { phase: 'applied', revision: 2 });
       assert.equal(flowApplyHolds(r.journal.view), false);
-      assert.deepEqual(livePlanLane(d), { ...livePlanLane(d), argv: PARALLEL, cpu: 3 }, 'the live plan file holds the applied argv');
+      assert.deepEqual([livePlanLane(d)?.argv, livePlanLane(d)?.cpu], [SERIAL, undefined], 'the owner\'s plan file is never written');
       assert.deepEqual(followingContext(r).plan().suite.lanes[0]?.argv, PARALLEL);
 
       await applyPendingFlow(applyCtx(r));
@@ -227,7 +227,8 @@ describe('suite-lane proofs (RC-4) and the apply', () => {
       await applyPendingFlow(applyCtx(r));
       assert.deepEqual(ofKind(r, 'plan-applied').map((x) => [x.rev, x.source.type]), [[1, 'start'], [2, 'flow']]);
       assert.deepEqual(ofKind(r, 'flow-applied'), [{ kind: 'flow-applied', proposal: proposal.id, revision: 2, preimage: { lever: 'suite-lane', lane: LANE, argv: SERIAL, cpu: null } }]);
-      assert.equal(livePlanLane(d)?.cpu, 2, 'written back after the crash');
+      assert.equal(f.plan().suite.lanes[0]?.cpu, 2, 'the flow revision is the plan in force');
+      assert.equal(livePlanLane(d)?.cpu, undefined, 'the owner\'s plan file is never written');
       assert.equal(flowApplyHolds(r.journal.view), false);
       assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {

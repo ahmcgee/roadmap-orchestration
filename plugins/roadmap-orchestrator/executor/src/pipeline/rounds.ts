@@ -112,7 +112,8 @@ export function steerBrief(runDir: AbsPath, sha: Sha256Hex): string {
 
 /** What a decision asks for: one of the table's rounds, with the inputs its kind needs. */
 export type DecidedRound =
-  | Readonly<{ kind: 'fresh' }>
+  /** `directives`: added to a reopen's resumed session after the respec directive (a reverted path a scope accept took in). */
+  | Readonly<{ kind: 'fresh'; directives?: readonly string[] }>
   | Readonly<{
     kind: 'fix';
     fix: FixRound;
@@ -448,7 +449,7 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       // (on the same seat: a moved seat gets a fresh session, told the worktree holds the earlier work).
       const earlier = ctx.journal.view.unit(unit).reopened === null ? null : lastImplementerSession(ctx, unit);
       if (earlier === null) return { ...ready, session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt, fresh: null };
-      return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), { failingEvidenceDirs: [], directives: [RESPEC_DIRECTIVE] }, []), deadlineAt };
+      return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), { failingEvidenceDirs: [], directives: [RESPEC_DIRECTIVE, ...(input.directives ?? [])] }, []), deadlineAt };
     }
     case 'fix': {
       if (input.verification !== null) await removeVerificationTree(ctx, input.verification, parent);

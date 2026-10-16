@@ -34,6 +34,8 @@ export type ChecksOptions = Readonly<{
   declares?: boolean;
   /** u1's spec witness items (default none). */
   witnesses?: readonly WitnessItemJson[];
+  /** I-1's witness `files` (plan defects, 2026-10-16; default none declared). */
+  files?: readonly string[];
   /** The journey lane's `testPaths` (default none); its argv, given the jsonl wrapper (default the wrapper). */
   testPaths?: readonly string[] | undefined;
   argv?: (wrapper: string) => readonly string[];
@@ -68,7 +70,7 @@ export async function checksArc(opts: ChecksOptions): Promise<ChecksArc> {
     o['lanes'] = [lane];
     const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
     const [i1] = o['obligations'] as Json[];
-    const witness = { lane: 'journey', testIds: [...testIds].sort() };
+    const witness = { lane: 'journey', testIds: [...testIds].sort(), ...(opts.files === undefined ? {} : { files: [...opts.files].sort() }) };
     o['obligations'] = [{
       ...i1, activation: opts.activation ?? 'must-hold', deliveredBy: [...(opts.deliveredBy ?? [])], witness,
       proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness },

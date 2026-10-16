@@ -82,6 +82,11 @@ describe('fold derives', () => {
       unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null, interrupted: null,
       pressureHold: null, pressureHolds: 0, spec: { rev: 1, sha256: H }, reopened: null, pendingRevision: null, redirectBase: 0,
       park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null, bounds: DEFAULT_BOUNDS, entry: null, steering: null, scopeDecisions: [],
+      // The charged lanes red is the unit's one failure outcome, with what it ran under (arc feedback 2026-10-16: a re-entry's `fixes`).
+      failures: [{
+        seq: 11, fact: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true }, park: null,
+        spec: { rev: 1, sha256: H }, dispatch: { scope: [repoPattern('src/**')], routingRev: REV }, planRev: null,
+      }],
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
         attempts: 7, chargeableFailures: 1, redirects: 1, reviseRounds: 0, candidateReds: 0, smokeRounds: 0,
@@ -125,7 +130,7 @@ describe('fold derives', () => {
       control: { stop: null, pausedAll: false, pausedUnits: [] }, containmentMode: null, tailDiscarded: [], parkedBackends: [],
       backendParks: [], resources: [], runOnly: null, resolvedEdges: [],
       holistic: {
-        on: false, witnessed: [], latched: [], findings: [], audits: [], auditRequests: [], docsCovered: [], docsPublished: [], checkpoints: [], divergences: [],
+        on: false, witnessed: [], latched: [], findings: [], audits: [], auditRequests: [], docsCovered: [], docsPublished: [], checkpoints: [], checkpointSkips: [], divergences: [],
         digests: [], steered: [], mergedIn: [], debt: [], amendments: [], intake: [], packReviews: [], captures: [], draining: null, completion: null, laneReuses: [], certificates: [], smokeRuns: [], corroborations: [],
       },
     });

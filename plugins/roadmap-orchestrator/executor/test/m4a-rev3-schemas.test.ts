@@ -308,15 +308,25 @@ describe('m4a-rev3 plan and spec', () => {
 });
 
 describe('m4a-rev3 apply body (I2, step N3)', () => {
-  it('apply.body-rulings: `rulings` round-trips in the order given; absent reads as none, byte-preserving; empty is refused', () => {
+  it('apply.body-rulings: `rulings` round-trips in the order given; absent reads as none, byte-preserving; empty is refused; a queued `expectRev` reads as base null', () => {
     const H = 'a'.repeat(64);
-    const plain = { type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: null } };
+    const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: null }, visionEdit: false };
     assert.deepEqual(commandBody(plain, 'b'), plain);
-    assert.equal(cj(commandBody(plain, 'b')), cj(plain), 'a queued dev.6 apply reads back byte-identical');
+    assert.equal(cj(commandBody(plain, 'b')), cj(plain), 'an apply without rulings reads back byte-identical');
+    const { base: _base, visionEdit: _visionEdit, ...queued } = plain;
+    assert.deepEqual(commandBody({ ...queued, expectRev: 4 }, 'b'), { ...plain, visionEdit: true }, 'an apply an earlier CLI queued (expectRev, no visionEdit) rebases from the default base');
     const ruled = { ...plain, rulings: [{ path: '/r/C-3.json', sha256: H }, { path: '/r/C-2.json', sha256: 'b'.repeat(64) }] };
     assert.deepEqual(commandBody(ruled, 'b'), ruled);
     assert.throws(() => commandBody({ ...plain, rulings: [] }, 'b'), /rulings/);
     assert.throws(() => commandBody({ ...plain, rulings: [{ path: 'relative.json', sha256: H }] }, 'b'), /path/);
+  });
+
+  it('apply.body-vision-edit: `visionEdit` true and false round-trip; absent (a body a dev.10 CLI queued) reads as a declared vision edit; a non-boolean is refused', () => {
+    const H = 'a'.repeat(64);
+    const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H } };
+    for (const visionEdit of [true, false]) assert.deepEqual(commandBody({ ...plain, visionEdit }, 'b'), { ...plain, visionEdit });
+    assert.deepEqual(commandBody(plain, 'b'), { ...plain, visionEdit: true }, 'absent is not false: the previous release\'s command is adopted');
+    assert.throws(() => commandBody({ ...plain, visionEdit: 'yes' }, 'b'), /visionEdit/);
   });
 });
 
@@ -443,8 +453,10 @@ describe('cli.m4a-rev3', () => {
     assert.deepEqual(parseCommand(['witness-check', '--lane-file', 'w.json']), { command: 'witness-check', laneFile: 'w.json' });
     assert.deepEqual(parseCommand(['resume-arc', '--repo', '.']), { command: 'resume-arc', repo: '.' });
     assert.deepEqual(parseCommand(['inputs', 'export', '--repo', '.', '--arc', 'arc-1', '--out', 'x']), { command: 'inputs-export', repo: '.', arc: 'arc-1', out: 'x' });
-    assert.deepEqual(parseCommand(['apply', '--ruling', 'a.json', '--ruling', 'b.json']), { command: 'apply', expectRev: null, dryRun: false, rulings: ['a.json', 'b.json'], run: { type: 'host' } });
-    assert.deepEqual(parseCommand(['apply']), { command: 'apply', expectRev: null, dryRun: false, rulings: [], run: { type: 'host' } });
+    assert.deepEqual(parseCommand(['apply', '--ruling', 'a.json', '--ruling', 'b.json']), { command: 'apply', base: null, dryRun: false, rulings: ['a.json', 'b.json'], visionEdit: false, run: { type: 'host' } });
+    assert.deepEqual(parseCommand(['apply']), { command: 'apply', base: null, dryRun: false, rulings: [], visionEdit: false, run: { type: 'host' } });
+    assert.deepEqual(parseCommand(['apply', '--base', 'x/export.json']), { command: 'apply', base: 'x/export.json', dryRun: false, rulings: [], visionEdit: false, run: { type: 'host' } });
+    assert.deepEqual(parseCommand(['apply', '--vision-edit']), { command: 'apply', base: null, dryRun: false, rulings: [], visionEdit: true, run: { type: 'host' } });
     const refuses = (argv: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(argv), (e: unknown) => e instanceof CliError && message.test(e.message), argv.join(' '));
     refuses(['witness-check'], /--lane-file <file> is required/);
     refuses(['resume-arc', '--repo', '.', 'x'], /unexpected argument/);

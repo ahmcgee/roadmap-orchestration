@@ -121,11 +121,11 @@ const ADVANCES = ['V-1', 'V-2', 'V-3', 'V-4'] as const;
 
 const PASS_PATH = { set: {}, pass: ['PATH'] };
 
-/** An arc lane (node-test reporter) over one journey test; the money lane goes through the barrier (branch R). */
+/** An arc lane (node-test reporter) over one journey test, its `testPaths`; the money lane goes through the barrier (branch R). */
 function arcLane(l: Layout, id: string, file: string) {
   const test = [process.execPath, '--test', file];
   const argv = id === MONEY_LANE ? [process.execPath, BARRIER_SCRIPT, l.barriers, String(BARRIER_TIMEOUT_MS), '--', ...test] : test;
-  return { id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test' };
+  return { id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [file] };
 }
 
 type ObligationSeed = Readonly<{ id: keyof typeof WITNESS_TESTS; lane: string; statement: string; rule: string; serves: readonly string[]; activation: 'future' | 'must-hold'; deliveredBy: readonly string[]; contracts: readonly string[] }>;
@@ -179,7 +179,7 @@ export function obligationsFile(l: Layout, pin: CorpusPin): unknown {
     cutLine: 'a bookkeeper reconciles a month in one command, and every amount is rendered exactly',
     lanes,
     obligations: OBLIGATIONS.map((o) => {
-      const witness = { lane: o.lane, testIds: [WITNESS_TESTS[o.id]] };
+      const witness = { lane: o.lane, testIds: [WITNESS_TESTS[o.id]], files: [...lanes.find((x) => x.id === o.lane)!.testPaths] };
       return {
         id: o.id, rev: 1, statement: o.statement, rule: ruleRef(o.rule), serves: o.serves,
         witness, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(o.lane), witness },

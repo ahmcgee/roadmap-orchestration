@@ -14,13 +14,13 @@ import { join } from 'node:path';
 import { type Event, type Fact, parseEventLine, prevHash } from './core/events.ts';
 import { type AmendmentRef, type ArcId, type BriefId, type CommandId, type PhaseQuestionId, type Sha, type Sha256Hex, amendmentRefOf, arcId } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
-import { EVENTS_FILE } from './core/log.ts';
+import { EVENTS_FILE, readJournal } from './core/log.ts';
 import { type RevisionManifest } from './core/records.ts';
 import { Fold } from './core/state.ts';
 import { type AbsPath, absPath } from './core/values.ts';
 import { git, gitCommonDir, gitRun, refTarget } from './git/git.ts';
 import { snapshotRef, verifySnapshot } from './git/snapshot.ts';
-import { PHASE0_INPUT, PLAN_INPUT, REVISION_INPUT } from './input/inforce.ts';
+import { PHASE0_INPUT, PLAN_INPUT, REVISION_INPUT, planInForce } from './input/inforce.ts';
 import { type PlanM1, parsePlan } from './input/plan.ts';
 import { parseRevisionPayload } from './core/events.ts';
 import { type AckMarker, type ChainProblem, type NextStart, type PhaseQuestion, parseAckMarker, parsePhase0Record } from './phase0/types.ts';
@@ -137,6 +137,28 @@ export function chainBack(repo: AbsPath, arc: ArcId): ChainBack {
     at = ref.plan.chain?.previousArc ?? null;
   }
   return { arcs: out.reverse(), missing: null };
+}
+
+/**
+ * The arc started on `arc`'s head (owner ruling 2026-10-16: `arc` is then reopened no more; its PR's fixes land in that
+ * arc): one whose plan in force names `arc` as `chain.previousArc`, from its run dir's log (a started arc records its
+ * plan first), else from its verified ref (a run dir `gc` pruned). Null when none has started.
+ */
+export function successorOf(repo: AbsPath, arc: ArcId): ArcId | null {
+  const common = gitCommonDir(repo);
+  const runtime = join(common, 'roadmap-runtime');
+  const read = new Set<ArcId>([arc]);
+  for (const name of existsSync(runtime) ? readdirSync(runtime).sort() : []) {
+    const next = arcId(name, runtime);
+    if (read.has(next) || !existsSync(join(runDir(common, next), EVENTS_FILE))) continue;
+    read.add(next);
+    const dir = runDir(common, next);
+    if (planInForce(dir, readJournal(dir, next).view)?.plan.chain?.previousArc === arc) return next;
+  }
+  for (const next of arcsWithRefs(repo)) {
+    if (!read.has(next) && readArcRef(repo, next)?.plan.chain?.previousArc === arc) return next;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------------------------------

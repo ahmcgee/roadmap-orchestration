@@ -35,7 +35,7 @@ import {
   type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type PackDisposition, type PackFinding,
   type RevisionVector, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger,
   checkpointTrigger, contractOp, divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, observationKey,
-  packDisposition, packFinding, revisionVector,
+  packDisposition, packFinding, revisionVector, type PlanDefect, planDefect,
 } from '../holistic/types.ts';
 import {
   type Read, Fields, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
@@ -285,8 +285,7 @@ export type RevisionBase = PlanRev | 0;
 
 /**
  * Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, the executor's own patch, or
- * (M4b) an accepted flow proposal, committed under the fence and written back to the live plan (`staleBase` treats it as a
- * bundle).
+ * (M4b) an accepted flow proposal, committed under the fence.
  * A bundle's `admits` and `conversions` (M4a rev 3, OR-A1, Q4): code's classification of its `admit` ops, persisted in
  * the decision record before any settlement and never recomputed; both present (in a corpus arc) or both absent (an
  * `architecture-doc` arc, or 1.0.0-dev.6: unclassified, never counted against a budget or a follow-up; `bundleClassesOf`).
@@ -434,8 +433,14 @@ export const STAGE_OUTCOME_KINDS = {
   // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known
   // defect, uncharged, back to prepare). `base-red` (the 2026-10-15 batch): a fast suite lane red at the salvage SHA is red on
   // the unit's diff base alone too; uncharged, on to the gate (the candidate decides against the tip). `witness-lane-missing`
-  // (2026-10-15, arc feedback #3): as at build.
-  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red', 'witness-lane-missing'],
+  // (2026-10-15, arc feedback #3): as at build. Plan defects (2026-10-16): `plan-defect` (a missing witness the lane never
+  // ran, or that no build of the unit could create: an uncharged park naming the defects, src/pipeline/witnesscheck.ts);
+  // `scope-growth` (salvage reverted the same out-of-scope path on the unit's last two build rounds: the hold of a
+  // plan-check's proposal, with that path as the proposal, until `scope accept|reject`).
+  lanes: [
+    'green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
+    'witness-lane-missing', 'plan-defect', 'scope-growth',
+  ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry,
   // `readRefused`, src/pipeline/stages.ts).
@@ -535,8 +540,13 @@ export type StageOutcomeDetail =
   | Readonly<{ kind: 'known-defect'; id: KnownDefectId; match: KnownDefectMatch }>
   | Readonly<{ kind: 'infeasible'; notes: string }>
   | Readonly<{ kind: 'base-red'; base: Sha; lanes: readonly LaneId[]; changedCheckout: boolean }>
-  /** Scope growth (2026-10-15): the plan-check's proposals code verified (`ScopeGrowthProposal`), in answer order. */
-  | Readonly<{ kind: 'scope-growth'; proposals: readonly ScopeGrowthProposal[] }>;
+  /**
+   * Scope growth (2026-10-15): the plan-check's proposals code verified (`ScopeGrowthProposal`), in answer order; at lanes
+   * (plan defects, 2026-10-16) one proposal of the paths salvage reverted twice running.
+   */
+  | Readonly<{ kind: 'scope-growth'; proposals: readonly ScopeGrowthProposal[] }>
+  /** Plan defects (2026-10-16): lanes `plan-defect`, the defects code found behind the missing witnesses (non-empty). */
+  | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>;
 /**
  * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
  * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
@@ -547,7 +557,7 @@ export type ScopeGrowthProposal = Readonly<{ patterns: readonly RepoPattern[]; r
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
   'lanes/base-red': 'base-red',
-  'plan-check/scope-growth': 'scope-growth',
+  'plan-check/scope-growth': 'scope-growth', 'lanes/scope-growth': 'scope-growth', 'lanes/plan-defect': 'plan-defect',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -723,9 +733,14 @@ export type AuditInputs = Readonly<{
   owners: readonly Readonly<{ unit: UnitId; head: Sha }>[];
   priorFindings: readonly FindingId[];
   highWater: number;
+  /**
+   * The lens-range fix (2026-10-16): the byte budget each lens chunk's and the owners' attached diffs keep within
+   * (src/holistic/lensdiff.ts). Absent on an audit an earlier executor started: read through `auditDiffBudgetOf`.
+   */
+  diffBudget?: number;
 }>;
 
-/** One lens's covered range: `from` its watermark before, `to` the audited SHA. */
+/** One lens's covered range: `from` its watermark before, `to` how far its reported chunks reached (at most the audited SHA). */
 export type CoveredRange = Readonly<{ lens: LensKindName; from: Sha; to: Sha }>;
 
 /**
@@ -761,6 +776,14 @@ export type HolisticFact =
     findings: readonly FindingId[]; observations: readonly ObservationKey[]; issues?: CheckpointIssues; corpusSha256?: Sha256Hex;
   }>
   | Readonly<{ kind: 'bundle-decided'; job: JobId; outcome: BundleOutcome }>
+  /**
+   * Arc feedback 2026-10-16: the checkpoint after a completed audit is not run, because the audit found nothing new: it is
+   * not the final one, a checkpoint already settled under the vision in force, and every active finding no unit owns was
+   * captured by such a checkpoint (src/holistic/checkpoint.ts `nothingNew`), and in a corpus arc every open issue was
+   * captured, unchanged, by such a checkpoint (src/holistic/intake.ts `unseenIssues`). `carried`: the findings the audit reported.
+   * `generation` is the audit's, quiescent under `visionSha256` (src/holistic/convergence.ts).
+   */
+  | Readonly<{ kind: 'checkpoint-skipped'; audit: JobId; generation: number; visionSha256: Sha256Hex; carried: readonly FindingId[] }>
   /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
   | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
   /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
@@ -932,7 +955,9 @@ export type PlanChange =
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
   | Readonly<{ type: 'known-defects' }>
   /** M4a rev 3 (E): the plan's `planCheck.shape` changed (no drain; units whose plan-check has not decided). */
-  | Readonly<{ type: 'plan-check-shape' }>;
+  | Readonly<{ type: 'plan-check-shape' }>
+  /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
+  | Readonly<{ type: 'derived' }>;
 
 /**
  * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
@@ -951,7 +976,10 @@ export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
  * A revision's full evaluated payload (G1), kept content-addressed as `inputs/<sha256>.revision.json` and named by
  * its `revision.commit` intent before any docs `ff`. `plan-applied` is appended from it exactly, then its
  * divergences in order; recovery never reclassifies. `publication`: the rendered `.roadmap/` files and the contract
- * ops the docs publication commits, null when the revision changes no in-tree document.
+ * ops the docs publication commits, null when the revision changes no in-tree document. `owner` (apply rebase, 2026-10-16):
+ * the owner's files a start or an `apply` was rebased from, when they differ from `manifest` (a merge, or `--ruling`
+ * records landed): the default base of the owner's next apply (src/input/rebase.ts `ownerBase`). Absent: the manifest is
+ * the owner's (every revision of an earlier release, whose write-back kept the owner's files at the manifest).
  */
 export type RevisionPayload = Readonly<{
   v: SchemaVersion;
@@ -964,6 +992,7 @@ export type RevisionPayload = Readonly<{
   divergences: readonly DivergenceDraft[];
   publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
   routingProvenance: RoutingProvenance;
+  owner?: RevisionManifest;
 }>;
 
 /**
@@ -1485,6 +1514,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
   'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
+  derived: object((f): PlanChange => ({ type: f.get('type', literal('derived')) })),
 });
 
 export const revisionPayload: Read<RevisionPayload> = object((f) => {
@@ -1505,8 +1535,9 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     })))),
     routingProvenance: f.get('routingProvenance', routingProvenance),
   };
+  const owner = f.optional('owner', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) })));
   if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
-  return out;
+  return owner === undefined ? out : { ...out, owner };
 });
 
 export function parseRevisionPayload(value: unknown): RevisionPayload {
@@ -1551,6 +1582,7 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     return out;
   }),
   'scope-growth': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('scope-growth')), proposals: f.get('proposals', arrayOf(scopeGrowthProposal, { nonEmpty: true })) })),
+  'plan-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('plan-defect')), defects: f.get('defects', arrayOf(planDefect, { nonEmpty: true })) })),
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {
@@ -1782,21 +1814,25 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     return out;
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
-  'audit-started': object((f): Fact => ({
-    kind: f.get('kind', literal('audit-started')),
-    job: f.get('job', auditJobR),
-    triggers: f.get('triggers', arrayOf(auditTrigger, { nonEmpty: true })),
-    generation: f.get('generation', positive),
-    lenses: f.get('lenses', lensSet),
-    integrationSha: f.get('integrationSha', shaR),
-    planRev: f.get('planRev', planRevR),
-    ledgerSha256: f.get('ledgerSha256', nullable(sha256R)),
-    obligationsSha256: f.get('obligationsSha256', nullable(sha256R)),
-    visionSha256: f.get('visionSha256', sha256R),
-    owners: f.get('owners', sortedBy(object((g) => ({ unit: g.get('unit', unitR), head: g.get('head', shaR) })), (o) => o.unit)),
-    priorFindings: f.get('priorFindings', findingSet),
-    highWater: f.get('highWater', positive),
-  })),
+  'audit-started': object((f): Fact => {
+    const diffBudget = f.optional('diffBudget', positive);
+    return {
+      kind: f.get('kind', literal('audit-started')),
+      job: f.get('job', auditJobR),
+      triggers: f.get('triggers', arrayOf(auditTrigger, { nonEmpty: true })),
+      generation: f.get('generation', positive),
+      lenses: f.get('lenses', lensSet),
+      integrationSha: f.get('integrationSha', shaR),
+      planRev: f.get('planRev', planRevR),
+      ledgerSha256: f.get('ledgerSha256', nullable(sha256R)),
+      obligationsSha256: f.get('obligationsSha256', nullable(sha256R)),
+      visionSha256: f.get('visionSha256', sha256R),
+      owners: f.get('owners', sortedBy(object((g) => ({ unit: g.get('unit', unitR), head: g.get('head', shaR) })), (o) => o.unit)),
+      priorFindings: f.get('priorFindings', findingSet),
+      highWater: f.get('highWater', positive),
+      ...(diffBudget === undefined ? {} : { diffBudget }),
+    };
+  }),
   'audit-ended': object((f): Fact => {
     const out = {
       kind: f.get('kind', literal('audit-ended')),
@@ -1825,6 +1861,10 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     return { ...out, ...(issues === undefined ? {} : { issues }), ...(corpusSha256 === undefined ? {} : { corpusSha256 }) };
   }),
   'bundle-decided': object((f): Fact => ({ kind: f.get('kind', literal('bundle-decided')), job: f.get('job', ckptJobR), outcome: f.get('outcome', bundleOutcome) })),
+  'checkpoint-skipped': object((f): Fact => ({
+    kind: f.get('kind', literal('checkpoint-skipped')), audit: f.get('audit', auditJobR), generation: f.get('generation', positive), visionSha256: f.get('visionSha256', sha256R),
+    carried: f.get('carried', findingSet),
+  })),
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
   'divergence-digest': object((f): Fact => ({
     kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
@@ -1977,10 +2017,10 @@ export const fact: Read<Fact> = tagged('kind', {
     // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
-    // An interruption holds the unit, and so does a plan-check's verified scope-growth proposal; nothing else does; a hold
-    // never charges.
-    const holds = out.outcome === 'interrupted' || (s === 'plan-check' && out.outcome === 'scope-growth');
-    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a plan-check scope-growth', out.class);
+    // An interruption holds the unit, and so does a scope-growth proposal (a plan-check's, or a lanes attempt's after two
+    // reverts of one path); nothing else does; a hold never charges.
+    const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth');
+    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a scope-growth', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),

@@ -1,7 +1,7 @@
 // The admit-conversions crash row's story (M4a rev 3 ADMIT_CONVERSIONS, LR-k; test/serial/pipeline-matrix.test.ts): a corpus arc
 // whose vision has two world clauses outside the slice (advances = [V-1]); `ckpt-1` admits `opp`, honest work on V-3, as
 // opportunity O-1; `opp` runs to its merge; audit-2's vision lens finds F-1 on its code; `ckpt-2` admits `fix1` repairing
-// F-1, O-1's one follow-up; audit-3 completes; `ckpt-3` admits `fix2` repairing F-1 again, which code converts
+// F-1, O-1's one follow-up; audit-3 completes with a new finding (so its checkpoint runs); `ckpt-3` admits `fix2` repairing F-1 again, which code converts
 // (`follow-up-overrun`): a no-op whose settlement writes the conversion's corpus amendment, then the debt item naming
 // O-1. Everything up to audit-3 runs in process; `ckpt-3` runs in the crash child (pm-overrun-child.ts).
 import { sha256Hex } from '../../src/core/json.ts';
@@ -11,7 +11,7 @@ import { runCheckpoint } from '../../src/holistic/checkpoint.ts';
 import { runUnit } from '../../src/pipeline/unit.ts';
 import { withForge } from '../helpers/corpusarc.ts';
 import { sampleCorpus } from '../helpers/corpus.ts';
-import { checkpointAnswer, checkpointStep, lensStep } from '../helpers/holistic.ts';
+import { checkpointAnswer, checkpointStep, lensStep, noteLensStep } from '../helpers/holistic.ts';
 import { readCalls } from '../helpers/scenario.ts';
 import { admitOp, checkpointContext, completedAudit, witnessSplit } from './checkpoint-common.ts';
 import { type CorpusHolisticArc, corpusHolisticArc } from './corpus-holistic.ts';
@@ -61,7 +61,8 @@ export async function overrunArc(): Promise<CorpusHolisticArc> {
     planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
     lensStep('audit-2', 'vision', [{ severity: 'P2', visionClauses: ['V-3'], claim: 'mul frees no berth', cause: 'mul: no pool', evidence: [{ path: 'src/mul.js', line: 1 }] }]),
     checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [repairOf(a, 'fix1')] })),
-    lensStep('audit-3', 'vision'),
+    // audit-3 reports a new finding, so its checkpoint runs (an audit that found nothing new has none: checkpoint-skipped).
+    noteLensStep('audit-3'),
     checkpointStep('ckpt-3', checkpointAnswer({ decision: 'bundle', ops: [repairOf(a, 'fix2')] })),
   ]);
   const r = contextFor(a.d);

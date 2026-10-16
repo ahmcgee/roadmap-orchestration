@@ -239,7 +239,7 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.equal(steps.filter((s) => s.unit?.startsWith('flow-') === true).length, 1, 'one flow run (M4b: constraint-shift once three units merged, the repair held until it ended)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('review-') === true).length, 1, 'one pack review call (the corpus arc\'s, before the first admission)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 5, 'five lens calls');
-  assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 6, 'six checkpoint calls (the paid run\'s four, the partial bundle and its repair turn)');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 5, 'five checkpoint calls (the paid run\'s three, the drift audit\'s skipped: nothing new; the partial bundle and its repair turn)');
 });
 
 type Fixture = Readonly<{ dir: string; driver: Exit; report: Report; checked: Checked }>;
@@ -310,7 +310,8 @@ describe('evals-m3: the fake-backed fixture run, branch R', () => {
       const x = decided.find((f) => f.job === job);
       return x === undefined ? (bundleRevs.some((f) => f.source?.type === 'bundle' && f.source.job === job) ? 'applied' : 'none') : x.outcome.kind === 'rejected' ? `rejected:${x.outcome.reason}` : x.outcome.kind;
     };
-    assert.deepEqual(['ckpt-1', 'ckpt-2', 'ckpt-3', 'ckpt-4', 'ckpt-5'].map(outcome), ['rejected:stale', 'rejected:invalid', 'applied', 'no-op', 'no-op']);
+    assert.deepEqual(['ckpt-1', 'ckpt-2', 'ckpt-3', 'ckpt-4'].map(outcome), ['rejected:stale', 'rejected:invalid', 'applied', 'no-op']);
+    assert.deepEqual(factsOf('checkpoint-skipped').map((f) => f.audit), ['audit-2'], 'the drift audit after the settled ckpt-3 found nothing new: no checkpoint');
     const invalid = decided.find((f) => f.job === 'ckpt-2')!;
     assert.ok(invalid.outcome.kind === 'rejected');
     assert.match(invalid.outcome.detail, /V-999/);

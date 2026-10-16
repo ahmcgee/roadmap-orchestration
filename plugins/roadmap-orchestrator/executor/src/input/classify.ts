@@ -32,7 +32,12 @@
 //                               envelope (M4a rev 3, F5: every member's dispatched scopes, src/input/envelope.ts
 //                               `lineageEnvelope`), or beyond it on a ruling its spec cites that names exactly the
 //                               added patterns (`widened{patterns, ruling}`); its risk not below the lineage's
-//                               floor; `reset` cites an active ruling of the ledger
+//                               floor; `reset` cites an active ruling of the ledger; `fixes` (arc feedback 2026-10-16,
+//                               required once the lineage recorded a failure)
+//                               names a failure of the lineage (an outcome or a lane failure, src/pipeline/failures.ts),
+//                               and unless that failure is flaky, host-suspected or no design failure of the unit, or it
+//                               resets, the re-entry changes what the failure ran under (spec content, effective scope,
+//                               suite lanes or routing: `fixesReasons`)
 //   effective graph (F15)       acyclic with every superseded unit replaced by its lineage head, the edges that
 //                               activate only after preparation included
 //   routing                     re-resolved; the caller refuses unsupported seats and smokes new backends
@@ -64,6 +69,7 @@
 //                               unit declaring an entry's lane, outside the fixer's lineage, to the fixer's head)
 //                               is acyclic (`known-defect-cycle`, the cycle named)
 //   plan-check shape (E)        `plan-check-shape` (no drain)
+//   derived files (2026-10-16)  `derived` (no drain; the dispatch check re-pins each unit's widening, src/input/derived.ts)
 //
 // M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
 // it may touch:
@@ -126,6 +132,7 @@ import { classifyObligations } from '../holistic/obligations.ts';
 import { specCensusMismatches } from '../holistic/rederive.ts';
 import { type ClassifiedAdmit, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { advancesReasons, visionEditReasons } from '../holistic/vision.ts';
+import { citedFailure, laneFailures, outcomeRef } from '../pipeline/failures.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { resourceTable } from '../resources/reserve.ts';
@@ -134,15 +141,17 @@ import { RISK_TIERS, type RiskTier, UNIT_ROLES } from '../routing/types.ts';
 import { readJournal } from '../core/log.ts';
 import { effectiveGraph, findCycle } from '../schedule/graph.ts';
 import type { CommandScope, ScopeOf } from '../schedule/types.ts';
-import { type Ruling, ledgerAfter, parseRulings, sidecarsAfter } from '../spec/rulings.ts';
+import { type Ruling, ledgerAfter, nextRulingId, parseRulings, sidecarsAfter } from '../spec/rulings.ts';
 import { SpecFileError, bytesSha256, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import {
   type InForce, type InputFile, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
-  readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
+  inForceFiles, payloadAtRev, readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
 } from './inforce.ts';
+import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
+import { derivedWidening } from './derived.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
-  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, knownDefectsOf, parsePlan, planCheckShapeOf, planFieldValue, priorityOf, reservedUnitIdReason,
+  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, knownDefectsOf, parsePlan, planCheckShapeOf, planFieldValue, priorityOf, reservedUnitIdReason,
 } from './plan.ts';
 
 /**
@@ -164,7 +173,13 @@ export type Proposer =
    * its patch takes the next rev, so the dispatched-spec rules do not apply to that unit's spec.
    */
   | Readonly<{ type: 'plan-check'; unit: UnitId }>
-  | Readonly<{ type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[] }>;
+  /**
+   * `fixesUnrecorded`: the units the bundle's `reenter` ops introduce from an answer recorded before `fixes` (a previous
+   * release's, `reenterFixesDefault`): adopted as recorded, the `fixes` rows do not bind them (`fixesReasons`).
+   */
+  | Readonly<{
+    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; fixesUnrecorded: readonly UnitId[];
+  }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -388,8 +403,9 @@ function cutRefusal(view: JournalView, unit: UnitId): string | null {
  * backed by an active ruling. Its change, or reasons.
  */
 function reentryRow(
-  view: JournalView, ledger: Ledger, unit: PlanUnit, spec: SpecM1 | null, inputs: NextInputs, cutNow: ReadonlySet<UnitId>,
+  input: ClassifyInput, plan: PlanM1, ledger: Ledger, unit: PlanUnit, spec: SpecM1 | null, inputs: NextInputs, cutNow: ReadonlySet<UnitId>,
 ): Extract<PlanChange, { type: 'unit-reentered' }> | readonly string[] {
+  const view = input.view;
   const re = unit.reenters;
   if (re === undefined) throw new Error(`reentryRow of ${unit.id}, which re-enters nothing`);
   const old = view.unit(re.unit);
@@ -423,9 +439,71 @@ function reentryRow(
     const r = rulingReason(ledger, re.reset.ruling, `unit ${unit.id}'s reset`);
     if (r !== null) reasons.push(r);
   }
+  reasons.push(...fixesReasons(input, unit, spec, plan));
   if (reasons.length > 0) return reasons;
   const change = { type: 'unit-reentered', unit: unit.id, reenters: re.unit, reset: re.reset !== undefined } as const;
   return widened === null ? change : { ...change, widened };
+}
+
+/** The re-entered unit `old`, then each unit its lineage re-entered before it, back to the root. */
+function lineageOf(view: JournalView, old: UnitId): readonly UnitId[] {
+  const out = [old];
+  for (let at = view.unit(old).lineage; at !== null; at = view.unit(at.reenters).lineage) out.push(at.reenters);
+  return out;
+}
+
+/** A spec's content but for its unit and rev, which a re-entry's copy always changes. */
+const specContent = (s: SpecM1): string => canonicalJson({ ...s, unit: null, rev: null });
+
+/**
+ * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding the cause, one more doomed try): the re-entry rows
+ * of `fixes`. It is required once the lineage recorded a failure (an outcome or a lane failure), and resolves to a failure
+ * of the re-entered lineage (src/pipeline/failures.ts `citedFailure`).
+ * Unless that failure is exempt (flaky, host-suspected, not the unit's design failure) or the re-entry resets under a
+ * ruling, the re-entry must change something the failure ran under: the spec's content, the effective scope (derived outputs included), the suite lanes or the
+ * resolved routing. A re-entry recorded before `fixes` is never classified again (it is in force, not added), and neither
+ * row binds one a previous release's checkpoint answer recorded before `fixes` (the bundle proposer's `fixesUnrecorded`).
+ */
+function fixesReasons(input: ClassifyInput, unit: PlanUnit, spec: SpecM1 | null, plan: PlanM1): readonly string[] {
+  if (input.proposer.type === 'bundle' && input.proposer.fixesUnrecorded.includes(unit.id)) return [];
+  const re = unit.reenters!;
+  const lineage = lineageOf(input.view, re.unit);
+  if (re.fixes === undefined) {
+    // A lineage that recorded no failure (a unit held by a pause, re-entered to change course) has none to name.
+    const known = lineage.flatMap((u) => [
+      ...input.view.unit(u).failures.map(outcomeRef), ...laneFailures({ journal: { view: input.view }, runDir: input.runDir }, { id: u }).map((l) => l.ref),
+    ]);
+    return known.length === 0 ? [] : [`unit ${unit.id} re-enters ${re.unit} without \`fixes\`: name the failure it fixes, one of ${known.join(', ')}`];
+  }
+  const cited = citedFailure({ journal: { view: input.view }, runDir: input.runDir }, lineage, re.fixes);
+  if (typeof cited === 'string') return [`unit ${unit.id}: \`fixes\` ${cited}`];
+  const base = cited.ranUnder;
+  if (cited.exempt !== null || re.reset !== undefined || base === null || spec === null) return [];
+  const same: string[] = [];
+  if (base.spec !== null) {
+    const was = parseSpec(keptInput(input.runDir, base.spec.sha256, SPEC_INPUT) ?? fail(`the spec ${base.spec.sha256} ${base.fact.unit} ran under is not kept`), inputPath(input.runDir, base.spec.sha256, SPEC_INPUT));
+    if (specContent(was) === specContent(spec)) same.push(`the spec (${base.fact.unit} rev ${base.spec.rev}'s content)`);
+  }
+  if (base.dispatch !== null) {
+    // The effective scope (plan defects 2026-10-16): the plan scope and the derived outputs it takes in, as a pin records it.
+    const effective = [...unit.scope, ...derivedWidening(plan, unit.scope)].sort();
+    if (canonicalJson(effective) === canonicalJson(base.dispatch.scope)) same.push(`the scope (${base.dispatch.scope.join(', ')})`);
+    if (unitRouting(input.routing, plan, unit).rev === base.dispatch.routingRev) same.push(`the routing (rev ${base.dispatch.routingRev})`);
+  }
+  if (base.planRev !== null) {
+    const then = parsePlan(JSON.parse((keptInput(input.runDir, payloadAtRev(input.view, input.runDir, base.planRev).manifest.planSha256, PLAN_INPUT)
+      ?? fail(`the plan of rev ${base.planRev} is not kept`)).toString('utf8')));
+    if (canonicalJson(then.suite.lanes) === canonicalJson(plan.suite.lanes)) same.push('the suite lanes');
+  }
+  if (same.length < 4) return [];
+  return [`unit ${unit.id} re-enters ${re.unit} to fix ${re.fixes} (${cited.text}) but changes nothing it ran under: ${same.join(', ')} are as they were, `
+    + `and it resets nothing. A retry of a design failure must differ in its cause: revise the spec, the scope, the suite lanes or the routing, `
+    + `or reset the chargeable failures under a ruling (\`reset\`); only a flaky or host-suspected lane failure, or a park that is not the unit's design failure, may be retried unchanged`];
+}
+
+/** Throws: a record the log names is missing (the run dir is incomplete). */
+function fail(detail: string): never {
+  throw new Error(detail);
 }
 
 /** Whether a resource unit belongs to declaration `name`: the name itself, or an instance of the pool. */
@@ -700,7 +778,7 @@ export function classify(input: ClassifyInput): Classified {
   for (const [old, units] of chains) reasons.push(`units ${units.join(', ')} each re-enter ${old}; a lineage is a chain: re-enter its head`);
   for (const unit of reentering) {
     if (chains.some(([old]) => old === unit.reenters?.unit)) continue;
-    const row = reentryRow(view, ledger, unit, specs.get(unit.id) ?? null, inputs, cutNow);
+    const row = reentryRow(input, plan, ledger, unit, specs.get(unit.id) ?? null, inputs, cutNow);
     if ('type' in row) {
       changes.push(row);
       scoped.add(row.reenters);
@@ -713,6 +791,7 @@ export function classify(input: ClassifyInput): Classified {
   }
   // M4a rev 3 (E): the plan-check shape.
   if (planCheckShapeOf(cur) !== planCheckShapeOf(plan)) changes.push({ type: 'plan-check-shape' });
+  if (!same(derivedOf(cur), derivedOf(plan))) changes.push({ type: 'derived' });
 
   // Routing: the plan's layer, then each unit's (`route`, M3).
   const routings: ResolvedRouting[] = [];
@@ -1178,6 +1257,7 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'unit-priority':
       case 'known-defects':
       case 'plan-check-shape':
+      case 'derived':
         break;
       case 'unit-added':
       case 'unit-removed':
@@ -1206,33 +1286,87 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
 // ---------------------------------------------------------------------------------------------------
 // An apply's proposal (G15)
 
+/** What an apply's proposal reads besides the owner's files: the log, the run dir and the revision in force. */
+export type ProposalContext = Readonly<{ runDir: AbsPath; view: JournalView; inForce: InForce; revision: RevisionInForce }>;
+
+/** An apply's proposal: the merged files with its rulings landed, the owner's files it was rebased from, and its numbered rulings. */
+export type ApplyProposal = Readonly<{ next: InputFiles; owner: InputFiles; records: readonly RulingRecord[] }>;
+
 /**
- * The proposal an `apply` command makes: the files as they are, when they still hash to its manifest, with the rulings
- * of its `--ruling` records landed (M4a rev 3, I2: `withRulings`). Otherwise why it no longer holds: files missing, or
- * changed since hashed.
+ * The proposal an `apply` makes (and a start whose files differ, with no manifest and no rulings): the owner's files, which
+ * must still hash to its manifest (null: a dry run or a start, which read them now), rebased from `base` (null: the
+ * default base, `ownerBase`) onto the files in force (src/input/rebase.ts), then its `--ruling` records numbered and landed
+ * on the merged ledger (M4a rev 3, I2: `withRulings`), which must be the ledger in force. Otherwise why it does not hold:
+ * files missing or changed since hashed, base bytes not kept, a conflict.
  */
 export function applyProposal(
-  files: InputFiles, manifest: RevisionManifest, rulings: readonly RulingRecord[],
-): Readonly<{ next: InputFiles }> | Readonly<{ reasons: readonly string[] }> {
+  ctx: ProposalContext, files: InputFiles, manifest: RevisionManifest | null, base: RevisionManifest | null, drafts: readonly RulingDraft[],
+): ApplyProposal | Readonly<{ reasons: readonly string[] }> {
   const actual = revisionManifestOf(files);
   if ('missing' in actual) return { reasons: actual.missing };
-  return same(actual, manifest) ? { next: withRulings(files, rulings) } : { reasons: [manifestMismatch(files, manifest, actual)] };
+  if (manifest !== null && !same(actual, manifest)) return { reasons: [manifestMismatch(files, manifest, actual)] };
+  const from = baseFiles(ctx.runDir, base ?? ownerBase(ctx.runDir, ctx.view, ctx.view.arc), files.planFile, files.repo);
+  if ('reasons' in from) return from;
+  const theirs = inForceFiles(ctx.runDir, ctx.view, ctx.inForce, ctx.revision, files.planFile, files.repo);
+  const merged = rebaseInputs(from.files, files, theirs);
+  if ('reasons' in merged) return merged;
+  const next = merged.next;
+  if (drafts.length > 0) {
+    const sidecars = (f: InputFiles): string => canonicalJson([...f.sidecars].map(([id, x]) => [id, bytesSha256(x.bytes)]));
+    if (next.ledger.bytes === null || theirs.ledger.bytes === null || !next.ledger.bytes.equals(theirs.ledger.bytes) || sidecars(next) !== sidecars(theirs)) {
+      return { reasons: [`the rulings ledger ${files.ledger.path} or its sidecars change the ledger in force: \`apply --ruling\` lands its rulings on the ledger in force; leave the ledger and its sidecars as they are`] };
+    }
+  }
+  const records = numberRulings(drafts, next.ledger.bytes);
+  return { next: withRulings(next, records), owner: files, records };
 }
 
-/** A ruling record a `rule` or an `apply --ruling` lands: the bytes the CLI hashed, parsed as a sidecar. */
-export type RulingRecord = Readonly<{ path: AbsPath; bytes: Buffer; sidecar: RulingSidecar }>;
+/** The placeholder id an owner's ruling record may carry: the executor numbers it when it lands (the ledger's next C-n). */
+export const UNNUMBERED = 'C-?';
 
-/** The ruling record at `file.path`, which must still hash to `file.sha256` and parse as a ruling sidecar; else why not. */
-export function readRulingRecord(file: HashedFile): RulingRecord | string {
+/** A ruling record a `rule` or an `apply --ruling` lands, numbered (`numberRulings`): the bytes it lands, parsed as a sidecar. */
+export type RulingRecord = Readonly<{ path: AbsPath; bytes: Buffer; sidecar: RulingSidecar }>;
+/** A ruling record as the CLI hashed it: its JSON, and its id, or null for `C-?` (numbered when it lands). */
+export type RulingDraft = Readonly<{ path: AbsPath; bytes: Buffer; raw: Readonly<Record<string, unknown>>; id: RulingId | null }>;
+
+/**
+ * The ruling record at `file.path`, which must still hash to `file.sha256` and parse as a ruling sidecar (its id a C-n, or
+ * `C-?`); else why not.
+ */
+export function readRulingRecord(file: HashedFile): RulingDraft | string {
   if (!existsSync(file.path)) return `the ruling record ${file.path} does not exist`;
   const bytes = readFileSync(file.path);
   if (bytesSha256(bytes) !== file.sha256) return `the ruling record ${file.path} changed since the command hashed it`;
   try {
-    return { path: file.path, bytes, sidecar: parseRulingSidecar(JSON.parse(bytes.toString('utf8'))) };
+    const raw = JSON.parse(bytes.toString('utf8')) as unknown;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SchemaError('ruling', 'a ruling sidecar object', raw);
+    const record = raw as Readonly<Record<string, unknown>>;
+    const unnumbered = record['id'] === UNNUMBERED;
+    const sidecar = parseRulingSidecar(unnumbered ? { ...record, id: 'C-1' } : record);
+    return { path: file.path, bytes, raw: record, id: unnumbered ? null : sidecar.id };
   } catch (error) {
     if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
     return `the ruling record ${file.path} is not a ruling sidecar: ${error.message}`;
   }
+}
+
+/**
+ * The records numbered, in order, on `ledger`: a `C-?` record takes the ledger's next C-n after the records before it (its
+ * bytes then its JSON with that id); a numbered one stays as written (validation refuses an id that is not next).
+ */
+export function numberRulings(drafts: readonly RulingDraft[], ledger: Buffer | null): readonly RulingRecord[] {
+  let text = ledger?.toString('utf8') ?? '';
+  return drafts.map((d) => {
+    let record: RulingRecord;
+    if (d.id !== null) record = { path: d.path, bytes: d.bytes, sidecar: parseRulingSidecar(d.raw) };
+    else {
+      const id = nextRulingId(parseRulings(text, 'the rulings ledger'));
+      const raw = Object.fromEntries(Object.entries(d.raw).map(([k, v]) => [k, k === 'id' ? id : v]));
+      record = { path: d.path, bytes: Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8'), sidecar: parseRulingSidecar(raw) };
+    }
+    text = ledgerAfter(text, record.sidecar);
+    return record;
+  });
 }
 
 /** A sidecar's bytes as the executor writes one it changed (a superseded status): its record as JSON. */
@@ -1318,7 +1452,7 @@ export type ScopeContext = Readonly<{
  * A12's `ScopeOf`, bound to what an apply's classification reads: `resume` (all) → the arc; `resume <u>` →
  * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` and (M4b) `flow-decide` and `flow-request` → none; `steer`, `merge-in` and
  * (scope growth) `scope-decide` → their unit; `apply` → its changes' scope
- * (`changesScope`) over the files as they are, its `--ruling` records landed; none when it would be rejected (a ruling
+ * (`changesScope`) over its proposal (the files rebased onto the files in force, its `--ruling` records landed); none when it would be rejected (a ruling
  * record that no longer reads included) or change nothing (it then
  * touches nothing); the arc when the files no longer hash to its manifest (they may be restored before it
  * applies, so nothing narrower is safe).
@@ -1354,14 +1488,14 @@ export function commandScope(sc: ScopeContext): ScopeOf {
           if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
           return NONE;
         }
-        const records = (body.rulings ?? []).map(readRulingRecord);
-        if (records.some((r) => typeof r === 'string')) return NONE;
-        const proposal = applyProposal(files, body.manifest, records as readonly RulingRecord[]);
+        const drafts = (body.rulings ?? []).map(readRulingRecord);
+        if (drafts.some((r) => typeof r === 'string')) return NONE;
+        const revision = revisionInForce(sc.runDir, inForce);
+        const proposal = applyProposal({ runDir: sc.runDir, view, inForce, revision }, files, body.manifest, body.base, drafts as readonly RulingDraft[]);
         if ('reasons' in proposal) return ARC;
         const verdict = classify({
-          runDir: sc.runDir, view, inForce, revision: revisionInForce(sc.runDir, inForce), next: proposal.next,
-          residues: undispositioned(sc.hostDir), routing: sc.routingBase,
-          proposer: records.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: (records as readonly RulingRecord[]).map((r) => r.sidecar.id) },
+          runDir: sc.runDir, view, inForce, revision, next: proposal.next, residues: undispositioned(sc.hostDir), routing: sc.routingBase,
+          proposer: proposal.records.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: proposal.records.map((r) => r.sidecar.id) },
         });
         return verdict.kind === 'accepted' ? changesScope(verdict.changes, inForce.plan, proposal.next.plan) : NONE;
       }

@@ -7,7 +7,8 @@
 // admission; u1 (declaring I-1 must-hold and delivering I-2 future) walks its pipeline, its candidate running the
 // journey lane, and its ff latches I-2 (obligation-latched); the final audit `audit-1` (the journey lane, its vision
 // lens); the checkpoint `ckpt-1` applies a bundle (an arc-wide limits op: a revision committed through the fence,
-// its divergence facts and digest item); the drift audit `audit-2` of generation 2; the checkpoint `ckpt-2`, a bundle
+// its divergence facts and digest item); the drift audit `audit-2` of generation 2, noting a new gap F-1 (so its
+// checkpoint runs: an audit that found nothing new has none); the checkpoint `ckpt-2`, dismissing F-1, a bundle
 // whose one op (an admit serving no world clause) code converts (M4a rev 3, B: `unrelated`), so a no-op carrying its
 // conversion and its interpretation (H12: one divergence, no revision; the conversion's corpus amendment), which makes
 // generation 2 quiescent; the close-out docs publication `docs-1` (docs.commit, its lanes, the docs ff, docs-covered,
@@ -26,7 +27,7 @@ import { type InvocationId, type JobId, parseInvocationId } from '../../src/core
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, noteLensStep, packReviewStep } from '../helpers/holistic.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
@@ -41,7 +42,11 @@ import { MUL, gateStep } from './unit-common.ts';
 type Json = Record<string, unknown>;
 
 const MAPPED = ['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations: ['I-1', 'I-2'] }));
-const OBLIGATIONS = [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', activation: 'future' as const, deliveredBy: ['u1'], testIds: ['t2'] }];
+// Each witness declares its test file (a fresh start requires them, plan defects 2026-10-16): I-1's is in the baseline,
+// I-2's is the one u1 delivers inside its scope.
+const OBLIGATIONS = [
+  { id: 'I-1', testIds: ['t1'], files: ['test/add.test.js'] }, { id: 'I-2', activation: 'future' as const, deliveredBy: ['u1'], testIds: ['t2'], files: ['test/mul.test.js'] },
+];
 /** The applied bundle's one op: an arc-wide limit changed (material, no docs), citing V-1. */
 const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-1'], evidence: ['scripted evidence'] };
 
@@ -117,9 +122,12 @@ export const HOLISTIC: Scenario = {
     ...keyed('u1', [ASSESS, IMPLEMENT, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
     lensStep('audit-1', 'vision'),
     checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
-    lensStep('audit-2', 'vision'),
+    // audit-2 notes a new gap (F-1), so its checkpoint runs (an audit that found nothing new has none: checkpoint-skipped);
+    // ckpt-2 dismisses it, so nothing is left to bank at close-out.
+    noteLensStep('audit-2'),
     checkpointStep('ckpt-2', checkpointAnswer({
       decision: 'bundle', ops: [asideAdmit(r)], interpretations: [{ clauses: ['V-1'], situation: 'scripted situation', reading: 'scripted reading' }],
+      findingDispositions: [{ finding: 'F-1', disposition: 'dismissed', reason: 'scripted: the gap is not this slice\'s' }],
     })),
   ],
   hooks: () => [],

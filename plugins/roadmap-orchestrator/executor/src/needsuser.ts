@@ -30,7 +30,7 @@ import type { Journal, JournalView, NeedsUserState, Reconciler } from './core/in
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import {
   NEEDS_USER_REASONS, NON_BLOCKING_M3_REASONS, type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord,
-  type NeedsUserContent,
+  type NeedsUserContent, failureRefOf,
 } from './core/records.ts';
 import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
@@ -201,9 +201,11 @@ export function routingChangedRecommendation(unit: UnitId, floor: RiskTier): str
  * re-enters it (`reenters`), whose `prepare` creates its branch at the parked unit's tip (M2; dx2 8a: never by hand, a
  * hand-made branch makes that `prepare` fail).
  */
-export function reentryRecommendation(unit: UnitId, stage: Stage, branch: string): string {
+export function reentryRecommendation(unit: UnitId, stage: Exclude<Stage, 'retire'>, attempt: number, branch: string): string {
+  const fixes = failureRefOf({ type: 'outcome', unit, stage, attempt });
   return `Read the evidence. A park at ${stage} is final: \`roadmap resume ${unit}\` does not re-open it. To re-run the work, `
-    + `add a unit with a new id to the plan that re-enters ${unit} (\`"reenters": {"unit": "${unit}"}\`, its fixed spec, the same scope), `
+    + `add a unit with a new id to the plan that re-enters ${unit} (\`"reenters": {"unit": "${unit}", "fixes": "${fixes}"}\`, its fixed spec, the same scope; `
+    + `\`fixes\` names this park or one of the unit's lane failures in \`roadmap status\`, and the re-entry must change what that failure ran under), `
     + `acknowledge this item, then \`roadmap apply\` the revised plan: the new unit's prepare creates its branch roadmap/<arc>/<new id> at the `
     + `tip of ${branch}. Never create that branch by hand. Or acknowledge this item to leave the unit parked.`;
 }

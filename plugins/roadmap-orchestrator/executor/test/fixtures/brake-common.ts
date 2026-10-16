@@ -36,6 +36,8 @@ export type ObligationJson = Readonly<{
   testIds: readonly string[];
   lane?: string;
   deliveredBy?: readonly string[];
+  /** The witness's declared test files (plan defects 2026-10-16: a fresh start requires them); absent: undeclared. */
+  files?: readonly string[];
   /** A split parent (`{type: 'split', children}`) has no witness: its `testIds` are ignored. */
   state?: Json;
   /** A split child's parent. */
@@ -81,10 +83,11 @@ export function obligationsJson(opts: Pick<HolisticOptions, 'obligations' | 'map
       const lane = o.lane ?? 'journey';
       const activation = o.activation ?? 'must-hold';
       const split = o.state?.['type'] === 'split';
+      const witness = { lane, testIds: [...o.testIds], ...(o.files === undefined ? {} : { files: [...o.files] }) };
       return {
         id: o.id, rev: 1, statement: `${o.id} holds.`, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-        witness: split ? null : { lane, testIds: [...o.testIds] },
-        proofJudgment: split ? null : { verdict: 'proves', obligationRev: 1, laneRev: revs.get(lane as never), witness: { lane, testIds: [...o.testIds] } },
+        witness: split ? null : witness,
+        proofJudgment: split ? null : { verdict: 'proves', obligationRev: 1, laneRev: revs.get(lane as never), witness },
         deliveredBy: activation === 'future' ? [...(o.deliveredBy ?? [])] : [], activation, contracts: [], state: o.state ?? { type: 'active' },
         ...(o.parent === undefined ? {} : { parent: o.parent }),
       };

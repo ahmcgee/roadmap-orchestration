@@ -173,6 +173,11 @@ const ROWS: readonly Row[] = [
   ['lanes', 'base-red', {}, 'gate@med', 'advance', {}],
   ['lanes', 'base-red', { promotion: true }, 'gate@escalation', 'advance', {}],
   ['lanes', 'witness-lane-missing', {}, 'park:witness-lane-missing', 'park', {}],
+  // Plan defects (2026-10-16): a missing witness no build could fix parks uncharged, even at the bound's edge; salvage's
+  // repeated reverts hold the unit for the root agent.
+  ['lanes', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
+  ['lanes', 'plan-defect', { counters: { chargeableFailures: 2 } }, 'park:plan-defect', 'park', {}],
+  ['lanes', 'scope-growth', {}, 'hold', 'hold', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
@@ -242,7 +247,7 @@ describe('transitions', () => {
       'plan-check redirect': 'design', 'plan-check infeasible': 'design', 'plan-check scope-widened': 'design', 'plan-check refusal': 'design',
       'plan-check malformed': 'design', 'plan-check process-fault': 'retryable', 'plan-check routing-changed': 'env', 'plan-check read-denied': 'env',
       'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
-      'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env',
+      'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env', 'lanes plan-defect': 'env',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
       'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',

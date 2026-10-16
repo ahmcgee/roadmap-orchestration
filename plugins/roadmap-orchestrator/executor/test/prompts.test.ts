@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
+  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
 } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
+import { failureRef } from '../src/core/records.ts';
 import {
   DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
 } from '../src/holistic/types.ts';
@@ -13,7 +14,7 @@ import { SchemaError } from '../src/core/validate.ts';
 import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
 import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
-import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
+import { type BoundedDiff, type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
   CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
   validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
@@ -105,6 +106,9 @@ const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
   };
 };
 
+/** A bounded diff shown whole: its stat, `inlined`, nothing omitted. */
+const shown = (from: Sha, to: Sha, inlined: string): BoundedDiff => ({ from, to, stat: { text: ` 1 file changed\n`, full: true }, inlined, omitted: [], unlisted: 0 });
+
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
     {
@@ -182,13 +186,16 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   ],
   lens: [
     {
-      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { from: SHA_A, to: SHA_B, diff: 'RANGE-A' },
+      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null, retry: null,
     },
     {
-      vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: { from: SHA_B, to: SHA_A, diff: 'RANGE-B' },
-      owners: [{ unit: unitId('u-two'), head: SHA_B, diff: 'OWNER-B' }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
+      vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
+        audited: SHA_A,
+        diff: { ...shown(SHA_B, SHA_A, 'RANGE-B'), stat: { text: 'STAT-B', full: false }, omitted: [{ path: 'dist/b.js', why: 'derived' }, { path: "src/it's.js", why: 'size' }], unlisted: 2 },
+      },
+      owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
       specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
@@ -201,7 +208,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
       contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', issues: { type: 'captured', issues: [] },
-      manifest: [], specs: [], nextRulingId: rulingId('C-2'), closeout: null, issuesUnchangedSince: null,
+      manifest: [], specs: [], nextRulingId: rulingId('C-2'), issuesUnchangedSince: null, diagnosis: null,
     },
     {
       vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40, cause: { stage: 'candidate', attempt: 9, outcome: 'red', reason: 'candidate-red', design: false, detail: ['TRIGGER-B'] } },
@@ -212,7 +219,15 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       direction: 'DIR-B', issues: { type: 'captured', issues: [capturedIssue(7, 'ISSUE-B')] },
       manifest: [{ kind: 'plan', id: 'plan', path: absPath('/run/inputs/MANIFEST-B.plan.json'), sha256: sha256('b'.repeat(64)) }],
       specs: [{ unit: unitId('u-two'), rev: specRev(3), markdown: 'SPECS-B', occupied: ['A1', 'W-1'] }],
-      nextRulingId: rulingId('C-9'), closeout: { since: jobId('ckpt', 1) }, issuesUnchangedSince: jobId('ckpt', 1),
+      nextRulingId: rulingId('C-9'), issuesUnchangedSince: jobId('ckpt', 1),
+      diagnosis: {
+        units: [{
+          unit: unitId('u-two'), outcomes: [{ ref: failureRef('u-two/candidate#9', 'ref'), text: 'DIAGNOSIS-OUTCOME-B' }],
+          lanes: [{ ref: failureRef('u-two/lanes#8/unit', 'ref'), class: 'red', hostSuspected: null }], reverted: [{ path: repoPath('gen/DIAGNOSIS-REVERTED-B.js'), salvages: 3 }],
+          witnesses: [{ test: { lane: laneId('journey'), testId: 'DIAGNOSIS-WITNESS-B' }, reason: 'missing', attempt: 8 }],
+        }],
+        reentries: [],
+      },
     },
   ],
   packReview: [
@@ -644,7 +659,23 @@ describe('M3 prompts: the vision and the arc roles', () => {
     for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
     const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
     assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
-    assert.match(text, /Unit u-two at b{40}:\n<pasted_content/, 'owner branches marked as pasted data');
+    assert.match(text, /Unit u-two at b{40} \(its diff from a{40}\):\n<pasted_content/, 'owner branches marked as pasted data');
+  });
+
+  it('the lens-range fix: a bounded range names its chunk and the audited SHA, lists each file not shown with the command that prints it, and the lens reads them before it reports', () => {
+    const mod = promptFor('lens', 'claude-opus-5-5');
+    const text = mod.render(SAMPLES.lens[1]);
+    const [a, b] = [SHA_A, SHA_B];
+    assert.ok(text.includes(`<audited_range from="${b}" to="${a}" audited="${a}">`));
+    assert.match(text, /<pasted_content id="[0-9a-f]{8}">\nSTAT-B\nRANGE-B\n<\/pasted_content/, 'the stat, then the inlined diffs, as pasted data');
+    assert.ok(text.includes(`The full stat is too long to attach; \`git diff --stat ${b} ${a}\` prints it.`));
+    assert.ok(text.includes(`- dist/b.js (derived output): git diff ${b} ${a} -- 'dist/b.js'`));
+    assert.ok(text.includes(`- src/it's.js (not inlined: over the budget): git diff ${b} ${a} -- 'src/it'\\''s.js'`), 'the path quoted as one shell word');
+    assert.ok(text.includes(`- 2 more files not inlined, not listed here: \`git diff --name-only ${b} ${a}\``));
+    assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat/, 'a range shown whole lists nothing');
+    for (const needle of [/Every file under <not_inlined> is part of the range and was not shown to you/, /read each one with the command beside it/,
+      /the executor records the whole range as reviewed by your lens, so your report is your statement that you read every part of it/,
+      /Never judge a file from its name or its stat line alone/, /split by publication/, /The same applies to <owner_branches>/]) assert.match(mod.system, needle);
   });
 
   it('plan-check (R17): the vision as read-only context, and visionConflict never a redirect by itself', () => {
@@ -997,7 +1028,7 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     }
   });
 
-  it('checkpoint inputs (H4, H5, C3, C6): the manifest, never live roadmap-inputs; every spec with its held ids; add vs replace; the next ruling id; the evidence note; closeout; unchanged issues', () => {
+  it('checkpoint inputs (H4, H5, C3, C6): the manifest, never live roadmap-inputs; every spec with its held ids; add vs replace; the next ruling id; the evidence note; the diagnosis right after a park trigger; unchanged issues', () => {
     const mod = promptFor('checkpoint', 'claude-fable-5-1');
     for (const needle of [/Read a captured input only through its manifest path\. Never read roadmap-inputs/, /add needs an id the spec does not hold, and replace an id it holds/,
       /takes the id in <next_ruling_id>, and each further one the next number \(C-9, then C-10\), written without leading zeros/,
@@ -1008,10 +1039,10 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     assert.match(text, /<input_manifest>\n- plan plan: \/run\/inputs\/MANIFEST-B\.plan\.json sha256:b{64}\n<\/input_manifest>/);
     assert.match(text, /<unit_specs>\n<documents>\n<document index="1">\n<source>spec of unit u-two, revision 3; item ids it holds: A1, W-1<\/source>\n<document_content>\nSPECS-B/);
     assert.match(text, /<next_ruling_id>C-9<\/next_ruling_id>/);
-    assert.match(text, /<\/trigger>[^]*<closeout since="ckpt-1">\nThe previous checkpoint, ckpt-1, decided no-op[^]*Weigh only what changed\.[^]*<\/closeout>/);
+    assert.match(text, /<\/trigger>\n\n<diagnosis>\n[^]*Unit u-two:\n- u-two\/candidate#9: DIAGNOSIS-OUTCOME-B\n- u-two\/lanes#8\/unit: lane failure, red\n- Edits outside the pinned scope that salvage reverted: gen\/DIAGNOSIS-REVERTED-B\.js \(3×\)\n- Required witness journey\/DIAGNOSIS-WITNESS-B missing at lanes attempt 8\n<\/diagnosis>/);
     assert.match(text, /Every open issue not listed above is unchanged since checkpoint ckpt-1, on unchanged grounds: its disposition there stands, and issueIntake records none for it\.\n<\/issues>/);
     const first = mod.render(SAMPLES.checkpoint[0]);
-    assert.doesNotMatch(first, /<closeout|unchanged since checkpoint/);
+    assert.doesNotMatch(first, /<diagnosis>|unchanged since checkpoint/);
     assert.match(first, /<input_manifest>\n\(none\)\n<\/input_manifest>/);
     assert.match(first, /<unit_specs>\n\(no unit specs\)\n<\/unit_specs>/);
   });

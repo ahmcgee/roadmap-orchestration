@@ -81,7 +81,7 @@ import {
 } from '../core/ids.ts';
 import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
 import { type CheckpointState, openAttempt } from '../core/state.ts';
-import { bundleClassesOf } from '../core/upgrade.ts';
+import { FIXES_UNRECORDED, bundleClassesOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
 import { git, revParse } from '../git/git.ts';
@@ -115,9 +115,10 @@ import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
 import { type Observation, keyOf, observedVerdict, reuse } from './observe.ts';
 import {
   type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
-  type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar,
+  type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar, planDefectText,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
+import { laneMisses } from './witnessfiles.ts';
 
 /**
  * What a checkpoint needs beyond an audit's context: the revision core's plan file, routing base, docs publisher and lane
@@ -534,7 +535,10 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
         const { cut: _cut, reenters: _r, ...rest } = old;
         plan.units.push({
           ...rest, id: op.unit, spec: `${op.unit}.json`, contingent: [],
-          reenters: { unit: op.reenters, ...(op.enterAt === null ? {} : { enterAt: op.enterAt }), ...(op.reset === null ? {} : { reset: { ruling: op.reset } }) },
+          reenters: {
+            unit: op.reenters, ...(op.enterAt === null ? {} : { enterAt: op.enterAt }), ...(op.reset === null ? {} : { reset: { ruling: op.reset } }),
+            ...(op.fixes === null || op.fixes === FIXES_UNRECORDED ? {} : { fixes: op.fixes }),
+          },
         });
         specs.set(op.unit, { path: specPath(op.unit), bytes: specBytes({ ...spec, unit: op.unit, rev: specRev(1) }) });
         authored.add(op.unit);
@@ -592,6 +596,19 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
           const lane = obligationsNow.lanes.find((l) => l.id === c.witness.lane);
           if (lane === undefined) {
             reasons.push(`${at}: child ${c.id}'s witness lane ${c.witness.lane} is not an arc lane`);
+            return [];
+          }
+          // Plan defects (2026-10-16): a child of a parent whose witness declares files declares its own, each in its lane.
+          if (parent.witness?.files !== undefined && c.witness.files === undefined) {
+            reasons.push(`${at}: child ${c.id}'s witness declares no files (the test files holding its test ids)`);
+            return [];
+          }
+          const outside = (c.witness.files ?? []).flatMap((file) => {
+            const missing = laneMisses(lane, file);
+            return missing === null ? [] : [planDefectText({ type: 'witness-not-in-lane', obligation: c.id, lane: lane.id, file, missing })];
+          });
+          if (outside.length > 0) {
+            reasons.push(...outside.map((t) => `${at}: ${t}`));
             return [];
           }
           const anchor = splitChildAnchor(c, pinned);
@@ -1013,7 +1030,10 @@ function admitOps(ctx: CheckpointContext, ops: readonly IndexedOp[], obligations
 // ---------------------------------------------------------------------------------------------------
 // The activation
 
-/** The proposer of a bundle's revision: its split ops' cites and evidence back a split that drops text (H14); its admits' classes (OR-A1). */
+/**
+ * The proposer of a bundle's revision: its split ops' cites and evidence back a split that drops text (H14); its admits'
+ * classes (OR-A1); the units its `reenter` ops introduce from an answer recorded before `fixes` (`reenterFixesDefault`).
+ */
 function proposerOf(a: Activation, ops: readonly IndexedOp[], admits: readonly ClassifiedAdmit[]) {
   const splits = ops.map((x) => x.op).filter((op) => op.op === 'obligation-split');
   const from = splits.length > 0 ? splits : ops.map((x) => x.op);
@@ -1021,6 +1041,7 @@ function proposerOf(a: Activation, ops: readonly IndexedOp[], admits: readonly C
     type: 'bundle' as const, job: a.job, cites: canonicalIds(from.flatMap((op) => op.cites)),
     evidence: [...new Set(from.flatMap((op) => op.evidence))],
     admits,
+    fixesUnrecorded: ops.flatMap(({ op }) => (op.op === 'reenter' && op.fixes === FIXES_UNRECORDED ? [op.unit] : [])),
   };
 }
 
