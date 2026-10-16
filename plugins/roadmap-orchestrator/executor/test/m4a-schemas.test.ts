@@ -595,7 +595,8 @@ describe('cli.m4a', () => {
     );
     assert.deepEqual(parseCommand(['brief', '--repo', '.']), { command: 'brief', repo: '.', json: false, ack: null });
     assert.deepEqual(parseCommand(['brief', '--repo', '.', '--json', '--ack', '0123456789abcdef']), { command: 'brief', repo: '.', json: true, ack: '0123456789abcdef' });
-    assert.deepEqual(parseCommand(['pr', '--repo', '.', '--arc', 'arc-1']), { command: 'pr', repo: '.', arc: 'arc-1' });
+    assert.deepEqual(parseCommand(['pr', '--repo', '.', '--arc', 'arc-1']), { command: 'pr', repo: '.', arc: 'arc-1', supersedePrevious: false });
+    assert.deepEqual(parseCommand(['pr', '--repo', '.', '--arc', 'arc-2', '--supersede-previous']), { command: 'pr', repo: '.', arc: 'arc-2', supersedePrevious: true });
     assert.deepEqual(parseCommand(['issues', '--repo', '.']), { command: 'issues', repo: '.', out: null });
     assert.deepEqual(parseCommand(['issues', '--repo', '.', '--out', 'issues.json']), { command: 'issues', repo: '.', out: 'issues.json' });
     assert.deepEqual(parseCommand(['chain', 'status', '--repo', '.']), { command: 'chain-status', repo: '.' });

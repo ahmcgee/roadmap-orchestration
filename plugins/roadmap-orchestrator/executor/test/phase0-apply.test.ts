@@ -58,10 +58,11 @@ async function repin(a: CorpusArc, commit: string): Promise<string> {
   return sha256Hex(readFileSync(join(a.planDir, PIN_FILE)));
 }
 
-function apply(a: CorpusArc, j: OpenJournal): Promise<ApplyVerdict> {
+/** `apply --dry-run` of the arc's files; `visionEdit`: `--vision-edit`. */
+function apply(a: CorpusArc, j: OpenJournal, visionEdit = false): Promise<ApplyVerdict> {
   return evaluateApply({
     runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), repo: a.repo, planFile: a.planPath, routingBase: BASE,
-    laneEnv: process.env, manifest: null, base: null, rulings: [],
+    laneEnv: process.env, manifest: null, base: null, rulings: [], visionEdit,
   });
 }
 
@@ -373,10 +374,29 @@ describe('the vision confirmed against the pin', () => {
       const clauses = [...(v2['clauses'] as Json[]), { id: 'V-3', kind: 'good', text: 'Quiet nights.', rank: null, state: 'active' }];
       writeFiles(a.repo, { '.roadmap/vision.json': JSON.stringify({ ...v2, rev: 2, clauses }) });
       commitAll(a.repo, 'vision rev 2');
-      const reasons = rejected(await apply(a, j));
+      const reasons = rejected(await apply(a, j, true));
       const pinned = (readJsonFile(join(a.planDir, PIN_FILE))['vision'] as Json)['sha256'];
       const row = { kind: 'vision-unconfirmed', ref: `corpus:0005_Vision.md#sha256:${sha256Hex('# Not the vision\n')}`, expected: sha256Hex('# Not the vision\n'), actual: pinned };
       assert.ok(reasons.includes(canonicalJson(row)), JSON.stringify(reasons));
+    } finally {
+      j.close();
+    }
+  });
+});
+
+describe('the vision leak (row 12)', () => {
+  it('vision.leak-refused: a next-arc vision committed to .roadmap/vision.json mid-arc is refused on an apply that does not declare a vision edit, pointing at _next/vision.md; --vision-edit applies it', T, async () => {
+    const { a, j } = await arcInForce();
+    try {
+      const was = readFileSync(join(a.repo, '.roadmap/vision.json'));
+      const v = JSON.parse(was.toString('utf8')) as Json;
+      const next = `${JSON.stringify({ ...v, rev: 2, clauses: [...(v['clauses'] as Json[]), { id: 'V-3', kind: 'good', text: 'Quiet nights.', rank: null, state: 'active' }] })}\n`;
+      writeFiles(a.repo, { '.roadmap/vision.json': next });
+      commitAll(a.repo, 'the next arc\'s vision, committed mid-arc');
+      const row = { kind: 'vision-leak', inForce: sha256Hex(was), committed: sha256Hex(next), draft: join(a.planDir, '..', '_next', 'vision.md') };
+      assert.deepEqual(rejected(await apply(a, j)), [canonicalJson(row)], 'the leak alone, naming where the draft belongs');
+      const v2 = accepted(await apply(a, j, true));
+      assert.deepEqual(v2.evaluated.draft.changes, [{ type: 'vision', rev: 2 }], 'a declared vision edit');
     } finally {
       j.close();
     }

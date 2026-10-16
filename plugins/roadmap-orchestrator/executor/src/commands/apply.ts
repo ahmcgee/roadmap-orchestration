@@ -129,7 +129,7 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { APPLY, type ScopeReference, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
+import { APPLY, type ScopeReference, phase0InputOf, phase0Rows, visionLeak } from '../phase0/rows.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
@@ -689,6 +689,8 @@ export type ApplyInput = RevisionContext & Readonly<{
   base: RevisionManifest | null;
   /** M4a rev 3 (I2): the `--ruling` records, in order, landed with the edits. */
   rulings: readonly HashedFile[];
+  /** `--vision-edit`: the apply declares a vision edit; without it a changed vision file is `vision-leak` (Phase-0 row 12). */
+  visionEdit: boolean;
 }>;
 
 /**
@@ -767,7 +769,8 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   // M4a: the shared Phase-0 rows (src/phase0/rows.ts) over the proposal: the tree, and for a corpus arc the pin
   // re-derived, corpus overlap, census, debt, questions, amendments, intake and the vision confirmed.
   const p0 = phase0Rows(phase0InputOf(proposal, input.routingBase.config), APPLY);
-  const rows = [...(await applyRows(context, verdict.scoped, routingChanged)), ...p0.rows];
+  const leak = visionLeak(input.planFile, proposal.vision?.bytes ?? null, revisionInForce(input.runDir, inForce).vision?.sha256 ?? null, input.visionEdit);
+  const rows = [...(await applyRows(context, verdict.scoped, routingChanged)), ...p0.rows, ...leak];
   if (rows.length > 0) return { kind: 'rejected', reasons: rows.map(rowText) };
   const before = new Set(backendsOf(planRouting(input.routingBase, inForce.plan)));
   const smoke = [...new Set(verdict.routings.flatMap((r) => backendsOf(r)))].filter((b) => !before.has(b)).sort();
@@ -816,7 +819,7 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
   for (let attempt = 1; ; attempt++) {
     const verdict = await evaluateApply({
       runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, repo: ctx.repo, planFile: ctx.planFile, routingBase: ctx.routingBase,
-      laneEnv: ctx.laneEnv, manifest: body.manifest, base: body.base, rulings,
+      laneEnv: ctx.laneEnv, manifest: body.manifest, base: body.base, rulings, visionEdit: body.visionEdit === true,
     });
     if (verdict.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(verdict.reasons) };
     if (verdict.kind === 'unchanged') return { kind: 'applied', verified: [`the files rebased onto the plan in force are the plan in force (rev ${verdict.rev}): nothing to apply`] };

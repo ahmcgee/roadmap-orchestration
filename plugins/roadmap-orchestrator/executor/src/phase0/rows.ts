@@ -45,14 +45,21 @@
 //                    declares `testPaths` and every binding witness `files` (`lane-test-paths-undeclared`,
 //                    `witness-files-undeclared`), and so must an arc whose witnesses declare any files; an arc started
 //                    before 2026-10-16 that declares none is read as undeclared, with a logged warning.
+//  12. vision leak (an apply only; owner ruling 2026-10-16) the vision of the apply's files rebased onto the files in force
+//                  (src/input/rebase.ts) differs from the vision in force, so the owner's vision file changed, and the
+//                  apply does not declare a vision edit (`apply --vision-edit`): `vision-leak{inForce, committed,
+//                  draft}` (`visionLeak`). The next arc's vision is drafted in `<inputs>/_next/vision.md` and reaches
+//                  `.roadmap/vision.json` only in the between-arc window, so a draft committed there mid-arc never rides
+//                  along with an unrelated apply. Not one of `phase0Rows`: it reads the revision in force, which only a
+//                  running arc has.
 // A record that names something absent (a debt disposition of no open item, a promote to a unit the plan does not
 // hold, a resolve by a ruling the ledger does not hold active, an intake act on an unknown unit or rule, an amendment
 // disposition of no amendment) is `plan-invalid{schema}` naming it.
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { answerLog, latestAnswers, refQuestions, unappliedOf } from '../answers.ts';
 import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
-import { type ArcId, type DebtId, type IssueId, type UnitId, issueId, phaseQuestionSeq, sha } from '../core/ids.ts';
+import { type ArcId, type DebtId, type IssueId, type Sha256Hex, type UnitId, issueId, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
 import { type SpecM1, specRemoves } from '../core/records.ts';
 import { sha256Hex } from '../core/json.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -610,3 +617,19 @@ export function visionAndObligations(input: Phase0Input): Readonly<{ vision: Vis
   return { vision: quiet(input.vision, parseVision), obligations: quiet(input.obligations, parseObligations) };
 }
 
+
+// ---------------------------------------------------------------------------------------------------
+// 12. The vision leak (an apply only)
+
+/** Where the next arc's vision draft belongs: `_next/vision.md` in the inputs dir that holds the arc's plan dir. */
+export const nextVisionDraft = (planFile: AbsPath): AbsPath => absPath(join(dirname(dirname(planFile)), '_next', 'vision.md'));
+
+/**
+ * Row 12: the apply's vision rebased onto the files in force (`committed`: its bytes' sha256, null when absent) is not the vision in force
+ * (`inForce`), and the apply does not declare a vision edit.
+ */
+export function visionLeak(planFile: AbsPath, vision: Buffer | null, inForce: Sha256Hex | null, declared: boolean): readonly Row<'vision-leak'>[] {
+  const committed = vision === null ? null : sha256(sha256Hex(vision));
+  if (declared || committed === inForce) return [];
+  return [{ kind: 'vision-leak', inForce, committed, draft: nextVisionDraft(planFile) }];
+}

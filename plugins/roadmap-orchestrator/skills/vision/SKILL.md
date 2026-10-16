@@ -26,13 +26,19 @@ Two files. The vision document lives in the product's corpus; its compiled recor
 
 No guide yet: the `orchestrate` bootstrap writes `.roadmap/corpus.md` first. Never choose the corpus home yourself.
 
+**The next-arc draft.** While an arc runs, the owner's vision thoughts go to
+`<repo>/../roadmap-inputs/_next/vision.md`, the working draft of the next vision, never into the vision document or
+`.roadmap/vision.json`: those change only between arcs, and a running arc's `apply` refuses a changed vision file
+(`vision-leak`). Edit the draft with the owner in the same voice as the document; it is not confirmed and binds
+nothing. The executor never reads it.
+
 Pick the mode from the files; never ask the owner which:
 
 | Files | Mode |
 |---|---|
 | no `vision.md` | **Distil** from nothing |
 | `vision.md` marked draft, or edited since its confirmation (its sha256 differs from `confirmation.ref`) | **Distil**, resuming: an edited confirmed vision is unconfirmed until its changes are played back |
-| `vision.md` confirmed, hash matches | **Calibrate** |
+| `vision.md` confirmed, hash matches | **Calibrate** (from `_next/vision.md` when that draft differs from it) |
 
 ## The shape of `vision.md`
 
@@ -173,14 +179,20 @@ On confirmation:
 Then hand back to `orchestrate`. The arc's plan names no vision file (a corpus arc reads `.roadmap/vision.json`);
 its `holistic.advances` and the Phase-0 record's `slice.advances` name the slice it advances: the clauses this arc
 moves toward, at least one of them a scene. Choose the first slice with the owner; later slices `orchestrate`
-chooses from the census and reports. A vision change belongs between arcs. On a running arc it takes a commit, a
-re-pin and `roadmap apply`, which refuses a slice naming a withdrawn clause.
+chooses from the census and reports. A vision change belongs between arcs; while an arc runs it waits in
+`_next/vision.md`. Only a change the owner orders for the running arc goes in now: a commit, a re-pin and
+`roadmap apply --vision-edit` (a plain `apply` refuses it as `vision-leak`), which refuses a slice naming a withdrawn
+clause.
 
 ## Calibrate
 
 Between arcs, before the next plan is written. Same dialogue, but from evidence: `roadmap brief` and `status` of
 the arc that just ran (its vision coverage, divergences, the checkpoints' interpretations, the census and the
-questions the corpus raised), the product as it now stands, and `vision.md`.
+questions the corpus raised), the product as it now stands, `vision.md`, and the owner's draft `_next/vision.md`.
+
+0. **The draft first.** Each difference between `_next/vision.md` and `vision.md` is the owner's proposal: probe it
+   like any input (is it a world, free of solutions, ranked against what it displaces?) and fold what survives into
+   `vision.md`. Nothing of the draft is adopted without the playback and the owner's confirmation below.
 
 1. **Open questions first.** For each one: is it answered now? Fold the answer into the world and close the
    question. If the answer contradicts the working assumption, name what the arc built on that assumption.

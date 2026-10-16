@@ -32,9 +32,10 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
 - `roadmap status`: the run as one JSON object ("status" below).
-- `roadmap watch [--actionable [--heartbeat-min <n>]]`: one JSON line per event until killed; `--actionable` prints
-  only the wakes. Wait on one `roadmap watch --actionable` per arc, started once in the background into a file that a
-  Monitor tails (SKILL.md "Running an arc"; "watch" below).
+- `roadmap watch [--actionable [--heartbeat-min <n>] [--from <seq>]]`: one JSON line per event until killed, each with
+  its `seq`; `--actionable` prints only the wakes, and `--from` replays the wakes since that seq. Wait on one
+  `roadmap watch --actionable` per arc, started in the background into a file that a Monitor tails, and started again
+  with `--from` the last line's seq (SKILL.md "Running an arc"; "watch" below).
 - `roadmap stop`: park everything, tear down, release the host lock.
 - `roadmap pause (<unit> | --all)`: kill and tear down; commits and worktree stay as left; the unit holds at its stage.
 - `roadmap resume [<unit> | --backend claude|codex]`: no argument clears pauses and holds (a held build continues
@@ -42,13 +43,15 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
 - `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item; `--choice` names one of its `options`.
 - `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
-- `roadmap apply [--base <file>] [--dry-run] [--ruling <file>]`: put the edited plan, specs and other revisioned
-  inputs in force at the next stage boundary, rebased onto the plan in force (merged per file from the edit's base: the
-  files you last applied, or with `--base` an `inputs export`'s `export.json`; a value you and the executor both
-  changed is a `conflict` naming the file and JSON path). Each `--ruling` (repeatable) is a ruling sidecar validated
-  as `rule` validates it and landed with the edits as one revision; an id `"C-?"` takes the ledger's next C-n.
-  `--dry-run` always exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev,
-  changes, smoke, advisories, numbered}`; it queues nothing.
+- `roadmap apply [--base <file>] [--dry-run] [--ruling <file>] [--vision-edit]`: put the edited plan, specs and other
+  revisioned inputs in force at the next stage boundary, rebased onto the plan in force (merged per file from the
+  edit's base: the files you last applied, or with `--base` an `inputs export`'s `export.json`; a value you and the
+  executor both changed is a `conflict` naming the file and JSON path). Each `--ruling` (repeatable) is a ruling sidecar
+  validated as `rule` validates it and landed with the edits as one revision; an id `"C-?"` takes the ledger's next C-n.
+  `--vision-edit` declares a vision edit: without it an apply whose rebased vision differs from the vision in force
+  (you changed the vision file) is refused `vision-leak` (a next-arc draft belongs in `_next/`). `--dry-run` always
+  exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke,
+  advisories, numbered}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
   files outside a unit's scope that still name what its spec `removes`. They never refuse. A revision
   that changes the plan or the vision cancels a checkpoint deciding on the earlier one (rejected `stale`); its trigger
@@ -102,9 +105,13 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   with `--json`). Exits 64 while no arc of the repo has published a snapshot.
 - `roadmap brief --repo <path> --ack <briefId>`: acknowledge that brief: prints `{acked, commands}` (one queued `ack`
   per item it covers), or `{stale: {expected, actual}}` (78, nothing written) when the brief changed.
-- `roadmap pr --repo <path> --arc <arc>`: push the completed arc's branch (a leased fast-forward, never `main`) and
-  open or update its PR. Prints `{number, url, base, created, retargeted, needsRebase}`. Idempotent. Exits 64 for an arc
-  whose ref holds no completion, or whose PR was closed unmerged.
+- `roadmap pr --repo <path> --arc <arc> [--supersede-previous]`: push the completed arc's branch (a leased fast-forward,
+  never `main`) and open or update its PR. Prints `{number, url, base, created, retargeted, needsRebase, supersedes}`.
+  Idempotent; a reopened arc's new completion fast-forwards the same PR. `--supersede-previous`: this arc carries
+  fixes the previous arc's still-open PR needed, so its PR supersedes that one: it targets the previous PR's base, its
+  body opens with `Supersedes <url>`, and the previous PR is closed with a comment naming it (`supersedes` is that
+  URL; later runs keep it, with or without the flag). Exits 64 for an arc whose ref holds no completion, whose PR was
+  closed unmerged, or for `--supersede-previous` with no previous arc, a merged previous PR or none open.
 - `roadmap chain status --repo <path>`: `{arcs: [{arc, previousArc, acked, pr}], k, unackedStarts, nextStart}`, oldest
   first. Exits 64 before any snapshot. `nextStart` answers whether a start chained on the head would pass `start`'s own
   chain rows that need no plan: `{allowed: true, reason: within-k, k, unacked}` or `{allowed: false, reason}` with reason
@@ -122,7 +129,8 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78).
 - `roadmap resume-arc --repo <path>`: when this repo's arc holds the host and its owner is dead, relaunches the
   supervisor as `start` would (prints its line and exit code). Otherwise `{resumed: false, reason}` (exit 0), reason
-  `no-claim`, `other-repo`, `alive`, `complete`, `refused` or `already-resumed`. "Recovery" has the boot hook.
+  `no-claim`, `other-repo`, `alive`, `refused` or `already-resumed`. A claim on a `complete` arc is a reopening start
+  that died, and is relaunched. "Recovery" has the boot hook.
 - `roadmap inputs export --repo <path> --arc <arc> --out <dir>`: read-only; writes the arc's current inputs into a
   new directory and prints `export.json` `{planRev, specRevs, base}` ("Recovery").
 - `roadmap flow accept|reject <proposal> --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). Your
@@ -143,7 +151,9 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
 `plan.json`, `specs/<unit>.json`, the rulings ledger, `obligations.json` (with its census), and for a corpus arc
 the pin (`corpus pin --out`), the Phase-0 record and the issue capture (`issues --out`). The executor keeps each by
 hash at `start` and `apply`; editing them later changes nothing until `apply`. Beside the arcs' directories, the
-operator log `skill-feedback.md` ("The operator log").
+operator log `skill-feedback.md` ("The operator log") and the next-arc staging dir `_next/`: `vision.md` (the owner's
+working draft of the next vision) and `notes.md` (work for later, deferred rulings, ideas). The executor never reads
+`_next/`; the Chaining step reads it and hands it to the next arc's directory.
 
 **In-tree `.roadmap/`** holds exactly: `contracts/`, `constraints.md`, `invariants.md` (with the `json roadmap-rules`
 registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the executor; and `config.json`,
@@ -330,11 +340,15 @@ units: {<unit>: <state>}}` with compact states (`running:build#3`, `waiting:deps
 the wakes, the key transitions: a `needs-user` line for an item not seen before and not already acknowledged or
 superseded; an `answer` line not seen before; the `units` line in which a unit is newly `merged` or newly parked (`parked:*`), in which `run` is newly
 `held`, `blocked` or `draining`, or in which `run` reaches `complete`, `refused` or `no-owner` (once each). Plus a fixed
-heartbeat, `{"event":"heartbeat","everyMin":<n>}`, every n minutes from the watch's start whatever happened
+heartbeat, `{"event":"heartbeat","everyMin":<n>,"seq":<s>}`, every n minutes from the watch's start whatever happened
 (`--heartbeat-min <n>`, a positive integer, default 30; only with `--actionable`). Owner, ack, superseded and every
 other `units` line are dropped. `status.needsUser` lists open items only: a superseded one shows under `packReview`
-alone. A fresh `--actionable` process starts with nothing seen: it prints the open items and a terminal or constrained
-run again, and takes its first view of the units as the baseline (no unit wake for what already merged or parked).
+alone. Every line carries `seq`, the event log's high-water when it was seen. A fresh `--actionable` process starts
+with nothing seen: it prints the open items and a terminal or constrained run again, and takes its first view of the
+units as the baseline (no unit wake for what already merged or parked). With `--from <seq>` (only with
+`--actionable`) it starts from the log as it stood at that seq instead: a unit merged or parked since then wakes at
+once, and an item raised by then counts as seen; a standing terminal or constrained run, an open `sup-*` or `host-*`
+item and an unapplied answer are printed again. A seq past the log's end is refused.
 
 ## Refusals
 
@@ -360,6 +374,8 @@ run again, and takes its first view of the units as the baseline (no unit wake f
 | `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K. `chain status` `nextStart` answers `limit`, `k-unset` and `previous-incomplete` before you compose the plan |
 | `issue-policy-untrusted{visibility, policy}` | anyone can open issues | the owner restricts issue creation to collaborators or disables issues |
 | `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |
+| `arc-superseded{by}` | a start of an arc with a plan in force (a reopen) after arc `by` started on its head | put the fixes in arc `by` as priority units; at its completion, `pr --supersede-previous` for arc `by` |
+| `vision-leak{inForce, committed, draft}` (`apply` only) | the vision file differs from the vision in force and the apply declares no vision edit | move the draft to `draft` (`<inputs>/_next/vision.md`) and restore `.roadmap/vision.json` and the vision document to the vision in force (commit, re-pin); `--vision-edit` only for a vision change the owner ordered for this arc |
 
 **`apply` rejections** (in the receipt or `--dry-run`): every row above that applies to the edit, plus
 `target-kind-changed` (an `architecture-doc` arc never becomes a corpus arc, nor the reverse), `chain-immutable`

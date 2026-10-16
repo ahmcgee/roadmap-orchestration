@@ -83,9 +83,10 @@ export type LogSnapshot = Readonly<{ view: JournalView; events: readonly Event[]
  * flight (the writer's two-part write, or a torn tail only the owner's open may repair), so it is "not yet
  * written" and left out, never raised, saved or truncated. The file is read once, so a line that completes
  * during the read is either wholly in the snapshot or wholly absent. Throws LogCorruptError on an invalid
- * complete line, as `openJournal` would.
+ * complete line, as `openJournal` would. `through` (`watch --from`, src/watch.ts): the log as it stood at that seq, the
+ * lines after it left unread (a log shorter than that is read whole; the caller compares the high-water).
  */
-export function readJournal(runDir: AbsPath, arc: ArcId): LogSnapshot {
+export function readJournal(runDir: AbsPath, arc: ArcId, through: number | null = null): LogSnapshot {
   const path = absPath(join(runDir, EVENTS_FILE));
   const fold = new Fold(arc);
   const events: Event[] = [];
@@ -93,7 +94,7 @@ export function readJournal(runDir: AbsPath, arc: ArcId): LogSnapshot {
   const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   const bytes = readFileSync(path);
   let start = 0;
-  for (let nl = bytes.indexOf(0x0a, start); nl !== -1; nl = bytes.indexOf(0x0a, start)) {
+  for (let nl = bytes.indexOf(0x0a, start); nl !== -1 && (through === null || fold.highWater() < through); nl = bytes.indexOf(0x0a, start)) {
     events.push(verifyLine(path, fold, utf8, bytes.subarray(start, nl + 1), start));
     start = nl + 1;
   }

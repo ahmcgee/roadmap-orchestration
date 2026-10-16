@@ -54,7 +54,7 @@
 //                              go, the previous release's pair stays byte for byte; recovery releases it and the arc
 //                              merges.
 //   upgrade.opt-in-holistic    stopped mid-build, `page-id` left held; on HEAD the architect's
-//                              `apply` adds `holistic` (a vision, one must-hold obligation witnessed by a node-test
+//                              `apply --vision-edit` adds `holistic` (a vision, one must-hold obligation witnessed by a node-test
 //                              lane, L = {invariants}), then `resume page-id`: the baseline job, the drift audit and
 //                              a no-op checkpoint, the brake on `page-id`'s candidate, the final audit and a no-op
 //                              checkpoint, the close-out, `arc-completed`.
@@ -905,7 +905,7 @@ test('upgrade.opt-in-holistic: an architect apply adds `holistic` to the previou
       writeFileSync(join(p.l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
       writeFileSync(join(p.l.input, 'obligations.json'), `${JSON.stringify(obligations(), null, 2)}\n`);
       editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
-      id = await submitOnHead(p, ['apply']);
+      id = await submitOnHead(p, ['apply', '--vision-edit']);
       await submitOnHead(p, ['resume', 'page-id']);
     });
   } finally {

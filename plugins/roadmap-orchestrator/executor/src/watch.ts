@@ -11,6 +11,9 @@
 //   {"event":"answer","question","k","answer","at"}                        an owner answer (`roadmap answer`) no Phase-0 record
 //                                                                          applies yet (present at start, or new; src/answers.ts)
 //
+// Every line carries `seq`: the log's high-water when its poll derived the view (`status`'s fold). It is the cursor a
+// restarted watch takes (`--from`, below).
+//
 // A `superseded` line comes before any `needs-user` line of its poll, as an ack file sorts before its item: a reader that
 // drops answered items (`--actionable`) sees the answer first (paid M4a run 10, R-17).
 //
@@ -29,8 +32,17 @@
 // or newly parked (its `units` line); the run newly `held`, `blocked` or `draining`; the run reaching a terminal state
 // (`complete`, `refused`, `no-owner`; once per state). The heartbeat is `{"event":"heartbeat","everyMin":<n>}` every n
 // minutes (default HEARTBEAT_MIN, 30) whatever happened: the architect's organic check, no other polling. Owner lines,
-// acks, superseded lines and every other unit move are absorbed. A fresh process starts with nothing seen: it re-emits
-// the open items and a terminal or constrained run; the first view of an arc's units is its baseline (no unit wake).
+// acks, superseded lines and every other unit move are absorbed. The heartbeat carries the `seq` of the latest poll. A
+// fresh process starts with nothing seen: it re-emits the open items and a terminal or constrained run; the first view
+// of an arc's units is its baseline (no unit wake).
+//
+// `--actionable --from <seq>` (owner ruling 2026-10-16) restarts the stream at a cursor: the `seq` of the last line the
+// architect read. Instead of baselining the units on its first view, the filter starts from the log as it stood at that
+// seq (`cursorAt`): a unit merged or parked since then wakes on the first poll, and every item whose raise was done at
+// or before it counts as seen. So a restarted watch replays exactly the key transitions since the cursor, the merges
+// and parks a fresh baseline would absorb included. What is not in the log is re-emitted as a fresh process does: a
+// standing terminal or constrained run (a condition, not an event), an open file-only item (`sup-*`, `host-*`) and an
+// answer not yet applied. A cursor past the log's high-water is refused (a seq of another arc's stream).
 //
 // A unit's state is `status`'s, compact (`compactState`): `running:build#3`, `waiting:deps=u1`,
 // `waiting:resources`, `awaiting-admission:paused`, `awaiting-admission:known-defect` (M4a rev 3: held at prepare by a
@@ -40,11 +52,12 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { type ArcId, needsUserId } from './core/ids.ts';
+import { type ArcId, needsUserId, needsUserIdForOp } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
-import { EVENTS_FILE } from './core/log.ts';
+import { EVENTS_FILE, readJournal } from './core/log.ts';
 import type { AbsPath } from './core/values.ts';
 import { answerNames, commonDirOfRun, unappliedAnswers } from './answers.ts';
+import { CliError } from './input/cli.ts';
 import { NEEDS_USER_DIR, readNeedsUser, readNeedsUserAck } from './needsuser.ts';
 import { SCHED_FILE } from './schedule/scheduler.ts';
 import { ownerState, unitStates } from './status.ts';
@@ -96,6 +109,13 @@ export class ActionableFilter {
     if (!Number.isSafeInteger(heartbeatMin) || heartbeatMin < 1) throw new Error(`heartbeat minutes must be a positive integer, got ${heartbeatMin}`);
     this.everyMin = heartbeatMin;
     this.nextHeartbeat = now + heartbeatMin * 60_000;
+  }
+
+  /** Starts `arc` at a cursor (`--from`): its items seen and its units' baseline as the log stood then. Before any feed. */
+  seed(arc: string, cursor: Cursor): void {
+    if (this.units.has(arc)) throw new Error(`arc ${arc} is seeded after its first view`);
+    for (const id of cursor.items) this.items.add(itemKey(arc, id));
+    this.units.set(arc, cursor.units);
   }
 
   /** The line itself when it is actionable, else null. */
@@ -150,27 +170,49 @@ export class ActionableFilter {
   }
 }
 
-/** `roadmap watch --actionable`: `watch` through an `ActionableFilter`, plus its heartbeat every `heartbeatMin` minutes. */
+/** The log at a cursor seq: the items whose raise was done by then, and each planned unit's key state then. */
+export type Cursor = Readonly<{ items: readonly string[]; units: Readonly<Record<string, string>> }>;
+
+/** The cursor at `seq` (`--from`); a seq past the log's high-water is a CLI error. */
+export function cursorAt(runDir: AbsPath, arc: ArcId, seq: number): Cursor {
+  const { view, events } = readJournal(runDir, arc, seq);
+  if (view.highWater() < seq) throw new CliError(`watch: --from ${seq} is past arc ${arc}'s log, whose high-water is ${view.highWater()}`);
+  const items = events.flatMap((e) => (e.type === 'done' && e.kind === 'needsuser.raise' ? [needsUserIdForOp(e.op)] : []));
+  const units: Record<string, string> = {};
+  for (const id of view.plannedUnits()) {
+    const u = view.unit(id);
+    units[id] = u.status === 'retired' ? 'merged' : u.status === 'park-pending' ? 'parked:' : u.status;
+  }
+  return { items, units };
+}
+
+/**
+ * `roadmap watch --actionable`: `watch` through an `ActionableFilter`, plus its heartbeat every `heartbeatMin` minutes;
+ * from a cursor (`--from`) when `from` is a seq.
+ */
 export async function watchActionable(
-  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, heartbeatMin: number, emit: (line: string) => void, signal: AbortSignal,
+  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, heartbeatMin: number, from: number | null, emit: (line: string) => void, signal: AbortSignal,
 ): Promise<void> {
   const filter = new ActionableFilter(Date.now(), heartbeatMin);
+  if (from !== null) filter.seed(arc, cursorAt(runDir, arc, from));
+  let seq = from ?? 0;
   const pass = (line: string): void => {
+    seq = (JSON.parse(line) as { seq: number }).seq;
     const out = filter.feed(arc, line);
     if (out !== null) emit(out);
   };
   await watch(runDir, arc, hostDir, pass, signal, () => {
     const beat = filter.heartbeat(Date.now());
-    if (beat !== null) emit(beat);
+    if (beat !== null) emit(canonicalJson({ ...(JSON.parse(beat) as object), seq }));
   });
 }
 
 /**
- * Polls until `signal` aborts; `emit` receives each event line (without its newline). `afterPoll` (`--actionable`'s
- * heartbeat check) runs once after every poll.
+ * Polls until `signal` aborts; `out` receives each event line (without its newline), its `seq` the poll's. `afterPoll`
+ * (`--actionable`'s heartbeat check) runs once after every poll.
  */
 export async function watch(
-  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, emit: (line: string) => void, signal: AbortSignal, afterPoll: () => void = () => {},
+  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, out: (line: string) => void, signal: AbortSignal, afterPoll: () => void = () => {},
 ): Promise<void> {
   const seenItems = new Set<string>();
   const seenAcks = new Set<string>();
@@ -191,10 +233,12 @@ export async function watch(
       key = next;
       view = unitStates(runDir, arc, hostDir);
     }
+    const seq = view.seq;
+    const emit = (line: Record<string, unknown>): void => out(canonicalJson({ ...line, seq }));
     for (const id of view.superseded) {
       if (seenSuperseded.has(id)) continue;
       seenSuperseded.add(id);
-      emit(canonicalJson({ event: 'superseded', id }));
+      emit({ event: 'superseded', id });
     }
     for (const name of names) {
       const item = ITEM.exec(name);
@@ -202,14 +246,14 @@ export async function watch(
         const n = readNeedsUser(runDir, needsUserId(item[1]));
         if (n === null) throw new Error(`${join(dir, name)} vanished while watching; needs-user files are write-once`);
         seenItems.add(n.id);
-        emit(canonicalJson({ event: 'needs-user', id: n.id, blocking: n.blocking, reason: n.reason, subject: n.subject, summary: n.summary }));
+        emit({ event: 'needs-user', id: n.id, blocking: n.blocking, reason: n.reason, subject: n.subject, summary: n.summary });
       }
       const ack = ACK.exec(name);
       if (ack !== null && !seenAcks.has(ack[1] as string)) {
         const a = readNeedsUserAck(runDir, needsUserId(ack[1]));
         if (a === null) throw new Error(`${join(dir, name)} vanished while watching; acknowledgements are write-once`);
         seenAcks.add(a.id);
-        emit(canonicalJson({ event: 'ack', id: a.id, command: a.command, choice: a.choice }));
+        emit({ event: 'ack', id: a.id, command: a.command, choice: a.choice });
       }
     }
     const answers = answerNames(common).join(' ');
@@ -218,17 +262,17 @@ export async function watch(
       for (const a of answers === '' ? [] : unappliedAnswers(common)) {
         if (seenAnswers.has(`${a.question}#${a.k}`)) continue;
         seenAnswers.add(`${a.question}#${a.k}`);
-        emit(canonicalJson({ event: 'answer', question: a.question, k: a.k, answer: a.answer, at: a.at }));
+        emit({ event: 'answer', question: a.question, k: a.k, answer: a.answer, at: a.at });
       }
     }
     if (state !== owner) {
       owner = state;
-      emit(state);
+      emit(JSON.parse(state) as Record<string, unknown>);
     }
     const line = canonicalJson({ event: 'units', run: view.run, units: view.units });
     if (line !== units) {
       units = line;
-      emit(line);
+      emit({ event: 'units', run: view.run, units: view.units });
     }
     afterPoll();
     try {

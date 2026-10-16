@@ -103,7 +103,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       const rulings = command.rulings.map((f) => hashedFile('apply --ruling', f));
       const base = command.base === null ? null : exportBase(absPath(resolve(command.base)));
       if (command.dryRun) {
-        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, base, rulings))}\n`);
+        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, base, rulings, command.visionEdit))}\n`);
         return;
       }
       let manifest: ReturnType<typeof revisionManifestOf>;
@@ -114,7 +114,9 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
         throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
       }
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
-      return submit(command.run, hostDir, { type: 'apply', base, manifest, ...(rulings.length === 0 ? {} : { rulings }) });
+      return submit(command.run, hostDir, {
+        type: 'apply', base, manifest, ...(rulings.length === 0 ? {} : { rulings }), ...(command.visionEdit ? { visionEdit: true as const } : {}),
+      });
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
@@ -122,7 +124,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => stop.abort());
       const emit = (line: string): void => void process.stdout.write(`${line}\n`);
       if (command.actionable === null) await watch(run.runDir, run.arc, hostDir, emit, stop.signal);
-      else await watchActionable(run.runDir, run.arc, hostDir, command.actionable.heartbeatMin ?? HEARTBEAT_MIN, emit, stop.signal);
+      else await watchActionable(run.runDir, run.arc, hostDir, command.actionable.heartbeatMin ?? HEARTBEAT_MIN, command.actionable.from, emit, stop.signal);
       return;
     }
     case 'start': {
@@ -193,7 +195,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     }
     case 'pr':
-      process.stdout.write(`${canonicalJson(await openPr({ repo: repoOf(command.repo), arc: command.arc }))}\n`);
+      process.stdout.write(`${canonicalJson(await openPr({ repo: repoOf(command.repo), arc: command.arc, supersedePrevious: command.supersedePrevious }))}\n`);
       return;
     case 'issues': {
       const outcome = await captureIssues({ repo: repoOf(command.repo), out: command.out === null ? null : absPath(resolve(command.out)) });
@@ -282,11 +284,11 @@ function startOf(run: Run): RunStart {
 }
 
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
-async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, base: RevisionManifest | null, rulings: readonly HashedFile[]): Promise<unknown> {
+async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, base: RevisionManifest | null, rulings: readonly HashedFile[], visionEdit: boolean): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
     runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
-    laneEnv: process.env, manifest: null, base, rulings,
+    laneEnv: process.env, manifest: null, base, rulings, visionEdit,
   });
   switch (verdict.kind) {
     case 'rejected':

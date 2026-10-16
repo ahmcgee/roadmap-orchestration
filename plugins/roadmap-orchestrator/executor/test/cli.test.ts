@@ -45,9 +45,13 @@ describe('cli', () => {
   }
 
   it('watch --actionable', () => {
-    assert.deepEqual(parseCommand(['watch', '--actionable']), { command: 'watch', actionable: { heartbeatMin: null }, run: HOST });
-    assert.deepEqual(parseCommand(['watch', '--actionable', ...EXPLICIT]), { command: 'watch', actionable: { heartbeatMin: null }, run: EXPLICIT_RUN });
-    assert.deepEqual(parseCommand(['watch', '--actionable', '--heartbeat-min', '45']), { command: 'watch', actionable: { heartbeatMin: 45 }, run: HOST });
+    assert.deepEqual(parseCommand(['watch', '--actionable']), { command: 'watch', actionable: { heartbeatMin: null, from: null }, run: HOST });
+    assert.deepEqual(parseCommand(['watch', '--actionable', ...EXPLICIT]), { command: 'watch', actionable: { heartbeatMin: null, from: null }, run: EXPLICIT_RUN });
+    assert.deepEqual(parseCommand(['watch', '--actionable', '--heartbeat-min', '45']), { command: 'watch', actionable: { heartbeatMin: 45, from: null }, run: HOST });
+    assert.deepEqual(parseCommand(['watch', '--actionable', '--from', '0']), { command: 'watch', actionable: { heartbeatMin: null, from: 0 }, run: HOST });
+    assert.deepEqual(parseCommand(['watch', '--actionable', '--from', '812']), { command: 'watch', actionable: { heartbeatMin: null, from: 812 }, run: HOST });
+    assert.throws(() => parseCommand(['watch', '--from', '3']), /--from goes with --actionable/);
+    assert.throws(() => parseCommand(['watch', '--actionable', '--from', '-1']), /non-negative integer/);
     assert.throws(() => parseCommand(['watch', '--heartbeat-min', '45']), /--heartbeat-min goes with --actionable/);
     assert.throws(() => parseCommand(['watch', '--actionable', '--heartbeat-min', '0']), /positive integer of minutes/);
     assert.throws(() => parseCommand(['status', '--actionable']), /unknown option --actionable/);

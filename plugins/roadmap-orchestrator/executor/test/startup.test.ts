@@ -31,6 +31,8 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'tree-uncommitted': { kind: 'tree-uncommitted', paths: [repoPath('.roadmap/vision.json')] },
   'holistic-needs-corpus': { kind: 'holistic-needs-corpus' },
   'plan-defect': { kind: 'plan-defect', defects: [{ type: 'witness-not-in-lane', obligation: obligationId('I-1'), lane: laneId('arc'), file: repoPath('test/a.test.ts'), missing: 'argv' }] },
+  'arc-superseded': { kind: 'arc-superseded', by: arcId('arc-2') },
+  'vision-leak': { kind: 'vision-leak', inForce: sha256('a'.repeat(64)), committed: sha256('b'.repeat(64)), draft: absPath('/w/roadmap-inputs/_next/vision.md') },
 };
 
 describe('startup rejection table', () => {
