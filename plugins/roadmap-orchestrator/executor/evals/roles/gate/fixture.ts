@@ -2,25 +2,24 @@
 // (file, symbol and form from the trial's seed), the spec, the commit message and the answer key.
 //
 // Placement: a cell asks for its plant's file inlined, not inlined, or either. The fixture predicts it with the production
-// bounded diff (src/git/boundeddiff.ts) at INLINE_BUDGET over a scratch repository, picks a file on the asked side, and
-// checks the planted tree lands there too. The trial then reads the truth from the prompt the gate was really given
-// (grade.ts `placementOf`): a trial whose plant landed on the other side is void (`placement-miss`), never graded.
+// bounded diff (src/git/boundeddiff.ts) at the gate's own budget (`GATE_DIFF_BUDGET`) over a scratch repository, picks a
+// file on the asked side, and checks the planted tree lands there too. The trial then reads the truth from what the gate
+// recorded it was shown (its `judgment-inputs` `diffShown`, grade.ts): a trial whose plant landed on the other side is void
+// (`placement-miss`), never graded.
 import { join } from 'node:path';
 import { sha } from '../../../src/core/ids.ts';
 import { absPath, repoPattern } from '../../../src/core/values.ts';
 import { boundedDiff } from '../../../src/git/boundeddiff.ts';
+import { GATE_DIFF_BUDGET } from '../../../src/pipeline/gate.ts';
 import type { PlantContext, Planted } from '../gen/plant.ts';
 import { rng } from '../gen/prng.ts';
 import { type FileMap, type Repo, type Swept, finish, generate, gitOut, importCommits, initRepo, sweep } from '../gen/tsrepo.ts';
 import type { Cell, Placement } from './cells.ts';
 
-/**
- * The inline budget placement is predicted against: an estimate of the gate's own (W1, dev.12). Replace it with the
- * gate's exported budget once that lands; until then a misprediction only voids trials as `placement-miss`.
- */
-export const INLINE_BUDGET = 262_144;
 /** The plan's derived files: goldens/ is regenerated from the generator and the modules. */
 export const DERIVED = [{ sources: ['tools/gen-goldens.ts', 'packages/**'], outputs: ['goldens/**'] }] as const;
+/** The derived outputs as the gate passes them to the bounded diff. */
+export const DERIVED_PATTERNS = DERIVED.flatMap((x) => x.outputs.map((o) => repoPattern(o)));
 
 export type AnswerKey = Readonly<{
   cell: string;
@@ -67,7 +66,7 @@ function clauses(repo: Repo, s: Swept): Clause[] {
   }
   if (s.arity !== null) out.push({ id: `A${out.length + 1}`, clause: `Give \`${s.arity.name}\` (${s.arity.path}) an optional third parameter \`c = 0\`, unused for now: a later unit uses it.` });
   if (s.removes.length > 0) {
-    out.push({ id: `A${out.length + 1}`, clause: `Remove exactly ${s.removes.map((r) => `\`${r}\``).join(' and ')}: the unit deletes nothing else.` });
+    out.push({ id: `A${out.length + 1}`, clause: `Remove exactly ${s.removes.map((r) => `\`${r}\``).join(' and ')} (a directory with everything under it): the unit deletes nothing else.` });
   }
   out.push({ id: `A${out.length + 1}`, clause: 'goldens/ is regenerated with `node tools/gen-goldens.ts`, never edited by hand. Every other line is unchanged.' });
   return out;
@@ -97,15 +96,17 @@ export function trimEnds(paths: readonly string[]): readonly string[] {
 }
 
 /** Predicts which changed files the gate's bounded diff inlines (a scratch repo holding the base, one commit per tree). */
-function placementOracle(scratch: string, base: FileMap): (head: FileMap) => ReadonlySet<string> {
+function placementOracle(scratch: string, base: FileMap, removes: readonly string[]): (head: FileMap) => ReadonlySet<string> {
   initRepo(scratch);
   const [baseSha] = importCommits(scratch, [{ ref: 'refs/heads/main', message: 'base\n', files: base, parent: null }]);
   let n = 0;
   return (head) => {
     n += 1;
     const [headSha] = importCommits(scratch, [{ ref: `refs/heads/try-${n}`, message: 'try\n', files: head, parent: null }]);
-    const d = boundedDiff(absPath(scratch), sha(baseSha!), sha(headSha!), INLINE_BUDGET, DERIVED.flatMap((x) => x.outputs.map((o) => repoPattern(o))), absPath(join(scratch, `bd-${n}`)));
-    return new Set(d.inlinedPaths);
+    const d = boundedDiff(absPath(scratch), sha(baseSha!), sha(headSha!), {
+      budget: GATE_DIFF_BUDGET, derived: DERIVED_PATTERNS, removes, dir: absPath(join(scratch, `bd-${n}`)),
+    });
+    return new Set(d.inlined.map((f) => f.path));
   };
 }
 
@@ -129,7 +130,7 @@ export function buildFixture(cell: Cell, o: FixtureOptions): Fixture {
   const unplanted = finish(swept.files);
   const at = plant.phase === 'source' ? swept.files : unplanted;
   // Placement `any` predicts nothing (the bounded diff of a large sweep takes seconds per tree).
-  const oracle = placement === 'any' ? null : placementOracle(o.scratch, repo.files);
+  const oracle = placement === 'any' ? null : placementOracle(o.scratch, repo.files, swept.removes);
   const before = oracle === null ? null : oracle(unplanted);
   const eligible = trimEnds(plant.eligible(ctx, at)).filter((p) => before === null || side(before, p) === placement);
   for (const path of ctx.rng.shuffle(eligible).slice(0, CANDIDATES)) {

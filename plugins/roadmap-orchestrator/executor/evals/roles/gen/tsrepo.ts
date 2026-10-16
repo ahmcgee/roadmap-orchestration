@@ -216,7 +216,7 @@ export type Swept = Readonly<{
   to: string;
   /** Scope `package`: the package renamed in. */
   pkg: string | null;
-  /** Globs the spec declares removed. */
+  /** The spec's `removes` (src/core/records.ts SpecM1): literal paths, the deprecated package's directory and a declared file. */
   removes: readonly string[];
   /** `golden-arity`: the function given an optional third parameter. */
   arity: Readonly<{ path: string; name: string }> | null;
@@ -251,7 +251,7 @@ export function sweep(r: Repo, spec: SweepSpec, decoy: Decoy, seed: string): Swe
     if (spec.tests !== 'none' && p.includes('/test/')) t = t.replace(/assert\.ok\((.+) === (-?\d+), ('[^']*')\);/g, `assert.${spec.tests}($1, $2, $3);`);
     files.set(p, t);
   }
-  if (spec.remove) removes.push(`packages/${r.deprecated}/**`);
+  if (spec.remove) removes.push(`packages/${r.deprecated}`);
   if (decoy === 'declared-compat-removal') {
     files.delete(r.compat);
     removes.push(r.compat);

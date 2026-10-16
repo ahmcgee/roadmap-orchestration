@@ -185,13 +185,6 @@ at triage stay in git history.
 
 ## Do soon (small fixes)
 
-- **Role eval placement budget** (dev.12 merge). `evals/roles/gate/fixture.ts` predicts a plant's placement against
-  `INLINE_BUDGET`, an estimate of the gate's bounded-diff budget, and calls `boundedDiff` as the WIP module shaped it.
-  Import the gate's own budget (and follow any signature change) once the bounded gate diff lands; until then a
-  misprediction voids trials as `placement-miss`, never grades them.
-- **Role eval declared removals** (dev.12 merge). The gate fixture states the spec's removals as an acceptance clause; if
-  the spec grows a `removes` field, write it there too (`evals/roles/gate/arc.ts` `setupGateArc`).
-
 - **Flow seat decorates its station id** (probe, 2026-10-16, dev.11 ladder). The efficient flow seat answered
   `constraint.station: "slot:integration (largest service component suite:suite)"`, refused by `m4b.flow.validate`; a
   rerun passed. In an arc the dev.10 repair turn catches it, at the cost of a call. Tighten the flow prompt: the station is

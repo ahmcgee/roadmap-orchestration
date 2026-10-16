@@ -6,10 +6,11 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { sha } from '../src/core/ids.ts';
-import { absPath, repoPattern } from '../src/core/values.ts';
+import { absPath } from '../src/core/values.ts';
 import { boundedDiff } from '../src/git/boundeddiff.ts';
+import { GATE_DIFF_BUDGET } from '../src/pipeline/gate.ts';
 import { DEV_CELLS, type Cell } from '../evals/roles/gate/cells.ts';
-import { DERIVED, INLINE_BUDGET, type Fixture, buildFixture, materialise, trimEnds } from '../evals/roles/gate/fixture.ts';
+import { DERIVED_PATTERNS, type Fixture, buildFixture, materialise, trimEnds } from '../evals/roles/gate/fixture.ts';
 import { rng } from '../evals/roles/gen/prng.ts';
 import { TEST_ARGV, generate, gitOut } from '../evals/roles/gen/tsrepo.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -51,7 +52,7 @@ test('roles.plant-in-diff: every planted dev cell plants inside the diff, away f
     if (p.deletion) {
       assert.equal(f.head.has(p.path), false, `${c.id}: the deleted file is still there`);
       assert.equal(f.base.has(p.path), true);
-      assert.ok(!f.key.removes.some((r) => r === p.path || p.path.startsWith(r.replace('**', ''))), `${c.id}: the stray deletion is declared`);
+      assert.ok(!f.key.removes.some((r) => r === p.path || p.path.startsWith(`${r}/`)), `${c.id}: the stray deletion is declared`);
     } else {
       assert.ok(f.head.get(p.path)!.includes(p.needle), `${c.id}: the needle ${p.needle} is not in ${p.path}`);
     }
@@ -71,12 +72,13 @@ test('roles.twins-identical: a family\'s planted and clean cells share the spec 
 });
 
 test('roles.placement-omitted: an omitted placement is really not inlined by the bounded diff, an inlined one is', () => {
+  // Size 400: large enough under this seed that the sweep overflows the gate's budget (GATE_DIFF_BUDGET, 384 KiB; 300 does not).
   for (const [id, inlined] of [['G3b', false], ['G2a', true]] as const) {
-    const f = build(id, 200);
+    const f = build(id, 400);
     const dir = tmpDir('roles-place');
     const { base, head } = materialise(f, dir);
-    const d = boundedDiff(absPath(dir), sha(base), sha(head), INLINE_BUDGET, DERIVED.flatMap((x) => x.outputs.map((o) => repoPattern(o))), absPath(join(tmpDir('roles-bd'), 'bd')));
-    assert.equal(d.inlinedPaths.includes(f.key.plant!.path as never), inlined, `${id}: ${f.key.plant!.path}`);
+    const d = boundedDiff(absPath(dir), sha(base), sha(head), { budget: GATE_DIFF_BUDGET, derived: DERIVED_PATTERNS, removes: f.swept.removes, dir: absPath(join(tmpDir('roles-bd'), 'bd')) });
+    assert.equal(d.inlined.some((x) => x.path === f.key.plant!.path), inlined, `${id}: ${f.key.plant!.path}`);
     assert.equal(f.key.plant!.predicted, inlined ? 'inlined' : 'omitted');
   }
 });

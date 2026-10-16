@@ -13,7 +13,7 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { StageOutcomeFact } from '../../../src/core/events.ts';
+import type { DiffShown, StageOutcomeFact } from '../../../src/core/events.ts';
 import type { RiskTier } from '../../../src/routing/types.ts';
 import { type InvocationId, invocationId } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
@@ -32,7 +32,7 @@ import { TEST_ARGV } from '../gen/tsrepo.ts';
 import { type Transcript, type Usage, parseEvents, readTranscript, sumUsage, toolCounts, unavailableCalls, usageOf } from '../transcript.ts';
 import type { Cell } from './cells.ts';
 import { type AnswerKey, DERIVED, type Fixture, buildFixture, materialise } from './fixture.ts';
-import { type Graded, grade, inlinedPaths, touched } from './grade.ts';
+import { type Graded, grade, touched } from './grade.ts';
 
 /** Degenerate gates: approve everything; revise everything (one blocking finding off the plant); cite every changed path; cite the plant without reading. */
 export const FAKE_GATES = ['approve-all', 'revise-all', 'cite-every-path', 'cite-plant'] as const;
@@ -79,6 +79,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier): ArcDes
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...laneJson(LANE), state: 'active' }],
     acceptance: f.acceptance.map((c) => ({ id: c.id, clause: c.clause, failLoudIfUndelivered: true, state: 'active' })),
     scope: SCOPE, resources: [], decisions: [], facts: [], cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
+    ...(f.swept.removes.length === 0 ? {} : { removes: f.swept.removes }),
   }));
   cpSync(RULINGS, join(planDir, 'rulings.md'));
   const arc = arcFor();
@@ -113,17 +114,21 @@ const TRACE_MS = 30_000;
 
 type Live = { inv: InvocationId; startedAt: number; firstRead: number | null; firstAgent: number | null; coverage: number[] };
 
-/** The prompt's changed files it did not inline: what coverage counts. */
-const omittedOf = (key: AnswerKey, prompt: string): readonly string[] => {
-  const inlined = inlinedPaths(prompt);
-  return key.changed.filter((p) => !inlined.has(p));
-};
+/** What the latest gate attempt recorded it was shown (null before its inputs are captured): what placement and coverage read. */
+function gateShown(r: ArcRun): DiffShown | null {
+  const parent = judgmentSpawns(r.ctx, U1, 'gate').at(-1)?.parent;
+  if (parent === undefined) return null;
+  if (parent.type !== 'stage') throw new Error(`a gate spawn under ${parent.type}`);
+  const inputs = r.journal.view.judgmentInputs(U1, 'gate', parent.attempt);
+  if (inputs?.diffShown === undefined) throw new Error(`gate#${parent.attempt}: a gate spawn without its judgment-inputs diffShown`);
+  return inputs.diffShown;
+}
 
 function gatePrompt(d: ArcDescriptor): string | null {
   return readCalls(d.scenarioPath).find(isGateCall)?.stdin ?? null;
 }
 
-function startMonitor(r: ArcRun, key: AnswerKey, label: string, medianLoad: number | null, log: (line: string) => void): { stop: () => void; brake: () => Brake | null; firsts: () => Readonly<{ read: number | null; agent: number | null }> } {
+function startMonitor(r: ArcRun, label: string, medianLoad: number | null, log: (line: string) => void): { stop: () => void; brake: () => Brake | null; firsts: () => Readonly<{ read: number | null; agent: number | null }> } {
   let live: Live | null = null;
   let braked: Brake | null = null;
   let lastTrace = Date.now();
@@ -158,8 +163,7 @@ function startMonitor(r: ArcRun, key: AnswerKey, label: string, medianLoad: numb
     if (live.firstAgent === null && t.calls.some((c) => c.name === 'Agent' || c.name === 'Task')) live.firstAgent = now - live.startedAt;
     firstRead ??= live.firstRead;
     firstAgent ??= live.firstAgent;
-    const prompt = gatePrompt(r.d);
-    const omitted = prompt === null ? [] : omittedOf(key, prompt);
+    const omitted = gateShown(r)?.notInlined ?? [];
     const covered = omitted.filter((p) => touched(t, p)).length;
     while (live.coverage.length < t.toolTurns.length) live.coverage.push(covered);
     // Only when the prompt left something out: with every file inlined, answering without a tool is a method choice.
@@ -255,7 +259,7 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   writeFileSync(join(o.out, 'key.json'), `${JSON.stringify(fx.key, null, 2)}\n`);
   const d = setupGateArc(fx, o.gate, o.risk);
   const r = contextFor(d);
-  const monitor = startMonitor(r, fx.key, label, o.medianLoad, o.log);
+  const monitor = startMonitor(r, label, o.medianLoad, o.log);
   const started = Date.now();
   let error: string | null = null;
   try {
@@ -292,10 +296,12 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const answer = last === undefined ? null : judgmentOutput(r.ctx, last, validateGateOutput);
   writeFileSync(join(o.out, 'answer.json'), `${JSON.stringify(answer, null, 2)}\n`);
   const decided = r.journal.view.unit(U1).decided;
+  const shown = gateShown(r);
   const stages = outcomes(d);
   r.journal.close();
 
-  const graded = answer === null ? null : grade(fx.key, prompt, t, answer);
+  if (answer !== null && shown === null) throw new Error(`${label}: a gate answer without the gate's judgment-inputs`);
+  const graded = answer === null ? null : grade(fx.key, shown!, prompt, t, answer);
   const hits = scanTranscript(transcriptFile, [o.out, dirname(o.out), 'evals/roles', ...repositoryPaths()]);
   const brake = monitor.brake();
   const voided: TrialRow['void'] = brake !== null ? { reason: 'runaway', detail: `${brake.rule}: ${brake.detail}` }

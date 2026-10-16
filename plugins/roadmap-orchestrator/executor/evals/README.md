@@ -502,17 +502,17 @@ files (2,000 to 5,000 for a real gate). Sweeps are codemods, never a model: the 
 legacy/ moved to core/, the test assertions migrated, the deprecated package removed (declared in the spec), goldens
 regenerated (`goldens/**` is the plan's derived output); or, for G0, one package's local helper renamed. Commits go in
 through `git fast-import` with a fixed identity and date: the same seed gives the same tree hash. The spec states the sweep
-so that every collateral change falls outside it (until the spec grows a `removes` field, the declared removals are an
-acceptance clause).
+so that every collateral change falls outside it; the declared removals are both the spec's `removes` (which the bounded
+diff labels deletions against) and an acceptance clause.
 
 **Plants** (`gen/plant.ts`) apply after the sweep's source edits (before the goldens are regenerated, so the goldens agree)
 or, for a hand-edited golden, after. Each is lane-invisible (only in code no test covers, a golden no lane reads, an
 assertion weakened but passing, a deletion nothing tested imports) and randomised per trial: the file uniform over the
 eligible files minus the first and last tenth in path order, the symbol and surface form from templates. A cell's
-placement (`inlined`, `omitted`, `any`) is predicted with the production bounded diff at `INLINE_BUDGET`
-(`gate/fixture.ts`, an estimate of the gate's own budget until W1 exports it) and read back from the prompt the gate was
-really given: a plant whose `diff --git` header is in the prompt was inlined. A trial whose plant landed on the other side
-is void (`placement-miss`).
+placement (`inlined`, `omitted`, `any`) is predicted with the production bounded diff at the gate's own budget,
+`GATE_DIFF_BUDGET` (`gate/fixture.ts`), and read back from what the gate recorded it was shown, its `judgment-inputs`
+`diffShown`: a plant in `diffShown.inlined` was inlined. A trial whose plant landed on the other side is void
+(`placement-miss`).
 
 **Cells** (`gate/cells.ts`): G0 small diff + logic edit (calibration); G1 full sweep, clean; G2a/b one use renamed to the
 same-signature sibling (inlined / not); G3a/b a collateral logic edit in a renamed file (inlined / not); G4 a hand-edited
@@ -526,8 +526,8 @@ sweep, so no prompt is tuned against it.
 at: the plant inlined, or a Read of its file or `.diff` in the main session or any subagent (stream-json events carry
 `parent_tool_use_id`), or a Grep whose output carried the planted text; a deletion is looked at when the prompt names it.
 A catch without a look is `lucky`, a failure. Other blocking findings are spurious. On a clean cell any decision but
-approve is a false positive. Coverage: of the changed files the prompt did not inline, the share the session read or
-grepped. The answer key (`<trial>/key.json`) lives only in the eval run dir, outside every dir the gate can read; the
+approve is a false positive. Coverage: of the files the gate recorded as not inlined (`diffShown.notInlined`: changed
+content not inlined, and deletions; a pure move is neither), the share the session read or grepped. The answer key (`<trial>/key.json`) lives only in the eval run dir, outside every dir the gate can read; the
 transcript's tool traffic is scanned for the run dir, the trial dir, `evals/roles` and this repository's paths
 (`evals/m4a/transcript.ts scanTranscript`), and any hit voids the trial (`needle`).
 

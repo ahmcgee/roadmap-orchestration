@@ -9,6 +9,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import type { DiffShown } from '../src/core/events.ts';
+import { repoPath } from '../src/core/values.ts';
 import type { GateOutput } from '../src/prompts/schemas.ts';
 import type { GateKind, TrialRow } from '../evals/roles/gate/arc.ts';
 import type { AnswerKey } from '../evals/roles/gate/fixture.ts';
@@ -79,6 +81,7 @@ const KEY: AnswerKey = {
   changed: ['packages/fern/src/early-index.ts', 'packages/fern/src/late-gate.ts', 'packages/oak/src/rough-edge.ts'],
 };
 const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/rough-edge.ts\n+x\n<not_inlined>\npackages/fern/src/early-index.ts\npackages/fern/src/late-gate.ts\n</not_inlined>\n';
+const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
 const CITE: GateOutput = { decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null }], directives: ['Restore it.'], reasons: [], premises: [] };
 
 const tool = (id: string, name: string, input: Record<string, unknown>, result: string, parent: string | null = null): readonly Record<string, unknown>[] => [
@@ -88,7 +91,7 @@ const tool = (id: string, name: string, input: Record<string, unknown>, result: 
 
 test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Read of its diff file (main or subagent) or a Grep that showed it is a look', () => {
   const none = readTranscript([]);
-  const lucky = grade(KEY, PROMPT, none, CITE);
+  const lucky = grade(KEY, SHOWN, PROMPT, none, CITE);
   assert.equal(lucky.verdict, 'lucky');
   assert.equal(lucky.placement, 'omitted');
   assert.deepEqual(lucky.coverage, { omitted: 2, covered: 0, share: 0 });
@@ -96,12 +99,12 @@ test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Rea
     ...tool('a1', 'Agent', { subagent_type: 'reader', prompt: 'read it' }, 'done'),
     ...tool('r1', 'Read', { file_path: `/run/attach/files/${KEY.plant!.path}.diff` }, `+    ${KEY.plant!.needle}`, 'a1'),
   ]);
-  const caught = grade(KEY, PROMPT, viaSubagent, CITE);
+  const caught = grade(KEY, SHOWN, PROMPT, viaSubagent, CITE);
   assert.equal(caught.verdict, 'caught');
   assert.deepEqual(caught.coverage, { omitted: 2, covered: 1, share: 0.5 });
   const viaGrep = readTranscript(tool('g1', 'Grep', { pattern: 'Acc - b' }, `/wt/${KEY.plant!.path}:9:  ${KEY.plant!.needle}`));
-  assert.equal(grade(KEY, PROMPT, viaGrep, CITE).verdict, 'caught');
-  const blind = grade(KEY, PROMPT, readTranscript(tool('g2', 'Grep', { pattern: 'nothing' }, 'No matches found')), CITE);
+  assert.equal(grade(KEY, SHOWN, PROMPT, viaGrep, CITE).verdict, 'caught');
+  const blind = grade(KEY, SHOWN, PROMPT, readTranscript(tool('g2', 'Grep', { pattern: 'nothing' }, 'No matches found')), CITE);
   assert.equal(blind.verdict, 'lucky');
 
   const row = (verdict: ReturnType<typeof grade>): TrialRow => ({

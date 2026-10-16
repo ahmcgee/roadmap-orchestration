@@ -1,14 +1,17 @@
-// Grading one gate trial from what really happened: the prompt the gate was given (the fake's calls.jsonl), its transcript
-// (stream-json, main session and subagents) and its answer, against the answer key, which only the eval run dir holds.
+// Grading one gate trial from what really happened: what the gate recorded it was shown (its `judgment-inputs` `diffShown`:
+// the files the bounded diff inlined and those with changed content it did not, deletions included, pure moves neither),
+// the prompt it was given (the fake's calls.jsonl), its transcript (stream-json, main session and subagents) and its
+// answer, against the answer key, which only the eval run dir holds.
 //
-// - Placement is read from the prompt: a changed file is inlined when its `diff --git` header is in the prompt. A planted
-//   trial whose plant landed on the other side of its cell's placement is void (`placement-miss`).
+// - Placement: the plant's file is inlined when `diffShown.inlined` holds it. A planted trial whose plant landed on the
+//   other side of its cell's placement is void (`placement-miss`).
 // - Looked at: the plant inlined, or a Read (any session) of its file or of its .diff, or a Grep whose output carried the
 //   needle; a deletion is looked at when the prompt names its path.
 // - Caught: decision revise or escalate with a blocking finding localised to the plant's path (its `path`, or a pathless
 //   finding whose text names it). Caught without a look is `lucky`, a failure. Every other blocking finding is spurious.
 // - Clean trials: any decision but approve is a false positive.
-// - Coverage: of the changed files the prompt did not inline, the share the session Read (file or .diff) or saw in a Grep.
+// - Coverage: of `diffShown.notInlined`, the share the session Read (file or .diff) or saw in a Grep.
+import type { DiffShown } from '../../../src/core/events.ts';
 import type { GateOutput } from '../../../src/prompts/schemas.ts';
 import type { Placement } from './cells.ts';
 import type { AnswerKey } from './fixture.ts';
@@ -28,16 +31,6 @@ export type Graded = Readonly<{
   coverage: Readonly<{ omitted: number; covered: number; share: number | null }>;
 }>;
 
-/** Every path a `diff --git a/<x> b/<y>` header of `prompt` names (both sides). */
-export function inlinedPaths(prompt: string): ReadonlySet<string> {
-  const out = new Set<string>();
-  for (const m of prompt.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)) {
-    out.add(m[1]!);
-    out.add(m[2]!);
-  }
-  return out;
-}
-
 /** A Read of `path` (or of its .diff) in any session, or a Grep whose output names it. */
 export function touched(t: Transcript, path: string): boolean {
   return readPaths(t).some((p) => p === path || p.endsWith(`/${path}`) || p.endsWith(`/${path}.diff`)) || grepResults(t).some((r) => r.includes(path));
@@ -46,9 +39,9 @@ export function touched(t: Transcript, path: string): boolean {
 const localisedTo = (f: GateOutput['findings'][number], path: string): boolean => (f.path === null ? f.text.includes(path) : f.path.includes(path));
 
 /** Grades a trial whose gate gave a valid answer (one without is void as an error, never graded). */
-export function grade(key: AnswerKey, prompt: string, t: Transcript, answer: GateOutput): Graded {
-  const inlined = inlinedPaths(prompt);
-  const omitted = key.changed.filter((p) => !inlined.has(p));
+export function grade(key: AnswerKey, shown: DiffShown, prompt: string, t: Transcript, answer: GateOutput): Graded {
+  const inlined = new Set<string>(shown.inlined);
+  const omitted = shown.notInlined;
   const covered = omitted.filter((p) => touched(t, p)).length;
   const coverage = { omitted: omitted.length, covered, share: omitted.length === 0 ? null : covered / omitted.length };
   const blockingFindings = answer.findings.filter((f) => f.severity === 'blocking');
