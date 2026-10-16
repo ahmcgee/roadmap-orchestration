@@ -180,6 +180,11 @@ at triage stay in git history.
 - **Lens chunking removal** (dev.12, deferred; the lens-range fix of 2026-10-16). With the bounded diff and readable
   `<not_inlined>` files, one lens call may cover a whole range. Trigger: a lens role eval shows a reader covers a whole
   range in one call; then delete `nextChunk`/`chunkEnd` and the chunk numbering in src/holistic/audit.ts.
+- **A checkpoint op's non-empty `cites` and `evidence`** (W4, 2026-10-16). W4 dropped the per-reason cite rule, the
+  unenforced reporting caps and any mandate on `premises`/`interpretations`, but kept the per-op requirement (every bundle op
+  cites at least one active `V-n` and non-empty evidence; DESIGN §2.8 checkpoint authority, the traceability the owner
+  audits). The evidence strings are not verified, so the requirement is partly method. Trigger: a repair turn or refused
+  bundle whose only fault is an op's empty `cites` or `evidence`; then make both may-be-empty and keep resolution only.
 
 - **Apply rebase merges arrays of plain values whole** (2026-10-16). `merge3` merges objects per key and arrays of
   keyed objects per element, but an array of strings (scope patterns, `holistic.advances`, cites, a lane's argv) both

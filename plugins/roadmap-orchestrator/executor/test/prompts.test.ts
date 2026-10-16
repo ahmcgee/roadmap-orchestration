@@ -503,7 +503,9 @@ describe('output validators', () => {
     assert.throws(() => validatePlanCheckOutput(dupEnv), SchemaError);
   });
 
-  it('planCheck and gate: premises are required; a cite op names at least one document', () => {
+  it('planCheck and gate: the premises key is required (strict schema) but may be empty; a cite op names at least one document', () => {
+    validatePlanCheckOutput({ ...ok.planCheck, premises: [] });
+    validateGateOutput({ ...ok.gate, premises: [] });
     const { premises: _p, ...noPremises } = ok.planCheck;
     assert.throws(() => validatePlanCheckOutput(noPremises), SchemaError);
     const { premises: _g, ...gateNoPremises } = ok.gate;
@@ -653,7 +655,8 @@ describe('M3 prompts: the vision and the arc roles', () => {
   it('the lens keeps the anti-spiral rules: the finding bar, prior findings not repeated, no reasoning field, nobody will answer', () => {
     const sys = promptFor('lens', 'claude-opus-5-5').system;
     for (const needle of [/Under-reporting a real defect and over-reporting a non-defect are both failures/, /An empty report is legitimate/, /Do not report one again/,
-      /Nobody will answer a question/, /not a transcript of your reasoning/, /At most 8 findings, worst first/]) assert.match(sys, needle);
+      /Nobody will answer a question/, /not a transcript of your reasoning/, /Findings worst first/]) assert.match(sys, needle);
+    assert.doesNotMatch(sys, /[Aa]t most \d+ (findings|premises)/, 'no unenforced reporting cap (W4)');
     for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
     const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
     assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
@@ -818,7 +821,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
       /before its first unit is admitted/, /You change nothing/, /adjudicates it/, /holds the arc's first admission/, /Nobody will answer a question/, /fresh session/,
       /Read-only: write no code, create no files, make no commit and edit nothing/, /Judge the pack as drafted/, /Never answer an open question yourself/,
       /1\. Contradictions[^]*2\. Units that cannot be built[^]*3\. Cuts[^]*4\. Lanes and obligations[^]*5\. The census and the slice[^]*6\. The Phase-0 record/,
-      /At most 12 findings, worst first/, /An empty report is legitimate/, /not a transcript of your reasoning/,
+      /Findings worst first/, /An empty report is legitimate/, /not a transcript of your reasoning/,
     ]) assert.match(mod.system, needle);
     const text = mod.render(SAMPLES.packReview[1]);
     assert.ok(text.startsWith('<vision>\nVision revision 2\n'), 'the vision first');
