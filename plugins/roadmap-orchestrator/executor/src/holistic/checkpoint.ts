@@ -24,7 +24,7 @@
 //      src/holistic/intake.ts, whose forge failure keeps the checkpoint). Code writes `checkpoint-skipped{audit, generation,
 //      visionSha256, carried}` instead of a call; it settles the audit's generation as a no-op would. A park trigger's prompt
 //      carries the code-produced diagnosis of the parked lineage (`parkDiagnosis`), and a reenter op cites the failure it
-//      fixes (src/input/classify.ts refuses an unchanged retry of a design failure).
+//      fixes (src/input/classify.ts requires and resolves it).
 //   1b. Paid M4a runs 10 and 11 (R-15, R-20): a due job that would make a call does not capture while a plan-check may
 //      patch a spec or a publication would move the head under it (`publishing`: a unit at plan-check or gate, approved
 //      and not yet at its candidate, at candidate or ff, or the integration slot held by any publication, a docs or batch

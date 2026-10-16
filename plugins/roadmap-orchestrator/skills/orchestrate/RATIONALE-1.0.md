@@ -365,7 +365,8 @@ measured number invites the cheapest way to move it: drop the slow test, loosen 
   front of them, the slot and its components). Code names the constraint, the largest wait or else the largest service.
   A proposal must target the constraint or one of its components, and an elevate lever (more cpu, a bigger pool) waits
   until an exploit or subordinate change on that target has a verdict, because elevating an unexploited constraint
-  buys capacity the arc never uses.
+  buys capacity the arc never uses. (Superseded in dev.12, owner 2026-10-16: both are the flow role's method, stated in
+  its prompt; code keeps the fence, the givens and the cpu and floor checks.)
 - **Statistical process control says when.** One XmR chart on log lead time, seeded from earlier arcs on an equal host
   and frozen for the arc. A point inside the limits is common-cause noise; acting on it is tampering. Only a special
   cause, a constraint shift, a closed verdict or a floor of 10 merges triggers a run, behind a cooldown, with at most

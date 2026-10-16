@@ -370,9 +370,7 @@ export function diagnosisText(d: ParkDiagnosis | null): string {
   return `\n\n<diagnosis>
 The executor's records of the parked unit's lineage, the parked unit first. A repeated failure, a lane the build keeps failing,
 edits salvage keeps reverting, or a witness test that is never found points at the cause; address it. A reenter op cites one of
-these references in fixes and must change what that failure ran under (the spec, the scope, the lanes or the routing), or reset
-its chargeable failures under a ruling: an unchanged retry of a design failure is refused. Only a flaky or host-suspected lane
-failure, or a park that is not the unit's design failure, may be retried unchanged.
+these references in fixes.
 ${d.units.map(unit).join('\n')}${reentries.length === 0 ? '' : `\nEarlier re-entries of this lineage:\n${reentries.join('\n')}`}
 </diagnosis>`;
 }

@@ -267,11 +267,11 @@ again, its recorded checkpoint answers re-enter as recorded, and the applies its
 | Record | Change | Read-time default for dev.10 state |
 |---|---|---|
 | `FailureRef` (src/core/records.ts) | new: `<unit>/<stage>#<attempt>` (a failure outcome: a `stage-outcome` that parked or stopped the unit or was charged) or `<unit>/lanes#<attempt>/<lane>` (a lane failure, src/pipeline/failures.ts); `parseFailureRef`, `failureRefOf` | none |
-| `plan.json` `reenters` | `+ fixes?: FailureRef`: the classifier requires it of a re-entry an apply adds once its lineage recorded a failure, resolves it, and refuses an unchanged retry of a design failure (`fixesReasons`) | absent: a re-entry already in force stays as recorded (lasting: the plan file reads it optional) |
-| Checkpoint answer, `reenter` op | `+ fixes: FailureRef \| null` (the schema requires the key; null only for a lineage with no failure) | the discriminator is the key: absent (only a dev.10 answer lacks it) reads as `unrecorded` (`reenterFixesDefault`, warned once; scaffolding), never as null. Such an op is adopted as recorded, applied or not: the bundle proposer's `fixesUnrecorded` names its unit, and `fixesReasons` (the requirement and the unchanged-retry refusal) does not bind it; it enters the plan without `fixes` |
+| `plan.json` `reenters` | `+ fixes?: FailureRef`: the classifier requires it of a re-entry an apply adds once its lineage recorded a failure, and resolves it (`fixesReasons`; dev.12 dropped the dev.11 refusal of an unchanged retry of a design failure) | absent: a re-entry already in force stays as recorded (lasting: the plan file reads it optional) |
+| Checkpoint answer, `reenter` op | `+ fixes: FailureRef \| null` (the schema requires the key; null only for a lineage with no failure) | the discriminator is the key: absent (only a dev.10 answer lacks it) reads as `unrecorded` (`reenterFixesDefault`, warned once; scaffolding), never as null. Such an op is adopted as recorded, applied or not: the bundle proposer's `fixesUnrecorded` names its unit, and `fixesReasons` (the requirement) does not bind it; it enters the plan without `fixes` |
 | `CommandBody` `apply` (apply rebase) | `- expectRev`, `+ base: RevisionManifest \| null` | `expectRev` present (a dev.10 CLI's body): base null (`applyExpectRevDefault`, warned once; scaffolding) |
 | `CommandBody` `apply` (`--vision-edit`) | `+ visionEdit: boolean`, written on every body (`false` included); row 12 (`vision-leak`) refuses a changed vision only when it is false | absent (a dev.10 CLI's body): true, a declared vision edit (`applyVisionEditDefault`, warned once; scaffolding): the previous release's queued command is adopted, never refused as `vision-leak` |
-| `UnitState` (fold) | `+ failures: [{seq, fact, park, spec, dispatch{scope, routingRev}\|null, planRev}]`: each failure outcome with what it ran under (`scope`: the effective scope, ascending) | derived |
+| `UnitState` (fold) | `+ failures: [{seq, fact, park}]`: each failure outcome (dev.12 dropped what it ran under, `spec`, `dispatch`, `planRev`, which only the unchanged-retry refusal read) | derived |
 | `LaneFailure`, `status.units[].failures[]` | `+ ref: FailureRef` | derived |
 | Facts | `+ checkpoint-skipped{audit, generation, visionSha256, carried: FindingId[]}`: a completed audit found nothing new, so no checkpoint ran (src/holistic/checkpoint.ts `nothingNew`, and in a corpus arc every open issue already seen by a settled checkpoint, src/holistic/intake.ts `unseenIssues`); its generation is quiescent (`quiescentGenerations`) | none: dev.10 logs never hold it |
 | `status.decisionsSince[].kind` | `+ checkpoint-skipped` (ruled by the executor) | none |
@@ -775,7 +775,10 @@ Every stored item adds `state: active | struck | deferred`; ids are never delete
 `SpecPatch = {expectRev, by: {role:'planCheck', routingRev, inv} | {role:'executor', inv}, ops (non-empty)}`; `by`
 is a plan-check redirect's judgment invocation, or the executor appending the build invocation `inv`'s
 `decisions.json` to the decisions section after the evidence snapshot (lead ruling, step 12; not while an applied
-revision of the spec is pending: the unit re-opens on it, and its next build writes its decisions again); ops `add{section, item} |
+revision of the spec is pending: the unit re-opens on it, and its next build writes its decisions again). A `decisions.json` that does
+not validate (`readDecisions`) makes a build that reported success `malformed` (dev.12), the resume round quoting why;
+one still read at evidence (a build lost with tree effects, or read by a previous release) is not appended and a stderr
+line names it. Ops `add{section, item} |
 replace{section, item} | strike{id} | defer{id} | cite{contracts, rulings}`, sections `lanes | acceptance |
 decisions | facts`. `cite` adds to `cites` (at least one entry; a repeated cite is already there) and nothing
 removes one; a plan-check redirect citing no plan contract or no ledger ruling is `malformed`, and so (run 10, C) is
@@ -3333,8 +3336,11 @@ agree, reason}, diagnosis, proposal: {target, action, rationale, risks} | null, 
 unused `argv`, `reporter` or `cpu` is null and reads as absent. A schema failure takes the one judgment repair turn
 (dev.12; M4b asked a fresh call, the retry told why); refused again, the run is `invalid`. Code's checks after the
 schema drop the proposal with a reason (`FLOW_DROP_REASONS`): `target`, `given`, `rejected-before`, `verdict-open`,
-`elevate-early`, `argv-shape`, `lane-cpu`, `concurrency-cpus`, `sequence-repair-waiting`, `sequence-high-set`,
-`build-class-step`.
+`direction`, `argv-shape`, `lane-cpu`, `concurrency-cpus`, `sequence-repair-waiting`, `sequence-high-set`,
+`build-class-step`. dev.12 dropped `elevate-early` and the constraint half of `target` (a target station is the
+role's method; `target` keeps held, `wait:finding`, a suite-lane action off its lane, the slot or `host:cpu`, a missing
+lane, pool or live unit, and an action that changes nothing). A recorded drop reads `RECORDED_DROP_REASONS`, which adds
+`elevate-early` for a dev.11 `flow-ended` (scaffolding). `ProposalContext` lost `constraint`, `judged` and `verdicts`.
 
 **Proofs and verdicts.** `PROOF_OUTCOMES = preserved | changed | unprovable | red`. `FLOW_GUARDS = lead | rework |
 first-run-reds | obligation | cost`; a verdict's `guards` are breaches `{guard, detail}`, each guard once, in that order.
@@ -3492,7 +3498,7 @@ under 5 s read up to 0.88 at concurrency 8 (process start-up), which is why they
 | `StationId` | `+ host:cpu` (`HOST_CPU_STATION`, parts `{type: host-cpu}`) | the host's cpu: internal, never a key of a point's `minutes`; `waitInFrontOf` refuses it (its levers' metric is pressure) |
 | `CodeConstraint` | `station: host:cpu` with `internal: true`, `component: null` | ahead of the wait and service rules when the window's mean pressure ≥ `PRESSURE_SATURATED` (H1) |
 | `FLOW_TRIGGERS` | `+ host-pressure`, after `yellow-worsening` | with units in flight, a host-pressure hold since the last run's start (its stage outcome's time, `pressureHoldTimes` over the log; recalibration: was 10 min of PSI avg60 ≥ the threshold, which a healthy busy host reaches) |
-| `FLOW_DROP_REASONS` | `+ direction`, after `elevate-early` | an increase at `host:cpu` (only decreases or `host` advice) |
+| `FLOW_DROP_REASONS` | `+ direction`, after `elevate-early` (dropped in dev.12) | an increase at `host:cpu` (only decreases or `host` advice) |
 | `FlowMetric` | `+ pressure{}` | RC-12: a lever at `host:cpu` is measured by the pressure of the units admitted after (a unit without one is no sample); lead stays a guard. Its step is `subordinate` (`stepOf`) |
 | `HoldCause` | `+ host-pressure{inv}` | RC-11: a unit whose run `inv` was starved, or red under pressure with its rerun pending, held until a minute of ticks since the hold shows the host's cpu wait < `PRESSURE_SATURATED` or 30 min pass (H2; see "Charging") |
 | `Starved` (src/host/pressure.ts) | `{kind: starved, inv, pressure}` | RC-11: a lane run or stage invocation ended by `deadline` or `stall` with its own pressure ≥ `PRESSURE_SATURATED`: no product verdict, not chargeable, no fix round; after `STARVED_MAX` host-pressure holds of one unit, today's handling (H2) |

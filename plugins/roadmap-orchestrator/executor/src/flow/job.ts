@@ -54,7 +54,7 @@ import { stationTable } from './series.ts';
 import { chartOf } from './spc.ts';
 import {
   FLOW_INPUTS_SCHEMA, type FlowAction, type FlowInputs, type FlowOutcome, type FlowOutput, type FlowProposal, type FlowPromptInputs, type FlowTrigger,
-  type JudgedConstraint, parseFlowInputs,
+  parseFlowInputs,
 } from './types.ts';
 
 /** The flow job runs under the checkpoint's context: the stage's, the arbiter's first-served `@cpu`, the plan file. */
@@ -322,11 +322,11 @@ export function settleFlowItems(ctx: Pick<FlowJobContext, 'journal' | 'runDir'>,
 // ---------------------------------------------------------------------------------------------------
 // The job
 
-/** Code's checks' context (`checkProposal`): the kept inputs, the role's reading, and the arc now. */
-function proposalContext(ctx: FlowJobContext, inputs: FlowInputs, judged: JudgedConstraint, flow: FlowNow): ProposalContext {
+/** Code's checks' context (`checkProposal`): the kept inputs and the arc now. */
+function proposalContext(ctx: FlowJobContext, inputs: FlowInputs, flow: FlowNow): ProposalContext {
   return {
-    plan: ctx.plan(), host: flow.host, constraint: inputs.constraint, judged, levers: inputs.levers, givens: inputs.givens, window: inputs.window,
-    verdicts: inputs.verdicts, rejections: inputs.rejections, repairWaiting: repairWaiting(ctx), flowHigh: flowHighOf(ctx, flow.log),
+    plan: ctx.plan(), host: flow.host, levers: inputs.levers, givens: inputs.givens, window: inputs.window,
+    rejections: inputs.rejections, repairWaiting: repairWaiting(ctx), flowHigh: flowHighOf(ctx, flow.log),
   };
 }
 
@@ -364,7 +364,7 @@ export async function runFlowJob(ctx: FlowJobContext, triggers: readonly FlowTri
   if (asked.kind === 'output') {
     const { output } = asked;
     const proposal: FlowProposal | null = output.proposal === null ? null : { id: proposalIdOf(job, 0), ...output.proposal };
-    const dropped = proposal === null ? null : checkProposal(proposal, proposalContext(ctx, inputs, output.constraint, flowNow(ctx, now())));
+    const dropped = proposal === null ? null : checkProposal(proposal, proposalContext(ctx, inputs, flowNow(ctx, now())));
     ctx.journal.fact({ kind: 'flow-ended', job, outcome: 'done', proposal: dropped === null ? proposal : null, dropped, constraint: { code, judged: output.constraint } });
   } else {
     ctx.journal.fact({ kind: 'flow-ended', job, outcome: asked.kind, proposal: null, dropped: null, constraint: { code, judged: null } });

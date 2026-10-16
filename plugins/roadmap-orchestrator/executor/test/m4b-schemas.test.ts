@@ -74,6 +74,11 @@ describe('m4b facts', () => {
       kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: { proposal: PROPOSAL, reason: 'rejected-before', detail: 'suite-lane on unit' },
       constraint: { code: SLOT, judged: JUDGED },
     }));
+    // A 1.0.0-dev.11 drop reason dev.12 no longer writes reads as recorded (scaffolding: RECORDED_DROP_REASONS).
+    roundTrip(fact({
+      kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: null, dropped: { proposal: PROPOSAL, reason: 'elevate-early', detail: 'no exploit or subordinate verdict closed on slot:integration this arc' },
+      constraint: { code: SLOT, judged: JUDGED },
+    }));
     roundTrip(fact({ kind: 'flow-ended', job: 'flow-3', outcome: 'invalid', proposal: null, dropped: null, constraint: { code: null, judged: null } }));
     roundTrip(fact({ kind: 'flow-requested', command: CMD, reason: 'the suite lane ran 6 min on a 1-file change' }));
     roundTrip(fact({ kind: 'flow-decided', proposal: 'flow-2.0', command: CMD, decision: 'accepted', reason: 'test-set-preserving by proof' }));

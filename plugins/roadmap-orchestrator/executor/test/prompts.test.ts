@@ -840,7 +840,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
       /common-cause variation: noise, not a signal, and a change made to answer it is tampering/, /diagnostics only, never a goal/,
       /The ruler is out of reach/, /you must not argue around them/, /Prefer exploit and subordinate before elevate/,
       /may change only the value of one --test-concurrency=<n> element, in place/, /The lane's cpu must cover its concurrency/,
-      /never held, never wait:finding/, /Exactly one of proposal and noAction/,
+      /whose target is held or wait:finding/, /Exactly one of proposal and noAction/,
     ]) assert.match(mod.system, needle);
     const a = mod.render(SAMPLES.flow[0]);
     assert.match(a, /No chart yet/);

@@ -243,7 +243,8 @@ touches only that lever's plan fields, and judges it on the chart (`status.flow`
 - **`flow-proposal`** (non-blocking, on `watch --actionable`). Read the item and its inputs file, then assess it
   skeptically:
   1. Does it touch a measurement: tests, lanes, witnesses, judgment? A change to what is measured is a reject.
-  2. Does its target match the code constraint (`status.flow.constraint` and its component)?
+  2. Does its target match the code constraint (`status.flow.constraint` and its component)? Code does not check
+     this; a target off the constraint needs a diagnosis that says why.
   3. Is the effect plausible at the target's share of lead time (the station table)? A station at 10 % of lead
      cannot halve it.
   4. Which guard could it breach: lead, rework, first-run reds, an obligation, cost per merge?
@@ -456,9 +457,8 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   ack the old item, `roadmap apply`. `fixes` names the failure the re-entry fixes, and `apply` refuses a re-entry
   without it: the park as `<unit>/<stage>#<attempt>` (the item's recommendation spells it), another failure outcome of
   the lineage, or a lane failure by its `ref` in `status.units[].failures` (`<unit>/lanes#<attempt>/<lane>`). Find
-  the cause first: a re-entry that changes nothing the failure ran under (the same spec content, effective scope, suite lanes
-  and routing, no `reset`) is refused, unless the failure is a flaky or host-suspected lane or a park that is not the
-  unit's design failure (a red base, an environment or retryable park); the refusal names what must differ. The new
+  the cause first: `apply` accepts a re-entry that changes nothing the failure ran under, but a design failure retried
+  unchanged usually fails again and spends the unit's chargeable bound. The new
   unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand. Its scope may grow beyond
   the lineage's only on a ruling its spec cites that names exactly the added patterns.
 - **Parked `witness-lane-missing`** (an arc started on 1.0.0-dev.9: the unit's spec names a witness lane that is no
