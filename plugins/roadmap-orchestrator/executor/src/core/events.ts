@@ -733,9 +733,14 @@ export type AuditInputs = Readonly<{
   owners: readonly Readonly<{ unit: UnitId; head: Sha }>[];
   priorFindings: readonly FindingId[];
   highWater: number;
+  /**
+   * The lens-range fix (2026-10-16): the byte budget each lens chunk's and the owners' attached diffs keep within
+   * (src/holistic/lensdiff.ts). Absent on an audit an earlier executor started: read through `auditDiffBudgetOf`.
+   */
+  diffBudget?: number;
 }>;
 
-/** One lens's covered range: `from` its watermark before, `to` the audited SHA. */
+/** One lens's covered range: `from` its watermark before, `to` how far its reported chunks reached (at most the audited SHA). */
 export type CoveredRange = Readonly<{ lens: LensKindName; from: Sha; to: Sha }>;
 
 /**
@@ -1809,21 +1814,25 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     return out;
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
-  'audit-started': object((f): Fact => ({
-    kind: f.get('kind', literal('audit-started')),
-    job: f.get('job', auditJobR),
-    triggers: f.get('triggers', arrayOf(auditTrigger, { nonEmpty: true })),
-    generation: f.get('generation', positive),
-    lenses: f.get('lenses', lensSet),
-    integrationSha: f.get('integrationSha', shaR),
-    planRev: f.get('planRev', planRevR),
-    ledgerSha256: f.get('ledgerSha256', nullable(sha256R)),
-    obligationsSha256: f.get('obligationsSha256', nullable(sha256R)),
-    visionSha256: f.get('visionSha256', sha256R),
-    owners: f.get('owners', sortedBy(object((g) => ({ unit: g.get('unit', unitR), head: g.get('head', shaR) })), (o) => o.unit)),
-    priorFindings: f.get('priorFindings', findingSet),
-    highWater: f.get('highWater', positive),
-  })),
+  'audit-started': object((f): Fact => {
+    const diffBudget = f.optional('diffBudget', positive);
+    return {
+      kind: f.get('kind', literal('audit-started')),
+      job: f.get('job', auditJobR),
+      triggers: f.get('triggers', arrayOf(auditTrigger, { nonEmpty: true })),
+      generation: f.get('generation', positive),
+      lenses: f.get('lenses', lensSet),
+      integrationSha: f.get('integrationSha', shaR),
+      planRev: f.get('planRev', planRevR),
+      ledgerSha256: f.get('ledgerSha256', nullable(sha256R)),
+      obligationsSha256: f.get('obligationsSha256', nullable(sha256R)),
+      visionSha256: f.get('visionSha256', sha256R),
+      owners: f.get('owners', sortedBy(object((g) => ({ unit: g.get('unit', unitR), head: g.get('head', shaR) })), (o) => o.unit)),
+      priorFindings: f.get('priorFindings', findingSet),
+      highWater: f.get('highWater', positive),
+      ...(diffBudget === undefined ? {} : { diffBudget }),
+    };
+  }),
   'audit-ended': object((f): Fact => {
     const out = {
       kind: f.get('kind', literal('audit-ended')),

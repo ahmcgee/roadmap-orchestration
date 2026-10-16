@@ -451,7 +451,7 @@ async function main(): Promise<void> {
   writeFileSync(join(m3Dir, 'convert.ts'), MINI_DIFF.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n'));
 
   const lensInputs: LensInputs = {
-    vision: MINI_VISION, lens: 'vision', obligations: MINI_OBLIGATIONS, range: { from: TREE, to: HEAD, diff: MINI_DIFF }, owners: [], priorFindings: [],
+    vision: MINI_VISION, lens: 'vision', obligations: MINI_OBLIGATIONS, range: { audited: HEAD, diff: { from: TREE, to: HEAD, stat: { text: ' convert.ts | 2 ++\n 1 file changed, 2 insertions(+)\n', full: true }, inlined: MINI_DIFF, omitted: [], unlisted: 0 } }, owners: [], priorFindings: [],
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir, specsOnly: null, retry: null,
   };
   await backend(ctx, 'm3.lens', seatCall(holistic, 'lens', 'arc', { role: 'planCheck', tier: 'high' }, 'm3-lens', m3Dir, lensInputs),

@@ -7,7 +7,7 @@
 //      recorded inputs; otherwise the cadence (cadence.ts) says whether one is due. A due audit is skipped (nothing
 //      written, its triggers stay owed) while the lens seat's backend is parked or the arc is paused or stopped.
 //   1. Immutable inputs (H2, A19): `audit-started{job, triggers, generation, lenses, integrationSha, planRev,
-//      ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater}` in one synchronous capture
+//      ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater, diffBudget}` in one synchronous capture
 //      under the revision fence (`captureUnderFence`), so no audit starts between a docs `ff` and its `plan-applied`.
 //      Everything after reads the recorded inputs, never what is in force later: the audited SHA, and the vision,
 //      obligations and ledger by their kept bytes.
@@ -21,16 +21,23 @@
 //      of the audited SHA: the vision first, then the obligations with their observations there, the lens's range
 //      (its watermark to the audited SHA) with its diff, the branch diffs of parked or in-flight owners of findings,
 //      the prior findings with their states, the contracts and rulings in force, the target (a corpus arc's materialised
-//      pin readable beside the checkout, `targetDirs`). A resumed job consumes a call it
-//      already made (`recordedArcCall`) and asks again only for one lost. Each report's findings are opened at once.
-//      A report with a draft refused at admission (below) asks that lens once more (M4b, paid run 3), as a later
-//      attempt, its prompt naming each refused draft with the reason (`LensInputs.retry`); the lens counts as reported
-//      only when the retry's report is admitted whole.
+//      pin readable beside the checkout, `targetDirs`). The lens-range fix (2026-10-16, src/holistic/lensdiff.ts): a
+//      range is reviewed in chunks, one call each, from the watermark to the furthest published head whose diff attaches
+//      whole within `diffBudget` (at least one publication), until the audited SHA, all within this job, so one audit
+//      always drains every range it runs; each chunk's diff and the owners' (sharing one budget) are attached bounded,
+//      a file not shown listed with the command that prints it. An audit an earlier executor started (no `diffBudget`)
+//      reviews each range in one call, as its recorded calls did. A resumed job consumes a call it already made
+//      (`recordedArcCall`) and asks again only for one lost: a lens's first call is numbered by its place in the run
+//      order, every further call (a later chunk, a retry) after every lens's first, in order, and the chunks are found
+//      again from git and the recorded inputs. Each report's findings are opened at once. A report with a draft refused
+//      at admission (below) asks that lens once more over the same chunk (M4b, paid run 3), its prompt naming each
+//      refused draft with the reason (`LensInputs.retry`); the chunk counts as reported only when the retry's report is
+//      admitted whole.
 //   5. The lens checkout removed, citing an evidence snapshot of it; then `audit-ended{covered, findings, suppressed,
-//      outcome, refused}`: `completed` when every lens reported, else `abandoned` (a lens failed, a draft was refused
-//      again, or its backend parked: the rest are not asked). Coverage (coverage.ts) is only the lenses that reported,
-//      each from its watermark at the capture to the audited SHA, never beyond it: a merge that landed meanwhile stays
-//      outstanding.
+//      outcome, refused}`: `completed` when every lens reported every chunk, else `abandoned` (a lens failed, a draft was
+//      refused again, or its backend parked: the rest are not asked). Coverage (coverage.ts) is each lens's range from
+//      its watermark at the capture as far as its reported chunks reached, never beyond the audited SHA: a lens that
+//      failed a later chunk keeps the earlier ones, and a merge that landed meanwhile stays outstanding.
 //   6. The race (§2.5): when the integration head moved past the audited SHA, the P1s this audit cited are
 //      re-witnessed on the current head (`rewitnessP1s`, their obligations' lanes under the same job), so the
 //      checkpoint reads their observation there. The checkpoint (B6) calls it again before its own capture.
@@ -51,16 +58,17 @@ import type { AuditInputs, LensRefusal, Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { canonicalJson } from '../core/json.ts';
 import { crashPoint } from '../core/crash.ts';
+import { auditDiffBudgetOf } from '../core/upgrade.ts';
 import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, parseJobId, canonicalIds } from '../core/ids.ts';
 import type { AuditState, FindingState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath, type RepoPattern, absPath } from '../core/values.ts';
 import { capturedEvidence, pathPattern } from '../git/evidence.ts';
-import { catFileType, git, refTarget, revParse } from '../git/git.ts';
+import { catFileType, refTarget, revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
 import { PLAN_INPUT, RULINGS_INPUT, OBLIGATIONS_INPUT, SPEC_INPUT, VISION_INPUT, keptInput, keptPayload, payloadAtRev } from '../input/inforce.ts';
-import { advancesOf, parsePlan } from '../input/plan.ts';
+import { advancesOf, derivedOf, parsePlan } from '../input/plan.ts';
 import { DEFAULT_BOUNDS } from '../core/records.ts';
 import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
@@ -79,7 +87,8 @@ import { type JobHolder, type Reservation, cleanup, heldReservation, run } from 
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { parseRulings } from '../spec/rulings.ts';
 import { type Cadence, type Clock, cadence, integrationHeadNow, runOrder, specsOnlyOf } from './cadence.ts';
-import { coverageBase, lensCoverage } from './coverage.ts';
+import { coverageBase, lensCoverage, publishedHeads } from './coverage.ts';
+import { LENS_DIFF_BUDGET, boundedDiff, chunkEnd } from './lensdiff.ts';
 import { type FindingDraft, admitMutant, corroborateFinding, crossKey, openFinding, witnessFindingDraft } from './findings.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
 import {
@@ -119,6 +128,22 @@ const jobParent = (job: JobId): JobParent => ({ type: 'job', job });
 const lensesCheckout = (ctx: StageContext, job: JobId): AbsPath =>
   absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.lenses`));
 
+/** The part of a lens's range one call reviews: `from` how far the lens reached, `to` the chunk's end. */
+type Chunk = Readonly<{ from: Sha; to: Sha }>;
+
+/** The audit's diff budget: the one it recorded, or (an audit started before the lens-range fix) today's. */
+const budgetOf = (s: Started): number => auditDiffBudgetOf(s) ?? LENS_DIFF_BUDGET;
+
+/**
+ * The next chunk of a lens's range from `from` (src/holistic/lensdiff.ts `chunkEnd`, over the recorded budget and the
+ * published heads); an audit started before the lens-range fix reviews the whole rest in one call, as its recorded
+ * calls did.
+ */
+function nextChunk(ctx: StageContext, s: Started, r: Recorded, from: Sha, heads: ReadonlySet<Sha>): Chunk {
+  const budget = auditDiffBudgetOf(s);
+  return { from, to: budget === null ? s.integrationSha : chunkEnd(ctx.repo, from, s.integrationSha, budget, r.derived, heads) };
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Findings
 
@@ -155,7 +180,11 @@ function admit(ctx: StageContext, t: Tally, draft: FindingDraft): void {
 // ---------------------------------------------------------------------------------------------------
 // The inputs, as recorded
 
-type Recorded = Readonly<{ vision: Vision; advances: readonly VisionClauseId[]; obligations: Obligations | null; ledgerText: string }>;
+type Recorded = Readonly<{
+  vision: Vision; advances: readonly VisionClauseId[]; obligations: Obligations | null; ledgerText: string;
+  /** The plan's derived outputs at the audit's rev: never inlined in a lens's diffs (src/holistic/lensdiff.ts). */
+  derived: readonly RepoPattern[];
+}>;
 
 function kept(ctx: StageContext, sha: Sha256Hex, ext: string): string {
   const bytes = keptInput(ctx.runDir, sha, ext);
@@ -163,7 +192,10 @@ function kept(ctx: StageContext, sha: Sha256Hex, ext: string): string {
   return bytes.toString('utf8');
 }
 
-/** The vision, the slice the plan at the audit's rev advances, the obligations and ledger the audit recorded, by their kept bytes. */
+/**
+ * The vision, the slice the plan at the audit's rev advances, the obligations and ledger the audit recorded, by their
+ * kept bytes, and that plan's derived outputs.
+ */
 function recorded(ctx: StageContext, s: Started): Recorded {
   if (s.ledgerSha256 === null) throw new Error(`${s.job}: a holistic arc's revision in force keeps its ledger`);
   const plan = parsePlan(JSON.parse(kept(ctx, payloadAtRev(ctx.journal.view, ctx.runDir, s.planRev).manifest.planSha256, PLAN_INPUT)));
@@ -172,6 +204,7 @@ function recorded(ctx: StageContext, s: Started): Recorded {
     advances: advancesOf(plan),
     obligations: s.obligationsSha256 === null ? null : parseObligations(JSON.parse(kept(ctx, s.obligationsSha256, OBLIGATIONS_INPUT))),
     ledgerText: kept(ctx, s.ledgerSha256, RULINGS_INPUT),
+    derived: [...new Set(derivedOf(plan).flatMap((d) => d.outputs))].sort(),
   };
 }
 
@@ -209,6 +242,7 @@ function capture(ctx: AuditContext): Started | null {
     owners: ownersOf(ctx),
     priorFindings: canonicalIds(view.holistic().findings.map((f) => f.id)),
     highWater: view.highWater(),
+    diffBudget: LENS_DIFF_BUDGET,
   };
   const seq = ctx.journal.fact({ kind: 'audit-started', ...inputs });
   return { ...inputs, seq };
@@ -258,17 +292,21 @@ function findingViews(findings: readonly FindingState[], ids: readonly FindingId
   });
 }
 
-/** A lens's inputs from the recorded ones: the vision first, then the tree at the audited SHA and the range it covers. */
-function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, from: Sha, checkout: AbsPath, retry: LensRetry | null): LensInputs {
+/**
+ * A lens's inputs from the recorded ones: the vision first, then the tree at the audited SHA, the chunk of the range
+ * this call covers and the owners' branch diffs, each attached within the budget (the owners sharing theirs).
+ */
+function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, retry: LensRetry | null): LensInputs {
   const sha = s.integrationSha;
   const rulings = parseRulings(r.ledgerText, ledgerPath(ctx));
-  const diff = (a: Sha, b: Sha): string => (a === b ? '' : git(ctx.repo, ['diff', '--no-color', '--no-renames', a, b]));
+  const budget = budgetOf(s);
+  const share = Math.floor(budget / Math.max(1, s.owners.length));
   return {
     vision: visionInputOf(r.vision, r.advances),
     lens,
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, sha),
-    range: { from, to: sha, diff: diff(from, sha) },
-    owners: s.owners.map((o) => ({ unit: o.unit, head: o.head, diff: diff(diffBase(ctx.repo, sha, o.head), o.head) })),
+    range: { audited: sha, diff: boundedDiff(ctx.repo, chunk.from, chunk.to, budget, r.derived) },
+    owners: s.owners.map((o) => ({ unit: o.unit, head: o.head, diff: boundedDiff(ctx.repo, diffBase(ctx.repo, sha, o.head), o.head, share, r.derived) })),
     priorFindings: findingViews(ctx.journal.view.holistic().findings, s.priorFindings),
     contracts: ctx.plan().contracts.map((c) => docAt(ctx, sha, c)),
     rulings: rulings.flatMap((x) => (x.status === 'active' ? [{ id: x.id, text: x.text }] : [])),
@@ -460,15 +498,15 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   const covered: LensKind[] = [];
   let outcome: 'completed' | 'abandoned' = 'completed';
   const order = runOrder(s.lenses);
-  /** One call of `lens` as `attempt`: the recorded one consumed, else asked (lazily making the checkout). */
-  const ask = async (lens: LensKind, attempt: number, from: Sha, retry: LensRetry | null): Promise<LensRead> => {
+  /** One call of `lens` as `attempt` over `chunk`: the recorded one consumed, else asked (lazily making the checkout). */
+  const ask = async (lens: LensKind, attempt: number, chunk: Chunk, retry: LensRetry | null): Promise<LensRead> => {
     let called = recordedArcCall(ctx, job, 'lens', attempt);
     if (called === null || called.kind === 'lost') {
       if (!made) {
         await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, { path: checkout, checkout: { type: 'detached', at: s.integrationSha } });
         made = true;
       }
-      const inputs = lensInputs(ctx, s, r, lens, from, checkout, retry);
+      const inputs = lensInputs(ctx, s, r, lens, chunk, checkout, retry);
       const rendered = prompt.render(inputs);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
         job, role: 'lens', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
@@ -492,21 +530,36 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     t.refused.push(...refused);
     return refused;
   };
-  // A lens whose report had a draft refused is asked once more, told why (M4b, paid run 3); its retries number after
-  // every lens's first call, in order, so a resumed audit finds each recorded call again.
-  let retries = 0;
+  // A lens reviews its range chunk by chunk (`nextChunk`), each a call; a report with a draft refused is asked once more
+  // over the same chunk, told why (M4b, paid run 3). A lens's first call is numbered by its place in the run order, every
+  // further call (a retry, a later chunk) after every lens's first, in order, so a resumed audit finds each recorded call
+  // again (an audit started before chunking numbers its retries the same way).
+  const heads = new Set(publishedHeads(ctx.journal.view).map((h) => h.head));
+  /** How far each lens's reported chunks reach. */
+  const reached = new Map<LensKind, Sha>();
+  let further = 0;
   for (const [i, lens] of order.entries()) {
-    const from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
-    let read = await ask(lens, i + 1, from, null);
-    if (read.kind === 'reported') {
-      const refused = admitReport(lens, i + 1, read.output);
-      if (refused.length > 0) {
-        const attempt = order.length + ++retries;
-        const recorded = read.output.findings.filter((f) => !refused.some((x) => x.claim === f.claim && x.cause === f.cause)).map((f) => ({ claim: f.claim, cause: f.cause }));
-        const again = await ask(lens, attempt, from, { refused, recorded });
-        // Covered only once a report is admitted whole: a draft refused again leaves the lens uncovered.
-        read = again.kind === 'reported' && admitReport(lens, attempt, again.output).length > 0 ? { kind: 'failed', detail: 'a draft was refused again' } : again;
+    let from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
+    let attempt = i + 1;
+    let read: LensRead;
+    for (;;) {
+      const chunk = nextChunk(ctx, s, r, from, heads);
+      read = await ask(lens, attempt, chunk, null);
+      if (read.kind === 'reported') {
+        const refused = admitReport(lens, attempt, read.output);
+        if (refused.length > 0) {
+          const again = order.length + ++further;
+          const recorded = read.output.findings.filter((f) => !refused.some((x) => x.claim === f.claim && x.cause === f.cause)).map((f) => ({ claim: f.claim, cause: f.cause }));
+          const retried = await ask(lens, again, chunk, { refused, recorded });
+          // A chunk is covered only once a report is admitted whole: a draft refused again leaves it outstanding.
+          read = retried.kind === 'reported' && admitReport(lens, again, retried.output).length > 0 ? { kind: 'failed', detail: 'a draft was refused again' } : retried;
+        }
       }
+      if (read.kind !== 'reported') break;
+      from = chunk.to;
+      reached.set(lens, from);
+      if (from === s.integrationSha) break;
+      attempt = order.length + ++further;
     }
     if (read.kind !== 'reported') {
       outcome = 'abandoned';
@@ -517,12 +570,13 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     crashPoint('audit.after-lens');
   }
 
-  // 5: the checkout removed, then the end: coverage only for the lenses that reported, up to the audited SHA.
+  // 5: the checkout removed, then the end: coverage as far as each lens's reported chunks reach, at most the audited SHA.
   if (made) await removeCheckout(ctx, job, checkout);
   crashPoint('audit.before-ended');
-  const ranges = covered.flatMap((lens) => {
+  const ranges = order.flatMap((lens) => {
     const from = lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
-    return from === s.integrationSha ? [] : [{ lens, from, to: s.integrationSha }];
+    const to = reached.get(lens);
+    return to === undefined || to === from ? [] : [{ lens, from, to }];
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
   const findings = canonicalIds(t.ids);
   ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome, refused: t.refused });

@@ -321,6 +321,9 @@ None.
 
 ## Scaffolding to delete
 
+- `auditDiffBudgetOf`'s absent arm (src/core/upgrade.ts) with `nextChunk`'s unchunked branch (src/holistic/audit.ts),
+  once no audit a dev.10 executor started is running: such an audit reads each range in one call. With it,
+  `audit-started.diffBudget` becomes required.
 - `applyExpectRevDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.10 is in flight: an apply command
   queued before the apply rebase carries `expectRev` and reads as base null. With it, `base` is the only field read.
 - `applyVisionEditDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.10 is in flight: an apply command

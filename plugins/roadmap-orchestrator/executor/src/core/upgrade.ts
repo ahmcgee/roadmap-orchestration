@@ -279,3 +279,15 @@ export function applyVisionEditDefault(): true {
   warnDefaulted('apply.visionEdit', 'an apply command without visionEdit (queued before --vision-edit): read as a declared vision edit');
   return true;
 }
+
+/**
+ * An `audit-started`'s `diffBudget` (the lens-range fix, 2026-10-16): absent on an audit an executor before it started
+ * (1.0.0-dev.10), resumed now. Read as null: each of its lenses reviews its whole range in one call, as its recorded
+ * calls did, so their attempt numbers stay its own; the attachments keep within today's budget. The next audit chunks.
+ * Scaffolding: deleted once no audit an executor before the fix started is running; `diffBudget` then becomes required.
+ */
+export function auditDiffBudgetOf(s: Readonly<{ job: string; diffBudget?: number }>): number | null {
+  if (s.diffBudget !== undefined) return s.diffBudget;
+  warnDefaulted('audit-started.diffBudget', `${s.job}: an audit started before the lens-range fix; its lenses read their whole range in one call`);
+  return null;
+}
