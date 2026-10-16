@@ -774,7 +774,8 @@ export type HolisticFact =
   /**
    * Arc feedback 2026-10-16: the checkpoint after a completed audit is not run, because the audit found nothing new: it is
    * not the final one, a checkpoint already settled under the vision in force, and every active finding no unit owns was
-   * captured by such a checkpoint (src/holistic/checkpoint.ts `nothingNew`). `carried`: the findings the audit reported.
+   * captured by such a checkpoint (src/holistic/checkpoint.ts `nothingNew`), and in a corpus arc every open issue was
+   * captured, unchanged, by such a checkpoint (src/holistic/intake.ts `unseenIssues`). `carried`: the findings the audit reported.
    * `generation` is the audit's, quiescent under `visionSha256` (src/holistic/convergence.ts).
    */
   | Readonly<{ kind: 'checkpoint-skipped'; audit: JobId; generation: number; visionSha256: Sha256Hex; carried: readonly FindingId[] }>

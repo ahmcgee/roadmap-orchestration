@@ -715,12 +715,14 @@ earlier re-entries with the failures they cited.
 **Aimed and rarer (arc feedback 2026-10-16: eleven checkpoints, mostly small spec patches, $78 before anything
 merged).** A completed audit that found nothing new has no checkpoint: it is not the final audit, a checkpoint already
 settled a decision (applied, no-op or requested) under the vision in force, and every active finding no unit owns was
-captured by such a checkpoint. Code records `checkpoint-skipped{audit, generation, visionSha256, carried}` instead of a
+captured by such a checkpoint; in a corpus arc, every open intake issue, fetched from the forge just before the
+decision (free, nothing recorded), is also held unchanged by such a checkpoint's issue capture (byte-equal, as issue
+reuse compares). A forge failure there keeps the checkpoint, whose own capture then records `unavailable` as ever, and an
+untrusted issue policy holds it as a capture does. Code records `checkpoint-skipped{audit, generation, visionSha256, carried}` instead of a
 call (shown in `decisionsSince`), and the audit's generation is quiescent as after a `no-op`. So the arc's first
 checkpoint and the first after a vision revision always run (they weigh coverage gaps and obligations), a final audit's
-always runs, and a bundle's drift audit that finds nothing ends the loop instead of feeding another bundle. Not yet
-weighed in the skip: newly captured issues, which wait for the next checkpoint (the final one at the latest; BACKLOG).
-Brakes in code:
+always runs, a new or changed owner issue reaches the next audit's checkpoint, and a bundle's drift audit that finds
+nothing ends the loop instead of feeding another bundle. Brakes in code:
 
 - **Bundles.** A decision is one action bundle, activated as a mutation job scoped to its ops; affected dispatch
   waits meanwhile. In order: validate schema, identity, rulings (their `consistency` included) and cites (active

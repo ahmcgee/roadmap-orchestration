@@ -12,8 +12,9 @@
 // checkpoint.capture-wait-bounded (paid M4a run 10, R-15), checkpoint.manifest-content-addressed,
 // checkpoint.specs-embedded-with-occupied-ids, checkpoint.next-ruling-id, checkpoint.closeout-delta-when-unchanged,
 // bundle.merged-since-capture-stale, bundle.merged-at-capture-invalid, checkpoint.refused-carried-across-triggers (paid M4a
-// run 12), checkpoint.final-always-full, intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists,
-// checkpoint.schema-closed-ids (paid M4b run 5).
+// run 12), checkpoint.final-always-full, checkpoint.skipped-nothing-new and checkpoint.skip-weighs-issues (arc feedback
+// 2026-10-16), intake.unchanged-capture-reuses-dispositions, intake.changed-ground-relists, checkpoint.schema-closed-ids
+// (paid M4b run 5).
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -638,6 +639,29 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
       const third = await run(x);
       assert.ok(third.kind === 'decided' && third.job === 'ckpt-2' && third.trigger.type === 'audit' && third.trigger.job === 'audit-3', JSON.stringify(third));
       assert.match(tagOf(callOf(x, 'ckpt-2').stdin, 'findings'), /audit-3 notes a gap in the arc/);
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('checkpoint.skip-weighs-issues (arc feedback 2026-10-16): an audit that finds nothing new is skipped while every open issue is one a settled checkpoint captured unchanged; a new issue keeps its checkpoint, which reads it', T, async () => {
+    const x = await arc([
+      checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op', issueIntake: [{ issue: 'issue-1', outcome: intakeOutcome.none('fixed by I-1') }] })),
+      lensStep('audit-2', 'vision'), lensStep('audit-3', 'vision'),
+      checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op', issueIntake: [{ issue: 'issue-2', outcome: intakeOutcome.none('the berth view covers it') }] })),
+    ], { before: (a) => a.forge.addIssue({ title: 'A berth was double-booked', labels: ['roadmap:bug'], body: 'Berth 4 holds two bookings.', association: 'OWNER', author: 'harbourmaster' }) });
+    try {
+      assert.ok((await run(x)).kind === 'decided');
+      await completedAudit(x.r, x.ctx);
+      assert.deepEqual(await run(x), { kind: 'not-needed', audit: 'audit-2', carried: [] }, 'issue-1 is unchanged since ckpt-1');
+      assert.deepEqual(factsOfKind(x.r, 'issues-captured').map((f) => f.job), ['ckpt-1'], 'the fetch before the skip records nothing');
+      x.a.forge.addIssue({ title: 'Show the tide window', labels: ['roadmap:feedback'], body: 'Every booking should say its tide window.', association: 'OWNER', author: 'harbourmaster' });
+      await completedAudit(x.r, x.ctx);
+      const third = await run(x);
+      assert.ok(third.kind === 'decided' && third.job === 'ckpt-2' && third.trigger.type === 'audit' && third.trigger.job === 'audit-3' && third.decision.kind === 'no-op', JSON.stringify(third));
+      assert.deepEqual(factsOfKind(x.r, 'checkpoint-skipped').map((f) => f.audit), ['audit-2'], 'audit-3 found nothing new but a new issue');
+      assert.match(callOf(x, 'ckpt-2').stdin, /Every booking should say its tide window/, 'the new issue reaches the checkpoint');
+      assert.deepEqual(factsOfKind(x.r, 'issue-intake').filter((f) => f.job === 'ckpt-2').map((f) => f.issue).sort(), ['issue-1', 'issue-2']);
     } finally {
       x.r.journal.close();
     }

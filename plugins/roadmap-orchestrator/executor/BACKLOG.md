@@ -112,9 +112,6 @@ at triage stay in git history.
   after a settled checkpoint has none (`checkpoint-skipped`), and a design park's checkpoint is aimed by the executor's
   diagnosis of the lineage, its re-entries citing the failure they fix. Lens cadence and the flow role's view of
   judgment cost stay ruler. Still open:
-  - Issues captured since the last checkpoint do not count as new: an audit that found nothing new is skipped even when
-    a new `roadmap:bug` issue is open, which waits for the next checkpoint (a park's, a finding's, the final one). Bring in
-    (capture before deciding the skip, and run when the capture's issues changed) when an issue waits visibly long.
   - A park checkpoint's diagnosis names salvage's reverted paths but not the lane command a red test belongs to, nor
     whether a red test is in any lane the unit runs (the u1a pattern: 21 attempts against tests its lane never runs).
     Phase 0's witness-in-lane row is the first defence; add it to the diagnosis when a park still shows the pattern.
