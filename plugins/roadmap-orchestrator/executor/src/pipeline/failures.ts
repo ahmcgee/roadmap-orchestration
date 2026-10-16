@@ -118,22 +118,8 @@ export function failuresText(failures: readonly LaneFailure[]): string {
 // ---------------------------------------------------------------------------------------------------
 // A re-entry's citation (arc feedback 2026-10-16): `fixes` names a failure of the lineage it re-enters.
 
-/**
- * A cited failure resolved. `ranUnder`: the failure outcome whose spec, scope, routing and plan the re-entry is compared
- * with: the outcome cited, or a cited lane failure's lanes outcome (null when that attempt recorded no failure outcome).
- * `exempt`: why an unchanged retry may cite it, or null for a design failure of the unit's own, for which a re-entry must
- * change something: a flaky or host-suspected lane, or an outcome that is not the unit's design failure (a retryable park,
- * an operator environment park, a stop).
- */
-export type CitedFailure = Readonly<{ ref: FailureRef; text: string; ranUnder: FailedOutcome | null; exempt: string | null }>;
-
-/** Why a failure outcome asks a re-entry to change nothing, or null for a design failure. */
-function outcomeExempt(f: FailedOutcome): string | null {
-  if (f.fact.chargeable) return null;
-  if (f.park === null) return f.fact.class === 'stop' ? 'it stopped the arc, not a design failure of the unit' : null;
-  if (f.park.class === 'retryable') return 'it is a retryable park (host, backend or resource)';
-  return f.park.kind === 'env' ? 'it is an environment park, not a design failure of the unit' : null;
-}
+/** A cited failure resolved: its reference and a phrase describing it. */
+export type CitedFailure = Readonly<{ ref: FailureRef; text: string }>;
 
 /** A failure outcome as a reference and a phrase. */
 export const outcomeRef = (f: FailedOutcome): FailureRef => failureRefOf({ type: 'outcome', unit: f.fact.unit, stage: f.fact.stage, attempt: f.fact.attempt });
@@ -150,16 +136,13 @@ export function citedFailure(
   const p = parseFailureRef(ref);
   if (!lineage.includes(p.unit)) return `${ref} names unit ${p.unit}, which is not of the re-entered lineage (${lineage.join(', ')})`;
   const failed = ctx.journal.view.unit(p.unit).failures;
-  const at = (stage: string, attempt: number): FailedOutcome | null => failed.find((f) => f.fact.stage === stage && f.fact.attempt === attempt) ?? null;
   if (p.type === 'outcome') {
-    const f = at(p.stage, p.attempt);
-    if (f === null) return `${ref} names no failure outcome of ${p.unit} (its failure outcomes: ${failed.length === 0 ? 'none' : failed.map(outcomeRef).join(', ')})`;
-    return { ref, text: outcomeText(f), ranUnder: f, exempt: outcomeExempt(f) };
+    const f = failed.find((o) => o.fact.stage === p.stage && o.fact.attempt === p.attempt);
+    if (f === undefined) return `${ref} names no failure outcome of ${p.unit} (its failure outcomes: ${failed.length === 0 ? 'none' : failed.map(outcomeRef).join(', ')})`;
+    return { ref, text: outcomeText(f) };
   }
   const lanes = laneFailures(ctx, { id: p.unit });
   const lane = lanes.find((l) => l.ref === ref);
   if (lane === undefined) return `${ref} names no lane failure of ${p.unit} (its lane failures: ${lanes.length === 0 ? 'none' : lanes.map((l) => l.ref).join(', ')})`;
-  const exempt = lane.class === 'flaky' ? 'the lane is flaky (its diagnostic rerun went green)'
-    : lane.hostSuspected === null ? null : `the lane is host-suspected (${lane.hostSuspected.signatures.join(', ')})`;
-  return { ref, text: `lanes attempt ${p.attempt}: lane ${p.lane} ${lane.class}`, ranUnder: at('lanes', p.attempt), exempt };
+  return { ref, text: `lanes attempt ${p.attempt}: lane ${p.lane} ${lane.class}` };
 }

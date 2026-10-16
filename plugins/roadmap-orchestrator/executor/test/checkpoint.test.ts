@@ -821,8 +821,7 @@ describe('divergences', () => {
     }
   });
 
-  test('ckpt.park-diagnosis-and-unchanged-reentry (arc feedback 2026-10-16): a park checkpoint reads the lineage\'s failures with their references; a bare re-entry citing the design park is refused as an unchanged retry, and the repair turn that patches the new unit\'s spec applies', T, async () => {
-    const cite = { op: 'patch-spec', unit: 'u1-r2', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: ['C-1'] }], cites: ['V-1'], evidence: ['u1-r2 must cite the api'] };
+  test('ckpt.park-diagnosis-and-unchanged-reentry (arc feedback 2026-10-16; dev.12): a park checkpoint reads the lineage\'s failures with their references; a re-entry naming no failure is refused, and the repair turn that cites the design park applies the re-entry unchanged', T, async () => {
     const empty: readonly Step[] = [{ ...planCheckStep({ decision: 'approve' }), unit: 'u1' }, { ...codexStep([], { argv: ['exec', '-C'] }), unit: 'u1' }];
     const d = checkpointArc(empty, { units: [{ id: 'u1', lanes: [] }] });
     const r = contextFor(d);
@@ -833,8 +832,8 @@ describe('divergences', () => {
       const ref = `u1/${park.stage}#${park.attempt}`;
       const reenter = { op: 'reenter', unit: 'u1-r2', reenters: 'u1', enterAt: null, reset: null, fixes: ref, cites: ['V-1'], evidence: [`${ref} parked u1`] };
       appendSteps(d, [
-        checkpointStep('ckpt-1', bundle([reenter])),
-        checkpointRepairStep('ckpt-1', bundle([reenter, cite]), [`unit u1-r2 re-enters u1 to fix ${ref}`, 'but changes nothing it ran under']),
+        checkpointStep('ckpt-1', bundle([{ ...reenter, fixes: null }])),
+        checkpointRepairStep('ckpt-1', bundle([reenter]), [`unit u1-r2 re-enters u1 without \`fixes\`: name the failure it fixes, one of ${ref}`]),
       ]);
       const out = await runCheckpoint(ctx);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));

@@ -419,7 +419,7 @@ const cutUnits = (...ids: string[]) => (d: ArcDescriptor): void => editPlan(d, (
 });
 /**
  * Adds unit `id` re-entering `old`: a copy of u1's entry with `extra` over it, and of u1's spec with `fix` applied (by default
- * one more acceptance clause: an unchanged retry of a design failure is refused); `reentry` over `{unit: old, fixes:
+ * one more acceptance clause); `reentry` over `{unit: old, fixes:
  * <old>/gate#1}`, the park `parkAtGate` records.
  */
 const reenter = (id: string, old: string, extra: Json = {}, reentry: Json = {}, fix: (s: Json) => void = addClause) => (d: ArcDescriptor): void => {
@@ -548,7 +548,7 @@ const M2_ROWS: readonly Row[] = [
     expect: [/^unit u4's reset cites ruling C-7, which the ledger .* does not hold$/],
   },
   {
-    name: 'apply.reenter-reset-ruled: a reset backed by C-1, the spec unchanged: now (a ruled reset may retry unchanged)',
+    name: 'apply.reenter-reset-ruled: a reset backed by C-1, the spec unchanged: now',
     setup: parkAtGate,
     edit: reenter('u4', 'u1', {}, { reset: { ruling: 'C-1' } }, unchanged),
     expect: () => reentered('u4', 'u1', true),
@@ -576,15 +576,13 @@ const M2_ROWS: readonly Row[] = [
     expect: [/^unit u4: `fixes` u2\/gate#1 names unit u2, which is not of the re-entered lineage \(u1\)$/],
   },
   {
-    name: 'apply.reenter-unchanged-retry: the same spec content, scope, routing and suite lanes as the cited design failure, no reset: refused, naming each',
+    name: 'apply.reenter-unchanged-retry: the same spec content, scope, routing and suite lanes as the cited design failure, no reset: now (dev.12: whether a retry differs is the proposer\'s method; the chargeable bound brakes it)',
     setup: parkAtGate,
     edit: reenter('u4', 'u1', {}, {}, unchanged),
-    expect: [
-      /^unit u4 re-enters u1 to fix u1\/gate#1 \(gate attempt 1 ended escalate, parked design\) but changes nothing it ran under: the spec \(u1 rev 1's content\), the scope \(contracts\/\*\*, src\/\*\*, test\/\*\*\), the routing \(rev [0-9a-f]{16}\), the suite lanes are as they were, and it resets nothing\. A retry of a design failure must differ in its cause: revise the spec, the scope, the suite lanes or the routing, or reset the chargeable failures under a ruling \(`reset`\); only a flaky or host-suspected lane failure, or a park that is not the unit's design failure, may be retried unchanged$/,
-    ],
+    expect: () => reentered('u4', 'u1'),
   },
   {
-    name: 'apply.reenter-derived-widened: the same plan scope, but a derived entry now takes outputs into the effective scope: a changed cause, now',
+    name: 'apply.reenter-derived-widened: the same plan scope, a derived entry added that takes outputs into the effective scope: now',
     setup: parkAtGate,
     edit: (d) => {
       reenter('u4', 'u1', {}, {}, unchanged)(d);
@@ -593,7 +591,7 @@ const M2_ROWS: readonly Row[] = [
     expect: () => [...reentered('u4', 'u1'), { type: 'derived' }],
   },
   {
-    name: 'apply.reenter-unchanged-env-park: an environment park (not the unit\'s design failure) retried unchanged: now',
+    name: 'apply.reenter-unchanged-env-park: an environment park retried unchanged, citing it: now',
     setup: (r) => {
       pin(r, 'u1');
       r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'build', attempt: 1, outcome: 'occupied', class: 'park', chargeable: false, park: { class: 'operator', kind: 'env' } } as Fact);

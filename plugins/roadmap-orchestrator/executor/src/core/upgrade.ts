@@ -213,8 +213,7 @@ export const FIXES_UNRECORDED = 'unrecorded';
 /**
  * A checkpoint `reenter` op's `fixes` (arc feedback 2026-10-16): absent (not null: the schema requires the key, null for a
  * lineage with no failure) on an answer recorded before it, so the previous release recorded it. Read as `unrecorded`: the
- * re-entry is adopted as recorded, applied or not; the classifier's `fixes` rows (the requirement and the unchanged-retry
- * refusal) do not bind it (src/input/classify.ts `fixesReasons`, through the bundle proposer's `fixesUnrecorded`), and it
+ * re-entry is adopted as recorded, applied or not; the classifier's `fixes` requirement does not bind it (src/input/classify.ts `fixesReasons`, through the bundle proposer's `fixesUnrecorded`), and it
  * enters the plan without `fixes`. Delete once no arc started on 1.0.0-dev.10 is in flight (BACKLOG "Scaffolding to delete").
  */
 export function reenterFixesDefault(): typeof FIXES_UNRECORDED {
