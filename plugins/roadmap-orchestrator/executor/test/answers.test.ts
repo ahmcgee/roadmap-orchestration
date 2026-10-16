@@ -11,6 +11,7 @@ import { answersDir, latestAnswers, answerLog, unappliedAnswers } from '../src/a
 import { brief } from '../src/commands/brief.ts';
 import { chainStatus } from '../src/commands/chain.ts';
 import type { BriefId } from '../src/core/ids.ts';
+import { readJournal } from '../src/core/log.ts';
 import { gitCommonDir } from '../src/git/git.ts';
 import { status } from '../src/status.ts';
 import { ActionableFilter, HEARTBEAT_MIN, watch } from '../src/watch.ts';
@@ -147,9 +148,11 @@ describe('roadmap answer', () => {
     await sleep(1_000);
     stop.abort();
     await running;
+    // Answers are files, not log events: each line carries the log's high-water, unchanged while the watch ran.
+    const seq = readJournal(runDirOfArc(a1), a1.arc).view.highWater();
     assert.deepEqual(answers().map((l) => ({ ...l, at: null })), [
-      { event: 'answer', question: 'P-1', k: 1, answer: '48 hours', at: null },
-      { event: 'answer', question: 'P-1', k: 2, answer: '72 hours', at: null },
+      { event: 'answer', question: 'P-1', k: 1, answer: '48 hours', at: null, seq },
+      { event: 'answer', question: 'P-1', k: 2, answer: '72 hours', at: null, seq },
     ]);
     const f = new ActionableFilter(0, HEARTBEAT_MIN);
     const line = JSON.stringify(answers()[0]);
