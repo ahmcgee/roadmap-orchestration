@@ -28,6 +28,17 @@ export class UnsupportedSchemaError extends Error {
   }
 }
 
+/**
+ * A Claude result whose per-model costs (`modelUsage[*].costUSD`) do not sum to its `total_cost_usd`: the meter's per-class
+ * attribution would not add up to what the CLI says the call cost, so the reading is refused loudly rather than guessed.
+ */
+export class UsageMismatchError extends Error {
+  constructor(detail: string) {
+    super(`Claude result usage does not add up: ${detail}`);
+    this.name = 'UsageMismatchError';
+  }
+}
+
 /** result.json is write-once: a re-run must produce the same bytes, or something changed under it. */
 export class ResultConflictError extends Error {
   constructor(path: string) {
@@ -36,6 +47,13 @@ export class ResultConflictError extends Error {
   }
 }
 
+/**
+ * The prompt or the session's context outgrew the model's window (2026-10-16, a dev.11 gate's 2.37 MB unit diff). Claude:
+ * "Prompt is too long", "Input is too long for requested model" (HTTP 413). Codex (codex-cli 0.163.0, its
+ * ContextWindowExceeded error): "Codex ran out of room in the model's context window. Start a new thread or clear earlier
+ * history before retrying."; the API's own code is `context_length_exceeded`.
+ */
+const CONTEXT_EXCEEDED = /prompt is too long|input is too long for requested model|ran out of room in the model's context window|context_length_exceeded/i;
 const USAGE_LIMIT = /usage limit|hit your limit|rate limit|quota/i;
 const CAPACITY = /at capacity|try a different model|overloaded/i;
 const PLATFORM = /stream disconnected|connection (?:lost|reset|refused|closed)|timed out|service unavailable|internal server error|bad gateway/i;
@@ -46,6 +64,7 @@ const PLATFORM = /stream disconnected|connection (?:lost|reset|refused|closed)|t
  * specific; otherwise the message text does; anything unrecognised is `backend`.
  */
 export function classifyBackendError(message: string, httpStatus: number | null): BackendErrorClass {
+  if (httpStatus === 413 || CONTEXT_EXCEEDED.test(message)) return 'context-exceeded';
   if (httpStatus === 429) return 'usage-limit';
   if (httpStatus === 529) return 'capacity';
   if (USAGE_LIMIT.test(message)) return 'usage-limit';

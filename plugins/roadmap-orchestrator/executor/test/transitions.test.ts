@@ -106,7 +106,8 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'refusal', { routedUp: ['plan-check'] }, 'park:refusal', 'park', {}],
   ['plan-check', 'malformed', {}, 'plan-check@med', 'retry', { 'retries.plan-check': 1 }],
   ['plan-check', 'malformed', { counters: { 'retries.plan-check': 1 } }, 'park:malformed', 'park', {}],
-  // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park.
+  // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park (a dev.11 record only,
+  // scaffolding: no longer recorded since 2026-10-16).
   ['plan-check', 'read-denied', {}, 'plan-check@med', 'retry', { 'retries.plan-check': 1 }],
   ['plan-check', 'read-denied', { counters: { 'retries.plan-check': 1 } }, 'park:read-denied', 'park', {}],
   ['plan-check', 'process-fault', {}, 'park:process-fault', 'park', {}],
@@ -116,6 +117,10 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'in-session', {}, 'build/fresh@med', 'advance', {}],
   // Scope growth (2026-10-15): a verified proposal holds the unit for the root agent, uncharged.
   ['plan-check', 'scope-growth', {}, 'hold', 'hold', {}],
+  // 2026-10-16: the prompt or context outgrew the model's window: an uncharged env park, never the retryable process-fault
+  // row (no probe, no repeat rule), whatever the counters.
+  ['plan-check', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
+  ['plan-check', 'context-exceeded', { counters: { 'retries.plan-check': 1, chargeableFailures: 2 } }, 'park:context-exceeded', 'park', {}],
   // build (implementer)
   ['build', 'success', {}, 'quiesce', 'advance', {}],
   ['build', 'refusal', {}, 'park:refusal', 'park', {}],
@@ -133,6 +138,7 @@ const ROWS: readonly Row[] = [
   ['build', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['build', 'interrupted', {}, 'hold', 'hold', {}],
   ['build', 'interrupted', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'hold', 'hold', {}],
+  ['build', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
   // M4a rev 3 (E, R55): the in-session assessment's outcomes. Infeasible parks design with the escalation's reason (a
   // build has no escalation seat to route up to); a raised floor on another seat builds fresh there, uncharged.
   ['build', 'infeasible', {}, 'park:escalation', 'park', {}],
@@ -199,6 +205,7 @@ const ROWS: readonly Row[] = [
   // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park.
   ['gate', 'read-denied', {}, 'gate@med', 'retry', { 'retries.gate': 1 }],
   ['gate', 'read-denied', { counters: { 'retries.gate': 1 } }, 'park:read-denied', 'park', {}],
+  ['gate', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
   // candidate (integration slot)
   ['candidate', 'green', {}, 'ff', 'advance', {}],
   ['candidate', 'transient-violation', {}, 'build/fix@med', 'trigger', { chargeableFailures: 1 }],
@@ -252,6 +259,7 @@ describe('transitions', () => {
       'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
       'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',
+      'plan-check context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
     };

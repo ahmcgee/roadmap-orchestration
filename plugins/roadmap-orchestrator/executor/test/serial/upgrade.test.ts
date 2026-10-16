@@ -239,7 +239,7 @@ const midBuild = (files: Readonly<Record<string, string>>): Step => ({
   acts: [{ type: 'threadStarted' }, { type: 'dirty', files }, { type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }],
 });
 /** page-id's plan-check after its reopen, parked. */
-const midPlanCheck: Step = { as: 'claude', expect: { argv: ['-p', '--tools', 'Read,Grep,Glob'] }, acts: [{ type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }] };
+const midPlanCheck: Step = { as: 'claude', expect: { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent'] }, acts: [{ type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }] };
 
 // ---------------------------------------------------------------------------------------------------
 // Phase 1: the previous release

@@ -2,7 +2,7 @@
 // git, real processes, the fake claude answering the review calls by job. Named tests: packreview.key-excludes-job,
 // packreview.holds-admission, packreview.ack-releases, packreview.key-pending-holds, packreview.superseded-by-rereview (with
 // R-17: status, watch and --actionable drop the superseded item),
-// packreview.none-after-first-admission, packreview.abandoned, packreview.consumed-on-restart,
+// packreview.none-after-first-admission, packreview.abandoned, packreview.context-exceeded, packreview.consumed-on-restart,
 // packreview.inputs-only-on-recovery, packreview.delta-rereview-dispositions (M4a rev 3, N5),
 // packreview.no-review-between-rule-and-apply (M4a rev 3, I2), and the
 // crash cells of the matrix row PACK_REVIEW_JOB.
@@ -216,6 +216,18 @@ describe('the hold before the first admission (K14, H9)', () => {
       await x.ack(out.needsUser);
       assert.ok(!x.holds().includes('pack-review'));
       assert.deepEqual(await runPackReview(x.ctx), { kind: 'none' }, 'not asked again for the same key');
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('packreview.context-exceeded (2026-10-16): a review whose prompt outgrew the window ends abandoned; its item names the call and the prompt size, and the backend is not parked', T, async () => {
+    const x = await arcWith([{ as: 'claude', unit: 'review-1', expect: {}, acts: [{ type: 'contextExceeded' }] }]);
+    try {
+      const out = await runPackReview(x.ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'abandoned' && out.needsUser !== null, JSON.stringify(out));
+      assert.match(readNeedsUser(x.r.ctx.runDir, out.needsUser)!.summary, /context-exceeded: the packReview call \S+ outgrew the model's context with a prompt of \d+ bytes: Prompt is too long/);
+      assert.deepEqual(x.r.journal.view.parkedBackends(), []);
     } finally {
       x.r.journal.close();
     }

@@ -27,9 +27,10 @@ import {
   parentUnit,
 } from '../core/events.ts';
 import {
-  type InvocationId, type OpId, type OpKey, type RoutingRev, type Sha256Hex, invocationDirName, invocationId, opKey,
+  type InvocationId, type OpId, type OpKey, type RoutingRev, type Sha256Hex, claudeSessionId, invocationDirName, invocationId, opKey,
   parseInvocationId, parseOpId, sha256,
 } from '../core/ids.ts';
+import { chargedUsage } from '../core/usage.ts';
 import type { Containment, IntentBody, Journal, JournalView, RunnerFiles, WorkloadRef } from '../core/interfaces.ts';
 import { sha256Hex } from '../core/json.ts';
 import {
@@ -145,6 +146,7 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
   const exit = files.read('exit.json');
   let outcome: InvocationOutcome;
   let usage: Usage | null;
+  let session: string | null = null;
   let recoveredBy: RecoveredBy;
   let pressure: number | null = null;
   if (exit !== null) {
@@ -156,6 +158,7 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
     crashPoint('spawn.after-result', unit);
     outcome = { kind: 'result', op: intent.op, inv, result, resultSha256: sha256(sha256Hex(readFileSync(resultPath))) };
     usage = result.type === 'backend' ? result.usage : null;
+    session = result.type === 'backend' ? result.session : null;
     recoveredBy = mode.type === 'live' ? null : mode.type === 'adopted' ? 'adopted' : hadResult ? 'reconciled' : 'redone';
   } else {
     if (hadResult) throw new Error(`${dir}: result.json without exit.json`);
@@ -167,7 +170,7 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
   const charge = chargeOf(intent.expect.subject);
   if (charge !== null && !ctx.journal.view.usageRecorded(inv)) {
     if (usage === null) throw new Error(`${inv}: a backend spawn produced a command result`);
-    ctx.journal.fact(usageFact(charge, inv, usage));
+    ctx.journal.fact(usageFact(ctx.journal.view, charge, inv, usage, session));
   }
   crashPoint('spawn.after-usage', unit);
   ctx.journal.done(intent.op, 'proc.spawn', doneOutcome(outcome, pressure), recoveredBy);
@@ -205,11 +208,18 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
   }
 }
 
-/** The one usage fact of a backend invocation. */
-export function usageFact(charge: Charge, inv: InvocationId, usage: Usage): Fact {
-  return usage.kind === 'known'
-    ? { kind: 'meter', inv, ...charge, usage: usage.tokens }
-    : { kind: 'usage-unavailable', inv, ...charge, reason: usage.reason };
+/**
+ * The one usage fact of a backend invocation. A Claude call's known usage (`delegated` present) is its session's cumulative
+ * reading: the fact charges it less what `session`'s earlier facts charged (src/core/usage.ts `chargedUsage`) and names the
+ * session, so a resumed session is never charged twice for its earlier processes.
+ */
+export function usageFact(view: Pick<JournalView, 'sessionCharge'>, charge: Charge, inv: InvocationId, usage: Usage, session: string | null): Fact {
+  if (usage.kind === 'unavailable') return { kind: 'usage-unavailable', inv, ...charge, reason: usage.reason };
+  if (usage.delegated === undefined) return { kind: 'meter', inv, ...charge, usage: usage.tokens };
+  if (session === null) throw new Error(`${inv}: a Claude call's usage without its session`);
+  const id = claudeSessionId(session, `${inv} session`);
+  const charged = chargedUsage({ tokens: usage.tokens, delegated: usage.delegated }, view.sessionCharge(id), inv);
+  return { kind: 'meter', inv, ...charge, usage: charged.tokens, session: id, delegated: charged.delegated };
 }
 
 /** The intent's subject and launch.json's terminal must describe the same thing; a mismatch is a caller bug. */

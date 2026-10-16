@@ -8,7 +8,7 @@ import { readCodex } from '../src/backends/codex.ts';
 import { implementerSessionId } from '../src/core/ids.ts';
 import type { BackendErrorClass } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
-import { BACKEND_FIXTURES, CODEX_USAGE_LIMIT, capturedArgv, fixtureInvocation } from './helpers/scenario.ts';
+import { BACKEND_FIXTURES, CODEX_CONTEXT_EXCEEDED, CODEX_USAGE_LIMIT, capturedArgv, fixtureInvocation } from './helpers/scenario.ts';
 
 const fixture = (name: string, file: string): string => readFileSync(join(BACKEND_FIXTURES, name, file), 'utf8');
 const EXIT0 = { type: 'exited', code: 0 } as const;
@@ -64,6 +64,9 @@ describe('codex', () => {
       ['platform', 'stream disconnected before completion: error sending request'],
       ['platform', JSON.stringify({ type: 'error', error: { type: 'server_error', message: 'oops' }, status: 503 })],
       ['backend', 'unexpected status 401 Unauthorized'],
+      // 2026-10-16: the prompt outgrew the model's window (codex-cli 0.163.0's ContextWindowExceeded text; the API's code).
+      ['context-exceeded', CODEX_CONTEXT_EXCEEDED],
+      ['context-exceeded', JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', code: 'context_length_exceeded', message: 'Your input exceeds the context window of this model.' }, status: 400 })],
     ];
     for (const [cls, message] of cases) {
       it(`${cls}: ${message.slice(0, 60)}`, () => {

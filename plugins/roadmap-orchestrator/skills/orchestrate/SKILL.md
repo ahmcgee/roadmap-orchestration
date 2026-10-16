@@ -447,6 +447,10 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
 - **Parked `plan-defect`** (a missing witness its lane never runs, or whose file no build of the unit can create;
   uncharged): the item names each defect. Fix the plan by `apply` (the lane's argv or `testPaths`, the witness's
   `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes.
+- **Parked `context-exceeded`** (a plan-check, build or gate call's prompt or context outgrew its model's window;
+  uncharged): the item names the role, the call and the prompt's size. Make the stage's inputs fit (split the unit or
+  narrow its spec by a spec revision and `apply`, or route that seat to a class whose model has a larger window), then
+  `roadmap resume <unit>` re-runs the stage. Resuming unchanged hits the same wall.
 - **Parked `routing-changed`** (the implementer seat's backend or model moved after its build started; an
   effort-only change re-pins by itself): restore the routing of the seat the item names, or re-enter the unit
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,

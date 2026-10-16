@@ -14,7 +14,7 @@ import type { LensKindName } from '../../src/core/records.ts';
 import { unitBarrierName, waitAtBarrier } from '../helpers/barrier.ts';
 import { git, writeFiles, type FileSet } from '../helpers/repo.ts';
 import {
-  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, CLAUDE_USAGE_LIMIT, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
+  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
 } from '../helpers/scenario.ts';
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/backend-output/', import.meta.url));
@@ -109,12 +109,12 @@ function codexEmit(argv: readonly string[], thread: string, message: string, ext
   writeFileSync(o, message);
 }
 
-function codexUsageLimit(thread: string): never {
+function codexFailed(thread: string, message: string): never {
   const events = [
     ...threadStarted(thread),
     { type: 'turn.started' },
-    { type: 'error', message: CODEX_USAGE_LIMIT },
-    { type: 'turn.failed', error: { message: CODEX_USAGE_LIMIT } },
+    { type: 'error', message },
+    { type: 'turn.failed', error: { message } },
   ];
   out(events.map((e) => `${JSON.stringify(e)}\n`).join(''));
   process.exit(1);
@@ -123,14 +123,16 @@ function codexUsageLimit(thread: string): never {
 // ---------------------------------------------------------------------------------------------------
 // Claude: stream-json on stdout, the captured init event then one result object, built from the fixtures.
 
-function capturedEvent(name: 'claude-judgment' | 'claude-api-error', type: 'system' | 'result'): Record<string, unknown> {
+type ClaudeCapture = 'claude-judgment' | 'claude-api-error' | 'claude-prompt-too-long';
+
+function capturedEvent(name: ClaudeCapture, type: 'system' | 'result'): Record<string, unknown> {
   const events = readFileSync(join(FIXTURES, name, 'stdout'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as Record<string, unknown>);
   const found = events.find((e) => e['type'] === type);
   if (found === undefined) throw new Error(`fake claude: capture ${name} has no ${type} event`);
   return found;
 }
 
-function template(name: 'claude-judgment' | 'claude-api-error'): Record<string, unknown> {
+function template(name: ClaudeCapture): Record<string, unknown> {
   return capturedEvent(name, 'result');
 }
 
@@ -168,15 +170,40 @@ function claudeSession(argv: readonly string[]): string {
   return id;
 }
 
+/**
+ * How many earlier calls of this call's Claude session the scenario recorded (main sets it). The real CLI reports a
+ * session's cumulative `modelUsage` and `total_cost_usd` on every result, a resume's and an error result's included
+ * (verified on Claude Code 2.1.301, 2026-10-16), so the fake reports the captured judgment's usage once per call of the
+ * session that reached the model: `sessionUsage`.
+ */
+let priorSessionCalls = 0;
+
+/** The captured judgment's `modelUsage` and `total_cost_usd` times `n` (n = 0: none). */
+function sessionUsage(n: number): Readonly<{ modelUsage: Record<string, unknown>; total_cost_usd: number }> {
+  const t = template('claude-judgment');
+  const modelUsage: Record<string, unknown> = {};
+  if (n > 0) {
+    for (const [model, raw] of Object.entries(t['modelUsage'] as Record<string, Record<string, unknown>>)) {
+      const u: Record<string, unknown> = { ...raw };
+      for (const k of ['inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens', 'costUSD']) u[k] = (raw[k] as number) * n;
+      modelUsage[model] = u;
+    }
+  }
+  return { modelUsage, total_cost_usd: (t['total_cost_usd'] as number) * n };
+}
+
 function claudeResult(session: string, fields: Readonly<Record<string, unknown>>, drop: readonly string[] = []): void {
-  const r: Record<string, unknown> = { ...template('claude-judgment'), session_id: session, permission_denials: denials, ...fields };
+  const r: Record<string, unknown> = { ...template('claude-judgment'), ...sessionUsage(priorSessionCalls + 1), session_id: session, permission_denials: denials, ...fields };
   for (const k of drop) delete r[k];
   claudeInit(session);
   out(`${JSON.stringify(r)}\n`);
 }
 
-function claudeUsageLimit(session: string): never {
-  const r = { ...template('claude-api-error'), session_id: session, result: CLAUDE_USAGE_LIMIT, api_error_status: 429 };
+/** A CLI error result (exit 1): the usage limit on the captured api-error result, or the captured prompt-too-long one. */
+function claudeFailed(session: string, what: 'usage-limit' | 'context-exceeded'): never {
+  const r = what === 'usage-limit'
+    ? { ...template('claude-api-error'), ...sessionUsage(priorSessionCalls), session_id: session, result: CLAUDE_USAGE_LIMIT, api_error_status: 429 }
+    : { ...template('claude-prompt-too-long'), ...sessionUsage(priorSessionCalls), session_id: session };
   claudeInit(session);
   out(`${JSON.stringify(r)}\n`);
   process.exit(1);
@@ -197,7 +224,7 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'noUsage': {
       const text = JSON.stringify(act.value);
       if (codex) codexEmit(call.argv, thread(), text, [], act.type === 'emit');
-      else claudeResult(session(), { result: text, structured_output: act.value }, act.type === 'noUsage' ? ['usage'] : []);
+      else claudeResult(session(), { result: text, structured_output: act.value }, act.type === 'noUsage' ? ['modelUsage'] : []);
       return;
     }
     case 'capacityText': {
@@ -216,8 +243,11 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
       else claudeResult(session(), { result: 'not json' }, ['structured_output']);
       return;
     case 'usageLimit':
-      if (codex) codexUsageLimit(thread());
-      claudeUsageLimit(session());
+      if (codex) codexFailed(thread(), CODEX_USAGE_LIMIT);
+      claudeFailed(session(), 'usage-limit');
+    case 'contextExceeded':
+      if (codex) codexFailed(thread(), CODEX_CONTEXT_EXCEEDED);
+      claudeFailed(session(), 'context-exceeded');
     case 'refusal':
       claudeResult(session(), { result: "I can't help with that.", stop_reason: 'refusal' }, ['structured_output']);
       return;
@@ -352,6 +382,10 @@ export function main(): void {
     process.exit(99);
   }
   const step = file.steps[claim.index] as Step;
+  if (as === 'claude') {
+    const id = flagValue(argv, '--session-id') ?? flagValue(argv, '--resume');
+    priorSessionCalls = readCalls(scenario).filter((c) => c.as === 'claude' && (flagValue(c.argv, '--session-id') ?? flagValue(c.argv, '--resume')) === id).length - 1;
+  }
   for (const act of step.acts) perform(act, call, step, claim.index, dir, unit);
   process.exit(0);
 }

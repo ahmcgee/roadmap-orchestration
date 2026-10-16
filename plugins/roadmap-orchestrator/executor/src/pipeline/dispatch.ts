@@ -41,7 +41,7 @@
 //   on the judgment profile at the role's one seat `arc` of the arc's routing, spawned as `arc-backend` under `job{job}`
 //   and metered to the job by role and routingRev. A resumed job reads a call it made back (`recordedArcCall`); its
 //   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes } from '../backends/argv.ts';
 import {
@@ -455,7 +455,23 @@ function isJsonLine(line: string): boolean {
  * recovery table); the outcome is the retry's. An implementer call that may have changed the tree is not
  * retried: its work is salvaged and verified (`lost-tree-effects`).
  */
-export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Promise<BackendCallOutcome> {
+/**
+ * A judgment session's read surface (2026-10-16): the repository and the run dir, then each of `extra` (the dirs its role
+ * names: evidence, the rulings ledger, a corpus, a branch checkout) not already inside one of them, in order; the tree it
+ * judges is its cwd. Read-only: a judgment's tools (argv.ts `JUDGMENT_TOOLS`) and its subagents' write nothing. A read
+ * outside the surface is refused by the CLI and recorded (reads.json `denied`); it no longer voids an approval.
+ */
+export function judgmentReadDirs(ctx: Readonly<{ repo: AbsPath; runDir: AbsPath }>, extra: readonly AbsPath[]): readonly AbsPath[] {
+  const out: AbsPath[] = [ctx.repo, ctx.runDir];
+  const covered = (dir: AbsPath): boolean => out.some((d) => dir === d || dir.startsWith(`${d}/`));
+  for (const dir of extra) if (!covered(dir)) out.push(dir);
+  return out;
+}
+
+export async function callBackend(ctx: StageContext, given: BackendCallSpec): Promise<BackendCallOutcome> {
+  const spec: BackendCallSpec = given.request.kind === 'judgment'
+    ? { ...given, request: { ...given.request, evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) } }
+    : given;
   const r = spec.request;
   const seat: UnitSeatRef = r.kind === 'judgment' ? { role: r.dispatch.role, tier: r.dispatch.tier } : { role: 'build', tier: r.dispatch.tier };
   const role: Role = seat.role;
@@ -530,7 +546,9 @@ export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise
   const { session } = spec;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
-  const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, system: spec.system, evidenceDirs: spec.evidenceDirs };
+  const c: BackendCall = {
+    kind: 'claude-judgment', role: spec.role, triple, session, schemaText, system: spec.system, evidenceDirs: judgmentReadDirs(ctx, spec.evidenceDirs),
+  };
   const stdin = inputFile(ctx.runDir, promptBytes(c, spec.rendered), 'prompt.txt');
   const env = backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
@@ -585,6 +603,8 @@ export type Interruption = 'pause' | 'stop' | BackendParkClass | 'host-pressure'
 export type BackendVerdict =
   | Readonly<{ kind: 'success'; value: JsonValue; result: BackendResult }>
   | Readonly<{ kind: 'refusal' | 'malformed' | 'process-fault'; detail: string }>
+  /** 2026-10-16: the call's prompt or context outgrew the model's window; `detail` names the role, the call and the size. */
+  | Readonly<{ kind: 'context-exceeded'; detail: string; inv: InvocationId; promptBytes: number }>
   | Readonly<{ kind: 'interrupted'; reason: Interruption; cause: HoldCause | null; needsUser: NeedsUserContent | null }>;
 
 /** Who a backend call ran for: a unit's stage attempt, or (M3) a job's arc-role call. */
@@ -615,9 +635,23 @@ export function backendOf(called: BackendCallOutcome): Backend {
 }
 
 /**
+ * The size in bytes of the prompt a backend call was launched with: its stdin (for Codex the system text leads it) and
+ * Claude's `--system-prompt` or `--append-system-prompt` value.
+ */
+export function launchedPromptBytes(called: Readonly<{ inv: InvocationId; invDir: AbsPath }>): number {
+  const launch = runnerFiles(called.invDir, called.inv).read('launch.json');
+  if (launch === null) throw new Error(`${called.invDir}: a finished backend call without its launch.json`);
+  const at = launch.argv.findIndex((t) => t === '--system-prompt' || t === '--append-system-prompt');
+  const system = at === -1 ? 0 : Buffer.byteLength(launch.argv[at + 1] ?? '', 'utf8');
+  return (launch.stdinPath === null ? 0 : statSync(launch.stdinPath).size) + system;
+}
+
+/**
  * Reads a finished call. Order: an interruption (outcome `cancelled`: a pause or stop) first, then the
  * usage-limit/capacity park (outcome != success with such an error: a `backend-park` fact, arc-wide, whose seq
- * is the park's epoch and the hold's cause), then, for a unit's stage, a starved call (M4b rev 3, RC-11: a process
+ * is the park's epoch and the hold's cause), then a context overrun (2026-10-16: outcome != success with a
+ * `context-exceeded` error: the call's own failure, never a backend park and never a process fault, so no probe and no
+ * repeat rule), then, for a unit's stage, a starved call (M4b rev 3, RC-11: a process
  * fault its deadline or stall watchdog ended under host pressure, `callRuling`: held with cause `host-pressure`,
  * uncharged), then the outcome itself. A job's call is never starved: no unit is charged for it.
  */
@@ -636,6 +670,12 @@ export function verdictOf(ctx: StageContext, parent: CallParent, called: Backend
       const parkSeq = ctx.journal.fact({ kind: 'backend-park', backend, class: park, inv: called.inv });
       const needsUser = park === 'usage-limit' ? usageLimitNeedsUser(parent, backend, called) : null;
       return { kind: 'interrupted', reason: park, cause: { type: 'backend', backend, parkSeq }, needsUser };
+    }
+    const exceeded = result.backendErrors.find((e) => e.class === 'context-exceeded');
+    if (exceeded !== undefined) {
+      const promptBytes = launchedPromptBytes(called);
+      const detail = `the ${result.role} call ${called.inv} outgrew the model's context with a prompt of ${promptBytes} bytes: ${exceeded.message}`;
+      return { kind: 'context-exceeded', detail, inv: called.inv, promptBytes };
     }
   }
   if (parent.type === 'stage' && result.outcome.kind === 'process-fault') {

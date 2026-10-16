@@ -11,7 +11,7 @@ import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../h
 import type { DiffShown, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
-import type { LaunchCpu, ReadsFile, ToolRead } from './records.ts';
+import type { LaunchCpu } from './records.ts';
 import type { ClassTable } from '../routing/types.ts';
 
 const warned = new Set<string>();
@@ -178,15 +178,6 @@ export function exitCpuOf(exit: Readonly<{ cpu?: LaunchCpu | null }>): LaunchCpu
 export function lensPatchMutantDefault(patch: string): string {
   warnDefaulted('lens.mutant.patch', 'a lens answer whose mutant is a unified diff (recorded before M4b edits); read as written');
   return patch;
-}
-
-// Paid M4b run 5 (a gate approved after the CLI refused its evidence read): reads.json records the refused reads.
-
-/** A reads.json's refused reads: absent from a file an earlier executor wrote, read as none (its call is judged as before). */
-export function readsDeniedOf(reads: ReadsFile): readonly ToolRead[] {
-  if (reads.denied !== undefined) return reads.denied;
-  warnDefaulted('reads.denied', 'a reads.json without denied (written before paid M4b run 5); read as none refused');
-  return [];
 }
 
 // The build answer's `final` (src/runner/report.ts): a build an earlier executor launched answered a schema without it.

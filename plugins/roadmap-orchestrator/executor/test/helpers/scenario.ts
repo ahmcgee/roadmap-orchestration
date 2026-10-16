@@ -30,7 +30,7 @@ export type Expect = Readonly<{
 /**
  * Output acts write the CLI's real output format (faithful to test/fixtures/backend-output):
  * `emit` a schema-conforming answer; `capacityText` the same with capacity and usage-limit text inside the
- * normal answer; `noUsage` an answer without a usage block; `malformed` a final message that is not JSON;
+ * normal answer; `noUsage` an answer without its usage (Claude: no `modelUsage`); `malformed` a final message that is not JSON;
  * `usageLimit` the CLI's usage-limit error (and exit 1); `exitZeroNoop` exit 0 having printed nothing.
  */
 export type OutputAct =
@@ -39,6 +39,11 @@ export type OutputAct =
   | Readonly<{ type: 'noUsage'; value: JsonValue }>
   | Readonly<{ type: 'malformed' }>
   | Readonly<{ type: 'usageLimit' }>
+  /**
+   * 2026-10-16: the prompt outgrew the model's window. Claude: the captured claude-prompt-too-long result (is_error, "Prompt
+   * is too long", exit 1); Codex: `error` and `turn.failed` with CODEX_CONTEXT_EXCEEDED, exit 1.
+   */
+  | Readonly<{ type: 'contextExceeded' }>
   | Readonly<{ type: 'exitZeroNoop' }>;
 
 /** Side effects on the world. File paths are relative to the call's cwd. */
@@ -129,6 +134,11 @@ export const CLAIMS_DIR = 'claims';
 
 /** Error texts the fakes emit. Codex's is hand-written from the CLI's usage-limit message (never captured). */
 export const CODEX_USAGE_LIMIT = "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:05 PM.";
+/**
+ * Codex's context-window error, as codex-cli 0.163.0 carries it (its ContextWindowExceeded error text, read from the
+ * binary 2026-10-16; never captured live).
+ */
+export const CODEX_CONTEXT_EXCEEDED = "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying.";
 /** Hand-written: Claude Code's subscription limit text; the object around it is the captured api-error result. */
 export const CLAUDE_USAGE_LIMIT = "You've hit your limit · resets 3am (UTC)";
 /**

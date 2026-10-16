@@ -170,7 +170,7 @@ export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPa
 // ---------------------------------------------------------------------------------------------------
 // Scenario steps
 
-const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] };
+const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] };
 
 export type GateAnswer = Readonly<{
   decision: 'approve' | 'revise' | 'escalate';

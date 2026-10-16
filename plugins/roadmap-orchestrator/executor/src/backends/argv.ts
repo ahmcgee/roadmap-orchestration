@@ -19,7 +19,7 @@
 //   `--append-system-prompt <text>` (appends to it). Judgment passes the module's `system` with
 //   `--system-prompt`: a judge is a read-only reviewer returning one structured verdict, and Claude Code's
 //   default prompt (an interactive coding agent that edits, runs commands and talks to a user) contradicts
-//   that role; the three read-only tools keep their own definitions. The implementer passes it with
+//   that role; its tools (`JUDGMENT_TOOLS`) keep their own definitions. The implementer passes it with
 //   `--append-system-prompt`: it does real agentic work with the full tool set, and the default prompt
 //   carries the tool-use and environment guidance that work relies on. A resume passes the same flag; the
 //   CLI records the system prompt on a conversation's first request and reuses it on resume.
@@ -27,9 +27,10 @@
 //   `system` leads the stdin text: `promptBytes` is the one function that composes stdin for every call.
 //
 // Evidence dirs, verified the same way: `claude -p --add-dir <directories...>` adds directories the tools
-// may access beyond the cwd. A judgment session runs in the tree it judges and must read evidence dirs
-// outside it, so every evidence dir is passed as its own `--add-dir <dir>` pair (the flag is variadic, so
-// it goes last, where no later token can be swallowed into its list). The Claude implementer works in its
+// may access beyond the cwd. A judgment session runs in the tree it judges and reads beyond it: its read surface is the
+// repository and the run dir, plus any dir its role names outside both (dispatch.ts `judgmentReadDirs`, 2026-10-16), each
+// passed as its own `--add-dir <dir>` pair (the flag is variadic, so it goes last, where no later token can be swallowed
+// into its list). Its tools write nothing, so the surface is read-only. The Claude implementer works in its
 // worktree but writes decisions.json into an evidence dir outside it and, in a fix round, reads the failing
 // lanes' evidence dirs: the same `--add-dir` pairs, last. Codex runs with danger-full-access, so nothing is
 // needed on the Codex side.
@@ -45,8 +46,8 @@
 //   MCP connectors of the logged-in account (their tools too: `--tools` does not restrict MCP tools) and the
 //   installed skills. `--setting-sources ''` loads no user, project or local settings, and with them no
 //   CLAUDE.md file; `--strict-mcp-config` with no `--mcp-config` loads no MCP server of any source;
-//   `--disable-slash-commands` loads no skill. The init event then lists tools Glob, Grep, Read and
-//   StructuredOutput only, no MCP server and no skill; a canary CLAUDE.md is not seen (evals/probe.ts pins
+//   `--disable-slash-commands` loads no skill. The init event then lists tools Task (the Agent tool), Glob, Grep, Read
+//   and StructuredOutput only, no MCP server and no skill; a canary CLAUDE.md is not seen (evals/probe.ts pins
 //   both). Auto-memory is turned off by environment for every Claude call (`backendEnv`,
 //   preflight/smoke.ts). The implementer keeps `--setting-sources project` so the repo's CLAUDE.md
 //   conventions reach it (the unit policy in its prompt overrides their permissions), but gets no MCP, no
@@ -66,8 +67,21 @@ export type ClaudeTriple = Extract<Triple, { backend: 'claude' }>;
 export type CodexSession = Extract<ImplementerSession, { backend: 'codex' }>;
 export type ClaudeImplementerSession = Extract<ImplementerSession, { backend: 'claude' }>;
 
-/** Tools a judgment session may use: read-only inspection of the tree it judges. */
-export const JUDGMENT_TOOLS = 'Read,Grep,Glob';
+/**
+ * Tools a judgment session may use: read-only inspection, and `Agent` to delegate reading and sub-judgments to subagents
+ * (owner ruling 2026-10-16: the role picks each subagent's type and model by its own calibration; no executor cap beyond
+ * Claude Code's defaults, the judgment deadline is the brake). The invariant is that a judge's subagents are read-only,
+ * and `--tools` alone keeps it: verified against the real CLI (Claude Code 2.1.301, 2026-10-16, `--tools
+ * Read,Grep,Glob,Agent --setting-sources ''`), a subagent's tools are its type's list intersected with the session's
+ * `--tools`. The built-in types (claude, general-purpose, Explore, Plan, statusline-setup; no user or project agents load
+ * without setting sources) got Agent, Glob, Grep and Read at most (statusline-setup, whose list is Read and Edit, got Read
+ * only); none could Write, Edit or run Bash. Subagents inherit the session's cwd and `--add-dir` reads (a read outside
+ * both is refused and listed in the result's `permission_denials` like the session's own). The Agent tool's `model`
+ * takes the aliases haiku, sonnet, opus and fable; `modelUsage` names the resolved ids (classes.ts `DELEGATE_CLASSES`).
+ * So no `--agents` definition or `--disallowedTools` list is needed; evals/probe.ts pins the read-only subagent.
+ * The init event lists the Agent tool as `Task`; its tool_use blocks name it `Agent`.
+ */
+export const JUDGMENT_TOOLS = 'Read,Grep,Glob,Agent';
 
 export type BackendCall =
   | Readonly<{

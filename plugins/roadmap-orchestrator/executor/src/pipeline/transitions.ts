@@ -176,11 +176,15 @@ export const TABLE: Table = {
     // M4a rev 3 (E, R55): a frontier or summit builder under `by-builder` makes no plan-check call; its fresh build
     // assesses in session first.
     'in-session': go(build('fresh')),
-    // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate.
+    // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate (scaffolding: a 1.0.0-dev.11 record).
     'read-denied': retry('read-denied', 'env'),
     // Scope growth (2026-10-15): a proposal code verified holds the unit, uncharged, for the root agent's `scope accept|reject`
     // (src/commands/scope.ts); its `scope-decided` releases the hold and the plan-check runs again.
     'scope-growth': hold,
+    // 2026-10-16: the call's prompt or context outgrew the model's window. Not a process fault (the backend is well, so no
+    // probe, no repeat rule, no backend park): uncharged, operator env, the needs-user naming the role, the call and the
+    // prompt's size; `resume` re-runs the stage once its inputs fit (a smaller unit, or a seat with a larger window).
+    'context-exceeded': park('context-exceeded', 'env'),
   },
   build: {
     success: go(at('quiesce')),
@@ -206,6 +210,8 @@ export const TABLE: Table = {
     // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
     // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.
     'witness-lane-missing': park('witness-lane-missing', 'env'),
+    // 2026-10-16: as at plan-check.
+    'context-exceeded': park('context-exceeded', 'env'),
   },
   quiesce: { empty: go(at('evidence')) },
   evidence: { captured: go(at('salvage')) },
@@ -258,9 +264,12 @@ export const TABLE: Table = {
     'routing-changed': park('routing-changed', 'env'),
     // M4a rev 3 (paid run 11): the latest spec series' checkout is gone or of another commit; the lanes run again, uncharged.
     unverified: go(at('lanes')),
-    // Paid M4b run 5: the CLI refused one of the session's reads (a path outside its cwd and --add-dirs), so its approve
-    // may rest on evidence it never opened. A fresh gate, uncharged; refused again, the read surface needs the operator.
+    // Paid M4b run 5: the CLI refused one of the session's reads, so its approve was voided: a fresh gate, uncharged;
+    // refused again, an env park. TEMPORARY SCAFFOLDING: no longer recorded since 2026-10-16 (the read surface is the
+    // repository and the run dir, and a refused read voids nothing); a 1.0.0-dev.11 record still retries by this row.
     'read-denied': retry('read-denied', 'env'),
+    // 2026-10-16: as at plan-check (the dev.11 consumer arc's 2.37 MB unit diff).
+    'context-exceeded': park('context-exceeded', 'env'),
   },
   candidate: {
     green: go(at('ff')),

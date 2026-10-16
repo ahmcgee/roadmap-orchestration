@@ -2,7 +2,9 @@
 // captures predate the system-prompt flag (step 6) and no capture has `--add-dir`: the builder appends those
 // after the captured tokens. The Claude captures predate `--effort <level>` (Claude triples carry an effort
 // since 2026-09-26): the builder's argv less that pair must equal the capture, and the pair follows
-// `--model`. `npm run probe` runs the full argv against the real CLIs.
+// `--model`. The 2.1.283 judgment capture predates the Agent tool (2026-10-16): its `--tools` value lacks `,Agent`; the
+// 2.1.301 capture claude-judgment-subagents is the whole argv, token for token. `npm run probe` runs the full argv against
+// the real CLIs.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -46,8 +48,18 @@ describe('argv', () => {
       cwd: absPath('/w'), outputPath: absPath('/o'), schemaPath: absPath('/s'),
     }, 'Do the unit.'), `${SYSTEM}\n\nDo the unit.`);
   });
+  it('claude judgment (2.1.301, with the Agent tool), token for token', () => {
+    const c = capturedArgv('claude-judgment-subagents');
+    const call = {
+      kind: 'claude-judgment', role: 'gate', triple: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'low' }, schemaText: value(c, '--json-schema'),
+      session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(value(c, '--session-id')) }, system: CAPTURED_SYSTEM, evidenceDirs: [],
+    } as const;
+    assert.deepEqual(backendArgv(call), c);
+    assert.equal(value(c, '--tools'), 'Read,Grep,Glob,Agent');
+    assert.equal(exitCode('claude-judgment-subagents'), '0');
+  });
   it('claude judgment', () => {
-    const c = capturedArgv('claude-judgment');
+    const c = capturedArgv('claude-judgment').map((t) => (t === 'Read,Grep,Glob' ? 'Read,Grep,Glob,Agent' : t));
     const call = {
       kind: 'claude-judgment', role: 'gate', triple: CLAUDE, schemaText: value(c, '--json-schema'),
       session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(value(c, '--session-id')) },

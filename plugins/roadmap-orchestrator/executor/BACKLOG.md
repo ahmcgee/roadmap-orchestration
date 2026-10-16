@@ -168,6 +168,11 @@ at triage stay in git history.
   rerun passed. In an arc the dev.10 repair turn catches it, at the cost of a call. Tighten the flow prompt: the station is
   a bare StationId, the reasoning goes in `reason`.
 
+- **Lens and flow failures drop their detail** (W2, 2026-10-16). A lens call that fails (a fault, a refusal,
+  `context-exceeded`) only marks its audit `abandoned`, and a flow job's `failed` raises nothing; the detail string
+  (`verdictOf`'s, which names the role, the call and, for `context-exceeded`, the prompt's size) reaches no record. The
+  checkpoint (rejected-invalid) and the pack review (its item) keep it. Record it where each job records its end.
+
 ## Watch (act only on the trigger)
 
 - **Bounded diff heuristics** (1.0.0-dev.12, src/git/boundeddiff.ts). A file's kind is read from its path (test and
@@ -179,6 +184,20 @@ at triage stay in git history.
   the `--no-renames`, three-line-context diff so a resumed dev.11 audit finds its chunks again; the attachment is the
   smaller bounded diff, so chunks are shorter than they need be. Trigger: once no audit a dev.11 executor started is
   running, size chunks by the bounded diff itself (recording the measure on `audit-started` if it must stay stable).
+- **Judge prompts do not name the read surface's paths** (W2, 2026-10-16). Judgment calls read the repository and the run
+  dir by `--add-dir` (`judgmentReadDirs`), but `--system-prompt` replaces Claude Code's default prompt, which is what
+  lists the additional working directories, so a judge learns those paths only from the inputs that name files under
+  them. Trigger: a judge refused a read it plainly meant to make, or asking for a path it could not find; then add an
+  input naming the repository and the run dir.
+- **Resume overcount crossing the upgrade** (W2, 2026-10-16). A Claude session's reading is charged less what its earlier
+  facts charged; a session whose earlier invocation an executor before 1.0.0-dev.12 metered has no `session` on that
+  fact, so its first dev.12 reading (a repair turn or a resumed build) is charged whole, once. Nothing to do unless an
+  arc's spend matters at that precision.
+- **A judge's background subagent** (W2, 2026-10-16). The Agent tool's `run_in_background` lets a judge end a turn while a
+  subagent runs; the session then prints an interim result (with `structured_output`) and a later one, and the adapter
+  reads the last. Watch for a judge whose deadline kills it while it waits on a background subagent: then tell judges to
+  run subagents in the foreground, or treat the last interim answer as the call's.
+
 - **Apply rebase merges arrays of plain values whole** (2026-10-16). `merge3` merges objects per key and arrays of
   keyed objects per element, but an array of strings (scope patterns, `holistic.advances`, cites, a lane's argv) both
   sides changed is a conflict, never a set merge (an argv's order is its meaning). Trigger: conflicts on id lists such as
@@ -356,8 +375,11 @@ at triage stay in git history.
   The M4b rev 3 defaults go with it: `spawnPressureOf` (a spawn result without `pressure` reads null) and
   `startPressureOf` (an `executor-started` without `pressure` reads `unavailable`) and `exitCpuOf` (an exit.json without
   `cpu` reads null); the three fields then become required.
-- `readsDeniedOf` (src/core/upgrade.ts), once no gate call an executor before paid M4b run 5's fix closed is unconsumed: a
-  reads.json without `denied` reads as none refused. With it, `denied` becomes required.
+- The `read-denied` outcome (gate and plan-check `STAGE_OUTCOME_KINDS`, its two `retry('read-denied', 'env')` rows in
+  src/pipeline/transitions.ts and their rows in test/transitions.test.ts) and `NeedsUserReason` `read-denied`, once no
+  arc started on 1.0.0-dev.11 is in flight: nothing records them since 1.0.0-dev.12 (the judge's read surface widened to
+  the repository and the run dir; a refused read voids nothing), kept so a dev.11 log whose latest judgment outcome is
+  one still folds and retries.
 - `buildFinalDefault` (src/core/upgrade.ts), once no build an executor before the report rule (2026-10-11) launched is
   unconsumed: a build answer without `final` reads as final. With it, `final` becomes required in `buildOutputFor`.
 - `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth

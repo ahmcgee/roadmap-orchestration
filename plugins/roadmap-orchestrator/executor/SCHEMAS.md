@@ -286,6 +286,23 @@ chunking keeps the dev.11 fit measure exactly (`fitsWhole`), so a resumed audit 
 | `GateInputs` (not persisted) | `diff: {bounded: BoundedDiff, claims: DiffClaims}` in place of `{base, head, text}`; `DiffClaims = {acceptance: ClauseId[], witnesses: WitnessItemId[], obligations: ObligationId[]}` (the active clauses and witness items, the selected obligations) | none |
 | `LensInputs` (not persisted), `BoundedDiff` | `BoundedDiff = {from, to, dir, orientation{stat{text, full}, moves, deletions{…, labelled}, packages, substitutions}, inlined[{path, kind, representation: line\|word, full}], text, omitted{shown[{path, kind, why: derived\|size, bytes, diff}], more}, notInlined}`; lists past their share are `{shown, more}` | none |
 | Gate and lens prompts (not persisted) | rendered as `<orientation>`, `<diff>`, `<not_inlined>` (src/prompts/inputs.ts `boundedDiffText`); a file not shown is a readable diff file, never a `git diff` command (a judgment has no shell) | none |
+**1.0.0-dev.11 → 1.0.0-dev.12 (gate method redesign, W2: judge sessions, metering per class, context-exceeded).**
+`SCHEMA_VERSION` stays 1; every change is additive. The scaffolding is the `read-denied` outcome kept readable (its
+`STAGE_OUTCOME_KINDS` entries, its transition rows and its `NeedsUserReason`): nothing records it since, and a dev.11 log
+whose latest gate or plan-check outcome is `read-denied` still folds and takes its retry by the old row. An arc started on
+dev.11 is adopted; a dev.11 unit parked `read-denied` resumes like any env park.
+
+| Record | Change | Read-time default for dev.11 state |
+|---|---|---|
+| Judgment argv (`JUDGMENT_TOOLS`) | `--tools Read,Grep,Glob,Agent`: every judgment role may delegate to subagents of the type and model it picks; `--tools` alone keeps them read-only (a subagent's tools are its type's list intersected with the session's, verified on Claude Code 2.1.301) | none |
+| Judgment `--add-dir` (`judgmentReadDirs`) | the repository and the run dir lead every judgment call's read surface, then each named dir outside both | none |
+| `stage-outcome` gate and plan-check `read-denied`; `NeedsUserReason` `read-denied` | no longer recorded or raised: a refused read is recorded in reads.json `denied` and voids nothing | a dev.11 record reads as written; its transition row (one uncharged retry, then an `env` park) still applies (scaffolding) |
+| `BackendErrorClass` | `+ context-exceeded` (Claude "Prompt is too long", "Input is too long for requested model", HTTP 413; Codex's "ran out of room in the model's context window", `context_length_exceeded`) | none |
+| `stage-outcome` plan-check, build and gate, `StageOutcomeDetail`, `NeedsUserReason` | `+ context-exceeded` (park `operator env`, uncharged, blocking; `detail: context-exceeded{inv, promptBytes}`, the needs-user naming the role, the call and the size) | none: dev.11 records never hold it |
+| result.json `usage` (Claude) | `known + delegated?: ClassUsage[]` (`{class: UsageClass, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd}`, one per class, ascending): `tokens` sums every model of the last result's `modelUsage` and `costUsd` is its `total_cost_usd` (both session-cumulative), `turns` sums the results' `num_turns`; `delegated` is the share of models other than the session's own | absent (Codex, a dev.11 Claude result): the invocation's own usage, charged as recorded (a dev.11 Claude result's `tokens` were the last turn's own model's) |
+| `meter` fact | `+ session?: ClaudeSessionId`, `+ delegated?: ClassUsage[]` (together): a Claude call's charge, its session's cumulative reading less what the session's earlier facts charged (src/core/usage.ts) | absent: as recorded, nothing delegated |
+| `UsageClass` | new: `efficient \| frontier \| summit \| economy`; `DELEGATE_CLASSES` (src/routing/classes.ts) maps every model a subagent can be put on to one (Haiku economy, Sonnet efficient, Opus frontier, Fable summit); an uncatalogued model in `modelUsage` fails loud (`UnknownModelError`), as do per-model costs that do not sum to `total_cost_usd` (`UsageMismatchError`) | none |
+| `status.spend` | `+ byClass{classes: ClassTotal[], unresolvedRevs}`; `byModel` counts each seat's own share (its totals less the delegated) | derived |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -462,7 +479,7 @@ in the line belongs to `arc`.
 |---|---|
 | `tail-discarded` | `offset, length, sha256` (fragment file `events.torn.<offset>.<sha256[0:8]>`) |
 | `containment-mode` | `mode: session\|cgroup` |
-| `meter` | `inv, routingRev, subject: MeterSubject, usage: TokenUsage`; a seat subject's `(role, tier)` is the seat (`tier` is `low\|med\|high`, or `escalation` for a judgment role), so `(role, tier, routingRev)` names one seat and a by-model view is exact (lead ruling, 13b) |
+| `meter` | `inv, routingRev, subject: MeterSubject, usage: TokenUsage, session?: ClaudeSessionId, delegated?: ClassUsage[]` (2026-10-16: `session` and `delegated` together on a Claude call's fact; `usage` is what the invocation is charged, its session's cumulative reading less what the session's earlier facts charged, and `delegated` the subagents' share of it per usage class); a seat subject's `(role, tier)` is the seat (`tier` is `low\|med\|high`, or `escalation` for a judgment role), so `(role, tier, routingRev)` names one seat and a by-model view is exact (lead ruling, 13b) |
 | `usage-unavailable` | `inv, routingRev, subject: MeterSubject, reason: no-result\|absent\|malformed` |
 | `dispatch` | `record: DispatchRecord` |
 | `stage-outcome` | `unit, stage, attempt, outcome, class, chargeable, park?, cause?`: one per `(unit, stage, attempt)`; see below |
@@ -681,11 +698,18 @@ also `preempt`, M3) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or 
 that hung is red, a verdict on the tree; cause `cancel` ⇒ `cancelled{reason}` from cancel.json, the same
 interruption a backend call records as outcome `cancelled{reason}`; `classifyCommand(exit, cancel, expectedExit)`).
 `outcome = success{value} | refusal{stopReason} | malformed{detail} | process-fault{detail} |
-cancelled{reason: pause|stop|supersede}` (`supersede`: M4b, a checkpoint call only); `usage = known{tokens: TokenUsage} | unavailable{reason}` with `TokenUsage =
+cancelled{reason: pause|stop|supersede}` (`supersede`: M4b, a checkpoint call only); `usage = known{tokens: TokenUsage, delegated?: ClassUsage[]} | unavailable{reason}` with `TokenUsage =
 {inputTokens, outputTokens, cacheReadTokens|null, cacheWriteTokens|null, turns|null, costUsd|null}` (`turns`
 and `costUsd` are the CLI's own `num_turns` and `total_cost_usd`, list price: Claude reports both, Codex
-neither); `backendErrors[].class = usage-limit | capacity | platform | backend`, classified only from
-`turn.failed` / CLI error events. A judgment result's `session` is its assigned id; an implementer's may be
+neither). A Claude call's usage (2026-10-16, `readUsage` in src/backends/claude.ts) is read from every result event:
+each one's `modelUsage` (per model id, its subagents' models included) must be catalogued and its `costUSD` values must
+sum to the result's `total_cost_usd`, both failing loud; the last result is the reading, cumulative over the session
+(a resume's includes its earlier processes'), so `tokens` sums every model and `turns` sums the results' `num_turns`;
+`delegated` is the share of every model other than the session's own (the init event's `model`), per usage class
+(`delegateClass`), and is written on every Claude result (`[]` when nothing was delegated). The top-level `usage` is the
+last turn's own model's alone and is not read. `backendErrors[].class = usage-limit | capacity | platform | backend |
+context-exceeded`, classified only from `turn.failed` / CLI error events (`context-exceeded`, 2026-10-16: the prompt or
+context outgrew the model's window; `verdictOf` reads it as its own verdict, never a backend park or a process fault). A judgment result's `session` is its assigned id; an implementer's may be
 `null` (died before reporting one).
 
 **Precedence** (`classifyTerminal(exit, cancel, output, schemaValid): TerminalOutcome`, pure; `cancel` is
@@ -709,13 +733,12 @@ order, from the tool_use blocks of its stream-json stdout (`path: null`: the ses
 required argument is not a string is left out (the CLI refuses it unrun). `denied` (paid M4b run 5): the Read, Grep
 and Glob entries of the result event's `permission_denials` (`[{tool_name, tool_use_id, tool_input}]`, on every
 result the CLI prints; a result without it is malformed output), in order: the calls the CLI refused, a path outside
-the cwd and every `--add-dir`; none for a stream without a result. The approval fingerprint does not bind either, but
-the gate and the plan-check do (`readRefused`, src/pipeline/stages.ts, the one check both read through): an `approve`
-from a session with any `denied` read records the stage outcome `read-denied`, not an approval (one uncharged retry,
-then an `env` park with reason `read-denied`), so no approval rests on evidence the session was refused. Run 5's gate Globbed `evidence/<unit>`, the parent of its `--add-dir` evidence dirs, was refused,
-and approved on the ledger's exit codes alone; a plan-check in the same run was refused a Grep above its checkouts.
-The gate and plan-check prompts now name the readable dirs exactly (named and below, never above). A reads.json without `denied` (an earlier executor's) reads as written and as none refused
-(`readsDeniedOf`, src/core/upgrade.ts, warned once; scaffolding).
+the cwd and every `--add-dir`; none for a stream without a result. `reads` includes the session's subagents' calls (their
+events carry `parent_tool_use_id`). Both are an audit and eval record: no judgment is decided on them. Paid M4b run 5
+(a gate refused a Glob above its evidence dirs approved on the ledger alone) made a refused read void an approve
+(`read-denied`); since 2026-10-16 a judgment's read surface is the repository and the run dir (src/pipeline/dispatch.ts
+`judgmentReadDirs`), which hold every evidence dir, and nothing reads `denied` to decide. A reads.json without
+`denied` (an executor before run 5) reads as written.
 
 **Claude stdout** is `--output-format stream-json --verbose` JSONL (`src/backends/argv.ts`): the reader takes
 the last `type: "result"` event, the object `--output-format json` prints alone. Both CLIs' JSONL is read by
@@ -1138,9 +1161,12 @@ planSha256}|null` (the plan in force; null before the first start records one); 
 seats: ClassTable, sources, bindings}|null` (since M3 B9: the plan in force under its revision's routing provenance;
 classes only, no model id); `needsUser[{id, reason, blocking}]` (unacknowledged, the log's items
 and the file-only `sup-*`/`host-*` ones, ascending id; step 14b); `commands{pending[{id, type}], receipts[]}` (the
-last 10 terminal receipts); `spend{byRole, byModel{models, unresolvedRevs}, byJob, bySmoke}` (every total: `calls, input,
-output, cacheRead, cacheWrite, turns, costUsd, unavailable`; `bySmoke` per backend and revision, in no role or
-model total); `host{…, log}` (below); `parkedBackends`; `rejection`; and the M3 keys (`holistic`, `target`, `nowTrue`,
+last 10 terminal receipts); `spend{byRole, byModel{models, unresolvedRevs}, byClass{classes, unresolvedRevs}, byJob, bySmoke}`
+(every role, model, job and smoke total: `calls, input, output, cacheRead, cacheWrite, turns, costUsd, unavailable`;
+`bySmoke` per backend and revision, in no role or model total; a call's totals include its subagents'; `byModel` counts
+each seat's own share, its totals less `meterOf(...).delegatedBySeat`; `byClass` (2026-10-16) totals `input, output,
+cacheRead, cacheWrite, costUsd` per usage class: each seat's own share on the class its revision seats there, each
+delegated share on its own class); `host{…, log}` (below); `parkedBackends`; `rejection`; and the M3 keys (`holistic`, `target`, `nowTrue`,
 `notYetTrue`, `waived`, `deferred`, `vision`, `divergences`, `decisionsSince`, `convergence`, `findings`, `audit`,
 `owed`, `completion`: "Choices made in M3 B9"); and the M4a keys (`holds`, `packReview`, `corpus`, `census`, `amendments`,
 `debt`, `issues`, `chain`, `timings`: "Readings of M4a C4"). The log is read with `readJournal`
