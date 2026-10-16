@@ -207,14 +207,19 @@ export function planCheckScopeGrowthDefault(): readonly never[] {
   return [];
 }
 
+/** A `reenter` op whose answer was recorded before `fixes` existed (`reenterFixesDefault`): distinct from an explicit null. */
+export const FIXES_UNRECORDED = 'unrecorded';
+
 /**
- * A checkpoint `reenter` op's `fixes` (arc feedback 2026-10-16): absent on an answer recorded before it; read as none, so a
- * bundle of such an answer not yet applied is refused (a re-entry an apply adds names its failure), while an applied one
- * stays as recorded. Delete once no arc started on 1.0.0-dev.10 is in flight.
+ * A checkpoint `reenter` op's `fixes` (arc feedback 2026-10-16): absent (not null: the schema requires the key, null for a
+ * lineage with no failure) on an answer recorded before it, so the previous release recorded it. Read as `unrecorded`: the
+ * re-entry is adopted as recorded, applied or not; the classifier's `fixes` rows (the requirement and the unchanged-retry
+ * refusal) do not bind it (src/input/classify.ts `fixesReasons`, through the bundle proposer's `fixesUnrecorded`), and it
+ * enters the plan without `fixes`. Delete once no arc started on 1.0.0-dev.10 is in flight (BACKLOG "Scaffolding to delete").
  */
-export function reenterFixesDefault(): null {
-  warnDefaulted('checkpoint.reenter.fixes', 'a reenter op without fixes (a checkpoint answer written before 2026-10-16); read as none');
-  return null;
+export function reenterFixesDefault(): typeof FIXES_UNRECORDED {
+  warnDefaulted('checkpoint.reenter.fixes', 'a reenter op without fixes (a checkpoint answer written before 2026-10-16); adopted as recorded, its fixes unchecked');
+  return FIXES_UNRECORDED;
 }
 
 // Efficient judgment (owner ruling 2026-10-15, 1.0.0-dev.10): the built-in seat table moved planCheck.low/med, gate.low,
@@ -262,4 +267,15 @@ export function witnessFilesUndeclared(obligation: ObligationId): void {
 export function applyExpectRevDefault(): null {
   warnDefaulted('apply.expectRev', 'an apply command with expectRev (queued before the apply rebase): rebased from the default base');
   return null;
+}
+
+/**
+ * A queued apply without `visionEdit` (queued by a CLI before the flag, owner ruling 2026-10-16): read as a declared vision
+ * edit, so the previous release's command is adopted, never refused as `vision-leak` (CLAUDE.md: its runtime state is never
+ * refused). Every body the CLI writes now carries the field, `false` included. Delete once no arc started on 1.0.0-dev.10
+ * is in flight (BACKLOG "Scaffolding to delete"); `visionEdit` then becomes required.
+ */
+export function applyVisionEditDefault(): true {
+  warnDefaulted('apply.visionEdit', 'an apply command without visionEdit (queued before --vision-edit): read as a declared vision edit');
+  return true;
 }

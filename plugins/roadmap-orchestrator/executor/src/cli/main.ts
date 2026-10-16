@@ -115,7 +115,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       }
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
       return submit(command.run, hostDir, {
-        type: 'apply', base, manifest, ...(rulings.length === 0 ? {} : { rulings }), ...(command.visionEdit ? { visionEdit: true as const } : {}),
+        type: 'apply', base, manifest, ...(rulings.length === 0 ? {} : { rulings }), visionEdit: command.visionEdit,
       });
     }
     case 'watch': {

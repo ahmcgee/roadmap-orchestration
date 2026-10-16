@@ -41,7 +41,9 @@ inputs (plan, specs, ledger).
 - `test/serial/upgrade.test.ts` is the guard: it starts the M1 fixture on `PREVIOUS_RELEASE` (extracted with `git
   archive`), stops it mid-arc, and finishes it on HEAD. Move `PREVIOUS_RELEASE` at each release.
 - Only the previous release is adopted (owner ruling OR-L4): 1.0.0-dev.6 by M4a, 1.0.0-dev.7 since M4b (1.0.0-dev.8,
-  `PREVIOUS_RELEASE` b55ad88). An arc started on an earlier release finishes on the executor release it started on. M4a step X0 deleted every older read-time layer (the 1.0.0-dev.1, dev.3, dev.4 and
+  `PREVIOUS_RELEASE` b55ad88). Since 1.0.0-dev.11 `PREVIOUS_RELEASE` is b1c3666 (1.0.0-dev.10, PR #112); arcs started on
+  dev.7 to dev.9 stay adopted through their defaults until none is in flight, though the test no longer starts one. An
+  arc started on an earlier release finishes on the executor release it started on. M4a step X0 deleted every older read-time layer (the 1.0.0-dev.1, dev.3, dev.4 and
   dev.5 defaults recorded below as history), so each field those releases lacked is required where it was defaulted:
   `launch.json` `stallMs`; a first start records revision 1 before anything runs (no arc without a `plan-applied`);
   `plan-applied` `scheduling: 'dag'` on rev 1 (exactly there), `source`, `payloadSha256`, `rulingsSha256`,
@@ -241,15 +243,19 @@ arc started on dev.10 is adopted.
 | `routingRev` (dispatch facts, spawn subjects, meter facts, `judgment-inputs`, `launch.json` terminal), `status.routing` (efficient judgment, owner ruling 2026-10-15) | no shape change: the built-in seats put planCheck.low/med, gate.low, `lens.arc` and `flow.arc` on efficient, whose judgment binding is Sonnet 5.5 high in both profiles (`ClassBinding{build, judgment}`), so every resolved table and rev moves; `status.routing.seats` names the new classes | none read: OR-L3 binds every revision through HEAD's seats, so an adopted dev.9 arc resolves to new revs and each unit re-pins at its next dispatch with its implementer seat unchanged (no build seat moved): nothing parks `routing-changed`. `status` aliases a dev.9 rev to its revision's current table (`preDev10RevAlias` over `PRE_DEV10_BUILTIN_SEATS`; scaffolding), so its spend resolves, attributed to today's bindings |
 | `PROMPTS` (not persisted) | Sonnet 5.5 `inherits` for every judgment role (planCheck, gate, lens, packReview, flow from Opus; checkpoint from Fable) | none |
 
-**1.0.0-dev.10 → next (arc feedback 2026-10-16: re-entry names its failure; the checkpoint aimed and rarer).**
-`SCHEMA_VERSION` stays 1; every change is additive. The scaffolding is `reenterFixesDefault` in `src/core/upgrade.ts`. An
-arc started on dev.10 is adopted: its applied re-entries are in force and never classified again.
+**1.0.0-dev.10 → next (arc feedback 2026-10-16: re-entry names its failure; the checkpoint aimed and rarer; the apply
+rebase and `--vision-edit`).** `SCHEMA_VERSION` stays 1; every change is additive. The scaffolding is
+`reenterFixesDefault`, `applyExpectRevDefault` and `applyVisionEditDefault` in `src/core/upgrade.ts`. An arc started on
+dev.10 is adopted and none of its runtime state is refused: its applied re-entries are in force and never classified
+again, its recorded checkpoint answers re-enter as recorded, and the applies its CLI queued apply as it meant them.
 
 | Record | Change | Read-time default for dev.10 state |
 |---|---|---|
 | `FailureRef` (src/core/records.ts) | new: `<unit>/<stage>#<attempt>` (a failure outcome: a `stage-outcome` that parked or stopped the unit or was charged) or `<unit>/lanes#<attempt>/<lane>` (a lane failure, src/pipeline/failures.ts); `parseFailureRef`, `failureRefOf` | none |
 | `plan.json` `reenters` | `+ fixes?: FailureRef`: the classifier requires it of a re-entry an apply adds once its lineage recorded a failure, resolves it, and refuses an unchanged retry of a design failure (`fixesReasons`) | absent: a re-entry already in force stays as recorded (lasting: the plan file reads it optional) |
-| Checkpoint answer, `reenter` op | `+ fixes: FailureRef \| null` (the schema requires it; null only for a lineage with no failure) | absent on a recorded answer: null (`reenterFixesDefault`, warned once; scaffolding), so an unapplied dev.10 bundle re-entering a failed lineage is refused as invalid |
+| Checkpoint answer, `reenter` op | `+ fixes: FailureRef \| null` (the schema requires the key; null only for a lineage with no failure) | the discriminator is the key: absent (only a dev.10 answer lacks it) reads as `unrecorded` (`reenterFixesDefault`, warned once; scaffolding), never as null. Such an op is adopted as recorded, applied or not: the bundle proposer's `fixesUnrecorded` names its unit, and `fixesReasons` (the requirement and the unchanged-retry refusal) does not bind it; it enters the plan without `fixes` |
+| `CommandBody` `apply` (apply rebase) | `- expectRev`, `+ base: RevisionManifest \| null` | `expectRev` present (a dev.10 CLI's body): base null (`applyExpectRevDefault`, warned once; scaffolding) |
+| `CommandBody` `apply` (`--vision-edit`) | `+ visionEdit: boolean`, written on every body (`false` included); row 12 (`vision-leak`) refuses a changed vision only when it is false | absent (a dev.10 CLI's body): true, a declared vision edit (`applyVisionEditDefault`, warned once; scaffolding): the previous release's queued command is adopted, never refused as `vision-leak` |
 | `UnitState` (fold) | `+ failures: [{seq, fact, park, spec, dispatch{scope, routingRev}\|null, planRev}]`: each failure outcome with what it ran under (`scope`: the effective scope, ascending) | derived |
 | `LaneFailure`, `status.units[].failures[]` | `+ ref: FailureRef` | derived |
 | Facts | `+ checkpoint-skipped{audit, generation, visionSha256, carried: FindingId[]}`: a completed audit found nothing new, so no checkpoint ran (src/holistic/checkpoint.ts `nothingNew`, and in a corpus arc every open issue already seen by a settled checkpoint, src/holistic/intake.ts `unseenIssues`); its generation is quiescent (`quiescentGenerations`) | none: dev.10 logs never hold it |
@@ -947,7 +953,7 @@ passes, read by `status` for the repo and plan file); `status.rejection.json` (`
 
 | File (run dir) | Type | Content |
 |---|---|---|
-| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{expectRev: PlanRev\|null, manifest: ApplyManifest, rulings?: HashedFile[], visionEdit?: true} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") |
+| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{base: RevisionManifest\|null, manifest: ApplyManifest, rulings?: HashedFile[], visionEdit: boolean} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
@@ -2494,7 +2500,7 @@ unacked} | baseline{baseline: previous-head-mismatch | merge-commit | parent-mis
 previous-incomplete{arc} | k-unset}`; `issue-policy-untrusted{visibility, policy}`; `tree-uncommitted{paths}`;
 `holistic-needs-corpus`; `vision-leak{inForce: Sha256Hex|null, committed: Sha256Hex|null, draft: AbsPath}` (an
 `apply` only, row 12 of src/phase0/rows.ts: its vision, rebased onto the files in force, differs from the vision in
-force and its body carries no `visionEdit: true`; `draft` is `_next/vision.md` beside the arc's input dir); `arc-superseded{by: ArcId}` (a start
+force and its body's `visionEdit` is false (a body without the field, queued by an earlier CLI, reads as true: `applyVisionEditDefault`); `draft` is `_next/vision.md` beside the arc's input dir); `arc-superseded{by: ArcId}` (a start
 of an arc with a plan in force, a reopen, after arc `by` started on its head: src/chain.ts `successorOf`).
 
 **Config** (`.roadmap/config.json`, `src/routing/layers.ts`): `+ chain?: {k: positive}`; nothing about issues (OR-L6).

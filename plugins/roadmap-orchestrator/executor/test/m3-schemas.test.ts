@@ -379,10 +379,10 @@ describe('M3 file records', () => {
       { type: 'audit', lenses: ['drift', 'vision'] },
       { type: 'audit', lenses: null },
       { type: 'close-admissions' },
-      { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 } },
+      { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 }, visionEdit: false },
       {
         type: 'apply', base: { planSha256: H2, specs: { u1: H2 }, rulings: { ledgerSha256: H2, sidecars: {} }, obligations: null, vision: H },
-        manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 },
+        manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 }, visionEdit: true,
       },
     ];
     for (const b of bodies) assert.deepEqual(commandBody(b, 'b'), b);
@@ -490,6 +490,12 @@ describe('M3 judgment outputs', () => {
     ].map((o) => ({ ...o, cites: ['V-1'], evidence: ['e'] }));
     const out = validateCheckpointOutput({ ...ckpt, ops: more });
     assert.equal(out.ops.length, more.length);
+    // A reenter op's `fixes`: absent (an answer a dev.10 executor recorded) is `unrecorded`, never the explicit null.
+    const fixesOf = (o: object): unknown => {
+      const [r] = validateCheckpointOutput({ ...ckpt, ops: [{ ...more[1], ...o }] }).ops;
+      return r?.op === 'reenter' ? r.fixes : assert.fail('a reenter op');
+    };
+    assert.deepEqual([fixesOf({}), fixesOf({ fixes: null }), fixesOf({ fixes: 'u1/gate#1' })], ['unrecorded', null, 'u1/gate#1']);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'arc', class: 'summit' }] }] }), /tier/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[9], class: 'anything' }] }), /class/);
   });

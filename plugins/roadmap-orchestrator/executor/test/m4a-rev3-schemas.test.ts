@@ -310,24 +310,23 @@ describe('m4a-rev3 plan and spec', () => {
 describe('m4a-rev3 apply body (I2, step N3)', () => {
   it('apply.body-rulings: `rulings` round-trips in the order given; absent reads as none, byte-preserving; empty is refused; a queued `expectRev` reads as base null', () => {
     const H = 'a'.repeat(64);
-    const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: null } };
+    const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: null }, visionEdit: false };
     assert.deepEqual(commandBody(plain, 'b'), plain);
     assert.equal(cj(commandBody(plain, 'b')), cj(plain), 'an apply without rulings reads back byte-identical');
-    const { base: _base, ...queued } = plain;
-    assert.deepEqual(commandBody({ ...queued, expectRev: 4 }, 'b'), plain, 'an apply an earlier CLI queued (expectRev) rebases from the default base');
+    const { base: _base, visionEdit: _visionEdit, ...queued } = plain;
+    assert.deepEqual(commandBody({ ...queued, expectRev: 4 }, 'b'), { ...plain, visionEdit: true }, 'an apply an earlier CLI queued (expectRev, no visionEdit) rebases from the default base');
     const ruled = { ...plain, rulings: [{ path: '/r/C-3.json', sha256: H }, { path: '/r/C-2.json', sha256: 'b'.repeat(64) }] };
     assert.deepEqual(commandBody(ruled, 'b'), ruled);
     assert.throws(() => commandBody({ ...plain, rulings: [] }, 'b'), /rulings/);
     assert.throws(() => commandBody({ ...plain, rulings: [{ path: 'relative.json', sha256: H }] }, 'b'), /path/);
   });
 
-  it('apply.body-vision-edit: `visionEdit: true` round-trips; absent reads as undeclared (a queued dev.10 apply); false is refused', () => {
+  it('apply.body-vision-edit: `visionEdit` true and false round-trip; absent (a body a dev.10 CLI queued) reads as a declared vision edit; a non-boolean is refused', () => {
     const H = 'a'.repeat(64);
     const plain = { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H } };
-    const declared = { ...plain, visionEdit: true };
-    assert.deepEqual(commandBody(declared, 'b'), declared);
-    assert.equal('visionEdit' in commandBody(plain, 'b'), false);
-    assert.throws(() => commandBody({ ...plain, visionEdit: false }, 'b'), /visionEdit/);
+    for (const visionEdit of [true, false]) assert.deepEqual(commandBody({ ...plain, visionEdit }, 'b'), { ...plain, visionEdit });
+    assert.deepEqual(commandBody(plain, 'b'), { ...plain, visionEdit: true }, 'absent is not false: the previous release\'s command is adopted');
+    assert.throws(() => commandBody({ ...plain, visionEdit: 'yes' }, 'b'), /visionEdit/);
   });
 });
 

@@ -173,7 +173,13 @@ export type Proposer =
    * its patch takes the next rev, so the dispatched-spec rules do not apply to that unit's spec.
    */
   | Readonly<{ type: 'plan-check'; unit: UnitId }>
-  | Readonly<{ type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[] }>;
+  /**
+   * `fixesUnrecorded`: the units the bundle's `reenter` ops introduce from an answer recorded before `fixes` (a previous
+   * release's, `reenterFixesDefault`): adopted as recorded, the `fixes` rows do not bind them (`fixesReasons`).
+   */
+  | Readonly<{
+    type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; fixesUnrecorded: readonly UnitId[];
+  }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -455,9 +461,11 @@ const specContent = (s: SpecM1): string => canonicalJson({ ...s, unit: null, rev
  * of the re-entered lineage (src/pipeline/failures.ts `citedFailure`).
  * Unless that failure is exempt (flaky, host-suspected, not the unit's design failure) or the re-entry resets under a
  * ruling, the re-entry must change something the failure ran under: the spec's content, the effective scope (derived outputs included), the suite lanes or the
- * resolved routing. A re-entry recorded before `fixes` is never classified again (it is in force, not added).
+ * resolved routing. A re-entry recorded before `fixes` is never classified again (it is in force, not added), and neither
+ * row binds one a previous release's checkpoint answer recorded before `fixes` (the bundle proposer's `fixesUnrecorded`).
  */
 function fixesReasons(input: ClassifyInput, unit: PlanUnit, spec: SpecM1 | null, plan: PlanM1): readonly string[] {
+  if (input.proposer.type === 'bundle' && input.proposer.fixesUnrecorded.includes(unit.id)) return [];
   const re = unit.reenters!;
   const lineage = lineageOf(input.view, re.unit);
   if (re.fixes === undefined) {
