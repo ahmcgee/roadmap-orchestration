@@ -624,7 +624,7 @@ function checkpointInputs(r: ArcRun): void {
 async function bundleRevision(r: ArcRun): Promise<void> {
   checkpointInputs(r);
   const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, laneEnv: process.env } as const;
-  const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [] });
+  const v = evaluateRevision(rctx, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), { type: 'bundle', job: CKPT, cites: [visionClauseId('V-1')], evidence: ['the scripted bundle'], admits: [], fixesUnrecorded: [] });
   assert.equal(v.kind, 'accepted', JSON.stringify(v));
   if (v.kind !== 'accepted') return;
   keepRevision(r.ctx.runDir, v);

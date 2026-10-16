@@ -326,6 +326,14 @@ None.
 
 - `applyExpectRevDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.10 is in flight: an apply command
   queued before the apply rebase carries `expectRev` and reads as base null. With it, `base` is the only field read.
+- `applyVisionEditDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.10 is in flight: an apply command
+  queued before `--vision-edit` carries no `visionEdit` and reads as a declared vision edit. With it, `visionEdit` becomes
+  required.
+- `reenterFixesDefault` and `FIXES_UNRECORDED` (src/core/upgrade.ts), with the bundle proposer's `fixesUnrecorded`
+  (src/holistic/bundle.ts `proposerOf`, src/input/classify.ts `Proposer`, `fixesReasons`' first line), once no arc
+  started on 1.0.0-dev.10 is in flight (every later checkpoint reads the arc's applied answers): a checkpoint `reenter`
+  op recorded without `fixes` is adopted as recorded. With it, `fixes` becomes required in `bundleOp`. (`plan.json`'s
+  `reenters.fixes` stays optional: re-entries in force before it are lasting records.)
 
 - The 1.0.0-dev.7 → M4b default in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.7 is in flight:
   `dev7ArcRolesDefault` and `arcRolesInForce`'s null arm (src/routing/layers.ts): a routing provenance without
@@ -337,10 +345,6 @@ None.
   reads.json without `denied` reads as none refused. With it, `denied` becomes required.
 - `buildFinalDefault` (src/core/upgrade.ts), once no build an executor before the report rule (2026-10-11) launched is
   unconsumed: a build answer without `final` reads as final. With it, `final` becomes required in `buildOutputFor`.
-- `reenterFixesDefault` (src/core/upgrade.ts), once no checkpoint call an executor before re-entry citations (arc
-  feedback 2026-10-16) launched is unconsumed: a recorded `reenter` op without `fixes` reads as none. With it, `fixes`
-  becomes required in `bundleOp`. (`plan.json`'s `reenters.fixes` stays optional: re-entries in force before it are
-  lasting records.)
 - `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth
   (2026-10-15) launched is unconsumed: a plan-check answer without `scopeGrowth` reads as none proposed. With it,
   `scopeGrowth` becomes required in `planCheckOutput`.

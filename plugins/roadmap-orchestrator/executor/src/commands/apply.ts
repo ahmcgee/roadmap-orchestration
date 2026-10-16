@@ -819,7 +819,7 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
   for (let attempt = 1; ; attempt++) {
     const verdict = await evaluateApply({
       runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, repo: ctx.repo, planFile: ctx.planFile, routingBase: ctx.routingBase,
-      laneEnv: ctx.laneEnv, manifest: body.manifest, base: body.base, rulings, visionEdit: body.visionEdit === true,
+      laneEnv: ctx.laneEnv, manifest: body.manifest, base: body.base, rulings, visionEdit: body.visionEdit,
     });
     if (verdict.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(verdict.reasons) };
     if (verdict.kind === 'unchanged') return { kind: 'applied', verified: [`the files rebased onto the plan in force are the plan in force (rev ${verdict.rev}): nothing to apply`] };

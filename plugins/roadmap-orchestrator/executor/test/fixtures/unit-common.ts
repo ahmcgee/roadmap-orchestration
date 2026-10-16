@@ -158,7 +158,7 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
 export function applyBody(d: ArcDescriptor, base: RevisionManifest | null = null): Extract<CommandBody, { type: 'apply' }> {
   const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath), absPath(d.repo)));
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
-  return { type: 'apply', base, manifest };
+  return { type: 'apply', base, manifest, visionEdit: false };
 }
 
 /** An `apply` that declares a vision edit (`roadmap apply --vision-edit`): a changed vision file is otherwise `vision-leak`. */

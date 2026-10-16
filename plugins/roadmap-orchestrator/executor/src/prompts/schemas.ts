@@ -29,6 +29,7 @@ import {
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
   admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+  FIXES_UNRECORDED,
   reenterFixesDefault,
 } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
@@ -545,8 +546,11 @@ export type BundleOpBody =
     targets: readonly RuleId[];
   }>
   | Readonly<{ op: 'patch-spec'; unit: UnitId; patch: readonly SpecPatchOp[] }>
-  /** `fixes` (arc feedback 2026-10-16): the failure it fixes; null when the lineage recorded none, or on an answer recorded before it (`reenterFixesDefault`). */
-  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: RulingId | null; fixes: FailureRef | null }>
+  /**
+   * `fixes` (arc feedback 2026-10-16): the failure it fixes; null when the lineage recorded none; `unrecorded` (the key absent)
+   * on an answer recorded before it (`reenterFixesDefault`), adopted as recorded.
+   */
+  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: RulingId | null; fixes: FailureRef | null | typeof FIXES_UNRECORDED }>
   | Readonly<{ op: 'cut'; unit: UnitId; reason: string }>
   | Readonly<{ op: 'route'; unit: UnitId; seats: readonly Readonly<{ role: Role; tier: Seat; class: ModelClass }>[] }>
   | Readonly<{ op: 'limits'; unit: UnitId | null; limits: readonly Readonly<{ field: keyof Bounds | 'convergenceK'; value: number }>[] }>

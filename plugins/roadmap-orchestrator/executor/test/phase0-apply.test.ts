@@ -302,7 +302,7 @@ describe('the specs against the census at every revision (run 10, C)', () => {
       const row = canonicalJson({ kind: 'phase0-invalid', problems: [{ type: 'spec-census-mismatch', unit: 'u1', item: 'A2', rule: 'T-2', state: 'out-of-slice' }] });
       assert.deepEqual(rejected(await apply(a, j)), [row], 'the apply: the classifier\'s row alone, naming unit, item and rule');
       const ctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE, laneEnv: process.env };
-      const bundle = evaluateRevision(ctx, filesOf(a), { type: 'bundle', job: jobId('ckpt', 1), cites: [visionClauseId('V-1')], evidence: ['e'], admits: [] });
+      const bundle = evaluateRevision(ctx, filesOf(a), { type: 'bundle', job: jobId('ckpt', 1), cites: [visionClauseId('V-1')], evidence: ['e'], admits: [], fixesUnrecorded: [] });
       assert.equal(bundle.kind, 'rejected');
       if (bundle.kind !== 'rejected') return;
       assert.deepEqual(bundle.reasons, [

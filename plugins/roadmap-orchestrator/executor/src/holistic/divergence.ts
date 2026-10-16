@@ -28,6 +28,7 @@ import { canonicalIds, divergenceId } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { HolisticFold } from '../core/state.ts';
 import type { AbsPath, RepoPath } from '../core/values.ts';
+import { FIXES_UNRECORDED } from '../core/upgrade.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
 import { type DivergenceDraft, type Preimage, type RevisionVector, type RulingSidecar, rulingRefSource } from './types.ts';
@@ -73,7 +74,7 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
     case 'admit':
       return [plan(`admits ${op.unit.id} (origin ${op.unit.origin}, risk ${op.unit.risk}, scope ${op.unit.scope.join(', ')}${op.unit.after.length === 0 ? '' : `, after ${op.unit.after.join(', ')}`})`)];
     case 'reenter':
-      return [plan(`${op.unit} re-enters ${op.reenters}${op.fixes === null ? '' : ` to fix ${op.fixes}`}${op.enterAt === null ? '' : ` at ${op.enterAt}`}${op.reset === null ? '' : `, its chargeable failures reset under ${op.reset}`}`)];
+      return [plan(`${op.unit} re-enters ${op.reenters}${op.fixes === null || op.fixes === FIXES_UNRECORDED ? '' : ` to fix ${op.fixes}`}${op.enterAt === null ? '' : ` at ${op.enterAt}`}${op.reset === null ? '' : `, its chargeable failures reset under ${op.reset}`}`)];
     case 'cut':
       return [plan(`cuts ${op.unit}: ${op.reason}`)];
     case 'route':

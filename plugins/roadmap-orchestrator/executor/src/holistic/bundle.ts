@@ -81,7 +81,7 @@ import {
 } from '../core/ids.ts';
 import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
 import { type CheckpointState, openAttempt } from '../core/state.ts';
-import { bundleClassesOf } from '../core/upgrade.ts';
+import { FIXES_UNRECORDED, bundleClassesOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
 import { git, revParse } from '../git/git.ts';
@@ -537,7 +537,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
           ...rest, id: op.unit, spec: `${op.unit}.json`, contingent: [],
           reenters: {
             unit: op.reenters, ...(op.enterAt === null ? {} : { enterAt: op.enterAt }), ...(op.reset === null ? {} : { reset: { ruling: op.reset } }),
-            ...(op.fixes === null ? {} : { fixes: op.fixes }),
+            ...(op.fixes === null || op.fixes === FIXES_UNRECORDED ? {} : { fixes: op.fixes }),
           },
         });
         specs.set(op.unit, { path: specPath(op.unit), bytes: specBytes({ ...spec, unit: op.unit, rev: specRev(1) }) });
@@ -1030,7 +1030,10 @@ function admitOps(ctx: CheckpointContext, ops: readonly IndexedOp[], obligations
 // ---------------------------------------------------------------------------------------------------
 // The activation
 
-/** The proposer of a bundle's revision: its split ops' cites and evidence back a split that drops text (H14); its admits' classes (OR-A1). */
+/**
+ * The proposer of a bundle's revision: its split ops' cites and evidence back a split that drops text (H14); its admits'
+ * classes (OR-A1); the units its `reenter` ops introduce from an answer recorded before `fixes` (`reenterFixesDefault`).
+ */
 function proposerOf(a: Activation, ops: readonly IndexedOp[], admits: readonly ClassifiedAdmit[]) {
   const splits = ops.map((x) => x.op).filter((op) => op.op === 'obligation-split');
   const from = splits.length > 0 ? splits : ops.map((x) => x.op);
@@ -1038,6 +1041,7 @@ function proposerOf(a: Activation, ops: readonly IndexedOp[], admits: readonly C
     type: 'bundle' as const, job: a.job, cites: canonicalIds(from.flatMap((op) => op.cites)),
     evidence: [...new Set(from.flatMap((op) => op.evidence))],
     admits,
+    fixesUnrecorded: ops.flatMap(({ op }) => (op.op === 'reenter' && op.fixes === FIXES_UNRECORDED ? [op.unit] : [])),
   };
 }
 

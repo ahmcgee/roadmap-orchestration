@@ -12,8 +12,9 @@
 // semantics and no new spend unless the architect opts in. Its role set, seat table and pressure records are HEAD's,
 // so its routing revs stand unchanged. What it lacks of 1.0.0-dev.11 reads with the defaults of src/core/upgrade.ts,
 // each warned once on the executor's stderr: an apply its CLI queued carries `expectRev` (rebased from the default
-// base) and no `visionEdit`; its arc lanes declare no `testPaths` and its witnesses no `files` (undeclared, unchecked);
-// its re-entries and its checkpoints' `reenter` ops name no `fixes` (in force, never classified again); and it wrote
+// base) and no `visionEdit` (a declared vision edit); its arc lanes declare no `testPaths` and its witnesses no `files`
+// (undeclared, unchecked); its re-entries and its checkpoints' `reenter` ops name no `fixes` (adopted as recorded,
+// applied or not: the `fixes` rows bind only what 1.0.0-dev.11 records); and it wrote
 // rulings and spec patches back into the owner's files, which HEAD's rebase takes as the files in force.
 //
 // A crashed previous release: its executor is armed with a crash trigger (src/core/crash.ts), and its supervisor
@@ -89,15 +90,20 @@
 //                              stopped mid-build of `page-id-2`. HEAD merges it (the brake on its candidate), runs the
 //                              final audit and checkpoint (reading the applied answer, the default warned) and
 //                              completes the arc; an apply then classifies as accepted.
+//   upgrade.vision-edit-queued as opt-in-holistic, the opt-in apply queued through the previous release's CLI (no
+//                              `visionEdit` field): adopted as a declared vision edit, never `vision-leak`; warned.
+//   upgrade.checkpoint-answer-unapplied
+//                              a corpus arc; `page-id` parks infeasible and the previous release crashes right after its
+//                              park checkpoint's call (`checkpoint.after-call`): the recorded answer, a bare re-entry
+//                              with no `fixes`, undecided. HEAD decides it from the record (no new call, no repair
+//                              turn), applies it (neither `fixes` row binds it), merges `page-id-2`; warned.
 //   upgrade.corpus-witnesses-undeclared
 //                              a corpus arc (the previous release's corpus target: pin, Phase-0 record, fake forge)
 //                              whose arc lane declares no `testPaths` and whose witness declares no `files`; stopped
 //                              mid-build. HEAD finishes it (the brake, the final audit and checkpoint); an apply's
 //                              Phase 0 then reads both as undeclared: unchecked, each default warned, accepted.
 //
-// Not covered: a backend parked on a usage limit, the Claude-only profile; a checkpoint answer the previous release
-// recorded but did not apply (its re-entry without `fixes` is refused on HEAD); an apply its CLI queued that changes the
-// vision (no `visionEdit`: row 12, `vision-leak`).
+// Not covered: a backend parked on a usage limit, the Claude-only profile.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -330,14 +336,15 @@ async function stopPrevious(p: Phase1, supervisor: ProcIdentity): Promise<void> 
 /**
  * Runs the previous release until its executor crashes at `spec` (it SIGKILLs itself there), and leaves what the crash
  * left open for HEAD: the supervisor is frozen as soon as it is ready, so no generation of the previous release
- * respawns to recover it, and SIGKILLed once the executor is gone. `act` runs meanwhile (the architect's commands).
+ * respawns to recover it, and SIGKILLed once the executor is gone. `act` runs meanwhile (the architect's commands);
+ * `env` is added to the start.
  */
-async function crashPrevious(p: Phase1, spec: TriggerSpec, act: () => Promise<void> = async () => {}): Promise<void> {
+async function crashPrevious(p: Phase1, spec: TriggerSpec, act: () => Promise<void> = async () => {}, env: Readonly<Record<string, string>> = {}): Promise<void> {
   const trigger = writeTrigger(p.dir, spec);
   const scope = scopeOf(p);
   track(scope);
   try {
-    const supervisor = await startPrevious(p, { ROADMAP_TEST_CRASH: trigger });
+    const supervisor = await startPrevious(p, { ...env, ROADMAP_TEST_CRASH: trigger });
     process.kill(supervisor.pid, 'SIGSTOP');
     await act();
     await until(`the previous release's executor crashes at ${spec.label}`, PHASE_MS, () => (existsSync(`${trigger}.fired`) ? true : null));
@@ -933,11 +940,15 @@ function obligations(lane: object = SLUG_LANE, witness: object = SLUG_WITNESS, r
   };
 }
 
-test('upgrade.opt-in-holistic: an architect apply adds `holistic` to the previous release\'s arc mid-run: the baseline job, the drift audit, the brake on page-id\'s candidate, the final audit, no-op checkpoints, arc-completed', T, async () => {
+/**
+ * The opt-in story: stopped mid-build, `page-id` left held; on HEAD the architect writes a vision, the obligations and
+ * `holistic`, `queue` submits the apply (and waits for it applied; returns its command id), then `resume page-id`: the
+ * baseline job, the drift audit (audit-1, L ∩ {drift, vision} empty: all of L) and its no-op checkpoint (ckpt-1), the
+ * brake on page-id's candidate, the final audit (audit-2) and its no-op checkpoint (ckpt-2), `arc-completed`.
+ */
+async function optInHolistic(queue: (p: Phase1) => Promise<string>): Promise<Readonly<{ p: Phase1; r: HeadRun; id: string }>> {
   // page-id stays held until the apply lands: an arc-scoped apply waits for every unit to be idle.
   const { p, head } = await stoppedMidBuild(clean(), undefined, false);
-  // The opt-in revision triggers a drift audit (audit-1, L ∩ {drift, vision} empty: all of L), whose checkpoint is
-  // ckpt-1; page-id's publication leaves the final audit (audit-2) and its checkpoint (ckpt-2).
   const steps: readonly Step[] = [
     ...headFakeSteps({ steps: head }, 'default'),
     ...(['1', '2'] as const).flatMap((n) => [lensStep(`audit-${n}`, 'invariants'), checkpointStep(`ckpt-${n}`, checkpointAnswer({ decision: 'no-op' }))]),
@@ -952,7 +963,7 @@ test('upgrade.opt-in-holistic: an architect apply adds `holistic` to the previou
       writeFileSync(join(p.l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
       writeFileSync(join(p.l.input, 'obligations.json'), `${JSON.stringify(obligations(), null, 2)}\n`);
       editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
-      id = await submitOnHead(p, ['apply', '--vision-edit']);
+      id = await queue(p);
       await submitOnHead(p, ['resume', 'page-id']);
     });
   } finally {
@@ -974,6 +985,22 @@ test('upgrade.opt-in-holistic: an architect apply adds `holistic` to the previou
   assert.equal(completed.planRev, 2);
   assert.equal(completed.head, git(p.l.repo, 'rev-parse', 'integration'));
   assert.equal(r.view.holistic().on, true);
+  return { p, r, id };
+}
+
+test('upgrade.opt-in-holistic: an architect apply adds `holistic` to the previous release\'s arc mid-run: the baseline job, the drift audit, the brake on page-id\'s candidate, the final audit, no-op checkpoints, arc-completed', T, async () => {
+  await optInHolistic((p) => submitOnHead(p, ['apply', '--vision-edit']));
+});
+
+test('upgrade.vision-edit-queued: the opt-in apply the previous release\'s CLI queues (no `visionEdit` field: its CLI had no flag) changes the vision and is adopted as a declared vision edit, never refused as vision-leak; the default warned', T, async () => {
+  let body: Readonly<Record<string, unknown>> = {};
+  const { p } = await optInHolistic(async (q) => {
+    const id = await submitOnPrevious(q, ['apply']);
+    body = (JSON.parse(commandBytes(q, id).toString('utf8')) as { body: Readonly<Record<string, unknown>> }).body;
+    return id;
+  });
+  assert.deepEqual([body['type'], 'expectRev' in body, 'visionEdit' in body], ['apply', true, false], 'the previous release\'s CLI queued no visionEdit');
+  assert.match(hostLogs(p), /roadmap: upgrade default \(apply\.visionEdit\)/, 'HEAD read the absent field as a declared vision edit, with a warning');
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -1314,21 +1341,25 @@ test('upgrade.checkpoint-reentry-before-fixes: a holistic arc whose checkpoint t
 // ---------------------------------------------------------------------------------------------------
 // A corpus arc the previous release started: its obligations declare no testPaths and no witness files
 
-test('upgrade.corpus-witnesses-undeclared: a corpus arc the previous release started (its arc lane without testPaths, its witness without files) finishes on HEAD, and an apply\'s Phase 0 reads both as undeclared: unchecked, warned, accepted', T, async () => {
-  const c = clean();
-  type Helpers = typeof import('../helpers/holistic.ts');
+type PreviousHelpers = typeof import('../helpers/holistic.ts');
+
+/**
+ * The M1 fixture as a corpus arc of the previous release (its corpus target: pin, Phase-0 record, fake forge, whose `gh`
+ * is in the returned bin dir), its one obligation witnessed on the fixture's initial text tests (green from the
+ * baseline), L = {invariants}; `m1` and `extra(helpers)` (the previous release's holistic step builders) its fake steps,
+ * after the pack review `review-1`.
+ */
+async function corpusArc(m1: readonly M1Step[], extra: (prev: PreviousHelpers) => readonly Step[]): Promise<Readonly<{ p: Phase1; gh: string }>> {
   type Types = typeof import('../../src/holistic/types.ts');
   type Target = typeof import('../fixtures/corpus-target.ts');
   type Brake = typeof import('../fixtures/brake-common.ts');
   const load = <M>(...path: string[]): Promise<M> => import(pathToFileURL(join(previous.root, ...path)).href) as Promise<M>;
   const [prev, prevTypes, target, brake] = await Promise.all([
-    load<Helpers>('test', 'helpers', 'holistic.ts'), load<Types>('src', 'holistic', 'types.ts'), load<Target>('test', 'fixtures', 'corpus-target.ts'),
+    load<PreviousHelpers>('test', 'helpers', 'holistic.ts'), load<Types>('src', 'holistic', 'types.ts'), load<Target>('test', 'fixtures', 'corpus-target.ts'),
     load<Brake>('test', 'fixtures', 'brake-common.ts'),
   ]);
   let gh = '';
-  const p = await preparePrevious([...c.slug, c.pageId.planCheck], [midBuild(pageIdFiles(c)), prev.packReviewStep('review-1')], (l) => {
-    // The previous release's corpus target (its pin, Phase-0 record and fake forge) over the laid-out fixture, the
-    // obligation witnessed on the fixture's initial text tests (green from the baseline), L = {invariants}.
+  const p = await preparePrevious(m1, [...extra(prev), prev.packReviewStep('review-1')], (l) => {
     gh = join(l.dir, 'bin-gh');
     mkdirSync(gh, { recursive: true });
     const file = obligations(TEXT_LANE, TEXT_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!)) as Record<string, unknown>;
@@ -1339,10 +1370,19 @@ test('upgrade.corpus-witnesses-undeclared: a corpus arc the previous release sta
     // The integration branch starts at the corpus baseline.
     git(l.repo, 'branch', '-f', 'integration', 'main');
   });
+  return { p, gh };
+}
+
+/** PATH with the corpus arc's `gh` and the previous release's fakes first. */
+const corpusPath = (p: Phase1, gh: string): string => [gh, join(p.fakeDir, 'bin'), process.env['PATH'] ?? ''].join(':');
+
+test('upgrade.corpus-witnesses-undeclared: a corpus arc the previous release started (its arc lane without testPaths, its witness without files) finishes on HEAD, and an apply\'s Phase 0 reads both as undeclared: unchecked, warned, accepted', T, async () => {
+  const c = clean();
+  const { p, gh } = await corpusArc([...c.slug, c.pageId.planCheck], () => [midBuild(pageIdFiles(c))]);
   const scope = scopeOf(p);
   track(scope);
   try {
-    const supervisor = await startPrevious(p, { PATH: [gh, join(p.fakeDir, 'bin'), process.env['PATH'] ?? ''].join(':') });
+    const supervisor = await startPrevious(p, { PATH: corpusPath(p, gh) });
     await midCall(p);
     await stopPrevious(p, supervisor);
   } finally {
@@ -1381,4 +1421,46 @@ test('upgrade.corpus-witnesses-undeclared: a corpus arc the previous release sta
   for (const kind of ['obligations.lanes.testPaths', 'obligations.witness.files']) {
     assert.ok(dry.stderr.includes(`roadmap: upgrade default (${kind})`), `the apply read the obligations with the ${kind} default, and warned: ${dry.stderr}`);
   }
+});
+
+test('upgrade.checkpoint-answer-unapplied: a park checkpoint\'s answer the previous release recorded but did not apply (it crashed after the call), re-entering page-id without `fixes` and changing nothing, is adopted on HEAD: decided from the recorded answer with no new call, applied, the re-entry merged', T, async () => {
+  const c = clean();
+  // A bare re-entry of the infeasible park: HEAD refuses it from an answer of its own (no `fixes`, an unchanged retry).
+  const reenter = { op: 'reenter', unit: REENTRY, reenters: 'page-id', enterAt: null, reset: null, cites: ['V-1'], evidence: ['page-id parked infeasible: it starts over'] };
+  const { p, gh } = await corpusArc([...c.slug, INFEASIBLE, INFEASIBLE], (prev) => [prev.checkpointStep('ckpt-1', prev.checkpointAnswer({ decision: 'bundle', ops: [reenter] }))]);
+  await crashPrevious(p, { label: 'checkpoint.after-call', occurrence: 1 }, async () => {}, { PATH: corpusPath(p, gh) });
+  const mid = journalOf(p).view;
+  assert.ok(mid.unit(unitId('page-id')).failures.length > 0, 'page-id\'s lineage recorded a failure');
+  assert.deepEqual(mid.holistic().checkpoints.map((ck) => [ck.inputs.job, ck.inputs.trigger.type, ck.decided]), [['ckpt-1', 'park', null]], 'the park checkpoint answered, undecided');
+  assert.equal(requirePlanInForce(absPath(p.l.runDir), mid).plan.units.some((u) => u.id === REENTRY), false);
+
+  const steps: readonly Step[] = [
+    ...headFakeSteps({ steps: [c.pageId.planCheck, c.pageId.build, c.pageId.gate] }, 'default'),
+    // The bundle's drift audit finds nothing new after ckpt-1 settled (no checkpoint: `checkpoint-skipped`); the final
+    // audit's checkpoint is ckpt-2.
+    lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants'), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
+  ];
+  let r: HeadRun;
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    r = await runOnHead(p, steps, async () => {
+      // The superseded park's escalation item holds the arc open until acknowledged.
+      await until('HEAD applies the recorded bundle', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'superseded' ? true : null));
+      for (const n of journalOf(p).view.needsUser().filter((x) => x.blocking && x.ack === null)) await submitOnHead(p, ['ack', n.id]);
+    }, 'fake-head', [gh]);
+  } finally {
+    await teardown(scope);
+  }
+  assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.deepEqual(r.calls.filter((call) => call.unit === 'ckpt-1'), [], 'HEAD decided ckpt-1 from the recorded answer: no new call, no repair turn');
+  const [applied] = factsOf(r.after, 'plan-applied');
+  assert.deepEqual(applied?.source, { type: 'bundle', job: 'ckpt-1', admits: [], conversions: [] }, 'HEAD applied the recorded bundle');
+  assert.deepEqual(r.view.holistic().checkpoints.find((ck) => ck.inputs.job === 'ckpt-1')?.decided?.kind, 'applied');
+  assert.deepEqual(requirePlanInForce(absPath(p.l.runDir), r.view).plan.units.find((u) => u.id === REENTRY)?.reenters, { unit: unitId('page-id') }, 'the re-entry enters the plan without fixes');
+  assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
+  assert.deepEqual(factsOf(r.after, 'checkpoint-skipped').map((k) => k.audit), ['audit-1']);
+  assert.deepEqual(factsOf(r.after, 'bundle-decided').map((b) => [b.job, b.outcome]), [['ckpt-2', { kind: 'no-op' }]]);
+  assert.equal(factsOf(r.after, 'arc-completed').length, 1);
+  assert.match(hostLogs(p), /roadmap: upgrade default \(checkpoint\.reenter\.fixes\)/, 'the default warned');
 });
