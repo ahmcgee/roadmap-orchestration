@@ -1,6 +1,7 @@
 // `roadmap scope accept|reject <unit> --reason <text>` (scope growth, 2026-10-15; SCHEMAS.md "Scope growth"): the root
 // agent's decision on the scope growth a unit's plan-check proposed and code verified, which holds the unit at plan-check
-// (`scope-growth`, src/pipeline/stages.ts `verifiedGrowth`). A `scope-decide` command, mutation, scope {u}. Refused unless
+// (`scope-growth`, src/pipeline/stages.ts `verifiedGrowth`), or (plan defects, 2026-10-16) the paths its last two salvages
+// both reverted, which hold it at lanes (`repeatedReverts`). A `scope-decide` command, mutation, scope {u}. Refused unless
 // the unit is held by that hold. The effect, each step only where missing (a run again after a crash finds what is done):
 //
 //   accept  1. The ruled growth, the one canonical path a dispatched unit's scope grows by (src/input/classify.ts "scope
@@ -24,6 +25,7 @@
 // the unit stays held, and the root agent rejects instead or lands its own `apply --ruling`.
 import { existsSync, readFileSync } from 'node:fs';
 import { canonicalJson } from '../core/json.ts';
+import { type ScopeHoldStage, scopeHoldStage } from '../core/state.ts';
 import type { ScopeGrowthProposal } from '../core/events.ts';
 import { type CommandId, type RulingId, type UnitId, specRev } from '../core/ids.ts';
 import { type CommandBody, type SpecM1, specRemoves } from '../core/records.ts';
@@ -60,11 +62,12 @@ export async function decideScope(ctx: CommandContext, id: CommandId, body: Scop
   const decided = u.scopeDecisions.find((d) => d.command === id);
   if (decided !== undefined) {
     const landed = ctx.journal.view.planAppliedBy(id);
-    return { kind: 'applied', verified: [...(landed === null ? [] : writeBacks(ctx, landed, body.unit)), decidedText(body.unit, decided.attempt, decided.decision)] };
+    return { kind: 'applied', verified: [...(landed === null ? [] : writeBacks(ctx, landed, body.unit)), decidedText(body.unit, decided.stage, decided.attempt, decided.decision)] };
   }
   const held = u.interrupted;
-  if (u.status !== 'held' || held === null || held.stage !== 'plan-check' || held.outcome !== 'scope-growth' || held.detail?.kind !== 'scope-growth') {
-    return { kind: 'rejected', reason: `${what}: the unit is ${u.status}${held === null ? '' : ` (held at ${held.stage}#${held.attempt} ${held.outcome})`}, not held for a scope-growth proposal of its plan-check` };
+  const stage = held === null ? null : scopeHoldStage(held.stage);
+  if (u.status !== 'held' || held === null || stage === null || held.outcome !== 'scope-growth' || held.detail?.kind !== 'scope-growth') {
+    return { kind: 'rejected', reason: `${what}: the unit is ${u.status}${held === null ? '' : ` (held at ${held.stage}#${held.attempt} ${held.outcome})`}, not held for a scope-growth proposal` };
   }
   const verified: string[] = [];
   if (body.decision === 'accept') {
@@ -72,16 +75,16 @@ export async function decideScope(ctx: CommandContext, id: CommandId, body: Scop
     if (landed.kind === 'rejected') return landed;
     verified.push(...landed.verified);
   }
-  const item = raisedFor(ctx.journal.view, { type: 'stage', unit: body.unit, stage: 'plan-check', attempt: held.attempt });
+  const item = raisedFor(ctx.journal.view, { type: 'stage', unit: body.unit, stage: held.stage, attempt: held.attempt });
   if (item !== null && ctx.journal.view.ackOf(item) === null) verified.push(...acknowledge(ctx, id, item, null));
   ctx.journal.fact({ kind: 'scope-decided', unit: body.unit, attempt: held.attempt, command: id, decision: DECIDED[body.decision], reason: body.reason });
-  verified.push(decidedText(body.unit, held.attempt, DECIDED[body.decision]));
+  verified.push(decidedText(body.unit, stage, held.attempt, DECIDED[body.decision]));
   return { kind: 'applied', verified };
 }
 
-const decidedText = (unit: UnitId, attempt: number, decision: 'accepted' | 'rejected'): string => decision === 'accepted'
-  ? `unit ${unit}: the scope growth of plan-check#${attempt} accepted; the unit re-opens at plan-check on its grown spec`
-  : `unit ${unit}: the scope growth of plan-check#${attempt} rejected; the plan-check runs again within the scope`;
+const decidedText = (unit: UnitId, stage: ScopeHoldStage, attempt: number, decision: 'accepted' | 'rejected'): string => decision === 'accepted'
+  ? `unit ${unit}: the scope growth of ${stage}#${attempt} accepted; the unit re-opens at plan-check on its grown spec`
+  : `unit ${unit}: the scope growth of ${stage}#${attempt} rejected; ${stage === 'lanes' ? 'the lanes run' : 'the plan-check runs again'} within the scope`;
 
 /** One line of ledger text: no newline, no backtick (the statement's backticks name exactly the added patterns). */
 const plain = (text: string): string => text.replace(/`/g, '\'').replace(/\s+/g, ' ').trim();

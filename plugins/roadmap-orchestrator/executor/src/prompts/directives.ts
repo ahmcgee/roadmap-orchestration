@@ -16,6 +16,7 @@
 //   repeatRedDirective    F2: a red lane that repeated its previous red exactly, so the executor did not rerun it
 //   SCOPE_GROWTH_BLOCKER, revertedPathsDirective   scope growth (2026-10-15): how a builder reports an out-of-scope path it
 //                         needs (the build report's `blockers`), and the fix round after salvage reverted its out-of-scope edits
+//   restoredPathsDirective  plan defects (2026-10-16): the round after a scope accept took reverted paths in
 import type { TestRef } from '../core/events.ts';
 import type { LaneId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
@@ -47,6 +48,11 @@ export const SCOPE_GROWTH_BLOCKER = 'list each such path in your report\'s block
  */
 export function revertedPathsDirective(paths: readonly string[], kept: string): string {
   return `The executor reverted your edits to these paths after your last round, because they are outside the unit's pinned scope: ${paths.join(', ')} (your versions are kept under ${kept}/files). Do not edit them again: the executor keeps only in-scope changes. If the spec cannot be met without them, ${SCOPE_GROWTH_BLOCKER}.`;
+}
+
+/** Plan defects (2026-10-16): reverted paths a scope accept has since taken into the unit's scope. */
+export function restoredPathsDirective(paths: readonly string[], kept: string): string {
+  return `The unit's scope now includes these paths, whose edits the executor reverted after your last round: ${paths.join(', ')}. Your versions are kept under ${kept}/files: restore them (or redo the edits) as part of this round.`;
 }
 
 /**

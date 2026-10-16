@@ -299,7 +299,7 @@ describe('m4b fold: the role set is fixed at revision 1', () => {
 
 describe('m4b: the checkpoint schema closes the ids its call knows (paid M4b run 5, ckpt-4)', () => {
   const child = (lane: string) => ({
-    id: 'I-9', statement: 's', docRef: null, rule: 'T-1', witness: { lane, testIds: ['t'] }, activation: 'future', deliveredBy: [],
+    id: 'I-9', statement: 's', docRef: null, rule: 'T-1', witness: { lane, testIds: ['t'], files: [] }, activation: 'future', deliveredBy: [],
   });
   const split = (obligation: string, lane: string) => checkpointAnswer({
     decision: 'bundle', ops: [{ op: 'obligation-split', obligation, children: [child(lane)], cites: ['V-1'], evidence: ['e'] }],

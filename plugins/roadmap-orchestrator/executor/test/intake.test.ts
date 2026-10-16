@@ -355,7 +355,7 @@ test('checkpoint.finding-deferred-banked: a deferred P2 without an obligation is
 const splitOp = (rule: string): JsonValue => ({
   op: 'obligation-split', obligation: 'I-1', cites: ['V-1'], evidence: ['audit-1 found I-1 too coarse'],
   children: [{
-    id: 'I-2', statement: 'A berth is never double-booked.', docRef: null, rule, witness: { lane: 'journey', testIds: ['t1'] }, activation: 'must-hold', deliveredBy: [],
+    id: 'I-2', statement: 'A berth is never double-booked.', docRef: null, rule, witness: { lane: 'journey', testIds: ['t1'], files: [] }, activation: 'must-hold', deliveredBy: [],
   }],
 });
 

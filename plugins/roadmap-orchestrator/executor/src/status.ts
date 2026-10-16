@@ -127,7 +127,7 @@ import { type CorpusInForce, type InForce, PLAN_INPUT, RULING_INPUT, type Revisi
 import {
   type CommandBody, type ContainmentMode, type NeedsUserReason, type Receipt, type RunStart, type Stage, heartbeat, runStart,
 } from './core/records.ts';
-import { type AbsPath, type IsoTime, absPath, branchRef, isoTimeOf } from './core/values.ts';
+import { type AbsPath, type IsoTime, type RepoPattern, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededPackItems } from './needsuser.ts';
 import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
@@ -284,6 +284,8 @@ export type UnitStatusLine = Readonly<{
   supersededBy: UnitId | null;
   /** The implementer's seat tier (A11), a tier, never a model; null before the first dispatch. */
   buildTier: RiskTier | null;
+  /** Plan defects (2026-10-16): the derived outputs its dispatch record adds to its scope, ascending; empty before a dispatch. */
+  derived: readonly RepoPattern[];
   running: UnitRunning | null;
   /** M4a rev 3 (F3): its lanes attempts' red, flaky and repeat lanes, host-suspected ones marked (src/pipeline/failures.ts). */
   failures: readonly LaneFailure[];
@@ -833,6 +835,7 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
     lineage: u.lineage,
     supersededBy: u.supersededBy,
     buildTier: u.buildTier,
+    derived: view.dispatchOf(unit.id)?.derived ?? [],
     running: state === 'running' || state === 'preparing' ? runningOf(view, u, times, holds, now) : null,
   };
 }

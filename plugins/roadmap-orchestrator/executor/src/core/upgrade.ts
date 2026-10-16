@@ -9,7 +9,7 @@
 // `supervisor.<token>.err` in the host dir).
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { MutantOf, RevisionSource } from './events.ts';
-import type { FindingId, LaneId } from './ids.ts';
+import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ReadsFile, ToolRead } from './records.ts';
 import type { ClassTable } from '../routing/types.ts';
@@ -228,3 +228,18 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   packReview: { arc: 'frontier' },
   flow: { arc: 'frontier' },
 };
+
+// Plan defects (2026-10-16, 1.0.0-dev.11): a fresh arc's arc lanes declare `testPaths` and its witnesses `files`, and
+// Phase 0 checks every witness file against its lane and its deliverers (src/phase0/rows.ts). Obligations an arc started
+// on 1.0.0-dev.10 recorded may lack both; they read as undeclared (nothing to check) until an apply declares them. Delete,
+// with the undeclared arm of the rows, once no arc started on 1.0.0-dev.10 is in flight.
+
+/** An arc lane without `testPaths` in the obligations of an arc started before plan defects: its witness files go unchecked. */
+export function laneTestPathsUndeclared(lane: LaneId): void {
+  warnDefaulted('obligations.lanes.testPaths', `arc lane ${lane} declares no testPaths (an arc started before 2026-10-16); its witness files are not checked`);
+}
+
+/** A witness without `files` in the obligations of an arc started before plan defects: its files go unchecked. */
+export function witnessFilesUndeclared(obligation: ObligationId): void {
+  warnDefaulted('obligations.witness.files', `obligation ${obligation}'s witness declares no files (an arc started before 2026-10-16); its files are not checked`);
+}

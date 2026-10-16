@@ -61,7 +61,8 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   `--resume`. `--class` seats that class at the unit's build tier.
 - `roadmap merge-in <unit>`: merge the integration tip into a unit's branch (clean merges only); it re-enters at lanes.
 - `roadmap scope accept|reject <unit> --reason <text> [--repo <path> --arc <arc>]`: queued (scope the unit). Your decision on
-  the scope growth a unit's plan-check proposed (its `scope-growth` item). `accept` lands it as one ruled revision (a new
+  the scope growth a unit's plan-check proposed, or the path salvage reverted on its last two rounds (its `scope-growth`
+  item). `accept` lands it as one ruled revision (a new
   ruling naming the patterns, the unit's plan and spec scope widened, the files written back) and the unit re-opens at
   plan-check on it; a revision the classifier refuses is rejected with every reason, and the unit stays held. `reject`
   keeps the scope: the plan-check runs again, told what you rejected, and decides within the scope. Acknowledges the
@@ -379,9 +380,12 @@ Blocking unless noted. Read the item file before acting.
   close-out is left, the executor declines it, a corpus arc's with an amendment `source: request`, and a later ack is
   rejected), `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest` (the brief ack
   acknowledges the digest and convergence-bound items).
-- `scope-growth` (the unit is held at plan-check): its plan-check proposes scope growth code verified (each pattern
-  matches a file, lies outside the scope, and could land). `scope accept` or `scope reject`
-  (SKILL.md "Scope growth").
+- `scope-growth` (the unit is held at plan-check, or at lanes): its plan-check proposes scope growth code verified
+  (each pattern matches a file, lies outside the scope, and could land), or salvage reverted the same path on its last
+  two build rounds. `scope accept` or `scope reject` (SKILL.md "Scope growth").
+- `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
+  witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
+  (SKILL.md "Handling parks").
 - Flow, non-blocking (SKILL.md "The flow loop"): `flow-proposal` and `flow-host` (`flow accept` or `flow reject`; the
   item's evidence is the run's inputs file), `flow-worse` (revert by `apply` to the `preimage` of the proposal's
   `flow-verdict` fact in the run dir's `events.jsonl`, then `ack`), `ruler-changed` (confirm or revert, then `ack`),
@@ -411,5 +415,7 @@ Blocking unless noted. Read the item file before acting.
   the Phase-0 record, the issue capture, debt, the brief and the ack log.
 - "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck`, spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
+- "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row and park, plan `derived`
+  and the dispatch record's `derived`, the lanes `scope-growth` hold.
 - "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,
   proofs, verdicts, givens and the flow facts.

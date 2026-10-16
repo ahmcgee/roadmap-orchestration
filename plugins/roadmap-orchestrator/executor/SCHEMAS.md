@@ -213,6 +213,25 @@ recovery hold.
 | `stage-outcome` | prepare `+ interrupted` (only as a recovery hold) | none: dev.9 records never hold it |
 | `HoldCause` (`stage-outcome.cause`) | `+ recovery{}`: the startup's hold of a crash-abandoned admission-stage attempt nothing consumes (`holdAbandoned`) | none (absent: a pause or stop, as before) |
 | `UnitState` (fold) | a recovery hold leaves `decided` and `interrupted`; `status` `held` under a pause, else `active`; a prepare hold does not mark the lineage prepared | derived |
+
+**1.0.0-dev.10 → 1.0.0-dev.11 (plan defects, 2026-10-16 arc feedback).** `SCHEMA_VERSION` stays 1; every change is
+additive. The scaffolding is `laneTestPathsUndeclared` and `witnessFilesUndeclared` in `src/core/upgrade.ts` (an arc
+started on dev.10 whose obligations declare no witness files is read as undeclared: Phase 0 checks nothing of it). An
+arc started on dev.10 is adopted.
+
+| Record | Change | Read-time default for dev.10 state |
+|---|---|---|
+| obligations file | `WitnessRef + files?: RepoPath[]` (ascending, non-empty; also inside `proofJudgment.witness`) | absent: undeclared (`witnessFilesUndeclared`, warned once); required at a fresh start |
+| obligations file | `ArcLaneDef.testPaths` required at a fresh start, and in any arc whose witnesses declare files | absent in an arc that declares no files: undeclared (`laneTestPathsUndeclared`, warned once) |
+| `plan.json` | `+ derived?: [{sources: RepoPattern[], outputs: RepoPattern[]}]` (each non-empty, unique) | absent: none (`derivedOf`; lasting) |
+| `DispatchRecord` | `+ derived?: RepoPattern[]` (ascending, non-empty; read through `effectiveScope`) | absent: none (lasting) |
+| `PlanChange` | `+ derived` (no drain) | none |
+| `StartupRejection` | `+ plan-defect{defects: PlanDefect[]}` (non-empty) | none |
+| `stage-outcome` lanes, `StageOutcomeDetail` | `+ plan-defect` (park `operator env`, uncharged; `detail: plan-defect{defects}`); `+ scope-growth` (class `hold`, as plan-check's) | none |
+| `NeedsUserReason` | `+ plan-defect` (blocking) | none |
+| Checkpoint answer | split child `witness + files: string[]` (`CHECKPOINT_SCHEMA` requires it; `[]` declares none) | absent: none declared |
+| `UnitState.scopeDecisions` (fold) | `+ stage: plan-check \| lanes` | derived |
+| `UnitStatusLine` (`status`) | `+ derived: RepoPattern[]` (the dispatch record's) | `[]` |
 | `Holder.batch{finding, attempt}`, `batch-<n>` job, batch items | `finding` is the key (lowest, canonical order) of the findings the batch repairs, one for a single-finding batch, several for a hold cycle | none: a dev.9 holder names the one finding its batch repaired, which is its key |
 | `launch.json` `terminal.session` (`JudgmentSession`) | `mode: fresh \| resume`: `resume` only for a `REPAIR_ROLES` role (`planCheck`, `checkpoint`), the repair turn; the reader refuses it on any other role. A repair role's fresh call runs without `--no-session-persistence` | none: dev.9 records hold `fresh` only, which reads as written |
 | `stage-outcome` build and lanes, `NeedsUserReason` | `+ witness-lane-missing` (a required witness item names no arc lane in force; park `env`, blocking) | none: dev.9 records never hold it |
@@ -3535,3 +3554,48 @@ applied `apply` receipt list it, a start writes it to the executor's stderr. The
 
 **Upgrade.** See "Record evolution" (the rows marked scope growth): additive; one scaffolding default
 (`planCheckScopeGrowthDefault`). An arc started on 1.0.0-dev.9 is adopted.
+
+## Plan defects (2026-10-16; 1.0.0-dev.11)
+
+A plan defect code can check is refused at Phase 0; one that surfaces at run time parks uncharged with a code-produced
+diagnosis instead of charging fix rounds.
+
+**`PlanDefect`** (src/holistic/types.ts; `planDefectText` renders each in one sentence):
+`witness-not-in-lane{obligation, lane, file, missing: test-paths | argv}`, `witness-file-unreachable{obligation, file,
+units: UnitId[]}`, `witness-files-undeclared{obligation}`, `lane-test-paths-undeclared{lane}`,
+`derived-overlaps-corpus{output}`, `derived-output-owned{output, unit}`.
+
+**Witness files** (src/holistic/witnessfiles.ts `laneMisses`, the one predicate). Test ids are names (the node
+reporter's name path, go's test name, a wrapper's own), so no reporter maps one to its file: a witness declares its
+`files`. A file is in its lane when a `testPaths` pattern matches it and, when the lane's argv names test paths, one of
+them reaches it. An argv element (after argv[0]) names a test path when it is no flag, resolves inside the repo against
+the lane's `cwd`, and is `.` or may overlap a `testPaths` pattern (`mayOverlap`); a trailing `/...` reads as its
+directory. It reaches the file when it is `.`, the file, a directory above it or a glob matching it (`matchesPattern`).
+An argv naming none leaves selection to the runner. The rule errs permissive: an element that only happens to name a
+test directory (a `test` subcommand under `testPaths: [test]`) counts.
+
+**Phase-0 row 11** (src/phase0/rows.ts, every mode), `plan-defect{defects}`: derived outputs in the scope of a unit
+covering none of the entry's sources, and (same-repo corpus) outputs that may reach the corpus file set; for a corpus
+arc's binding obligations (active, not exempt) with declared files, each file in its lane, and present at the
+integration tip (the baseline before the branch exists) or inside the effective scope of a deliverer or a unit a
+deliverer runs `after`, transitively (`units`: the deliverers; empty for a must-hold obligation, whose file must exist).
+`Phase0Mode.fresh` (a fresh start, `phase0 check --plan`) and any arc whose witnesses declare files require every lane's
+`testPaths` and every binding witness's `files`.
+
+**Run time.** Before a `witnesses-missing` is charged, `missingWitnessDefects` (src/pipeline/witnesscheck.ts) diagnoses
+each missing id of an obligation's witness with declared files: a file its lane never runs, or one absent at the salvage
+SHA and outside the unit's effective scope (`units: [the unit]`). Any defect makes the lanes outcome `plan-defect`
+(park `operator env`, uncharged, a blocking item naming the defects; `resume` re-runs the lanes after an `apply`).
+
+**Derived files** (src/input/derived.ts `derivedWidening`, the one place). A unit whose scope may overlap an entry's
+source takes the entry's outputs; `firstPin` and every re-pin (`pinUpdate`) record them as `DispatchRecord.derived`.
+`effectiveScope(record)` (scope + derived) bounds salvage, recovery's salvage rules, the gate's growth and reverted paths,
+the transient check, plan-check's growth verification and the prompts' scope.
+
+**Repeated reverts** (src/pipeline/stages.ts `repeatedReverts`). A lanes attempt whose unit's last two salvages both
+reverted a path as out of scope that could land (still outside the effective scope, never rejected for the unit,
+covered by no `evidenceGlobs`, clear of a same-repo corpus) records lanes `scope-growth` (hold) before anything runs,
+`detail: scope-growth{proposals: [{patterns: those paths, reason}]}`, with a blocking `scope-growth` item. `scope
+accept|reject` decide it as a plan-check's (`scopeHoldStage`); the fold keeps the decision's `stage`. An accept's pending
+revision re-opens the unit at plan-check (`reentryAllowed` admits a held lanes attempt); the build round after it (a fix
+round, or a reopen's resumed fresh round) carries `restoredPathsDirective` for each reverted path now inside the scope.

@@ -258,7 +258,8 @@ function obligationsOf(n: ArcNo, pin: Pin) {
     cutLine: SLICES[n].why,
     lanes,
     obligations: inForce.map((o) => {
-      const witness = { lane: o.lane, testIds: [LANES.find((x) => x.id === o.lane)!.test] };
+      const seed = LANES.find((x) => x.id === o.lane)!;
+      const witness = { lane: o.lane, testIds: [seed.test], files: [seed.journey] };
       const future = o.deliveredIn === n;
       return {
         id: o.id, rev: 1, statement: o.statement, rule: ref(o.rule), serves: o.serves, witness,

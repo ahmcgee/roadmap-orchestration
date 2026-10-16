@@ -24,7 +24,8 @@
 //   dispatch.ts) parks it at the stage that found it: `routing-changed`, uncharged.
 // - An interruption (a pause or stop cancel, or the stage's backend parked arc-wide on a usage limit) holds
 //   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling). So does a
-//   plan-check's verified scope-growth proposal, until the root agent's `scope accept|reject` (or a resume) releases it.
+//   plan-check's verified scope-growth proposal, or a lanes attempt's after salvage reverted one path twice running, until
+//   the root agent's `scope accept|reject` (or a resume) releases it.
 //   A held build's new attempt continues the interrupted session (the `continue` round, rounds.ts).
 // - `attempts` counts stage starts, which only the fold sees; `transition` passes it through unchanged.
 // - Every park row names its class (A7): `retryable` (the executor probes its targets, which the stage names,
@@ -238,6 +239,12 @@ export const TABLE: Table = {
     'base-red': go(at('gate')),
     // 2026-10-15: as at build.
     'witness-lane-missing': park('witness-lane-missing', 'env'),
+    // Plan defects (2026-10-16): a missing witness the lane never ran or no build of the unit could create. Uncharged; the
+    // needs-user names the defects, and `resume` re-runs the lanes once an `apply` fixes the plan (or a re-entry, the spec).
+    'plan-defect': park('plan-defect', 'env'),
+    // Plan defects (2026-10-16): salvage reverted the same out-of-scope path on two build rounds running: the scope-growth
+    // hold, uncharged, until the root agent's `scope accept|reject`.
+    'scope-growth': hold,
   },
   gate: {
     approve: go(at('candidate')),

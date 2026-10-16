@@ -728,10 +728,20 @@ export type DispatchRecord = Readonly<{
   transientRules: TransientRules;
   /** M3 (`limits`): the unit's bounds in force since this pin; absent: `DEFAULT_BOUNDS` (`boundsOfRecord`). */
   bounds?: BoundsRecord;
+  /**
+   * Plan defects (2026-10-16): the derived outputs the plan's `derived` entries add to `scope` (src/input/derived.ts
+   * `derivedWidening`), ascending, non-empty when present; absent: none (a plan without `derived`, lasting). Read only
+   * through `effectiveScope`.
+   */
+  derived?: readonly RepoPattern[];
 }>;
+
+/** What a unit may change: its pinned scope and its derived outputs. Salvage, the gate, the candidate and recovery read it. */
+export const effectiveScope = (record: DispatchRecord): readonly RepoPattern[] => [...record.scope, ...(record.derived ?? [])];
 
 export const dispatchRecord: Read<DispatchRecord> = object((f) => {
   const b = f.optional('bounds', bounds);
+  const derived = f.optional('derived', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true }));
   return {
     unit: f.get('unit', unit),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
@@ -743,6 +753,7 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
     at: f.get('at', time),
     transientRules: f.get('transientRules', oneOf(TRANSIENT_RULES)),
     ...(b === undefined ? {} : { bounds: b }),
+    ...(derived === undefined ? {} : { derived }),
   };
 });
 
@@ -1446,6 +1457,8 @@ export const NEEDS_USER_REASONS = [
   'scope-growth',
   // 2026-10-15 (arc feedback #3), blocking: a unit's required witness item names no arc lane in force (build or lanes).
   'witness-lane-missing',
+  // Plan defects (2026-10-16), blocking: a unit's missing witness is a plan defect code diagnosed (lanes `plan-defect`).
+  'plan-defect',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

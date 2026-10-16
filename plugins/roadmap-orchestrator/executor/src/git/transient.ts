@@ -12,7 +12,7 @@
 // - The prefix-collision guard refuses a candidate whose new paths would collide on a case-insensitive
 //   filesystem. Collisions already present at T are grandfathered.
 import type { LaneId, Sha } from '../core/ids.ts';
-import type { DispatchRecord, SpecM1 } from '../core/records.ts';
+import { type DispatchRecord, type SpecM1, effectiveScope } from '../core/records.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern, repoPath } from '../core/values.ts';
 import { git, lsTree, mergeBase } from './git.ts';
 
@@ -64,8 +64,8 @@ export type TransientViolation =
 export type LaneEvidenceGlob = Readonly<{ lane: LaneId; glob: RepoPattern }>;
 
 /**
- * H15: no `.roadmap/` path, and every path inside `scope`, the dispatch record's pinned scope (re-pinned on a ruled
- * growth). `evidenceGlobs`: the spec's declared lane `evidenceGlobs` (every lane's, active or not), in spec order.
+ * H15: no `.roadmap/` path, and every path inside `scope`, the dispatch record's effective scope (its pinned scope,
+ * re-pinned on a ruled growth, and its derived outputs). `evidenceGlobs`: the spec's declared lane `evidenceGlobs` (every lane's, active or not), in spec order.
  */
 export type TransientRules = Readonly<{ evidenceGlobs: readonly LaneEvidenceGlob[]; scope: readonly RepoPattern[] }>;
 
@@ -75,7 +75,7 @@ export const laneEvidenceGlobs = (spec: SpecM1): readonly LaneEvidenceGlob[] =>
 
 /** The rules of a unit's candidate from its latest dispatch record and its spec in force. */
 export function unitTransientRules(dispatch: DispatchRecord, spec: SpecM1): TransientRules {
-  return { evidenceGlobs: laneEvidenceGlobs(spec), scope: dispatch.scope };
+  return { evidenceGlobs: laneEvidenceGlobs(spec), scope: effectiveScope(dispatch) };
 }
 
 const RUN_STATE_SEGMENTS: ReadonlySet<string> = new Set(['roadmap-runtime', '.roadmap-runtime', '__preview', '__codex']);

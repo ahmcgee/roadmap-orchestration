@@ -161,7 +161,9 @@ export type Reporter = (typeof REPORTERS)[number];
 /**
  * An arc lane: owned by no unit, run in candidates, audits, the baseline job and close-out. `testPaths` (M4a rev 3, D2):
  * the repo patterns its test files live under, non-empty when present; mutation smoke reverts only the production diff
- * outside them (absent: smoke `notRun{no-test-paths}`).
+ * outside them (absent: smoke `notRun{no-test-paths}`). Plan defects (2026-10-16): a fresh arc's lanes all declare it, and
+ * every witness file of the lane lies under it (Phase-0 `plan-defect`, src/holistic/witnessfiles.ts); an arc's inputs
+ * recorded before then may lack it (read as undeclared, with a logged warning).
  */
 export type ArcLaneDef = LaneDef & Readonly<{ reporter: Reporter; testPaths?: readonly RepoPattern[] }>;
 
@@ -184,7 +186,14 @@ export function obligationSource(o: ObligationAnchor): ObligationSource {
   const d = o.docRef as DocRef;
   return { kind: 'doc', path: d.path, anchor: d.anchor, quotedText: d.quotedText };
 }
-export type WitnessRef = Readonly<{ lane: LaneId; testIds: readonly string[] }>;
+/**
+ * `files` (plan defects, 2026-10-16): the repo paths of the test files that hold the test ids, ascending, non-empty when
+ * present. Test ids are names (the node reporter's name path, go's test name, a wrapper's own), so no reporter maps one to
+ * its file: the witness declares them, and Phase 0 checks each against its lane and the units that deliver it
+ * (src/phase0/rows.ts, src/holistic/witnessfiles.ts). Required at a fresh start; absent only on inputs recorded before
+ * (read as undeclared, with a logged warning: src/core/upgrade.ts `witnessFilesUndeclared`).
+ */
+export type WitnessRef = Readonly<{ lane: LaneId; testIds: readonly string[]; files?: readonly RepoPath[] }>;
 /**
  * "This test proves this statement", judged at Phase 0 and bound to everything it judged: the obligation's `rev`,
  * the witness lane's `laneRev`, and the complete witness definition (`witness`: the lane id and every test id, in
@@ -268,9 +277,70 @@ const obligationState: Read<ObligationState> = tagged('type', {
 export const docRef: Read<DocRef> = object(docRefFields);
 
 const witnessRef: Read<WitnessRef> = object((f) => {
-  const out = { lane: f.get('lane', (v, p) => laneId(v, p)), testIds: f.get('testIds', arrayOf(str, { nonEmpty: true })) };
+  const files = f.optional('files', sortedBy(pathR, (x) => x, { nonEmpty: true }));
+  const out = { lane: f.get('lane', (v, p) => laneId(v, p)), testIds: f.get('testIds', arrayOf(str, { nonEmpty: true })), ...(files === undefined ? {} : { files }) };
   assertUnique(out.testIds, (t) => t, `${f.path}.testIds`);
   return out;
+});
+
+/**
+ * A plan defect code finds (2026-10-16): something wrong with the plan that no build round can fix. Phase 0 refuses each
+ * one it can check (`plan-defect`, src/phase0/rows.ts); one that shows only at run time parks the unit uncharged with the
+ * defects named (lanes `plan-defect`, src/pipeline/witnesscheck.ts).
+ *   witness-not-in-lane       an obligation's witness file the lane would never run: outside its `testPaths`
+ *                             (`missing: test-paths`), or not named by its argv where the argv names test paths (`argv`).
+ *   witness-file-unreachable  a witness file absent at the tip (Phase 0) or the salvage SHA (run time) that no unit able
+ *                             to create it covers: at Phase 0 the obligation's deliverers and every unit they depend on
+ *                             (`units`: the deliverers), at run time the unit checked.
+ *   witness-files-undeclared  (a fresh start) an active witness without `files`.
+ *   lane-test-paths-undeclared (a fresh start, or an arc whose witnesses declare files) an arc lane without `testPaths`.
+ *   derived-overlaps-corpus   a derived output that may reach the corpus file set.
+ *   derived-output-owned      a derived output inside the scope of a unit that covers none of its sources.
+ */
+export type PlanDefect =
+  | Readonly<{ type: 'witness-not-in-lane'; obligation: ObligationId; lane: LaneId; file: RepoPath; missing: 'test-paths' | 'argv' }>
+  | Readonly<{ type: 'witness-file-unreachable'; obligation: ObligationId; file: RepoPath; units: readonly UnitId[] }>
+  | Readonly<{ type: 'witness-files-undeclared'; obligation: ObligationId }>
+  | Readonly<{ type: 'lane-test-paths-undeclared'; lane: LaneId }>
+  | Readonly<{ type: 'derived-overlaps-corpus'; output: RepoPattern }>
+  | Readonly<{ type: 'derived-output-owned'; output: RepoPattern; unit: UnitId }>;
+
+/** A plan defect in one sentence, for a needs-user and a refusal's reader. */
+export function planDefectText(d: PlanDefect): string {
+  switch (d.type) {
+    case 'witness-not-in-lane':
+      return d.missing === 'test-paths'
+        ? `${d.obligation}'s witness file ${d.file} is outside lane ${d.lane}'s testPaths, so the lane never runs it.`
+        : `${d.obligation}'s witness file ${d.file} is not named by lane ${d.lane}'s argv, which names its test files, so the lane never runs it.`;
+    case 'witness-file-unreachable':
+      return d.units.length === 0
+        ? `${d.obligation}'s witness file ${d.file} does not exist, and no unit delivers the obligation to create it.`
+        : `${d.obligation}'s witness file ${d.file} does not exist, and it is outside the effective scope of ${d.units.join(', ')} (and every unit ${d.units.length === 1 ? 'it runs' : 'they run'} after), so no build can create it.`;
+    case 'witness-files-undeclared':
+      return `${d.obligation}'s witness declares no files.`;
+    case 'lane-test-paths-undeclared':
+      return `Arc lane ${d.lane} declares no testPaths.`;
+    case 'derived-overlaps-corpus':
+      return `Derived output ${d.output} may reach the corpus file set.`;
+    case 'derived-output-owned':
+      return `Derived output ${d.output} is inside unit ${d.unit}'s scope, which covers none of its sources.`;
+  }
+}
+
+const patternR: Read<RepoPattern> = (v, p) => repoPattern(v, p);
+export const planDefect: Read<PlanDefect> = tagged('type', {
+  'witness-not-in-lane': object((f): PlanDefect => ({
+    type: f.get('type', literal('witness-not-in-lane')), obligation: f.get('obligation', oid), lane: f.get('lane', (v, p) => laneId(v, p)), file: f.get('file', pathR),
+    missing: f.get('missing', oneOf(['test-paths', 'argv'] as const)),
+  })),
+  'witness-file-unreachable': object((f): PlanDefect => ({
+    type: f.get('type', literal('witness-file-unreachable')), obligation: f.get('obligation', oid), file: f.get('file', pathR),
+    units: f.get('units', arrayOf((v, p) => unitId(v, p))),
+  })),
+  'witness-files-undeclared': object((f): PlanDefect => ({ type: f.get('type', literal('witness-files-undeclared')), obligation: f.get('obligation', oid) })),
+  'lane-test-paths-undeclared': object((f): PlanDefect => ({ type: f.get('type', literal('lane-test-paths-undeclared')), lane: f.get('lane', (v, p) => laneId(v, p)) })),
+  'derived-overlaps-corpus': object((f): PlanDefect => ({ type: f.get('type', literal('derived-overlaps-corpus')), output: f.get('output', patternR) })),
+  'derived-output-owned': object((f): PlanDefect => ({ type: f.get('type', literal('derived-output-owned')), output: f.get('output', patternR), unit: f.get('unit', (v, p) => unitId(v, p)) })),
 });
 
 const proofJudgment: Read<ProofJudgment> = object((f) => ({

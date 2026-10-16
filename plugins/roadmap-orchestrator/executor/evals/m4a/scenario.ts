@@ -183,12 +183,14 @@ function admitOp(id: keyof typeof OPPORTUNITY): JsonValue {
 function fitsWitnessOp(): JsonValue {
   const w = FITS_WITNESS;
   const parent = OBLIGATIONS.find((o) => o.id === w.parent)!;
-  const test = LANES.find((x) => x.id === parent.lane)!.test;
+  const seed = LANES.find((x) => x.id === parent.lane)!;
+  const test = seed.test;
+  const childFile = LANES.find((x) => x.id === w.child.lane)!.journey;
   return {
     op: 'obligation-split', obligation: w.parent, cites: [...w.cites], evidence: [w.why],
     children: [
-      { id: w.restated, statement: parent.statement, docRef: null, rule: parent.rule, witness: { lane: parent.lane, testIds: [test] }, activation: 'must-hold', deliveredBy: [] },
-      { id: w.child.id, statement: w.child.statement, docRef: null, rule: w.child.rule, witness: { lane: w.child.lane, testIds: [w.child.test] }, activation: 'future', deliveredBy: ['fits'] },
+      { id: w.restated, statement: parent.statement, docRef: null, rule: parent.rule, witness: { lane: parent.lane, testIds: [test], files: [seed.journey] }, activation: 'must-hold', deliveredBy: [] },
+      { id: w.child.id, statement: w.child.statement, docRef: null, rule: w.child.rule, witness: { lane: w.child.lane, testIds: [w.child.test], files: [childFile] }, activation: 'future', deliveredBy: ['fits'] },
     ],
   };
 }

@@ -35,7 +35,7 @@ import {
   type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type PackDisposition, type PackFinding,
   type RevisionVector, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger,
   checkpointTrigger, contractOp, divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, observationKey,
-  packDisposition, packFinding, revisionVector,
+  packDisposition, packFinding, revisionVector, type PlanDefect, planDefect,
 } from '../holistic/types.ts';
 import {
   type Read, Fields, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
@@ -434,8 +434,14 @@ export const STAGE_OUTCOME_KINDS = {
   // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known
   // defect, uncharged, back to prepare). `base-red` (the 2026-10-15 batch): a fast suite lane red at the salvage SHA is red on
   // the unit's diff base alone too; uncharged, on to the gate (the candidate decides against the tip). `witness-lane-missing`
-  // (2026-10-15, arc feedback #3): as at build.
-  lanes: ['green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red', 'witness-lane-missing'],
+  // (2026-10-15, arc feedback #3): as at build. Plan defects (2026-10-16): `plan-defect` (a missing witness the lane never
+  // ran, or that no build of the unit could create: an uncharged park naming the defects, src/pipeline/witnesscheck.ts);
+  // `scope-growth` (salvage reverted the same out-of-scope path on the unit's last two build rounds: the hold of a
+  // plan-check's proposal, with that path as the proposal, until `scope accept|reject`).
+  lanes: [
+    'green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
+    'witness-lane-missing', 'plan-defect', 'scope-growth',
+  ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry,
   // `readRefused`, src/pipeline/stages.ts).
@@ -535,8 +541,13 @@ export type StageOutcomeDetail =
   | Readonly<{ kind: 'known-defect'; id: KnownDefectId; match: KnownDefectMatch }>
   | Readonly<{ kind: 'infeasible'; notes: string }>
   | Readonly<{ kind: 'base-red'; base: Sha; lanes: readonly LaneId[]; changedCheckout: boolean }>
-  /** Scope growth (2026-10-15): the plan-check's proposals code verified (`ScopeGrowthProposal`), in answer order. */
-  | Readonly<{ kind: 'scope-growth'; proposals: readonly ScopeGrowthProposal[] }>;
+  /**
+   * Scope growth (2026-10-15): the plan-check's proposals code verified (`ScopeGrowthProposal`), in answer order; at lanes
+   * (plan defects, 2026-10-16) one proposal of the paths salvage reverted twice running.
+   */
+  | Readonly<{ kind: 'scope-growth'; proposals: readonly ScopeGrowthProposal[] }>
+  /** Plan defects (2026-10-16): lanes `plan-defect`, the defects code found behind the missing witnesses (non-empty). */
+  | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>;
 /**
  * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
  * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
@@ -547,7 +558,7 @@ export type ScopeGrowthProposal = Readonly<{ patterns: readonly RepoPattern[]; r
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
   'lanes/base-red': 'base-red',
-  'plan-check/scope-growth': 'scope-growth',
+  'plan-check/scope-growth': 'scope-growth', 'lanes/scope-growth': 'scope-growth', 'lanes/plan-defect': 'plan-defect',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -932,7 +943,9 @@ export type PlanChange =
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
   | Readonly<{ type: 'known-defects' }>
   /** M4a rev 3 (E): the plan's `planCheck.shape` changed (no drain; units whose plan-check has not decided). */
-  | Readonly<{ type: 'plan-check-shape' }>;
+  | Readonly<{ type: 'plan-check-shape' }>
+  /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
+  | Readonly<{ type: 'derived' }>;
 
 /**
  * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
@@ -1485,6 +1498,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
   'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
+  derived: object((f): PlanChange => ({ type: f.get('type', literal('derived')) })),
 });
 
 export const revisionPayload: Read<RevisionPayload> = object((f) => {
@@ -1551,6 +1565,7 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     return out;
   }),
   'scope-growth': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('scope-growth')), proposals: f.get('proposals', arrayOf(scopeGrowthProposal, { nonEmpty: true })) })),
+  'plan-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('plan-defect')), defects: f.get('defects', arrayOf(planDefect, { nonEmpty: true })) })),
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {
@@ -1977,10 +1992,10 @@ export const fact: Read<Fact> = tagged('kind', {
     // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
-    // An interruption holds the unit, and so does a plan-check's verified scope-growth proposal; nothing else does; a hold
-    // never charges.
-    const holds = out.outcome === 'interrupted' || (s === 'plan-check' && out.outcome === 'scope-growth');
-    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a plan-check scope-growth', out.class);
+    // An interruption holds the unit, and so does a scope-growth proposal (a plan-check's, or a lanes attempt's after two
+    // reverts of one path); nothing else does; a hold never charges.
+    const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth');
+    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a scope-growth', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),

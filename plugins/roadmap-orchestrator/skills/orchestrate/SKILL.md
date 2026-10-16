@@ -363,6 +363,14 @@ At arc completion (`status.run.state` `complete`, `completion.active`):
 with a merge commit, then exactly one line: `ROADMAP-SESSION: stopped <reason>`, where reason is `k-limit`,
 `vision-silent` or `owner` (the owner told you to stop, or an executor defect stopped the arc: "Handling parks").
 
+## Derived files
+
+A file the build regenerates from others (a bundle, generated types, a lockfile) belongs to every unit that edits its
+sources. Declare it in the plan: `derived: [{sources: [<patterns>], outputs: [<patterns>]}]`. A unit whose scope
+covers a source takes the outputs into its effective scope (its dispatch record's `derived`, shown in `status`), so
+salvage keeps a regenerated output and the candidate allows it. Phase 0 refuses an output that may reach the corpus,
+and one inside the scope of a unit that covers none of its sources (`plan-defect`).
+
 ## Scope growth
 
 A plan-check sweeps for references to what a unit removes or renames and proposes the paths outside its scope.
@@ -377,7 +385,10 @@ Read the proposal against the spec, then:
   again, told what you rejected, and decides within the scope (an infeasible spec then escalates to you).
 
 The builder cannot grow its scope: salvage reverts its edits outside it, the gate and the next fix round are told
-which paths, and the builder names a path it needs in its report's blockers as a scope growth. A gate that escalates
+which paths, and the builder names a path it needs in its report's blockers as a scope growth. When salvage reverts
+the same path on two build rounds running, the unit is held at lanes with the same `scope-growth` item, that path as
+the proposal: `scope accept` re-opens it at plan-check and its builder is told to restore the reverted version;
+`scope reject` lets the lanes run. A gate that escalates
 over one comes to you as a park: grow the scope then by `apply --ruling` with the spec's next rev, or re-enter.
 
 ## Handling parks
@@ -389,6 +400,9 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
 - **Parked at plan-check or gate**: edit the unit's spec to the next rev, `roadmap apply`, then
   `roadmap resume <unit>`. The unit re-enters plan-check on the new revision and keeps its branch, worktree and
   session. The resume acknowledges the park.
+- **Parked `plan-defect`** (a missing witness its lane never runs, or whose file no build of the unit can create;
+  uncharged): the item names each defect. Fix the plan by `apply` (the lane's argv or `testPaths`, the witness's
+  `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes.
 - **Parked `routing-changed`** (the implementer seat's backend or model moved after its build started; an
   effort-only change re-pins by itself): restore the routing of the seat the item names, or re-enter the unit
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,
@@ -465,9 +479,14 @@ rejected. An edit you never apply has no effect, even after a restart.
   stateful suites `estate`: only the candidate runs those.
 - A spec lane may declare `inputs`, the repo patterns it reads: a fast lane's pass is then reused on a later commit
   that touched none of them. Suite and arc lanes never declare it.
-- Every arc lane in the obligations file declares `testPaths`, every test path it runs. Mutation smoke reverts a
-  unit's production change (everything outside `testPaths`) and runs its witnesses again; without `testPaths` it
-  does not run.
+- Every arc lane in the obligations file declares `testPaths`, every test path it runs; `start` refuses a fresh arc
+  whose lane lacks it (`plan-defect`). Mutation smoke reverts a unit's production change (everything outside
+  `testPaths`) and runs its witnesses again.
+- Every obligation's witness declares `files`: the test files holding its test ids (`{lane, testIds, files}`). Test ids
+  are names, so the executor cannot find their files; it checks the ones you declare. `start`, `apply` and `phase0
+  check` refuse (`plan-defect`) a witness file outside its lane's `testPaths`, one its lane's argv does not name when
+  the argv names test files, and one absent at the integration tip that no deliverer of the obligation (nor a unit a
+  deliverer runs `after`) has in its scope: credit an obligation to the unit that writes its test, or to one after it.
 - A witness lane runs exactly the test files that witness its obligations and names each one in its argv
   (`["node", "--test", "test/unit/soak.test.js"]`). The whole-suite lane is the suite gate, never an obligation's
   witness: it hides which test witnesses what, so the flow loop cannot measure or shard one witness, a change to the

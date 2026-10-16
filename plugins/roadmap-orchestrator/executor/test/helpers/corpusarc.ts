@@ -52,7 +52,9 @@ export function visionRecord(visionText: string | null): Json {
 }
 
 const lane = (id: string): Json => ({ id, argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
-const arcLane = { ...lane('journey'), reporter: 'jsonl' };
+const arcLane = { ...lane('journey'), reporter: 'jsonl', testPaths: ['test'] };
+/** The witness test file I-1 declares (in the baseline). */
+export const WITNESS_FILE = 'test/berths.test.ts';
 /** The journey lane's revision as the reader computes it (over the lane with its defaults filled in). */
 const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [arcLane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
 
@@ -60,7 +62,7 @@ const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', 
 export function obligationsFile(pin: CorpusPin, opts: Readonly<{ activation?: 'must-hold' | 'future'; census?: readonly Json[] }> = {}): Json {
   const t1 = pin.rules.find((r) => r.id === 'T-1');
   assert.ok(t1 !== undefined, 'the sample corpus pins T-1');
-  const witness = { lane: 'journey', testIds: ['t1'] };
+  const witness = { lane: 'journey', testIds: ['t1'], files: [WITNESS_FILE] };
   return {
     schema: 'roadmap/obligations-m3', cutLine: 'the berth booking ships', lanes: [arcLane],
     obligations: [{
@@ -120,7 +122,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   };
   let repo: AbsPath;
   if (opts.repo === undefined) {
-    repo = absPath(makeRepo(tmpDir('c1-repo'), { files: { 'README.md': 'harbour\n', 'src/berths.ts': 'export {};\n', ...corpus.files, ...roadmap, ...opts.files } }));
+    repo = absPath(makeRepo(tmpDir('c1-repo'), { files: { 'README.md': 'harbour\n', 'src/berths.ts': 'export {};\n', [WITNESS_FILE]: 'export {};\n', ...corpus.files, ...roadmap, ...opts.files } }));
   } else repo = opts.repo;
   const baseline = git(repo, 'rev-parse', 'HEAD');
   const forge = opts.forge ?? makeForge();
