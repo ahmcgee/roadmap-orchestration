@@ -163,7 +163,10 @@ at triage stay in git history.
 
 ## Do soon (small fixes)
 
-None.
+- **Flow seat decorates its station id** (probe, 2026-10-16, dev.11 ladder). The efficient flow seat answered
+  `constraint.station: "slot:integration (largest service component suite:suite)"`, refused by `m4b.flow.validate`; a
+  rerun passed. In an arc the dev.10 repair turn catches it, at the cost of a call. Tighten the flow prompt: the station is
+  a bare StationId, the reasoning goes in `reason`.
 
 ## Watch (act only on the trigger)
 
