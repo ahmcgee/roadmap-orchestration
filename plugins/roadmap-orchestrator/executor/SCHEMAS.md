@@ -246,18 +246,6 @@ started on dev.10 whose obligations declare no witness files is read as undeclar
 | `routingRev` (dispatch facts, spawn subjects, meter facts, `judgment-inputs`, `launch.json` terminal), `status.routing` (efficient judgment, owner ruling 2026-10-15) | no shape change: the built-in seats put planCheck.low/med, gate.low, `lens.arc` and `flow.arc` on efficient, whose judgment binding is Sonnet 5.5 high in both profiles (`ClassBinding{build, judgment}`), so every resolved table and rev moves; `status.routing.seats` names the new classes | none read: OR-L3 binds every revision through HEAD's seats, so an adopted dev.9 arc resolves to new revs and each unit re-pins at its next dispatch with its implementer seat unchanged (no build seat moved): nothing parks `routing-changed`. `status` aliases a dev.9 rev to its revision's current table (`preDev10RevAlias` over `PRE_DEV10_BUILTIN_SEATS`; scaffolding), so its spend resolves, attributed to today's bindings |
 | `PROMPTS` (not persisted) | Sonnet 5.5 `inherits` for every judgment role (planCheck, gate, lens, packReview, flow from Opus; checkpoint from Fable) | none |
 
-**1.0.0-dev.11 → 1.0.0-dev.12 (one judgment repair turn, W4).** `SCHEMA_VERSION` stays 1; no record changes shape.
-Every judgment role's refused answer (its schema, or the role's validator) takes one repair turn in its own session
-(DESIGN-1.0.md §2.1), so every judgment's fresh call persists its session. The scaffolding is in `repairTurnOf` and
-`isRepairTurnOf` (src/pipeline/dispatch.ts) and the lens loop (src/holistic/audit.ts): an arc started on dev.11 is
-adopted, a running audit, flow run or pack review included.
-
-| Record | Change | Read-time default for dev.11 state |
-|---|---|---|
-| `launch.json` `terminal.session` (`JudgmentSession`) | `mode: resume` on every judgment role (its repair turn); no judgment argv carries `--no-session-persistence` | a dev.11 call launched with `--no-session-persistence` (a gate, lens, pack-review or flow call) takes no repair turn: its refusal stands (`repairTurnOf`, warned on stderr; scaffolding) |
-| arc-backend `attempt` (lens, flow, pack review) | a repair turn is the refused call's next attempt (a lens's: the next number after every lens's first) | a dev.11 fresh re-ask recorded there (a lens's refused draft, a flow answer) is consumed as the repair turn's answer; after a malformed lens report dev.11 asked nothing, so a call recorded at that number that is not its repair (`isRepairTurnOf`) is another's, and the report takes none (scaffolding) |
-| `LensInputs` (not persisted) | `- retry` | none |
-
 **1.0.0-dev.10 → next (arc feedback 2026-10-16: re-entry names its failure; the checkpoint aimed and rarer; the apply
 rebase and `--vision-edit`).** `SCHEMA_VERSION` stays 1; every change is additive. The scaffolding is
 `reenterFixesDefault`, `applyExpectRevDefault` and `applyVisionEditDefault` in `src/core/upgrade.ts`. An arc started on
@@ -277,7 +265,15 @@ again, its recorded checkpoint answers re-enter as recorded, and the applies its
 | `status.decisionsSince[].kind` | `+ checkpoint-skipped` (ruled by the executor) | none |
 | `CheckpointInputs` (not persisted) | `+ diagnosis: ParkDiagnosis \| null` (a park trigger's lineage: failures with refs, reverted out-of-scope paths, missing witnesses, earlier re-entries); `- closeout` (H5's delta render: such an audit now has no checkpoint) | none: rendered per call |
 
-**1.0.0-dev.11 → 1.0.0-dev.12 (gate method redesign, 2026-10-16).** `SCHEMA_VERSION` stays 1; every change is additive.
+**1.0.0-dev.11 → 1.0.0-dev.12 (gate method redesign, 2026-10-16: the bounded diff, judge sessions and metering, one
+repair turn, seat prompts).** `SCHEMA_VERSION` stays 1; every change is additive, and an arc started on dev.11 is adopted
+(`PREVIOUS_RELEASE` 1f7f696). The scaffolding, listed in BACKLOG "Scaffolding to delete": `gateDiffShownOf`
+(src/core/upgrade.ts); the `read-denied` outcome kept readable (its `STAGE_OUTCOME_KINDS` entries, transition rows and
+`NeedsUserReason`: a dev.11 log whose latest gate or plan-check outcome is `read-denied` still folds and takes its retry
+by the old row, and a unit parked `read-denied` resumes like any env park); the dev.11 arms of `repairTurnOf` and
+`isRepairTurnOf` (src/pipeline/dispatch.ts) and of the lens loop (src/holistic/audit.ts); `RECORDED_DROP_REASONS`'s
+`elevate-early`.
+
 The bounded diff (src/git/boundeddiff.ts) is the one way a judgment is shown a diff: the gate's unit diff (budget
 `GATE_DIFF_BUDGET`, 384 KiB) and a lens's chunk and owner diffs (`LENS_DIFF_BUDGET`). Renames detected (`-M`: a move is
 one orientation line, a moved-and-edited file a rename diff); a deleted file is named with its line count (labelled
@@ -289,8 +285,10 @@ each within an eighth of the budget. What is not inlined is written under the at
 call (`--add-dir`): `files/<path>.diff` (the whole `git diff -M` of each file not inlined, deleted, or inlined as a word
 diff), `stat.txt`, `moves.txt`, `deletions.txt`, `not-inlined.txt`. The gate's directory is
 `evidence/<unit>/<attempt>-gate/diff`; a lens call's `evidence/jobs/<job>/diffs/lens-<attempt>/{range,owner-<unit>}`. Lens
-chunking keeps the dev.11 fit measure exactly (`fitsWhole`), so a resumed audit finds the same chunks. The scaffolding is
-`gateDiffShownOf` in `src/core/upgrade.ts`.
+chunking keeps the dev.11 fit measure exactly (`fitsWhole`), so a resumed audit finds the same chunks.
+
+Every judgment role's refused answer (its schema, or the role's validator) takes one repair turn in its own session
+(DESIGN-1.0.md §2.1), so every judgment's fresh call persists its session.
 
 | Record | Change | Read-time default for dev.11 state |
 |---|---|---|
@@ -298,14 +296,6 @@ chunking keeps the dev.11 fit measure exactly (`fitsWhole`), so a resumed audit 
 | `GateInputs` (not persisted) | `diff: {bounded: BoundedDiff, claims: DiffClaims}` in place of `{base, head, text}`; `DiffClaims = {acceptance: ClauseId[], witnesses: WitnessItemId[], obligations: ObligationId[]}` (the active clauses and witness items, the selected obligations) | none |
 | `LensInputs` (not persisted), `BoundedDiff` | `BoundedDiff = {from, to, dir, orientation{stat{text, full}, moves, deletions{…, labelled}, packages, substitutions}, inlined[{path, kind, representation: line\|word, full}], text, omitted{shown[{path, kind, why: derived\|size, bytes, diff}], more}, notInlined}`; lists past their share are `{shown, more}` | none |
 | Gate and lens prompts (not persisted) | rendered as `<orientation>`, `<diff>`, `<not_inlined>` (src/prompts/inputs.ts `boundedDiffText`); a file not shown is a readable diff file, never a `git diff` command (a judgment has no shell) | none |
-**1.0.0-dev.11 → 1.0.0-dev.12 (gate method redesign, W2: judge sessions, metering per class, context-exceeded).**
-`SCHEMA_VERSION` stays 1; every change is additive. The scaffolding is the `read-denied` outcome kept readable (its
-`STAGE_OUTCOME_KINDS` entries, its transition rows and its `NeedsUserReason`): nothing records it since, and a dev.11 log
-whose latest gate or plan-check outcome is `read-denied` still folds and takes its retry by the old row. An arc started on
-dev.11 is adopted; a dev.11 unit parked `read-denied` resumes like any env park.
-
-| Record | Change | Read-time default for dev.11 state |
-|---|---|---|
 | Judgment argv (`JUDGMENT_TOOLS`) | `--tools Read,Grep,Glob,Agent`: every judgment role may delegate to subagents of the type and model it picks; `--tools` alone keeps them read-only (a subagent's tools are its type's list intersected with the session's, verified on Claude Code 2.1.301) | none |
 | Judgment `--add-dir` (`judgmentReadDirs`) | the repository and the run dir lead every judgment call's read surface, then each named dir outside both | none |
 | `stage-outcome` gate and plan-check `read-denied`; `NeedsUserReason` `read-denied` | no longer recorded or raised: a refused read is recorded in reads.json `denied` and voids nothing | a dev.11 record reads as written; its transition row (one uncharged retry, then an `env` park) still applies (scaffolding) |
@@ -315,14 +305,15 @@ dev.11 is adopted; a dev.11 unit parked `read-denied` resumes like any env park.
 | `meter` fact | `+ session?: ClaudeSessionId`, `+ delegated?: ClassUsage[]` (together): a Claude call's charge, its session's cumulative reading less what the session's earlier facts charged (src/core/usage.ts) | absent: as recorded, nothing delegated |
 | `UsageClass` | new: `efficient \| frontier \| summit \| economy`; `DELEGATE_CLASSES` (src/routing/classes.ts) maps every model a subagent can be put on to one (Haiku economy, Sonnet efficient, Opus frontier, Fable summit); an uncatalogued model in `modelUsage` fails loud (`UnknownModelError`), as do per-model costs that do not sum to `total_cost_usd` (`UsageMismatchError`) | none |
 | `status.spend` | `+ byClass{classes: ClassTotal[], unresolvedRevs}`; `byModel` counts each seat's own share (its totals less the delegated) | derived |
-
-
-**1.0.0-dev.11 → next (gate method redesign, W3 seat prompts).** No persisted record changes.
-
-| Record | Change | Read-time default |
-|---|---|---|
+| `launch.json` `terminal.session` (`JudgmentSession`) | `mode: resume` on every judgment role (its repair turn); no judgment argv carries `--no-session-persistence` | a dev.11 call launched with `--no-session-persistence` (a gate, lens, pack-review or flow call) takes no repair turn: its refusal stands (`repairTurnOf`, warned on stderr; scaffolding) |
+| arc-backend `attempt` (lens, flow, pack review) | a repair turn is the refused call's next attempt (a lens's: the next number after every lens's first) | a dev.11 fresh re-ask recorded there (a lens's refused draft, a flow answer) is consumed as the repair turn's answer; after a malformed lens report dev.11 asked nothing, so a call recorded at that number that is not its repair (`isRepairTurnOf`) is another's, and the report takes none (scaffolding) |
+| `LensInputs` (not persisted) | `- retry` | none |
 | `GateInputs`, `PlanCheckInputs` (not persisted) | `+ escalation: EscalationInput \| null` = `{kind: route-up, first: {decision, reasons} \| null} \| {kind: risk-trigger}`: at the escalation seat only, from the unit's `routedUp` and the latest answer of a spawn below that seat (`escalationOf`, src/pipeline/stages.ts); rendered as `<escalation>` before the ask | none: rendered per call from the journal |
 | `PROMPTS` (not persisted) | Sonnet 5.5 is a `prompt` row for every judgment role: the role's Opus module with `SONNET_THINK_FIRST` ending its system prompt; its build still inherits the Opus brief. The Fable gate and plan-check modules are deleted, the checkpoint module is `checkpoint/claude-opus-5-5.ts`, and Fable inherits Opus for every judgment role. `MAX_LENS_FINDINGS` is deleted (unenforced) | none |
+| Judgment outputs (not persisted; `src/prompts/schemas.ts`) | every key still present, but `premises` and a checkpoint's `interpretations` may be empty, no list is capped and a reason need not cite; a cite given still resolves (see Judgment outputs) | none |
+| `flow-ended` drops, `FLOW_DROP_REASONS` | `- elevate-early` and the constraint half of `target`: a target station is the flow role's method | a dev.11 `flow-ended` recording `elevate-early` reads by `RECORDED_DROP_REASONS` (scaffolding) |
+| Judgment system text (not persisted) | ends with `<readable_directories>` listing the call's read surface (`judgmentSurface`, src/pipeline/dispatch.ts): `--system-prompt` drops Claude Code's own list of added dirs | none |
+| `decisions.json` (`readDecisions`) | an entry naming a lane, an acceptance clause or a fact, or a struck or deferred decision, does not validate: the build is `malformed` and its resume round quotes why (dev.11 skipped the entry at append) | none: read per build |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
