@@ -14,7 +14,8 @@ import { SchemaError } from '../src/core/validate.ts';
 import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
 import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
-import { type BoundedDiff, type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
+import type { BoundedDiff } from '../src/git/boundeddiff.ts';
+import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
   CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
   validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
@@ -106,8 +107,42 @@ const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
   };
 };
 
-/** A bounded diff shown whole: its stat, `inlined`, nothing omitted. */
-const shown = (from: Sha, to: Sha, inlined: string): BoundedDiff => ({ from, to, stat: { text: ` 1 file changed\n`, full: true }, inlined, omitted: [], unlisted: 0 });
+/** A bounded diff shown whole: its stat, one file inlined as `text`, nothing else. */
+const shown = (from: Sha, to: Sha, text: string): BoundedDiff => ({
+  from, to, dir: absPath(`/run/diff-${text}`),
+  orientation: {
+    stat: { text: ` 1 file changed\n`, full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false },
+    packages: { shown: [{ name: 'src', files: 1, added: 1, deleted: 0 }], more: 0 }, substitutions: [],
+  },
+  inlined: [{ path: repoPath('src/a.js'), kind: 'modified-source', representation: 'line', full: null }], text, omitted: { shown: [], more: 0 }, notInlined: [],
+});
+/** A bounded diff with every part of its orientation and a cut listing. */
+const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDiff => {
+  const d = shown(from, to, text);
+  return {
+    ...d,
+    orientation: {
+      stat: { text: `STAT-${text}`, full: false }, moves: { shown: [{ from: repoPath('src/old.js'), to: repoPath('src/new.js') }], more: 3 },
+      deletions: {
+        shown: [
+          { path: repoPath('src/gone.js'), lines: 40, removes: null, diff: absPath(`${d.dir}/files/src/gone.js.diff`) },
+          { path: repoPath('legacy/x.js'), lines: 1, removes: labelled ? 'legacy' : null, diff: absPath(`${d.dir}/files/legacy/x.js.diff`) },
+        ],
+        more: 0, labelled,
+      },
+      packages: { shown: [{ name: 'packages/core', files: 12, added: 300, deleted: 120 }], more: 4 },
+      substitutions: [{ from: 'oldName', to: 'newName', count: 17 }],
+    },
+    omitted: {
+      shown: [
+        { path: repoPath('dist/b.js'), kind: 'derived', why: 'derived', bytes: 900, diff: absPath(`${d.dir}/files/dist/b.js.diff`) },
+        { path: repoPath("src/it's.js"), kind: 'new-source', why: 'size', bytes: 200_000, diff: absPath(`${d.dir}/files/src/it's.js.diff`) },
+      ],
+      more: 2,
+    },
+    notInlined: [repoPath('dist/b.js'), repoPath('legacy/x.js'), repoPath('src/gone.js'), repoPath("src/it's.js")],
+  };
+};
 
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
@@ -158,7 +193,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
-      diff: { base: SHA_A, head: SHA_B, text: 'DIFF-A' },
+      diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
     },
@@ -166,7 +201,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', planCheckNotes: 'NOTES-B',
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)],
-      diff: { base: SHA_B, head: SHA_A, text: 'DIFF-B' },
+      diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
         ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
@@ -193,7 +228,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
         audited: SHA_A,
-        diff: { ...shown(SHA_B, SHA_A, 'RANGE-B'), stat: { text: 'STAT-B', full: false }, omitted: [{ path: 'dist/b.js', why: 'derived' }, { path: "src/it's.js", why: 'size' }], unlisted: 2 },
+        diff: partial(SHA_B, SHA_A, 'RANGE-B', false),
       },
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -659,23 +694,39 @@ describe('M3 prompts: the vision and the arc roles', () => {
     for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
     const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
     assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
-    assert.match(text, /Unit u-two at b{40} \(its diff from a{40}\):\n<pasted_content/, 'owner branches marked as pasted data');
+    assert.match(text, /Unit u-two at b{40} \(its diff from a{40}\):\n<orientation>[\s\S]*?<\/orientation>\n<diff>\n[^\n]*\n<pasted_content/, 'owner branches marked as pasted data');
   });
 
-  it('the lens-range fix: a bounded range names its chunk and the audited SHA, lists each file not shown with the command that prints it, and the lens reads them before it reports', () => {
+  it('the bounded diff: a range names its chunk and the audited SHA, orients the reader, and lists each file not shown with the readable file holding its diff; the lens reads them before it reports', () => {
     const mod = promptFor('lens', 'claude-opus-5-5');
     const text = mod.render(SAMPLES.lens[1]);
     const [a, b] = [SHA_A, SHA_B];
+    const dir = '/run/diff-RANGE-B';
     assert.ok(text.includes(`<audited_range from="${b}" to="${a}" audited="${a}">`));
-    assert.match(text, /<pasted_content id="[0-9a-f]{8}">\nSTAT-B\nRANGE-B\n<\/pasted_content/, 'the stat, then the inlined diffs, as pasted data');
-    assert.ok(text.includes(`The full stat is too long to attach; \`git diff --stat ${b} ${a}\` prints it.`));
-    assert.ok(text.includes(`- dist/b.js (derived output): git diff ${b} ${a} -- 'dist/b.js'`));
-    assert.ok(text.includes(`- src/it's.js (not inlined: over the budget): git diff ${b} ${a} -- 'src/it'\\''s.js'`), 'the path quoted as one shell word');
-    assert.ok(text.includes(`- 2 more files not inlined, not listed here: \`git diff --name-only ${b} ${a}\``));
-    assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat/, 'a range shown whole lists nothing');
-    for (const needle of [/Every file under <not_inlined> is part of the range and was not shown to you/, /read each one with the command beside it/,
+    assert.ok(text.includes(`<orientation>\nDiff ${b}..${a}. Files named below are readable with Read.\nStat (summary; the full stat is in ${dir}/stat.txt):\nSTAT-RANGE-B\n`));
+    assert.ok(text.includes(`Moved or renamed without content change (no diff below): 4\n- src/old.js → src/new.js\n- and 3 more, all listed in ${dir}/moves.txt\n`));
+    assert.ok(text.includes(`Deleted (no diff below; each file holds the whole deleted content): 2\n- src/gone.js (40 lines): ${dir}/files/src/gone.js.diff\n- legacy/x.js (1 line): ${dir}/files/legacy/x.js.diff\n`), 'a lens has no spec: deletions unlabelled');
+    assert.ok(text.includes(`- packages/core: 12 files; +300 -120\n- and 4 more packages\n`));
+    assert.ok(text.includes(`(removed → added, times; where to look, not a verification):\n- oldName → newName ×17\n</orientation>`), 'a lens orientation claims nothing');
+    assert.match(text, /<diff>\nPer-file diffs with one line of context[^\n]*\n<pasted_content id="[0-9a-f]{8}">\nRANGE-B\n<\/pasted_content id="[0-9a-f]{8}">\n<\/diff>/, 'the inlined diffs, as pasted data');
+    assert.ok(text.includes(`<not_inlined>\nFiles with changed content not shown above; each file named holds its whole diff.\n- dist/b.js (derived output, regenerated from sources this diff changes, 900 bytes): ${dir}/files/dist/b.js.diff\n- src/it's.js (new source, over the budget, 200000 bytes): ${dir}/files/src/it's.js.diff\n- and 2 more, all listed in ${dir}/not-inlined.txt\n</not_inlined>`));
+    assert.doesNotMatch(text, /git diff/, 'no git command: a judgment has no shell');
+    assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat|Moved|Deleted/, 'a range shown whole lists nothing');
+    for (const needle of [/Every file under <not_inlined> is part of the range and was not shown to you/, /Read each one's diff at the path beside it/,
       /the executor records the whole range as reviewed by your lens, so your report is your statement that you read every part of it/,
       /Never judge a file from its name or its stat line alone/, /split by publication/, /The same applies to <owner_branches>/]) assert.match(mod.system, needle);
+    assert.doesNotMatch(mod.system, /git diff|command beside it/);
+  });
+
+  it('the bounded gate diff: deletions labelled against the spec removes, unexpected first as given, and what the unit claims as id pointers', () => {
+    for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+      const text = promptFor('gate', model).render(SAMPLES.gate[1]);
+      const dir = '/run/diff-DIFF-B';
+      assert.ok(text.includes(`Deleted (no diff below; each file holds the whole deleted content): 2, those not in the spec's removes first\n- src/gone.js (40 lines, not in the spec's removes): ${dir}/files/src/gone.js.diff\n- legacy/x.js (1 line, matches removes "legacy"): ${dir}/files/legacy/x.js.diff\n`), model);
+      assert.ok(text.includes('Claimed by the unit (stated in full above): acceptance A1, A2; witness items W-1; obligations I-2\n</orientation>'), model);
+      assert.ok(text.includes(`Diff ${SHA_A}..${SHA_B}.`) === false && text.includes(`Diff ${SHA_B}..${SHA_A}.`), model);
+      assert.match(promptFor('gate', model).render(SAMPLES.gate[0]), /acceptance A1; witness items none; obligations none/, model);
+    }
   });
 
   it('plan-check (R17): the vision as read-only context, and visionConflict never a redirect by itself', () => {

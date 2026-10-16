@@ -24,7 +24,7 @@
 // a build that needed one is escalated to the root agent rather than lost silently.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  bullets, documentsXml, findingsText, laneLedgerText, obligationsText, pasted, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
+  boundedDiffText, bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
 import { GATE_SCHEMA, MAX_DIRECTIVES, MAX_PREMISES } from '../schemas.ts';
 
 const system = `You are the gate for one unit of a roadmap build: nothing merges without your approval. You judge the unit's change against its spec, the contracts and rulings, and the architecture doc.
@@ -134,9 +134,7 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 ${obligationsText(i.obligations, { serves: false })}
 </obligations>
 
-<diff base="${i.diff.base}" head="${i.diff.head}">
-${pasted('diff', i.diff.text)}
-</diff>
+${boundedDiffText('diff', i.diff.bounded, i.diff.claims)}
 
 <lane_ledger>
 ${laneLedgerText(i.laneLedger)}
@@ -158,5 +156,5 @@ ${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
 ${bullets(i.scope.rejected, '(none: the build edited nothing outside the envelope)')}
 </scope_reverted>${gateChecksText(i.checks)}${priorRound(i)}
 
-Gate unit ${i.spec.unit} at head ${i.diff.head}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`,
+Gate unit ${i.spec.unit} at head ${i.diff.bounded.to}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`,
 };

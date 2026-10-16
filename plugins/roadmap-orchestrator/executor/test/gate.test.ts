@@ -16,6 +16,7 @@ import { holderUnits, resourceTable } from '../src/resources/reserve.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { type Wired, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { rulingId } from '../src/core/ids.ts';
+import { gateDiffShownOf } from '../src/core/upgrade.ts';
 import { absPath } from '../src/core/values.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
@@ -342,6 +343,32 @@ test('gate.obligations-selected: in a holistic arc the gate prompt lists the obl
     assert.ok(!('obligationRevs' in fingerprint), 'no obligationRevs key outside a holistic arc');
   } finally {
     p.journal.close();
+  }
+});
+
+test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orientation, inlined diffs, what the unit claims), its files dir readable, and judgment-inputs records what it inlined', T, async () => {
+  const d = setupArc({ steps: straightToGate() });
+  recordFirst(d);
+  const r = contextFor(d);
+  try {
+    await stepTo(followContext(r), 'u1', (f) => f.stage === 'gate');
+    const [g] = readCalls(d.scenarioPath).filter(isGate);
+    assert.match(g!.stdin, /<orientation>\nDiff [0-9a-f]{40}\.\.[0-9a-f]{40}\. Files named below are readable with Read\.\nStat:\n src\/mul\.js/);
+    assert.match(g!.stdin, /Claimed by the unit \(stated in full above\): acceptance A1[^;]*; witness items none; obligations none\n<\/orientation>\n<diff>\n/);
+    assert.match(g!.stdin, /<pasted_content id="[0-9a-f]{8}">\ndiff --git a\/src\/mul\.js b\/src\/mul\.js/);
+    assert.ok(!g!.stdin.includes('<not_inlined>'), 'a small diff is inlined whole');
+    const addDirs = g!.argv.flatMap((a, i) => (g!.argv[i - 1] === '--add-dir' ? [a] : []));
+    const attempt = Number(addDirs.map((a) => new RegExp(`^${d.runDir}/evidence/u1/(\\d+)-gate/diff$`).exec(a)?.[1]).find((x) => x !== undefined));
+    assert.ok(attempt > 0, `the attachment's dir is readable: ${addDirs.join(', ')}`);
+    assert.match(g!.stdin, new RegExp(`<evidence_dirs>[^<]*- ${d.runDir}/evidence/u1/${attempt}-gate/diff\\n[^<]*</evidence_dirs>`), 'and listed with the evidence');
+    const inputs = r.journal.view.judgmentInputs(U1, 'gate', attempt)!;
+    assert.deepEqual(inputs.diffShown, { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] });
+    assert.deepEqual(gateDiffShownOf(inputs), inputs.diffShown);
+    // A dev.11 executor's gate recorded none: read as nothing recorded (scaffolding).
+    const { diffShown: _, ...dev11 } = inputs;
+    assert.deepEqual(gateDiffShownOf(dev11), { inlined: [], notInlined: [] });
+  } finally {
+    r.journal.close();
   }
 });
 

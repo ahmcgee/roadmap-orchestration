@@ -8,7 +8,7 @@
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
-import type { MutantOf, RevisionSource } from './events.ts';
+import type { DiffShown, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu, ReadsFile, ToolRead } from './records.ts';
@@ -290,4 +290,17 @@ export function auditDiffBudgetOf(s: Readonly<{ job: string; diffBudget?: number
   if (s.diffBudget !== undefined) return s.diffBudget;
   warnDefaulted('audit-started.diffBudget', `${s.job}: an audit started before the lens-range fix; its lenses read their whole range in one call`);
   return null;
+}
+
+/**
+ * A gate's `judgment-inputs` `diffShown` (1.0.0-dev.12, the bounded gate diff): absent on one a dev.11 executor recorded,
+ * whose gate was shown its whole diff inline. Read as empty lists: nothing recorded either way. Scaffolding: deleted once
+ * no arc started on 1.0.0-dev.11 is in flight (BACKLOG "Scaffolding to delete"); `diffShown` then becomes required on a
+ * gate's.
+ */
+export function gateDiffShownOf(inputs: JudgmentInputs): DiffShown {
+  if (inputs.stage !== 'gate') throw new Error(`${inputs.unit} ${inputs.stage}#${inputs.attempt}: only a gate's judgment-inputs record a diff shown`);
+  if (inputs.diffShown !== undefined) return inputs.diffShown;
+  warnDefaulted('judgment-inputs.diffShown', `${inputs.unit} gate#${inputs.attempt}: a gate a dev.11 executor recorded, shown its whole diff inline; read as nothing recorded`);
+  return { inlined: [], notInlined: [] };
 }

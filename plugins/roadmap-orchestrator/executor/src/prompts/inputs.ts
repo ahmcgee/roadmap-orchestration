@@ -7,7 +7,7 @@
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
-import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
+import type { ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
@@ -23,6 +23,7 @@ import type { PinnedRule } from '../corpus/types.ts';
 import type { FlowPromptInputs } from '../flow/types.ts';
 import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
+import type { BoundedDiff } from '../git/boundeddiff.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
@@ -233,8 +234,11 @@ export type GateInputs = Readonly<{
   planCheckNotes: string;
   /** The obligations the candidate selects, with their observations (never their vision clauses: R17). */
   obligations: readonly ObligationView[];
-  /** `merge-base(T, branch)..head`, recomputed after any merge-in. */
-  diff: Readonly<{ base: Sha; head: Sha; text: string }>;
+  /**
+   * `merge-base(T, branch)..head`, recomputed after any merge-in, attached within the gate's budget (src/git/boundeddiff.ts;
+   * `from` the base, `to` the head), and what the unit claims, for its orientation.
+   */
+  diff: Readonly<{ bounded: BoundedDiff; claims: DiffClaims }>;
   laneLedger: readonly LaneLedgerEntry[];
   /** Evidence directories the gate may read (lane output, the build's decisions.json). */
   evidence: readonly AbsPath[];
@@ -287,7 +291,8 @@ export type LensInputs = Readonly<{
   obligations: readonly ObligationView[];
   /**
    * The range this call reviews: from the lens's watermark to `diff.to`, the audited SHA or, for an outstanding range
-   * over the budget, an earlier published head (one chunk; src/holistic/lensdiff.ts), with its bounded attachment.
+   * over the budget, an earlier published head (one chunk; src/holistic/lensdiff.ts), with its bounded attachment
+   * (src/git/boundeddiff.ts).
    */
   range: Readonly<{ audited: Sha; diff: BoundedDiff }>;
   /** Branch diffs of parked or in-flight owners of open findings (the w33 P1s were already fixed on one), bounded together. */
@@ -308,22 +313,11 @@ export type LensInputs = Readonly<{
   retry: LensRetry | null;
 }>;
 
-/** A file of a range a lens was not shown: a plan-declared derived output, or over what the budget left (src/holistic/lensdiff.ts). */
-export type OmittedFile = Readonly<{ path: string; why: 'derived' | 'size' }>;
-
 /**
- * A diff attached within a byte budget (src/holistic/lensdiff.ts `boundedDiff`): the stat of the whole range (`full`
- * false: its shortstat, the full one over its share), the per-file diffs inlined, the files not inlined (each read with
- * `git diff <from> <to> -- <path>`), and how many more were not inlined past the listing's share.
+ * What the unit under a gate claims, as id pointers into the inputs that state them in full (the spec, <obligations>):
+ * its active acceptance clauses and witness items, and the obligations its diff selects.
  */
-export type BoundedDiff = Readonly<{
-  from: Sha;
-  to: Sha;
-  stat: Readonly<{ text: string; full: boolean }>;
-  inlined: string;
-  omitted: readonly OmittedFile[];
-  unlisted: number;
-}>;
+export type DiffClaims = Readonly<{ acceptance: readonly ClauseId[]; witnesses: readonly WitnessItemId[]; obligations: readonly ObligationId[] }>;
 
 /** A lens asked again: the drafts refused with why, and the claims and causes of the previous report's admitted findings. */
 export type LensRetry = Readonly<{
@@ -765,21 +759,50 @@ export function lensRetryText(retry: LensRetry | null): string {
   return `\n\n<previous_report>\nThis lens already reported on this tree. The executor could not admit these findings of that report, so they are not recorded:\n${refused}\nReport each of them again with the defect corrected, under the same cause: copy each edit's old text exactly from the file at the audited SHA, with enough lines that it occurs exactly once, and name a lane from the obligations. These findings of that report are recorded; do not report them again:\n${recorded}\nReport anything else your lens finds as usual.\n</previous_report>`;
 }
 
-/** A path as one shell word (single-quoted). */
-const shellWord = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+const KIND_TEXT: { readonly [K in BoundedDiff['inlined'][number]['kind']]: string } = {
+  'new-source': 'new source', 'modified-source': 'modified source', test: 'test', fixture: 'fixture', other: 'other', derived: 'derived output',
+};
 
 /**
- * A bounded diff (src/holistic/lensdiff.ts) as a lens reads it: the stat and the inlined per-file diffs as pasted
- * content under `label`, then `<not_inlined>`: each file not shown, why, and the exact command that prints its diff.
+ * A bounded diff (src/git/boundeddiff.ts) as a judgment reads it: `<orientation>` (the stat, moves, deletions, the spread
+ * per package, recurring substitutions and, for a gate, what the unit claims), `<diff>` (the inlined per-file diffs as
+ * pasted content under `label`) and `<not_inlined>` (each file with changed content not shown, with the readable file
+ * holding its whole diff). Lists cut short name the file in the attachment's directory that holds them whole.
  */
-export function boundedDiffText(label: string, d: BoundedDiff): string {
-  if (d.from === d.to) return '(empty: no change)';
-  const statNote = d.stat.full ? '' : `\nThe full stat is too long to attach; \`git diff --stat ${d.from} ${d.to}\` prints it.`;
-  const files = d.omitted.map((o) => `- ${o.path} (${o.why === 'derived' ? 'derived output' : 'not inlined: over the budget'}): git diff ${d.from} ${d.to} -- ${shellWord(o.path)}`);
-  if (d.unlisted > 0) files.push(`- ${d.unlisted} more files not inlined, not listed here: \`git diff --name-only ${d.from} ${d.to}\` names every file of the range; read each one not shown above with git diff ${d.from} ${d.to} -- <path>`);
-  const omitted = files.length === 0 ? '' : `\n<not_inlined>\n${files.join('\n')}\n</not_inlined>`;
-  return `${pasted(label, `${d.stat.text}\n${d.inlined}`)}${statNote}${omitted}`;
+export function boundedDiffText(label: string, d: BoundedDiff, claims: DiffClaims | null): string {
+  const o = d.orientation;
+  if (d.from === d.to || (d.text === '' && d.notInlined.length === 0 && o.moves.shown.length + o.moves.more === 0)) return '(empty: no change)';
+  const more = (n: number, file: string): string[] => (n === 0 ? [] : [`- and ${n} more, all listed in ${d.dir}/${file}`]);
+  const section = (heading: string, lines: readonly string[]): string[] => (lines.length === 0 ? [] : [heading, ...lines]);
+  const lines = (n: number | null): string => (n === null ? 'binary' : `${n} line${n === 1 ? '' : 's'}`);
+  const orientation = [
+    `Diff ${d.from}..${d.to}. Files named below are readable with Read.`,
+    o.stat.full ? `Stat:\n${o.stat.text.replace(/\n$/, '')}` : `Stat (summary; the full stat is in ${d.dir}/stat.txt):\n${o.stat.text.replace(/\n$/, '')}`,
+    ...section(`Moved or renamed without content change (no diff below): ${o.moves.shown.length + o.moves.more}`,
+      [...o.moves.shown.map((m) => `- ${m.from} → ${m.to}`), ...more(o.moves.more, 'moves.txt')]),
+    ...section(`Deleted (no diff below; each file holds the whole deleted content): ${o.deletions.shown.length + o.deletions.more}${o.deletions.labelled ? ', those not in the spec\'s removes first' : ''}`, [
+      ...o.deletions.shown.map((x) => `- ${x.path} (${lines(x.lines)}${!o.deletions.labelled ? '' : x.removes === null ? ', not in the spec\'s removes' : `, matches removes "${x.removes}"`}): ${x.diff}`),
+      ...more(o.deletions.more, 'deletions.txt'),
+    ]),
+    ...section('Spread per package (files; lines added, deleted):', [
+      ...o.packages.shown.map((p) => `- ${p.name}: ${p.files} file${p.files === 1 ? '' : 's'}; +${p.added} -${p.deleted}`),
+      ...(o.packages.more === 0 ? [] : [`- and ${o.packages.more} more packages`]),
+    ]),
+    ...section('Recurring identifier substitutions in the changed files (removed → added, times; where to look, not a verification):',
+      o.substitutions.map((s) => `- ${s.from} → ${s.to} ×${s.count}`)),
+    ...(claims === null ? [] : [`Claimed by the unit (stated in full above): acceptance ${idList(claims.acceptance)}; witness items ${idList(claims.witnesses)}; obligations ${idList(claims.obligations)}`]),
+  ];
+  const diff = d.text === ''
+    ? 'No per-file diff is inlined.'
+    : `Per-file diffs with one line of context: new source first, then modified source, tests, fixtures and other files. A file headed "word diff" shows changed words: a line starting - or + is removed or added text, a line starting with a space is unchanged text (a long run cut to its ends, marked …[n chars]…), and ~ ends a line.\n${pasted(label, d.text)}`;
+  const notInlined = d.omitted.shown.length + d.omitted.more === 0 ? '' : `\n<not_inlined>\nFiles with changed content not shown above; each file named holds its whole diff.\n${[
+    ...d.omitted.shown.map((x) => `- ${x.path} (${KIND_TEXT[x.kind]}, ${x.why === 'derived' ? 'regenerated from sources this diff changes' : 'over the budget'}, ${x.bytes} bytes): ${x.diff}`),
+    ...more(d.omitted.more, 'not-inlined.txt'),
+  ].join('\n')}\n</not_inlined>`;
+  return `<orientation>\n${orientation.join('\n')}\n</orientation>\n<diff>\n${diff}\n</diff>${notInlined}`;
 }
+
+const idList = (ids: readonly string[]): string => (ids.length === 0 ? 'none' : ids.join(', '));
 
 /** The checkpoint's input manifest (H4): every captured input by kind, id, kept path and hash. */
 export function manifestText(manifest: CheckpointInputs['manifest']): string {

@@ -265,6 +265,28 @@ again, its recorded checkpoint answers re-enter as recorded, and the applies its
 | `status.decisionsSince[].kind` | `+ checkpoint-skipped` (ruled by the executor) | none |
 | `CheckpointInputs` (not persisted) | `+ diagnosis: ParkDiagnosis \| null` (a park trigger's lineage: failures with refs, reverted out-of-scope paths, missing witnesses, earlier re-entries); `- closeout` (H5's delta render: such an audit now has no checkpoint) | none: rendered per call |
 
+**1.0.0-dev.11 → 1.0.0-dev.12 (gate method redesign, 2026-10-16).** `SCHEMA_VERSION` stays 1; every change is additive.
+The bounded diff (src/git/boundeddiff.ts) is the one way a judgment is shown a diff: the gate's unit diff (budget
+`GATE_DIFF_BUDGET`, 384 KiB) and a lens's chunk and owner diffs (`LENS_DIFF_BUDGET`). Renames detected (`-M`: a move is
+one orientation line, a moved-and-edited file a rename diff); a deleted file is named with its line count (labelled
+against the spec's `removes` at the gate: the entry is the path, a directory above it, or the file name without its
+extension; unexpected first), never inlined; a file whose line diff changes a line over `LONG_LINE` (1000) characters is
+a word diff, unchanged runs cut to their ends; `-U1`; candidates by kind (new source, modified source, tests, fixtures
+and other; derived outputs never inlined), then path, each while it fits; the orientation and the `<not_inlined>` listing
+each within an eighth of the budget. What is not inlined is written under the attachment's directory, readable to the
+call (`--add-dir`): `files/<path>.diff` (the whole `git diff -M` of each file not inlined, deleted, or inlined as a word
+diff), `stat.txt`, `moves.txt`, `deletions.txt`, `not-inlined.txt`. The gate's directory is
+`evidence/<unit>/<attempt>-gate/diff`; a lens call's `evidence/jobs/<job>/diffs/lens-<attempt>/{range,owner-<unit>}`. Lens
+chunking keeps the dev.11 fit measure exactly (`fitsWhole`), so a resumed audit finds the same chunks. The scaffolding is
+`gateDiffShownOf` in `src/core/upgrade.ts`.
+
+| Record | Change | Read-time default for dev.11 state |
+|---|---|---|
+| `judgment-inputs` | `+ diffShown?: {inlined: RepoPath[], notInlined: RepoPath[]}` (each ascending; only on a gate's): the files the attached diff inlined, and the files with changed content it did not inline plus the deleted files (a pure move is neither) | absent (a gate a dev.11 executor recorded, shown its whole diff inline): empty lists, nothing recorded either way (`gateDiffShownOf`, warned once; scaffolding) |
+| `GateInputs` (not persisted) | `diff: {bounded: BoundedDiff, claims: DiffClaims}` in place of `{base, head, text}`; `DiffClaims = {acceptance: ClauseId[], witnesses: WitnessItemId[], obligations: ObligationId[]}` (the active clauses and witness items, the selected obligations) | none |
+| `LensInputs` (not persisted), `BoundedDiff` | `BoundedDiff = {from, to, dir, orientation{stat{text, full}, moves, deletions{…, labelled}, packages, substitutions}, inlined[{path, kind, representation: line\|word, full}], text, omitted{shown[{path, kind, why: derived\|size, bytes, diff}], more}, notInlined}`; lists past their share are `{shown, more}` | none |
+| Gate and lens prompts (not persisted) | rendered as `<orientation>`, `<diff>`, `<not_inlined>` (src/prompts/inputs.ts `boundedDiffText`); a file not shown is a readable diff file, never a `git diff` command (a judgment has no shell) | none |
+
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
@@ -455,7 +477,7 @@ in the line belongs to `arc`.
 | `approval` | `unit, attempt, fingerprint: ApprovalFingerprint`: the gate at `attempt` approved; recorded before its stage-outcome, read by the candidate and ff stages (step 12) |
 | `unparked` (M2) | `unit, command`: `resume <unit>` of a unit parked operator-env; `decided` and `interrupted` return to what they were before the park, so the unit re-runs the parked stage as a new, uncharged attempt |
 | `probe` (M2) | `target: ProbeTarget, covers: number[] (park seqs, and for a resource target the fail seq of its own-arc residue; ascending, non-empty), result: pass\|fail, nextProbeAt: IsoTime\|null` (null exactly on a pass): see "M2: parks" |
-| `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev, fingerprint?: ApprovalFingerprint` (M3 Checkpoint A: a gate's captured approval fingerprint, `unitCommit` = `head`; required on a gate's, never on a plan-check's): written before its spawn (F1); since M3 Checkpoint A under the fence BEFORE the attempt's entry reservation. One per started `(unit, stage, attempt)`: a later one replaces it only while no op or outcome started that attempt (its `@cpu` wait was cancelled). A recovered call is consumed against it (`gateRead` with `fingerprint`; a recovered gate call without its inputs fails loud) |
+| `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev, fingerprint?: ApprovalFingerprint` (M3 Checkpoint A: a gate's captured approval fingerprint, `unitCommit` = `head`; required on a gate's, never on a plan-check's), `diffShown?: {inlined, notInlined}` (1.0.0-dev.12: the paths the gate's bounded diff inlined and did not, ascending; a gate's only, absent on a dev.11 one): written before its spawn (F1); since M3 Checkpoint A under the fence BEFORE the attempt's entry reservation. One per started `(unit, stage, attempt)`: a later one replaces it only while no op or outcome started that attempt (its `@cpu` wait was cancelled). A recovered call is consumed against it (`gateRead` with `fingerprint`; a recovered gate call without its inputs fails loud) |
 | `edge-resolved` (M2) | `edge: EdgeId, command, evidence` (non-empty text): `resolve-edge`; once per edge |
 | `run-only` (M2) | `command, units: UnitId[] (ascending, non-empty)\|null`: the admission allowlist; null clears it |
 | `implementer-escalated` (M2) | `unit, attempt, from: RiskTier (below high), to: high, stalled`: the fix round at build `attempt` runs cold on `build.high` because the round at build attempt `stalled` (< `attempt`) stalled (A11, G1); journaled before that round's implementer seat is chosen, only while `chargeableFailures < CHARGEABLE_BOUND` |
@@ -2088,10 +2110,10 @@ src/pipeline/dispatch.ts `callArcRole`):
    its range in chunks, one call each, from its watermark to the furthest first-parent commit of the range that is a
    published head (or the audited SHA) whose diff attaches whole within `diffBudget` (`LENS_DIFF_BUDGET`, 128 KiB; at
    least the first such head), then from there, until the audited SHA. Every attachment (`BoundedDiff`; the chunk's,
-   and the owners' sharing one budget) is the `--stat` (its `--shortstat` past an eighth of the budget), then per-file
-   diffs in path order each while it fits; a plan `derived` output, or a file whose blobs exceed four budgets, is never
-   inlined; files not inlined are listed with `git diff <from> <to> -- <path>` within an eighth of the budget, the rest
-   counted. An audit without `diffBudget` (a dev.10 executor's) reviews each range in one call. A lens call is
+   and the owners' sharing one budget) is the shared bounded diff (src/git/boundeddiff.ts; 1.0.0-dev.12 record
+   evolution above), its files not inlined written under `evidence/jobs/<job>/diffs/lens-<attempt>/`, which the call
+   reads. Whether a chunk fits whole is still the dev.11 measure (`fitsWhole`: the `--stat` within an eighth of the
+   budget, every per-file `--no-renames` diff not derived within what remains). An audit without `diffBudget` (a dev.10 executor's) reviews each range in one call. A lens call is
    `arc-backend{role: lens, tier: arc, routingRev, job, attempt}`, `attempt` its lens's place in the run order for its
    first call; every further call (a retry, M4b, over the same chunk; a later chunk) after every lens's first, numbered
    in order; a resumed job consumes a recorded call (`recordedArcCall`) and asks again only for a lost one, finding the

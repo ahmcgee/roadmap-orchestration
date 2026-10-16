@@ -839,7 +839,7 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
     }
   });
 
-  test('audit.oversized-publication-bounded: one publication over the budget is attached bounded (stat, small files inlined, the large one and a derived output listed with their commands), as is an owner\'s branch, and the lens reports', T, async () => {
+  test('audit.oversized-publication-bounded: one publication over the budget is attached bounded (stat, small files inlined, the large one and a derived output listed with their readable diff files), as is an owner\'s branch, and the lens reports', T, async () => {
     const { d } = auditArc({
       steps: [
         ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/huge.js': bigSource('hugeone', 300_000), 'dist/bundle.js': 'export const bundled = true;\n' }),
@@ -875,10 +875,17 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
       assert.ok(!stdin.includes('hugeone000100') && !stdin.includes('ownerbig000100'), 'neither large file is attached');
       assert.match(stdin, /src\/huge\.js +\| +\d+ \+/, 'the stat names every file of the range');
       assert.match(stdin, /^\+export function mul\(a, b\) \{/m, 'the small files are inlined');
-      assert.ok(stdin.includes(`- src/huge.js (not inlined: over the budget): git diff ${S0} ${S1} -- 'src/huge.js'`));
-      assert.ok(stdin.includes(`- dist/bundle.js (derived output): git diff ${S0} ${S1} -- 'dist/bundle.js'`));
+      // 1.0.0-dev.12: each file not shown is a readable diff file under the call's diff dir, which the call may read.
+      const diffDir = join(d.runDir, 'evidence', 'jobs', 'audit-1', 'diffs', 'lens-1');
+      const addDirs = call!.argv.flatMap((a, i) => (call!.argv[i - 1] === '--add-dir' ? [a] : []));
+      assert.ok(addDirs.includes(diffDir), addDirs.join(', '));
+      const huge = join(diffDir, 'range', 'files', 'src/huge.js.diff');
+      assert.match(stdin, new RegExp(`- src/huge\\.js \\(new source, over the budget, \\d+ bytes\\): ${huge.replace(/[.]/g, '\\.')}\\n`));
+      assert.equal(readFileSync(huge, 'utf8').trim(), git(d.repo, 'diff', '--no-color', '-M', S0, S1, '--', 'src/huge.js'), 'the readable file is what git diff prints (both trimmed)');
+      assert.ok(stdin.includes(`- dist/bundle.js (derived output, regenerated from sources this diff changes, `) && stdin.includes(join(diffDir, 'range', 'files', 'dist/bundle.js.diff')));
       assert.doesNotMatch(stdin, /^\+export const bundled/m, 'a derived output is never inlined');
-      assert.match(stdin, /- src\/ownerbig\.js \(not inlined: over the budget\): git diff [0-9a-f]{40} [0-9a-f]{40} -- 'src\/ownerbig\.js'/, 'the owner\'s branch is bounded too');
+      assert.ok(stdin.includes(`- src/ownerbig.js (new source, over the budget, `) && stdin.includes(join(diffDir, 'owner-u2', 'files', 'src/ownerbig.js.diff')), 'the owner\'s branch is bounded too');
+      assert.doesNotMatch(stdin, /git diff [0-9a-f]{40}/, 'no git command: a lens has no shell');
       assert.match(stdin, /^\+export const owner = 1;/m);
       assert.deepEqual(watermarks(ctx, ['vision']), [['vision', S1, false]]);
     } finally {
