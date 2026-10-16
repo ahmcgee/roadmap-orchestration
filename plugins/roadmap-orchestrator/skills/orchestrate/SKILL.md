@@ -245,7 +245,7 @@ touches only that lever's plan fields, and judges it on the chart (`status.flow`
   yours that touches one after the first admission raises `ruler-changed` (`status.flow`, the brief). Ack it only for
   a change convergence needed, and say why at the next check-in.
 - **`flow-worse`**: a verdict found an applied change worse. Revert it by `apply` (export, restore the values in the
-  `preimage` of that proposal's `flow-verdict` fact, apply), then ack. No flow run proposes it again.
+  `preimage` of that proposal's `flow-verdict` fact, `apply --base`), then ack. No flow run proposes it again.
 - **`flow-host`** is advice for the owner (more cores, a faster disk), never applied: put it in your next check-in
   preface, then accept or reject it with a reason.
 - **Givens.** When a lever cannot be tuned on this host and that is self-evident, declare it yourself:
@@ -270,8 +270,9 @@ answer"), whatever else the wake holds.
 **Operate** only through the sanctioned levers: `pause`, `resume`, `resume --backend`, `ack`, `apply` (re-entry,
 priority, known defects and `--ruling` included), `rule`, `steer`, `reverse`, `merge-in`, `audit`,
 `close-admissions`, `flow`, `stop`, `start`, `resume-arc`, `gc`, `inputs export`. Use them when observation says to; that is
-the job. Never patch the plugin or the run dir. To recover inputs, `roadmap inputs export` the arc, edit the export,
-then `apply --expect-rev <planRev>` (`reference.md`, "Recovery"); never copy a historical manifest back.
+the job. Never patch the plugin or the run dir. To see or recover the inputs in force, `roadmap inputs export` the arc,
+edit the export, then `apply --base <export>/export.json` (`reference.md`, "Recovery"); never copy a historical manifest
+back.
 
 Two levers carry their own judgment:
 
@@ -371,8 +372,8 @@ at plan-check with a blocking `scope-growth` item naming the patterns and why. I
 Read the proposal against the spec, then:
 
 - `roadmap scope accept <unit> --reason <text>` when the unit needs them: the executor lands the growth as one ruled
-  revision (a new ruling naming exactly the patterns, the plan and spec scope widened, the files written back) and
-  the unit re-opens at plan-check on it. A refused revision is rejected with every reason; the unit stays held.
+  revision (a new ruling naming exactly the patterns, the plan and spec scope widened, in force only: your files are
+  never written) and the unit re-opens at plan-check on it. A refused revision is rejected with every reason; the unit stays held.
 - `roadmap scope reject <unit> --reason <text>` when another unit owns them or the spec is wrong: the plan-check runs
   again, told what you rejected, and decides within the scope (an infeasible spec then escalates to you).
 
@@ -417,10 +418,21 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
 
 ## Changing the plan
 
-The executor revises the plan itself (checkpoint admits and cuts, plan-check patches, spec patches), so your input
-files fall behind the plan in force. Before any edit, `apply` or `start` after the arc has run, `roadmap inputs export`
-the arc and edit the export, never the files you wrote at Phase 0. Then `roadmap apply` (`--dry-run` first;
-`--expect-rev <n>` to refuse if the plan moved).
+The executor revises the plan itself (checkpoint admits and cuts, plan-check patches, spec patches, rulings, steer
+classes, scope growth) and never writes into your files: the plan in force lives in the run dir, and
+`roadmap inputs export` is the one way to see it. Your files stay what you last applied.
+
+- **Edit, then apply.** Edit your input files and `roadmap apply` (`--dry-run` first). The apply rebases: each file is
+  merged from what you last applied onto the plan in force, so what the executor did since stays and your edit lands on
+  top. A spec you revise takes your file's `rev` + 1; the executor renumbers it onto its own patches.
+- **Editing what the executor changed** (a spec it patched, a unit a checkpoint admitted): `roadmap inputs export` the
+  arc, sync the export over your input files, edit, and `roadmap apply --base <export>/export.json`. Without `--base`,
+  an edit of a value the executor also changed is a conflict.
+- **A conflict** (you and the executor changed one value differently) rejects the apply naming the file and the JSON
+  path (`conflict: …/u1.json at $.decisions[D1].text`). Export, re-apply your edit on top of the executor's value,
+  apply with `--base`.
+- `start` merges your files the same way: unchanged files restart on the plan in force.
+
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.
 
@@ -441,6 +453,8 @@ rejected. An edit you never apply has no effect, even after a restart.
 - **Fixed**: `arc`, `integrationBranch`, `baseline`, `worktreeRoot`, the target kind and `chain`.
 - **Rulings ledger**: only through commands. A ruling and the edits that depend on it go in one
   `apply --ruling <sidecar>`, so no review sees half of it; `roadmap rule` is for a ruling with no dependent edit.
+  Write a new ruling's id as `"C-?"`: it takes the ledger's next C-n when it lands, and the receipt names it
+  (`ruling <file> numbered C-7`). Cite it by that id in later edits. Never renumber by hand.
 
 ## Lanes, witnesses and clocks
 

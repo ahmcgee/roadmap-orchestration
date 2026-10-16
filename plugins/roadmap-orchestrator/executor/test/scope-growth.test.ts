@@ -3,7 +3,8 @@
 //
 // scope.accept: a plan-check's verified proposal holds the unit (`plan-check scope-growth`, a blocking `scope-growth` item,
 //   unverifiable patterns dropped and named); `scope accept` lands one ruled revision (a new ruling naming exactly the
-//   patterns, the plan and spec scope widened, everything written back so a later apply of the files changes nothing),
+//   patterns, the plan and spec scope widened; nothing written into the owner's files, and a later apply of them rebases
+//   onto the growth and changes nothing),
 //   acknowledges the item and releases the hold; the unit re-opens at plan-check on the grown spec, whose dispatch check
 //   re-pins the wider scope before any build, and the build's edit there is salvaged.
 // scope.reject: the hold released, no revision; the plan-check runs again told what was rejected, and a proposal of the
@@ -25,7 +26,7 @@ import { arcId, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody } from '../src/core/records.ts';
 import { absPath, branchName } from '../src/core/values.ts';
-import { readInputFiles } from '../src/input/inforce.ts';
+import { inForceFiles, readInputFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
 import { APPLY, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
 import { dispatchOf, unitBranch } from '../src/pipeline/dispatch.ts';
 import { type Gate, runUnit } from '../src/pipeline/unit.ts';
@@ -39,6 +40,12 @@ import { git } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
+
+/** The files in force (the run dir's kept inputs), as `roadmap inputs export` writes them. */
+function inForceNow(r: ArcRun) {
+  const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
+  return inForceFiles(r.ctx.runDir, r.journal.view, inForce, revisionInForce(r.ctx.runDir, inForce), absPath(r.d.planPath), absPath(r.d.repo));
+}
 const GROWTH = [{ patterns: ['package.json', 'nope/**', 'src/**'], reason: 'it names the script the shell page used' }];
 const PACKAGE = '{\n  "name": "unit-fixture",\n  "private": true,\n  "type": "module",\n  "scripts": { "test": "node --test" }\n}\n';
 
@@ -74,9 +81,10 @@ async function holdU1(r: ArcRun) {
   return held.needsUser;
 }
 
-test('scope.accept: a verified proposal holds the unit; `scope accept` lands one ruled revision, written back, and the re-opened plan-check re-pins the wider scope before any build', T, async () => {
+test('scope.accept: a verified proposal holds the unit; `scope accept` lands one ruled revision, nothing written into the owner\'s files, and the re-opened plan-check re-pins the wider scope before any build', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve', scopeGrowth: GROWTH }), planCheckStep({ decision: 'approve' }), mulBuild({ 'package.json': PACKAGE })] });
   editSpec(d, (s) => void (s['removes'] = ['src/add.js']));
+  const owned = [d.planPath, specPath(d), join(dirname(d.planPath), 'rulings.md')].map((p) => readFileSync(p, 'utf8'));
   const r = contextFor(d);
   try {
     const item = await holdU1(r);
@@ -98,12 +106,12 @@ test('scope.accept: a verified proposal holds the unit; `scope accept` lands one
     const applied = r.journal.view.planAppliedBy(accepted.id);
     assert.ok(applied !== null);
     assert.deepEqual(applied.changes.map((c) => `${c.type}:${'unit' in c ? c.unit : ''}${c.type === 'spec' ? `:${c.edit}` : ''}`).sort(), ['spec:u1:revision', 'unit-changed:u1']);
-    const ledger = readFileSync(join(dirname(d.planPath), 'rulings.md'), 'utf8');
-    assert.match(ledger, /^C-2 — Unit u1's scope grows by `package\.json`: proposed by its plan-check \(it names the script the shell page used\), accepted by the root agent \(the test lives there\)\.$/m);
-    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { units: { id: string; scope: string[] }[] };
-    assert.deepEqual(plan.units[0]!.scope, ['src/**', 'test/**', 'contracts/**', 'package.json'], 'the live plan written back');
-    const spec = JSON.parse(readFileSync(specPath(d), 'utf8')) as { rev: number; scope: string[]; cites: { rulings: string[] } };
-    assert.deepEqual([spec.rev, spec.scope.includes('package.json'), spec.cites.rulings], [2, true, ['C-1', 'C-2']], 'the live spec written back');
+    const inForce = inForceNow(r);
+    assert.match(inForce.ledger.bytes!.toString('utf8'), /^C-2 — Unit u1's scope grows by `package\.json`: proposed by its plan-check \(it names the script the shell page used\), accepted by the root agent \(the test lives there\)\.$/m);
+    assert.deepEqual(inForce.plan.units[0]!.scope, ['src/**', 'test/**', 'contracts/**', 'package.json'], 'the plan in force widened');
+    const spec = JSON.parse(inForce.specs.get(U1)!.bytes!.toString('utf8')) as { rev: number; scope: string[]; cites: { rulings: string[] } };
+    assert.deepEqual([spec.rev, spec.scope.includes('package.json'), spec.cites.rulings], [2, true, ['C-1', 'C-2']], 'the spec in force grown');
+    assert.deepEqual([d.planPath, specPath(d), join(dirname(d.planPath), 'rulings.md')].map((p) => readFileSync(p, 'utf8')), owned, 'the owner\'s files are never written');
     const after = r.journal.view.unit(U1);
     assert.deepEqual([after.status, after.pendingRevision?.rev, after.scopeDecisions.map((x) => x.decision)], ['active', 2, ['accepted']]);
     const raised = raisedFor(r.journal.view, { type: 'stage', unit: U1, stage: 'plan-check', attempt: 1 });
@@ -111,9 +119,9 @@ test('scope.accept: a verified proposal holds the unit; `scope accept` lands one
     assert.equal(r.journal.view.ackOf(raised)?.command, accepted.id, 'the hold\'s item acknowledged by the command');
     assert.ok(facts(d).some((x) => x.kind === 'scope-decided' && x.command === accepted.id && x.decision === 'accepted'));
     const receipt = readReceipt(r.ctx.runDir, accepted.id, 'applied');
-    assert.ok(receipt?.state === 'applied' && receipt.verified.some((v) => /spec file .*u1\.json written back: it holds rev 2/.test(v)), JSON.stringify(receipt));
+    assert.ok(receipt?.state === 'applied' && receipt.verified.some((v) => /scope grows by package\.json, ruled by C-2/.test(v)), JSON.stringify(receipt));
 
-    // A later apply of the files as they are now changes nothing: the growth is in them.
+    // A later apply of the owner's files as they are changes nothing: rebased onto the growth, which it keeps.
     const again = await command(r, applyBody(d));
     assert.equal(again.outcome.kind, 'applied', JSON.stringify(again.outcome));
     assert.equal(r.journal.view.planApplied()?.rev, applied.rev);

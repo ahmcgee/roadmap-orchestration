@@ -6,9 +6,10 @@
 // they name into the command (its absolute path and sha256). `gc` is a host action under the host lock, not a
 // queued command (src/commands/gc.ts): it prints its report, or `{refused}` with exit 75 (host busy) or 78. `apply` first hashes the
 // plan file the arc started with (start.json), every unit's spec and (M3) the ledger with its sidecars, the obligations
-// and the vision into the command's manifest (`RevisionManifest`); `apply
-// --dry-run` instead classifies them against the plan in force, read-only, and prints the verdict (it runs
-// no smoke: a backend the new routing needs is listed under `smoke`). Output is agent-facing JSON.
+// and the vision into the command's manifest (`RevisionManifest`), and `--base <export.json>` the base the executor
+// rebases them from (an `inputs export`'s manifest; src/input/rebase.ts); `apply --dry-run` instead classifies the
+// rebased files against the plan in force, read-only, and prints the verdict (it runs no smoke: a backend the new
+// routing needs is listed under `smoke`). Output is agent-facing JSON.
 // `start` launches the supervisor detached (src/supervisor.ts), which claims the host and spawns the
 // executor, and waits for its own generation's readiness (the executor passed every startup check), at
 // most 240 s by default or `--wait <ms>`. It prints one JSON line: `ready` (exit 0; start returns while the

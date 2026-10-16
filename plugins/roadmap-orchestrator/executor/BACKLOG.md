@@ -151,6 +151,14 @@ None.
 
 ## Watch (act only on the trigger)
 
+- **Apply rebase merges arrays of plain values whole** (2026-10-16). `merge3` merges objects per key and arrays of
+  keyed objects per element, but an array of strings (scope patterns, `holistic.advances`, cites, a lane's argv) both
+  sides changed is a conflict, never a set merge (an argv's order is its meaning). Trigger: conflicts on id lists such as
+  `advances` or `cites.rulings` in an arc's apply receipts; then set-merge the canonical-order id lists only.
+- **`rule` does not rebase under the fence** (2026-10-16). A ruling that another revision overtakes while `rule` waits
+  for the fence is rejected (`the arc moved`), and its `consistency` is stale anyway (G21). Trigger: an owner `rule`
+  rejected that way; then rebuild its proposal under the fence as `apply` does (`commitRebased`).
+
 - **The fast suite is not a flow lever at the lanes stage** (2026-10-15). A fast suite lane's time counts as
   `stage:lanes` service, but a suite-lane lever targets only the integration slot or host cpu, so a slow lane left
   `fast` that makes lanes the constraint has no proposal. Trigger: a flow verdict naming `stage:lanes` while fast suite
@@ -286,6 +294,9 @@ None.
   (Q27 remainder). Trigger: `by-builder` reverted after run 10, or a missed-risk term fires.
 
 ## Scaffolding to delete
+
+- `applyExpectRevDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.10 is in flight: an apply command
+  queued before the apply rebase carries `expectRev` and reads as base null. With it, `base` is the only field read.
 
 - The 1.0.0-dev.7 → M4b default in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.7 is in flight:
   `dev7ArcRolesDefault` and `arcRolesInForce`'s null arm (src/routing/layers.ts): a routing provenance without

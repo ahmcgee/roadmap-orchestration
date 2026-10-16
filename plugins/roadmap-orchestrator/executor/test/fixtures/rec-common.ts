@@ -20,7 +20,7 @@ import { decidedBy } from '../../src/pipeline/transitions.ts';
 import type { RecoveryContext } from '../../src/recover/recover.ts';
 import { resourceTable } from '../../src/resources/reserve.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
-import { fileSha256 } from '../../src/spec/spec.ts';
+import { SPEC_INPUT, keptInput } from '../../src/input/inforce.ts';
 import { reached } from '../helpers/barrier.ts';
 import { assertFired, writeTrigger } from '../helpers/crash.ts';
 import { type Exit, fixture, runFixture } from '../helpers/proc.ts';
@@ -260,7 +260,7 @@ export function assertNoDuplicateEffect(d: ArcDescriptor, callsBefore: number): 
     if (done?.kind === 'worktree.create' && !removed && i.expect.checkout.type === 'detached') assert.equal(revParse(i.expect.path, 'HEAD'), done.outcome.head, 'worktree: at its recorded head');
   }
   for (const i of view.opsOf('worktree.remove')) if (view.doneOf(i.op) !== null) assert.ok(!existsSync(i.expect.path), `worktree ${i.expect.path} removed`);
-  for (const i of view.opsOf('spec.patch')) if (view.doneOf(i.op) !== null && view.opsOf('spec.patch').at(-1)?.op === i.op) assert.equal(fileSha256(i.expect.path), i.post.newSha256, 'spec: the recorded bytes');
+  for (const i of view.opsOf('spec.patch')) if (view.doneOf(i.op) !== null) assert.ok(keptInput(runDir, i.post.newSha256, SPEC_INPUT) !== null, 'spec: the recorded bytes kept');
 
   // One needs-user per cause, one file per item.
   const raises = view.opsOf('needsuser.raise').filter((i) => view.doneOf(i.op) !== null);

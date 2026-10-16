@@ -248,7 +248,7 @@ in a repo's class rebinds (`.roadmap/config.json` `routing.classes`). Built-in p
 | `ack <needs-user-id> [--choice <option>]` | `{id, choice \| null}` |
 | `resume [<unit> \| --backend claude\|codex]` | `{target: all \| unit \| backend}` |
 | `sweep [--resource <name>]` | `{resource \| null}` |
-| `apply [--expect-rev <n>] [--dry-run] [--ruling <sidecar.json>]...` | `{expectRev: PlanRev \| null, dryRun, rulings: string[]}`: `--expect-rev` is a positive integer; `--ruling` (M4a rev 3, I2) is repeatable, each file once, in the order given |
+| `apply [--base <export.json>] [--dry-run] [--ruling <sidecar.json>]...` | `{base: string \| null, dryRun, rulings: string[]}`: `--base` names an `inputs export`'s `export.json` (its `base` manifest is the command's `base`; "Apply rebase"); `--ruling` (M4a rev 3, I2) is repeatable, each file once, in the order given |
 | `resolve-edge <edge> --evidence <text>`, `run-only (<unit>... \| --clear)` (M2) | `{edge, evidence}`, `{units \| null}` |
 | `rule <record.json>` (M3) | `{record}`; the CLI queues `rule{path (absolute), sha256}` of the file's bytes |
 | `reverse <D-n>` (M3) | `{divergence: DivergenceId}` |
@@ -799,10 +799,10 @@ architect). The executor's contexts read `plan()` and `routing()` (the plan in f
 profile and repo config) from the log at each call. `roadmap apply` and a `start` whose files differ are the only
 ways a revision comes into force; an unapplied edit is ignored, also by a respawn.
 
-`roadmap apply [--expect-rev n] [--dry-run]` hashes the plan file the arc started with (`start.json`) and every
+`roadmap apply [--base <export.json>] [--dry-run]` hashes the plan file the arc started with (`start.json`) and every
 unit's spec into the command's manifest. The effect (`src/commands/apply.ts`, a mutation, so once its scope has drained
-(A12, "Executor, status, recovery"); nothing live is killed): the plan in force's `rev` must equal `expectRev`
-when given (`stale: …`); the files are re-read and must hash to the manifest (`the files changed since …`); every
+(A12, "Executor, status, recovery"); nothing live is killed): the files are re-read and must hash to the manifest
+(`the files changed since …`), then are rebased onto the files in force ("Apply rebase", 2026-10-16); every
 change is classified against the plan in force and the log (`src/input/classify.ts`); the startup rows re-run
 (`applyRows`: `plan-invalid` over the units whose entry or spec changed, all units when a resource was changed or
 removed or the contracts or rulings changed; `unsupported-routing` when the routing changed); `spec-lane-unrunnable`
@@ -1584,7 +1584,8 @@ src/docs/contracts.ts, src/spec/rulings.ts, src/holistic/{obligations,impact,red
    `revision.commit` (`docsStateOf`). Recovery runs `revision.commit` after the git ops and before the command ops;
    an abort raises no needs-user (its source re-evaluates).
 6. **Stale base (A4)** is the in-force revision's source: without `--expect-rev`, an apply is refused when it is a
-   bundle's or the executor's (a `rule` or `reverse` is an architect command).
+   bundle's or the executor's (a `rule` or `reverse` is an architect command). Superseded 2026-10-16: an apply rebases
+   ("Apply rebase"), and `--expect-rev` and the refusal are gone.
 7. **Edit-class readings**: `route` sets any class at any seat (DESIGN §4), unsupported unit-role seats refused;
    `limits` refuses only a bound the edit changes to below what a unit spent; scope growth needs the unit's spec to
    cite an active ruling with a sidecar applying to the unit whose statement names exactly the added patterns (in
@@ -1625,7 +1626,8 @@ src/docs/contracts.ts, src/spec/rulings.ts, src/holistic/{obligations,impact,red
    the plan in force before the revision (the `plan-applied` preceding it in the log): `spec.patch`'s write-back
    rule. A run again after a crash (`planAppliedBy`) writes back the same way; a file the architect changed since is
    left alone and the receipt's `verified` says so. Stale base (A2 choice 6) treats a `command` revision as
-   architect-owned, so a later `apply` of the unchanged file keeps the layer.
+   architect-owned, so a later `apply` of the unchanged file keeps the layer. Superseded 2026-10-16: nothing is written
+   back; a later `apply` rebases onto the layer ("Apply rebase").
 6. **`merge-in`** plans with the op's own prepare (`merge-tree`); a conflict, or a branch already containing the tip,
    is rejected before any intent. Its `mergein.prepare` op is parented by the command.
 7. **Fenced captures (H2)**: plan-check and gate read their inputs, render their prompt and write `judgment-inputs` in
@@ -1681,7 +1683,8 @@ residues, the snapshot closure):
    `validateRuling` at the tip; the proposal is the revision in force with `ledgerAfter` and `sidecarsAfter` (a
    superseded sidecar re-serialised with its new status), proposer `rule`, committed through `commitUnderFence`. Then
    the live ledger and each changed sidecar file take the revision's bytes only while they hold the previous
-   revision's (a new sidecar: while absent); a file changed since is left alone and reported.
+   revision's (a new sidecar: while absent); a file changed since is left alone and reported. Superseded 2026-10-16:
+   no write-back, and a `C-?` record is numbered when it lands ("Apply rebase").
 7. **The transient check (G17, H15)**: `candidateRequest` builds `TransientRules` from the unit's latest dispatch
    record (`unitTransientRules`): `m3` refuses any in-tree `.roadmap/` path (`roadmap-dir`) and any path no pattern of
    the pinned scope matches (`out-of-scope`; `matchesPattern`, src/core/values.ts, as salvage matches); run-state, evidence and executor-file
@@ -1762,11 +1765,12 @@ supersede the A4 items they name):
   JSON edited in place); the classifier checks it like any obligation edit, and the publication renders
   `invariants.md` when the rendering changes. `amended` is no state: it authorizes a later `apply`'s amendment while
   the ruling is in force. The write-back covers the obligations file (beside the plan, `plan.holistic.obligations`)
-  with the same compare-and-write as the ledger and sidecars.
+  with the same compare-and-write as the ledger and sidecars (superseded 2026-10-16: no write-back, "Apply rebase").
 - **Startup and a committed command (finding 7).** `settlePlan` (src/preflight/checks.ts, exported) leaves the files
   for the next start while a `command.apply` is open whose command a `plan-applied` names: its revision is in force,
   its write-back may be unfinished, and recovery re-runs the command, which finishes it. The open command op is the
-  durable pending-write-back phase; no new record.
+  durable pending-write-back phase; no new record. (2026-10-16: no write-back; recovery still finishes the command
+  first.)
 - **A rule on a 1.0.0-dev.5 revision (finding 8; scaffolding, deleted in M4a X0).** Before committing a rule whose previous revision
   has no payload, `rule` keeps the live ledger's hash it evaluated against at
   `<runDir>/commands/rule-preimages/<command>.json` (`{ledgerSha256}`; such a revision has no sidecars or obligations
@@ -3020,12 +3024,14 @@ sections and marks converted amendments.
     (`rulingNaming`: cited by its spec, active, applying to the unit, naming them in backticks), recorded as
     `unit-reentered.widened{patterns, ruling}`; prepare's dispatch accepts the envelope plus those patterns.
 16. **`apply --ruling` (N3, I2; src/commands/apply.ts, rule.ts).** Each `rulings` entry is read by `readRulingRecord`
-    (its hash, then the sidecar reader); the live ledger and sidecars must equal those in force; `rulingReasons` (the one
+    (its hash, then the sidecar reader); the live ledger and sidecars must equal those in force (2026-10-16: the merged
+    ones, "Apply rebase"); `rulingReasons` (the one
     validation `rule` shares) checks each against the ledger after the ones before it and the units of the revision being
     built; `withRulings` lands them (shared with `rule`), proposer `apply{rulings}`. The startup check reads the
     proposal's ledger bytes (`ledger?` in its context, src/preflight/checks.ts): the live file gets them only at
     write-back (`writeBack`, shared with `rule`; a command already applied finishes it through `writeBackAfter`). A
-    `--ruling` apply never takes the already-in-force shortcut.
+    `--ruling` apply never takes the already-in-force shortcut. (2026-10-16: no write-back; the check reads every apply's
+    merged ledger, "Apply rebase".)
 17. **Build schema, resume, resolve (N3, I3, 8d).** Each build call writes `buildSchemaFor(buildLaneIds(spec))` and reads
     its answer with the same lanes; a resume round quotes why the answer was malformed (`resumeDirectives`,
     src/pipeline/unit.ts `malformedError`). `resolvedHead` (src/git/mergein.ts): a resolve round may leave HEAD on
@@ -3279,7 +3285,7 @@ Repo scope: `.roadmap/config.json` `flow: {givens: [{lever, note}]}` (owner-comm
 | `flow-verdict` | `proposal, metric, before, after, guards, verdict, preimage`; a breach ⇒ `worse`; `inconclusive` exactly when either side has fewer than 3 samples and no guard is breached |
 
 **Other arms and fields.** `executor-started + host?` (every dev.8 start). `RevisionSource + flow{proposal}` (`staleBase`
-forces `--expect-rev` after it, as after a bundle; status rules it `flow{proposal}`). `HoldCause + flow-apply{proposal}`
+forced `--expect-rev` after it, as after a bundle, until the apply rebase; status rules it `flow{proposal}`). `HoldCause + flow-apply{proposal}`
 (new candidate starts held while an accepted proposal is `pending-apply`; the backend-park release ignores it). Spawn
 subject `+ proof{job: proof-n, proposal, lane, side: old | new, at}` (no usage charge, no `witnessed`). `CommandBody +
 flow-decide{proposal, decision: accept | reject, reason} | flow-request{reason}` (scope ∅). CLI `roadmap flow accept|reject
@@ -3514,9 +3520,9 @@ and the root agent's reasons, its docRef a line of the first file the growth tak
 `removes` entry first), its consistency fresh at the integration tip), the plan's unit scope widened, and the unit's spec
 in force at rev + 1 with the patterns in its scope and the ruling in its cites (`grownSpec`); validated by `rulingReasons`,
 evaluated by the apply core (proposer `apply{rulings}`) and the Phase-0 rows (`APPLY`), committed under the fence
-(`plan-applied`, source the command); (2) the write-back: ledger, sidecars and obligations (`rule`'s), the plan (`steer`'s),
-and the unit's live spec file while it holds the spec the growth was built on. A refusal at (1) rejects the command with
-every reason and leaves the unit held. Both: (3) the hold's item acknowledged; (4) `scope-decided`, the postcondition.
+(`plan-applied`, source the command); nothing is written into the owner's files (2026-10-16, "Apply rebase"). A refusal
+at (1) rejects the command with every reason and leaves the unit held. Both: (2) the hold's item acknowledged; (3)
+`scope-decided`, the postcondition.
 
 The fold: `scope-decided` only of the unit held by that attempt's `scope-growth` hold (else it fails loud); the hold is
 released (`active`) and the decision kept in `UnitState.scopeDecisions` with the proposals it decided. Accepted: the spec
@@ -3535,3 +3541,38 @@ applied `apply` receipt list it, a start writes it to the executor's stderr. The
 
 **Upgrade.** See "Record evolution" (the rows marked scope growth): additive; one scaffolding default
 (`planCheckScopeGrowthDefault`). An arc started on 1.0.0-dev.9 is adopted.
+
+## Apply rebase (2026-10-16)
+
+Arc feedback 2026-10-16 item 3: applies bounced stale while the executor revised the plan, and each owner ruling meant
+re-export, re-sync and hand numbering. An apply now rebases; the executor never writes into the owner's files.
+
+- **The base.** `CommandBody apply{base: RevisionManifest | null, manifest, rulings?}` (`expectRev` removed). `base` is an
+  export's (`inputs export` writes `export.json {planRev, specRevs, base}`, `base` the manifest of the exported files, every
+  byte kept in the run dir; the CLI's `--base <export.json>` copies it), or null: the owner's files of the latest revision
+  applied from them (src/input/rebase.ts `ownerBase`: the newest done `revision.commit` whose source is `start` or an
+  `apply` command; its payload's `owner`, else its manifest). A command an earlier CLI queued carries `expectRev`: read as
+  base null (`applyExpectRevDefault`, scaffolding until no dev.10 arc is in flight).
+- **`RevisionPayload + owner?: RevisionManifest`.** A start's or apply's revision names the owner's files it was rebased
+  from when they differ from its manifest (a merge, or `--ruling` records landed); absent, the manifest is the owner's
+  (every earlier revision: its release's write-back kept the owner's files at the manifest). The owner's bytes are kept
+  (`keepOwner`) before the commit.
+- **The merge** (`rebaseInputs`, three-way per input file; base, ours = the owner's files, theirs = `inForceFiles`): ours
+  unchanged since the base takes theirs, theirs unchanged takes ours, both alike is that; otherwise JSON objects merge per
+  key and arrays whose elements all carry a distinct `id` (else `name`) per element (the side that reordered keeps its
+  order; both reordering is a conflict); anything else is a conflict, one reason per JSON path
+  (`conflict: <file> at $.units[u1].risk: …`). A spec's `rev` rebases: the merged spec takes theirs' rev plus ours' step
+  from the base; an owner spec whose rev is below the base's is refused (the files predate the base). The ledger merges by
+  line (the owner's added and removed lines replayed on theirs); sidecars per file. The classifier then judges the merge as
+  any proposal; an owner ledger or sidecar edit stays refused (A3).
+- **Under the fence** (`commitRebased`): the proposal is rebased again against the log as it is then; a draft that differs
+  returns `moved`, and the apply is evaluated again (its startup rows and smoke included), at most `APPLY_ATTEMPTS` (3)
+  times, then rejected. Other revision sources keep `commitUnderFence`.
+- **A start** rebases its files from the default base (`settlePlan`): files unchanged since their latest apply are the plan
+  in force; a conflict is `plan-change-refused`.
+- **No write-back.** `spec.patch` keeps the patched spec only; `rule`, `apply --ruling`, `steer --class`, an applied flow
+  proposal and `scope accept` write nothing into the owner's files. `writeSpec` is gone.
+- **Unnumbered rulings.** A ruling record (`rule`, `apply --ruling`) may carry `id: "C-?"` (`UNNUMBERED`); `readRulingRecord`
+  returns a `RulingDraft`, and `numberRulings` gives each `C-?` the ledger's next C-n after the records before it, its
+  bytes then its JSON with that id. The receipt's `verified` names it (`ruling <path> numbered C-n`); the dry run lists
+  `numbered`. A numbered record must still be the next id.

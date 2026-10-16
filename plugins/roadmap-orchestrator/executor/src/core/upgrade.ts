@@ -229,7 +229,7 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   flow: { arc: 'frontier' },
 };
 
-// Apply rebase (2026-10-16, 1.0.0-dev.11): an apply command carries the `base` it rebases from. One an earlier CLI queued
+// Apply rebase (2026-10-16): an apply command carries the `base` it rebases from. One an earlier CLI queued
 // carries `expectRev` instead (the plan rev it expected in force). Delete once no arc started on 1.0.0-dev.10 is in flight
 // (BACKLOG "Scaffolding to delete"); `base` then becomes required alone.
 

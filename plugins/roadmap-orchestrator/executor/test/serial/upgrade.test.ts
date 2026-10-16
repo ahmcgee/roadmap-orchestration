@@ -724,7 +724,7 @@ async function submitOnHead(p: Phase1, args: readonly string[]): Promise<string>
 const RULING = 'C-3';
 const RULING_TEXT = 'Every page identifier is built from slugify.';
 
-test('upgrade.rule-on-adopted-arc: `roadmap rule` lands on the previous release\'s revision: constraints.md published, the files written back; the arc then merges', T, async () => {
+test('upgrade.rule-on-adopted-arc: `roadmap rule` lands on the previous release\'s revision: constraints.md published, the owner\'s files never written; the arc then merges', T, async () => {
   let marker = '';
   const { p, head } = await stoppedMidBuild(clean(), (l) => {
     marker = join(l.dir, 'page-id-lane');
@@ -758,10 +758,10 @@ test('upgrade.rule-on-adopted-arc: `roadmap rule` lands on the previous release\
   assertFinished(f);
   const [fact, ...more] = factsOf(f.after, 'plan-applied');
   assert.ok(fact !== undefined && more.length === 0);
-  const written = readFileSync(ledger);
-  assert.equal(written.toString('utf8'), `${before.toString('utf8')}${RULING} — ${RULING_TEXT}\n`, 'the live ledger written back');
-  assert.deepEqual([fact.rev, fact.command, fact.source, fact.rulingsSha256, fact.publication?.pub], [2, id, { type: 'command', command: id }, bytesSha256(written), 'docs-1']);
-  assert.ok(existsSync(join(`${ledger}.d`, `${RULING}.json`)), 'its sidecar written beside the ledger');
+  assert.ok(readFileSync(ledger).equals(before), 'the owner\'s ledger is never written');
+  const inForce = Buffer.from(`${before.toString('utf8')}${RULING} — ${RULING_TEXT}\n`, 'utf8');
+  assert.deepEqual([fact.rev, fact.command, fact.source, fact.rulingsSha256, fact.publication?.pub], [2, id, { type: 'command', command: id }, bytesSha256(inForce), 'docs-1']);
+  assert.ok(!existsSync(join(`${ledger}.d`, `${RULING}.json`)), 'nor a sidecar beside it');
   assert.match(git(p.l.repo, 'show', `integration:.roadmap/constraints.md`), new RegExp(`${RULING} — ${RULING_TEXT}`), 'constraints.md published');
 });
 

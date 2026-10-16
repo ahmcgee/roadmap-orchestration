@@ -224,14 +224,12 @@ export function rebaseInputs(base: InputFiles, ours: InputFiles, theirs: InputFi
       capture: record === null ? null : optionalFile(beside(record.issueCapture.file), sides((f) => f.corpus?.capture), conflicts),
     };
   }
+  const obligations = optionalFile(beside(plan.holistic?.obligations), sides((f) => f.obligations), conflicts);
+  const visionAt = vision === null ? null : absPath(join(vision.base === 'plan' ? dirname(ours.planFile) : ours.repo, vision.path));
+  const visionBytes = optionalFile(visionAt, sides((f) => f.vision), conflicts);
   if (conflicts.length > 0) return { reasons: conflicts };
   return {
-    next: {
-      repo: ours.repo, planFile: ours.planFile, plan, planBytes, specs, ledger: { path: ledger, bytes: ledgerBytes }, sidecars,
-      obligations: optionalFile(beside(plan.holistic?.obligations), sides((f) => f.obligations), conflicts),
-      vision: vision === null ? null : optionalFile(absPath(join(vision.base === 'plan' ? dirname(ours.planFile) : ours.repo, vision.path)), sides((f) => f.vision), conflicts),
-      corpus,
-    },
+    next: { repo: ours.repo, planFile: ours.planFile, plan, planBytes, specs, ledger: { path: ledger, bytes: ledgerBytes }, sidecars, obligations, vision: visionBytes, corpus },
   };
 }
 
