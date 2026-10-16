@@ -247,8 +247,10 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   `parked`, `merged`, `cut` or `superseded`. `waitingFor{deps, edges, resources, envBlocked, admission, drainFor}`;
   `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare. `running{stage,
   attempt, elapsed (ms), deadline, resources, lane}`, `lane{id, set: spec|suite|journey|mutant, inv, startedAt}` the
-  lane run open now. `failures[{stage, attempt, lane, class: red|flaky|repeat, hostSuspected}]`: `hostSuspected`
-  `{signatures, busy}` names the host failure signatures the output matched and whether the host was busy, or null.
+  lane run open now. `failures[{ref, stage, attempt, lane, class: red|flaky|repeat, hostSuspected}]`: `hostSuspected`
+  `{signatures, busy}` names the host failure signatures the output matched and whether the host was busy, or null;
+  `ref` (`<unit>/lanes#<attempt>/<lane>`) is how a re-entry's `fixes` cites it (a park or another failure outcome is
+  cited as `<unit>/<stage>#<attempt>`).
   `park{class: retryable|operator, kind, targets, outstanding, nextProbeAt, escalateAt}`: a retryable park recovers
   by itself once its probes pass.
 - `edges[]` (`after{unit, on, effective, met}`, `contingent{unit, edge, condition, resolved}`), `runOnly`.
@@ -266,7 +268,8 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   `witness` (its lane has not run on the head yet; an audit, checkpoint or close-out runs every lane), `spec`; and
   `lastObserved{treeSha, verdict, evidence}|null` for a `not-covered` one: its newest observation on an earlier tree
   of the head's history, context only), `waived`, `deferred`, `vision` (clauses, questions, `advances`, `coverage`), `divergences`,
-  `decisionsSince`, `convergence{k, counter, since, open}`, `findings{active, metrics}`, `audit`, `owed`,
+  `decisionsSince` (rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals, and `checkpoint-skipped`:
+  an audit that found nothing new, so no checkpoint ran), `convergence{k, counter, since, open}`, `findings{active, metrics}`, `audit`, `owed`,
   `completion{planRev, head, active, sealed, notSealed, unmet}`, `holds` (arc-wide admission holds: `baseline`,
   `pack-review`, `issue-policy-untrusted`), `amendments[{id, source, rules, proposal, why}]`.
 - Corpus arcs also (null otherwise): `packReview{state: none|running|due|held|clear, reviews[{job, planRev, key,
@@ -383,7 +386,10 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 lineage merged or cut, or the apply cuts a fixer an entry still names), `known-defect-lane` (no spec in force declares
 the lane) and `known-defect-cycle` (the `after` edges plus the holds form a cycle, named). A re-entry whose scope
 leaves its lineage's envelope is refused unless its spec cites an active ruling for it naming exactly the added
-patterns. Priority, known-defect and plan-check-shape edits drain nothing.
+patterns. A re-entry the apply adds is refused without `fixes` (once its lineage recorded a failure) or with one that names no failure of its lineage (the
+refusal lists the lineage's failures), and as an unchanged retry: its cited failure is a design failure of the unit, it
+has no `reset`, and its spec content, effective scope (derived outputs included), suite lanes and resolved routing are all as the failure ran under (the
+refusal names each). Priority, known-defect and plan-check-shape edits drain nothing.
 
 ## Needs-user reasons
 

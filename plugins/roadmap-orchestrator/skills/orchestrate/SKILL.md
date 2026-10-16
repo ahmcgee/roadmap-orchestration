@@ -201,7 +201,11 @@ $0.30), so the wakes are few by design.
   full before you act or ack. The recommendation says which procedure applies; "Handling parks" below has them.
 - **The checkpoint acts first.** In a holistic arc it rules toward the vision and records every departure as a
   divergence. Read `divergences` and `decisionsSince`; reverse with `roadmap reverse <D-n>` or an `apply` when it
-  read the vision wrong. A `bundle-request` is yours: `ack` it with `--choice apply` or `--choice reject`; one the
+  read the vision wrong. It runs after an audit only when the audit found something new: once a checkpoint has
+  settled, an audit whose active findings it already weighed is recorded `checkpoint-skipped` in `decisionsSince`, no
+  call made. A design park's checkpoint reads the executor's diagnosis of the lineage (its failures with their `fixes`
+  references, reverted out-of-scope paths, missing witnesses, earlier re-entries) and its `reenter` cites one too. A
+  `bundle-request` is yours: `ack` it with `--choice apply` or `--choice reject`; one the
   executor cannot apply offers `--choice acknowledge` (you made the change with `apply`, or none is needed) or
   `--choice decline`. One still unanswered when only the close-out is left is declined by the executor, and its
   proposal becomes an amendment for the next Phase 0: a non-blocking item never holds completion. The executor already
@@ -448,9 +452,15 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,
   `roadmap resume <unit>` re-pins it and re-enters it where it parked.
 - **Parked anywhere else** (a lost build, a residue, a red candidate, a red base, a failed salvage): re-enter.
-  Add a unit with a new id and `"reenters": {"unit": <old>}` (its fixed spec, the same scope), ack the old item,
-  `roadmap apply`. The new unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand.
-  Its scope may grow beyond the lineage's only on a ruling its spec cites that names exactly the added patterns.
+  Add a unit with a new id and `"reenters": {"unit": <old>, "fixes": <failure>}` (its fixed spec, the same scope),
+  ack the old item, `roadmap apply`. `fixes` names the failure the re-entry fixes, and `apply` refuses a re-entry
+  without it: the park as `<unit>/<stage>#<attempt>` (the item's recommendation spells it), another failure outcome of
+  the lineage, or a lane failure by its `ref` in `status.units[].failures` (`<unit>/lanes#<attempt>/<lane>`). Find
+  the cause first: a re-entry that changes nothing the failure ran under (the same spec content, effective scope, suite lanes
+  and routing, no `reset`) is refused, unless the failure is a flaky or host-suspected lane or a park that is not the
+  unit's design failure (a red base, an environment or retryable park); the refusal names what must differ. The new
+  unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand. Its scope may grow beyond
+  the lineage's only on a ruling its spec cites that names exactly the added patterns.
 - **Parked `witness-lane-missing`** (an arc started on 1.0.0-dev.9: the unit's spec names a witness lane that is no
   arc lane): add that lane to the obligations with `roadmap apply`, then `roadmap resume <unit>`; or re-enter the unit
   with a spec whose witness items name arc lanes. An apply can no longer create this state.

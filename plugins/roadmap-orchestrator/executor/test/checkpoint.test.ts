@@ -30,7 +30,7 @@ import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { BUNDLE_ACTIVATE, CHECKPOINT_JOB, crashCells } from './matrix.ts';
 import {
-  type Wired, admitOp, applyPlanEdit, applyVision, checkpointArc, checkpointContext, completedAudit, factsOfKind, limitsOp, visionLenses,
+  type Wired, admitOp, applyPlanEdit, applyVision, checkpointArc, checkpointContext, completedAudit, factsOfKind, limitsOp, noteLenses, visionLenses,
 } from './fixtures/checkpoint-common.ts';
 import { auditArc, mapped } from './fixtures/audit-common.ts';
 import { ruleRecord, submitRule } from './fixtures/publish-common.ts';
@@ -249,7 +249,7 @@ const checkpointRuling = (id: string): string => JSON.stringify({
   evidence: ['the vision asks for helpers anyone can trust'], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
 });
 const ruleOp = (id: string): JsonValue => ({ op: 'rule', ruling: id, cites: ['V-1'], evidence: ['the vision asks for helpers anyone can trust'] });
-const requirePlan = (r: ArcRun) => JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${r.journal.view.planApplied()!.planSha256}.plan.json`), 'utf8')) as { units: { id: string; origin?: string }[] };
+const requirePlan = (r: ArcRun) => JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${r.journal.view.planApplied()!.planSha256}.plan.json`), 'utf8')) as { units: { id: string; origin?: string; reenters?: { fixes?: string } }[] };
 
 describe('the activation checks', () => {
   test('bundle.finding-closed-moot (paid M4b run 5, ckpt-2): a finding a publication resolves during the call leaves its disposition moot; the bundle applies, the finding stays resolved', T, async () => {
@@ -673,7 +673,8 @@ describe('the activation checks', () => {
 describe('convergence', () => {
   test('convergence.bound-k: at K applied bundles one non-blocking convergence-bound is raised; while open the next bundle is a request; acknowledged, bundles apply again', T, async () => {
     const d = checkpointArc([
-      ...visionLenses('audit-1', 'audit-2', 'audit-3'),
+      // Each later audit finds something new, so each has its checkpoint (an audit with nothing new has none).
+      ...visionLenses('audit-1'), ...noteLenses('audit-2', 'audit-3'),
       checkpointStep('ckpt-1', bundle([limitsOp('candidateReds', 2)])), checkpointStep('ckpt-2', bundle([limitsOp('retries', 2)])),
       checkpointStep('ckpt-3', bundle([limitsOp('redirects', 3)])),
     ]);
@@ -703,7 +704,7 @@ describe('convergence', () => {
 
   test('convergence.bound-identity: a second material change of one causal identity (F-1 @ arc) becomes a bundle request and raises convergence-identity; units are not held', T, async () => {
     const d = checkpointArc([
-      ...visionLenses('audit-1', 'audit-2'),
+      ...visionLenses('audit-1'), ...noteLenses('audit-2'),
       checkpointStep('ckpt-1', bundle([limitsOp('candidateReds', 2, ['F-1 asks for another candidate round'])])),
       checkpointStep('ckpt-2', bundle([limitsOp('retries', 2, ['F-1 still fails'])])),
     ]);
@@ -751,7 +752,7 @@ describe('divergences', () => {
 
   test('digest.binds-ids (H11): a digest binds the ids uncovered when raised; later divergences wait while it is open; its acknowledgement covers exactly its ids and the next digest binds the rest', T, async () => {
     const d = checkpointArc([
-      ...visionLenses('audit-1', 'audit-2'), checkpointStep('ckpt-1', bundle([limitsOp('retries', 2)])), checkpointStep('ckpt-2', bundle([limitsOp('redirects', 3)])),
+      ...visionLenses('audit-1'), ...noteLenses('audit-2'), checkpointStep('ckpt-1', bundle([limitsOp('retries', 2)])), checkpointStep('ckpt-2', bundle([limitsOp('redirects', 3)])),
     ]);
     const r = contextFor(d);
     const { ctx, w } = checkpointContext(r);
@@ -798,14 +799,16 @@ describe('divergences', () => {
   });
 
   test('divergence.patch-of-introduced-unit (a real arc\'s crash loop): a bundle re-entering u1 as u1-r2 and patching u1-r2\'s spec applies; the patch departs from the plan rev, as the re-entry does', T, async () => {
-    const reenter = { op: 'reenter', unit: 'u1-r2', reenters: 'u1', enterAt: null, reset: null, cites: ['V-1'], evidence: ['u1 must start over'] };
     const cite = { op: 'patch-spec', unit: 'u1-r2', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: ['C-1'] }], cites: ['V-1'], evidence: ['u1-r2 must cite the api'] };
     const empty: readonly Step[] = [{ ...planCheckStep({ decision: 'approve' }), unit: 'u1' }, { ...codexStep([], { argv: ['exec', '-C'] }), unit: 'u1' }];
-    const d = checkpointArc([...empty, checkpointStep('ckpt-1', bundle([reenter, cite]))], { units: [{ id: 'u1', lanes: [] }] });
+    const d = checkpointArc(empty, { units: [{ id: 'u1', lanes: [] }] });
     const r = contextFor(d);
     const { ctx } = checkpointContext(r);
     try {
       assert.equal((await runUnit(ctx, r.unit('u1'), admitAll)).kind, 'parked');
+      const park = r.journal.view.unit(unitId('u1')).decided!;
+      const reenter = { op: 'reenter', unit: 'u1-r2', reenters: 'u1', enterAt: null, reset: null, fixes: `u1/${park.stage}#${park.attempt}`, cites: ['V-1'], evidence: ['u1 must start over'] };
+      appendSteps(d, [checkpointStep('ckpt-1', bundle([reenter, cite]))]);
       const before = r.journal.view.planApplied()!;
       const out = await runCheckpoint(ctx);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
@@ -813,6 +816,32 @@ describe('divergences', () => {
       assert.deepEqual(factsOfKind(r, 'divergence').map((x) => [x.index, x.type, x.from, x.preimage]), [[0, 'plan-departed', `plan rev ${before.rev}`, pre], [1, 'plan-departed', `plan rev ${before.rev}`, pre]]);
       assert.match(factsOfKind(r, 'divergence')[1]!.what, /^patches u1-r2's spec: cite \(a unit this bundle introduces\)$/);
       assert.equal(r.journal.view.planApplied()!.specs[unitId('u1-r2')] !== undefined, true);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('ckpt.park-diagnosis-and-unchanged-reentry (arc feedback 2026-10-16): a park checkpoint reads the lineage\'s failures with their references; a bare re-entry citing the design park is refused as an unchanged retry, and the repair turn that patches the new unit\'s spec applies', T, async () => {
+    const cite = { op: 'patch-spec', unit: 'u1-r2', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: ['C-1'] }], cites: ['V-1'], evidence: ['u1-r2 must cite the api'] };
+    const empty: readonly Step[] = [{ ...planCheckStep({ decision: 'approve' }), unit: 'u1' }, { ...codexStep([], { argv: ['exec', '-C'] }), unit: 'u1' }];
+    const d = checkpointArc(empty, { units: [{ id: 'u1', lanes: [] }] });
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      assert.equal((await runUnit(ctx, r.unit('u1'), admitAll)).kind, 'parked');
+      const park = r.journal.view.unit(unitId('u1')).decided!;
+      const ref = `u1/${park.stage}#${park.attempt}`;
+      const reenter = { op: 'reenter', unit: 'u1-r2', reenters: 'u1', enterAt: null, reset: null, fixes: ref, cites: ['V-1'], evidence: [`${ref} parked u1`] };
+      appendSteps(d, [
+        checkpointStep('ckpt-1', bundle([reenter])),
+        checkpointRepairStep('ckpt-1', bundle([reenter, cite]), [`unit u1-r2 re-enters u1 to fix ${ref}`, 'but changes nothing it ran under']),
+      ]);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      const stdin = readCalls(d.scenarioPath).find((c) => c.unit === 'ckpt-1')!.stdin;
+      const diagnosis = /<\/trigger>\n\n<diagnosis>\n([^]*?)<\/diagnosis>/.exec(stdin)?.[1] ?? assert.fail(stdin);
+      assert.match(diagnosis, new RegExp(`\\nUnit u1:\\n- ${ref}: ${park.stage} attempt ${park.attempt} ended ${park.outcome}[^\\n]*, parked design\\n$`));
+      assert.equal(requirePlan(r).units.find((u) => u.id === 'u1-r2')?.reenters?.fixes, ref, 'the citation is in the plan in force');
     } finally {
       r.journal.close();
     }

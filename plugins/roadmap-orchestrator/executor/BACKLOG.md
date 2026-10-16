@@ -107,7 +107,17 @@ at triage stay in git history.
 - Spec-lane levers (RC-3: spec lanes are planner-authored per unit; they often repeat the suite argv).
 - `flow revert` (RC-6: a `worse` verdict raises `flow-worse` with the preimage; the root reverts by `apply`).
 - A rope (WIP) lever (RC-7: drum-buffer-rope's rope is diagnosed only).
-- Judgment-cost levers (RC-1: checkpoint triggering and lens cadence are ruler).
+- Judgment-cost levers (RC-1: checkpoint triggering and lens cadence are ruler). Partly addressed in code, not as a flow
+  lever (arc feedback 2026-10-16: eleven checkpoints, $78, mostly small spec patches): an audit that finds nothing new
+  after a settled checkpoint has none (`checkpoint-skipped`), and a design park's checkpoint is aimed by the executor's
+  diagnosis of the lineage, its re-entries citing the failure they fix. Lens cadence and the flow role's view of
+  judgment cost stay ruler. Still open:
+  - Issues captured since the last checkpoint do not count as new: an audit that found nothing new is skipped even when
+    a new `roadmap:bug` issue is open, which waits for the next checkpoint (a park's, a finding's, the final one). Bring in
+    (capture before deciding the skip, and run when the capture's issues changed) when an issue waits visibly long.
+  - A park checkpoint's diagnosis names salvage's reverted paths but not the lane command a red test belongs to, nor
+    whether a red test is in any lane the unit runs (the u1a pattern: 21 attempts against tests its lane never runs).
+    Phase 0's witness-in-lane row is the first defence; add it to the diagnosis when a park still shows the pattern.
 - Journalled resource waits (the arbiter's waits are in memory; the series reads stage and slot spans only).
 - A cost chart and SPC run rule 4.
 - Ranking pools by utilisation.
@@ -327,6 +337,10 @@ None.
   reads.json without `denied` reads as none refused. With it, `denied` becomes required.
 - `buildFinalDefault` (src/core/upgrade.ts), once no build an executor before the report rule (2026-10-11) launched is
   unconsumed: a build answer without `final` reads as final. With it, `final` becomes required in `buildOutputFor`.
+- `reenterFixesDefault` (src/core/upgrade.ts), once no checkpoint call an executor before re-entry citations (arc
+  feedback 2026-10-16) launched is unconsumed: a recorded `reenter` op without `fixes` reads as none. With it, `fixes`
+  becomes required in `bundleOp`. (`plan.json`'s `reenters.fixes` stays optional: re-entries in force before it are
+  lasting records.)
 - `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth
   (2026-10-15) launched is unconsumed: a plan-check answer without `scopeGrowth` reads as none proposed. With it,
   `scopeGrowth` becomes required in `planCheckOutput`.

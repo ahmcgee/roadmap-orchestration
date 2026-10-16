@@ -535,7 +535,10 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
         const { cut: _cut, reenters: _r, ...rest } = old;
         plan.units.push({
           ...rest, id: op.unit, spec: `${op.unit}.json`, contingent: [],
-          reenters: { unit: op.reenters, ...(op.enterAt === null ? {} : { enterAt: op.enterAt }), ...(op.reset === null ? {} : { reset: { ruling: op.reset } }) },
+          reenters: {
+            unit: op.reenters, ...(op.enterAt === null ? {} : { enterAt: op.enterAt }), ...(op.reset === null ? {} : { reset: { ruling: op.reset } }),
+            ...(op.fixes === null ? {} : { fixes: op.fixes }),
+          },
         });
         specs.set(op.unit, { path: specPath(op.unit), bytes: specBytes({ ...spec, unit: op.unit, rev: specRev(1) }) });
         authored.add(op.unit);

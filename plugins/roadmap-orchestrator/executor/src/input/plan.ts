@@ -16,7 +16,7 @@ import {
   edgeId, knownDefectId, laneId, resourceName, rulingId, sha, unitId, visionClauseId, idList,
 } from '../core/ids.ts';
 import {
-  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
+  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
 } from '../core/records.ts';
 import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
@@ -56,8 +56,13 @@ export type ContingentEdge = Readonly<{ id: EdgeId; condition: string }>;
 /** Where a re-entry's prepared worktree enters (M2): absent, the preparation decides from the merge. */
 export const REENTRY_POINTS = ['plan-check', 'build', 'verify'] as const;
 export type ReentryPoint = (typeof REENTRY_POINTS)[number];
-/** `reenters` (M2): this unit re-enters `unit`, which it supersedes; `reset` (with a ruling) resets its chargeable failures. */
-export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ ruling: RulingId }> }>;
+/**
+ * `reenters` (M2): this unit re-enters `unit`, which it supersedes; `reset` (with a ruling) resets its chargeable failures.
+ * `fixes` (arc feedback 2026-10-16): the failure of the lineage this re-entry fixes. The file reads it as optional, since
+ * re-entries applied before it carry none; the classifier requires it of every re-entry an apply adds whose lineage
+ * recorded a failure.
+ */
+export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ ruling: RulingId }>; fixes?: FailureRef }>;
 /** `cut` (M2): the unit is out of scope; a ruling may back the reason. */
 export type Cut = Readonly<{ reason: string; ruling?: RulingId }>;
 
@@ -322,7 +327,10 @@ const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 const reentry: Read<Reentry> = object((f) => {
   const enterAt = f.optional('enterAt', oneOf(REENTRY_POINTS));
   const reset = f.optional('reset', object((g) => ({ ruling: g.get('ruling', rulingR) })));
-  return { unit: f.get('unit', (v, p) => unitId(v, p)), ...(enterAt === undefined ? {} : { enterAt }), ...(reset === undefined ? {} : { reset }) };
+  const fixes = f.optional('fixes', failureRef);
+  return {
+    unit: f.get('unit', (v, p) => unitId(v, p)), ...(enterAt === undefined ? {} : { enterAt }), ...(reset === undefined ? {} : { reset }), ...(fixes === undefined ? {} : { fixes }),
+  };
 });
 
 const cut: Read<Cut> = object((f) => {

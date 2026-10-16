@@ -63,7 +63,8 @@
 //   divergences   every divergence no acknowledged digest covers (H11), with what differed, the clauses cited,
 //                 evidence, its bundle and its compensation hint (H13)
 //   decisionsSince  what was decided since the architect last acknowledged a divergence digest (the whole arc
-//                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences and reversals
+//                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals and the audits
+//                 whose checkpoint was not run because they found nothing new (`checkpoint-skipped`)
 //   convergence   K, the applied bundles counted against it since the counter last cleared, the open brake items
 //   findings      the active findings and `findingMetrics` (B3)
 //   audit         per lens in L: its watermark and the docs edges pending a gap (B5 `coverageOf`), the uncovered
@@ -396,7 +397,7 @@ export type DivergenceView = Readonly<{
   digest: NeedsUserId | null;
 }>;
 
-export const DECISION_KINDS = ['ruling', 'bundle', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse'] as const;
+export const DECISION_KINDS = ['ruling', 'bundle', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse', 'checkpoint-skipped'] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 /** Who decided: the architect (a command, or a start's edited files: null), a checkpoint job, plan-check's redirect, or the executor. */
 export type RuledBy =
@@ -1315,6 +1316,12 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
       });
     }
     if (f.kind === 'divergence') out.push({ seq: e.seq, kind: 'divergence', id: f.id, oneLine: `${f.type}: ${f.what}`, ruledBy: { type: 'checkpoint', job: f.job } });
+    if (f.kind === 'checkpoint-skipped') {
+      out.push({
+        seq: e.seq, kind: 'checkpoint-skipped', id: f.audit,
+        oneLine: `no checkpoint after ${f.audit}: it found nothing new${f.carried.length === 0 ? '' : ` (${f.carried.join(', ')} already weighed, inactive or owned)`}`, ruledBy: { type: 'executor' },
+      });
+    }
   }
   return out;
 }

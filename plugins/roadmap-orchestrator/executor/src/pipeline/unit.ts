@@ -165,7 +165,7 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
       : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
         ? reopenRecommendation(unit.id, path, spec.rev)
-        : reentryRecommendation(unit.id, f.stage, unitBranch(ctx.plan().arc, unit.id));
+        : reentryRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id));
   return {
     blocking: true,
     subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },

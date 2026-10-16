@@ -32,7 +32,12 @@
 //                               envelope (M4a rev 3, F5: every member's dispatched scopes, src/input/envelope.ts
 //                               `lineageEnvelope`), or beyond it on a ruling its spec cites that names exactly the
 //                               added patterns (`widened{patterns, ruling}`); its risk not below the lineage's
-//                               floor; `reset` cites an active ruling of the ledger
+//                               floor; `reset` cites an active ruling of the ledger; `fixes` (arc feedback 2026-10-16,
+//                               required once the lineage recorded a failure)
+//                               names a failure of the lineage (an outcome or a lane failure, src/pipeline/failures.ts),
+//                               and unless that failure is flaky, host-suspected or no design failure of the unit, or it
+//                               resets, the re-entry changes what the failure ran under (spec content, effective scope,
+//                               suite lanes or routing: `fixesReasons`)
 //   effective graph (F15)       acyclic with every superseded unit replaced by its lineage head, the edges that
 //                               activate only after preparation included
 //   routing                     re-resolved; the caller refuses unsupported seats and smokes new backends
@@ -127,6 +132,7 @@ import { classifyObligations } from '../holistic/obligations.ts';
 import { specCensusMismatches } from '../holistic/rederive.ts';
 import { type ClassifiedAdmit, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { advancesReasons, visionEditReasons } from '../holistic/vision.ts';
+import { citedFailure, laneFailures, outcomeRef } from '../pipeline/failures.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
 import { resourceTable } from '../resources/reserve.ts';
@@ -139,9 +145,10 @@ import { type Ruling, ledgerAfter, nextRulingId, parseRulings, sidecarsAfter } f
 import { SpecFileError, bytesSha256, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import {
   type InForce, type InputFile, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
-  inForceFiles, readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
+  inForceFiles, payloadAtRev, readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
 } from './inforce.ts';
 import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
+import { derivedWidening } from './derived.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
   type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, knownDefectsOf, parsePlan, planCheckShapeOf, planFieldValue, priorityOf, reservedUnitIdReason,
@@ -390,8 +397,9 @@ function cutRefusal(view: JournalView, unit: UnitId): string | null {
  * backed by an active ruling. Its change, or reasons.
  */
 function reentryRow(
-  view: JournalView, ledger: Ledger, unit: PlanUnit, spec: SpecM1 | null, inputs: NextInputs, cutNow: ReadonlySet<UnitId>,
+  input: ClassifyInput, plan: PlanM1, ledger: Ledger, unit: PlanUnit, spec: SpecM1 | null, inputs: NextInputs, cutNow: ReadonlySet<UnitId>,
 ): Extract<PlanChange, { type: 'unit-reentered' }> | readonly string[] {
+  const view = input.view;
   const re = unit.reenters;
   if (re === undefined) throw new Error(`reentryRow of ${unit.id}, which re-enters nothing`);
   const old = view.unit(re.unit);
@@ -425,9 +433,69 @@ function reentryRow(
     const r = rulingReason(ledger, re.reset.ruling, `unit ${unit.id}'s reset`);
     if (r !== null) reasons.push(r);
   }
+  reasons.push(...fixesReasons(input, unit, spec, plan));
   if (reasons.length > 0) return reasons;
   const change = { type: 'unit-reentered', unit: unit.id, reenters: re.unit, reset: re.reset !== undefined } as const;
   return widened === null ? change : { ...change, widened };
+}
+
+/** The re-entered unit `old`, then each unit its lineage re-entered before it, back to the root. */
+function lineageOf(view: JournalView, old: UnitId): readonly UnitId[] {
+  const out = [old];
+  for (let at = view.unit(old).lineage; at !== null; at = view.unit(at.reenters).lineage) out.push(at.reenters);
+  return out;
+}
+
+/** A spec's content but for its unit and rev, which a re-entry's copy always changes. */
+const specContent = (s: SpecM1): string => canonicalJson({ ...s, unit: null, rev: null });
+
+/**
+ * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding the cause, one more doomed try): the re-entry rows
+ * of `fixes`. It is required once the lineage recorded a failure (an outcome or a lane failure), and resolves to a failure
+ * of the re-entered lineage (src/pipeline/failures.ts `citedFailure`).
+ * Unless that failure is exempt (flaky, host-suspected, not the unit's design failure) or the re-entry resets under a
+ * ruling, the re-entry must change something the failure ran under: the spec's content, the effective scope (derived outputs included), the suite lanes or the
+ * resolved routing. A re-entry recorded before `fixes` is never classified again (it is in force, not added).
+ */
+function fixesReasons(input: ClassifyInput, unit: PlanUnit, spec: SpecM1 | null, plan: PlanM1): readonly string[] {
+  const re = unit.reenters!;
+  const lineage = lineageOf(input.view, re.unit);
+  if (re.fixes === undefined) {
+    // A lineage that recorded no failure (a unit held by a pause, re-entered to change course) has none to name.
+    const known = lineage.flatMap((u) => [
+      ...input.view.unit(u).failures.map(outcomeRef), ...laneFailures({ journal: { view: input.view }, runDir: input.runDir }, { id: u }).map((l) => l.ref),
+    ]);
+    return known.length === 0 ? [] : [`unit ${unit.id} re-enters ${re.unit} without \`fixes\`: name the failure it fixes, one of ${known.join(', ')}`];
+  }
+  const cited = citedFailure({ journal: { view: input.view }, runDir: input.runDir }, lineage, re.fixes);
+  if (typeof cited === 'string') return [`unit ${unit.id}: \`fixes\` ${cited}`];
+  const base = cited.ranUnder;
+  if (cited.exempt !== null || re.reset !== undefined || base === null || spec === null) return [];
+  const same: string[] = [];
+  if (base.spec !== null) {
+    const was = parseSpec(keptInput(input.runDir, base.spec.sha256, SPEC_INPUT) ?? fail(`the spec ${base.spec.sha256} ${base.fact.unit} ran under is not kept`), inputPath(input.runDir, base.spec.sha256, SPEC_INPUT));
+    if (specContent(was) === specContent(spec)) same.push(`the spec (${base.fact.unit} rev ${base.spec.rev}'s content)`);
+  }
+  if (base.dispatch !== null) {
+    // The effective scope (plan defects 2026-10-16): the plan scope and the derived outputs it takes in, as a pin records it.
+    const effective = [...unit.scope, ...derivedWidening(plan, unit.scope)].sort();
+    if (canonicalJson(effective) === canonicalJson(base.dispatch.scope)) same.push(`the scope (${base.dispatch.scope.join(', ')})`);
+    if (unitRouting(input.routing, plan, unit).rev === base.dispatch.routingRev) same.push(`the routing (rev ${base.dispatch.routingRev})`);
+  }
+  if (base.planRev !== null) {
+    const then = parsePlan(JSON.parse((keptInput(input.runDir, payloadAtRev(input.view, input.runDir, base.planRev).manifest.planSha256, PLAN_INPUT)
+      ?? fail(`the plan of rev ${base.planRev} is not kept`)).toString('utf8')));
+    if (canonicalJson(then.suite.lanes) === canonicalJson(plan.suite.lanes)) same.push('the suite lanes');
+  }
+  if (same.length < 4) return [];
+  return [`unit ${unit.id} re-enters ${re.unit} to fix ${re.fixes} (${cited.text}) but changes nothing it ran under: ${same.join(', ')} are as they were, `
+    + `and it resets nothing. A retry of a design failure must differ in its cause: revise the spec, the scope, the suite lanes or the routing, `
+    + `or reset the chargeable failures under a ruling (\`reset\`); only a flaky or host-suspected lane failure, or a park that is not the unit's design failure, may be retried unchanged`];
+}
+
+/** Throws: a record the log names is missing (the run dir is incomplete). */
+function fail(detail: string): never {
+  throw new Error(detail);
 }
 
 /** Whether a resource unit belongs to declaration `name`: the name itself, or an instance of the pool. */
@@ -702,7 +770,7 @@ export function classify(input: ClassifyInput): Classified {
   for (const [old, units] of chains) reasons.push(`units ${units.join(', ')} each re-enter ${old}; a lineage is a chain: re-enter its head`);
   for (const unit of reentering) {
     if (chains.some(([old]) => old === unit.reenters?.unit)) continue;
-    const row = reentryRow(view, ledger, unit, specs.get(unit.id) ?? null, inputs, cutNow);
+    const row = reentryRow(input, plan, ledger, unit, specs.get(unit.id) ?? null, inputs, cutNow);
     if ('type' in row) {
       changes.push(row);
       scoped.add(row.reenters);

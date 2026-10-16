@@ -246,7 +246,7 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       const baseFault = pressureHeld(ctx, unit.id, alone) ?? seriesFault(alone);
       if (baseFault !== null) return baseFault;
       if (!failed(alone)) return ended('red');
-      return ended('base-red', baseRedNeedsUser(ctx, unit.id, tip, suiteBaseRed(alone), [candidateSeriesRoot(ctx.runDir, parent), baseSeriesRoot(ctx.runDir, parent)]));
+      return ended('base-red', baseRedNeedsUser(ctx, parent, tip, suiteBaseRed(alone), [candidateSeriesRoot(ctx.runDir, parent), baseSeriesRoot(ctx.runDir, parent)]));
     }
   }
 }
@@ -273,13 +273,14 @@ const suiteBaseRed = (series: Series): BaseRed => ({
 });
 
 /** `base`: what T alone was red on. `evidence`: the series on the candidate and on T alone. */
-function baseRedNeedsUser(ctx: StageContext, unit: UnitId, tip: Sha, base: BaseRed, evidence: readonly AbsPath[]): NeedsUserContent {
+function baseRedNeedsUser(ctx: StageContext, parent: StageParent, tip: Sha, base: BaseRed, evidence: readonly AbsPath[]): NeedsUserContent {
+  const unit = parent.unit;
   return {
     blocking: true,
     subject: { type: 'arc' },
     reason: 'base-red',
     summary: `On ${ctx.plan().integrationBranch} at ${tip} alone, without unit ${unit}: ${baseRedAccount(base)}. The base is broken, not the unit. Merges halt; unit ${unit} is parked uncharged.`,
-    recommendation: `Repair ${ctx.plan().integrationBranch} (or the suite), then acknowledge this item: merges resume. ${reentryRecommendation(unit, 'candidate', unitBranch(ctx.plan().arc, unit))}`,
+    recommendation: `Repair ${ctx.plan().integrationBranch} (or the suite), then acknowledge this item: merges resume. ${reentryRecommendation(unit, 'candidate', parent.attempt, unitBranch(ctx.plan().arc, unit))}`,
     options: [],
     evidence,
   };
@@ -562,7 +563,7 @@ async function heldClaims(ctx: StageContext, unit: PlanUnit, parent: StageParent
     case 'red':
       return ended('red');
     case 'base-red':
-      return ended('base-red', baseRedNeedsUser(ctx, unit.id, tip, withWitnessLanes(verdict.base, claims.obligations), [
+      return ended('base-red', baseRedNeedsUser(ctx, parent, tip, withWitnessLanes(verdict.base, claims.obligations), [
         candidateSeriesRoot(ctx.runDir, parent), journeyRoot(ctx.runDir, parent),
       ]));
   }

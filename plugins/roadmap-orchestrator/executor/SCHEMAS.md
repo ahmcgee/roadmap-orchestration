@@ -241,6 +241,21 @@ arc started on dev.10 is adopted.
 | `routingRev` (dispatch facts, spawn subjects, meter facts, `judgment-inputs`, `launch.json` terminal), `status.routing` (efficient judgment, owner ruling 2026-10-15) | no shape change: the built-in seats put planCheck.low/med, gate.low, `lens.arc` and `flow.arc` on efficient, whose judgment binding is Sonnet 5.5 high in both profiles (`ClassBinding{build, judgment}`), so every resolved table and rev moves; `status.routing.seats` names the new classes | none read: OR-L3 binds every revision through HEAD's seats, so an adopted dev.9 arc resolves to new revs and each unit re-pins at its next dispatch with its implementer seat unchanged (no build seat moved): nothing parks `routing-changed`. `status` aliases a dev.9 rev to its revision's current table (`preDev10RevAlias` over `PRE_DEV10_BUILTIN_SEATS`; scaffolding), so its spend resolves, attributed to today's bindings |
 | `PROMPTS` (not persisted) | Sonnet 5.5 `inherits` for every judgment role (planCheck, gate, lens, packReview, flow from Opus; checkpoint from Fable) | none |
 
+**1.0.0-dev.10 → next (arc feedback 2026-10-16: re-entry names its failure; the checkpoint aimed and rarer).**
+`SCHEMA_VERSION` stays 1; every change is additive. The scaffolding is `reenterFixesDefault` in `src/core/upgrade.ts`. An
+arc started on dev.10 is adopted: its applied re-entries are in force and never classified again.
+
+| Record | Change | Read-time default for dev.10 state |
+|---|---|---|
+| `FailureRef` (src/core/records.ts) | new: `<unit>/<stage>#<attempt>` (a failure outcome: a `stage-outcome` that parked or stopped the unit or was charged) or `<unit>/lanes#<attempt>/<lane>` (a lane failure, src/pipeline/failures.ts); `parseFailureRef`, `failureRefOf` | none |
+| `plan.json` `reenters` | `+ fixes?: FailureRef`: the classifier requires it of a re-entry an apply adds once its lineage recorded a failure, resolves it, and refuses an unchanged retry of a design failure (`fixesReasons`) | absent: a re-entry already in force stays as recorded (lasting: the plan file reads it optional) |
+| Checkpoint answer, `reenter` op | `+ fixes: FailureRef \| null` (the schema requires it; null only for a lineage with no failure) | absent on a recorded answer: null (`reenterFixesDefault`, warned once; scaffolding), so an unapplied dev.10 bundle re-entering a failed lineage is refused as invalid |
+| `UnitState` (fold) | `+ failures: [{seq, fact, park, spec, dispatch{scope, routingRev}\|null, planRev}]`: each failure outcome with what it ran under (`scope`: the effective scope, ascending) | derived |
+| `LaneFailure`, `status.units[].failures[]` | `+ ref: FailureRef` | derived |
+| Facts | `+ checkpoint-skipped{audit, generation, visionSha256, carried: FindingId[]}`: a completed audit found nothing new, so no checkpoint ran (src/holistic/checkpoint.ts `nothingNew`); its generation is quiescent (`quiescentGenerations`) | none: dev.10 logs never hold it |
+| `status.decisionsSince[].kind` | `+ checkpoint-skipped` (ruled by the executor) | none |
+| `CheckpointInputs` (not persisted) | `+ diagnosis: ParkDiagnosis \| null` (a park trigger's lineage: failures with refs, reverted out-of-scope paths, missing witnesses, earlier re-entries); `- closeout` (H5's delta render: such an audit now has no checkpoint) | none: rendered per call |
+
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
@@ -1428,6 +1443,7 @@ added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`, `a
 | `docs-covered` | `pub, from: U, to: D` (A17, H8) |
 | `checkpoint-inputs` | `job (ckpt-n), trigger: audit{job} \| park{unit, seq}, generation, vector: {plan, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, visionSha256, contracts: [{path, blob}]}, headSha, visionSha256 (= the vector's), findings, observations: ObservationKey[]` |
 | `bundle-decided` | `job, outcome: no-op \| rejected{reason: stale\|evidence\|invalid, detail} \| requested{needsUser}`; an applied bundle is its `plan-applied{source: bundle{job}}` instead |
+| `checkpoint-skipped` | `audit (audit-n), generation (the audit's), visionSha256, carried: FindingId[]`: the audit's checkpoint not run, the audit having found nothing new (arc feedback 2026-10-16); once per audit, never beside its `checkpoint-inputs` |
 | `divergence` | `id, index (its place among its job's divergences), job, type: target-departed\|obligation-departed\|plan-departed\|contract-departed\|split-dropped\|interpretation, from, what, cites: V-n[] (non-empty), evidence (non-empty), preimage: {planRev, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, contracts}, compensation: {hint, kind: restore-revision\|repair-unit\|none}` (H13: no executable inverse) |
 | `divergence-digest` | `needsUser, ids: D-n[] (ascending, non-empty)` (H11) |
 | `steered` | `unit, command, brief (sha256), budgetMin, resume` |

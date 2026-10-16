@@ -301,7 +301,7 @@ admitted with; prompt inputs are snapshotted by revision at dispatch.
 | `patch-spec <unit> <patch.json>` | id-targeted patch with expected revision (§2.7); since the 2026-09-29 ruling, an edit class of `apply` | merged units; stale revision; scope growth without a cited ruling naming exactly the added patterns (the unit is then re-pinned, and the transient check allows exactly those paths) |
 | `admit <units+edges.json>` | adds units/edges; since the 2026-09-29 ruling, an edit class of `apply` | no spec or plan-check; unknown endpoint; cycle; duplicate id; a new prerequisite on a merged target, or on a dispatched one without `--force-park` (quiescence and invalidation first); a checkpoint admit while `draining` (a `bundle-request` instead); declared obligations narrower than the impact mapping (prefix-conservative) |
 | `resolve-edge <edge> --evidence` | contingent edge → resolved (`edge-resolved`, a runtime fact, so a command) | unknown or resolved edge |
-| `reenter` | a new unit with `reenters{unit, enterAt?: plan-check\|build\|verify, reset?{ruling}}`, entering through a durable preparation (§4 Re-entry); a retry resumes it; since the 2026-09-30 lead ruling, an edit class of `apply` | old unit not parked or held, or merged, cut or already superseded; scope outside the lineage's original envelope; risk below its floor; `reset` without a ruling; a cycle in the effective graph (each superseded unit replaced by its head) |
+| `reenter` | a new unit with `reenters{unit, fixes, enterAt?: plan-check\|build\|verify, reset?{ruling}}`, `fixes` naming the failure it fixes (arc feedback 2026-10-16: `<unit>/<stage>#<attempt>`, a failure outcome of the lineage, or `<unit>/lanes#<attempt>/<lane>`, one of its `status.units[].failures`), entering through a durable preparation (§4 Re-entry); a retry resumes it; since the 2026-09-30 lead ruling, an edit class of `apply` | old unit not parked or held, or merged, cut or already superseded; scope outside the lineage's original envelope; risk below its floor; `reset` without a ruling; no `fixes` while the lineage recorded a failure (a unit only held by a pause has none to name), or one that names no failure of the lineage; an unchanged retry: the cited failure is a design failure of the unit (not a flaky or host-suspected lane, a retryable or environment park, or a stop), no `reset`, and the spec content, effective scope (with its derived outputs), suite lanes and resolved routing are all as the failure ran under (the refusal names each); a cycle in the effective graph (each superseded unit replaced by its head). Re-entries applied before `fixes` stay as recorded |
 | `cut` | unit `cut{reason, ruling?}`: `inScope:false`; since the 2026-09-30 lead ruling, an edit class of `apply` | a unit in a task or merged; a direct dependent neither cut in the same apply nor dropping its `after` |
 | `route` | the unit's routing layer `unit.routing` (§4), a new `routingRev`; an edit class of `apply`. Risk may rise; a moved implementer seat once the build started parks the unit (`routing-changed`, §4). `--adversarial` is withdrawn: a unit routing layer expresses it (A12) | risk below the Phase-0 floor without a ruling; an unsupported triple |
 | `limits` | arc (`plan.limits`) or unit (`unit.limits`) bounds, in place of the built-in constants; an edit class of `apply` | lowering a counter below what is spent |
@@ -367,7 +367,7 @@ gates had passed; drift in four of six audits; eight vacuity rows). The fourth, 
 product serves the vision, whether anything is faithful to its letter but wrong for it, and where the vision
 does not anticipate what happened; it opens P2 or P3 findings citing `V-n`. `holistic.audit.lenses` is the arc's
 **required lens set L** (default: all four); coverage, owed audits and completion are measured per lens in L
-(H9). Audits run only when the holistic layer is on (§2.8). The lenses report; the checkpoint that follows
+(H9). Audits run only when the holistic layer is on (§2.8). The lenses report; the checkpoint that follows (when they found something new, §2.8 "Aimed and rarer")
 them acts (§2.8).
 
 - **Triggers**: every N publications (D3; unit, batch, and rule-with-contract-ops publications); a publication
@@ -694,8 +694,8 @@ deadline; P1s never bank; while `draining`, a new P1 or P2 raises a blocking `ne
 `{lens, severity, gateHadPassed, disposition, merged, timeToResolve}` is recorded, so arc 2 measures whether the
 checkpoint works.
 
-**Checkpoint authority.** After every completed audit (§2.5), and on every operator-design park, the checkpoint
-seat **rules**, steering toward the vision rather than the original plan: amend implementation contracts,
+**Checkpoint authority.** After every completed audit (§2.5) that found something new, and on every operator-design
+park, the checkpoint seat **rules**, steering toward the vision rather than the original plan: amend implementation contracts,
 respec, `reenter`, `cut`, `admit`, re-route, set limits, rule, split or dispose obligations, invalidate
 approvals. A design park goes to the checkpoint for a respec, re-entry or cut first; a `no-op` raises the park's
 `needs-user`, and a second design park on the same lineage raises a blocking `respec-second` (OR-Q1). The
@@ -707,7 +707,20 @@ it. Where the vision does not anticipate a situation, it takes the most optimist
 it in `interpretations`. Its inputs, captured under the revision fence as `checkpoint-inputs`, are the vision
 first, the revision vector `{plan, spec:<u>, obligations, ledger, vision, corpus, contract:<path>}`, the head,
 findings, observations, vision coverage, open vision-conflict findings and the issues captured just before (§4
-Issue mode). Brakes in code:
+Issue mode); a park trigger's prompt also carries, right after the trigger, the code-produced diagnosis of the parked
+lineage: each unit's failure outcomes and lane failures with the references a re-entry cites (`fixes`, §2.3), the paths
+salvage reverted as outside the pinned scope, the required witness tests found missing or failing, and the lineage's
+earlier re-entries with the failures they cited.
+
+**Aimed and rarer (arc feedback 2026-10-16: eleven checkpoints, mostly small spec patches, $78 before anything
+merged).** A completed audit that found nothing new has no checkpoint: it is not the final audit, a checkpoint already
+settled a decision (applied, no-op or requested) under the vision in force, and every active finding no unit owns was
+captured by such a checkpoint. Code records `checkpoint-skipped{audit, generation, visionSha256, carried}` instead of a
+call (shown in `decisionsSince`), and the audit's generation is quiescent as after a `no-op`. So the arc's first
+checkpoint and the first after a vision revision always run (they weigh coverage gaps and obligations), a final audit's
+always runs, and a bundle's drift audit that finds nothing ends the loop instead of feeding another bundle. Not yet
+weighed in the skip: newly captured issues, which wait for the next checkpoint (the final one at the latest; BACKLOG).
+Brakes in code:
 
 - **Bundles.** A decision is one action bundle, activated as a mutation job scoped to its ops; affected dispatch
   waits meanwhile. In order: validate schema, identity, rulings (their `consistency` included) and cites (active
@@ -733,7 +746,7 @@ Issue mode). Brakes in code:
   <D-n>` (§2.3) builds and validates a fresh compensating revision at request time, or the architect uses
   `apply`. A published product effect (`repair-unit`) is reversed only by a verified repair unit.
 - **Generations.** A checkpoint takes its trigger's generation; an applied bundle's drift audit starts g+1. A
-  `no-op` makes its generation quiescent, unless the vision changed since.
+  `no-op`, or an audit skipped for finding nothing new, makes its generation quiescent, unless the vision changed since.
 - **Convergence bound (OR-Q2/3, A9).** Material ops (cut-and-replace, respec, scope expansion, budget reset,
   re-route, a spec patch changing lanes or acceptance) count per causal identity `(finding or obligation id,
   lineage root)`; a second → `convergence-identity`. Each applied bundle increments an arc counter, cleared by a
@@ -768,9 +781,9 @@ ids are read in numeric form; a split child anchored at an out-of-slice rule mov
 slice, and is refused with the fix otherwise. A bundle touching a unit's running or crash-abandoned attempt is
 rejected `busy` (not counted toward the invalid brake) and decided again only after the attempt's boundary. The
 checkpoint reads an immutable, content-addressed manifest of its inputs (never `roadmap-inputs`) with every unit's
-spec embedded with its occupied item ids and the ledger's next ruling id; after a no-op, a checkpoint whose relevant
-inputs are unchanged renders only the deltas (never the final one), and unchanged issues on unchanged grounds keep
-their dispositions. Before admitting or approving a repair that reorders a transaction, the checkpoint and plan-check
+spec embedded with its occupied item ids and the ledger's next ruling id; unchanged issues on unchanged grounds keep
+their dispositions. (The delta-only closeout render after a no-op on an unchanged arc is gone, 2026-10-16: such an
+audit now has no checkpoint at all.) Before admitting or approving a repair that reorders a transaction, the checkpoint and plan-check
 write its failure matrix (each step × process death).
 
 **Phase 0 (A-M4-28).** The shared Phase-0 rows gain `spec-census-mismatch`: a pack spec's declared obligation whose
@@ -1042,7 +1055,7 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
 | Unit policy | Every build prompt carries an executor-owned policy that overrides the repository's agent-instruction files: no cloud resources or CLIs, no sudo or system package installs, no killing processes the unit did not start, no network beyond the lanes' needs (arc-1 feedback item 20). The unit policy is a prompt: with containment, it is what bounds an implementer build. The owner-only check (§2.8) governs checkpoint revisions only (H10); code-level enforcement beyond these is backlog (§8). |
 | Consults, findings | The consult seat reads evidence, spec, diff and C-nn directly; the Sonnet dossier goes. Findings dedupe by finding+cause with a disposition; a dismissed one is not re-raised without new evidence (sf16, w35–37). |
 | Wave-tail roles | → §2.5 + §2.8; an operator-design park goes to the checkpoint for a respec, re-entry or cut first, a second on the same lineage → `respec-second` (OR-Q1); explorer and reconciler are backlog (§8). |
-| Re-entry | `reenter` replaces `adopt`. A preparation is the durable stage `prepare`: `worktree.create` (branch `roadmap/<arc>/<new>` at the old tip), `dispatch`, `mergein.prepare` of integration (§3.23), `evidence.snapshot` of the prepared worktree; outcomes `clean-plan-check \| clean-build \| clean-verify \| conflicted`. Budgets, attempts, counters (`chargeableFailures` reset only by a ruled `reset`), risk floor, dispositions and the lineage's original scope envelope **inherit**; approvals and evidence are **invalidated**; sessions do not inherit; the old unit becomes `superseded`. A conflicted preparation keeps `MERGE_HEAD` (the M1 conflict precedent) and enters at a `resolve` round in a fresh session. Replacement edges, cycle-checked at `apply`, activate at the first `prepare` outcome that is not a park. `retire` cites the latest snapshot of the unit's `evidence` or `prepare` stage. Resets need a ruling. |
+| Re-entry | `reenter` replaces `adopt`. A preparation is the durable stage `prepare`: `worktree.create` (branch `roadmap/<arc>/<new>` at the old tip), `dispatch`, `mergein.prepare` of integration (§3.23), `evidence.snapshot` of the prepared worktree; outcomes `clean-plan-check \| clean-build \| clean-verify \| conflicted`. Budgets, attempts, counters (`chargeableFailures` reset only by a ruled `reset`), risk floor, dispositions and the lineage's original scope envelope **inherit**; approvals and evidence are **invalidated**; sessions do not inherit; the old unit becomes `superseded`. A conflicted preparation keeps `MERGE_HEAD` (the M1 conflict precedent) and enters at a `resolve` round in a fresh session. Replacement edges, cycle-checked at `apply`, activate at the first `prepare` outcome that is not a park. `retire` cites the latest snapshot of the unit's `evidence` or `prepare` stage. Resets need a ruling. A re-entry names the failure it fixes (`fixes`) and must change what that failure ran under unless it is flaky, host-suspected or not the unit's design failure (arc feedback 2026-10-16: a checkpoint re-entered a unit without finding the cause, one more doomed try; §2.3 `reenter`). |
 | Plan-load validation | Every `edge.contract` path exists (sf18); `argv[0]` and env prerequisites resolve for spec lanes and `must-hold` arc lanes (`future` ones at activation); no request over capacity; worktree root not on tmpfs; routing supported, judgment roles on the judgment profile; every obligation not held on the base names `deliveredBy`; every arc lane declares a supported reporter (R1), and a `node-test` lane does not set `NODE_OPTIONS`; the plan target is one closed variant (§2.8); no plan contract or unit scope overlaps a same-repo corpus file set. |
 | Measurement | Per lane per invocation `{start, end, exitCode}`, per unit `{dispatchedAt, terminalAt, mergeSha, mergedAt}`, every upper-tier call's tokens keyed by `{role, routingRev}`, every escalation, checkpoint lane duration and per-finding instrumentation (§2.8). Arc 1 recorded almost none of this; defaults are marked unmeasured and re-derived after arc 2. |
 | State | The event log is authoritative and write-ahead; its envelope is frozen before M1: every operation has an arc-scoped id, parent command or stage id, invocation ordinal, expected inputs and postconditions; op kinds include `mergein.prepare` (integration merged into the unit branch in its worktree; postcondition `clean-merged | conflicted | completed`) and `evidence.snapshot` (a completion manifest of paths and sha256, required before teardown or retire); a complete durable intent precedes every act; `state.json` is derived (`atomic()`). A truncated final record is discarded; earlier corruption → `needs-user`. Every operation kind (resource states, spawns, commands, publications — the latter by second-parent test or activation postcondition) has a reconstruction rule pinned by a crash-boundary fixture. Deadlines are absolute; attempts monotonic across re-entry; run state reaches git only via `refs/roadmap/<arc>`. |

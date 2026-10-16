@@ -73,7 +73,7 @@ function ofOp(b: DivergenceBase, op: BundleOp, rulings: ReadonlyMap<string, Ruli
     case 'admit':
       return [plan(`admits ${op.unit.id} (origin ${op.unit.origin}, risk ${op.unit.risk}, scope ${op.unit.scope.join(', ')}${op.unit.after.length === 0 ? '' : `, after ${op.unit.after.join(', ')}`})`)];
     case 'reenter':
-      return [plan(`${op.unit} re-enters ${op.reenters}${op.enterAt === null ? '' : ` at ${op.enterAt}`}${op.reset === null ? '' : `, its chargeable failures reset under ${op.reset}`}`)];
+      return [plan(`${op.unit} re-enters ${op.reenters}${op.fixes === null ? '' : ` to fix ${op.fixes}`}${op.enterAt === null ? '' : ` at ${op.enterAt}`}${op.reset === null ? '' : `, its chargeable failures reset under ${op.reset}`}`)];
     case 'cut':
       return [plan(`cuts ${op.unit}: ${op.reason}`)];
     case 'route':

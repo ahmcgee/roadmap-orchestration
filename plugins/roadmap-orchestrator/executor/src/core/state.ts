@@ -19,9 +19,9 @@ import {
 } from './ids.ts';
 import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
+import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord, effectiveScope } from './records.ts';
 import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
-import type { IsoTime } from './values.ts';
+import type { IsoTime, RepoPattern } from './values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
 import { type Backend, RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
 
@@ -185,6 +185,25 @@ export type UnitState = Readonly<{
    * to propose them again, and a proposal of a rejected pattern no longer holds it).
    */
   scopeDecisions: readonly ScopeDecision[];
+  /**
+   * Arc feedback 2026-10-16: the unit's failure outcomes in log order, each a `stage-outcome` that parked or stopped it or
+   * was charged, with what it ran under: the spec, pinned scope and routing then, and the plan in force. A re-entry's
+   * `fixes` names one of these (or a lane failure, src/pipeline/failures.ts), and the classifier compares a re-entry
+   * against what its cited failure ran under (src/input/classify.ts `reentryRow`). Derived from the log alone.
+   */
+  failures: readonly FailedOutcome[];
+}>;
+
+/** One failure outcome of a unit (`UnitState.failures`): the fact, its seq, and what the attempt ran under. */
+export type FailedOutcome = Readonly<{
+  seq: number;
+  fact: StageOutcomeFact;
+  /** The park it recorded (classed as `park` reads it), on a parking outcome; else null. */
+  park: ParkRecord | null;
+  spec: SpecState | null;
+  /** The unit's latest dispatch record then (its effective scope, ascending: pinned scope and derived outputs, and its routing rev); null before its first pin. */
+  dispatch: Readonly<{ scope: readonly RepoPattern[]; routingRev: RoutingRev }> | null;
+  planRev: PlanRev | null;
 }>;
 
 /** One `scope-decided` fact with the proposals of the plan-check attempt it decided. */
@@ -206,7 +225,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, redirects: 0, reviseRounds: 0, candidateReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, redirectBase: 0,
-    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [],
+    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, scopeDecisions: [], failures: [],
   };
 }
 
@@ -412,6 +431,8 @@ export type HolisticFold = Readonly<{
   docsCovered: readonly (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[];
   docsPublished: readonly (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[];
   checkpoints: readonly CheckpointState[];
+  /** Arc feedback 2026-10-16: the completed audits whose checkpoint was not run, having found nothing new, in log order. */
+  checkpointSkips: readonly (Omit<FactOf<'checkpoint-skipped'>, 'kind'> & Seq)[];
   divergences: readonly (Omit<FactOf<'divergence'>, 'kind'> & Seq)[];
   digests: readonly (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[];
   steered: readonly (Omit<FactOf<'steered'>, 'kind'> & Seq)[];
@@ -575,6 +596,7 @@ export class Fold implements JournalView {
   readonly #docsCovered: (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[] = [];
   readonly #docsPublished: (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[] = [];
   readonly #checkpoints = new Map<JobId, { inputs: CheckpointState['inputs']; decided: CheckpointState['decided'] }>();
+  readonly #checkpointSkips: (Omit<FactOf<'checkpoint-skipped'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #digests: (Omit<FactOf<'divergence-digest'>, 'kind'> & Seq)[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
@@ -893,9 +915,17 @@ export class Fold implements JournalView {
         if (f.cause?.type === 'host-pressure') {
           u.state = { ...u.state, status: 'active', pressureHold: { inv: f.cause.inv, at: at.at }, pressureHolds: u.state.pressureHolds + 1 };
         }
-        if (f.class === 'park') {
-          u.state = { ...u.state, park: { seq: at.seq, at: at.at, park: f.park ?? unclassedParkRecord(f), passed: [] } };
+        const park = f.class === 'park' ? f.park ?? unclassedParkRecord(f) : null;
+        if (park !== null) {
+          u.state = { ...u.state, park: { seq: at.seq, at: at.at, park, passed: [] } };
           this.#unitParkSeqs.set(at.seq, f.unit);
+        }
+        if (f.class === 'park' || f.class === 'stop' || f.chargeable) {
+          const d = this.dispatchOf(f.unit);
+          const failed: FailedOutcome = {
+            seq: at.seq, fact: f, park, spec: u.state.spec, dispatch: d === null ? null : { scope: [...effectiveScope(d)].sort(), routingRev: d.routingRev }, planRev: this.#planApplied?.rev ?? null,
+          };
+          u.state = { ...u.state, failures: [...u.state.failures, failed] };
         }
         const lineage = u.state.lineage;
         if (f.stage === 'prepare' && f.class !== 'park' && f.class !== 'hold' && lineage !== null) u.state = { ...u.state, lineage: { ...lineage, prepared: true } };
@@ -1190,6 +1220,17 @@ export class Fold implements JournalView {
         const c = this.#checkpoints.get(f.job);
         if (c === undefined || c.decided !== null) return fail(`bundle-decided of ${f.job}, which has no undecided checkpoint inputs`);
         c.decided = f.outcome;
+        return;
+      }
+      case 'checkpoint-skipped': {
+        const a = this.#audits.find((x) => x.started.job === f.audit);
+        if (a?.ended?.outcome !== 'completed') return fail(`checkpoint-skipped of ${f.audit}, which is no completed audit`);
+        if (a.started.generation !== f.generation) fail(`checkpoint-skipped of ${f.audit} at generation ${f.generation}; the audit's is ${a.started.generation}`);
+        if (this.#checkpointSkips.some((s) => s.audit === f.audit)) fail(`a second checkpoint-skipped of ${f.audit}`);
+        const trigger = canonicalJson({ type: 'audit', job: f.audit });
+        if ([...this.#checkpoints.values()].some((c) => canonicalJson(c.inputs.trigger) === trigger)) fail(`checkpoint-skipped of ${f.audit}, whose checkpoint ran`);
+        const { kind: _k, ...rest } = f;
+        this.#checkpointSkips.push({ ...rest, seq });
         return;
       }
       case 'divergence': {
@@ -1744,6 +1785,7 @@ export class Fold implements JournalView {
       docsCovered: this.#docsCovered,
       docsPublished: this.#docsPublished,
       checkpoints: [...this.#checkpoints.values()].map((x) => ({ inputs: x.inputs, decided: x.decided })),
+      checkpointSkips: [...this.#checkpointSkips],
       divergences: this.#divergences,
       digests: this.#digests,
       steered: this.#steered,

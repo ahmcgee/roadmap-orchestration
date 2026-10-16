@@ -13,7 +13,7 @@ import { runAudit } from '../../src/holistic/audit.ts';
 import type { CheckpointContext } from '../../src/holistic/checkpoint.ts';
 import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { admitSpecWire, lensStep } from '../helpers/holistic.ts';
+import { admitSpecWire, lensStep, noteLensStep } from '../helpers/holistic.ts';
 import { type AuditArcOptions, auditArc, auditContext, factsOf } from './audit-common.ts';
 import { type ArcDescriptor, type ArcRun, applyBody, visionApplyBody } from './unit-common.ts';
 
@@ -52,6 +52,8 @@ export async function completedAudit(r: ArcRun, ctx: CheckpointContext): Promise
 
 /** The vision lens step of each of `jobs`. */
 export const visionLenses = (...jobs: readonly string[]): readonly Step[] => jobs.map((j) => lensStep(j, 'vision'));
+/** The vision lens step of each of `jobs`, each reporting a new P3 finding (`noteLensStep`): each audit has its checkpoint. */
+export const noteLenses = (...jobs: readonly string[]): readonly Step[] => jobs.map((j) => noteLensStep(j));
 
 /** Edits plan.json in place and applies it (an architect's `roadmap apply`). */
 export async function applyPlanEdit(r: ArcRun, w: Wired, edit: (plan: Json) => void): Promise<void> {

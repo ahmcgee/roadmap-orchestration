@@ -15,7 +15,7 @@ import {
   repoPath, repoPattern,
 } from './values.ts';
 import {
-  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
+  type Brand, type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
@@ -72,6 +72,36 @@ export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
 export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
 export type Stage = (typeof STAGES)[number];
 export const stage: Read<Stage> = oneOf(STAGES);
+
+/**
+ * A re-entry's `fixes` (arc feedback 2026-10-16): the failure record of the re-entered lineage it names. `<unit>/<stage>#<attempt>`
+ * names a stage outcome of that unit (its park, or a charged failure); `<unit>/lanes#<attempt>/<lane>` names one entry of
+ * the unit's lane failures (`status.units[].failures`, src/pipeline/failures.ts). The classifier resolves it against the log.
+ */
+export type FailureRef = Brand<string, 'FailureRef'>;
+export type FailureRefParts =
+  | Readonly<{ type: 'outcome'; unit: UnitId; stage: Exclude<Stage, 'retire'>; attempt: number }>
+  | Readonly<{ type: 'lane'; unit: UnitId; attempt: number; lane: LaneId }>;
+// The unit is a slug and the lane a LaneId (their forms in src/core/ids.ts); the stage is checked against STAGES.
+const FAILURE_REF = /^([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)\/([a-z-]+)#([1-9][0-9]{0,14})(?:\/([A-Za-z][A-Za-z0-9_.-]{0,63}))?$/;
+const FAILURE_REF_FORM = '<unit>/<stage>#<attempt> or <unit>/lanes#<attempt>/<lane>';
+export function parseFailureRef(value: unknown, path = 'FailureRef'): FailureRefParts {
+  const m = typeof value === 'string' ? FAILURE_REF.exec(value) : null;
+  const s = m?.[2];
+  if (m === null || s === undefined || !(STAGES as readonly string[]).includes(s) || s === 'retire' || (m[4] !== undefined && s !== 'lanes')) {
+    throw new SchemaError(path, `a failure reference (${FAILURE_REF_FORM})`, value);
+  }
+  const unit = unitId(m[1]);
+  const attempt = Number(m[3]);
+  return m[4] === undefined ? { type: 'outcome', unit, stage: s as Exclude<Stage, 'retire'>, attempt } : { type: 'lane', unit, attempt, lane: laneId(m[4]) };
+}
+export const failureRef: Read<FailureRef> = (value, path) => {
+  parseFailureRef(value, path);
+  return value as FailureRef;
+};
+/** The reference naming `parts`. */
+export const failureRefOf = (p: FailureRefParts): FailureRef =>
+  (p.type === 'outcome' ? `${p.unit}/${p.stage}#${p.attempt}` : `${p.unit}/lanes#${p.attempt}/${p.lane}`) as FailureRef;
 
 export const RESOURCE_STATES = ['free', 'reserved', 'running', 'cleaning', 'cleanup-failed'] as const;
 export type ResourceState = (typeof RESOURCE_STATES)[number];

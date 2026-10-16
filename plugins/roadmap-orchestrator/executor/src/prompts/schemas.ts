@@ -16,7 +16,7 @@ import {
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
 import { type JsonValue, canonicalJson } from '../core/json.ts';
-import { BOUND_FIELDS, type Bounds, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecPatchOp, specM1, specPatchOp } from '../core/records.ts';
+import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
 import {
   Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
@@ -29,6 +29,7 @@ import {
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
   admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+  reenterFixesDefault,
 } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import { specBytes } from '../spec/spec.ts';
@@ -544,7 +545,8 @@ export type BundleOpBody =
     targets: readonly RuleId[];
   }>
   | Readonly<{ op: 'patch-spec'; unit: UnitId; patch: readonly SpecPatchOp[] }>
-  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: RulingId | null }>
+  /** `fixes` (arc feedback 2026-10-16): the failure it fixes; null when the lineage recorded none, or on an answer recorded before it (`reenterFixesDefault`). */
+  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: RulingId | null; fixes: FailureRef | null }>
   | Readonly<{ op: 'cut'; unit: UnitId; reason: string }>
   | Readonly<{ op: 'route'; unit: UnitId; seats: readonly Readonly<{ role: Role; tier: Seat; class: ModelClass }>[] }>
   | Readonly<{ op: 'limits'; unit: UnitId | null; limits: readonly Readonly<{ field: keyof Bounds | 'convergenceK'; value: number }>[] }>
@@ -677,7 +679,7 @@ export function checkpointSchemaFor(ids: CheckpointIds | null): Schema {
       anyOf: [
         opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
         opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
-        opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR) }),
+        opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR), fixes: sNullable(S_STR) }),
         opSchema('cut', { unit: S_STR, reason: S_STR }),
         opSchema('route', { unit: S_STR, seats: sArr(sObj({ role: sEnum(ROLES), tier: sEnum([...JUDGMENT_SEATS, 'arc']), class: sEnum(MODEL_CLASSES) })) }),
         opSchema('limits', { unit: sNullable(S_STR), limits: sArr(sObj({ field: sEnum(LIMIT_FIELDS), value: S_INT })) }),
@@ -789,8 +791,13 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
       };
     case 'patch-spec':
       return { op, unit: f.get('unit', unitR), patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
-    case 'reenter':
-      return { op, unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), enterAt: f.get('enterAt', nullable(oneOf(REENTRY_POINTS))), reset: f.get('reset', nullable(rulingR)) };
+    case 'reenter': {
+      const fixes = f.optional('fixes', nullable(failureRef));
+      return {
+        op, unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), enterAt: f.get('enterAt', nullable(oneOf(REENTRY_POINTS))), reset: f.get('reset', nullable(rulingR)),
+        fixes: fixes === undefined ? reenterFixesDefault() : fixes,
+      };
+    }
     case 'cut':
       return { op, unit: f.get('unit', unitR), reason: f.get('reason', str) };
     case 'route':
