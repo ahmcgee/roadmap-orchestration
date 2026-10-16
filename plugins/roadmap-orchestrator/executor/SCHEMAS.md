@@ -804,7 +804,11 @@ carries only the manifests, never the files.
 
 **Judgment outputs** (`src/prompts/schemas.ts`): plan-check `{decision, reasons, patch, risk, notes, premises}`,
 gate `{decision, findings, directives, reasons, premises}`, `premises: [{claim, evidence: [{path, line}]}]` (the
-premises the decision relies on, the next round's handoff). A plan-check's `notes` go to the architect on escalate
+premises the decision relies on, the next round's handoff). Reasoning structure is method, not invariant (W4,
+2026-10-16): every key is present (strict schemas), but `premises` and a checkpoint's `interpretations` may be empty and
+nothing caps a list (no premise, directive or finding cap); a reason need not cite anything; a cite that is given
+(a `visionConflict` or op's `V-n`, an interpretation's clauses, a decision's observations and findings, a `cite` op's
+contracts and rulings) must still resolve, and decisions stay closed enums. A plan-check's `notes` go to the architect on escalate
 or infeasible; on approve they are facts for the build and the gate, which receive the approving plan-check's
 notes. A plan-check after its own applied redirect gets `priorRound {patch, reasons, premises, patchedRev,
 changedPremiseFiles}`; a plan-check whose previous answer was refused (since 2026-10-15 by the one validator, every
@@ -1514,7 +1518,7 @@ divergences[{id, type, what}], contracts, rulings, index, architecture, directio
 required): `LensOutput = {findings: [{severity: P1|P2|P3, obligation|null, visionClauses, claim, cause, evidence:
 [{path, line}], mutant: {lane, edits: [{path, old, new}] (non-empty)}|null}], reasons, premises}` (M4b; was `{patch, lane}`); `CheckpointOutput = {decision: no-op|bundle,
 reasons, ops: BundleOp[] (empty exactly on a no-op), rulings: string[] (sidecars as canonical JSON text, read from the objects `S_RULING` constrains since 2026-10-15; none on a no-op),
-findingDispositions[{finding, disposition, reason}], interpretations[{clauses, situation, reading}], cites{vision,
+findingDispositions[{finding, disposition, reason}], interpretations[{clauses (non-empty), situation, reading}] (may be empty), cites{vision,
 observations, findings}, premises}`, `BundleOp = (admit{unit{id, risk, scope, after, origin: checkpoint|repair},
 spec (spec.json text)} | patch-spec{unit, patch} | reenter{unit, reenters, enterAt|null, reset|null} | cut{unit,
 reason} | route{unit, seats[{role, tier, class}]} | limits{unit|null, limits[{field, value}]} |
@@ -2040,8 +2044,8 @@ supersede the A4 items they name):
 
 1. **One lens module for the four lenses**: the standing rules in the system prompt, the lens's own brief in the
    message's `<lens_brief>`, whose first line is the one marker `lens: <kind>` (what the fake backend keys on).
-2. **`MAX_LENS_FINDINGS` (8)** is stated in the prompt as the reporting bound, worst first; the reader does not
-   enforce it (an anti-spiral bound on reporting, never on reading).
+2. **No finding cap** (W4, 2026-10-16; was `MAX_LENS_FINDINGS` 8, stated in the prompt and never enforced): findings
+   worst first; the finding bar and the dedupe key bound reporting.
 3. **Routing**: lens/Opus and checkpoint/Fable are modules; lens/Fable and checkpoint/Opus inherit them (reviewed
    2026-09-30); Sonnet and Codex are unsupported for both ("Prompts" above; Sonnet inherits since 1.0.0-dev.10).
 

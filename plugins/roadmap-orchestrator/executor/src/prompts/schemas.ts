@@ -6,7 +6,7 @@
 //
 // Derived from the M1 transition table (plan "Pipeline for one serial unit"):
 //   planCheck: approve → build · redirect → spec.patch, re-check · infeasible → escalate · escalate → route up
-// Both judgments also return their premises (claim + file:line evidence): the next round's handoff.
+// Both judgments also return their premises (claim + file:line evidence, possibly none): the next round's handoff.
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
@@ -58,11 +58,10 @@ function sObj(properties: { readonly [key: string]: Schema }): Schema {
 /**
  * A claim about the repository a judgment's decision relies on, with the file:line evidence it read. The
  * next round of the same unit re-verifies only the premises whose files changed since (the executor
- * compares blobs); it trusts the rest unless it has evidence against one.
+ * compares blobs); it trusts the rest unless it has evidence against one. Method, not invariant (W4, 2026-10-16): the key is
+ * present (strict schema) but the list may be empty, and nothing caps it; an empty list re-checks nothing next round.
  */
 export type Premise = Readonly<{ claim: string; evidence: readonly Readonly<{ path: string; line: number }>[] }>;
-/** The premise cap the prompts state: the premises the decision relies on, not everything read. Not enforced. */
-export const MAX_PREMISES = 12;
 
 const S_PREMISES = sArr(sObj({ claim: S_STR, evidence: sArr(sObj({ path: S_STR, line: S_INT })) }));
 const premise: Read<Premise> = object((f) => ({
@@ -76,7 +75,7 @@ const premise: Read<Premise> = object((f) => ({
 export const PLAN_CHECK_DECISIONS = ['approve', 'redirect', 'infeasible', 'escalate'] as const;
 
 type PlanCheckCommon = Readonly<{
-  /** The decision's justification: each reason cites the clause, contract or C-nn it rests on. */
+  /** The decision's justification, one point per entry (a reason need not cite; a cite given elsewhere must resolve). */
   reasons: readonly string[];
   /** The unit's risk after the check: the dispatch floor or higher. The executor refuses a lower tier. */
   risk: RiskTier;
@@ -378,11 +377,6 @@ export function validateDecisionsFile(value: unknown): DecisionsFile {
 export const GATE_DECISIONS = ['approve', 'revise', 'escalate'] as const;
 /** `blocking`: the merge cannot carry it (it has a directive). `note`: recorded, never blocks. */
 export const FINDING_SEVERITIES = ['blocking', 'note'] as const;
-/**
- * The directive cap the gate prompt states (anti-spiral core: the cap bounds reporting, never reading).
- * The validator does not enforce it: overflow banks in code (the gate stage), it is not malformed.
- */
-export const MAX_DIRECTIVES = 5;
 
 export type GateFinding = Readonly<{
   severity: (typeof FINDING_SEVERITIES)[number];
@@ -470,8 +464,6 @@ export type LensFinding = Readonly<{
   mutant: LensMutant | null;
 }>;
 export type LensOutput = Readonly<{ findings: readonly LensFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
-/** The finding cap the lens prompt states (anti-spiral: it bounds reporting, never reading). Not enforced. */
-export const MAX_LENS_FINDINGS = 8;
 
 export const LENS_SCHEMA: Schema = sObj({
   findings: sArr(sObj({
@@ -573,7 +565,11 @@ export type CheckpointOutput = Readonly<{
    */
   rulings: readonly string[];
   findingDispositions: readonly Readonly<{ finding: FindingId; disposition: FindingDisposition; reason: string }>[];
-  /** H12: readings of the vision where it does not anticipate a situation; each records a divergence, even on a `no-op`. */
+  /**
+   * H12: readings of the vision where it does not anticipate a situation; each records a divergence, even on a `no-op`.
+   * Method, not invariant (W4, 2026-10-16): the key is present (strict schema), the list may be empty; one given cites
+   * at least one active clause (its divergence's cites), resolved as every cite is.
+   */
   interpretations: readonly Readonly<{ clauses: readonly VisionClauseId[]; situation: string; reading: string }>[];
   cites: Readonly<{ vision: readonly VisionClauseId[]; observations: readonly ObservationKey[]; findings: readonly FindingId[] }>;
   premises: readonly Premise[];

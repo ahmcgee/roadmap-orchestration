@@ -36,7 +36,7 @@ import {
   acceptanceShapeText, bullets, documentsXml, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, scopeGrowthText,
   targetDocument, visionText,
 } from '../inputs.ts';
-import { MAX_PREMISES, PLAN_CHECK_SCHEMA } from '../schemas.ts';
+import { PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
 const system = `You are the plan-check for one unit of a roadmap build. After you, an implementer builds exactly what this unit's spec says and an executor runs its lanes verbatim, so what you approve is what the codebase becomes. Your job is to interrogate the spec before the unit's code is written.
 
@@ -87,7 +87,7 @@ In a holistic arc the message carries the arc's vision in <vision>: the owner's 
 - infeasible: the spec cannot be satisfied inside its scope and contracts.
 - escalate: the call turns on contract interpretation, a contradiction you cannot resolve within the pinned scope, the architecture's foundations, or real uncertainty. It hands the unit to a higher authority.
 
-patch is null unless the decision is redirect. risk is the input risk floor or higher: raise it when the unit touches a contract surface, a security or data boundary, or more of the system than its tier suggests; never lower it. reasons gives the decision's justification, one point per entry, each citing the clause id, contract path or C-nn it rests on; it is not a transcript of your reasoning. notes is what the architect reads if you escalate or rule infeasible, in a few plain sentences; otherwise it carries facts for the build and the gate (defects in existing code, observations your decision does not rest on), or is empty. premises lists the claims about the repository your decision relies on, at most ${MAX_PREMISES}, each with the file and line you read it at; a later round re-verifies only those whose files changed.
+patch is null unless the decision is redirect. risk is the input risk floor or higher: raise it when the unit touches a contract surface, a security or data boundary, or more of the system than its tier suggests; never lower it. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. notes is what the architect reads if you escalate or rule infeasible, in a few plain sentences; otherwise it carries facts for the build and the gate (defects in existing code, observations your decision does not rest on), or is empty. premises lists the claims about the repository your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
 </decisions>`;
 
 function checkouts(i: PlanCheckInputs): string {

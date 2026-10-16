@@ -170,6 +170,12 @@ at triage stay in git history.
 
 ## Watch (act only on the trigger)
 
+- **A checkpoint op's non-empty `cites` and `evidence`** (W4, 2026-10-16). W4 dropped the per-reason cite rule, the
+  unenforced reporting caps and any mandate on `premises`/`interpretations`, but kept the per-op requirement (every bundle op
+  cites at least one active `V-n` and non-empty evidence; DESIGN §2.8 checkpoint authority, the traceability the owner
+  audits). The evidence strings are not verified, so the requirement is partly method. Trigger: a repair turn or refused
+  bundle whose only fault is an op's empty `cites` or `evidence`; then make both may-be-empty and keep resolution only.
+
 - **Apply rebase merges arrays of plain values whole** (2026-10-16). `merge3` merges objects per key and arrays of
   keyed objects per element, but an array of strings (scope patterns, `holistic.advances`, cites, a lane's argv) both
   sides changed is a conflict, never a set merge (an argv's order is its meaning). Trigger: conflicts on id lists such as

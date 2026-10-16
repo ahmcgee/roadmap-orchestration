@@ -42,7 +42,7 @@ import {
   checkpointSpecsText, coverageText, diagnosisText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
   priorRejectedText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
 } from '../inputs.ts';
-import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
+import { CHECKPOINT_SCHEMA } from '../schemas.ts';
 import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
 
 /** A closed enum as the prompt lists it, from the sidecar reader's own constants (src/holistic/types.ts). */
@@ -129,7 +129,7 @@ Weigh every open finding, every obligation not held, the coverage gaps, the unco
 Change as little as settles the arc's course. no-op is legitimate and often right: when nothing in front of you needs the plan to change, decide no-op with no ops and no rulings (interpretations and finding dispositions may still be recorded). A bundle is checked against the head and revisions you were given: an op on stale evidence is rejected. The head may advance while you decide: an observation stays valid when the head's run keeps every cited test's outcome and selection; cite the observations your ops rest on. A second material op on the same finding or obligation lineage goes to the owner, so an op should settle what it addresses rather than try again. The Direction breaks ties where the vision, contracts and rulings are silent; it never overrides the vision.
 
 # Output
-decision is no-op or bundle; a bundle has at least one op. reasons holds the decision's justification, one point per entry, each citing V-n, finding, obligation or C-nn ids; it is not a transcript of your reasoning. cites lists the vision clauses, the observations (their full keys as given) and the findings the decision as a whole rests on. premises lists the claims about the repository the decision relies on, at most ${MAX_PREMISES}, each with the file and line where you read it. corpusAmendments and issueIntake are as described above, on a no-op as on a bundle.
+decision is no-op or bundle; a bundle has at least one op. reasons holds the decision's justification, one point per entry; it is not a transcript of your reasoning. cites lists the vision clauses, the observations (their full keys as given) and the findings the decision as a whole rests on. premises lists the claims about the repository the decision relies on, each with the file and line where you read it, or is empty. corpusAmendments and issueIntake are as described above, on a no-op as on a bundle.
 
 Write every reason, summary, interpretation and disposition as plain, literal sentences: what, where and why, without metaphor or flourish.`;
 
