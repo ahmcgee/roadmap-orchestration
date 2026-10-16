@@ -8,7 +8,13 @@ claude-judgment                  2026-09-26, Claude Code 2.1.283, claude-opus-5-
                                  the prompt asks for one Glob, one Grep and one Read before {"ok": true}
 claude-implementer(-resume)      same, implementer argv, fresh then --resume of the same session
 claude-api-error                 same, judgment argv with an unknown model: is_error result, HTTP 404, exit 1
+claude-judgment-subagents        2026-10-16, Claude Code 2.1.301, claude-sonnet-5-5 effort low, judgment argv with the
+                                 Agent tool; the prompt (stdin) has it put a background Explore subagent on haiku, answer
+                                 {"ok": false} at once, then {"ok": true} when the subagent reports: two result events,
+                                 each with the session's cumulative modelUsage of both models
+claude-prompt-too-long           same CLI, claude-haiku-5-5 effort low, judgment argv, a generated 9.4 MB prompt (not kept):
+                                 is_error result "Prompt is too long", api_error_status null, empty modelUsage, exit 1
 
-Per dir: argv.json, stdin, stdout, stderr, exit-code, and last.json (the -o file) for Codex.
+Per dir: argv.json, stdin (but claude-prompt-too-long's), stdout, stderr, exit-code, and last.json (the -o file) for Codex.
 Hand-written, never captured: the usage-limit and capacity texts in test/helpers/scenario.ts
-(CODEX_USAGE_LIMIT, CLAUDE_USAGE_LIMIT, CAPACITY_TEXT).
+(CODEX_USAGE_LIMIT, CLAUDE_USAGE_LIMIT, CAPACITY_TEXT); CODEX_CONTEXT_EXCEEDED is read from the codex-cli 0.163.0 binary.

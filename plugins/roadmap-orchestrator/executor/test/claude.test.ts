@@ -7,6 +7,7 @@ import { type BackendCall, backendArgv, freshClaudeImplementerSession, freshJudg
 import { readClaude } from '../src/backends/claude.ts';
 import { judgmentSessionId } from '../src/core/ids.ts';
 import { RUNNER_FILE_READERS } from '../src/core/records.ts';
+import { chargedUsage } from '../src/core/usage.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { BACKEND_FIXTURES, CLAUDE_USAGE_LIMIT, capturedClaudeResult, editClaudeResult, fixtureInvocation } from './helpers/scenario.ts';
 
@@ -41,6 +42,15 @@ describe('claude', () => {
       assert.deepEqual(delegated, [{ class: 'economy', inputTokens: 4, outputTokens: 152, cacheReadTokens: 4313, cacheWriteTokens: 4494, costUsd: 0.0006812799999999999 }]);
       // The subagent's Read is in the session's reads (reads.json), beside the session's own.
       assert.ok(r.access?.reads.some((x) => x.tool === 'Read' && x.path.endsWith('/a.ts')));
+    });
+    it('a resume reports its session\'s cumulative usage: charged less the fresh call\'s, it is the resume\'s own (the captured implementer pair)', () => {
+      const fresh = readClaude(stdoutOf('claude-implementer')).usage;
+      const resumed = readClaude(stdoutOf('claude-implementer-resume')).usage;
+      assert.ok(fresh.kind === 'known' && resumed.kind === 'known' && fresh.delegated !== undefined && resumed.delegated !== undefined);
+      const charged = chargedUsage({ tokens: resumed.tokens, delegated: resumed.delegated }, { tokens: fresh.tokens, delegated: fresh.delegated }, 'resume');
+      // The resume's own turn, as its result's top-level usage reports it: 2 in, 52 out, 18474 cache reads, 112 writes.
+      assert.deepEqual([charged.tokens.inputTokens, charged.tokens.outputTokens, charged.tokens.cacheReadTokens, charged.tokens.cacheWriteTokens, charged.tokens.turns], [2, 52, 18474, 112, 2]);
+      assert.ok(Math.abs((charged.tokens.costUsd ?? 0) - (0.1544788 - 0.14884)) < 1e-12);
     });
     it('per-model costs that do not sum to total_cost_usd fail loud', () => {
       const invDir = editClaudeResult(fixtureInvocation('claude-judgment-subagents', EXIT0), (o) => ({ ...o, total_cost_usd: 0.05 }));
