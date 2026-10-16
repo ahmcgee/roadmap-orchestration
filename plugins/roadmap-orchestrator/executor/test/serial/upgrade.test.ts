@@ -7,12 +7,14 @@
 // HEAD (same repo, run dir and host dir; setup does not re-run; the spec inputs stay as the previous release
 // left them), with HEAD's driver, graded by HEAD's check.ts (every criterion passes, and the upgrade forced no
 // park and no new session), or, where the story needs arc judgments the M1 scenario format cannot express, with
-// HEAD's CLI and fakes directly. The previous release (1.0.0-dev.7, the only one adopted: OR-L4) scheduled a DAG
-// and kept every M3 and M4a record, so its arcs run on HEAD as they ran on it; an arc it started without the holistic
-// layer runs with M2 semantics and no new spend unless the architect opts in, and (M4b) every arc it started keeps the
-// dev.7 role set: no flow seat, no flow loop; its routing revs move only with HEAD's seat table (OR-L3: the efficient
-// judgment seats of 1.0.0-dev.10), and status aliases the ones it recorded. Its starts and spawns carry no pressure (M4b
-// rev 3) and read with the defaults; HEAD's record this host's schedstat cpu wait.
+// HEAD's CLI and fakes directly. The previous release (1.0.0-dev.10) schedules a DAG and keeps every M3, M4a and M4b
+// record, so its arcs run on HEAD as they ran on it; an arc it started without the holistic layer runs with M2
+// semantics and no new spend unless the architect opts in. Its role set, seat table and pressure records are HEAD's,
+// so its routing revs stand unchanged. What it lacks of 1.0.0-dev.11 reads with the defaults of src/core/upgrade.ts,
+// each warned once on the executor's stderr: an apply its CLI queued carries `expectRev` (rebased from the default
+// base) and no `visionEdit`; its arc lanes declare no `testPaths` and its witnesses no `files` (undeclared, unchecked);
+// its re-entries and its checkpoints' `reenter` ops name no `fixes` (in force, never classified again); and it wrote
+// rulings and spec patches back into the owner's files, which HEAD's rebase takes as the files in force.
 //
 // A crashed previous release: its executor is armed with a crash trigger (src/core/crash.ts), and its supervisor
 // is frozen (SIGSTOP) as soon as it is ready, so no generation of the previous release recovers the crash; once
@@ -41,12 +43,13 @@
 //                              refuses the DAG arc over the `@cpu` capacity and changes nothing; on this host HEAD
 //                              finishes it reserving both the named `cpu` and `@cpu` tokens.
 //   upgrade.apply-queued       stopped mid-build, `page-id` left held; on HEAD's running arc the architect's `apply`
-//                              (a new `direction`) queued through the previous release's CLI: HEAD applies it as plan
-//                              revision 2, the command's bytes unchanged.
+//                              (a new `direction`) queued through the previous release's CLI, its body `expectRev`
+//                              with no `base` and no `visionEdit`: HEAD rebases it from the default base and applies
+//                              it as plan revision 2, the command's bytes unchanged, the default warned.
 //   upgrade.rule-on-adopted-arc
 //                              stopped mid-build; while `page-id` waits at its lane on HEAD, `roadmap rule` lands
-//                              C-3 on the previous release's revision: the docs publication of constraints.md, the
-//                              write-back; then `page-id` merges.
+//                              C-3 on the previous release's revision: the docs publication of constraints.md, nothing
+//                              written into the owner's files; then `page-id` merges.
 //   upgrade.compact-with-adopted-retry
 //                              (A5a, H1) `slug`'s resource teardown fails once; the previous release's retry crashes
 //                              after its `cleaned` disposition (`retry.after-disposition`), the instance still held;
@@ -63,13 +66,38 @@
 //   upgrade.config-without-chain
 //                              no chain K in the repo config: no chain row applies to the adopted arc.
 //   upgrade.target-kind-fixed  an apply cannot switch the adopted arc to a corpus target (`target-kind-changed`).
-//   upgrade.dev7-flow-off      (M4b, R5) stopped mid-build, `page-id` left held; on HEAD the architect's `apply` (a new
-//                              `direction`) and `resume page-id`: every revision, dev.7's and HEAD's, records no role
-//                              set; under the seats dev.7 hashed HEAD resolves the rev dev.7 recorded, and under its own
-//                              (efficient judgment, 1.0.0-dev.10) another, re-pinned without a park; it seats no flow; no
-//                              flow fact or flow call; `status` spend resolves every metered call (the dev.7 rev aliased).
+//   upgrade.routing-stable     stopped mid-build, `page-id` left held; on HEAD the architect's `apply` (a new
+//                              `direction`) and `resume page-id`: HEAD's revision records the role set the previous
+//                              release recorded and resolves the rev it recorded; every HEAD judgment runs under it, no
+//                              re-pin, no `routing-changed`; `status` spend resolves every metered call.
+//   upgrade.reentry-before-fixes
+//                              `page-id` parked infeasible at plan-check (a recorded failure); the architect's `apply`
+//                              through the previous release's CLI adds `page-id-2` re-entering it with no `fixes`, and
+//                              the previous release is stopped mid-build of it. HEAD's start finds that revision in
+//                              force, HEAD merges `page-id-2`, and an apply then classifies as accepted: the re-entry in
+//                              force is never classified again.
+//   upgrade.written-back-inputs
+//                              `page-id`'s plan-check redirects with a spec patch and `roadmap rule` lands C-3, both on
+//                              the previous release, which writes them back into the owner's spec, ledger and sidecar;
+//                              stopped mid-build. On HEAD an architect `apply` (a new `direction`) rebases those files
+//                              cleanly as plan revision 3, C-3 in force and published once, and HEAD writes nothing
+//                              into the owner's files.
+//   upgrade.checkpoint-reentry-before-fixes
+//                              `page-id` parks infeasible; the architect opts in to `holistic` through the previous
+//                              release's CLI; its park checkpoint's bundle re-enters `page-id` as `page-id-2` with no
+//                              `fixes`, the drift audit and its no-op checkpoint settle, and the previous release is
+//                              stopped mid-build of `page-id-2`. HEAD merges it (the brake on its candidate), runs the
+//                              final audit and checkpoint (reading the applied answer, the default warned) and
+//                              completes the arc; an apply then classifies as accepted.
+//   upgrade.corpus-witnesses-undeclared
+//                              a corpus arc (the previous release's corpus target: pin, Phase-0 record, fake forge)
+//                              whose arc lane declares no `testPaths` and whose witness declares no `files`; stopped
+//                              mid-build. HEAD finishes it (the brake, the final audit and checkpoint); an apply's
+//                              Phase 0 then reads both as undeclared: unchecked, each default warned, accepted.
 //
-// Not covered: a backend parked on a usage limit, the Claude-only profile.
+// Not covered: a backend parked on a usage limit, the Claude-only profile; a checkpoint answer the previous release
+// recorded but did not apply (its re-entry without `fixes` is refused on HEAD); an apply its CLI queued that changes the
+// vision (no `visionEdit`: row 12, `vision-leak`).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -81,8 +109,7 @@ import { isAlive, statOf } from '../../src/contain/proc.ts';
 import type { Event, Fact } from '../../src/core/events.ts';
 import { arcId, commandId, invocationId, opId, resourceName, unitId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
-import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
-import { PRE_DEV10_BUILTIN_SEATS, spawnPressureOf, startPressureOf } from '../../src/core/upgrade.ts';
+import { canonicalJson } from '../../src/core/json.ts';
 import type { ProcIdentity } from '../../src/core/records.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
@@ -97,7 +124,7 @@ import { overCapacity } from '../../src/resources/pool.ts';
 import { bytesSha256, loadSpec } from '../../src/spec/spec.ts';
 import { CONTINUE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { meterOf } from '../../src/meter.ts';
-import { provenanceStack, resolveRouting, resolveRoutingUnder, seatsInForce } from '../../src/routing/layers.ts';
+import { provenanceStack, resolveRouting } from '../../src/routing/layers.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import { corpusTarget } from '../fixtures/corpus-target.ts';
 import type { CheckResult } from '../../evals/m1/check.ts';
@@ -116,11 +143,11 @@ after(assertNoSurvivors);
 /**
  * The previous release: its executor starts the arc, HEAD's finishes it. At each release, move it to the
  * last released commit, the merge of the previous release's PR into main. Merges here are merge commits, so
- * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.7, merged to main as
- * PR #107 (schema version 1). Arcs started before 1.0.0-dev.7 are not adopted (owner ruling OR-L4, applied again at
- * M4b): each finishes on the executor release it started on.
+ * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.10, merged to main as
+ * PR #112 (schema version 1). Arcs started on 1.0.0-dev.7 to dev.9 stay adopted through their defaults in
+ * src/core/upgrade.ts until none is in flight; this test exercises the previous release only.
  */
-const PREVIOUS_RELEASE = 'b55ad88bde074422528d1450113a8ff25a4831b7';
+const PREVIOUS_RELEASE = 'b1c3666843fa458c46eb2e541c97f62dd0244328';
 const EXECUTOR_PATH = 'plugins/roadmap-orchestrator/executor';
 
 const EXECUTOR = fileURLToPath(new URL('../../', import.meta.url));
@@ -161,7 +188,7 @@ before(async () => {
   const tar = spawnSync('tar', ['-x', '-C', dir], { input: archive.stdout });
   assert.equal(tar.status, 0, `tar: ${tar.stderr}`);
   const root = join(dir, EXECUTOR_PATH);
-  assert.match(readFileSync(join(root, 'package.json'), 'utf8'), /"version": "1\.0\.0-dev\.7"/);
+  assert.match(readFileSync(join(root, 'package.json'), 'utf8'), /"version": "1\.0\.0-dev\.10"/);
   const load = (path: string): Promise<Record<string, unknown>> => import(pathToFileURL(join(root, path)).href);
   const [scenario, shim, sample] = await Promise.all([load('evals/m1/scenario.ts'), load('test/fakes/shim.ts'), load('src/host/sample.ts')]);
   previous = {
@@ -194,7 +221,7 @@ function pageIdFiles(c: Clean): Readonly<Record<string, string>> {
 
 const ESCALATE: M1Step = {
   role: 'planCheck',
-  answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [] },
+  answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [] },
 };
 
 /** Where the previous release is stopped: a fake call parked at a barrier in its scenario dir. */
@@ -241,7 +268,7 @@ async function preparePrevious(
   const fakeDir = join(dir, 'fake-previous');
   mkdirSync(fakeDir, { recursive: true });
   const m1File = join(fakeDir, 'm1.json');
-  writeFileSync(m1File, JSON.stringify({ steps: (typeof m1 === 'function' ? m1(l) : m1).map(previousStep) }));
+  writeFileSync(m1File, JSON.stringify({ steps: typeof m1 === 'function' ? m1(l) : m1 }));
   const { fakeSteps, readScenario, writeShims } = previous.modules;
   const scenario = join(fakeDir, 'scenario.json');
   writeFileSync(scenario, JSON.stringify({ steps: [...fakeSteps(readScenario(m1File), 'default'), ...extra] }, null, 2));
@@ -250,16 +277,6 @@ async function preparePrevious(
   const cli = (args: readonly string[], timeoutMs = CLI_MS, extraEnv: Readonly<Record<string, string>> = {}): Promise<Exit> =>
     runUntilExit(process.execPath, [join(previous.root, 'test', 'fixtures', 'exec-cli.ts'), host, ...args], { env: { ...env, ...extraEnv }, timeoutMs });
   return { dir, l, host, fakeDir, cli, run: ['--repo', l.repo, '--arc', l.arc] };
-}
-
-/**
- * A step as the previous release answers it: its plan-check schema predates `scopeGrowth` (1.0.0-dev.10) and admits no
- * other key, so a plan-check answer the previous release reads carries none (HEAD's carry it, as clean.json's do).
- */
-function previousStep(step: M1Step): M1Step {
-  if (step.role !== 'planCheck') return step;
-  const { scopeGrowth: _, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
-  return { ...step, answer };
 }
 
 /** HEAD's `roadmap` CLI against the fixture's host dir. */
@@ -385,21 +402,18 @@ function assertFinished(f: Finished): void {
 }
 
 /**
- * M4b rev 3: the previous release's starts and spawns carry no pressure and read with the defaults (`unavailable`, null);
- * HEAD's starts record this host's schedstat availability and every spawn it closed records its pressure (a number, or
- * null for a launch under `PRESSURE_MIN_WALL_MS`; null always without schedstat).
+ * M4b rev 3: both releases record host pressure. Every start, the previous release's and HEAD's, records this host's
+ * schedstat availability, and every spawn either closed records its pressure (a number, or null for a launch under
+ * `PRESSURE_MIN_WALL_MS`; null always without schedstat).
  */
 function assertPressure(f: Finished): void {
-  const headFirst = f.after[0]?.seq ?? Infinity;
-  const before = f.events.filter((e) => e.seq < headFirst);
   const available = pressureAvailability();
-  assert.deepEqual(factsOf(before, 'executor-started').map((s) => [s.pressure, startPressureOf(s)]), factsOf(before, 'executor-started').map(() => [undefined, 'unavailable']));
-  for (const s of factsOf(f.after, 'executor-started')) assert.equal(s.pressure, available);
-  const spawnResults = (events: readonly Event[]) => events.flatMap((e) => (e.type === 'done' && e.kind === 'proc.spawn' && e.outcome.kind === 'result' ? [{ e, outcome: e.outcome }] : []));
-  for (const { outcome } of spawnResults(before)) assert.equal(spawnPressureOf(outcome), null);
-  const closed = spawnResults(f.after);
-  assert.ok(closed.length > 0, 'HEAD closed spawns');
-  for (const { outcome } of closed) {
+  const headFirst = f.after[0]?.seq ?? Infinity;
+  assert.ok(factsOf(f.events.filter((e) => e.seq < headFirst), 'executor-started').length > 0, 'the previous release started the arc');
+  for (const s of factsOf(f.events, 'executor-started')) assert.equal(s.pressure, available, JSON.stringify(s));
+  const spawnResults = (events: readonly Event[]) => events.flatMap((e) => (e.type === 'done' && e.kind === 'proc.spawn' && e.outcome.kind === 'result' ? [e.outcome] : []));
+  assert.ok(spawnResults(f.after).length > 0, 'HEAD closed spawns');
+  for (const outcome of spawnResults(f.events)) {
     assert.notEqual(outcome.pressure, undefined, JSON.stringify(outcome));
     if (available === 'unavailable') assert.equal(outcome.pressure, null, JSON.stringify(outcome));
   }
@@ -666,7 +680,7 @@ const newDirection = (l: Layout): void =>
 /** The queued command file's bytes. */
 const commandBytes = (p: Phase1, id: string): Buffer => readFileSync(incomingPath(absPath(p.l.runDir), commandId(id)));
 
-test('upgrade.apply-queued: an apply the previous release\'s CLI queues on HEAD\'s running arc is applied as revision 2, its bytes unchanged', T, async () => {
+test('upgrade.apply-queued: an apply the previous release\'s CLI queues (`expectRev`, no `base`, no `visionEdit`) on HEAD\'s running arc is rebased from the default base and applied as revision 2, its bytes unchanged', T, async () => {
   // page-id stays held until the apply lands: an arc-scoped apply waits for every unit to be idle. The edit is made
   // on the running arc, so HEAD's start finds the files in force and the revision is the command's.
   const { p, head } = await stoppedMidBuild(clean(), undefined, false);
@@ -679,22 +693,21 @@ test('upgrade.apply-queued: an apply the previous release\'s CLI queues on HEAD\
     f = await finishOnHead(p, head, async () => {
       await until('HEAD\'s executor runs the arc', PHASE_MS, () => (factsOf(journalOf(p).events, 'executor-started').length > 1 ? true : null));
       newDirection(p.l);
-      const apply = await p.cli(['apply', ...p.run]);
-      assert.equal(apply.code, 0, apply.stderr);
-      id = (JSON.parse(apply.stdout) as { command: string }).command;
+      id = await submitOnPrevious(p, ['apply']);
       queued = commandBytes(p, id);
-      const receipt = await until(`the previous release's apply ${id} ends`, PHASE_MS, () => terminalReceipt(absPath(p.l.runDir), commandId(id)));
-      assert.equal(receipt.state, 'applied', JSON.stringify(receipt));
       await submitOnHead(p, ['resume', 'page-id']);
     });
   } finally {
     await teardown(scope);
   }
   assertFinished(f);
+  const body = (JSON.parse(queued!.toString('utf8')) as { body: Readonly<Record<string, unknown>> }).body;
+  assert.deepEqual([body['type'], 'expectRev' in body, 'base' in body, 'visionEdit' in body], ['apply', true, false, false], 'the previous release\'s CLI queued the apply it knew');
   const [fact, ...more] = factsOf(f.after, 'plan-applied');
   assert.ok(fact !== undefined && more.length === 0);
   assert.deepEqual([fact.rev, fact.command, fact.changes], [2, id, [{ type: 'plan-field', field: 'direction' }]]);
   assert.ok(queued !== null && commandBytes(p, id).equals(queued), 'the previous release\'s command file is never rewritten');
+  assert.match(hostLogs(p), /roadmap: upgrade default \(apply\.expectRev\)/, 'HEAD read the command\'s expectRev as the default base, with a warning');
 });
 
 /**
@@ -720,6 +733,33 @@ async function submitOnHead(p: Phase1, args: readonly string[]): Promise<string>
   assert.equal(receipt.state, 'applied', JSON.stringify(receipt));
   return id;
 }
+
+/** Submits `args` through the previous release's CLI and waits for the command's terminal receipt; returns the command id. */
+async function submitOnPrevious(p: Phase1, args: readonly string[]): Promise<string> {
+  const out = await p.cli([...args, ...p.run]);
+  assert.equal(out.code, 0, out.stderr);
+  const id = (JSON.parse(out.stdout) as { command: string }).command;
+  const receipt = await until(`the previous release's command ${id} ends`, PHASE_MS, () => terminalReceipt(absPath(p.l.runDir), commandId(id)));
+  assert.equal(receipt.state, 'applied', JSON.stringify(receipt));
+  return id;
+}
+
+/**
+ * Acknowledges, through the previous release's CLI, every blocking needs-user still open (a superseded unit's park
+ * escalation, which otherwise holds the arc open), and waits until the previous release records each ack.
+ */
+async function ackOpenItems(p: Phase1): Promise<void> {
+  const open = journalOf(p).view.needsUser().filter((n) => n.blocking && n.ack === null).map((n) => n.id);
+  for (const id of open) {
+    const ack = await p.cli(['ack', id, ...p.run]);
+    assert.equal(ack.code, 0, ack.stderr);
+  }
+  await until('the previous release records the acks', PHASE_MS, () => (journalOf(p).view.needsUser().every((n) => !open.includes(n.id) || n.ack !== null) ? true : null));
+}
+
+/** Every supervisor's and executor's stderr in the host dir (the executors' upgrade-default warnings land there). */
+const hostLogs = (p: Phase1): string =>
+  readdirSync(p.host).filter((n) => /^(supervisor\.[0-9a-f]+|executor\.\d+)\.err$/.test(n)).map((n) => readFileSync(join(p.host, n), 'utf8')).join('');
 
 const RULING = 'C-3';
 const RULING_TEXT = 'Every page identifier is built from slugify.';
@@ -835,11 +875,14 @@ function remainingSteps(p: Phase1, c: Clean): readonly M1Step[] {
 
 type HeadRun = Readonly<{ exit: ExitReason; calls: readonly CallRecord[]; after: readonly Event[]; view: JournalView }>;
 
-/** Starts HEAD on the fixture with `steps` behind its fake backends and waits for the run to end; `during` runs alongside. */
-async function runOnHead(p: Phase1, steps: readonly Step[], during: () => Promise<void>, name = 'fake-head'): Promise<HeadRun> {
+/**
+ * Starts HEAD on the fixture with `steps` behind its fake backends (`binDirs` next on PATH) and waits for the run to end;
+ * `during` runs alongside.
+ */
+async function runOnHead(p: Phase1, steps: readonly Step[], during: () => Promise<void>, name = 'fake-head', binDirs: readonly string[] = []): Promise<HeadRun> {
   const highWater = journalOf(p).view.highWater();
   const s = writeScenario(join(p.dir, name), steps);
-  const env = { ...process.env, PATH: `${s.binDir}:${process.env['PATH'] ?? ''}` };
+  const env = { ...process.env, PATH: [s.binDir, ...binDirs, process.env['PATH'] ?? ''].join(':') };
   const start = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), p.host, 'start', '--repo', p.l.repo, '--plan', p.l.plan, '--profile', 'default'], { env, timeoutMs: START_MS });
   assert.equal(start.code, 0, `HEAD start: ${start.stdout} ${start.stderr}`);
   const ready = JSON.parse(start.stdout) as { kind: string; generation: number; supervisor: number };
@@ -871,16 +914,20 @@ const SLUG_LANE = {
 } as const;
 const SLUG_WITNESS = { lane: SLUG_LANE.id, testIds: ['slugify never starts or ends with a hyphen (A2)'] };
 
-/** The obligations file: I-1 witnessed through `lane` (slug's journey lane: its id is SLUG_LANE's). */
-function obligations(lane: object = SLUG_LANE): unknown {
+/**
+ * The obligations file: I-1 witnessed through `lane` by `witness`, its proof judged on the lane's rev as `revOf` (HEAD's
+ * `laneRevOf`, or the previous release's) computes it. No lane declares `testPaths` and no witness `files`: neither
+ * release before 1.0.0-dev.11 had them.
+ */
+function obligations(lane: object = SLUG_LANE, witness: object = SLUG_WITNESS, revOf: (file: object) => string = (file) => laneRevOf(parseObligations(file).lanes[0]!)): unknown {
   const empty = { schema: 'roadmap/obligations-m3', cutLine: 'the arc ends when page-id ships', lanes: [lane], obligations: [], mapping: { paths: [] } };
-  const laneRev = laneRevOf(parseObligations(empty).lanes[0]!);
+  const laneRev = revOf(empty);
   return {
     ...empty,
     obligations: [{
       id: 'I-1', rev: 1, statement: 'slugify never returns a leading or trailing hyphen.',
       docRef: { path: '.roadmap/contracts/one.md', anchor: '#slugifytext', quotedText: 'The result never starts or ends with' },
-      serves: ['V-1'], witness: SLUG_WITNESS, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness: SLUG_WITNESS },
+      serves: ['V-1'], witness, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness },
       deliveredBy: [], activation: 'must-hold', contracts: ['.roadmap/contracts/one.md'], state: { type: 'active' },
     }],
   };
@@ -1003,16 +1050,15 @@ test('upgrade.target-kind-fixed: an apply cannot switch an adopted architecture-
 });
 
 // ---------------------------------------------------------------------------------------------------
-// M4b: an arc 1.0.0-dev.7 started keeps the dev.7 role set (R5)
+// Routing: HEAD binds the previous release's revisions through the same seat table
 
-test('upgrade.dev7-flow-off: a dev.7 arc runs on HEAD with no role set: its revisions record none, its routing rev moves only by HEAD\'s seat table and re-pins without a park, no flow seat, fact or call; spend resolves', T, async () => {
+test('upgrade.routing-stable: an arc the previous release started keeps its role set and routing rev on HEAD: HEAD\'s revision records the same role set and resolves the same rev, it judges under it with no re-pin and no routing-changed; spend resolves', T, async () => {
   const { p, head } = await stoppedMidBuild(clean(), undefined, false);
   const before = journalOf(p).events;
   const [rev1] = factsOf(before, 'plan-applied');
-  assert.ok(rev1 !== undefined);
-  assert.equal(rev1.routingProvenance.arcRoles, undefined, 'dev.7 records no role set');
-  const dev7Revs = new Set(factsOf(before, 'dispatch').map((d) => d.record.routingRev));
-  assert.equal(dev7Revs.size, 1, 'one arc routing rev under dev.7');
+  assert.ok(rev1 !== undefined && rev1.routingProvenance.arcRoles !== undefined, 'the previous release records its role set');
+  const revs = new Set(factsOf(before, 'dispatch').map((d) => d.record.routingRev));
+  assert.equal(revs.size, 1, 'one arc routing rev under the previous release');
   const scope = scopeOf(p);
   let f: Finished;
   track(scope);
@@ -1029,21 +1075,13 @@ test('upgrade.dev7-flow-off: a dev.7 arc runs on HEAD with no role set: its revi
   assertFinished(f);
   const [rev2, ...more] = factsOf(f.after, 'plan-applied');
   assert.ok(rev2 !== undefined && more.length === 0);
-  assert.equal(rev2.routingProvenance.arcRoles, undefined, 'HEAD\'s revision of the dev.7 arc carries no role set');
-  const stack = provenanceStack(rev2.routingProvenance, 'none', null);
-  const resolved = resolveRouting(stack);
-  // The dev.7 role set hashes no flow seat; the seat table HEAD binds every revision through (OR-L3) moved the low-risk
-  // judgments to the efficient class (1.0.0-dev.10), so the rev moved, and the seats dev.7 hashed reproduce its rev.
-  assert.ok(dev7Revs.has(resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, stack).rev), 'under the seats dev.7 hashed, HEAD resolves the rev dev.7 recorded');
-  assert.ok(!dev7Revs.has(resolved.rev), 'HEAD\'s seat table moved the rev');
-  assert.ok(!seatsInForce(resolved).some((s) => s.role === 'flow'), 'no flow seat in force');
+  assert.deepEqual(rev2.routingProvenance.arcRoles, rev1.routingProvenance.arcRoles, 'HEAD\'s revision carries the role set the previous release recorded');
+  const resolved = resolveRouting(provenanceStack(rev2.routingProvenance, 'none', null));
+  assert.ok(revs.has(resolved.rev), 'HEAD resolves the rev the previous release recorded');
   const judged = factsOf(f.after, 'judgment-inputs');
-  for (const ji of judged) assert.ok(dev7Revs.has(ji.routingRev) || ji.routingRev === resolved.rev, `${ji.unit} ${ji.stage}: judged under the dev.7 rev or HEAD's`);
-  assert.ok(judged.some((ji) => ji.routingRev === resolved.rev), 'HEAD judged under its own rev, the unit re-pinned');
+  assert.ok(judged.length > 0);
+  for (const ji of judged) assert.ok(revs.has(ji.routingRev), `${ji.unit} ${ji.stage}: judged under the previous release's rev`);
   assert.deepEqual(factsOf(f.after, 'stage-outcome').filter((o) => o.outcome === 'routing-changed'), [], 'no routing-changed');
-  assert.deepEqual(f.events.flatMap((e) => (e.type === 'fact' && e.fact.kind.startsWith('flow-') ? [e.fact.kind] : [])), [], 'no flow fact');
-  const flowCalls = f.after.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' && e.expect.subject.purpose === 'arc-backend' && e.expect.subject.role === 'flow' ? [e.op] : []));
-  assert.deepEqual(flowCalls, [], 'no flow call');
   const started = factsOf(f.after, 'executor-started');
   assert.ok(started.length > 0 && started.every((s) => s.host !== undefined), 'HEAD\'s starts record the host fingerprint');
 
@@ -1055,4 +1093,292 @@ test('upgrade.dev7-flow-off: a dev.7 arc runs on HEAD with no role set: its revi
   assert.deepEqual(spend.byModel.unresolvedRevs, []);
   assert.equal(total(spend.byModel.models), total(metered.bySeat), 'every metered seat call resolves to a model');
   assert.equal(total(spend.byRole), total(metered.byRole));
+});
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.11's additive records over an arc the previous release started
+
+/** A plan-check that finds page-id infeasible; played twice (its seat, then the escalation seat), it parks page-id. */
+const INFEASIBLE: M1Step = {
+  role: 'planCheck',
+  answer: { decision: 'infeasible', reasons: ['Contract one cannot be met as written.'], patch: null, risk: 'med', notes: 'Contract one contradicts itself.', premises: [], visionConflict: [], scopeGrowth: [] },
+};
+const REENTRY = 'page-id-2';
+
+/** The architect re-enters `page-id` as REENTRY (its spec and scope), with no `fixes`: the previous release has none. */
+function reenterPageId(l: Layout): void {
+  type Unit = { id: string; spec: string };
+  const spec = JSON.parse(readFileSync(join(l.input, 'page-id.json'), 'utf8')) as object;
+  writeFileSync(join(l.input, `${REENTRY}.json`), `${JSON.stringify({ ...spec, unit: REENTRY, rev: 1 }, null, 2)}\n`);
+  editJson<{ units: Unit[] }>(l.plan, (plan) => {
+    const old = plan.units.find((u) => u.id === 'page-id')!;
+    return { ...plan, units: [...plan.units, { ...old, id: REENTRY, spec: `${REENTRY}.json`, reenters: { unit: 'page-id' } }] };
+  });
+}
+
+test('upgrade.reentry-before-fixes: a re-entry the previous release applied without `fixes` over a lineage with a recorded failure stays in force on HEAD, never classified again: HEAD finishes it, and a later apply is accepted', T, async () => {
+  const c = clean();
+  const p = await preparePrevious([...c.slug, INFEASIBLE, INFEASIBLE, c.pageId.planCheck], [midBuild(pageIdFiles(c))]);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await until('page-id parks infeasible', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'park-pending' ? true : null));
+    reenterPageId(p.l);
+    await submitOnPrevious(p, ['apply']);
+    await midCall(p);
+    await ackOpenItems(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  assert.ok(mid.unit(unitId('page-id')).failures.length > 0, 'page-id\'s lineage recorded a failure: a re-entry added now must name it in `fixes`');
+  const held = mid.unit(unitId(REENTRY));
+  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['build', 'held', 'interrupted']);
+  const inForce = requirePlanInForce(absPath(p.l.runDir), mid).plan.units.find((u) => u.id === REENTRY);
+  assert.deepEqual(inForce?.reenters, { unit: unitId('page-id') }, 'the re-entry in force names no failure');
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+
+  const steps = headFakeSteps({ steps: [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate] }, 'default');
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, steps, async () => {});
+  } finally {
+    await teardown(scope);
+  }
+  assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
+  assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found the previous release\'s revision in force');
+  newDirection(p.l);
+  const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
+  assert.equal(dry.code, 0, dry.stderr);
+  const out = JSON.parse(dry.stdout) as { kind: string; changes: unknown[] };
+  assert.deepEqual([out.kind, out.changes], ['accepted', [{ type: 'plan-field', field: 'direction' }]], dry.stdout);
+});
+
+/** The architect's ruling C-3 on the revision in force: its ledger, no obligations and no vision. */
+const rulingRecord = (p: Phase1, ledger: Buffer): object => ({
+  schema: 'roadmap/ruling-m3', id: RULING, statement: RULING_TEXT, kind: 'decision', ruledBy: { type: 'architect' }, trigger: 'review', supersedes: [], condition: null,
+  docRefs: [{ path: 'ARCHITECTURE.md', anchor: '#architecture', quotedText: 'A tiny library of pure string and number helpers.', relation: 'consistent' }],
+  contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: [], evidence: [], appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
+  consistency: {
+    verdict: 'consistent', judgedRevs: { head: git(p.l.repo, 'rev-parse', 'integration'), ledgerSha256: bytesSha256(ledger), obligationsSha256: null, visionSha256: null, contracts: [] },
+    by: { type: 'architect' },
+  },
+});
+
+const REDIRECT_FACT = { id: 'F2', text: 'Contract one is unambiguous about the empty slug.' };
+
+test('upgrade.written-back-inputs: the owner\'s files the previous release wrote back (a plan-check\'s spec patch, a ruling\'s ledger line and sidecar) rebase cleanly on HEAD: its start and an architect apply take them as in force, and HEAD writes nothing into them', T, async () => {
+  const c = clean();
+  const redirect: M1Step = { role: 'planCheck', answer: { ...((c.pageId.planCheck as Exclude<M1Step, { role: 'build' }>).answer as object), decision: 'redirect', patch: [{ op: 'add', section: 'facts', item: REDIRECT_FACT }] } };
+  const p = await preparePrevious([...c.slug, redirect, c.pageId.planCheck], [midBuild(pageIdFiles(c))]);
+  const ledger = join(p.l.input, 'rulings.md');
+  const sidecar = join(`${ledger}.d`, `${RULING}.json`);
+  const specPath = join(p.l.input, 'page-id.json');
+  const ledgerBefore = readFileSync(ledger);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await midCall(p);
+    const file = join(p.dir, 'C-3.json');
+    writeFileSync(file, `${JSON.stringify(rulingRecord(p, ledgerBefore), null, 2)}\n`);
+    await submitOnPrevious(p, ['rule', file]);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  // What the previous release wrote back into the owner's files.
+  const writtenLedger = readFileSync(ledger);
+  assert.equal(writtenLedger.toString('utf8'), `${ledgerBefore.toString('utf8')}${RULING} — ${RULING_TEXT}\n`, 'the previous release wrote its ruling into the ledger');
+  assert.ok(existsSync(sidecar), 'and its sidecar beside it');
+  const writtenSidecar = readFileSync(sidecar);
+  const writtenSpec = readFileSync(specPath);
+  const spec = JSON.parse(writtenSpec.toString('utf8')) as { rev: number; facts: { id: string }[] };
+  assert.deepEqual([spec.rev, spec.facts.some((x) => x.id === REDIRECT_FACT.id)], [2, true], 'the previous release wrote the plan-check\'s patch into page-id\'s spec');
+  assert.equal(journalOf(p).view.planApplied()?.rev, 2, 'the ruling\'s revision');
+
+  let id = '';
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate], async () => {
+      await until('HEAD\'s executor runs the arc', PHASE_MS, () => (factsOf(journalOf(p).events, 'executor-started').length > 1 ? true : null));
+      newDirection(p.l);
+      id = await submitOnHead(p, ['apply']);
+      await submitOnHead(p, ['resume', 'page-id']);
+    });
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  const [fact, ...more] = factsOf(f.after, 'plan-applied');
+  assert.ok(fact !== undefined && more.length === 0, 'HEAD\'s start found the files in force: only the apply revised the plan');
+  assert.deepEqual([fact.rev, fact.command, fact.changes, fact.rulingsSha256], [3, id, [{ type: 'plan-field', field: 'direction' }], bytesSha256(writtenLedger)]);
+  assert.equal(f.view.unit(unitId('page-id')).spec?.rev, 2, 'page-id merged at the patched rev');
+  assert.ok(readFileSync(ledger).equals(writtenLedger) && readFileSync(sidecar).equals(writtenSidecar) && readFileSync(specPath).equals(writtenSpec), 'HEAD wrote nothing into the owner\'s files');
+  const constraints = git(p.l.repo, 'show', 'integration:.roadmap/constraints.md');
+  assert.equal(constraints.split(`${RULING} — ${RULING_TEXT}`).length - 1, 1, 'C-3 published once');
+});
+
+/** An arc lane over the fixture's initial tests (green from the baseline): `node --test test/text.test.js`. */
+const TEXT_LANE = { ...SLUG_LANE, id: 'text-journey', argv: ['node', '--test', 'test/text.test.js'] } as const;
+const TEXT_WITNESS = { lane: TEXT_LANE.id, testIds: ['words splits on runs of whitespace'] };
+
+test('upgrade.checkpoint-reentry-before-fixes: a holistic arc whose checkpoint the previous release ran re-entered page-id without `fixes` finishes on HEAD: the bundle\'s re-entry stays in force, HEAD\'s final checkpoint reads the applied answer with the default, and a later apply is accepted', T, async () => {
+  const c = clean();
+  type Helpers = typeof import('../helpers/holistic.ts');
+  type Types = typeof import('../../src/holistic/types.ts');
+  const [prev, prevTypes] = await Promise.all([
+    import(pathToFileURL(join(previous.root, 'test', 'helpers', 'holistic.ts')).href) as Promise<Helpers>,
+    import(pathToFileURL(join(previous.root, 'src', 'holistic', 'types.ts')).href) as Promise<Types>,
+  ]);
+  const reenter = { op: 'reenter', unit: REENTRY, reenters: 'page-id', enterAt: null, reset: null, cites: ['V-1'], evidence: ['page-id parked infeasible: it starts over'] };
+  // Once holistic, page-id's park has a checkpoint (ckpt-1, the re-entry); the opt-in's drift audit (audit-1, which the
+  // bundle's revision joins) and its checkpoint (ckpt-2, no-op).
+  const p = await preparePrevious([...c.slug, INFEASIBLE, INFEASIBLE, c.pageId.planCheck], [
+    midBuild(pageIdFiles(c)),
+    prev.checkpointStep('ckpt-1', prev.checkpointAnswer({ decision: 'bundle', ops: [reenter] })),
+    prev.lensStep('audit-1', 'invariants'),
+    prev.checkpointStep('ckpt-2', prev.checkpointAnswer({ decision: 'no-op' })),
+  ]);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await until('page-id parks infeasible', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'park-pending' ? true : null));
+    // The architect opts in through the previous release's CLI, the obligations as it wrote them.
+    writeFileSync(join(p.l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
+    const file = obligations(SLUG_LANE, SLUG_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!));
+    writeFileSync(join(p.l.input, 'obligations.json'), `${JSON.stringify(file, null, 2)}\n`);
+    editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
+    await submitOnPrevious(p, ['apply']);
+    await midCall(p);
+    // The park checkpoint and the drift audit run side by side; the audit's own checkpoint follows it. Every audit
+    // started by then (the bundle's revision's drift included) has ended and its checkpoint settled.
+    await until('the previous release ends its audits and settles their checkpoints', PHASE_MS, () => {
+      const h = journalOf(p).view.holistic();
+      const audited = new Set(h.checkpoints.flatMap((ck) => (ck.inputs.trigger.type === 'audit' ? [ck.inputs.trigger.job] : [])));
+      const settled = h.audits.length > 0 && h.audits.every((a) => a.ended !== null && audited.has(a.started.job)) && h.checkpoints.every((ck) => ck.decided !== null);
+      return settled ? true : null;
+    });
+    await ackOpenItems(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  assert.ok(mid.unit(unitId('page-id')).failures.length > 0, 'page-id\'s lineage recorded a failure');
+  const h = mid.holistic();
+  assert.deepEqual(h.checkpoints.map((ck) => [ck.inputs.job, ck.inputs.trigger.type, ck.decided?.kind]), [['ckpt-1', 'park', 'applied'], ['ckpt-2', 'audit', 'no-op']], 'the park checkpoint re-entered page-id; the drift audit\'s checkpoint changed nothing');
+  assert.deepEqual(h.audits.map((a) => a.started.job), ['audit-1']);
+  const held = mid.unit(unitId(REENTRY));
+  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['build', 'held', 'interrupted']);
+  assert.deepEqual(requirePlanInForce(absPath(p.l.runDir), mid).plan.units.find((u) => u.id === REENTRY)?.reenters, { unit: unitId('page-id') }, 'the bundle\'s re-entry names no failure');
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+
+  const steps: readonly Step[] = [
+    ...headFakeSteps({ steps: [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate] }, 'default'),
+    lensStep('audit-2', 'invariants'), checkpointStep('ckpt-3', checkpointAnswer({ decision: 'no-op' })),
+  ];
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, steps, async () => {});
+  } finally {
+    await teardown(scope);
+  }
+  assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
+  assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found the previous release\'s revision in force');
+  assert.ok(factsOf(r.after, 'witnessed').some((w) => w.for.type === 'candidate' && w.for.unit === REENTRY), 'the brake ran on the re-entry\'s candidate');
+  assert.deepEqual(factsOf(r.after, 'audit-started').map((a) => [a.job, a.triggers.map((t) => t.type)]), [['audit-2', ['final']]]);
+  assert.deepEqual(factsOf(r.after, 'bundle-decided').map((b) => [b.job, b.outcome]), [['ckpt-3', { kind: 'no-op' }]]);
+  assert.equal(factsOf(r.after, 'arc-completed').length, 1);
+  assert.match(hostLogs(p), /roadmap: upgrade default \(checkpoint\.reenter\.fixes\)/, 'HEAD\'s checkpoint read the applied answer\'s re-entry as naming no failure, and warned');
+  // The architect's next apply classifies the plan holding the bundle's re-entry: accepted.
+  newDirection(p.l);
+  const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
+  assert.equal(dry.code, 0, dry.stderr);
+  const out = JSON.parse(dry.stdout) as { kind: string; changes: unknown[] };
+  assert.deepEqual([out.kind, out.changes], ['accepted', [{ type: 'plan-field', field: 'direction' }]], dry.stdout);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// A corpus arc the previous release started: its obligations declare no testPaths and no witness files
+
+test('upgrade.corpus-witnesses-undeclared: a corpus arc the previous release started (its arc lane without testPaths, its witness without files) finishes on HEAD, and an apply\'s Phase 0 reads both as undeclared: unchecked, warned, accepted', T, async () => {
+  const c = clean();
+  type Helpers = typeof import('../helpers/holistic.ts');
+  type Types = typeof import('../../src/holistic/types.ts');
+  type Target = typeof import('../fixtures/corpus-target.ts');
+  type Brake = typeof import('../fixtures/brake-common.ts');
+  const load = <M>(...path: string[]): Promise<M> => import(pathToFileURL(join(previous.root, ...path)).href) as Promise<M>;
+  const [prev, prevTypes, target, brake] = await Promise.all([
+    load<Helpers>('test', 'helpers', 'holistic.ts'), load<Types>('src', 'holistic', 'types.ts'), load<Target>('test', 'fixtures', 'corpus-target.ts'),
+    load<Brake>('test', 'fixtures', 'brake-common.ts'),
+  ]);
+  let gh = '';
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck], [midBuild(pageIdFiles(c)), prev.packReviewStep('review-1')], (l) => {
+    // The previous release's corpus target (its pin, Phase-0 record and fake forge) over the laid-out fixture, the
+    // obligation witnessed on the fixture's initial text tests (green from the baseline), L = {invariants}.
+    gh = join(l.dir, 'bin-gh');
+    mkdirSync(gh, { recursive: true });
+    const file = obligations(TEXT_LANE, TEXT_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!)) as Record<string, unknown>;
+    target.corpusTarget(
+      { arc: l.arc, repo: l.repo, planPath: l.plan, runDir: l.runDir, hostDir: join(l.fake, 'host'), binDir: gh, scenarioPath: '', scenarioDir: '' },
+      { obligations: file, advances: brake.ADVANCES, audit: { lenses: ['invariants'] } },
+    );
+    // The integration branch starts at the corpus baseline.
+    git(l.repo, 'branch', '-f', 'integration', 'main');
+  });
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p, { PATH: [gh, join(p.fakeDir, 'bin'), process.env['PATH'] ?? ''].join(':') });
+    await midCall(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  const held = mid.unit(unitId('page-id'));
+  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['build', 'held', 'interrupted']);
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+
+  const steps: readonly Step[] = [
+    ...headFakeSteps({ steps: [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate] }, 'default'),
+    lensStep('audit-1', 'invariants'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })),
+  ];
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, steps, async () => {}, 'fake-head', [gh]);
+  } finally {
+    await teardown(scope);
+  }
+  assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.equal(r.view.unit(unitId('page-id')).status, 'retired');
+  assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found the previous release\'s revision in force');
+  assert.ok(factsOf(r.after, 'witnessed').some((w) => w.for.type === 'candidate' && w.for.unit === 'page-id'), 'the brake ran on page-id\'s candidate');
+  assert.equal(factsOf(r.after, 'arc-completed').length, 1);
+  newDirection(p.l);
+  const dry = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), p.host, 'apply', '--dry-run', ...p.run], {
+    env: { ...process.env, PATH: [gh, process.env['PATH'] ?? ''].join(':') }, timeoutMs: CLI_MS,
+  });
+  assert.equal(dry.code, 0, dry.stderr);
+  const out = JSON.parse(dry.stdout) as { kind: string; changes: unknown[] };
+  assert.deepEqual([out.kind, out.changes], ['accepted', [{ type: 'plan-field', field: 'direction' }]], dry.stdout);
+  for (const kind of ['obligations.lanes.testPaths', 'obligations.witness.files']) {
+    assert.ok(dry.stderr.includes(`roadmap: upgrade default (${kind})`), `the apply read the obligations with the ${kind} default, and warned: ${dry.stderr}`);
+  }
 });
