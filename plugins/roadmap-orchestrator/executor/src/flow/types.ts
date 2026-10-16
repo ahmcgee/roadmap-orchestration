@@ -518,12 +518,18 @@ export type FlowOutcome = (typeof FLOW_OUTCOMES)[number];
  * increase at `host:cpu` (only decreases or `host` advice subordinate to a saturated cpu).
  */
 export const FLOW_DROP_REASONS = [
-  'target', 'given', 'rejected-before', 'verdict-open', 'elevate-early', 'direction', 'argv-shape', 'lane-cpu', 'concurrency-cpus', 'sequence-repair-waiting',
+  'target', 'given', 'rejected-before', 'verdict-open', 'direction', 'argv-shape', 'lane-cpu', 'concurrency-cpus', 'sequence-repair-waiting',
   'sequence-high-set', 'build-class-step',
 ] as const;
 export type FlowDropReason = (typeof FLOW_DROP_REASONS)[number];
-export type FlowDropped = Readonly<{ proposal: FlowProposal; reason: FlowDropReason; detail: string }>;
-export const flowDropped: Read<FlowDropped> = object((f) => ({ proposal: f.get('proposal', flowProposal), reason: f.get('reason', oneOf(FLOW_DROP_REASONS)), detail: f.get('detail', str) }));
+/**
+ * A recorded drop's reason: the checks' reasons, and `elevate-early`, which a 1.0.0-dev.11 executor wrote before dev.12
+ * dropped the step-order check (read as recorded, never written; scaffolding, BACKLOG "Scaffolding to delete").
+ */
+export const RECORDED_DROP_REASONS = [...FLOW_DROP_REASONS, 'elevate-early'] as const;
+export type RecordedDropReason = (typeof RECORDED_DROP_REASONS)[number];
+export type FlowDropped = Readonly<{ proposal: FlowProposal; reason: RecordedDropReason; detail: string }>;
+export const flowDropped: Read<FlowDropped> = object((f) => ({ proposal: f.get('proposal', flowProposal), reason: f.get('reason', oneOf(RECORDED_DROP_REASONS)), detail: f.get('detail', str) }));
 /** The constraint a run ended with: code's (null before the first point) and the role's (null unless `done`). */
 export type FlowEndedConstraint = Readonly<{ code: CodeConstraint | null; judged: JudgedConstraint | null }>;
 export const flowEndedConstraint: Read<FlowEndedConstraint> = object((f) => ({ code: f.get('code', nullable(codeConstraint)), judged: f.get('judged', nullable(judgedConstraint)) }));

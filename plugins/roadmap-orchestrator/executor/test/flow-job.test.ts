@@ -95,10 +95,10 @@ test('flow.job-proposal-item: a request starts a run from kept inputs; its survi
   }
 });
 
-test('flow.host-and-dropped: host advice raises flow-host; a proposal off the constraint is dropped with its reason and raises nothing', T, async () => {
+test('flow.host-and-dropped: host advice raises flow-host; a proposal targeting held time is dropped with its reason and raises nothing', T, async () => {
   const { r, ctx } = arc([
     flowStep('flow-1', flowAnswer({ proposal: { target: 'stage:build', action: flowAction.host('add cores') } })),
-    flowStep('flow-2', flowAnswer({ proposal: { target: 'stage:gate', action: flowAction.sequence('u1') } })),
+    flowStep('flow-2', flowAnswer({ proposal: { target: 'held', action: flowAction.sequence('u1') } })),
   ]);
   try {
     await runFlowJob(ctx, ['requested'], null);

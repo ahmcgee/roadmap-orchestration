@@ -1332,6 +1332,10 @@ ladder with its own runnable fixture:
     rope is diagnosed only. RC-8: build-seat effort is the build seat's class, moved one class step and never below the
     tier's built-in class (effort lives in the class binding; a plan cannot rebind a class). RC-9: a rejection is
     remembered by `(station, lever, target)`, never by the value; a `worse` verdict adds its key, a `red` proof does not.
+    dev.12 (owner, 2026-10-16: code owns invariants, models own method): the target station and the focusing-step order
+    are the role's method. Code no longer drops a proposal whose target is not the constraint, a component of it or the
+    disputed station, nor an elevate lever before an exploit or subordinate verdict closed on its target
+    (`elevate-early`, read on a dev.11 `flow-ended` only); `target` keeps held, `wait:finding` and the lever's own shape.
   - **Host pressure is a constraint** (owner ruling 2026-10-09, plan rev 3): cpu saturation that degrades every pipeline
     is optimized like a serial suite. Code measures cpu wait (Linux schedstat `run_delay`: time runnable but waiting for
     a cpu) over each launch's own process tree and over the host per scheduler tick, the flow role may name the internal

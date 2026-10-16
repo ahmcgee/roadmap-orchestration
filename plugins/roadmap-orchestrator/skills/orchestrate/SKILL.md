@@ -243,7 +243,8 @@ touches only that lever's plan fields, and judges it on the chart (`status.flow`
 - **`flow-proposal`** (non-blocking, on `watch --actionable`). Read the item and its inputs file, then assess it
   skeptically:
   1. Does it touch a measurement: tests, lanes, witnesses, judgment? A change to what is measured is a reject.
-  2. Does its target match the code constraint (`status.flow.constraint` and its component)?
+  2. Does its target match the code constraint (`status.flow.constraint` and its component)? Code does not check
+     this; a target off the constraint needs a diagnosis that says why.
   3. Is the effect plausible at the target's share of lead time (the station table)? A station at 10 % of lead
      cannot halve it.
   4. Which guard could it breach: lead, rework, first-run reds, an obligation, cost per merge?

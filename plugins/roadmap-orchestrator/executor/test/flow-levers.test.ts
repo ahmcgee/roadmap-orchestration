@@ -43,18 +43,14 @@ const shard = (argv: readonly string[] = ['node', '--test', '--test-concurrency=
 const CONTEXT: ProposalContext = {
   plan: PLAN,
   host: { platform: 'linux', arch: 'x64', cpus: 8, memGiB: 16 },
-  constraint: { station: SLOT, internal: true, component: SUITE_UNIT },
-  judged: { station: SLOT, agree: true, reason: 'the suite dominates the slot' },
   levers: [
     { lever: 'build-class', tier: 'low', class: 'efficient', builtin: 'efficient' },
     { lever: 'build-class', tier: 'med', class: 'frontier', builtin: 'efficient' },
     { lever: 'build-class', tier: 'high', class: 'frontier', builtin: 'frontier' },
   ],
-  givens: [], window: null, verdicts: [], rejections: [], repairWaiting: false, flowHigh: [],
+  givens: [], window: null, rejections: [], repairWaiting: false, flowHigh: [],
 };
 const reason = (p: FlowProposal, context: Partial<ProposalContext> = {}): FlowDropReason | null => checkProposal(p, { ...CONTEXT, ...context })?.reason ?? null;
-/** A context in which an elevate lever on the slot is not early. */
-const AFTER_EXPLOIT: Partial<ProposalContext> = { verdicts: [{ proposal: proposalId('flow-2.0'), lever: 'suite-lane', target: SLOT, verdict: 'no-effect' }] };
 
 describe('the fence', () => {
   it('each lever\'s revision differs from the plan exactly at its own paths, and the preimage tells absent from set', () => {
@@ -145,18 +141,16 @@ describe('checkProposal: each drop reason', () => {
   it('passes the plant proposal', () => assert.equal(checkProposal(proposal(shard()), CONTEXT), null));
 
   it('target', () => {
-    assert.equal(reason(proposal(shard(), stationId('stage:build'))), 'target', 'not the constraint');
-    assert.equal(reason(proposal(shard(), SLOT)), null, 'the constraint itself');
-    assert.equal(reason(proposal(shard(), stationId('stage:build')), { judged: { station: stationId('stage:build'), agree: false, reason: 'r' } }), 'target', 'a suite-lane action off its lane station');
-    assert.equal(reason(proposal({ lever: 'build-class', tier: 'low', class: 'frontier' }, stationId('stage:build')), { judged: { station: stationId('stage:build'), agree: false, reason: 'r' } }), null, 'the disputed station');
-    assert.equal(reason(proposal({ lever: 'host', note: 'n' }, stationId('held')), { judged: { station: stationId('held'), agree: false, reason: 'r' } }), 'target', 'held');
-    const finding = stationId('wait:finding');
-    assert.equal(reason(proposal({ lever: 'host', note: 'n' }, finding), { constraint: { station: finding, internal: true, component: null } }), 'target', 'the finding wait, even as the constraint');
+    assert.equal(reason(proposal(shard(), SLOT)), null, 'the slot');
+    assert.equal(reason(proposal(shard(), stationId('stage:build'))), 'target', 'a suite-lane action off its lane station');
+    // dev.12: which station a proposal targets is the role's method; code's constraint and the role's reading do not bind it.
+    assert.equal(reason(proposal({ lever: 'build-class', tier: 'low', class: 'frontier' }, stationId('stage:build'))), null, 'a station that is not the constraint');
+    assert.equal(reason(proposal({ lever: 'host', note: 'n' }, stationId('held'))), 'target', 'held');
+    assert.equal(reason(proposal({ lever: 'host', note: 'n' }, stationId('wait:finding'))), 'target', 'the finding wait');
     assert.equal(reason(proposal({ lever: 'suite-lane', lane: laneId('nope'), cpu: 4 }, SLOT)), 'target', 'no such lane');
-    assert.equal(reason(proposal({ lever: 'resource-pool', resource: resourceName('cache'), size: 2 }, SLOT), AFTER_EXPLOIT), 'target', 'an unpooled resource');
+    assert.equal(reason(proposal({ lever: 'resource-pool', resource: resourceName('cache'), size: 2 }, SLOT)), 'target', 'an unpooled resource');
     assert.equal(reason(proposal({ lever: 'sequence', unit: unitId('u3'), priority: 'high' }, SLOT)), 'target', 'a cut unit');
-    assert.equal(reason(proposal({ lever: 'resource-pool', resource: resourceName('db'), size: 2 }, SLOT), AFTER_EXPLOIT), 'target', 'a change to nothing');
-    assert.equal(reason(proposal(shard()), { constraint: null, judged: { station: SLOT, agree: true, reason: 'r' } }), 'target', 'no constraint and none disputed');
+    assert.equal(reason(proposal({ lever: 'resource-pool', resource: resourceName('db'), size: 2 }, SLOT)), 'target', 'a change to nothing');
   });
 
   it('given', () => {
@@ -178,13 +172,9 @@ describe('checkProposal: each drop reason', () => {
     assert.equal(reason(proposal({ lever: 'host', note: 'more cores' }, SLOT), { window }), null, 'host advice meanwhile');
   });
 
-  it('elevate-early', () => {
-    const pool = proposal({ lever: 'resource-pool', resource: resourceName('db'), size: 3 }, SLOT);
-    assert.equal(reason(pool), 'elevate-early');
-    assert.equal(reason(pool, { verdicts: [{ proposal: proposalId('flow-2.0'), lever: 'concurrency', target: SLOT, verdict: 'improved' }] }), 'elevate-early', 'an elevate verdict does not count');
-    assert.equal(reason(pool, { verdicts: [{ proposal: proposalId('flow-2.0'), lever: 'suite-lane', target: SUITE_UNIT, verdict: 'improved' }] }), 'elevate-early', 'another target');
-    assert.equal(reason(pool, AFTER_EXPLOIT), null);
-    assert.equal(reason(proposal({ lever: 'host', note: 'n' }, SLOT)), null, 'host is excepted');
+  it('no step order (dev.12): an elevate lever needs no exploit verdict first', () => {
+    assert.equal(reason(proposal({ lever: 'resource-pool', resource: resourceName('db'), size: 3 }, SLOT)), null);
+    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 6 }, SLOT)), null);
   });
 
   it('argv-shape and lane-cpu', () => {
@@ -199,8 +189,8 @@ describe('checkProposal: each drop reason', () => {
   });
 
   it('concurrency-cpus', () => {
-    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 9 }, SLOT), AFTER_EXPLOIT), 'concurrency-cpus');
-    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 8 }, SLOT), AFTER_EXPLOIT), null);
+    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 9 }, SLOT)), 'concurrency-cpus');
+    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 8 }, SLOT)), null);
   });
 
   it('sequence-repair-waiting and sequence-high-set', () => {
@@ -211,12 +201,11 @@ describe('checkProposal: each drop reason', () => {
   });
 
   it('build-class-step: one class step, never below the built-in (RC-8)', () => {
-    const judged = { judged: { station: stationId('stage:build'), agree: false, reason: 'r' } };
     const build = (tier: 'low' | 'med' | 'high', cls: 'efficient' | 'frontier' | 'summit') => proposal({ lever: 'build-class', tier, class: cls }, stationId('stage:build'));
-    assert.equal(reason(build('low', 'summit'), judged), 'build-class-step', 'two steps');
-    assert.equal(reason(build('low', 'frontier'), judged), null);
-    assert.equal(reason(build('high', 'efficient'), judged), 'build-class-step', 'below the built-in frontier');
-    assert.equal(reason(build('med', 'efficient'), { ...judged, levers: CONTEXT.levers }), null, 'back down to the built-in');
+    assert.equal(reason(build('low', 'summit')), 'build-class-step', 'two steps');
+    assert.equal(reason(build('low', 'frontier')), null);
+    assert.equal(reason(build('high', 'efficient')), 'build-class-step', 'below the built-in frontier');
+    assert.equal(reason(build('med', 'efficient'), { levers: CONTEXT.levers }), null, 'back down to the built-in');
   });
 });
 
@@ -224,8 +213,6 @@ describe('levers at host:cpu (RC-12)', () => {
   const HOST_CPU = stationId('host:cpu');
   const AT_CPU: Partial<ProposalContext> = {
     plan: planWith({ capacity: { cpu: 6 } }),
-    constraint: { station: HOST_CPU, internal: true, component: null },
-    judged: { station: HOST_CPU, agree: true, reason: 'every service is inflated' },
     levers: [{ lever: 'concurrency', cpu: 6, set: true, hostCpus: 8 }, ...CONTEXT.levers],
   };
   const at = (action: FlowAction): FlowDropReason | null => reason(proposal(action, HOST_CPU), AT_CPU);
@@ -263,10 +250,9 @@ describe('levers at host:cpu (RC-12)', () => {
     assert.match(detail ?? '', /capacity\.cpu 6 → 8 at host:cpu is not a decrease/);
   });
 
-  it('the target rule: host:cpu only as code\'s constraint or the disputed station', () => {
-    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 4 }, HOST_CPU), { plan: planWith({ capacity: { cpu: 6 } }) }), 'target');
-    const disputed = { judged: { station: HOST_CPU, agree: false, reason: 'the suite runs eight files on four cpus' } };
-    assert.equal(reason(proposal({ lever: 'concurrency', cpu: 4 }, HOST_CPU), { ...AT_CPU, constraint: CONTEXT.constraint, ...disputed }), null);
+  it('host:cpu is a target whatever code\'s constraint (dev.12); the direction check still binds there', () => {
+    assert.equal(at({ lever: 'concurrency', cpu: 4 }), null);
+    assert.equal(at({ lever: 'concurrency', cpu: 7 }), 'direction');
   });
 });
 

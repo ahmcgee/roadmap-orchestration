@@ -4,8 +4,8 @@
 // sum of its components). For the slot, its largest service component too. `wait:finding` (a unit's candidate wait held
 // by an open P1 on an obligation it selects) stands in front of nothing a lever moves: when it is the largest wait it is
 // the constraint itself, diagnostic (no lever targets it, src/flow/levers.ts). Ties go to the station id first in order.
-// The flow role may dispute it; a proposal's target must be the constraint, one of its components, or the disputed
-// station (or one of its components). Pure.
+// The flow role may dispute it; which station a proposal targets is the role's method (dev.12 dropped the rule that
+// it be the constraint or the disputed station). Pure.
 //
 // Ahead of both rules (M4b rev 3, RC-10): when the window's mean pressure is at least `PRESSURE_SATURATED`, the
 // constraint is `host:cpu` (internal): a contended cpu inflates every station's service, so the largest station is a
@@ -14,7 +14,7 @@
 import { type StationId, HOST_CPU_STATION, SLOT_STATION, parseStationId, stationId, stationOf } from '../core/ids.ts';
 import { PRESSURE_SATURATED } from '../host/pressure.ts';
 import { isSlotComponent, stationMeans } from './series.ts';
-import type { CodeConstraint, FlowPoint, JudgedConstraint } from './types.ts';
+import type { CodeConstraint, FlowPoint } from './types.ts';
 
 export const CONSTRAINT_WINDOW = 10;
 export const WAIT_SHARE = 0.1;
@@ -62,14 +62,4 @@ export function codeConstraintOf(points: readonly FlowPoint[]): CodeConstraint |
   const component = station.station === SLOT ? largest(means.filter(([s]) => isSlotComponent(s)))?.[0] ?? null : null;
   if (station.station === SLOT && component === null) throw new Error('flow constraint: the slot has a wait in front of it but no service component in the window');
   return { station: station.station, internal: station.internal, component };
-}
-
-/** `target` is `station` or, when `station` is the slot, one of its components. */
-function within(station: StationId, target: StationId): boolean {
-  return target === station || (station === SLOT && isSlotComponent(target));
-}
-
-/** Whether a proposal may target `target` (the `target` drop rule): code's constraint or a component, or the disputed station or a component. */
-export function targetAdmissible(code: CodeConstraint | null, judged: JudgedConstraint, target: StationId): boolean {
-  return (code !== null && within(code.station, target)) || (!judged.agree && within(judged.station, target));
 }

@@ -1,11 +1,11 @@
 // M4b A1: code's constraint (src/flow/constraint.ts): the largest wait in front of a station when it is at least 10 % of
 // mean lead, else the largest service (the slot as its components' sum), never `held`; the slot's largest component; the
-// last ten points only; and the target rule. M4b rev 3 (RC-10): host:cpu ahead of both rules at a saturated window.
+// last ten points only. M4b rev 3 (RC-10): host:cpu ahead of both rules at a saturated window.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { stationId, unitId } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
-import { codeConstraintOf, targetAdmissible, windowPressure } from '../src/flow/constraint.ts';
+import { codeConstraintOf, windowPressure } from '../src/flow/constraint.ts';
 import type { FlowPoint } from '../src/flow/types.ts';
 
 const AT = isoTime('2026-10-08T09:00:00.000Z');
@@ -66,28 +66,5 @@ describe('flow constraint: host:cpu (RC-10)', () => {
     const old = Array.from({ length: 5 }, () => point(slowWait, 0.9));
     const calm = Array.from({ length: 10 }, () => point(slowWait, 0.05));
     assert.equal(codeConstraintOf([...old, ...calm])?.station, 'slot:integration', 'the last ten points only');
-  });
-
-  it('host:cpu is a target only as code\'s constraint or the disputed station', () => {
-    const code = { station: stationId('host:cpu'), internal: true, component: null };
-    assert.ok(targetAdmissible(code, { station: stationId('host:cpu'), agree: true, reason: 'r' }, stationId('host:cpu')));
-    assert.equal(targetAdmissible(code, { station: stationId('host:cpu'), agree: true, reason: 'r' }, stationId('suite:unit')), false);
-  });
-});
-
-describe('flow constraint: the target rule', () => {
-  const slot = { station: stationId('slot:integration'), internal: true, component: stationId('suite:unit') };
-  const agree = { station: stationId('slot:integration'), agree: true, reason: 'the slot queues' };
-  const dispute = { station: stationId('stage:build'), agree: false, reason: 'the build is slow' };
-
-  it('the constraint or any of its components; the disputed station only when the role disputes', () => {
-    for (const t of ['slot:integration', 'suite:unit', 'suite:e2e', 'candidate-rest', 'ff']) assert.ok(targetAdmissible(slot, agree, stationId(t)), t);
-    assert.equal(targetAdmissible(slot, agree, stationId('stage:build')), false);
-    assert.equal(targetAdmissible(slot, agree, stationId('wait:slot:integration')), false);
-    assert.equal(targetAdmissible(slot, dispute, stationId('stage:build')), true);
-    assert.equal(targetAdmissible(slot, { ...dispute, agree: true }, stationId('stage:build')), false);
-    const build = { station: stationId('stage:build'), internal: false, component: null };
-    assert.equal(targetAdmissible(build, agree, stationId('suite:unit')), false);
-    assert.equal(targetAdmissible(null, dispute, stationId('stage:build')), true);
   });
 });
