@@ -762,7 +762,10 @@ Every stored item adds `state: active | struck | deferred`; ids are never delete
 `SpecPatch = {expectRev, by: {role:'planCheck', routingRev, inv} | {role:'executor', inv}, ops (non-empty)}`; `by`
 is a plan-check redirect's judgment invocation, or the executor appending the build invocation `inv`'s
 `decisions.json` to the decisions section after the evidence snapshot (lead ruling, step 12; not while an applied
-revision of the spec is pending: the unit re-opens on it, and its next build writes its decisions again); ops `add{section, item} |
+revision of the spec is pending: the unit re-opens on it, and its next build writes its decisions again). A `decisions.json` that does
+not validate (`readDecisions`) makes a build that reported success `malformed` (dev.12), the resume round quoting why;
+one still read at evidence (a build lost with tree effects, or read by a previous release) is not appended and a stderr
+line names it. Ops `add{section, item} |
 replace{section, item} | strike{id} | defer{id} | cite{contracts, rulings}`, sections `lanes | acceptance |
 decisions | facts`. `cite` adds to `cites` (at least one entry; a repeated cite is already there) and nothing
 removes one; a plan-check redirect citing no plan contract or no ledger ruling is `malformed`, and so (run 10, C) is

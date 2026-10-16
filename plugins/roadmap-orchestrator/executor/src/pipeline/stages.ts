@@ -49,7 +49,8 @@
 //   quiesce     the build invocation's workload is empty (invoke already guarantees it; asserted).
 //   evidence    `evidence.snapshot` of the build's stdout, stderr and evidence dir, and the fast lanes'
 //               declared outputs in the worktree; then the implementer's decisions.json is appended to
-//               the spec's decisions (spec.patch by the executor).
+//               the spec's decisions (spec.patch by the executor). A decisions.json that does not validate makes
+//               a build that reported success malformed (dev.12): its resume round quotes why.
 //   salvage     `salvage.commit` under the pinned scope; a plan contract, the architecture doc or its
 //               digest in the unit's merge-base diff is a risk trigger; a merge left in progress parks. A
 //               failed salvage cleans the build's reservation, and the instances that cleanup failed join the
@@ -1374,6 +1375,9 @@ export async function buildRead(
       malformed = true;
     }
   }
+  // dev.12: a decisions.json that does not validate is part of a malformed report: the resume round quotes why
+  // (src/pipeline/unit.ts `malformedError`), so the implementer rewrites it instead of the decisions being lost.
+  if (v.kind === 'success' && !malformed) malformed = typeof readDecisions(absPath(join(workDir(ctx.runDir, parent), DECISIONS_FILE))) === 'string';
   // A resolve round must end with the merge committed: HEAD with parents [old, T] (mergeinCompleted). A
   // report of success without it does not describe the tree, so it is read as a malformed report.
   if (v.kind === 'success' && !malformed && round === 'resolve') malformed = !mergeinResolved(ctx, unit.id);
@@ -1438,23 +1442,36 @@ export async function evidence(ctx: StageContext, unit: PlanUnit, run: BuildRun)
 }
 
 /**
+ * The implementer's decisions.json at `file`: its validated content, null when it was not written, or why it does not
+ * validate (a build whose report validates but whose decisions.json does not is malformed: `buildRead`).
+ */
+export function readDecisions(file: AbsPath): DecisionsFile | string | null {
+  if (!existsSync(file)) return null;
+  try {
+    return validateDecisionsFile(JSON.parse(readFileSync(file, 'utf8')));
+  } catch (error) {
+    if (!(error instanceof SyntaxError || error instanceof SchemaError)) throw error;
+    return `${DECISIONS_FILE} does not validate: ${error.message}`;
+  }
+}
+
+/**
  * The implementer's decisions.json, as captured by the snapshot, appended to the spec's decisions section
  * (lead ruling, step 12): one `spec.patch` by the executor, so the gate grades against every decision taken
  * and the new revision is part of the approval fingerprint. A new id is added, a decision restated with new
- * text replaces the active one, a decision restated verbatim is already there. A file that does not
- * validate, or an entry naming an item that is not an active decision, is not appended: it stays in the
- * build's evidence dir, which the gate reads. Nor is anything appended while the architect's revision of the
- * spec is pending (`UnitState.pendingRevision`): the unit re-opens on that revision at its next boundary that
- * allows it, and its next build writes its decisions again.
+ * text replaces the active one, a decision restated verbatim is already there. An entry naming an item that is
+ * not an active decision is not appended: it stays in the build's evidence dir, which the gate reads. A file that
+ * does not validate reaches here only from a build with no report to refuse (lost with tree effects) or one a
+ * previous release read (`buildRead` makes any other malformed): it is not appended, and a stderr line names it.
+ * Nor is anything appended while the architect's revision of the spec is pending (`UnitState.pendingRevision`): the
+ * unit re-opens on that revision at its next boundary that allows it, and its next build writes its decisions again.
  */
 async function appendDecisions(ctx: StageContext, unit: PlanUnit, run: BuildRun, file: AbsPath, parent: StageParent): Promise<void> {
-  if (!existsSync(file)) return;
-  let decisions: DecisionsFile;
-  try {
-    decisions = validateDecisionsFile(JSON.parse(readFileSync(file, 'utf8')));
-  } catch (error) {
-    if (error instanceof SyntaxError || error instanceof SchemaError) return;
-    throw error;
+  const decisions = readDecisions(file);
+  if (decisions === null) return;
+  if (typeof decisions === 'string') {
+    process.stderr.write(`roadmap: ${unit.id} ${parent.stage}#${parent.attempt}: ${file} not appended to the spec: ${decisions}\n`);
+    return;
   }
   if (ctx.journal.view.unit(unit.id).pendingRevision !== null) return;
   const { path, spec, sha256 } = loadUnitSpec(ctx, unit);
