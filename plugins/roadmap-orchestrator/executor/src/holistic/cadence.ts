@@ -18,7 +18,8 @@
 //   wall-clock    `wallClockMin` (default 360) since the latest audit started or unit published, while work remains
 //                 (a plan unit not retired, cut or superseded)
 //   requested     `audit [--lens]` (`audit-requested`): its lenses ∩ L, or L
-//   final         H9: no work remains and some lens in L has an outstanding range: those lenses only
+//   final         H9: no work remains and some lens in L has an outstanding range (one an abandoned audit covered
+//                 in part included: its rest is outstanding): those lenses only
 // Everything else runs all of L. Triggers coalesce: an audit records every owed trigger.
 //
 // Due: one audit at a time, and some trigger is fresh: its event came after the latest audit started, the wall-clock

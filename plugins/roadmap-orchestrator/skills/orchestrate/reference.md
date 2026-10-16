@@ -75,7 +75,8 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   keeps the scope: the plan-check runs again, told what you rejected, and decides within the scope. Acknowledges the
   item. Rejected for a unit not held for a proposal.
 - `roadmap audit [--lens <lenses>]`: request an audit (holistic arcs; lenses comma-separated, within the arc's set:
-  `invariants`, `drift`, `vacuity`, `vision`).
+  `invariants`, `drift`, `vacuity`, `vision`). An audit reviews each lens's whole outstanding range: one too large
+  for a single lens call is reviewed in chunks by publication within that audit, so no range needs a smaller audit.
 - `roadmap close-admissions`: latch `draining`; checkpoint admissions become requests to you; an `apply` adding a
   unit reopens.
 - `roadmap gc --repo <path> [--keep <K>] [--dry-run]`: not queued. Under the host lock, prunes sealed arcs (raw

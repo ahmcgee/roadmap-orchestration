@@ -377,7 +377,7 @@ them acts (§2.8).
   `audit [--lens]`; **final**: at the final head, every lens in L with an outstanding range (H9). Triggers
   coalesce, one audit runs at a time, and each records its causal generation (§2.8).
 - **Immutable inputs**: `audit-started{job, triggers, generation, lenses, integrationSha, planRev,
-  ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater}`, captured under the revision
+  ledgerSha256, obligationsSha256, visionSha256, owners, priorFindings, highWater, diffBudget}`, captured under the revision
   fence (§2.6, A19): owners are the branch SHAs of parked or in-flight owners (the w33 P1s were already fixed on
   a blocked branch), prior findings carry dispositions (w35–37 repeated one note thrice). A detached worktree,
   so merges continue.
@@ -387,6 +387,15 @@ them acts (§2.8).
   P1s are re-witnessed on the current head. A failed job-lane cleanup leaves a residue owned by `job{…}`,
   probed and reclaimed like any other; the job re-runs the lane. A job whose lane gives no verdict is retried on
   the retryable-park backoff, and at 6 h raises one non-blocking `park-escalated` (lead ruling 2026-09-30).
+- **Bounded ranges (2026-10-16).** A lens's range is reviewed in chunks by publication: each call covers its
+  watermark to the furthest published integration head whose diff attaches whole within the recorded `diffBudget`
+  (at least one publication), and the job asks again from there until the audited SHA, so one audit drains every
+  range it runs and no range can outgrow a lens call (a dev.10 arc's range did, and every audit was abandoned).
+  Every attachment, the chunk's and the owners' branch diffs, is bounded: the stat, then per-file diffs in path
+  order while they fit; a file not inlined (over what remains, or a plan-declared `derived` output) is listed with
+  the exact `git diff` that prints it, which the lens runs in its checkout. The prompt makes a report the lens's
+  statement that it read every file of its range. Coverage records exactly the chunks reported: a lens that fails a
+  later chunk keeps the earlier ones, and its rest stays outstanding for the next audit.
 - **Coverage**: per lens, a contiguous watermark over the integration history; results are observations keyed by
   the audited SHA. A docs-only publication (the executor-rendered `.roadmap/` files, rendered by code from
   in-force records) covers its own edge U→D by construction (`docs-covered`, A17, H8): a lens's watermark

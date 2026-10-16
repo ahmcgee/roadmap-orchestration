@@ -285,10 +285,13 @@ export type LensInputs = Readonly<{
   vision: VisionInput;
   lens: LensKind;
   obligations: readonly ObligationView[];
-  /** The audited range: the lens's watermark to the audited SHA, with its diff. */
-  range: Readonly<{ from: Sha; to: Sha; diff: string }>;
-  /** Branch diffs of parked or in-flight owners of open findings (the w33 P1s were already fixed on one). */
-  owners: readonly Readonly<{ unit: UnitId; head: Sha; diff: string }>[];
+  /**
+   * The range this call reviews: from the lens's watermark to `diff.to`, the audited SHA or, for an outstanding range
+   * over the budget, an earlier published head (one chunk; src/holistic/lensdiff.ts), with its bounded attachment.
+   */
+  range: Readonly<{ audited: Sha; diff: BoundedDiff }>;
+  /** Branch diffs of parked or in-flight owners of open findings (the w33 P1s were already fixed on one), bounded together. */
+  owners: readonly Readonly<{ unit: UnitId; head: Sha; diff: BoundedDiff }>[];
   priorFindings: readonly FindingView[];
   contracts: readonly DocText[];
   rulings: readonly RulingText[];
@@ -303,6 +306,23 @@ export type LensInputs = Readonly<{
   specsOnly: readonly RenderedSpec[] | null;
   /** M4b (paid run 3): this lens asked again because drafts of its previous report on this tree were refused; null: a first call. */
   retry: LensRetry | null;
+}>;
+
+/** A file of a range a lens was not shown: a plan-declared derived output, or over what the budget left (src/holistic/lensdiff.ts). */
+export type OmittedFile = Readonly<{ path: string; why: 'derived' | 'size' }>;
+
+/**
+ * A diff attached within a byte budget (src/holistic/lensdiff.ts `boundedDiff`): the stat of the whole range (`full`
+ * false: its shortstat, the full one over its share), the per-file diffs inlined, the files not inlined (each read with
+ * `git diff <from> <to> -- <path>`), and how many more were not inlined past the listing's share.
+ */
+export type BoundedDiff = Readonly<{
+  from: Sha;
+  to: Sha;
+  stat: Readonly<{ text: string; full: boolean }>;
+  inlined: string;
+  omitted: readonly OmittedFile[];
+  unlisted: number;
 }>;
 
 /** A lens asked again: the drafts refused with why, and the claims and causes of the previous report's admitted findings. */
@@ -743,6 +763,22 @@ export function lensRetryText(retry: LensRetry | null): string {
   const refused = retry.refused.map((x) => `- claim: ${x.claim}\n  cause: ${x.cause}\n  refused: ${x.reason}`).join('\n');
   const recorded = retry.recorded.length === 0 ? '(none)' : retry.recorded.map((x) => `- claim: ${x.claim}\n  cause: ${x.cause}`).join('\n');
   return `\n\n<previous_report>\nThis lens already reported on this tree. The executor could not admit these findings of that report, so they are not recorded:\n${refused}\nReport each of them again with the defect corrected, under the same cause: copy each edit's old text exactly from the file at the audited SHA, with enough lines that it occurs exactly once, and name a lane from the obligations. These findings of that report are recorded; do not report them again:\n${recorded}\nReport anything else your lens finds as usual.\n</previous_report>`;
+}
+
+/** A path as one shell word (single-quoted). */
+const shellWord = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * A bounded diff (src/holistic/lensdiff.ts) as a lens reads it: the stat and the inlined per-file diffs as pasted
+ * content under `label`, then `<not_inlined>`: each file not shown, why, and the exact command that prints its diff.
+ */
+export function boundedDiffText(label: string, d: BoundedDiff): string {
+  if (d.from === d.to) return '(empty: no change)';
+  const statNote = d.stat.full ? '' : `\nThe full stat is too long to attach; \`git diff --stat ${d.from} ${d.to}\` prints it.`;
+  const files = d.omitted.map((o) => `- ${o.path} (${o.why === 'derived' ? 'derived output' : 'not inlined: over the budget'}): git diff ${d.from} ${d.to} -- ${shellWord(o.path)}`);
+  if (d.unlisted > 0) files.push(`- ${d.unlisted} more files not inlined, not listed here: \`git diff --name-only ${d.from} ${d.to}\` names every file of the range; read each one not shown above with git diff ${d.from} ${d.to} -- <path>`);
+  const omitted = files.length === 0 ? '' : `\n<not_inlined>\n${files.join('\n')}\n</not_inlined>`;
+  return `${pasted(label, `${d.stat.text}\n${d.inlined}`)}${statNote}${omitted}`;
 }
 
 /** The checkpoint's input manifest (H4): every captured input by kind, id, kept path and hash. */

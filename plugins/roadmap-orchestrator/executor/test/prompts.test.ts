@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
+  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
 } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
 import { failureRef } from '../src/core/records.ts';
@@ -14,7 +14,7 @@ import { SchemaError } from '../src/core/validate.ts';
 import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
 import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
-import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
+import { type BoundedDiff, type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
   CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
   validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
@@ -106,6 +106,9 @@ const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
   };
 };
 
+/** A bounded diff shown whole: its stat, `inlined`, nothing omitted. */
+const shown = (from: Sha, to: Sha, inlined: string): BoundedDiff => ({ from, to, stat: { text: ` 1 file changed\n`, full: true }, inlined, omitted: [], unlisted: 0 });
+
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
     {
@@ -183,13 +186,16 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   ],
   lens: [
     {
-      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { from: SHA_A, to: SHA_B, diff: 'RANGE-A' },
+      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null, retry: null,
     },
     {
-      vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: { from: SHA_B, to: SHA_A, diff: 'RANGE-B' },
-      owners: [{ unit: unitId('u-two'), head: SHA_B, diff: 'OWNER-B' }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
+      vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
+        audited: SHA_A,
+        diff: { ...shown(SHA_B, SHA_A, 'RANGE-B'), stat: { text: 'STAT-B', full: false }, omitted: [{ path: 'dist/b.js', why: 'derived' }, { path: "src/it's.js", why: 'size' }], unlisted: 2 },
+      },
+      owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
       specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
@@ -653,7 +659,23 @@ describe('M3 prompts: the vision and the arc roles', () => {
     for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
     const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
     assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
-    assert.match(text, /Unit u-two at b{40}:\n<pasted_content/, 'owner branches marked as pasted data');
+    assert.match(text, /Unit u-two at b{40} \(its diff from a{40}\):\n<pasted_content/, 'owner branches marked as pasted data');
+  });
+
+  it('the lens-range fix: a bounded range names its chunk and the audited SHA, lists each file not shown with the command that prints it, and the lens reads them before it reports', () => {
+    const mod = promptFor('lens', 'claude-opus-5-5');
+    const text = mod.render(SAMPLES.lens[1]);
+    const [a, b] = [SHA_A, SHA_B];
+    assert.ok(text.includes(`<audited_range from="${b}" to="${a}" audited="${a}">`));
+    assert.match(text, /<pasted_content id="[0-9a-f]{8}">\nSTAT-B\nRANGE-B\n<\/pasted_content/, 'the stat, then the inlined diffs, as pasted data');
+    assert.ok(text.includes(`The full stat is too long to attach; \`git diff --stat ${b} ${a}\` prints it.`));
+    assert.ok(text.includes(`- dist/b.js (derived output): git diff ${b} ${a} -- 'dist/b.js'`));
+    assert.ok(text.includes(`- src/it's.js (not inlined: over the budget): git diff ${b} ${a} -- 'src/it'\\''s.js'`), 'the path quoted as one shell word');
+    assert.ok(text.includes(`- 2 more files not inlined, not listed here: \`git diff --name-only ${b} ${a}\``));
+    assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat/, 'a range shown whole lists nothing');
+    for (const needle of [/Every file under <not_inlined> is part of the range and was not shown to you/, /read each one with the command beside it/,
+      /the executor records the whole range as reviewed by your lens, so your report is your statement that you read every part of it/,
+      /Never judge a file from its name or its stat line alone/, /split by publication/, /The same applies to <owner_branches>/]) assert.match(mod.system, needle);
   });
 
   it('plan-check (R17): the vision as read-only context, and visionConflict never a redirect by itself', () => {

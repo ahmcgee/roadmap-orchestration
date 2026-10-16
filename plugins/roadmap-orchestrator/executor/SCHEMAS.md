@@ -216,8 +216,8 @@ recovery hold.
 
 **1.0.0-dev.10 → 1.0.0-dev.11 (plan defects, 2026-10-16 arc feedback).** `SCHEMA_VERSION` stays 1; every change is
 additive. The scaffolding is `laneTestPathsUndeclared` and `witnessFilesUndeclared` in `src/core/upgrade.ts` (an arc
-started on dev.10 whose obligations declare no witness files is read as undeclared: Phase 0 checks nothing of it). An
-arc started on dev.10 is adopted.
+started on dev.10 whose obligations declare no witness files is read as undeclared: Phase 0 checks nothing of it), and
+`auditDiffBudgetOf` (the lens-range fix). An arc started on dev.10 is adopted, an audit it left running included.
 
 | Record | Change | Read-time default for dev.10 state |
 |---|---|---|
@@ -229,6 +229,9 @@ arc started on dev.10 is adopted.
 | `StartupRejection` | `+ plan-defect{defects: PlanDefect[]}` (non-empty) | none |
 | `stage-outcome` lanes, `StageOutcomeDetail` | `+ plan-defect` (park `operator env`, uncharged; `detail: plan-defect{defects}`); `+ scope-growth` (class `hold`, as plan-check's) | none |
 | `NeedsUserReason` | `+ plan-defect` (blocking) | none |
+| `audit-started` (the lens-range fix) | `+ diffBudget?: number` (bytes; every audit since): each lens reviews its range in chunks by publication within the job, each chunk's and the owners' diffs attached within it (src/holistic/lensdiff.ts) | absent (an audit a dev.10 executor started, still running): its lenses read their whole range in one call, as its recorded calls did, attached within today's budget (`auditDiffBudgetOf`, warned once; scaffolding). A dev.10 range that outgrew a lens call needs nothing else: the next audit chunks it |
+| `audit-ended.covered` (the lens-range fix) | no shape change: `to` is how far the lens's reported chunks reached, the audited SHA unless a later chunk failed | none |
+| `LensInputs` (not persisted) | `range: {audited, diff: BoundedDiff}`, owners' `diff: BoundedDiff` (`{from, to, stat{text, full}, inlined, omitted[{path, why: derived\|size}], unlisted}`) in place of the diff text | none |
 | Checkpoint answer | split child `witness + files: string[]` (`CHECKPOINT_SCHEMA` requires it; `[]` declares none) | absent: none declared |
 | `UnitState.scopeDecisions` (fold) | `+ stage: plan-check \| lanes` | derived |
 | `UnitStatusLine` (`status`) | `+ derived: RepoPattern[]` (the dispatch record's) | `[]` |
@@ -1438,8 +1441,8 @@ added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`, `a
 | `obligation-latched` | `obligation, unit, treeSha`: after `ff{published}`, before the snapshot; once per obligation |
 | `finding-opened` | `id, key (findingKey = sha256 of canonical {lens, obligation, cause}), lens: LensKind\|witness\|plan-check, severity: P1\|P2\|P3, obligation\|null, visionClauses (ascending), claim, evidence: [{path, blob\|null}], mutant: {patchSha256, lane}\|null (vacuity only), source: job{job} \| stage{unit, stage: plan-check, attempt}, gateHadPassed`. Plan-check (R17) opens only P3 findings citing clauses, from its attempt (the only `stage` source); a `witness` finding is a P1 over its obligation; a `vision` finding is P2 or P3 |
 | `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced \| close-out}}` (`close-out`: run 10, F) |
-| `audit-started` | `job (audit-n), triggers: [cadence \| unwitnessed{obligation} \| drift{planRev} \| wall-clock \| requested{command} \| final] (non-empty), generation, lenses (ascending, a subset of L), integrationSha, planRev, ledgerSha256\|null, obligationsSha256\|null, visionSha256, owners: [{unit, head}] (ascending), priorFindings, highWater` |
-| `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens), findings, suppressed, outcome: completed\|abandoned, refused?: [{lens, attempt, claim, cause, reason}]` (M4b: each lens draft refused at admission, in call order; absent on an earlier executor's) |
+| `audit-started` | `job (audit-n), triggers: [cadence \| unwitnessed{obligation} \| drift{planRev} \| wall-clock \| requested{command} \| final] (non-empty), generation, lenses (ascending, a subset of L), integrationSha, planRev, ledgerSha256\|null, obligationsSha256\|null, visionSha256, owners: [{unit, head}] (ascending), priorFindings, highWater, diffBudget?` (bytes, positive; absent on an audit a dev.10 executor started) |
+| `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens; `to` as far as the lens's reported chunks reached), findings, suppressed, outcome: completed\|abandoned, refused?: [{lens, attempt, claim, cause, reason}]` (M4b: each lens draft refused at admission, in call order; absent on an earlier executor's) |
 | `docs-covered` | `pub, from: U, to: D` (A17, H8) |
 | `checkpoint-inputs` | `job (ckpt-n), trigger: audit{job} \| park{unit, seq}, generation, vector: {plan, specs: {unit: rev}, obligationsSha256\|null, ledgerSha256\|null, visionSha256, contracts: [{path, blob}]}, headSha, visionSha256 (= the vector's), findings, observations: ObservationKey[]` |
 | `bundle-decided` | `job, outcome: no-op \| rejected{reason: stale\|evidence\|invalid, detail} \| requested{needsUser}`; an applied bundle is its `plan-applied{source: bundle{job}}` instead |
@@ -2075,14 +2078,23 @@ src/pipeline/dispatch.ts `callArcRole`):
    `witness not held`) for each must-hold or latched obligation `not-held` on the audited tree; the lenses serially, the
    vision first, each `@cpu`×1 under the job holder through `acquireFirst`, in a detached checkout `<job>.lenses`,
    reading the recorded vision, obligations and ledger by their kept bytes, every plan contract at the audited SHA in
-   full, owner branch diffs from `diffBase`. A lens call is `arc-backend{role: lens, tier: arc, routingRev, job,
-   attempt}`, `attempt` its place in the run order (a retry's: after every lens's first call, numbered in order, M4b); a
-   resumed job consumes a recorded call (`recordedArcCall`) and asks again only for a lost one. A lens's refusal,
-   malformed report or fault, or a draft refused again after its retry, abandons the audit after the rest; a usage
-   limit or capacity parks the backend (`verdictOf` with a job parent; the usage-limit item parented by the spawn op)
-   and stops it. The lens checkout is removed (citing an evidence snapshot) before `audit-ended`, so a crash never
-   strands it. `covered` lists only lenses that reported with a non-empty range, from their watermark at the capture to
-   the audited SHA. Crash labels `audit.after-started`, `audit.after-lens`, `audit.before-ended`, `audit.after-ended`
+   full, owner branch diffs from `diffBase`. The lens-range fix (2026-10-16, src/holistic/lensdiff.ts): a lens reviews
+   its range in chunks, one call each, from its watermark to the furthest first-parent commit of the range that is a
+   published head (or the audited SHA) whose diff attaches whole within `diffBudget` (`LENS_DIFF_BUDGET`, 128 KiB; at
+   least the first such head), then from there, until the audited SHA. Every attachment (`BoundedDiff`; the chunk's,
+   and the owners' sharing one budget) is the `--stat` (its `--shortstat` past an eighth of the budget), then per-file
+   diffs in path order each while it fits; a plan `derived` output, or a file whose blobs exceed four budgets, is never
+   inlined; files not inlined are listed with `git diff <from> <to> -- <path>` within an eighth of the budget, the rest
+   counted. An audit without `diffBudget` (a dev.10 executor's) reviews each range in one call. A lens call is
+   `arc-backend{role: lens, tier: arc, routingRev, job, attempt}`, `attempt` its lens's place in the run order for its
+   first call; every further call (a retry, M4b, over the same chunk; a later chunk) after every lens's first, numbered
+   in order; a resumed job consumes a recorded call (`recordedArcCall`) and asks again only for a lost one, finding the
+   chunks again from git, the published heads and the recorded budget. A lens's refusal, malformed report or fault, or
+   a draft refused again after its retry, abandons the audit after the rest; a usage limit or capacity parks the backend
+   (`verdictOf` with a job parent; the usage-limit item parented by the spawn op) and stops it. The lens checkout is
+   removed (citing an evidence snapshot) before `audit-ended`, so a crash never strands it. `covered` lists each lens
+   whose reported chunks reached past its watermark, from that watermark at the capture as far as they reached (the
+   audited SHA unless a later chunk failed). Crash labels `audit.after-started`, `audit.after-lens`, `audit.before-ended`, `audit.after-ended`
    (matrix row AUDIT_JOB).
 8. **Race:** `rewitnessP1s` re-runs, on the head when it moved past the audited SHA, the lanes of the active P1s over an
    obligation the audit named, under the same job. `runAudit` calls it at its end; the checkpoint (B6) calls it again

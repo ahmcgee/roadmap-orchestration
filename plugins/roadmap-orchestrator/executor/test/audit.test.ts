@@ -5,7 +5,9 @@
 // orders), audit.owed, audit.skipped-on-park, audit.starts-in-ff-window (H2), coverage.docs-edge-contiguous (H8), coverage.docs-edge-subsumed,
 // coverage.vision-reset (H3), the crash cells of the matrix row AUDIT_JOB (test/matrix.ts), and M4a rev 3 (N5):
 // cadence.spec-only-bundle-vision-lens-only, cadence.obligation-bundle-full-drift, audit.cross-lens-merge-corroborated,
-// audit.cross-lens-different-cause-separate (with a refused mutant refused again); M4b: audit.refused-mutant-retried.
+// audit.cross-lens-different-cause-separate (with a refused mutant refused again); M4b: audit.refused-mutant-retried; the
+// lens-range fix (2026-10-16): audit.range-chunked, audit.oversized-publication-bounded, audit.upgrade-dev10-oversized-range,
+// audit.chunk-crash-resume.
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,7 +27,8 @@ import { type AuditContext, runAudit } from '../src/holistic/audit.ts';
 import { type Cadence, cadence } from '../src/holistic/cadence.ts';
 import { coverageBase, coverageOf, lensCoverage } from '../src/holistic/coverage.ts';
 import { findingKey } from '../src/holistic/types.ts';
-import { readNeedsUser } from '../src/needsuser.ts';
+import { openBlocking, readNeedsUser } from '../src/needsuser.ts';
+import { LENS_DIFF_BUDGET } from '../src/holistic/lensdiff.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { reached, release } from './helpers/barrier.ts';
@@ -771,4 +774,202 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
       r.journal.close();
     }
   });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// The lens-range fix (2026-10-16): a lens's outstanding range over the budget is reviewed in chunks by publication within
+// one audit, each chunk's diff attached within the budget (src/holistic/lensdiff.ts); coverage records exactly what the
+// reports reached. The fixtures' diffs are genuinely over LENS_DIFF_BUDGET (no test hook sets a smaller one).
+
+/** About `n` bytes of source, in 50-byte lines tagged `tag`. */
+const bigSource = (tag: string, n: number): string =>
+  Array.from({ length: Math.ceil(n / 50) }, (_, i) => `${`export const ${tag}${i.toString().padStart(6, '0')} = 1;`.padEnd(49)}\n`).join('');
+/** Two units, each publishing about 100 KB: their range together is over the budget, each alone within it. */
+const TWO_BIG = [
+  ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/big1.js': bigSource('bigone', 100_000) }),
+  ...unitSteps('u2', { ...moduleFiles('div', '/'), 'src/big2.js': bigSource('bigtwo', 100_000) }),
+];
+const TWO_UNITS = { units: [{ id: 'u1' }, { id: 'u2' }], ...I1, mapping: [] };
+/** The `<audited_range>` opening tag a lens call's stdin carries. */
+const rangeTag = (from: Sha, to: Sha, audited: Sha): string => `<audited_range from="${from}" to="${to}" audited="${audited}">`;
+/**
+ * The `spawn.after-runner-exit` occurrences of the chunk calls in a two-chunk audit of TWO_BIG (the recording mode lists
+ * them for its one process): the arc lane's observation is reused from u2's publication, so the first spawn is chunk 1's.
+ */
+const CHUNK_SPAWN = [1, 2] as const;
+
+describe('the lens-range fix: chunks by publication, bounded attachments', () => {
+  test('audit.range-chunked: a range over the budget is reviewed chunk by chunk in one audit; a lens failing a later chunk keeps what it reported, and the next audit drains the rest', T, async () => {
+    const { d } = auditArc({
+      steps: [
+        ...TWO_BIG,
+        lensStep('audit-1', 'vision', [], [], ['bigone000100']), lensStep('audit-1', 'vision', [], [], ['bigtwo000100']),
+        lensStep('audit-1', 'invariants', [], [], ['bigone000100']), { as: 'claude', unit: 'audit-1', lens: 'invariants', expect: {}, acts: [{ type: 'malformed' }] },
+        lensStep('audit-2', 'invariants', [], [], ['bigtwo000100']),
+      ],
+      ...TWO_UNITS, audit: { every: 5, lenses: [...L2], wallClockMin: 1 },
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      const S0 = head(d.repo);
+      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+      const S1 = head(d.repo);
+      assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
+      const S2 = head(d.repo);
+      const first = await runAudit(ctx);
+      assert.ok(first.kind === 'ended' && first.outcome === 'abandoned', JSON.stringify(first));
+      assert.equal(started(r)[0]!.diffBudget, LENS_DIFF_BUDGET, 'the budget is a recorded input');
+      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'invariants', from: S0, to: S1 }, { lens: 'vision', from: S0, to: S2 }], 'the failed lens keeps the chunk it reported');
+      const calls = lensCalls(r);
+      assert.deepEqual(calls.map((c) => `${c.unit}:${c.lens}`), ['audit-1:vision', 'audit-1:vision', 'audit-1:invariants', 'audit-1:invariants']);
+      assert.ok(calls[0]!.stdin.includes(rangeTag(S0, S1, S2)) && !calls[0]!.stdin.includes('bigtwo000100'), 'chunk 1: u1\'s publication alone');
+      assert.ok(calls[1]!.stdin.includes(rangeTag(S1, S2, S2)) && !calls[1]!.stdin.includes('bigone000100'), 'chunk 2: from where chunk 1 ended');
+      for (const c of calls) assert.doesNotMatch(c.stdin, /<not_inlined>/, 'each chunk attaches whole');
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true], ['vision', S2, false]]);
+      assert.deepEqual(cadence(ctx, () => 2)!.plan, { triggers: [{ type: 'final' }], lenses: ['invariants'], generation: 2 }, 'the final audit runs the partly covered lens alone');
+      const again = await runAudit({ ...ctx, clock: () => 2 });
+      assert.ok(again.kind === 'ended' && again.outcome === 'completed', JSON.stringify(again));
+      assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'invariants', from: S1, to: S2 }]);
+      assert.ok(lensCalls(r)[4]!.stdin.includes(rangeTag(S1, S2, S2)));
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S2, false], ['vision', S2, false]]);
+      assert.deepEqual(owed(cadence(ctx, () => 2)), [], 'nothing outstanding: the arc converges');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('audit.oversized-publication-bounded: one publication over the budget is attached bounded (stat, small files inlined, the large one and a derived output listed with their commands), as is an owner\'s branch, and the lens reports', T, async () => {
+    const { d } = auditArc({
+      steps: [
+        ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/huge.js': bigSource('hugeone', 300_000), 'dist/bundle.js': 'export const bundled = true;\n' }),
+        ...unitSteps('u2', { 'src/ownerbig.js': bigSource('ownerbig', 300_000), 'src/owner.js': 'export const owner = 1;\n' }),
+        lensStep('audit-1', 'vision'),
+      ],
+      units: [{ id: 'u1' }, { id: 'u2' }], ...I1, mapping: [], audit: { lenses: ['vision'] },
+      planExtra: { derived: [{ sources: ['src/**'], outputs: ['dist/**'] }] },
+    });
+    const r = contextFor(d);
+    const { ctx, w } = auditContext(r);
+    const stop = ticking(w);
+    try {
+      const S0 = head(d.repo);
+      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+      const S1 = head(d.repo);
+      // u2 approved, not merged, owning a finding: its branch is an owner the lens reads.
+      await stepUntil(r, 'u2', (f) => f.stage === 'gate' && f.outcome === 'approve');
+      r.journal.fact({
+        kind: 'finding-opened', id: r.journal.view.nextFindingId(), key: findingKey('plan-check', null, 'owner gap'), lens: 'plan-check', severity: 'P3',
+        obligation: null, visionClauses: [VISION.clauses[0].id as never], claim: 'owner gap', evidence: [], mutant: null,
+        source: { type: 'stage', unit: r.unit('u2').id, stage: 'plan-check', attempt: 1 }, gateHadPassed: false,
+      });
+      r.journal.fact({ kind: 'finding-transition', id: r.journal.view.holistic().findings[0]!.id, to: { state: 'owned', unit: r.unit('u2').id } });
+      requestAudit(r);
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'vision', from: S0, to: S1 }], 'the whole publication is covered by the one call');
+      const [call] = lensCalls(r);
+      const stdin = call!.stdin;
+      assert.ok(stdin.includes(rangeTag(S0, S1, S1)));
+      assert.ok(stdin.length < 2 * LENS_DIFF_BUDGET + 64_000, `the prompt is bounded: ${stdin.length} bytes`);
+      assert.ok(!stdin.includes('hugeone000100') && !stdin.includes('ownerbig000100'), 'neither large file is attached');
+      assert.match(stdin, /src\/huge\.js +\| +\d+ \+/, 'the stat names every file of the range');
+      assert.match(stdin, /^\+export function mul\(a, b\) \{/m, 'the small files are inlined');
+      assert.ok(stdin.includes(`- src/huge.js (not inlined: over the budget): git diff ${S0} ${S1} -- 'src/huge.js'`));
+      assert.ok(stdin.includes(`- dist/bundle.js (derived output): git diff ${S0} ${S1} -- 'dist/bundle.js'`));
+      assert.doesNotMatch(stdin, /^\+export const bundled/m, 'a derived output is never inlined');
+      assert.match(stdin, /- src\/ownerbig\.js \(not inlined: over the budget\): git diff [0-9a-f]{40} [0-9a-f]{40} -- 'src\/ownerbig\.js'/, 'the owner\'s branch is bounded too');
+      assert.match(stdin, /^\+export const owner = 1;/m);
+      assert.deepEqual(watermarks(ctx, ['vision']), [['vision', S1, false]]);
+    } finally {
+      stop();
+      r.journal.close();
+    }
+  });
+
+  test('audit.upgrade-dev10-oversized-range: an audit a dev.10 executor started (no diffBudget) resumes unchunked and is abandoned with an owed item; the next audit chunks and the arc converges', T, async () => {
+    const { d } = auditArc({
+      steps: [
+        ...TWO_BIG,
+        { as: 'claude', unit: 'audit-1', lens: 'vision', expect: {}, acts: [{ type: 'malformed' }] },
+        lensStep('audit-2', 'vision', [], [], ['bigone000100']), lensStep('audit-2', 'vision', [], [], ['bigtwo000100']),
+      ],
+      ...TWO_UNITS, audit: { every: 5, lenses: ['vision'], wallClockMin: 1 },
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    const late = { ...ctx, clock: () => 2 };
+    try {
+      const S0 = head(d.repo);
+      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+      assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
+      const S2 = head(d.repo);
+      // audit-started as a dev.10 executor wrote it: no diffBudget.
+      const applied = r.journal.view.planApplied()!;
+      r.journal.fact({
+        kind: 'audit-started', job: jobId('audit', 1), triggers: [{ type: 'final' }], generation: 1, lenses: ['vision'], integrationSha: S2, planRev: applied.rev,
+        ledgerSha256: applied.rulingsSha256 ?? null, obligationsSha256: applied.obligationsSha256 ?? null, visionSha256: applied.visionSha256!, owners: [], priorFindings: [],
+        highWater: r.journal.view.highWater(),
+      });
+      const first = await runAudit(late);
+      assert.ok(first.kind === 'ended' && first.job === 'audit-1' && first.outcome === 'abandoned', JSON.stringify(first));
+      assert.ok(lensCalls(r)[0]!.stdin.includes(rangeTag(S0, S2, S2)), 'the dev.10 audit reads its whole range in one call');
+      assert.match(lensCalls(r)[0]!.stdin, /<not_inlined>/, 'attached within today\'s budget');
+      const item = r.journal.view.needsUser().find((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === 'audit-owed');
+      assert.ok(item !== undefined && !item.blocking, 'the overdue audit raised its non-blocking item');
+      const again = await runAudit(late);
+      assert.ok(again.kind === 'ended' && again.job === 'audit-2' && again.outcome === 'completed', JSON.stringify(again));
+      assert.equal(started(r)[1]!.diffBudget, LENS_DIFF_BUDGET);
+      assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'vision', from: S0, to: S2 }]);
+      assert.equal(lensCalls(r).length, 3, 'two chunks');
+      assert.deepEqual(owed(cadence(ctx, () => 2)), [], 'nothing owed: the audit no longer holds completion');
+      assert.deepEqual(watermarks(ctx, ['vision']), [['vision', S2, false]]);
+      assert.deepEqual(openBlocking(r.journal.view), [], 'the owed item never blocks; the owner acknowledges it as before');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  /**
+   * Crashed mid-chunking: at the runner exit of chunk 1's call (its result not yet read) or of chunk 2's, the resumed
+   * job consumes the calls it made (redone from exit.json) and asks only the rest, at the same attempts.
+   */
+  for (const [occurrence, before] of [[CHUNK_SPAWN[0], 1], [CHUNK_SPAWN[1], 2]] as const) {
+    test(`audit.chunk-crash-resume: crashed at the runner exit of chunk ${before}'s call, the job resumes and asks no chunk twice`, T, async () => {
+      const { d } = auditArc({
+        steps: [...TWO_BIG, lensStep('audit-1', 'vision', [], [], ['bigone000100']), lensStep('audit-1', 'vision', [], [], ['bigtwo000100'])],
+        ...TWO_UNITS, audit: { every: 5, lenses: ['vision'] },
+      });
+      const setup = contextFor(d);
+      const S0 = head(d.repo);
+      try {
+        const sctx = auditContext(setup).ctx;
+        assert.deepEqual(await runUnit(sctx, setup.unit('u1'), admitAll), { kind: 'merged' });
+        assert.deepEqual(await runUnit(sctx, setup.unit('u2'), admitAll), { kind: 'merged' });
+      } finally {
+        setup.journal.close();
+      }
+      const S2 = head(d.repo);
+      const trigger = writeTrigger(tmpDir('audit-chunk-crash'), { label: 'spawn.after-runner-exit', occurrence });
+      const exit = await runFixture('audit-child.ts', [JSON.stringify(d)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 150_000 });
+      assert.equal(exit.signal, 'SIGKILL', `the child must crash: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
+      assertFired(trigger);
+      const r = contextFor(d);
+      const open = r.journal.view.openIntents();
+      const { ctx, w } = auditContext(r);
+      try {
+        assert.deepEqual(open.map((i) => (i.kind === 'proc.spawn' ? i.expect.subject.purpose : i.kind)), ['arc-backend'], 'a lens call was cut short');
+        assert.equal(lensCalls(r).length, before, 'the chunk calls made before the crash');
+        await recover({ stage: ctx, commands: w.commands });
+        const out = await runAudit(ctx);
+        assert.ok(out.kind === 'ended' && out.job === 'audit-1' && out.outcome === 'completed', JSON.stringify(out));
+        assert.deepEqual(ended(r)[0]!.covered, [{ lens: 'vision', from: S0, to: S2 }]);
+        assert.equal(lensCalls(r).length, 2, 'no chunk asked twice');
+        assert.deepEqual(r.journal.view.openIntents(), []);
+        assert.deepEqual(await runAudit(ctx), { kind: 'none' });
+      } finally {
+        r.journal.close();
+      }
+    });
+  }
 });
