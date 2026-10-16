@@ -22,8 +22,8 @@ import type { SchemaVersion } from './version.ts';
 import { applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, isRepairRole, modelClass,
-  profileName, riskTier,
+  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, type UsageClass, ROLES, backend, isRepairRole,
+  modelClass, profileName, riskTier, usageClass, USAGE_CLASSES,
 } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -349,10 +349,31 @@ export type TokenUsage = Readonly<{
   /** The CLI's own list-price cost estimate in USD (Claude `total_cost_usd`); null when not reported (Codex). */
   costUsd: number | null;
 }>;
+/** One usage class's tokens and list-price cost (Claude `modelUsage`, per model, summed per class). */
+export type ClassUsage = Readonly<{
+  class: UsageClass;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}>;
 export const USAGE_UNAVAILABLE_REASONS = ['no-result', 'absent', 'malformed'] as const;
 export type UsageUnavailableReason = (typeof USAGE_UNAVAILABLE_REASONS)[number];
-/** Usage validity is independent of the outcome: missing usage never invalidates a judgment. */
-export type Usage = Readonly<{ kind: 'known'; tokens: TokenUsage }> | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason }>;
+/**
+ * Usage validity is independent of the outcome: missing usage never invalidates a judgment.
+ *
+ * `delegated` (2026-10-16) is present exactly on a Claude call's known usage (the adapter writes it, empty when nothing was
+ * delegated): what the models other than the session's own spent (its subagents'), per usage class (classes.ts
+ * `delegateClass`), ascending by class. With it, `tokens` and `delegated` are the session's cumulative usage as the CLI
+ * reports it (the last result event's `modelUsage`, every model, and `total_cost_usd`): a resumed session's include its
+ * earlier processes', so the meter charges each reading as the difference from the session's previous one (meter.ts);
+ * `turns` alone is this process's. Absent (Codex; a Claude result an executor before 1.0.0-dev.12 wrote, whose `tokens`
+ * were the last turn's own model's alone): the invocation's own usage, charged as recorded.
+ */
+export type Usage =
+  | Readonly<{ kind: 'known'; tokens: TokenUsage; delegated?: readonly ClassUsage[] }>
+  | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason }>;
 
 const usd: Read<number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new SchemaError(path, 'a finite non-negative number', value);
@@ -366,13 +387,35 @@ export const tokenUsage: Read<TokenUsage> = object((f) => ({
   turns: f.get('turns', nullable(nat)),
   costUsd: f.get('costUsd', nullable(usd)),
 }));
+export const classUsage: Read<ClassUsage> = object((f) => ({
+  class: f.get('class', usageClass),
+  inputTokens: f.get('inputTokens', nat),
+  outputTokens: f.get('outputTokens', nat),
+  cacheReadTokens: f.get('cacheReadTokens', nat),
+  cacheWriteTokens: f.get('cacheWriteTokens', nat),
+  costUsd: f.get('costUsd', usd),
+}));
+/** Per-class usage, one entry per class, ascending in `USAGE_CLASSES` order. */
+export const classUsages: Read<readonly ClassUsage[]> = (value, path) => {
+  const list = arrayOf(classUsage)(value, path);
+  const order = list.map((c) => USAGE_CLASSES.indexOf(c.class));
+  for (let i = 1; i < order.length; i++) if (!((order[i - 1] as number) < (order[i] as number))) throw new SchemaError(`${path}[${i}]`, 'classes ascending, each once', value);
+  return list;
+};
 export const usageUnavailableReason: Read<UsageUnavailableReason> = oneOf(USAGE_UNAVAILABLE_REASONS);
 const usage: Read<Usage> = tagged('kind', {
-  known: object((f): Usage => ({ kind: f.get('kind', literal('known')), tokens: f.get('tokens', tokenUsage) })),
+  known: object((f): Usage => {
+    const delegated = f.optional('delegated', classUsages);
+    return { kind: f.get('kind', literal('known')), tokens: f.get('tokens', tokenUsage), ...(delegated === undefined ? {} : { delegated }) };
+  }),
   unavailable: object((f): Usage => ({ kind: f.get('kind', literal('unavailable')), reason: f.get('reason', usageUnavailableReason) })),
 });
 
-export const BACKEND_ERROR_CLASSES = ['usage-limit', 'capacity', 'platform', 'backend'] as const;
+/**
+ * `context-exceeded` (2026-10-16): the call's prompt or context outgrew the model's window; neither a backend park nor a
+ * generic process fault (dispatch.ts `verdictOf`).
+ */
+export const BACKEND_ERROR_CLASSES = ['usage-limit', 'capacity', 'platform', 'backend', 'context-exceeded'] as const;
 export type BackendErrorClass = (typeof BACKEND_ERROR_CLASSES)[number];
 /** Classified only from `turn.failed` / CLI error events, never from command output. */
 export type BackendError = Readonly<{ class: BackendErrorClass; message: string }>;
@@ -1496,6 +1539,8 @@ export const NEEDS_USER_REASONS = [
   'witness-lane-missing',
   // Plan defects (2026-10-16), blocking: a unit's missing witness is a plan defect code diagnosed (lanes `plan-defect`).
   'plan-defect',
+  // 2026-10-16, blocking: a plan-check, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
+  'context-exceeded',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

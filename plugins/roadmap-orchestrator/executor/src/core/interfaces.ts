@@ -6,7 +6,10 @@ import type {
   AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
   PlanAppliedFact, RecoveredBy,
 } from './events.ts';
-import type { AmendmentId, ArcId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId } from './ids.ts';
+import type {
+  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId,
+} from './ids.ts';
+import type { SessionCharge } from './usage.ts';
 import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
@@ -49,6 +52,11 @@ export interface JournalView {
    * since the fact precedes the spawn's done and a crash between them leaves it already written.
    */
   usageRecorded(inv: InvocationId): boolean;
+  /**
+   * 2026-10-16: what a Claude session's `meter` facts have charged so far (src/core/usage.ts), null before its first; the
+   * next fact of the session charges its cumulative reading less this.
+   */
+  sessionCharge(session: ClaudeSessionId): SessionCharge | null;
   /**
    * A unit's state as the fold derives it from its stage-outcome facts, stage-parented intents and dispatch
    * facts; a unit the log has not named yet is fresh at plan-check. The only source of a unit's counters.

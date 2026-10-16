@@ -4,7 +4,8 @@
 // the empty-diff refusal. M3 step A3: gate.inputs-not-in-ff-window (the capture under the revision fence),
 // gate.obligations-selected, plan-check.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
 // gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
-// voids nothing): gate.read-surface, plan-check.read-surface.
+// voids nothing): gate.read-surface, plan-check.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
+// context-exceeded.plan-check, context-exceeded.build.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -187,6 +188,57 @@ test('gate.read-surface: the gate reads the repository and the run dir; an appro
     const reads = JSON.parse(readFileSync(join(invocationDir(absPath(d.runDir), inv), 'reads.json'), 'utf8')) as { denied: unknown[] };
     assert.deepEqual(reads.denied, [{ tool: 'Glob', pattern: '**/*', path: dirname(dirname(d.repo)) }]);
     assert.equal(r.journal.view.unit(U1).counters.retries.gate, 0);
+  } finally {
+    r.journal.close();
+  }
+});
+
+// 2026-10-16: a call whose prompt or context outgrew the model's window parks its unit, uncharged, operator env, with no
+// probe target and no backend park; the item names the role, the call and the prompt's size.
+const stageOutcome = (d: ArcDescriptor, stage: string) => events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === stage ? [e.fact] : [])).at(-1)!;
+const backendParks = (d: ArcDescriptor) => events(d.runDir).filter((e) => e.type === 'fact' && e.fact.kind === 'backend-park');
+
+function assertContextPark(d: ArcDescriptor, r: ReturnType<typeof contextFor>, result: Awaited<ReturnType<typeof runUnit>>, stage: string, role: string): void {
+  assert.ok(result.kind === 'parked', JSON.stringify(result));
+  assert.equal(result.needsUser.reason, 'context-exceeded');
+  const f = stageOutcome(d, stage);
+  assert.equal(f.outcome, 'context-exceeded');
+  assert.deepEqual(f.park, { class: 'operator', kind: 'env' }, 'operator env: no probe, so no repeat rule');
+  assert.equal(f.chargeable, false);
+  assert.ok(f.detail?.kind === 'context-exceeded' && f.detail.promptBytes > 0, JSON.stringify(f.detail));
+  assert.match(result.needsUser.summary, new RegExp(`The ${role} call ${f.detail.inv.replace(/[#/]/g, '.')} outgrew the model's context window: its prompt was ${f.detail.promptBytes} bytes\\.`));
+  assert.match(result.needsUser.recommendation, new RegExp(`roadmap resume u1\` re-runs ${stage}, uncharged`));
+  assert.deepEqual(backendParks(d), [], 'the backend is not parked');
+  assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
+}
+
+test('context-exceeded.gate: a gate prompt over the model\'s window parks the unit (env, uncharged), naming the gate call and its size', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [{ type: 'contextExceeded' }])] });
+  const r = contextFor(d);
+  try {
+    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'gate', 'gate');
+    assert.equal(r.journal.view.unit(U1).approval, null);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('context-exceeded.plan-check: a plan-check prompt over the window parks before any build', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }, {}, [{ type: 'contextExceeded' }])] });
+  const r = contextFor(d);
+  try {
+    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'plan-check', 'planCheck');
+    assert.ok(!outcomes(d).some((o) => o.startsWith('build:')), 'no build ran');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('context-exceeded.build: a Codex build over its context window parks the same way', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), codexStep([{ type: 'contextExceeded' }], { argv: ['exec', '-C'] })] });
+  const r = contextFor(d);
+  try {
+    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'build', 'build');
   } finally {
     r.journal.close();
   }

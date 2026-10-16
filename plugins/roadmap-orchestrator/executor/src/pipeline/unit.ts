@@ -97,6 +97,7 @@ import {
   nowInside, planCheck, quiesce, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
 import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
+import type { Role } from '../routing/types.ts';
 import { requiredAt } from './witnesscheck.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
@@ -115,6 +116,9 @@ export type Step = UnitResult | Readonly<{ kind: 'continue' }>;
 
 /** The stages that make a backend call. */
 const CALL_STAGES: readonly OutcomeStage[] = ['plan-check', 'build', 'gate'];
+type CallStage = 'plan-check' | 'build' | 'gate';
+/** The role each call stage's backend call sits on. */
+const STAGE_ROLE = { 'plan-check': 'planCheck', build: 'build', gate: 'gate' } as const satisfies Readonly<Record<CallStage, Role>>;
 
 /** Reasons that concern the arc rather than one unit: the base is broken, or someone else moved a ref. */
 const ARC_REASONS: ReadonlySet<NeedsUserReason> = new Set(['base-red', 'foreign-ref-move', 'usage-limit']);
@@ -156,8 +160,13 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   const f = ctx.journal.view.unit(unit.id).decided;
   if (f === null) throw new Error(`unit ${unit.id} halted without a decided outcome`);
   const { path, spec } = loadUnitSpec(ctx, unit);
+  const exceeded = f.detail?.kind === 'context-exceeded' ? f.detail : null;
+  if (reason === 'context-exceeded' && exceeded === null) throw new Error(`unit ${unit.id}: ${f.stage}#${f.attempt} context-exceeded without its detail`);
   const recommendation = kind === 'stop'
     ? 'Read the evidence and the log, find and fix the cause, then acknowledge this item and start the arc again.'
+    : exceeded !== null
+      ? `Make the ${f.stage} inputs fit: split the unit or narrow its spec through a spec revision, or route ${STAGE_ROLE[f.stage as CallStage]}'s seat `
+        + `to a class whose model has a larger context window. Then \`roadmap resume ${unit.id}\` re-runs ${f.stage}, uncharged.`
     : reason === 'steered'
       ? `Review the steer pass (its build and ${f.stage} evidence). \`roadmap resume ${unit.id}\` re-runs ${f.stage} with the pass over, so the pipeline goes on as usual `
         + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
@@ -171,7 +180,11 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
     subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },
     reason,
     // F3: a lanes park lists the unit's lane failures, host-suspected ones marked, so a reset re-entry can cite them.
-    summary: [`Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`, ...(f.stage === 'lanes' ? [failuresText(laneFailures(ctx, unit))] : [])]
+    summary: [
+      `Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`,
+      ...(exceeded === null ? [] : [`The ${STAGE_ROLE[f.stage as CallStage]} call ${exceeded.inv} outgrew the model's context window: its prompt was ${exceeded.promptBytes} bytes.`]),
+      ...(f.stage === 'lanes' ? [failuresText(laneFailures(ctx, unit))] : []),
+    ]
       .filter((x) => x !== '').join(' '),
     recommendation,
     options: [],

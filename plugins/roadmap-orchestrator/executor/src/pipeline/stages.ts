@@ -466,6 +466,10 @@ export function verdictKind<S extends JudgmentOrBuild>(
 ): StageDone<S> {
   if (v.kind === 'interrupted') return record(ctx, parent, 'interrupted' as StageOutcomeKind<S>, v.needsUser, NO_PARK_FACTS, v.cause ?? undefined);
   if (v.kind === 'process-fault') return record(ctx, parent, 'process-fault' as StageOutcomeKind<S>, null, { backend: backendOf(called), failed: [] });
+  if (v.kind === 'context-exceeded') {
+    const detail = { kind: 'context-exceeded', inv: v.inv, promptBytes: v.promptBytes } as const;
+    return record(ctx, parent, 'context-exceeded' as StageOutcomeKind<S>, null, NO_PARK_FACTS, undefined, detail);
+  }
   return record(ctx, parent, v.kind as StageOutcomeKind<S>);
 }
 

@@ -13,8 +13,9 @@ import { BACKEND_FIXTURES, CLAUDE_USAGE_LIMIT, capturedClaudeResult, editClaudeR
 const EXIT0 = { type: 'exited', code: 0 } as const;
 const TRIPLE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const stdoutOf = (name: string): string => readFileSync(join(BACKEND_FIXTURES, name, 'stdout'), 'utf8');
-/** A one-event stream: the captured api-error result with `fields` replaced. */
-const errorStream = (fields: Readonly<Record<string, unknown>>): string => `${JSON.stringify({ ...capturedClaudeResult('claude-api-error'), ...fields })}\n`;
+/** The captured api-error stream (its init event, then its result with `fields` replaced). */
+const errorStream = (fields: Readonly<Record<string, unknown>>): string =>
+  `${stdoutOf('claude-api-error').split('\n')[0]}\n${JSON.stringify({ ...capturedClaudeResult('claude-api-error'), ...fields })}\n`;
 const initOf = (name: string): Record<string, unknown> => JSON.parse(stdoutOf(name).split('\n')[0]!) as Record<string, unknown>;
 
 describe('claude', () => {
@@ -23,7 +24,47 @@ describe('claude', () => {
     assert.deepEqual(r.output, { kind: 'present', value: { ok: true } });
     assert.equal(r.sessionId, '8519f8cd-0b40-4801-8782-5bbf12dbaf58');
     assert.deepEqual(r.usage, {
-      kind: 'known', tokens: { inputTokens: 4, outputTokens: 316, cacheReadTokens: 3200, cacheWriteTokens: 3627, turns: 5, costUsd: 0.035992 },
+      kind: 'known', tokens: { inputTokens: 4, outputTokens: 316, cacheReadTokens: 3200, cacheWriteTokens: 3627, turns: 5, costUsd: 0.035992 }, delegated: [],
+    });
+  });
+
+  describe('claude.subagent-usage (2026-10-16)', () => {
+    // The 2.1.301 capture: a Sonnet judgment that put a background Explore subagent on Haiku, so it printed two results
+    // (the interim {ok: false}, then {ok: true}), each with the session's cumulative modelUsage of both models.
+    it('every model in modelUsage counts; the session\'s own model is its seat\'s, Haiku delegated to economy; turns summed over the results', () => {
+      const r = readClaude(stdoutOf('claude-judgment-subagents'));
+      assert.deepEqual(r.output, { kind: 'present', value: { ok: true } }, 'the last result is the answer');
+      assert.ok(r.usage.kind === 'known');
+      const { tokens, delegated } = r.usage;
+      assert.deepEqual([tokens.inputTokens, tokens.outputTokens, tokens.cacheReadTokens, tokens.cacheWriteTokens, tokens.turns], [8 + 4, 280 + 152, 11950 + 4313, 6868 + 4494, 3 + 2]);
+      assert.equal(tokens.costUsd, 0.03216428);
+      assert.deepEqual(delegated, [{ class: 'economy', inputTokens: 4, outputTokens: 152, cacheReadTokens: 4313, cacheWriteTokens: 4494, costUsd: 0.0006812799999999999 }]);
+      // The subagent's Read is in the session's reads (reads.json), beside the session's own.
+      assert.ok(r.access?.reads.some((x) => x.tool === 'Read' && x.path.endsWith('/a.ts')));
+    });
+    it('per-model costs that do not sum to total_cost_usd fail loud', () => {
+      const invDir = editClaudeResult(fixtureInvocation('claude-judgment-subagents', EXIT0), (o) => ({ ...o, total_cost_usd: 0.05 }));
+      assert.throws(() => adapt(invDir), /usage does not add up: result_index 1: modelUsage costUSD sums to 0\.032\d*, total_cost_usd is 0\.05/);
+    });
+    it('a subagent model the class catalogue does not know fails loud', () => {
+      const invDir = editClaudeResult(fixtureInvocation('claude-judgment-subagents', EXIT0), (o) => {
+        const m = o['modelUsage'] as Record<string, unknown>;
+        return { ...o, modelUsage: { 'claude-sonnet-5-5': m['claude-sonnet-5-5'], 'claude-haiku-9-9': m['claude-haiku-5-5'] } };
+      });
+      assert.throws(() => adapt(invDir), /modelUsage names "claude-haiku-9-9", which src\/routing\/classes\.ts DELEGATE_CLASSES does not catalogue/);
+    });
+  });
+
+  describe('claude.context-exceeded (2026-10-16)', () => {
+    it('the captured prompt-too-long result (2.1.301: is_error, "Prompt is too long", exit 1) is a process fault classed context-exceeded', () => {
+      const r = adapt(fixtureInvocation('claude-prompt-too-long', { type: 'exited', code: 1 }));
+      assert.ok(r.type === 'backend');
+      assert.equal(r.outcome.kind, 'process-fault');
+      assert.deepEqual(r.backendErrors, [{ class: 'context-exceeded', message: 'Prompt is too long' }]);
+    });
+    it('by text or by HTTP 413', () => {
+      assert.equal(readClaude(errorStream({ result: 'Input is too long for requested model.', api_error_status: 400 })).backendErrors[0]?.class, 'context-exceeded');
+      assert.equal(readClaude(errorStream({ result: 'API Error: 413 request too large', api_error_status: 413 })).backendErrors[0]?.class, 'context-exceeded');
     });
   });
 
@@ -51,16 +92,16 @@ describe('claude', () => {
   });
 
   describe('claude.usage-unavailable', () => {
-    it('a result without usage is still a success; usage unavailable{absent}', () => {
+    it('a result without modelUsage is still a success; usage unavailable{absent}', () => {
       const r = adapt(editClaudeResult(fixtureInvocation('claude-judgment', EXIT0), (o) => {
-        delete o['usage'];
+        delete o['modelUsage'];
         return o;
       }));
       assert.equal(r.type === 'backend' ? r.outcome.kind : null, 'success');
       assert.deepEqual(r.type === 'backend' ? r.usage : null, { kind: 'unavailable', reason: 'absent' });
     });
-    it('a usage block of the wrong shape → unavailable{malformed}, judgment still a success', () => {
-      const r = adapt(editClaudeResult(fixtureInvocation('claude-judgment', EXIT0), (o) => ({ ...o, usage: { input_tokens: 'many' } })));
+    it('a modelUsage of the wrong shape → unavailable{malformed}, judgment still a success', () => {
+      const r = adapt(editClaudeResult(fixtureInvocation('claude-judgment', EXIT0), (o) => ({ ...o, modelUsage: { 'claude-opus-5-5': { inputTokens: 'many' } } })));
       assert.equal(r.type === 'backend' ? r.outcome.kind : null, 'success');
       assert.deepEqual(r.type === 'backend' ? r.usage : null, { kind: 'unavailable', reason: 'malformed' });
     });

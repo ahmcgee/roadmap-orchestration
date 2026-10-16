@@ -88,6 +88,13 @@ export const SEAT_REFS: readonly SeatRef[] = ROLES.flatMap((r) => SEATS[r].map((
  */
 export const MODEL_CLASSES = ['efficient', 'frontier', 'summit'] as const;
 export type ModelClass = (typeof MODEL_CLASSES)[number];
+/**
+ * The classes a call's usage is metered to (2026-10-16): the seat classes and `economy`, Haiku's. Haiku holds no seat (no
+ * prompt module); a judge or a builder reaches it only as a subagent model (the Agent tool's `model`), so `economy` is a
+ * meter class, never a seat's (classes.ts `DELEGATE_CLASSES`).
+ */
+export const USAGE_CLASSES = [...MODEL_CLASSES, 'economy'] as const;
+export type UsageClass = (typeof USAGE_CLASSES)[number];
 /** Where a class's binding came from. */
 export type ClassSource = 'builtin' | 'repo-config';
 
@@ -150,6 +157,7 @@ export const backend: Read<Backend> = oneOf(BACKENDS);
 export const profileName: Read<ProfileName> = oneOf(PROFILES);
 export const modelId: Read<ModelId> = oneOf(MODEL_IDS);
 export const modelClass: Read<ModelClass> = oneOf(MODEL_CLASSES);
+export const usageClass: Read<UsageClass> = oneOf(USAGE_CLASSES);
 
 /** Reads a record's `role` and `tier` fields as one seat: a tier the role does not have is refused. */
 export function seatFields(f: Fields): SeatRef {

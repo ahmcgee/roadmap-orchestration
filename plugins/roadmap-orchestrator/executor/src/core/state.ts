@@ -13,12 +13,13 @@ import {
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
-  type AmendmentId, type ArcId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
+  type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
   type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId,
 } from './ids.ts';
 import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
+import { type SessionCharge, addCharged } from './usage.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord, effectiveScope } from './records.ts';
 import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
 import type { IsoTime, RepoPattern } from './values.ts';
@@ -554,6 +555,7 @@ export class Fold implements JournalView {
   readonly #pinnedSpec = new Map<UnitId, SpecState>();
   readonly #meter = new Map<string, MeterEntry>();
   readonly #metered = new Set<InvocationId>();
+  readonly #sessionCharges = new Map<ClaudeSessionId, SessionCharge>();
   readonly #needsUser = new Map<NeedsUserId, { blocking: boolean }>();
   readonly #acks = new Map<NeedsUserId, NeedsUserAckState>();
   #stop: CommandId | null = null;
@@ -825,6 +827,9 @@ export class Fold implements JournalView {
           charge, routingRev: f.routingRev, known: 0, unavailable: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: 0,
         };
         if (f.kind === 'meter') {
+          if (f.session !== undefined && f.delegated !== undefined) {
+            this.#sessionCharges.set(f.session, addCharged(this.#sessionCharges.get(f.session) ?? null, { tokens: f.usage, delegated: f.delegated }));
+          }
           m.known += 1;
           m.inputTokens += f.usage.inputTokens;
           m.outputTokens += f.usage.outputTokens;
@@ -1646,6 +1651,10 @@ export class Fold implements JournalView {
 
   usageRecorded(inv: InvocationId): boolean {
     return this.#metered.has(inv);
+  }
+
+  sessionCharge(session: ClaudeSessionId): SessionCharge | null {
+    return this.#sessionCharges.get(session) ?? null;
   }
 
   unit(unit: UnitId): UnitState {

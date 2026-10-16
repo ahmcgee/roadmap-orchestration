@@ -19,7 +19,7 @@
 // Fable 5.1 keeps its model entry and prompt modules and is reached only by a repo rebind. GPT-5.6 Sol has no class of
 // its own: it stays in the model catalogue (models.ts) and is reached by rebinding a class.
 import type { ClaudeTriple } from '../backends/argv.ts';
-import type { ModelClass, ProfileName, Role, Triple } from './types.ts';
+import type { ModelClass, ProfileName, Role, Triple, UsageClass } from './types.ts';
 
 /** What a class binds: the triple at its build seats and the Claude triple at its judgment seats. */
 export type ClassBinding = Readonly<{ build: Triple; judgment: ClaudeTriple }>;
@@ -48,4 +48,33 @@ export const CLASS_CATALOGUE: ClassCatalogue = {
 /** The triple `binding` puts at a seat of `role`: its build triple at a build seat, its judgment triple at any other. */
 export function boundAt(binding: ClassBinding, role: Role): Triple {
   return role === 'build' ? binding.build : binding.judgment;
+}
+
+/**
+ * Where a subagent's usage is metered: the class of every model a Claude session's Agent tool can put a subagent on
+ * (aliases haiku, sonnet, opus and fable, Claude Code 2.1.301), keyed by the id the result's `modelUsage` names it by. A
+ * session's own model is metered to its seat's class instead (meter.ts), which is why Opus 5.5, bound by frontier and
+ * summit alike, can sit here under one: frontier, the class it binds at its own default effort. Fable 5.1 binds no class
+ * (a repo rebind reaches it) and is the costliest model a subagent can pick: summit, the strongest class. Static, unlike
+ * the bindings: a repo rebind moves seats, not where a subagent's spend is counted.
+ */
+export const DELEGATE_CLASSES = {
+  'claude-haiku-5-5': 'economy',
+  'claude-sonnet-5-5': 'efficient',
+  'claude-opus-5-5': 'frontier',
+  'claude-fable-5-1': 'summit',
+} as const satisfies Readonly<Record<string, UsageClass>>;
+
+/** A model `modelUsage` names that the catalogue does not know: a CLI or account change the meter must not guess at. */
+export class UnknownModelError extends Error {
+  constructor(model: string) {
+    super(`modelUsage names ${JSON.stringify(model)}, which src/routing/classes.ts DELEGATE_CLASSES does not catalogue; add it with its class`);
+    this.name = 'UnknownModelError';
+  }
+}
+
+/** The class a subagent's usage on `model` is metered to; an uncatalogued model fails loud. */
+export function delegateClass(model: string): UsageClass {
+  if (!Object.hasOwn(DELEGATE_CLASSES, model)) throw new UnknownModelError(model);
+  return DELEGATE_CLASSES[model as keyof typeof DELEGATE_CLASSES];
 }

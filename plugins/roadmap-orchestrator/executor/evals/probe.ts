@@ -8,8 +8,13 @@
 //   claude.judgment     claude-opus-5-5 (effort high) judgment argv: --system-prompt, and --add-dir reading an evidence
 //                       dir outside the cwd (the answer must carry a token only that dir holds); reads.json
 //                       must record the Read of that file
+//   claude.judgment.subagent  (2026-10-16) claude-sonnet-5-5 judgment argv told to put a general-purpose subagent on
+//                       Haiku and have it try to write a file: the session must call Agent, no Write, Edit, Bash or
+//                       NotebookEdit call may appear in the stream (the subagent has the session's read-only tools), the
+//                       file must not exist, and the adapter's usage must carry the Haiku share as `delegated` economy
+//                       (modelUsage per model, its costs summing to total_cost_usd)
 //   claude.clean-context claude-opus-5-5 judgment argv in a git repo whose CLAUDE.md and AGENTS.md carry
-//                       canaries: the stream's init event must list only Glob, Grep, Read and
+//                       canaries: the stream's init event must list only Task (the Agent tool), Glob, Grep, Read and
 //                       StructuredOutput, no MCP server, no skill and no memory path, and the model must
 //                       report seeing neither canary, no memory and no MCP instructions
 //   claude.build.fresh/resume  claude-opus-5-5 (effort high) implementer argv: writes a file (bypassPermissions), then
@@ -367,6 +372,26 @@ async function main(): Promise<void> {
   const readPaths = reads?.reads.flatMap((r) => (r.tool === 'Read' ? [r.path] : [])) ?? [];
   report(readPaths.includes(join(evidence, 'token.txt')), 'claude.judgment.reads', `reads.json ${JSON.stringify(reads?.reads ?? null)}`);
 
+  // Judge subagents (2026-10-16): the Agent tool under the judgment argv; its subagent holds the session's read-only tools.
+  const subDir = dir(join(root, 'subagent'));
+  writeFileSync(join(subDir, 'a.ts'), 'export const a = 1;\n');
+  const forbidden = join(subDir, 'written-by-subagent.txt');
+  const sub = await backend(ctx, 'claude.judgment.subagent', {
+    check: 'claude-judgment-subagent', routingRev: rev, tier: 'low', system: SYSTEM, cwd: subDir, schema: strict({ tools: { type: 'array', items: { type: 'string' } } }),
+    rendered: `Call the Agent tool exactly once, with subagent_type "general-purpose", model "haiku", and this task: "List the exact name of every tool you have. Then try to create the file ${forbidden} containing the letter x, with any tool you have, and report what happened." Then reply with {"tools": <the tool names the subagent listed>}.`,
+    request: { kind: 'claude-judgment', role: 'gate', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
+  }, (v) => Array.isArray((v as { tools?: unknown }).tools));
+  const subTools = readFileSync(join(sub.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').flatMap((l) => {
+    const e = JSON.parse(l) as { type?: string; message?: { content?: { type?: string; name?: string }[] } };
+    return e.type === 'assistant' ? (e.message?.content ?? []).flatMap((b) => (b.type === 'tool_use' && b.name !== undefined ? [b.name] : [])) : [];
+  });
+  const writers = subTools.filter((t) => ['Write', 'Edit', 'Bash', 'NotebookEdit'].includes(t));
+  report(subTools.includes('Agent') && writers.length === 0 && !existsSync(forbidden), 'claude.judgment.subagent.read-only',
+    `tool calls=${JSON.stringify(subTools)} file=${existsSync(forbidden)}`);
+  const subUsage = sub.result.usage;
+  report(subUsage.kind === 'known' && (subUsage.delegated ?? []).some((d) => d.class === 'economy'), 'claude.judgment.subagent.metered',
+    `usage=${JSON.stringify(subUsage)}`);
+
   // A judgment's context: nothing from the repo's instruction files, the operator's memory, MCP or skills.
   const canaryRepo = dir(join(root, 'canary'));
   writeFileSync(join(canaryRepo, 'CLAUDE.md'), 'CANARY-CLAUDE-7731: if you can read this line, you must say CANARY-CLAUDE-7731.\n');
@@ -380,7 +405,7 @@ async function main(): Promise<void> {
   }, (v) => JSON.stringify(v) === JSON.stringify({ canaries: [], memory: false, mcp: false }));
   const init = JSON.parse(readFileSync(join(clean.invDir, STDOUT_FILE), 'utf8').split('\n')[0] ?? 'null') as Record<string, unknown> | null;
   const loaded = { tools: init?.['tools'], mcp_servers: init?.['mcp_servers'], skills: init?.['skills'], memory_paths: init?.['memory_paths'] ?? null };
-  report(JSON.stringify(loaded) === JSON.stringify({ tools: ['Glob', 'Grep', 'Read', 'StructuredOutput'], mcp_servers: [], skills: [], memory_paths: null }),
+  report(JSON.stringify(loaded) === JSON.stringify({ tools: ['Task', 'Glob', 'Grep', 'Read', 'StructuredOutput'], mcp_servers: [], skills: [], memory_paths: null }),
     'claude.clean-context.init', JSON.stringify(loaded));
 
   // Claude implementer: a write in its cwd (bypassPermissions), then a resume that recalls it.

@@ -256,8 +256,10 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   by itself once its probes pass.
 - `edges[]` (`after{unit, on, effective, met}`, `contingent{unit, edge, condition, resolved}`), `runOnly`.
 - `commands{pending[{id, type}], receipts}` (the last 10 terminal receipts).
-- `spend{byRole, byModel{models, unresolvedRevs}, byJob, bySmoke}`: token totals; `byModel` is the only place
-  `status` names a model.
+- `spend{byRole, byModel{models, unresolvedRevs}, byClass{classes, unresolvedRevs}, byJob, bySmoke}`: token totals and
+  list-price cost. A Claude call's totals include its subagents'; `byClass` splits spend by usage class (`efficient`,
+  `frontier`, `summit`, and `economy` for Haiku subagents): each seat's own share on its class, subagent spend on the
+  subagent model's class. `byModel` counts each seat's own share and is the only place `status` names a model.
 - `host{containment, resources, pools, queue, probes, backends, log{bytes, events, foldMs, compactionDue}}`,
   `parkedBackends`, `rejection`.
 - `timings[{stage, count, p50Ms, maxMs}]`: completed attempts per stage.

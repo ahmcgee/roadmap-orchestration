@@ -137,7 +137,7 @@ import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
 import { PRE_DEV10_BUILTIN_SEATS, bundleClassesOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
-import { type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
+import { type ClassTotal, type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byClass, byModel, meterOf, ownShare } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat } from './pipeline/transitions.ts';
@@ -472,7 +472,13 @@ export type Status = Readonly<{
   }>;
   spend: Readonly<{
     byRole: readonly RoleTotal[];
+    /** Each seat's own share (less its subagents') on the model its revision seats there. */
     byModel: Readonly<{ models: readonly ModelTotal[]; unresolvedRevs: readonly RoutingRev[] }>;
+    /**
+     * 2026-10-16: spend per usage class: each seat's own share on its class, its subagents' on theirs (meter.ts `byClass`),
+     * over the same resolvable revisions as `byModel`.
+     */
+    byClass: Readonly<{ classes: readonly ClassTotal[]; unresolvedRevs: readonly RoutingRev[] }>;
     /** M3: each job's lens and checkpoint calls, M4a's pack review calls (also in `byRole` and `byModel`). */
     byJob: readonly JobTotal[];
     /** Start-up smokes per backend: in neither `byRole` nor `byModel`. */
@@ -605,15 +611,16 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
 }
 
 /**
- * The routing table of every routing revision the log's plan revisions resolve to (the arc's and each unit layer's), from
- * their recorded provenance only: what `spend.byModel` renders historical usage with (never the live repo config). The
+ * The routing of every routing revision the log's plan revisions resolve to (the arc's and each unit layer's), from
+ * their recorded provenance only: what `spend.byModel` and `spend.byClass` render historical usage with (never the live
+ * repo config). The
  * class catalogue and the built-in seats bind every revision (OR-L3), so a 1.0.0-dev.9 meter row's recorded rev is also
  * registered, aliased to its revision's current table (`preDev10RevAlias`, scaffolding): its spend joins and is
  * attributed to today's bindings. An alias never displaces a rev HEAD resolves.
  */
-function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, RoutingTable> {
-  const out = new Map<RoutingRev, RoutingTable>();
-  const aliases = new Map<RoutingRev, RoutingTable>();
+function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
+  const out = new Map<RoutingRev, ResolvedRouting>();
+  const aliases = new Map<RoutingRev, ResolvedRouting>();
   for (const e of events) {
     if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') continue;
     const provenance = e.fact.routingProvenance;
@@ -621,11 +628,11 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
     for (const unit of [null, ...(Object.keys(provenance.unitLayers) as UnitId[])]) {
       const stack = provenanceStack(provenance, scope, unit);
       const r = resolveRouting(stack);
-      out.set(r.rev, r.table);
-      aliases.set(preDev10RevAlias(stack), r.table);
+      out.set(r.rev, r);
+      aliases.set(preDev10RevAlias(stack), r);
     }
   }
-  for (const [rev, table] of aliases) if (!out.has(rev)) out.set(rev, table);
+  for (const [rev, r] of aliases) if (!out.has(rev)) out.set(rev, r);
   return out;
 }
 
@@ -1632,7 +1639,8 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const now = Date.now();
   const meter = meterOf(events);
   const tables = routingTables(runDir, events);
-  const resolvable = meter.bySeat.filter((t) => tables.has(t.routingRev));
+  const resolvable = { bySeat: meter.bySeat.filter((t) => tables.has(t.routingRev)), delegatedBySeat: meter.delegatedBySeat };
+  const each = <V>(of: (r: ResolvedRouting) => V): ReadonlyMap<RoutingRev, V> => new Map([...tables].map(([rev, r]) => [rev, of(r)]));
   const unresolvedRevs = [...new Set(meter.bySeat.filter((t) => !tables.has(t.routingRev)).map((t) => t.routingRev))].sort();
 
   const needsUser: readonly OpenItem[] = [
@@ -1670,7 +1678,13 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     runOnly: view.runOnly(),
     needsUser,
     commands,
-    spend: { byRole: meter.byRole, byModel: { models: byModel(resolvable, tables), unresolvedRevs }, byJob: meter.byJob, bySmoke: meter.bySmoke },
+    spend: {
+      byRole: meter.byRole,
+      byModel: { models: byModel(ownShare(resolvable), each((r) => r.table)), unresolvedRevs },
+      byClass: { classes: byClass(resolvable, each((r) => r.classes)), unresolvedRevs },
+      byJob: meter.byJob,
+      bySmoke: meter.bySmoke,
+    },
     host: {
       containment: { mode: view.containmentMode(), guarantee: SESSION_GUARANTEE },
       resources: hostResources(view),
