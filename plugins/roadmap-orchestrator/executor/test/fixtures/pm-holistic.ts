@@ -41,7 +41,11 @@ import { MUL, gateStep } from './unit-common.ts';
 type Json = Record<string, unknown>;
 
 const MAPPED = ['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations: ['I-1', 'I-2'] }));
-const OBLIGATIONS = [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', activation: 'future' as const, deliveredBy: ['u1'], testIds: ['t2'] }];
+// Each witness declares its test file (a fresh start requires them, plan defects 2026-10-16): I-1's is in the baseline,
+// I-2's is the one u1 delivers inside its scope.
+const OBLIGATIONS = [
+  { id: 'I-1', testIds: ['t1'], files: ['test/add.test.js'] }, { id: 'I-2', activation: 'future' as const, deliveredBy: ['u1'], testIds: ['t2'], files: ['test/mul.test.js'] },
+];
 /** The applied bundle's one op: an arc-wide limit changed (material, no docs), citing V-1. */
 const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-1'], evidence: ['scripted evidence'] };
 

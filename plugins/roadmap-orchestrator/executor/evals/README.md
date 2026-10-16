@@ -127,7 +127,8 @@ node evals/m2/check.ts /var/tmp/m2-default
   right` once `right` waits at `right-hold` with its registry edit committed; `right-hold` released and
   `urgent` added to `run-only` once `status` shows `right` held with nothing running; once `urgent` merged, a
   `git merge-tree` conflict on the registry line, then `right2 {reenters: {unit: right, enterAt: verify}}` by
-  `roadmap apply`; `run-only --clear` once that applies. Each device is recorded in `report.json` (`devices`).
+  `roadmap apply`, its `fixes` naming `right`'s latest failure outcome when it recorded one (the teardown device's
+  retryable park, when `right` held instance #2); `run-only --clear` once that applies. Each device is recorded in `report.json` (`devices`).
   A device whose own check fails (no conflict, a rejected apply) stops the run (`endedBy: device-failed`); a
   parked run is stopped as in M1; hard timeout 120 minutes. It refuses a dir that holds a report or a run dir:
   a fixture dir is set up and run once. It uses the machine's host lock, and kills only the executor pid
