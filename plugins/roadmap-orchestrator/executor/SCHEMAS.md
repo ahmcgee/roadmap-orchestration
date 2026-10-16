@@ -316,6 +316,14 @@ dev.11 is adopted; a dev.11 unit parked `read-denied` resumes like any env park.
 | `UsageClass` | new: `efficient \| frontier \| summit \| economy`; `DELEGATE_CLASSES` (src/routing/classes.ts) maps every model a subagent can be put on to one (Haiku economy, Sonnet efficient, Opus frontier, Fable summit); an uncatalogued model in `modelUsage` fails loud (`UnknownModelError`), as do per-model costs that do not sum to `total_cost_usd` (`UsageMismatchError`) | none |
 | `status.spend` | `+ byClass{classes: ClassTotal[], unresolvedRevs}`; `byModel` counts each seat's own share (its totals less the delegated) | derived |
 
+
+**1.0.0-dev.11 → next (gate method redesign, W3 seat prompts).** No persisted record changes.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| `GateInputs`, `PlanCheckInputs` (not persisted) | `+ escalation: EscalationInput \| null` = `{kind: route-up, first: {decision, reasons} \| null} \| {kind: risk-trigger}`: at the escalation seat only, from the unit's `routedUp` and the latest answer of a spawn below that seat (`escalationOf`, src/pipeline/stages.ts); rendered as `<escalation>` before the ask | none: rendered per call from the journal |
+| `PROMPTS` (not persisted) | Sonnet 5.5 is a `prompt` row for every judgment role: the role's Opus module with `SONNET_THINK_FIRST` ending its system prompt; its build still inherits the Opus brief. The Fable gate and plan-check modules are deleted, the checkpoint module is `checkpoint/claude-opus-5-5.ts`, and Fable inherits Opus for every judgment role. `MAX_LENS_FINDINGS` is deleted (unenforced) | none |
+
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
@@ -983,8 +991,8 @@ judgment claude-sonnet-5-5 high (both); `frontier` → claude-opus-5-5 medium, `
 both profiles). Built-in seats (1.0.0-dev.10): planCheck `{low: efficient, med: efficient, high: frontier, escalation:
 summit}`, build `{low: efficient, med: efficient, high: frontier}`, gate `{low: efficient, med: frontier, high: frontier,
 escalation: summit}`, lens and flow efficient, packReview frontier, checkpoint summit. A repo rebind (`ClassBindings`) binds
-its one triple at every seat that names the class. `PROMPTS[role]['claude-sonnet-5-5']` inherits a Claude module for every
-judgment role (2026-10-15 review). `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
+its one triple at every seat that names the class. `PROMPTS[role]['claude-sonnet-5-5']` is, for every
+judgment role, the Opus module with `SONNET_THINK_FIRST` ending its system prompt (W3; inherited unchanged 2026-10-15 to dev.11). `SeatTable<V>` = a value per seat; `RoutingTable = SeatTable<Triple>`; `ClassTable =
 SeatTable<ModelClass>` (the built-in seats, shared by both profiles); `RoutingLayer` = a class at any subset of seats (a named role needs
 ≥ 1 seat; a triple is refused); `ClassBindings` = a triple for any subset of classes (repo config only; a
 binding's effort must be one `models.ts` lists for its model: Claude low|medium|high|xhigh|max, Codex low|medium|high); `RoutingLayerName = builtin | repo-config | plan

@@ -49,7 +49,8 @@ describe('argv', () => {
     }, 'Do the unit.'), `${SYSTEM}\n\nDo the unit.`);
   });
   it('claude judgment (2.1.301, with the Agent tool), token for token', () => {
-    const c = capturedArgv('claude-judgment-subagents');
+    // Captured on 2.1.301 before dev.12 made every judgment's session persist (its repair turn resumes it).
+    const c = capturedArgv('claude-judgment-subagents').filter((t) => t !== '--no-session-persistence');
     const call = {
       kind: 'claude-judgment', role: 'gate', triple: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'low' }, schemaText: value(c, '--json-schema'),
       session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(value(c, '--session-id')) }, system: CAPTURED_SYSTEM, evidenceDirs: [],
@@ -59,7 +60,8 @@ describe('argv', () => {
     assert.equal(exitCode('claude-judgment-subagents'), '0');
   });
   it('claude judgment', () => {
-    const c = capturedArgv('claude-judgment').map((t) => (t === 'Read,Grep,Glob' ? 'Read,Grep,Glob,Agent' : t));
+    // Captured before dev.12: the Agent tool joined the judgment tools and every judgment's session persists.
+    const c = capturedArgv('claude-judgment').map((t) => (t === 'Read,Grep,Glob' ? 'Read,Grep,Glob,Agent' : t)).filter((t) => t !== '--no-session-persistence');
     const call = {
       kind: 'claude-judgment', role: 'gate', triple: CLAUDE, schemaText: value(c, '--json-schema'),
       session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(value(c, '--session-id')) },

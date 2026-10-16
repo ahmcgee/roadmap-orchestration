@@ -4,37 +4,45 @@
 import type { ModelId, PromptSupport, PromptTable, Role } from '../routing/types.ts';
 import { PROMPT as BUILD_LUNA } from './build/gpt-5.6-luna.ts';
 import { PROMPT as BUILD_OPUS } from './build/claude-opus-5-5.ts';
-import { PROMPT as CHECKPOINT_FABLE } from './checkpoint/claude-fable-5-1.ts';
+import { PROMPT as CHECKPOINT_OPUS } from './checkpoint/claude-opus-5-5.ts';
 import { PROMPT as FLOW_OPUS } from './flow/claude-opus-5-5.ts';
-import { PROMPT as GATE_FABLE } from './gate/claude-fable-5-1.ts';
 import { PROMPT as GATE_OPUS } from './gate/claude-opus-5-5.ts';
 import type { PromptModule, PromptModules } from './inputs.ts';
 import { PROMPT as LENS_OPUS } from './lens/claude-opus-5-5.ts';
 import { PROMPT as PACK_REVIEW_OPUS } from './packReview/claude-opus-5-5.ts';
-import { PROMPT as PLAN_CHECK_FABLE } from './planCheck/claude-fable-5-1.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 
 /** Every Codex judgment triple is unsupported in M1 (R21); layers.ts reports it as `codex-judgment`. */
 const CODEX_JUDGMENT = 'no read-only Codex judgment profile exists yet (R21)';
+/** What a Sonnet judgment seat adds to the Opus module it reads: the line ends its system prompt (`sonnet`). */
+export const SONNET_THINK_FIRST = 'Think the problem through before you answer.';
+
 /**
- * Sonnet 5.5 judges on the efficient class (owner ruling 2026-10-15) and reads the Claude judgment modules unchanged, as
- * its build reads the Opus brief: Anthropic's Sonnet 5.5 guidance says prompts written for the Claude 5 line perform well
- * unchanged, and the shifts it names are already absent from every judgment module (no reasoning field to invite a
- * `reasoning_extraction` decline, no tool-discouraging, anti-laziness or think-more text; effort, not the prompt, sets
- * how much it thinks: `high` on its judgment seats, classes.ts). Every judgment role has the row, so `route` may seat the
- * efficient class at any seat.
+ * The Sonnet 5.5 module of a judgment role: the role's Opus module with SONNET_THINK_FIRST at the end of its system prompt.
+ * Sonnet 5.5 judges on the efficient class (owner ruling 2026-10-15) at effort `high` (classes.ts), and every judgment
+ * answers a schema-bound structured output after a few steps of working out. Anthropic's "Prompting Claude Sonnet 5.5"
+ * (Reasoning tasks with JSON output, 2026-10-16): on such tasks the model often answers without thinking first; with
+ * structured outputs it can work the problem out only in its thinking, and this line at the end of the system prompt makes
+ * it think first more often, bringing `high` close to `xhigh` accuracy for a modest increase in output tokens. The rest of
+ * the Opus module carries over unchanged (the guide: prompts written for the Claude 5 line perform well). Sonnet's build
+ * seat is agentic coding, not a JSON reasoning task, and inherits the Opus brief instead.
  */
-const sonnetJudgment = (from: 'claude-opus-5-5' | 'claude-fable-5-1', module: string) => ({
+function sonnet<M extends Readonly<{ system: string }>>(opus: M): { readonly type: 'prompt'; readonly prompt: M } {
+  return { type: 'prompt', prompt: { ...opus, system: `${opus.system}\n\n${SONNET_THINK_FIRST}` } };
+}
+
+/** Fable 5.1 holds no built-in seat (a repo rebind reaches it) and reads each judgment role's Opus module unchanged. */
+const fableJudgment = (module: string) => ({
   type: 'inherits',
-  from,
-  reviewed: `2026-10-15: Sonnet 5.5 migration guidance (Anthropic) checked against the ${module}: no reasoning field, no tool-discouraging, anti-laziness or think-more text, the answer schema-bound; no Sonnet-specific change needed`,
+  from: 'claude-opus-5-5',
+  reviewed: `2026-10-16: Prompting Claude Fable 5.1 (Anthropic) checked against the ${module}; no Fable-specific change needed, and no built-in seat routes Fable`,
 }) as const;
 
 export const PROMPTS: PromptTable<PromptModules> = {
   planCheck: {
     'claude-opus-5-5': { type: 'prompt', prompt: PLAN_CHECK_OPUS },
-    'claude-fable-5-1': { type: 'prompt', prompt: PLAN_CHECK_FABLE },
-    'claude-sonnet-5-5': sonnetJudgment('claude-opus-5-5', 'Opus 5.5 plan-check prompt (both shapes, scope growth, the repair turn)'),
+    'claude-fable-5-1': fableJudgment('Opus 5.5 plan-check prompt (both shapes, scope growth, the escalation preface)'),
+    'claude-sonnet-5-5': sonnet(PLAN_CHECK_OPUS),
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
@@ -62,13 +70,14 @@ export const PROMPTS: PromptTable<PromptModules> = {
   },
   gate: {
     'claude-opus-5-5': { type: 'prompt', prompt: GATE_OPUS },
-    'claude-fable-5-1': { type: 'prompt', prompt: GATE_FABLE },
-    'claude-sonnet-5-5': sonnetJudgment('claude-opus-5-5', 'Opus 5.5 gate prompt'),
+    'claude-fable-5-1': fableJudgment('Opus 5.5 gate prompt (the bounded diff, the escalation preface)'),
+    'claude-sonnet-5-5': sonnet(GATE_OPUS),
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
   // The arc roles (M3). The built-in seats put the lenses on efficient (Sonnet) and the checkpoint on summit (Opus)
-  // under both profiles; a plan's `route` or a class rebind can seat either role on another Claude model.
+  // under both profiles; a plan's `route` or a class rebind can seat either role on another Claude model. Every judgment
+  // role has a Sonnet row, so `route` may seat the efficient class at any seat.
   lens: {
     'claude-opus-5-5': { type: 'prompt', prompt: LENS_OPUS },
     // Fable reads the Opus lens brief unchanged: the rules a Fable-native judgment adds (finish the whole task,
@@ -79,21 +88,16 @@ export const PROMPTS: PromptTable<PromptModules> = {
       from: 'claude-opus-5-5',
       reviewed: '2026-10-06: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 lens prompt with its M4a rev 3 cause shape and specs-only drift; no Fable-specific change needed',
     },
-    'claude-sonnet-5-5': sonnetJudgment('claude-opus-5-5', 'Opus 5.5 lens prompt (its cause shape and specs-only drift)'),
+    'claude-sonnet-5-5': sonnet(LENS_OPUS),
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
   checkpoint: {
-    // Opus reads the Fable checkpoint prompt unchanged: its structure (role and authority up front, the inputs
-    // before the ask, no reasoning field) is what the Opus 5.5 guide asks for, and its Fable-specific lines
-    // (finish the whole weighing, plain prose, ops held to what the clauses demand) cost Opus nothing.
-    'claude-opus-5-5': {
-      type: 'inherits',
-      from: 'claude-fable-5-1',
-      reviewed: '2026-10-06: Prompting Claude Opus 5.5 (Anthropic) checked against the Fable 5.1 checkpoint prompt with its M4a corpus amendments and issue intake and its rev 3 admit classes, failure matrix, input manifest, embedded specs and closeout; no Opus-specific change needed',
-    },
-    'claude-fable-5-1': { type: 'prompt', prompt: CHECKPOINT_FABLE },
-    'claude-sonnet-5-5': sonnetJudgment('claude-fable-5-1', 'Fable 5.1 checkpoint prompt (its admit classes, failure matrix and repair turn)'),
+    'claude-opus-5-5': { type: 'prompt', prompt: CHECKPOINT_OPUS },
+    // Written for Fable first (2026-09-30), so its Fable-specific lines (finish the whole weighing, plain prose, ops held
+    // to what the clauses demand) are already in it.
+    'claude-fable-5-1': fableJudgment('Opus 5.5 checkpoint prompt (first written for Fable 5.1)'),
+    'claude-sonnet-5-5': sonnet(CHECKPOINT_OPUS),
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
@@ -107,7 +111,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
       from: 'claude-opus-5-5',
       reviewed: '2026-10-06: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 pack-review prompt with its M4a rev 3 census cross-check and time-fixture and entry-point checks; no Fable-specific change needed',
     },
-    'claude-sonnet-5-5': sonnetJudgment('claude-opus-5-5', 'Opus 5.5 pack-review prompt'),
+    'claude-sonnet-5-5': sonnet(PACK_REVIEW_OPUS),
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
@@ -121,7 +125,7 @@ export const PROMPTS: PromptTable<PromptModules> = {
       from: 'claude-opus-5-5',
       reviewed: '2026-10-08: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 flow prompt (the five focusing steps, no tampering, the ruler out of reach, the lever catalogue with code\'s checks); no Fable-specific change needed',
     },
-    'claude-sonnet-5-5': sonnetJudgment('claude-opus-5-5', 'Opus 5.5 flow prompt (the five focusing steps, the ruler out of reach)'),
+    'claude-sonnet-5-5': sonnet(FLOW_OPUS),
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },

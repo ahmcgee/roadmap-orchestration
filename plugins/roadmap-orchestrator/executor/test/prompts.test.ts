@@ -13,7 +13,8 @@ import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
-import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
+import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
+import { BUILD_DELEGATION, JUDGE_DELEGATION } from '../src/prompts/delegation.ts';
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
@@ -151,7 +152,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] },
+      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -173,6 +174,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
         rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
       },
+      escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } },
     },
   ],
   build: [
@@ -196,6 +198,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
+      escalation: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -217,6 +220,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         },
         smoke: { killed: [], survived: [{ lane: laneId('journey'), testId: 'SURVIVOR-B' }], inconclusive: [], notRun: null },
       },
+      escalation: { kind: 'risk-trigger' },
     },
   ],
   lens: [
@@ -425,16 +429,25 @@ describe('prompts', () => {
       const s = PROMPTS[role][model];
       if (s.type === 'inherits') assert.equal(PROMPTS[role][s.from].type, 'prompt', `${role}/${model}: inherits a real module`);
     }
-    // Sonnet 5.5 judges on the efficient class (2026-10-15): every judgment role reads a Claude module, reviewed for it.
+    // W3: every judgment role has one written module, Opus's. Sonnet 5.5 (efficient, 2026-10-15) reads it with the think-first
+    // line ending its system prompt (the Sonnet 5.5 guide, reasoning tasks with JSON output); Fable inherits it unchanged.
     for (const role of ROLES.filter((r) => r !== 'build')) {
+      const opus = promptFor(role, 'claude-opus-5-5');
+      assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt', role);
       const s = PROMPTS[role]['claude-sonnet-5-5'];
-      assert.ok(s.type === 'inherits' && s.reviewed.startsWith('2026-10-15: Sonnet 5.5 migration guidance'), `${role}/sonnet: ${JSON.stringify(s)}`);
-      assert.equal(promptFor(role, 'claude-sonnet-5-5'), promptFor(role, s.from));
+      assert.ok(s.type === 'prompt', `${role}/sonnet: a module of its own`);
+      assert.equal(s.prompt.system, `${opus.system}\n\n${SONNET_THINK_FIRST}`, `${role}/sonnet: the Opus system prompt, then the line`);
+      assert.ok(s.prompt.system.endsWith('Think the problem through before you answer.'), role);
+      assert.equal(s.prompt.render, opus.render, `${role}/sonnet: the Opus message`);
+      assert.equal(s.prompt.schema, opus.schema, role);
+      const fable = PROMPTS[role]['claude-fable-5-1'];
+      assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5', `${role}/fable: inherits Opus`);
     }
+    assert.equal(promptFor('build', 'claude-sonnet-5-5'), promptFor('build', 'claude-opus-5-5'), 'the Sonnet build reads the Opus brief unchanged');
   });
 
   it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => {
-    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5'] as const) {
       const sys = promptFor(role, model).system;
       assert.match(sys, /fresh session/, `${role}/${model}`);
       assert.match(sys, /C-nn/, `${role}/${model}`);
@@ -462,10 +475,12 @@ describe('prompts', () => {
   });
 
   it('judgment prompts: cited documents in full, the rest indexed; host facts only from lane programs; correctness or acceptance only', () => {
-    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5'] as const) {
       const mod = promptFor(role, model) as { system: string; render: (i: unknown) => string };
       assert.match(mod.system, /reference index|<reference_index>/, `${role}/${model}`);
-      assert.match(mod.system, /correctness or the spec's stated acceptance/, `${role}/${model}`);
+      // W3: every real defect is reported and classified; no "report only what affects correctness" filter.
+      assert.match(mod.system, /Report every real (spec )?defect you find, and classify each/, `${role}/${model}`);
+      assert.doesNotMatch(mod.system, /Report only what affects correctness/, `${role}/${model}`);
       assert.match(mod.system, /one Grep over many paths/, `${role}/${model}`);
       assert.match(mod.system, /premises/, `${role}/${model}`);
       const text = mod.render(SAMPLES[role][1]);
@@ -488,7 +503,7 @@ describe('prompts', () => {
   });
 
   it('a later round rules on its prior round: the handoff and the four rules are rendered', () => {
-    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5'] as const) {
       const mod = promptFor(role, model) as { render: (i: unknown) => string };
       assert.doesNotMatch(mod.render(SAMPLES[role][0]), /PREMISE-B|Re-verify only premises/, `${role}/${model}: no prior round on the first`);
       const text = mod.render(SAMPLES[role][1]);
@@ -574,13 +589,12 @@ describe('M3 prompts: the vision and the arc roles', () => {
   /** Every Claude model: Opus and Fable have written modules, Sonnet reads them (owner ruling 2026-10-15, efficient judgment). */
   const ARC_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'] as const;
 
-  it('the arc roles are supported on every Claude model: lens/Opus and checkpoint/Fable written, the others inherit; Codex unsupported', () => {
-    assert.equal(PROMPTS.lens['claude-opus-5-5'].type, 'prompt');
-    assert.equal(PROMPTS.checkpoint['claude-fable-5-1'].type, 'prompt');
-    assert.equal(promptFor('lens', 'claude-fable-5-1'), promptFor('lens', 'claude-opus-5-5'));
-    assert.equal(promptFor('lens', 'claude-sonnet-5-5'), promptFor('lens', 'claude-opus-5-5'));
-    assert.equal(promptFor('checkpoint', 'claude-opus-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
-    assert.equal(promptFor('checkpoint', 'claude-sonnet-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
+  it('the arc roles are supported on every Claude model: lens/Opus and checkpoint/Opus written, Fable inherits, Sonnet adds its line; Codex unsupported', () => {
+    for (const role of ['lens', 'checkpoint'] as const) {
+      assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt');
+      assert.equal(promptFor(role, 'claude-fable-5-1'), promptFor(role, 'claude-opus-5-5'));
+      assert.equal(promptFor(role, 'claude-sonnet-5-5').system, `${promptFor(role, 'claude-opus-5-5').system}\n\n${SONNET_THINK_FIRST}`);
+    }
     for (const role of ['lens', 'checkpoint'] as const) {
       for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.throws(() => promptFor(role, model), UnsupportedPromptError);
       for (const model of ARC_MODELS) {
@@ -621,7 +635,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
       questions: [q, { ...q, id: questionId('Q-2'), text: 'CLOSED', state: 'closed' as const }],
       advances: [visionClauseId('V-1'), visionClauseId('V-4')],
     };
-    const text = promptFor('checkpoint', 'claude-fable-5-1').render({ ...SAMPLES.checkpoint[0], vision: v });
+    const text = promptFor('checkpoint', 'claude-opus-5-5').render({ ...SAMPLES.checkpoint[0], vision: v });
     assert.match(text, /<vision>\nVision revision 3\nV-4 \(world\): W\nV-1 \(purpose\): P\n/);
     assert.match(text, /V-2 \(tradeoff, rank 1\): T/);
     assert.match(text, /V-3 \(good, WITHDRAWN: never cite it\): G/);
@@ -630,7 +644,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
   });
 
   it('the checkpoint conveys OR-V: steer to the vision, cite V-n plus evidence per op, optimistic interpretations, owner-only acts only as requests', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     for (const needle of [
       /not toward the original plan/, /most optimistic reading/, /interpretations/, /cites the active V-n clauses that demand it/, /evidence/,
       /amend its statement or anchor, re-anchor it, split it and drop part of its text, retire, waive or defer it/, /amend the implementation contracts/,
@@ -642,7 +656,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
   });
 
   it('the checkpoint lists the ruling sidecar\'s required schema value and every closed enum from the reader\'s constants (paid m3 run 7: invalid rulings twice)', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     assert.ok(sys.includes(`- schema: "${RULING_SCHEMA}".`), 'the schema value');
     for (const [field, values] of [['kind', RULING_KINDS], ['relation', DOC_RELATIONS], ['disposition', OBLIGATION_DISPOSITIONS], ['lifetime', RULING_LIFETIMES]] as const) {
       assert.ok([`${field}: one of`, `${field} one of`].some((f) => sys.includes(`${f} ${values.map((v) => `"${v}"`).join(', ')}`)), field);
@@ -651,12 +665,12 @@ describe('M3 prompts: the vision and the arc roles', () => {
   });
 
   it('the checkpoint never accepts or defers a P1: dismissed, or left to the repair that names it (paid m3 run 9)', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     assert.ok(sys.includes('A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
   });
 
   it('the checkpoint states anchors as anchorSection reads them: #<heading-slug> or literal text on exactly one line (paid m3 run 9)', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     assert.match(sys, /An anchor \(in docRefs and contractOps\) is #<heading-slug> for a section, .*\(## Money is #money\).*; otherwise it is literal text found on exactly one line/);
     const doc = '# Contract\n\n## Money\n\nformatAmount renders two decimals.\n\n## Other\n\nmoney elsewhere\n';
     assert.equal(headingSlug('Money'), 'money', 'the example is the slug code computes');
@@ -690,8 +704,8 @@ describe('M3 prompts: the vision and the arc roles', () => {
   it('the lens keeps the anti-spiral rules: the finding bar, prior findings not repeated, no reasoning field, nobody will answer', () => {
     const sys = promptFor('lens', 'claude-opus-5-5').system;
     for (const needle of [/Under-reporting a real defect and over-reporting a non-defect are both failures/, /An empty report is legitimate/, /Do not report one again/,
-      /Nobody will answer a question/, /not a transcript of your reasoning/, /Findings worst first/]) assert.match(sys, needle);
-    assert.doesNotMatch(sys, /[Aa]t most \d+ (findings|premises)/, 'no unenforced reporting cap (W4)');
+      /Nobody will answer a question/, /not a transcript of your reasoning/, /Report every finding that clears this bar, worst first/]) assert.match(sys, needle);
+    assert.doesNotMatch(sys, /[Aa]t most \d+ (findings|premises)/, 'no unenforced reporting cap (W3, W4)');
     for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
     const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
     assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
@@ -713,8 +727,10 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.ok(text.includes(`<not_inlined>\nFiles with changed content not shown above; each file named holds its whole diff.\n- dist/b.js (derived output, regenerated from sources this diff changes, 900 bytes): ${dir}/files/dist/b.js.diff\n- src/it's.js (new source, over the budget, 200000 bytes): ${dir}/files/src/it's.js.diff\n- and 2 more, all listed in ${dir}/not-inlined.txt\n</not_inlined>`));
     assert.doesNotMatch(text, /git diff/, 'no git command: a judgment has no shell');
     assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat|Moved|Deleted/, 'a range shown whole lists nothing');
-    for (const needle of [/Every file under <not_inlined> is part of the range and was not shown to you/, /Read each one's diff at the path beside it/,
-      /the executor records the whole range as reviewed by your lens, so your report is your statement that you read every part of it/,
+    // W3: the bounded diff's three parts, and the whole range read by the lens or a subagent before it reports.
+    for (const needle of [/<orientation> is a map of the whole range/, /it is not a verdict on any file/, /the absolute path of a readable \.diff file/,
+      /it names the file that lists them all/,
+      /the executor records the whole range as reviewed by your lens, so your report covers every part of it/, /by you or by a subagent/,
       /Never judge a file from its name or its stat line alone/, /split by publication/, /The same applies to <owner_branches>/]) assert.match(mod.system, needle);
     assert.doesNotMatch(mod.system, /git diff|command beside it/);
   });
@@ -793,8 +809,8 @@ describe('M3 prompts: the vision and the arc roles', () => {
 });
 
 describe('M4a prompts: the corpus target, checkpoint intake, the pack review, unattended builds', () => {
-  const JUDGMENTS = [['planCheck', 'claude-opus-5-5'], ['planCheck', 'claude-fable-5-1'], ['gate', 'claude-opus-5-5'], ['gate', 'claude-fable-5-1'],
-    ['lens', 'claude-opus-5-5'], ['checkpoint', 'claude-fable-5-1']] as const;
+  const JUDGMENTS = [['planCheck', 'claude-opus-5-5'], ['gate', 'claude-opus-5-5'],
+    ['lens', 'claude-opus-5-5'], ['checkpoint', 'claude-opus-5-5']] as const;
 
   it('corpus target: the rules index by file and section, the read-only corpus dir, the vision doc only where the role reads it', () => {
     const doc = targetDocument(corpusTarget('/run/corpus/0123abcd', 'docs/vision.md'));
@@ -830,7 +846,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
   });
 
   it('checkpoint issues: trusted data in <pasted_content> under their issue ids, acted on like evidence; an unavailable capture says why', () => {
-    const mod = promptFor('checkpoint', 'claude-fable-5-1');
+    const mod = promptFor('checkpoint', 'claude-opus-5-5');
     const text = mod.render({ ...SAMPLES.checkpoint[1], issuesUnchangedSince: null });
     assert.match(text, /<issues>\nissue-7 \[roadmap:bug\], title "Title 7":\n<pasted_content id="issue-7">\nISSUE-B\n<\/pasted_content id="issue-7">\nComment issue-7\/c-3 \(OWNER\):\n<pasted_content id="issue-7\/c-3">\nISSUE-B comment\n<\/pasted_content id="issue-7\/c-3">\n<\/issues>/);
     assert.match(mod.render(SAMPLES.checkpoint[0]), /<issues>\n\(no open roadmap:bug or roadmap:feedback issues\)\n<\/issues>/);
@@ -872,8 +888,9 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
       /before its first unit is admitted/, /You change nothing/, /adjudicates it/, /holds the arc's first admission/, /Nobody will answer a question/, /fresh session/,
       /Read-only: write no code, create no files, make no commit and edit nothing/, /Judge the pack as drafted/, /Never answer an open question yourself/,
       /1\. Contradictions[^]*2\. Units that cannot be built[^]*3\. Cuts[^]*4\. Lanes and obligations[^]*5\. The census and the slice[^]*6\. The Phase-0 record/,
-      /Findings worst first/, /An empty report is legitimate/, /not a transcript of your reasoning/,
+      /Report every finding, worst first/, /An empty report is legitimate/, /not a transcript of your reasoning/,
     ]) assert.match(mod.system, needle);
+    assert.doesNotMatch(mod.system, /At most \d+ findings/, 'W3: no unenforced finding cap');
     const text = mod.render(SAMPLES.packReview[1]);
     assert.ok(text.startsWith('<vision>\nVision revision 2\n'), 'the vision first');
     assert.match(text, /<source>spec\.json for unit u-one, revision 2 \(rendered\)<\/source>\n<document_content>\nSPEC-B/);
@@ -1062,14 +1079,14 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
   });
 
   it('prompts.checkpoint-failure-matrix: a matrix of each step against process death before admitting an ordering repair, prior repairs of the transaction carried in, put in the spec', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     for (const needle of [/# Transaction repairs/, /reorders the steps of a transaction \(staging, a ledger or file save, a publication, a rollback\)/, /write its failure matrix/,
       /process dies just before the step, just after it, and when the step itself fails/, /Read the earlier repairs of the same transaction first/,
       /Put the matrix in the repair's spec as a facts item/]) assert.match(sys, needle);
   });
 
   it('checkpoint admits (OR-A1, LR-k, LR-m, R35): code classifies from declared targets; honest citation; one opportunity, one follow-up; the rest converts to amendments', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     for (const needle of [/# Admits in a corpus arc/, /Code classifies every admit after you decide/, /you do not label it/, /- repair: /, /- oversight: /, /- opportunity: /,
       /budget of one opportunity/, /at most one follow-up/, /Honest citation: an admit that targets an out-of-slice rule cites the clause outside the slice that the rule advances/,
       /targets lists the corpus rules \(T-n\) the unit adds or changes behaviour for/, /A finding's vision clauses are context, not scope/, /Every target must be an active rule of the pin/,
@@ -1081,7 +1098,7 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
   });
 
   it('checkpoint inputs (H4, H5, C3, C6): the manifest, never live roadmap-inputs; every spec with its held ids; add vs replace; the next ruling id; the evidence note; the diagnosis right after a park trigger; unchanged issues', () => {
-    const mod = promptFor('checkpoint', 'claude-fable-5-1');
+    const mod = promptFor('checkpoint', 'claude-opus-5-5');
     for (const needle of [/Read a captured input only through its manifest path\. Never read roadmap-inputs/, /add needs an id the spec does not hold, and replace an id it holds/,
       /takes the id in <next_ruling_id>, and each further one the next number \(C-9, then C-10\), written without leading zeros/,
       /The head may advance while you decide: an observation stays valid when the head's run keeps every cited test's outcome and selection; cite the observations your ops rest on\./,
@@ -1141,5 +1158,52 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     assert.match(s[2]!, /already existed before this unit, leave that test as it is/);
     assert.throws(() => smokeFixDirectives([], required), /names a surviving test/);
     assert.match(repeatRedDirective(laneId('unit'), { attempt: 2 }), /^Lane unit failed exactly as it did in attempt 2: .* deterministic, not flaky/);
+  });
+});
+
+describe('W3 seat prompts (2026-10-16)', () => {
+  it('prompts.delegation: every Claude role prompt carries its delegation text; the Codex build brief, which has no Agent tool, does not', () => {
+    for (const role of ROLES.filter((r) => r !== 'build')) {
+      for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] as const) assert.ok(promptFor(role, model).system.includes(JUDGE_DELEGATION), `${role}/${model}`);
+    }
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5'] as const) assert.ok(promptFor('build', model).system.includes(BUILD_DELEGATION), `build/${model}`);
+    assert.doesNotMatch(promptFor('build', 'gpt-5.6-luna').system, /Agent tool|subagent/);
+    for (const text of [JUDGE_DELEGATION, BUILD_DELEGATION]) {
+      for (const needle of [/You own/, /the Agent tool/, /model: haiku/, /model: opus/, /One subagent is enough when one suffices/, /Do not use subagents to re-check your own/]) assert.match(text, needle);
+    }
+    assert.match(JUDGE_DELEGATION, /A subagent's answer is a lead, not evidence/);
+    assert.match(JUDGE_DELEGATION, /quoted to you with their file and line/);
+    assert.match(JUDGE_DELEGATION, /read-only, as you are/);
+  });
+
+  it('prompts.gate-bounded-diff: the gate reads <orientation> as a map, <diff> and every <not_inlined> file, derived outputs through their sources', () => {
+    const sys = promptFor('gate', 'claude-opus-5-5').system;
+    for (const needle of [/<orientation> is a map of the whole change/, /it is not a verdict on any file/, /<diff> holds per-file diffs inlined, in priority order/,
+      /<not_inlined> lists every file whose diff is not inlined/, /the absolute path of a readable \.diff file/, /Your verdict covers the whole diff/,
+      /by you or by a subagent/, /judged through its sources/, /Never judge a file by its name or its stat line/]) assert.match(sys, needle);
+    assert.doesNotMatch(sys, /Stop reading once every clause is graded/, 'the whole diff is read');
+  });
+
+  it('prompts.lens-brief-last: the vision opens the lens message and the lens brief sits after the data, just before the ask', () => {
+    const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
+    assert.ok(text.startsWith('<vision>'));
+    const brief = text.indexOf('<lens_brief>');
+    for (const tag of ['<obligations>', '<audited_range', '<owner_branches>', '<prior_findings>', '<checkout>']) {
+      assert.ok(text.indexOf(tag) >= 0 && text.indexOf(tag) < brief, `${tag} before the brief`);
+    }
+    assert.match(text.slice(brief), /^<lens_brief>\nlens: vision\n[^]*<\/lens_brief>\n\nAudit the tree at /);
+  });
+
+  it('prompts.escalation-preface: only at the escalation seat, naming a route-up\'s first answer or the risk trigger', () => {
+    for (const [role, name] of [['planCheck', 'plan-check'], ['gate', 'gate']] as const) {
+      const mod = promptFor(role, 'claude-opus-5-5') as { render: (i: unknown) => string };
+      const base = SAMPLES[role][0];
+      assert.doesNotMatch(mod.render(base), /<escalation>/, `${role}: nothing below the seat`);
+      const routed = mod.render({ ...base, escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['FIRST-REASON'] } } });
+      assert.match(routed, new RegExp(`<escalation>\\nThis ${name} is an escalation[^]*decided escalate, and the unit was routed up\\. Its reasons:\\n- FIRST-REASON\\n[^]*not as facts[^]*</escalation>`));
+      assert.match(mod.render({ ...base, escalation: { kind: 'route-up', first: null } }), /gave no answer \(its session was refused\)/);
+      assert.match(mod.render({ ...base, escalation: { kind: 'risk-trigger' } }), /A runtime risk trigger[^]*straight to the escalation seat/);
+      assert.ok(routed.indexOf('<escalation>') < routed.lastIndexOf(role === 'gate' ? 'Gate unit' : 'Check the spec'), `${role}: before the ask`);
+    }
   });
 });

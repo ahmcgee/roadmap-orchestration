@@ -87,7 +87,7 @@ import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  judgedAnswer, salvageRejections, stillOutside, writeJudgmentInputs,
+  escalationOf, judgedAnswer, salvageRejections, stillOutside, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -344,6 +344,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       priorRound: priorRound(ctx, unit.id, head),
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head),
+      escalation: escalationOf(ctx, unit.id, 'gate', seat.tier, validateGateOutput),
     });
     const fingerprint = fingerprintAt(ctx, unit, tip);
     writeJudgmentInputs(ctx, parent, {

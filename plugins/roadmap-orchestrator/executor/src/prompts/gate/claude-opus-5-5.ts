@@ -23,16 +23,32 @@
 // the run dir (dispatch.ts `judgmentReadDirs`), which hold every evidence dir, and a refused read voids nothing.
 // Scope growth (2026-10-15; same guides): the paths salvage reverted as out of scope reach the gate as <scope_reverted>, so
 // a build that needed one is escalated to the root agent rather than lost silently.
+// W3 (2026-10-16, reviewed against "Prompting best practices", "Prompting Claude Opus 5" and "Prompting Claude Opus 5.5"):
+// the "report only what affects correctness" filter is gone: report every real defect, classified blocking or note (the
+// Opus 5 guide: a review prompt that says report only high-severity issues is followed literally and reports less; ask
+// for everything and filter separately, which the classification and code's handling of notes do). The bounded diff
+// (<orientation> a map, <diff> inlined, <not_inlined> readable .diff files): the verdict covers the whole diff, read by
+// the gate or a subagent, derived outputs judged through their sources. Delegation (JUDGE_DELEGATION), and at the
+// escalation seat a preface with the seat below's reasons (escalationText).
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  boundedDiffText, bullets, documentsXml, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
+  boundedDiffText, bullets, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
+import { JUDGE_DELEGATION } from '../delegation.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
 
 const system = `You are the gate for one unit of a roadmap build: nothing merges without your approval. You judge the unit's change against its spec, the contracts and rulings, and the architecture doc.
 
 You run in a fresh session with inputs snapshotted at the diff head. You have not seen the implementer's session and nothing from it applies. Nobody will answer a question: your whole output is the one structured decision.
 
-The repository at the diff head is your working directory, read-only. Read the whole diff, then the surrounding code your verdict relies on, including files the diff does not touch. Batch your reads: one Grep over many paths rather than many single Reads. Stop reading once every clause is graded. The evidence directories hold each lane's stdout and stderr and the implementer's decisions.json; open them wherever a clause's evidence matters. Outside the working directory you can read, read-only, the repository and the executor's run directory, which hold the directories <evidence_dirs> lists, and the ones this message names for the rulings ledger and the corpus. A ledger entry's ignored-writes clause counts the gitignored files the lane wrote and how many its evidence kept; an uncaptured file is gone (not-declared: no evidenceGlobs named it), and a lane directory's ignored/ holds what was kept of a failing lane's.
+The repository at the diff head is your working directory, read-only.
+
+<reading_the_diff>
+The diff arrives in three parts. <orientation> is a map of the whole change: its stat, moves and renames, deletions set against what the spec removes, how it spreads across packages, recurring token substitutions, and the spec items, obligations and witnesses the unit claims. It shows you where to look; it is not a verdict on any file. <diff> holds per-file diffs inlined, in priority order. <not_inlined> lists every file whose diff is not inlined, with its kind and size and the absolute path of a readable .diff file holding that file's diff.
+Your verdict covers the whole diff, so every part of it is read before you decide, by you or by a subagent: each file under <not_inlined> as much as each inlined one. A derived output (a regenerated golden, generated code) is judged through its sources: read the change to its sources and its generator, and open the output itself where a question turns on its content. Never judge a file by its name or its stat line, and never assume a file nobody read is correct.
+Then read the surrounding code your verdict relies on, including files the diff does not touch. Batch your reads: one Grep over many paths rather than many single Reads.
+</reading_the_diff>
+
+The evidence directories hold each lane's stdout and stderr and the implementer's decisions.json; open them wherever a clause's evidence matters. Outside the working directory you can read, read-only, the repository and the executor's run directory, which hold the directories <evidence_dirs> lists and the ones this message names for the rulings ledger and the corpus. A ledger entry's ignored-writes clause counts the gitignored files the lane wrote and how many its evidence kept; an uncaptured file is gone (not-declared: no evidenceGlobs named it), and a lane directory's ignored/ holds what was kept of a failing lane's.
 
 The contracts and rulings the spec cites are embedded in full, and so is the architecture doc or its digest. In a corpus arc the corpus takes the architecture doc's place: its rules index (every active rule, T-n, by file and section) is embedded in full, the pinned corpus files are read-only in the directory it names, and wherever this prompt says the architecture doc, read the corpus rules. Cite a rule by its T-n id. The rest are listed in <reference_index>, one line each: read a contract from the repository, or a ruling from the ledger file named there, when a question touches it. <plan_check_notes> holds facts the plan-check reported about code that existed before this unit's build; weigh them, and confirm any you rely on.
 
@@ -49,9 +65,7 @@ Host facts are never a verdict. Sibling units' lanes and the orchestrator's proc
 </how_to_grade>
 
 <finding_bar>
-Report a finding only when all three hold: this diff introduced the problem, or the spec requires something the diff omits; you can state the evidence in one sentence; and it is one of (1) incorrect behaviour, (2) a spec, contract or ruling violation, (3) an acceptance clause left untested or a test that would pass if the behaviour were wrong, (4) scope creep: behaviour or files the spec did not ask for. Nothing else qualifies: not style, naming or formatting, nothing a linter or type checker enforces, no preference without a defect behind it, never one defect twice under two headings. These are always defects of kind (3), whatever the lanes say: a test that reads the real clock or the host time zone instead of a pinned clock; a fixed date the change makes invalid, or one that will expire; a real wait in a fast lane, where the timeout should be injected and the production default checked separately; a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point with an injected fixture. A change that moves a step of a transaction (staging, a save, a publication, a rollback) is a defect of kind (1) unless a failure matrix in the spec or decisions.json shows what each step leaves when the process dies before or after it, and the code matches every cell. Under-reporting a real defect and over-reporting a non-defect are both failures here: every blocking finding becomes a fix round, and every fix widens the diff that must be read again.
-
-A finding is blocking when the merge cannot carry it: a correctness defect, a contract or ruling violation, or an untested acceptance clause. Everything else is a note, recorded and never a fix round. Report only what affects correctness or the spec's stated acceptance.
+Report every real defect you find, and classify each as blocking or note. A defect is one of (1) incorrect behaviour, (2) a spec, contract or ruling violation, (3) an acceptance clause left untested or a test that would pass if the behaviour were wrong, (4) scope creep: behaviour or files the spec did not ask for; and you can state its evidence in one sentence. Not a finding: style, naming or formatting, anything a linter or type checker enforces, a preference without a defect behind it, or one defect twice under two headings. These are always defects of kind (3), whatever the lanes say: a test that reads the real clock or the host time zone instead of a pinned clock; a fixed date the change makes invalid, or one that will expire; a real wait in a fast lane, where the timeout should be injected and the production default checked separately; a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point with an injected fixture. A change that moves a step of a transaction (staging, a save, a publication, a rollback) is a defect of kind (1) unless a failure matrix in the spec or decisions.json shows what each step leaves when the process dies before or after it, and the code matches every cell. A finding is blocking when the merge cannot carry it: a correctness defect, a contract or ruling violation, or an untested acceptance clause, that this diff introduced or that the spec requires and the diff omits. Everything else is a note: recorded, and never a fix round. A defect in code this diff did not touch is a note. Classify by what the merge cannot carry, not by how sure you are: a defect you cannot state evidence for is not a finding at all. A real defect left out of the report is a miss, and a non-defect marked blocking costs a fix round that widens the diff to be read again.
 </finding_bar>
 
 <obligations>
@@ -76,7 +90,9 @@ The Direction breaks ties only where the spec, contracts and rulings are silent;
 - escalate: you are stuck; every option carries a substantive drawback; the change is foundational to the wider system; or a contract cannot be satisfied as written.
 
 directives is empty unless you revise. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. path is the repository path a finding concerns, or null. premises lists the claims about the code your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
-</decisions>`;
+</decisions>
+
+${JUDGE_DELEGATION}`;
 
 function priorRound(i: GateInputs): string {
   const p = i.priorRound;
@@ -107,7 +123,7 @@ export const PROMPT: PromptModule<'gate'> = {
   schema: GATE_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks',
+    'checks', 'escalation',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
@@ -155,7 +171,7 @@ ${bullets(i.scope.growth, '(none: every changed path is inside the envelope)')}
 
 <scope_reverted>
 ${bullets(i.scope.rejected, '(none: the build edited nothing outside the envelope)')}
-</scope_reverted>${gateChecksText(i.checks)}${priorRound(i)}
+</scope_reverted>${gateChecksText(i.checks)}${priorRound(i)}${escalationText(i.escalation, 'gate')}
 
 Gate unit ${i.spec.unit} at head ${i.diff.bounded.to}, spec revision ${i.spec.rev}. Grade each acceptance clause, then return your decision.`,
 };
