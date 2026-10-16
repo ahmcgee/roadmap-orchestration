@@ -158,10 +158,10 @@ describe('status of a live arc', () => {
     const line = startLine(await startCli(r, []));
     assert.equal(line.kind, 'ready', JSON.stringify(line));
     await idle(r, line.generation!);
-    // The files moved on (a spec edit nobody applied), so the apply is evaluated, and it expects a revision not in force.
+    // The files moved on (a spec edit nobody applied), so the apply is evaluated, and its spec does not load.
     const spec = join(r.planPath, '..', 'u1.json');
-    writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), rev: 2 }));
-    const submitted = JSON.parse((await cli(r, ['apply', '--expect-rev', '7'])).stdout) as { command: string };
+    writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), rev: 'two' }));
+    const submitted = JSON.parse((await cli(r, ['apply'])).stdout) as { command: string };
     let s = await statusOf(r);
     await until(async () => (s = await statusOf(r)).commands.receipts.some((x) => x.command === submitted.command), 60_000, 'the apply\'s receipt');
     assert.equal(s.commands.receipts.find((x) => x.command === submitted.command)?.state, 'rejected');

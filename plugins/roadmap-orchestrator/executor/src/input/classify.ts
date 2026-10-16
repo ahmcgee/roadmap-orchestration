@@ -135,12 +135,13 @@ import { RISK_TIERS, type RiskTier, UNIT_ROLES } from '../routing/types.ts';
 import { readJournal } from '../core/log.ts';
 import { effectiveGraph, findCycle } from '../schedule/graph.ts';
 import type { CommandScope, ScopeOf } from '../schedule/types.ts';
-import { type Ruling, ledgerAfter, parseRulings, sidecarsAfter } from '../spec/rulings.ts';
+import { type Ruling, ledgerAfter, nextRulingId, parseRulings, sidecarsAfter } from '../spec/rulings.ts';
 import { SpecFileError, bytesSha256, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import {
   type InForce, type InputFile, type InputFiles, PLAN_INPUT, type RevisionInForce, type RoutingBase, SPEC_INPUT, inputPath, keptInput, phase0RecordOf, planInForce, planRouting,
-  readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
+  inForceFiles, readInputFiles, revisionInForce, revisionManifestOf, sidecarPath, specShaInForce, unitRouting,
 } from './inforce.ts';
+import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
   type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, knownDefectsOf, parsePlan, planCheckShapeOf, planFieldValue, priorityOf, reservedUnitIdReason,
@@ -1209,33 +1210,87 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
 // ---------------------------------------------------------------------------------------------------
 // An apply's proposal (G15)
 
+/** What an apply's proposal reads besides the owner's files: the log, the run dir and the revision in force. */
+export type ProposalContext = Readonly<{ runDir: AbsPath; view: JournalView; inForce: InForce; revision: RevisionInForce }>;
+
+/** An apply's proposal: the merged files with its rulings landed, the owner's files it was rebased from, and its numbered rulings. */
+export type ApplyProposal = Readonly<{ next: InputFiles; owner: InputFiles; records: readonly RulingRecord[] }>;
+
 /**
- * The proposal an `apply` command makes: the files as they are, when they still hash to its manifest, with the rulings
- * of its `--ruling` records landed (M4a rev 3, I2: `withRulings`). Otherwise why it no longer holds: files missing, or
- * changed since hashed.
+ * The proposal an `apply` makes (and a start whose files differ, with no manifest and no rulings): the owner's files, which
+ * must still hash to its manifest (null: a dry run or a start, which read them now), rebased from `base` (null: the
+ * default base, `ownerBase`) onto the files in force (src/input/rebase.ts), then its `--ruling` records numbered and landed
+ * on the merged ledger (M4a rev 3, I2: `withRulings`), which must be the ledger in force. Otherwise why it does not hold:
+ * files missing or changed since hashed, base bytes not kept, a conflict.
  */
 export function applyProposal(
-  files: InputFiles, manifest: RevisionManifest, rulings: readonly RulingRecord[],
-): Readonly<{ next: InputFiles }> | Readonly<{ reasons: readonly string[] }> {
+  ctx: ProposalContext, files: InputFiles, manifest: RevisionManifest | null, base: RevisionManifest | null, drafts: readonly RulingDraft[],
+): ApplyProposal | Readonly<{ reasons: readonly string[] }> {
   const actual = revisionManifestOf(files);
   if ('missing' in actual) return { reasons: actual.missing };
-  return same(actual, manifest) ? { next: withRulings(files, rulings) } : { reasons: [manifestMismatch(files, manifest, actual)] };
+  if (manifest !== null && !same(actual, manifest)) return { reasons: [manifestMismatch(files, manifest, actual)] };
+  const from = baseFiles(ctx.runDir, base ?? ownerBase(ctx.runDir, ctx.view, ctx.view.arc), files.planFile, files.repo);
+  if ('reasons' in from) return from;
+  const theirs = inForceFiles(ctx.runDir, ctx.view, ctx.inForce, ctx.revision, files.planFile, files.repo);
+  const merged = rebaseInputs(from.files, files, theirs);
+  if ('reasons' in merged) return merged;
+  const next = merged.next;
+  if (drafts.length > 0) {
+    const sidecars = (f: InputFiles): string => canonicalJson([...f.sidecars].map(([id, x]) => [id, bytesSha256(x.bytes)]));
+    if (next.ledger.bytes === null || theirs.ledger.bytes === null || !next.ledger.bytes.equals(theirs.ledger.bytes) || sidecars(next) !== sidecars(theirs)) {
+      return { reasons: [`the rulings ledger ${files.ledger.path} or its sidecars change the ledger in force: \`apply --ruling\` lands its rulings on the ledger in force; leave the ledger and its sidecars as they are`] };
+    }
+  }
+  const records = numberRulings(drafts, next.ledger.bytes);
+  return { next: withRulings(next, records), owner: files, records };
 }
 
-/** A ruling record a `rule` or an `apply --ruling` lands: the bytes the CLI hashed, parsed as a sidecar. */
-export type RulingRecord = Readonly<{ path: AbsPath; bytes: Buffer; sidecar: RulingSidecar }>;
+/** The placeholder id an owner's ruling record may carry: the executor numbers it when it lands (the ledger's next C-n). */
+export const UNNUMBERED = 'C-?';
 
-/** The ruling record at `file.path`, which must still hash to `file.sha256` and parse as a ruling sidecar; else why not. */
-export function readRulingRecord(file: HashedFile): RulingRecord | string {
+/** A ruling record a `rule` or an `apply --ruling` lands, numbered (`numberRulings`): the bytes it lands, parsed as a sidecar. */
+export type RulingRecord = Readonly<{ path: AbsPath; bytes: Buffer; sidecar: RulingSidecar }>;
+/** A ruling record as the CLI hashed it: its JSON, and its id, or null for `C-?` (numbered when it lands). */
+export type RulingDraft = Readonly<{ path: AbsPath; bytes: Buffer; raw: Readonly<Record<string, unknown>>; id: RulingId | null }>;
+
+/**
+ * The ruling record at `file.path`, which must still hash to `file.sha256` and parse as a ruling sidecar (its id a C-n, or
+ * `C-?`); else why not.
+ */
+export function readRulingRecord(file: HashedFile): RulingDraft | string {
   if (!existsSync(file.path)) return `the ruling record ${file.path} does not exist`;
   const bytes = readFileSync(file.path);
   if (bytesSha256(bytes) !== file.sha256) return `the ruling record ${file.path} changed since the command hashed it`;
   try {
-    return { path: file.path, bytes, sidecar: parseRulingSidecar(JSON.parse(bytes.toString('utf8'))) };
+    const raw = JSON.parse(bytes.toString('utf8')) as unknown;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SchemaError('ruling', 'a ruling sidecar object', raw);
+    const record = raw as Readonly<Record<string, unknown>>;
+    const unnumbered = record['id'] === UNNUMBERED;
+    const sidecar = parseRulingSidecar(unnumbered ? { ...record, id: 'C-1' } : record);
+    return { path: file.path, bytes, raw: record, id: unnumbered ? null : sidecar.id };
   } catch (error) {
     if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
     return `the ruling record ${file.path} is not a ruling sidecar: ${error.message}`;
   }
+}
+
+/**
+ * The records numbered, in order, on `ledger`: a `C-?` record takes the ledger's next C-n after the records before it (its
+ * bytes then its JSON with that id); a numbered one stays as written (validation refuses an id that is not next).
+ */
+export function numberRulings(drafts: readonly RulingDraft[], ledger: Buffer | null): readonly RulingRecord[] {
+  let text = ledger?.toString('utf8') ?? '';
+  return drafts.map((d) => {
+    let record: RulingRecord;
+    if (d.id !== null) record = { path: d.path, bytes: d.bytes, sidecar: parseRulingSidecar(d.raw) };
+    else {
+      const id = nextRulingId(parseRulings(text, 'the rulings ledger'));
+      const raw = Object.fromEntries(Object.entries(d.raw).map(([k, v]) => [k, k === 'id' ? id : v]));
+      record = { path: d.path, bytes: Buffer.from(`${JSON.stringify(raw, null, 2)}\n`, 'utf8'), sidecar: parseRulingSidecar(raw) };
+    }
+    text = ledgerAfter(text, record.sidecar);
+    return record;
+  });
 }
 
 /** A sidecar's bytes as the executor writes one it changed (a superseded status): its record as JSON. */
@@ -1321,7 +1376,7 @@ export type ScopeContext = Readonly<{
  * A12's `ScopeOf`, bound to what an apply's classification reads: `resume` (all) → the arc; `resume <u>` →
  * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` and (M4b) `flow-decide` and `flow-request` → none; `steer`, `merge-in` and
  * (scope growth) `scope-decide` → their unit; `apply` → its changes' scope
- * (`changesScope`) over the files as they are, its `--ruling` records landed; none when it would be rejected (a ruling
+ * (`changesScope`) over its proposal (the files rebased onto the files in force, its `--ruling` records landed); none when it would be rejected (a ruling
  * record that no longer reads included) or change nothing (it then
  * touches nothing); the arc when the files no longer hash to its manifest (they may be restored before it
  * applies, so nothing narrower is safe).
@@ -1357,14 +1412,14 @@ export function commandScope(sc: ScopeContext): ScopeOf {
           if (!(error instanceof SchemaError || error instanceof SyntaxError)) throw error;
           return NONE;
         }
-        const records = (body.rulings ?? []).map(readRulingRecord);
-        if (records.some((r) => typeof r === 'string')) return NONE;
-        const proposal = applyProposal(files, body.manifest, records as readonly RulingRecord[]);
+        const drafts = (body.rulings ?? []).map(readRulingRecord);
+        if (drafts.some((r) => typeof r === 'string')) return NONE;
+        const revision = revisionInForce(sc.runDir, inForce);
+        const proposal = applyProposal({ runDir: sc.runDir, view, inForce, revision }, files, body.manifest, body.base, drafts as readonly RulingDraft[]);
         if ('reasons' in proposal) return ARC;
         const verdict = classify({
-          runDir: sc.runDir, view, inForce, revision: revisionInForce(sc.runDir, inForce), next: proposal.next,
-          residues: undispositioned(sc.hostDir), routing: sc.routingBase,
-          proposer: records.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: (records as readonly RulingRecord[]).map((r) => r.sidecar.id) },
+          runDir: sc.runDir, view, inForce, revision, next: proposal.next, residues: undispositioned(sc.hostDir), routing: sc.routingBase,
+          proposer: proposal.records.length === 0 ? { type: 'apply' } : { type: 'apply', rulings: proposal.records.map((r) => r.sidecar.id) },
         });
         return verdict.kind === 'accepted' ? changesScope(verdict.changes, inForce.plan, proposal.next.plan) : NONE;
       }

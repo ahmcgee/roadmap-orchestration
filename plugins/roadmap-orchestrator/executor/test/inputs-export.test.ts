@@ -1,6 +1,7 @@
 // M4a rev 3 step N6 (I1, F17): `roadmap inputs export --repo <repo> --arc <arc> --out <dir>` (src/commands/inputs.ts),
 // over real arcs whose run dir is the repo's (`<git common dir>/roadmap-runtime/<arc>`): the current input view from the
-// run dir's kept inputs, a plan-check's post-plan spec patch included, the CLI as a child. Named tests:
+// run dir's kept inputs, a plan-check's post-plan spec patch included, the CLI as a child; `export.json`'s `base` is the
+// manifest of the exported files (what `apply --base` rebases from). Named tests:
 // cli.inputs-export-current-revs, cli.inputs-export-refuses-existing-out.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
@@ -11,6 +12,7 @@ import { exportInputs } from '../src/commands/inputs.ts';
 import { arcId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { runDir } from '../src/input/cli.ts';
+import { readInputFiles, revisionManifestOf } from '../src/input/inforce.ts';
 import { gitCommonDir } from '../src/preflight/checks.ts';
 import { runUntilExit } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -33,6 +35,9 @@ function filesUnder(dir: string): readonly string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => relative(dir, join(e.parentPath, e.name))).sort();
 }
 
+/** The manifest of the exported files, read as an apply reads files: what `export.json` names as the base. */
+const exportedManifest = (out: string, repo: string) => revisionManifestOf(readInputFiles(absPath(join(out, 'plan.json')), absPath(repo)));
+
 const exportCli = (d: ArcDescriptor, out: string) =>
   runUntilExit(process.execPath, [BIN, 'inputs', 'export', '--repo', d.repo, '--arc', d.arc, '--out', out], { env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '/' }, timeoutMs: 60_000 });
 
@@ -50,8 +55,9 @@ describe('roadmap inputs export', () => {
     const out = join(tmpDir('export'), 'inputs');
     const exit = await exportCli(d, out);
     assert.equal(exit.code, 0, exit.stderr);
-    assert.deepEqual(JSON.parse(exit.stdout), { planRev: 1, specRevs: { u1: 2 } });
-    assert.deepEqual(JSON.parse(readFileSync(join(out, 'export.json'), 'utf8')), { planRev: 1, specRevs: { u1: 2 } });
+    const expected = { planRev: 1, specRevs: { u1: 2 }, base: exportedManifest(out, d.repo) };
+    assert.deepEqual(JSON.parse(exit.stdout), expected);
+    assert.deepEqual(JSON.parse(readFileSync(join(out, 'export.json'), 'utf8')), expected);
     assert.deepEqual(filesUnder(out), ['export.json', 'plan.json', 'rulings.md', 'u1.json']);
     const spec = JSON.parse(readFileSync(join(out, 'u1.json'), 'utf8')) as { rev: number; decisions: readonly { id: string }[] };
     assert.equal(spec.rev, 2, 'the patched spec in force');
@@ -71,7 +77,7 @@ describe('roadmap inputs export', () => {
 
     const out = absPath(join(tmpDir('export'), 'inputs'));
     const done = await exportInputs({ repo: absPath(d.repo), arc: arcId(d.arc), out });
-    assert.deepEqual(done, { planRev: 1, specRevs: { u1: 1 } });
+    assert.deepEqual(done, { planRev: 1, specRevs: { u1: 1 }, base: exportedManifest(out, d.repo) });
     const files = filesUnder(out);
     for (const f of ['export.json', 'plan.json', 'u1.json', 'obligations.json', 'repo/.roadmap/vision.json']) assert.ok(files.includes(f), `${f} in ${files.join(', ')}`);
     const plan = JSON.parse(readFileSync(join(out, 'plan.json'), 'utf8')) as { corpus: string; phase0: string };

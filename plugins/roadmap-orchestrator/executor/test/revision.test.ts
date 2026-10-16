@@ -12,7 +12,7 @@
 // revision.crash-after-payload, revision.crash-after-docs, revision.crash-after-fact (the REVISION_COMMIT matrix row's cells),
 // reverse.crash-cells (the REVERSE matrix row's cells).
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import {
@@ -177,7 +177,7 @@ test('apply.ledger-in-manifest: the manifest hashes the ledger and its sidecars,
   const r = holisticArc();
   try {
     const d = r.d;
-    const body = applyBody(d, planRev(1));
+    const body = applyBody(d);
     assert.ok(body.type === 'apply');
     const m = body.manifest;
     assert.equal(m.rulings.ledgerSha256, fileSha256(absPath(ledgerPathOf(d))));
@@ -188,7 +188,7 @@ test('apply.ledger-in-manifest: the manifest hashes the ledger and its sidecars,
     assert.deepEqual([first.rev, first.source, first.rulingsSha256, first.obligationsSha256, first.visionSha256], [1, { type: 'start' }, m.rulings.ledgerSha256, m.obligations, m.vision]);
 
     addUnit(d, 'u2');
-    const { id, outcome } = await command(r, applyBody(d, planRev(1)));
+    const { id, outcome } = await command(r, applyBody(d));
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
     const fact = lastApplied(r);
     assert.deepEqual([fact.rev, fact.command, fact.source], [2, id, { type: 'command', command: id }]);
@@ -221,7 +221,7 @@ test('apply.ledger-edit-refused: the ledger is executor-owned after start (A3): 
   }
 });
 
-test('apply.stale-base: without --expect-rev an apply is refused when the revision in force came from the executor (A4); with it, it applies', T, async () => {
+test('apply.rebase-keeps-executor-act: an apply of files that predate an executor revision rebases onto it: the act is kept, the edit lands, the files are never written', T, async () => {
   const d = setupArc({ steps: [] });
   recordFirst(d);
   const r = contextFor(d);
@@ -239,10 +239,18 @@ test('apply.stale-base: without --expect-rev an apply is refused when the revisi
     assert.equal(machine.kind, 'applied');
     assert.deepEqual(lastApplied(r).source, { type: 'executor', inv });
 
+    // The owner's files never saw the machine direction; their edit adds a unit, rebased from their start revision.
     addUnit(d, 'u2');
-    assert.match(reasonOf((await command(r, applyBody(d))).outcome), /stale base: plan rev 2 in force came from the executor .*apply with --expect-rev 2/);
-    const ok = await command(r, applyBody(d, planRev(2)));
+    const before = readFileSync(d.planPath);
+    const ok = await command(r, applyBody(d));
     assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
+    assert.equal(lastApplied(r).rev, 3);
+    const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
+    assert.deepEqual([plan.direction, plan.units.map((u) => u.id)], ['Machine direction.', ['u1', 'u2']], 'the executor\'s act and the owner\'s edit, both');
+    assert.ok(readFileSync(d.planPath).equals(before), 'the owner\'s plan file is never written');
+    const payload = keptPayload(r.ctx.runDir, lastApplied(r).payloadSha256);
+    assert.equal(payload.owner?.planSha256, fileSha256(absPath(d.planPath)), 'the payload names the owner\'s files: the base of their next apply');
+    assert.equal((await command(r, applyBody(d))).outcome.kind, 'applied', 'applied again unchanged: nothing to apply');
     assert.equal(lastApplied(r).rev, 3);
   } finally {
     r.journal.close();
@@ -469,14 +477,15 @@ test('apply.scope-growth-ruling: a dispatched unit\'s scope grows only with a ci
 function rulingFile(r: ArcRun, id: string, statement: string, units: readonly string[], judged: Json = {}): Readonly<{ path: ReturnType<typeof absPath>; sha256: ReturnType<typeof sha256> }> {
   const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
   const draft = sidecar(id, statement, { kind: 'decision', appliesTo: { type: 'units', units } });
-  const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: absPath(r.d.repo) }, tip));
+  // An unnumbered record (`C-?`) is judged like any other: its id is not among what consistency judges.
+  const fresh = consistencyRevs(parseRulingSidecar({ ...draft, id: id === 'C-?' ? 'C-1' : id }), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: absPath(r.d.repo) }, tip));
   if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
   const path = absPath(join(tmpDir('apply-ruling'), `${id}.json`));
   writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...(draft['consistency'] as Json), judgedRevs: { ...fresh.revs, ...judged } } }, null, 2)}\n`);
   return { path, sha256: sha256(fileSha256Bytes(readFileSync(path))) };
 }
 
-test('apply.ruling-sidecar-one-revision: `apply --ruling` lands the ruling and the edits that cite it as one revision, then writes the ledger back', T, async () => {
+test('apply.ruling-sidecar-one-revision: `apply --ruling` lands the ruling and the edits that cite it as one revision; the owner\'s ledger is never written', T, async () => {
   const d = setupArc({ steps: [] });
   recordFirst(d);
   const r = contextFor(d);
@@ -505,9 +514,11 @@ test('apply.ruling-sidecar-one-revision: `apply --ruling` lands the ruling and t
     const manifest = keptPayload(r.ctx.runDir, fact.payloadSha256).manifest;
     assert.deepEqual(Object.keys(manifest.rulings.sidecars), ['C-2'], 'the ruling is in the same revision as the edits');
     assert.equal(manifest.rulings.sidecars['C-2' as never], ruling.sha256, 'its bytes as recorded');
-    assert.match(readFileSync(ledgerPathOf(d), 'utf8'), /^C-2 — u1 may also edit `docs\/\*\*`\.$/m, 'the live ledger written back');
-    assert.equal(fileSha256(absPath(join(`${ledgerPathOf(d)}.d`, 'C-2.json'))), ruling.sha256, 'the sidecar written beside it');
-    // The ledger is the one in force again: a plain apply over the same files changes nothing.
+    const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
+    assert.match(inForce.ledger.bytes.toString('utf8'), /^C-2 — u1 may also edit `docs\/\*\*`\.$/m, 'the ledger in force holds the ruling');
+    assert.doesNotMatch(readFileSync(ledgerPathOf(d), 'utf8'), /C-2/, 'the owner\'s ledger is never written');
+    assert.equal(existsSync(join(`${ledgerPathOf(d)}.d`, 'C-2.json')), false, 'nor a sidecar beside it');
+    // The owner's files are the base of their next apply: a plain apply over the same files changes nothing.
     assert.equal((await command(r, applyBody(d))).outcome.kind, 'applied');
     assert.equal(applied(r).length, before + 1);
   } finally {
@@ -537,6 +548,27 @@ test('apply.ruling-sidecar-invalid-refused: a ruling `rule` would refuse (stale 
     assert.match(reasonOf((await command(r, { ...applyBody(d), rulings: [first] } as CommandBody)).outcome), /changed since the command hashed it/);
     assert.equal(applied(r).length, before, 'nothing in force');
     assert.doesNotMatch(readFileSync(ledgerPathOf(d), 'utf8'), /C-2/, 'the ledger untouched');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('apply.ruling-auto-number: `C-?` records take the ledger\'s next ids in order when they land, and the receipt names each', T, async () => {
+  const d = setupArc({ steps: [] });
+  recordFirst(d);
+  const r = contextFor(d);
+  try {
+    editPlan(d, (p) => void (p['direction'] = 'Keep it smaller.'));
+    const first = rulingFile(r, 'C-?', 'u1 stays small.', ['u1']);
+    const second = rulingFile(r, 'C-?', 'u1 stays tidy.', ['u1']);
+    const ok = await command(r, { ...applyBody(d), rulings: [first, second] } as CommandBody);
+    assert.equal(ok.outcome.kind, 'applied', JSON.stringify(ok.outcome));
+    const receipt = readReceipt(r.ctx.runDir, ok.id as never, 'applied');
+    assert.ok(receipt?.state === 'applied');
+    for (const line of [`ruling ${first.path} numbered C-2`, `ruling ${second.path} numbered C-3`]) assert.ok(receipt.verified.includes(line), JSON.stringify(receipt.verified));
+    const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
+    assert.match(inForce.ledger.bytes.toString('utf8'), /^C-2 — u1 stays small\.\nC-3 — u1 stays tidy\.\n$/m);
+    assert.deepEqual([...inForce.sidecars.values()].map((x) => [x.sidecar.id, x.sidecar.statement]), [['C-2', 'u1 stays small.'], ['C-3', 'u1 stays tidy.']]);
   } finally {
     r.journal.close();
   }
@@ -781,8 +813,10 @@ test('reverse.conflict-refused: a later revision that changed the touched artifa
   const r = contextFor(d);
   try {
     bundleAdmitsU2(r, 'restore-revision');
+    // The files hold the bundle's revision, as an export of it does: the edit's base is that revision.
+    const exported = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).manifest;
     editPlan(d, (p) => void (p.units[1]!['risk'] = 'high'));
-    assert.equal((await command(r, applyBody(d, planRev(2)))).outcome.kind, 'applied');
+    assert.equal((await command(r, applyBody(d, exported))).outcome.kind, 'applied');
     const reason = reasonOf((await command(r, { type: 'reverse', divergence: 'D-1' as DivergenceId })).outcome);
     assert.match(reason, /^reverse rejected \(1 reason\): \(1\) the plan changed again after D-1's act \(plan rev 2\); reverse it with `roadmap apply`$/);
     assert.equal(lastApplied(r).rev, 3, 'nothing reversed');
@@ -936,7 +970,7 @@ describe(`matrix row ${REVISION_COMMIT}`, () => {
     const r = holisticArc();
     const d = r.d;
     editObligations(d, (o) => void o.obligations.push(obligation('I-3', 'mul(1, x) is x.')));
-    const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d, planRev(1)));
+    const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d));
     r.journal.close();
     const trigger = writeTrigger(tmpDir('revision-crash'), { label, occurrence: 1 });
     const exit = await runFixture('revision-child.ts', [JSON.stringify(d), file.id], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 30_000 });

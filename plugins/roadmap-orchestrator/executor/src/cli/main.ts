@@ -6,9 +6,10 @@
 // they name into the command (its absolute path and sha256). `gc` is a host action under the host lock, not a
 // queued command (src/commands/gc.ts): it prints its report, or `{refused}` with exit 75 (host busy) or 78. `apply` first hashes the
 // plan file the arc started with (start.json), every unit's spec and (M3) the ledger with its sidecars, the obligations
-// and the vision into the command's manifest (`RevisionManifest`); `apply
-// --dry-run` instead classifies them against the plan in force, read-only, and prints the verdict (it runs
-// no smoke: a backend the new routing needs is listed under `smoke`). Output is agent-facing JSON.
+// and the vision into the command's manifest (`RevisionManifest`), and `--base <export.json>` the base the executor
+// rebases them from (an `inputs export`'s manifest; src/input/rebase.ts); `apply --dry-run` instead classifies the
+// rebased files against the plan in force, read-only, and prints the verdict (it runs no smoke: a backend the new
+// routing needs is listed under `smoke`). Output is agent-facing JSON.
 // `start` launches the supervisor detached (src/supervisor.ts), which claims the host and spawns the
 // executor, and waits for its own generation's readiness (the executor passed every startup check), at
 // most 240 s by default or `--wait <ms>`. It prints one JSON line: `ready` (exit 0; start returns while the
@@ -43,17 +44,16 @@ import { corpusPin } from '../commands/corpus.ts';
 import { captureIssues } from '../commands/issues.ts';
 import { phase0Check } from '../commands/phase0.ts';
 import { openPr } from '../commands/pr.ts';
-import { exportInputs } from '../commands/inputs.ts';
+import { exportBase, exportInputs } from '../commands/inputs.ts';
 import { flowCommand } from '../commands/flow.ts';
 import { type Run, locate } from './locate.ts';
 import { resumeArc } from '../commands/resumearc.ts';
 import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
-import type { PlanRev } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { sha256 } from '../core/ids.ts';
-import { type CommandBody, type HashedFile, type RunStart, runStart } from '../core/records.ts';
+import { type CommandBody, type HashedFile, type RevisionManifest, type RunStart, runStart } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { START_FILE } from '../executor.ts';
 import { arcRolesOf, readInputFiles, revisionManifestOf } from '../input/inforce.ts';
@@ -101,8 +101,9 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       const start = startOf(run);
       // M4a rev 3 (I2): each `--ruling` sidecar hashed like a `rule` record, in the order given.
       const rulings = command.rulings.map((f) => hashedFile('apply --ruling', f));
+      const base = command.base === null ? null : exportBase(absPath(resolve(command.base)));
       if (command.dryRun) {
-        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, command.expectRev, rulings))}\n`);
+        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, base, rulings))}\n`);
         return;
       }
       let manifest: ReturnType<typeof revisionManifestOf>;
@@ -113,7 +114,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
         throw new CliError(`apply: ${start.planFile} does not load: ${error.message}`);
       }
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
-      return submit(command.run, hostDir, { type: 'apply', expectRev: command.expectRev, manifest, ...(rulings.length === 0 ? {} : { rulings }) });
+      return submit(command.run, hostDir, { type: 'apply', base, manifest, ...(rulings.length === 0 ? {} : { rulings }) });
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
@@ -281,11 +282,11 @@ function startOf(run: Run): RunStart {
 }
 
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
-async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: PlanRev | null, rulings: readonly HashedFile[]): Promise<unknown> {
+async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, base: RevisionManifest | null, rulings: readonly HashedFile[]): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
     runDir: run.runDir, view, hostDir, repo: start.repo, planFile: start.planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
-    laneEnv: process.env, manifest: null, expectRev, rulings,
+    laneEnv: process.env, manifest: null, base, rulings,
   });
   switch (verdict.kind) {
     case 'rejected':
@@ -295,7 +296,7 @@ async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, expectRev: Pl
     case 'accepted':
       return {
         dryRun: true, kind: 'accepted', rev: verdict.rev, nextRev: verdict.evaluated.draft.rev, changes: verdict.evaluated.draft.changes, smoke: verdict.smoke,
-        advisories: verdict.advisories,
+        advisories: verdict.advisories, numbered: verdict.numbered,
       };
   }
 }

@@ -300,7 +300,7 @@ describe('impact mapping', () => {
       const path = join(d.planPath, '..', 'obligations.json');
       const o = JSON.parse(readFileSync(path, 'utf8')) as { mapping: { paths: unknown[] } };
       writeFileSync(path, JSON.stringify({ ...o, mapping: { paths: [{ pattern: 'lib/**', obligations: ['I-2'] }] } }));
-      const outcome = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d, 1 as never)));
+      const outcome = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d)));
       assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
       assert.ok(!outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));
@@ -327,7 +327,7 @@ describe('impact mapping', () => {
       const next = obligationsJson({ obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED }, control) as Readonly<{ obligations: readonly Readonly<{ proofJudgment: object }>[] }>;
       const i1 = next.obligations[0]!;
       writeFileSync(path, JSON.stringify({ ...next, obligations: [{ ...i1, rev: 2, proofJudgment: { ...i1.proofJudgment, obligationRev: 2 } }] }));
-      const outcome = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d, 1 as never)));
+      const outcome = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d)));
       assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
       await stepUntil(r, 'u1', (f) => f.stage === 'ff');
       assert.equal(outcomes(d).at(-1), 'ff:fingerprint-invalid', outcomes(d).join(' '));

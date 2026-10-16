@@ -1,7 +1,6 @@
 // `roadmap apply` in process (src/commands/apply.ts `applyPlan`, src/input/{classify,inforce}.ts, the fold's
 // `plan-applied`): the classifier's per-edit rules, one row per edit class; the plan in force as a fold of
-// the log, with and without a fact; an apply's rejections (a stale expectRev, files changed since they were
-// hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
+// the log, with and without a fact; an apply's rejections (files changed since they were hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
 // apply.crash-cells, apply.recovered-after-start; M4a rev 3 (N3): classify.priority-edit-no-drain,
 // classify.plan-check-shape-edit, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
@@ -924,15 +923,12 @@ test('apply.stale-after-evidence-revision: an architect\'s revision written whil
   }
 });
 
-test('apply.rejections: a stale expectRev, files changed since they were hashed, and a startup row over the changed units each reject the whole apply; then it applies, and a re-run is a no-op', T, async () => {
+test('apply.rejections: files changed since they were hashed, and a startup row over the changed units each reject the whole apply; then it applies, and a re-run is a no-op', T, async () => {
   const d = setupArc({ steps: [] });
   const r = contextFor(d);
   try {
     addUnit(d, 'u2');
-    const stale = await command(r, applyBody(d, planRev(2)));
-    assert.deepEqual(stale.outcome, { kind: 'rejected', reason: 'apply rejected (1 reason): (1) stale: --expect-rev 2, but the plan in force is rev 1' });
-
-    const hashed = applyBody(d, planRev(1));
+    const hashed = applyBody(d);
     editSpec(d, 'u2', addClause);
     const changed = await command(r, hashed);
     assert.deepEqual(changed.outcome, {
@@ -947,7 +943,7 @@ test('apply.rejections: a stale expectRev, files changed since they were hashed,
     assert.equal(readReceipt(r.ctx.runDir, row.id as never, 'rejected')?.state, 'rejected');
 
     editSpec(d, 'u2', (s) => void (s['lanes'] = JSON.parse(readFileSync(specPath(d, 'u1'), 'utf8')).lanes));
-    const ok = await command(r, applyBody(d, planRev(1)));
+    const ok = await command(r, applyBody(d));
     assert.equal(ok.outcome.kind, 'applied');
     const receipt = readReceipt(r.ctx.runDir, ok.id as never, 'applied');
     assert.ok(receipt?.state === 'applied');
@@ -1108,7 +1104,7 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
       const d = setupArc({ steps: [] });
       const setup = contextFor(d);
       addUnit(d, 'u2');
-      const file = submitCommand(setup.ctx.runDir, setup.ctx.plan().arc, applyBody(d, planRev(1)));
+      const file = submitCommand(setup.ctx.runDir, setup.ctx.plan().arc, applyBody(d));
       assert.equal(pollCommands(setup.ctx.runDir, setup.ctx.plan().arc).length, 1);
       setup.journal.close();
 
@@ -1154,7 +1150,7 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
     const d = setupArc({ steps: [] });
     const setup = contextFor(d);
     addUnit(d, 'u2');
-    const file = submitCommand(setup.ctx.runDir, setup.ctx.plan().arc, applyBody(d, planRev(1)));
+    const file = submitCommand(setup.ctx.runDir, setup.ctx.plan().arc, applyBody(d));
     setup.journal.close();
     const trigger = writeTrigger(tmpDir('apply-crash'), { label: 'plan.apply.after-inputs', occurrence: 1 });
     const exit = await runFixture('apply-child.ts', [JSON.stringify(d), file.id], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 30_000 });

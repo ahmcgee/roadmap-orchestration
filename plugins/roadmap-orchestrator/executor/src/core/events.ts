@@ -285,8 +285,7 @@ export type RevisionBase = PlanRev | 0;
 
 /**
  * Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, the executor's own patch, or
- * (M4b) an accepted flow proposal, committed under the fence and written back to the live plan (`staleBase` treats it as a
- * bundle).
+ * (M4b) an accepted flow proposal, committed under the fence.
  * A bundle's `admits` and `conversions` (M4a rev 3, OR-A1, Q4): code's classification of its `admit` ops, persisted in
  * the decision record before any settlement and never recomputed; both present (in a corpus arc) or both absent (an
  * `architecture-doc` arc, or 1.0.0-dev.6: unclassified, never counted against a budget or a follow-up; `bundleClassesOf`).
@@ -964,7 +963,10 @@ export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
  * A revision's full evaluated payload (G1), kept content-addressed as `inputs/<sha256>.revision.json` and named by
  * its `revision.commit` intent before any docs `ff`. `plan-applied` is appended from it exactly, then its
  * divergences in order; recovery never reclassifies. `publication`: the rendered `.roadmap/` files and the contract
- * ops the docs publication commits, null when the revision changes no in-tree document.
+ * ops the docs publication commits, null when the revision changes no in-tree document. `owner` (apply rebase, 2026-10-16):
+ * the owner's files a start or an `apply` was rebased from, when they differ from `manifest` (a merge, or `--ruling`
+ * records landed): the default base of the owner's next apply (src/input/rebase.ts `ownerBase`). Absent: the manifest is
+ * the owner's (every revision of an earlier release, whose write-back kept the owner's files at the manifest).
  */
 export type RevisionPayload = Readonly<{
   v: SchemaVersion;
@@ -977,6 +979,7 @@ export type RevisionPayload = Readonly<{
   divergences: readonly DivergenceDraft[];
   publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
   routingProvenance: RoutingProvenance;
+  owner?: RevisionManifest;
 }>;
 
 /**
@@ -1519,8 +1522,9 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     })))),
     routingProvenance: f.get('routingProvenance', routingProvenance),
   };
+  const owner = f.optional('owner', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) })));
   if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
-  return out;
+  return owner === undefined ? out : { ...out, owner };
 });
 
 export function parseRevisionPayload(value: unknown): RevisionPayload {

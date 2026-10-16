@@ -61,7 +61,7 @@ function ticking(w: Readonly<{ arbiter: Readonly<{ wake: () => void }> }>): () =
   return () => clearInterval(timer);
 }
 
-/** What every published rule leaves: its revision, its docs ff to exactly its commit, the snapshot, the slot free, the ledger written back. */
+/** What every published rule leaves: its revision, its docs ff to exactly its commit, the snapshot, the slot free. */
 function assertPublished(r: ArcRun, id: string, pub: string, tip: string, atHead = true): PlanAppliedFact {
   const fact = applied(r).find((f) => f.command === id)!;
   assert.deepEqual([fact.command, fact.source], [id, { type: 'command', command: id }]);
@@ -85,7 +85,7 @@ function assertPublished(r: ArcRun, id: string, pub: string, tip: string, atHead
 // ---------------------------------------------------------------------------------------------------
 // rule
 
-test('rule.publish: a ruling with a contract op lands through its docs publication: constraints.md and the edited contract in one commit on the tip, lanes on it, ff, activation, snapshot, write-back', T, async () => {
+test('rule.publish: a ruling with a contract op lands through its docs publication: constraints.md and the edited contract in one commit on the tip, lanes on it, ff, activation, snapshot; nothing written into the owner\'s files; a `C-?` record takes the next id', T, async () => {
   const d = publishArc({ steps: [] });
   const r = contextFor(d);
   const w = wire(r);
@@ -107,13 +107,19 @@ test('rule.publish: a ruling with a contract op lands through its docs publicati
     assert.deepEqual(lanes.map((i) => [i.expect.subject.purpose === 'journey' && i.expect.subject.lane, i.expect.subject.purpose === 'journey' && i.expect.subject.at, i.parent]),
       [['suite', at, { type: 'job', job: 'docs-1' }]]);
     assert.equal(facts(r).filter((f) => f.kind === 'docs-covered').length, 0, 'a publication carrying contract ops is not docs-only (A17)');
-    // Write-back: the live ledger and the new sidecar hold the revision.
-    assert.match(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /^C-2 — Helpers take finite numbers only\.$/m);
-    assert.ok(existsSync(join(d.planPath, '..', 'rulings.md.d', 'C-2.json')));
-    // A second ruling takes the next id and supersedes nothing it may not.
-    const again = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-3', { statement: 'Helpers never round.' })));
+    // The ledger in force holds the ruling; the owner's ledger is never written, nor a sidecar beside it.
+    const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
+    assert.match(inForce.ledger.bytes.toString('utf8'), /^C-2 — Helpers take finite numbers only\.$/m);
+    assert.doesNotMatch(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /C-2/);
+    assert.ok(!existsSync(join(d.planPath, '..', 'rulings.md.d', 'C-2.json')));
+    // A second ruling, unnumbered, takes the next id when it lands; the receipt names it.
+    const second = submitRule(r, ruleRecord(r, 'C-?', { statement: 'Helpers never round.' }));
+    const again = await applyCommand(w.commands, second);
     assert.equal(again.kind, 'applied', JSON.stringify(again));
     assert.equal(applied(r).at(-1)!.publication?.pub, 'docs-2');
+    const receipt = readReceipt(r.ctx.runDir, second.id, 'applied');
+    assert.ok(receipt?.state === 'applied' && receipt.verified.some((v) => / numbered C-3$/.test(v)), JSON.stringify(receipt));
+    assert.match(revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).ledger.bytes.toString('utf8'), /^C-3 — Helpers never round\.$/m);
     assert.deepEqual(r.journal.view.openIntents(), []);
   } finally {
     r.journal.close();
@@ -135,7 +141,7 @@ test('apply.ruling-for-added-unit (paid M4b run 3, OP-2): `apply --ruling` with 
     const rulings = [{ path: absPath(path), sha256: bytesSha256(bytes) }];
     const c = w.commands;
     const dry = await evaluateApply({
-      runDir: c.runDir, view: r.journal.view, hostDir: c.hostDir, repo: c.repo, planFile: c.planFile, routingBase: c.routingBase, laneEnv: c.laneEnv, manifest: null, expectRev: null, rulings,
+      runDir: c.runDir, view: r.journal.view, hostDir: c.hostDir, repo: c.repo, planFile: c.planFile, routingBase: c.routingBase, laneEnv: c.laneEnv, manifest: null, base: null, rulings,
     });
     assert.equal(dry.kind, 'accepted', JSON.stringify(dry));
     const tip = head(d);
@@ -337,7 +343,7 @@ describe('holistic docs publications', () => {
     try {
       const tip = head(r.d);
       addObligation(r, 'I-2');
-      const red = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d, 1 as never)));
+      const red = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d)));
       assert.ok(red.kind === 'rejected' && /obligations I-2 do not hold on the docs candidate/.test(red.reason), JSON.stringify(red));
       assert.equal(head(r.d), tip);
       const witnessed = facts(r).flatMap((f) => (f.kind === 'witnessed' ? [[f.lane, f.for, f.purpose]] : []));
@@ -351,7 +357,7 @@ describe('holistic docs publications', () => {
       o.obligations = o.obligations.filter((x) => x['id'] !== 'I-2');
       writeFileSync(path, JSON.stringify(o));
       addObligation(r, 'I-3');
-      const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d, 1 as never));
+      const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d));
       const ok = await applyCommand(w.commands, file);
       assert.equal(ok.kind, 'applied', JSON.stringify(ok));
       const fact = assertPublished(r, file.id, 'docs-2', tip);
@@ -406,7 +412,7 @@ test('publish.lane-evidence-immutable: a suite lane and an arc lane of one id ea
   const r = holisticArc([], { 't-I-1': 'pass', 't-I-3': 'pass' }, false, suite);
   const tip = head(r.d);
   addObligation(r, 'I-3');
-  const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d, 1 as never));
+  const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d));
   r.journal.close();
   await crashChild('revision.commit.after-docs', r.d, file.id, null);
   const back = await recoverArc(r.d);
@@ -453,21 +459,19 @@ test('publish.checkout-integrity: a passing lane that changes the docs checkout,
   }
 });
 
-/** The live obligations file of `r`, parsed. */
-const liveObligations = (r: ArcRun): Json & { obligations: (Json & { state: Json })[] } => JSON.parse(readFileSync(join(r.d.planPath, '..', 'obligations.json'), 'utf8')) as never;
-
-test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own revision, publishes invariants.md, and writes the obligations back; a crash after its snapshot leaves a manual start nothing to refuse, and recovery finishes the write-back (startup.pending-write-back)', T, async () => {
+test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own revision and publishes invariants.md; the owner\'s files are never written; a crash after its snapshot leaves a manual start nothing to refuse, and after recovery a start with the owner\'s files changes nothing (startup.pending-write-back)', T, async () => {
   const r = holisticArc([], { 't-I-1': 'pass' });
   const tip = head(r.d);
   const file = submitRule(r, ruleRecord(r, 'C-2', { obligations: ['I-1'], obligationDispositions: [{ id: 'I-1', disposition: 'waived' }] }));
   const ledgerBefore = readFileSync(join(r.d.planPath, '..', 'rulings.md'), 'utf8');
+  const obligationsBefore = readFileSync(join(r.d.planPath, '..', 'obligations.json'), 'utf8');
   r.journal.close();
   await crashChild('docs.after-snapshot', r.d, file.id, null);
 
   // A manual start before recovery: the revision is in force, the files do not hold it yet, and nothing is refused.
   const start = contextFor(r.d);
   try {
-    assert.equal(readFileSync(join(r.d.planPath, '..', 'rulings.md'), 'utf8'), ledgerBefore, 'the crash left the live ledger behind');
+    assert.equal(readFileSync(join(r.d.planPath, '..', 'rulings.md'), 'utf8'), ledgerBefore, 'the owner\'s ledger is never written');
     const context = {
       repo: start.ctx.repo, planFile: absPath(r.d.planPath), plan: start.ctx.plan(), specOf: () => null, profile: 'default' as never, arcRoles: 'm4b' as const, runDir: start.ctx.runDir, hostDir: start.ctx.hostDir,
     };
@@ -488,16 +492,18 @@ test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own
     const i1 = inForce.obligations!.value.obligations.find((o) => o.id === obligationId('I-1'))!;
     assert.deepEqual(i1.state, { type: 'waived', ruling: 'C-2' });
     assert.ok(isExempt(i1), 'a waived obligation is exempt');
-    assert.deepEqual(liveObligations(back).obligations[0]!.state, { type: 'waived', ruling: 'C-2' }, 'the obligations file is written back');
-    assert.match(readFileSync(join(back.d.planPath, '..', 'rulings.md'), 'utf8'), /^C-2 — /m, 'the ledger is written back');
-    assert.ok(existsSync(join(back.d.planPath, '..', 'rulings.md.d', 'C-2.json')));
-    // The next start finds the files holding the revision in force.
+    assert.equal(readFileSync(join(back.d.planPath, '..', 'obligations.json'), 'utf8'), obligationsBefore, 'the owner\'s obligations file is never written');
+    assert.equal(readFileSync(join(back.d.planPath, '..', 'rulings.md'), 'utf8'), ledgerBefore, 'nor the ledger');
+    assert.ok(!existsSync(join(back.d.planPath, '..', 'rulings.md.d', 'C-2.json')));
+    // The next start rebases the owner's unchanged files onto the revision in force: nothing changes, I-1 stays waived.
     const context = {
       repo: back.ctx.repo, planFile: absPath(back.d.planPath), plan: back.ctx.plan(), specOf: () => null, profile: 'default' as never, arcRoles: 'm4b' as const, runDir: back.ctx.runDir, hostDir: back.ctx.hostDir,
     };
     const revs = applied(back).length;
     assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath), absPath(back.d.repo)), process.env), []);
     assert.equal(applied(back).length, revs, 'unchanged');
+    const after = revisionInForce(back.ctx.runDir, requirePlanInForce(back.ctx.runDir, back.journal.view)).obligations!.value.obligations;
+    assert.deepEqual(after.find((o) => o.id === obligationId('I-1'))!.state, { type: 'waived', ruling: 'C-2' });
   } finally {
     back.journal.close();
   }
@@ -588,7 +594,8 @@ describe(`matrix row ${DOCS_PUBLICATION}`, () => {
         assertPublished(r, id, pub, tip);
         assert.equal(docsFfs(r).filter((i) => r.journal.view.doneOf(i.op)?.kind === 'integration.ff').length, 1, 'one docs ff');
         assert.match(show(d, 'main', 'contracts/api.md'), /finite numbers/);
-        assert.match(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /^C-2 — /m, 'the ledger is written back');
+        assert.match(revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).ledger.bytes.toString('utf8'), /^C-2 — /m, 'the ledger in force holds the ruling');
+        assert.doesNotMatch(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /C-2/, 'the owner\'s ledger is never written');
         assert.equal(r.journal.view.opsOf('snapshot.publish').filter((i) => i.parent.type === 'job').length, 1, 'one docs snapshot');
         assert.deepEqual(r.journal.view.openIntents(), [], 'recovery leaves nothing open');
       } finally {

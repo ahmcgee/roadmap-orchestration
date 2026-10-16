@@ -70,7 +70,10 @@ export function barrierSuite(dir: string): LaneJson {
   return { id: 'suite', tier: 'estate', argv: ['node', '-e', script, dir] };
 }
 
-/** An architect's ruling record (raw JSON), its consistency judged at `r`'s integration tip and the revisions in force. */
+/**
+ * An architect's ruling record (raw JSON), its consistency judged at `r`'s integration tip and the revisions in force; `id`
+ * `C-?` leaves it unnumbered (numbered when it lands).
+ */
 export function ruleRecord(r: ArcRun, id: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   const tip = sha(git(r.d.repo, 'rev-parse', 'main'));
   const draft: Record<string, unknown> = {
@@ -82,7 +85,7 @@ export function ruleRecord(r: ArcRun, id: string, over: Record<string, unknown> 
     consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
     ...over,
   };
-  const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: r.ctx.repo }, tip));
+  const fresh = consistencyRevs(parseRulingSidecar({ ...draft, id: id === 'C-?' ? 'C-1' : id }), rulingContextAt({ journal: r.journal, runDir: r.ctx.runDir, planFile: absPath(r.d.planPath), repo: r.ctx.repo }, tip));
   if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
   return { ...draft, consistency: { ...(draft['consistency'] as object), judgedRevs: fresh.revs } };
 }

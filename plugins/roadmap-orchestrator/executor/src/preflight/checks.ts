@@ -11,12 +11,13 @@
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
 //                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
 //                   `obligation-dropped`, and the classifier's lane-evidence row `evidenceScopeConflicts` over
-//                   every unit, both reported as plan-change-refused), a start whose files differ applies
-//                   them through the apply core (src/commands/apply.ts `evaluateRevision`, source `start`) or
-//                   refuses (plan-change-refused); a revision a crash left mid-commit is recovery's first, and so
-//                   is a committed command's write-back (its `command.apply` still open with its revision in force:
-//                   the files may not hold that revision yet, and recovery re-runs the command, which writes it
-//                   back), so the files wait for the next start.
+//                   every unit, both reported as plan-change-refused), a later start rebases them from the owner's
+//                   files of the latest revision applied from them onto the files in force (src/input/rebase.ts:
+//                   files unchanged since are the plan in force) and applies a change through the apply core
+//                   (src/commands/apply.ts `evaluateRevision`, source `start`) or refuses (plan-change-refused, a
+//                   conflict included); a revision a crash left mid-commit is recovery's first, and so is a committed
+//                   command (its `command.apply` still open with its revision in force: recovery finishes it), so the
+//                   files wait for the next start.
 //
 // M3: group 1 also loads the ruling sidecars, the obligations and the vision the files name (`revisionInputRows`).
 //
@@ -60,8 +61,10 @@ import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
   type InputFiles, type RoutingBase, appendRevision, arcRolesOf, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
-  recordPlan, specBytesOf, specShaInForce,
+  recordPlan, revisionInForce, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
+import { applyProposal } from '../input/classify.ts';
+import { keepOwner } from '../input/rebase.ts';
 import { CORPUS_VISION_FILE, type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason, visionFile } from '../input/plan.ts';
 import type { SourceFile } from '../corpus/source.ts';
 import { finishPendingAcks } from '../chain.ts';
@@ -522,11 +525,13 @@ export function settlePlan(
   }
   // A command's or bundle's revision a crash left mid-commit: recovery settles it; the files are settled at the next start.
   if (openRevision(journal.view) !== null) return [];
-  // A command whose revision is in force but which a crash cut short (its write-back of that revision into the files
-  // may be unfinished): recovery re-runs it and finishes the write-back; the files are settled at the next start.
+  // A command whose revision is in force but which a crash cut short: recovery finishes it; the files are settled at the next start.
   if (committedCommand(journal.view)) return [];
+  // The owner's files rebased from their latest applied revision onto the files in force: unchanged files are the plan in force.
+  const proposal = applyProposal({ runDir: context.runDir, view: journal.view, inForce, revision: revisionInForce(context.runDir, inForce) }, files, null, null, []);
+  if ('reasons' in proposal) return [{ kind: 'plan-change-refused', reasons: proposal.reasons }];
   const rctx = { runDir: context.runDir, view: journal.view, hostDir: context.hostDir, planFile: context.planFile, routingBase, laneEnv: env };
-  const verdict = evaluateRevision(rctx, files, { type: 'start' });
+  const verdict = evaluateRevision(rctx, proposal.next, { type: 'start' });
   switch (verdict.kind) {
     case 'unchanged':
       return [];
@@ -539,7 +544,7 @@ export function settlePlan(
       }
       keepCorpusFiles(context.runDir, corpusFiles);
       keepRevision(context.runDir, verdict);
-      commitRevisionNow(journal, context.runDir, payloadOf(verdict.draft, { type: 'start' }), { type: 'arc' });
+      commitRevisionNow(journal, context.runDir, payloadOf(verdict.draft, { type: 'start' }, keepOwner(context.runDir, files, verdict.draft.manifest)), { type: 'arc' });
       return [];
     case 'rejected':
       return [{ kind: 'plan-change-refused', reasons: verdict.reasons }];

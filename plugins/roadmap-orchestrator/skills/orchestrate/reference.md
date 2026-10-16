@@ -42,18 +42,22 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
 - `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item; `--choice` names one of its `options`.
 - `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
-- `roadmap apply [--expect-rev <n>] [--dry-run] [--ruling <file>]`: put the edited plan, specs and other revisioned
-  inputs in force at the next stage boundary. Each `--ruling` (repeatable) is a ruling sidecar validated as `rule`
-  validates it and landed with the edits as one revision. `--dry-run` always exits 0 and prints `kind`:
-  `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke, advisories}`; it queues nothing.
+- `roadmap apply [--base <file>] [--dry-run] [--ruling <file>]`: put the edited plan, specs and other revisioned
+  inputs in force at the next stage boundary, rebased onto the plan in force (merged per file from the edit's base: the
+  files you last applied, or with `--base` an `inputs export`'s `export.json`; a value you and the executor both
+  changed is a `conflict` naming the file and JSON path). Each `--ruling` (repeatable) is a ruling sidecar validated
+  as `rule` validates it and landed with the edits as one revision; an id `"C-?"` takes the ledger's next C-n.
+  `--dry-run` always exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev,
+  changes, smoke, advisories, numbered}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
   files outside a unit's scope that still name what its spec `removes`. They never refuse. A revision
   that changes the plan or the vision cancels a checkpoint deciding on the earlier one (rejected `stale`); its trigger
   is decided again on your revision.
 - `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
 - `roadmap run-only (<unit>... | --clear)`: limit admission to these units, or lift the limit.
-- `roadmap rule <record.json>`: land a ruling (a `roadmap/ruling-m3` sidecar); published through a docs
-  publication, then written to the live ledger.
+- `roadmap rule <record.json>`: land a ruling (a `roadmap/ruling-m3` sidecar; id `"C-?"` takes the ledger's next C-n,
+  named in the receipt) through a docs publication. Your ledger file is never written: `inputs export` shows the ledger
+  in force.
 - `roadmap reverse <D-n>`: a compensating revision restoring what divergence D-n's act changed; rejected when a later
   revision changed it again (use `apply`).
 - `roadmap steer <unit> --brief <file> --budget <min> [--class efficient|frontier|summit] [--resume]`: one uncharged
@@ -63,7 +67,7 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 - `roadmap scope accept|reject <unit> --reason <text> [--repo <path> --arc <arc>]`: queued (scope the unit). Your decision on
   the scope growth a unit's plan-check proposed, or the path salvage reverted on its last two rounds (its `scope-growth`
   item). `accept` lands it as one ruled revision (a new
-  ruling naming the patterns, the unit's plan and spec scope widened, the files written back) and the unit re-opens at
+  ruling naming the patterns, the unit's plan and spec scope widened, in force only) and the unit re-opens at
   plan-check on it; a revision the classifier refuses is rejected with every reason, and the unit stays held. `reject`
   keeps the scope: the plan-check runs again, told what you rejected, and decides within the scope. Acknowledges the
   item. Rejected for a unit not held for a proposal.
@@ -120,7 +124,7 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   supervisor as `start` would (prints its line and exit code). Otherwise `{resumed: false, reason}` (exit 0), reason
   `no-claim`, `other-repo`, `alive`, `complete`, `refused` or `already-resumed`. "Recovery" has the boot hook.
 - `roadmap inputs export --repo <path> --arc <arc> --out <dir>`: read-only; writes the arc's current inputs into a
-  new directory and prints `export.json` `{planRev, specRevs}` ("Recovery").
+  new directory and prints `export.json` `{planRev, specRevs, base}` ("Recovery").
 - `roadmap flow accept|reject <proposal> --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). Your
   decision on flow proposal `flow-<n>.0` with a one-line reason; acknowledges its `flow-proposal` or `flow-host` item.
   Idempotent by proposal; refused (78) for a proposal no run made, one code's checks dropped (the reason is printed), or
@@ -196,8 +200,10 @@ T-13: A cancelled booking frees its berth at once.
   dir's kept copies: the plan, every spec at its current rev (machine and plan-check patches included), the rulings
   ledger and sidecars, the obligations, and for a corpus arc the pin, the Phase-0 record and the issue capture. A file
   beside the plan keeps its path relative to the plan's directory; a file in the product repo (the vision record)
-  goes under `repo/` at its repo path. The corpus guide is not exported (it is the baseline's). Edit the export in
-  place of your inputs, then `roadmap apply --expect-rev <n>` with `n` = `export.json`'s `planRev`.
+  goes under `repo/` at its repo path. The corpus guide is not exported (it is the baseline's). `export.json`'s `base`
+  is the manifest of the exported files. The executor never writes your input files, so this is the one way to get the
+  files in force: sync the export over your inputs, edit, then `roadmap apply --base <dir>/export.json`; the apply
+  rebases your edit onto whatever the executor did since the export.
 - **Boot hook.** A devcontainer restarts with no executor. `roadmap resume-arc --repo <path>` relaunches a dead
   owner's supervisor and does nothing otherwise, so it is safe at every boot:
   `"postStartCommand": "<plugin root>/executor/bin/roadmap resume-arc --repo <product repo>"` in

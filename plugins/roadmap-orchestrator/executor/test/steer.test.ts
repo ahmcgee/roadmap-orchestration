@@ -2,7 +2,7 @@
 // fake-backed over a unit-common arc: a unit parked by two gate escalations is steered through the command path; its
 // steer round is a fresh, uncharged implementer session on the brief with the budget as its window; the pass exits by
 // the table's steer rows; a judgment after it is always a fresh session; the command's rejections and its `--class`
-// revision, written back to the live plan file only while it holds the plan in force before it; and the crash cells of
+// revision, which never writes the owner's plan file (an apply of it rebases onto the layer); and the crash cells of
 // the matrix row STEER, recovered by the recovery engine (src/recover/recover.ts).
 // Named tests: steer.round-uncharged, steer.resume-vs-park, steer.never-judge, steer.rejections, steer.class,
 // steer.class-write-back, steer.class-architect-edit, steer.crash-cells.
@@ -325,53 +325,49 @@ test('steer.class: `--class frontier` on a parked unit commits a plan revision r
   }
 });
 
-test('steer.class-write-back: the class revision is written back to the unchanged live plan file, and a later apply of that file keeps the layer', T, async () => {
+test('steer.class-write-back: the class revision never writes the owner\'s plan file, and a later apply of that file rebases onto it and keeps the layer', T, async () => {
   const d = setupArc({ steps: TO_PARK });
   const r = contextFor(d);
   try {
     await parkU1(r);
     const f = followingContext(r);
-    const before = r.journal.view.planApplied();
-    assert.ok(before !== null);
-    assert.equal(fileSha256(absPath(d.planPath)), before.planSha256, 'the live file holds the plan in force');
+    const before = readFileSync(d.planPath, 'utf8');
     const steered = await command(r, steerBody({ cls: 'frontier' }), f);
     const applied = r.journal.view.planAppliedBy(steered.id);
     assert.ok(applied !== null);
-    const verified = verifiedOf(r, steered.id);
-    assert.ok(verified.includes(`plan file ${d.planPath} written back: it holds plan rev ${applied.rev}`), JSON.stringify(verified));
-    assert.equal(fileSha256(absPath(d.planPath)), applied.planSha256, 'the live file holds the class revision');
-    assert.equal(fileSeat(d), 'frontier');
+    assert.ok(verifiedOf(r, steered.id).includes(`plan rev ${applied.rev} in force: unit u1's implementer class frontier`));
+    assert.equal(readFileSync(d.planPath, 'utf8'), before, 'the owner\'s plan file is never written');
+    assert.equal(fileSeat(d), undefined);
 
     const again = await command(r, applyBody(d), f);
     assert.equal(again.outcome.kind, 'applied', JSON.stringify(again.outcome));
-    assert.equal(r.journal.view.planApplied()?.rev, applied.rev, 'the unchanged file is the plan in force: no revision');
+    assert.equal(r.journal.view.planApplied()?.rev, applied.rev, 'the unchanged file rebased is the plan in force: no revision');
     assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier', 'the layer stays');
   } finally {
     r.journal.close();
   }
 });
 
-test('steer.class-architect-edit: a live plan file the architect changed since the plan in force is left alone, and the receipt says so', T, async () => {
+test('steer.class-architect-edit: an owner\'s plan edit written while the class revision lands is applied on top of it: both the edit and the layer are in force', T, async () => {
   const d = setupArc({ steps: TO_PARK });
   const r = contextFor(d);
   try {
     await parkU1(r);
     const f = followingContext(r);
-    const before = r.journal.view.planApplied();
-    assert.ok(before !== null);
-    // The architect's edit in progress: the same plan, reformatted.
-    const edited = `${JSON.stringify(JSON.parse(readFileSync(d.planPath, 'utf8')))}\n`;
+    // The owner's edit in progress: a new direction.
+    const edited = `${JSON.stringify({ ...(JSON.parse(readFileSync(d.planPath, 'utf8')) as Record<string, unknown>), direction: 'Keep the helpers tiny.' })}\n`;
     writeFileSync(d.planPath, edited);
-    assert.notEqual(fileSha256(absPath(d.planPath)), before.planSha256);
     const steered = await command(r, steerBody({ cls: 'frontier' }), f);
     const applied = r.journal.view.planAppliedBy(steered.id);
     assert.ok(applied !== null);
     assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier', 'the revision is in force');
-    const text = `plan file ${d.planPath} left alone: it changed since plan rev ${before.rev}, so it does not hold plan rev ${applied.rev}'s routing, and an apply of it as it is drops that`;
-    const verified = verifiedOf(r, steered.id);
-    assert.ok(verified.includes(text), JSON.stringify(verified));
-    assert.equal(readFileSync(d.planPath, 'utf8'), edited, 'the architect\'s file is untouched');
-    assert.equal(fileSeat(d), undefined);
+    assert.equal(readFileSync(d.planPath, 'utf8'), edited, 'the owner\'s file is untouched');
+
+    const again = await command(r, applyBody(d), f);
+    assert.equal(again.outcome.kind, 'applied', JSON.stringify(again.outcome));
+    assert.equal(r.journal.view.planApplied()?.rev, applied.rev + 1);
+    assert.equal(f.plan().direction, 'Keep the helpers tiny.', 'the owner\'s edit');
+    assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier', 'and the layer');
   } finally {
     r.journal.close();
   }
@@ -430,7 +426,7 @@ describe(`matrix row ${STEER}`, () => {
         assert.equal(applied.length, 1, 'exactly one plan-applied from the command');
         assert.ok(applied[0]!.kind === 'plan-applied' && applied[0].changes.some((c) => c.type === 'routing' && c.unit === U1));
         assert.equal(unitInForce(f, 'u1').routing?.build?.med, 'frontier');
-        assert.equal(fileSha256(absPath(d.planPath)), applied[0].planSha256, 'the class revision written back to the live plan file, once');
+        assert.notEqual(fileSha256(absPath(d.planPath)), applied[0].planSha256, 'the owner\'s plan file is never written');
         const briefs = readdirSync(join(d.runDir, 'inputs')).filter((n) => n.endsWith(`.${BRIEF_INPUT}`));
         assert.deepEqual(briefs, [`${brief.sha256}.${BRIEF_INPUT}`], 'one kept brief');
         assert.equal(keptInput(r.ctx.runDir, brief.sha256, BRIEF_INPUT)?.toString('utf8'), BRIEF);

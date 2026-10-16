@@ -243,3 +243,13 @@ export function laneTestPathsUndeclared(lane: LaneId): void {
 export function witnessFilesUndeclared(obligation: ObligationId): void {
   warnDefaulted('obligations.witness.files', `obligation ${obligation}'s witness declares no files (an arc started before 2026-10-16); its files are not checked`);
 }
+
+// Apply rebase (2026-10-16): an apply command carries the `base` it rebases from. One an earlier CLI queued
+// carries `expectRev` instead (the plan rev it expected in force). Delete once no arc started on 1.0.0-dev.10 is in flight
+// (BACKLOG "Scaffolding to delete"); `base` then becomes required alone.
+
+/** A queued apply with `expectRev` (queued before the rebase): read as base null, the owner's files of their latest apply. */
+export function applyExpectRevDefault(): null {
+  warnDefaulted('apply.expectRev', 'an apply command with expectRev (queued before the apply rebase): rebased from the default base');
+  return null;
+}
