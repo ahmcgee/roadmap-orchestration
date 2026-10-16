@@ -27,7 +27,8 @@
 //
 // Evidence dirs, verified the same way: `claude -p --add-dir <directories...>` adds directories the tools
 // may access beyond the cwd. A judgment session runs in the tree it judges and reads beyond it: its read surface is the
-// repository and the run dir, plus any dir its role names outside both (dispatch.ts `judgmentReadDirs`, 2026-10-16), each
+// repository and the run dir, plus any dir its role names outside both (dispatch.ts `judgmentReadDirs`, 2026-10-16; named
+// in its system text by `judgmentSurface`, since `--system-prompt` drops Claude Code's own list), each
 // passed as its own `--add-dir <dir>` pair (the flag is variadic, so it goes last, where no later token can be swallowed
 // into its list). Its tools write nothing, so the surface is read-only. The Claude implementer works in its
 // worktree but writes decisions.json into an evidence dir outside it and, in a fix round, reads the failing

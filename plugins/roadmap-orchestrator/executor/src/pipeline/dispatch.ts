@@ -468,10 +468,31 @@ export function judgmentReadDirs(ctx: Readonly<{ repo: AbsPath; runDir: AbsPath 
   return out;
 }
 
+/**
+ * A judgment's system text and `--add-dir` list: the module's text, then `<readable_directories>` naming every dir of its
+ * read surface (`judgmentReadDirs`). `--system-prompt` replaces Claude Code's default prompt, which is what would list the
+ * additional working directories, so without this a judge learns those paths only from inputs naming files under them
+ * (the bounded diff's .diff files and the run dir's evidence are read by absolute path, by the judge or its subagents).
+ * The CLI keeps a session's first system prompt on resume, so a repair turn reads the same list.
+ */
+export function judgmentSurface(
+  ctx: Readonly<{ repo: AbsPath; runDir: AbsPath }>, system: string, extra: readonly AbsPath[],
+): Readonly<{ system: string; evidenceDirs: readonly AbsPath[] }> {
+  const evidenceDirs = judgmentReadDirs(ctx, extra);
+  const label = (d: AbsPath): string => (d === ctx.repo ? ' (the repository)' : d === ctx.runDir ? ' (the executor\'s run directory: evidence, attached diffs, inputs)' : '');
+  const listed = evidenceDirs.map((d) => `- ${d}${label(d)}`).join('\n');
+  return {
+    system: `${system}\n\n<readable_directories>\nBesides your working directory, you and any subagent you start may read these directories and everything under them, read-only, by absolute path:\n${listed}\n</readable_directories>`,
+    evidenceDirs,
+  };
+}
+
 export async function callBackend(ctx: StageContext, given: BackendCallSpec): Promise<BackendCallOutcome> {
-  const spec: BackendCallSpec = given.request.kind === 'judgment'
-    ? { ...given, request: { ...given.request, evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) } }
-    : given;
+  let spec = given;
+  if (given.request.kind === 'judgment') {
+    const { system, evidenceDirs } = judgmentSurface(ctx, given.system, given.request.evidenceDirs);
+    spec = { ...given, system, request: { ...given.request, evidenceDirs } };
+  }
   const r = spec.request;
   const seat: UnitSeatRef = r.kind === 'judgment' ? { role: r.dispatch.role, tier: r.dispatch.tier } : { role: 'build', tier: r.dispatch.tier };
   const role: Role = seat.role;
@@ -581,9 +602,7 @@ export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise
   const { session } = spec;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
-  const c: BackendCall = {
-    kind: 'claude-judgment', role: spec.role, triple, session, schemaText, system: spec.system, evidenceDirs: judgmentReadDirs(ctx, spec.evidenceDirs),
-  };
+  const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, ...judgmentSurface(ctx, spec.system, spec.evidenceDirs) };
   const stdin = inputFile(ctx.runDir, promptBytes(c, spec.rendered), 'prompt.txt');
   const env = backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({

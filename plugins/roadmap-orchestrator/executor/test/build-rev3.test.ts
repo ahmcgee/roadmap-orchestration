@@ -201,4 +201,25 @@ describe('I3: the build answer schema', () => {
       r.journal.close();
     }
   });
+
+  test('build.decisions-non-decision-malformed (dev.12): a decisions.json entry naming a spec item that is not a decision is malformed, never skipped', T, async () => {
+    const d = setupArc({ steps: [] });
+    const write = (text: string) => ({ type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text }) as const;
+    appendSteps(d, [
+      planCheckStep({ decision: 'approve' }),
+      mulBuild({}, [write(JSON.stringify({ decisions: [{ id: 'A1', text: 'mul(2, 3) is 6 by the * operator.' }] }))]),
+      codexStep([write(JSON.stringify({ decisions: [{ id: 'D1', text: 'mul multiplies with the * operator.' }] }))], { argv: ['exec', 'resume'], stdinContains: [RESUME_DIRECTIVE] }),
+    ]);
+    const r = contextFor(d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'build');
+      assert.equal(outcomes(d).at(-1), 'build:malformed');
+      await stepUntil(r, 'u1', (f) => f.stage === 'evidence');
+      const resume = codexCalls(d).at(-1)!;
+      assert.match(resume.stdin, /Why it did not match: the report validated, but decisions\.json does not validate: A1 is an acceptance clause of the spec, not a decision/);
+      assert.deepEqual(loadUnitSpec(r.ctx, r.unit('u1')).spec.decisions, [{ id: 'D1', text: 'mul multiplies with the * operator.', state: 'active' }]);
+    } finally {
+      r.journal.close();
+    }
+  });
 });

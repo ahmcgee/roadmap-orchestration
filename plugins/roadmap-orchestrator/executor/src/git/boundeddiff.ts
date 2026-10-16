@@ -20,8 +20,9 @@
 //   deletions, the spread of files and lines per package (a top-level directory, or two levels under a monorepo
 //   container such as `packages/`), and the recurring identifier substitutions mined from the removed and added words of
 //   the changed files: a pointer list for the reviewer, never verification. Lists past their share are counted.
-// - Readable files. A judgment has Read, Grep and Glob only, no shell (src/backends/argv.ts JUDGMENT_TOOLS), so what is
-//   not inlined is written under the attachment's directory, which the caller makes readable to the session:
+// - Readable files. A judgment has no shell (Read, Grep, Glob and read-only subagents: src/backends/argv.ts
+//   JUDGMENT_TOOLS), so what is not inlined is written under the attachment's directory, inside the run dir its read
+//   surface holds (src/pipeline/dispatch.ts `judgmentSurface`):
 //   `files/<path>.diff` holds the whole `git diff -M` of each file not inlined, each deleted file and each file inlined
 //   as a word diff (streamed by git, whatever its size); `stat.txt`, `moves.txt`, `deletions.txt` and `not-inlined.txt`
 //   the full lists.

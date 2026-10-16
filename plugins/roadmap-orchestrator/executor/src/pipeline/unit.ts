@@ -267,7 +267,7 @@ function malformedError(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact):
     if (error instanceof SchemaError) return error.message;
     throw error;
   }
-  const decisions = readDecisions(absPath(join(workDir(ctx.runDir, stageParent(f)), DECISIONS_FILE)));
+  const decisions = readDecisions(absPath(join(workDir(ctx.runDir, stageParent(f)), DECISIONS_FILE)), loadUnitSpec(ctx, unit).spec);
   if (typeof decisions === 'string') return `the report validated, but ${decisions}. Write ${DECISIONS_FILE} again, complete, in the evidence directory`;
   return 'the report claimed success, but the merge of the integration branch is not committed on the unit branch';
 }

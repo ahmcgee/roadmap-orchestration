@@ -172,7 +172,8 @@ test('gate.empty-diff: a unit whose branch adds nothing is refused at the gate w
 });
 
 // Paid M4b run 5: a gate Globbed the evidence root above its --add-dirs and was refused. Since 2026-10-16 the judge's read
-// surface is the repository and the run dir (dispatch.ts `judgmentReadDirs`), and a refused read is recorded, voiding nothing.
+// surface is the repository and the run dir (dispatch.ts `judgmentReadDirs`), named in its system text (`judgmentSurface`), and
+// a refused read is recorded, voiding nothing.
 const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((t, i) => (c.argv[i - 1] === '--add-dir' ? [t] : []));
 
@@ -209,6 +210,10 @@ test('gate.read-surface: the gate reads the repository and the run dir; an appro
     const dirs = addDirs(gate);
     assert.deepEqual(dirs.slice(0, 2), [d.repo, d.runDir], 'the repository and the run dir lead the read surface');
     assert.ok(dirs.slice(2).every((x) => !x.startsWith(`${d.runDir}/`) && !x.startsWith(`${d.repo}/`)), `no dir inside them is named again: ${dirs.join(' ')}`);
+    // --system-prompt replaces Claude Code's list of working dirs, so the system text names the read surface itself.
+    const system = gate.argv[gate.argv.indexOf('--system-prompt') + 1]!;
+    assert.ok(system.endsWith(`<readable_directories>\nBesides your working directory, you and any subagent you start may read these directories and everything under them, read-only, by absolute path:\n${
+      dirs.map((x) => `- ${x}${x === d.repo ? ' (the repository)' : x === d.runDir ? ' (the executor\'s run directory: evidence, attached diffs, inputs)' : ''}`).join('\n')}\n</readable_directories>`), system.slice(-600));
     // The refusal is on record in the call's reads.json, for audit.
     const inv = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'meter' && e.fact.subject.type === 'seat' && e.fact.subject.role === 'gate' ? [e.fact.inv] : []))[0]!;
     const reads = JSON.parse(readFileSync(join(invocationDir(absPath(d.runDir), inv), 'reads.json'), 'utf8')) as { denied: unknown[] };

@@ -206,11 +206,6 @@ at triage stay in git history.
   the `--no-renames`, three-line-context diff so a resumed dev.11 audit finds its chunks again; the attachment is the
   smaller bounded diff, so chunks are shorter than they need be. Trigger: once no audit a dev.11 executor started is
   running, size chunks by the bounded diff itself (recording the measure on `audit-started` if it must stay stable).
-- **Judge prompts do not name the read surface's paths** (W2, 2026-10-16). Judgment calls read the repository and the run
-  dir by `--add-dir` (`judgmentReadDirs`), but `--system-prompt` replaces Claude Code's default prompt, which is what
-  lists the additional working directories, so a judge learns those paths only from the inputs that name files under
-  them. Trigger: a judge refused a read it plainly meant to make, or asking for a path it could not find; then add an
-  input naming the repository and the run dir.
 - **Resume overcount crossing the upgrade** (W2, 2026-10-16). A Claude session's reading is charged less what its earlier
   facts charged; a session whose earlier invocation an executor before 1.0.0-dev.12 metered has no `session` on that
   fact, so its first dev.12 reading (a repair turn or a resumed build) is charged whole, once. Nothing to do unless an
