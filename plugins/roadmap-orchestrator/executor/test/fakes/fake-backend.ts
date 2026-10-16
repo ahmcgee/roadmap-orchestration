@@ -170,8 +170,30 @@ function claudeSession(argv: readonly string[]): string {
   return id;
 }
 
+/**
+ * How many earlier calls of this call's Claude session the scenario recorded (main sets it). The real CLI reports a
+ * session's cumulative `modelUsage` and `total_cost_usd` on every result, a resume's and an error result's included
+ * (verified on Claude Code 2.1.301, 2026-10-16), so the fake reports the captured judgment's usage once per call of the
+ * session that reached the model: `sessionUsage`.
+ */
+let priorSessionCalls = 0;
+
+/** The captured judgment's `modelUsage` and `total_cost_usd` times `n` (n = 0: none). */
+function sessionUsage(n: number): Readonly<{ modelUsage: Record<string, unknown>; total_cost_usd: number }> {
+  const t = template('claude-judgment');
+  const modelUsage: Record<string, unknown> = {};
+  if (n > 0) {
+    for (const [model, raw] of Object.entries(t['modelUsage'] as Record<string, Record<string, unknown>>)) {
+      const u: Record<string, unknown> = { ...raw };
+      for (const k of ['inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens', 'costUSD']) u[k] = (raw[k] as number) * n;
+      modelUsage[model] = u;
+    }
+  }
+  return { modelUsage, total_cost_usd: (t['total_cost_usd'] as number) * n };
+}
+
 function claudeResult(session: string, fields: Readonly<Record<string, unknown>>, drop: readonly string[] = []): void {
-  const r: Record<string, unknown> = { ...template('claude-judgment'), session_id: session, permission_denials: denials, ...fields };
+  const r: Record<string, unknown> = { ...template('claude-judgment'), ...sessionUsage(priorSessionCalls + 1), session_id: session, permission_denials: denials, ...fields };
   for (const k of drop) delete r[k];
   claudeInit(session);
   out(`${JSON.stringify(r)}\n`);
@@ -180,8 +202,8 @@ function claudeResult(session: string, fields: Readonly<Record<string, unknown>>
 /** A CLI error result (exit 1): the usage limit on the captured api-error result, or the captured prompt-too-long one. */
 function claudeFailed(session: string, what: 'usage-limit' | 'context-exceeded'): never {
   const r = what === 'usage-limit'
-    ? { ...template('claude-api-error'), session_id: session, result: CLAUDE_USAGE_LIMIT, api_error_status: 429 }
-    : { ...template('claude-prompt-too-long'), session_id: session };
+    ? { ...template('claude-api-error'), ...sessionUsage(priorSessionCalls), session_id: session, result: CLAUDE_USAGE_LIMIT, api_error_status: 429 }
+    : { ...template('claude-prompt-too-long'), ...sessionUsage(priorSessionCalls), session_id: session };
   claudeInit(session);
   out(`${JSON.stringify(r)}\n`);
   process.exit(1);
@@ -360,6 +382,10 @@ export function main(): void {
     process.exit(99);
   }
   const step = file.steps[claim.index] as Step;
+  if (as === 'claude') {
+    const id = flagValue(argv, '--session-id') ?? flagValue(argv, '--resume');
+    priorSessionCalls = readCalls(scenario).filter((c) => c.as === 'claude' && (flagValue(c.argv, '--session-id') ?? flagValue(c.argv, '--resume')) === id).length - 1;
+  }
   for (const act of step.acts) perform(act, call, step, claim.index, dir, unit);
   process.exit(0);
 }

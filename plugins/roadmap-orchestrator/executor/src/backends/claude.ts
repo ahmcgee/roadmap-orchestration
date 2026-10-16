@@ -72,12 +72,14 @@ function crossCheck(r: StreamEvent, models: ReadonlyMap<string, ModelTokens>): v
  * the last one is the reading. `ownModel` (the init event's `model`) is metered to the call's seat; every other model is
  * `delegated`, per class (classes.ts `delegateClass`, which fails loud on a model it does not know).
  */
-function readUsage(results: readonly StreamEvent[], ownModel: string): Usage {
+function readUsage(results: readonly StreamEvent[], ownModel: string | null): Usage {
   let models: ReadonlyMap<string, ModelTokens> | null = null;
   let turns: number | null = 0;
   for (const r of results) {
     const m = modelUsageOf(r);
     if (typeof m === 'string') return { kind: 'unavailable', reason: m };
+    // Without an init event naming the session's model, no model's usage can be told the seat's from a subagent's.
+    if (ownModel === null && m.size > 0) return { kind: 'unavailable', reason: 'malformed' };
     crossCheck(r, m);
     for (const model of m.keys()) if (model !== ownModel) delegateClass(model);
     models = m;
@@ -162,8 +164,7 @@ export function readClaude(stdout: string): BackendReading {
   if (typeof sessionId !== 'string') throw new MalformedOutputError('stdout', 'result without a string session_id');
   const stopReason = typeof r['stop_reason'] === 'string' ? r['stop_reason'] : null;
   const init = events.find((e) => e['type'] === 'system' && e['subtype'] === 'init');
-  if (typeof init?.['model'] !== 'string') throw new MalformedOutputError('stdout', 'a result without a system/init event naming the session\'s model');
-  const usage = readUsage(results, init['model']);
+  const usage = readUsage(results, typeof init?.['model'] === 'string' ? init['model'] : null);
   const denied = deniedOf(r);
   if (r['is_error'] === true) {
     const message = typeof r['result'] === 'string' ? r['result'] : JSON.stringify(r['result'] ?? null);

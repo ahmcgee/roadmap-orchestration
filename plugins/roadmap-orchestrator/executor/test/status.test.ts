@@ -83,7 +83,7 @@ describe('status.subset', () => {
       runOnly: null,
       needsUser: [],
       commands: { pending: [], receipts: [] },
-      spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, byJob: [], bySmoke: [] },
+      spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, byClass: { classes: [], unresolvedRevs: [] }, byJob: [], bySmoke: [] },
       host: {
         containment: { mode: null, guarantee: SESSION_GUARANTEE }, resources: [], pools: {}, queue: [], probes: [], backends: [],
         log: { bytes: 0, events: 0, foldMs: 0, compactionDue: false },
