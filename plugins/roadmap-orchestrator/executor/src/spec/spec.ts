@@ -6,7 +6,7 @@
 // exactly one per `spec.patch`). Content identity is the sha256 of the file's bytes, which the op records.
 import { readFileSync } from 'node:fs';
 import { type Sha256Hex, type UnitId, sha256 } from '../core/ids.ts';
-import { durableWrite, canonicalJson as fileJson } from '../core/fsx.ts';
+import { canonicalJson as fileJson } from '../core/fsx.ts';
 import { sha256Hex } from '../core/json.ts';
 import { type SpecM1, specM1 } from '../core/records.ts';
 import { type AbsPath, type RepoPattern, matchesPattern, repoPath } from '../core/values.ts';
@@ -35,13 +35,9 @@ export function loadSpec(path: AbsPath): SpecM1 {
   return parseSpec(readFileSync(path), path);
 }
 
-/** The exact bytes `writeSpec` puts on disk: canonical (sorted keys), indented for human readers. */
+/** A spec's canonical bytes (sorted keys), indented for human readers: what the executor keeps for a spec it builds. */
 export function specBytes(spec: SpecM1): Buffer {
   return Buffer.from(fileJson(spec), 'utf8');
-}
-
-export function writeSpec(path: AbsPath, spec: SpecM1): void {
-  durableWrite(path, specBytes(spec));
 }
 
 export function bytesSha256(bytes: Buffer): Sha256Hex {

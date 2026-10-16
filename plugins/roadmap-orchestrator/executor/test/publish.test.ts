@@ -135,7 +135,7 @@ test('apply.ruling-for-added-unit (paid M4b run 3, OP-2): `apply --ruling` with 
     const rulings = [{ path: absPath(path), sha256: bytesSha256(bytes) }];
     const c = w.commands;
     const dry = await evaluateApply({
-      runDir: c.runDir, view: r.journal.view, hostDir: c.hostDir, repo: c.repo, planFile: c.planFile, routingBase: c.routingBase, laneEnv: c.laneEnv, manifest: null, expectRev: null, rulings,
+      runDir: c.runDir, view: r.journal.view, hostDir: c.hostDir, repo: c.repo, planFile: c.planFile, routingBase: c.routingBase, laneEnv: c.laneEnv, manifest: null, base: null, rulings,
     });
     assert.equal(dry.kind, 'accepted', JSON.stringify(dry));
     const tip = head(d);
@@ -337,7 +337,7 @@ describe('holistic docs publications', () => {
     try {
       const tip = head(r.d);
       addObligation(r, 'I-2');
-      const red = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d, 1 as never)));
+      const red = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d)));
       assert.ok(red.kind === 'rejected' && /obligations I-2 do not hold on the docs candidate/.test(red.reason), JSON.stringify(red));
       assert.equal(head(r.d), tip);
       const witnessed = facts(r).flatMap((f) => (f.kind === 'witnessed' ? [[f.lane, f.for, f.purpose]] : []));
@@ -351,7 +351,7 @@ describe('holistic docs publications', () => {
       o.obligations = o.obligations.filter((x) => x['id'] !== 'I-2');
       writeFileSync(path, JSON.stringify(o));
       addObligation(r, 'I-3');
-      const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d, 1 as never));
+      const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d));
       const ok = await applyCommand(w.commands, file);
       assert.equal(ok.kind, 'applied', JSON.stringify(ok));
       const fact = assertPublished(r, file.id, 'docs-2', tip);
@@ -406,7 +406,7 @@ test('publish.lane-evidence-immutable: a suite lane and an arc lane of one id ea
   const r = holisticArc([], { 't-I-1': 'pass', 't-I-3': 'pass' }, false, suite);
   const tip = head(r.d);
   addObligation(r, 'I-3');
-  const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d, 1 as never));
+  const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(r.d));
   r.journal.close();
   await crashChild('revision.commit.after-docs', r.d, file.id, null);
   const back = await recoverArc(r.d);

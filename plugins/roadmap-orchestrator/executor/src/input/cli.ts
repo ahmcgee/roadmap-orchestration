@@ -2,8 +2,8 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PhaseQuestionId, type PlanRev, type ProposalId, type ResourceName, type Sha,
-  type UnitId, arcId, briefId, divergenceId, edgeId, needsUserId, phaseQuestionId, planRev, proposalId, resourceName, sha, unitId,
+  type ArcId, type BriefId, type DivergenceId, type EdgeId, type NeedsUserId, type PhaseQuestionId, type ProposalId, type ResourceName, type Sha,
+  type UnitId, arcId, briefId, divergenceId, edgeId, needsUserId, phaseQuestionId, proposalId, resourceName, sha, unitId,
 } from '../core/ids.ts';
 import { FLOW_LEVERS, type FlowLever } from '../flow/types.ts';
 import { LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
@@ -46,10 +46,12 @@ export type Command =
   | Readonly<{ command: 'resume'; target: ResumeTarget; run: RunLocator }>
   | Readonly<{ command: 'sweep'; resource: ResourceName | null; run: RunLocator }>
   /**
-   * Put the edited plan.json and specs in force; `dryRun` classifies them read-only and queues nothing. `rulings` (M4a
-   * rev 3, I2): ruling sidecar files (`--ruling`, repeatable, in the order given) landed with the edits as one revision.
+   * Put the edited plan.json and specs in force, rebased onto the files in force; `dryRun` classifies them read-only and
+   * queues nothing. `base`: the `export.json` of the export the edit started from (`--base`; null: the owner's files of
+   * their latest apply). `rulings` (M4a rev 3, I2): ruling sidecar files (`--ruling`, repeatable, in the order given)
+   * landed with the edits as one revision.
    */
-  | Readonly<{ command: 'apply'; expectRev: PlanRev | null; dryRun: boolean; rulings: readonly string[]; run: RunLocator }>
+  | Readonly<{ command: 'apply'; base: string | null; dryRun: boolean; rulings: readonly string[]; run: RunLocator }>
   /** A contingent edge's condition is met, on the architect's evidence (M2). */
   | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
   /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
@@ -257,13 +259,11 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, resource: r === undefined ? null : arg(command, '--resource', resourceName, r), run: locator(p, command) };
     }
     case 'apply': {
-      const p = parseRest(rest, { ...LOCATOR, 'expect-rev': 'value', 'dry-run': 'switch', ruling: 'many' }, command);
+      const p = parseRest(rest, { ...LOCATOR, base: 'value', 'dry-run': 'switch', ruling: 'many' }, command);
       positionals(p, command, 0);
-      const rev = value(p, 'expect-rev');
-      if (rev !== undefined && !/^[1-9][0-9]*$/.test(rev)) throw new CliError(`apply: --expect-rev takes a plan revision (a positive integer), got ${JSON.stringify(rev)}`);
       const rulings = values(p, 'ruling');
       if (new Set(rulings).size !== rulings.length) throw new CliError('apply: a --ruling file given twice');
-      return { command, expectRev: rev === undefined ? null : planRev(Number(rev)), dryRun: p.flags.has('dry-run'), rulings, run: locator(p, command) };
+      return { command, base: value(p, 'base') ?? null, dryRun: p.flags.has('dry-run'), rulings, run: locator(p, command) };
     }
     case 'resolve-edge': {
       const p = parseRest(rest, { ...LOCATOR, evidence: 'value' }, command);

@@ -206,7 +206,7 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
       // ...and keeps the obligations in force (the opportunity's witness split).
       const obligationsSha = factsOfKind(r, 'plan-applied').at(-1)!.obligationsSha256!;
       writeFileSync(join(a.planDir, plan.holistic.obligations), readFileSync(join(r.ctx.runDir, 'inputs', `${obligationsSha}.obligations.json`)));
-      const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(a.d, r.journal.view.planApplied()!.rev)));
+      const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(a.d)));
       assert.equal(applied.kind, 'applied', JSON.stringify(applied));
       await recover({ stage: ctx, commands: w.commands });
       assert.deepEqual(await run({ a, r, ctx, w }), { kind: 'none' });

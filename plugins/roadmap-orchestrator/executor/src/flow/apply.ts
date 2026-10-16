@@ -6,8 +6,8 @@
 // While a proposal is `pending-apply` the scheduler holds new candidate starts (`flowApplyHolds`, hold cause
 // `flow-apply`). Once no candidate op is open, `applyPendingFlow` commits `flowRevision` (the fence, src/flow/levers.ts)
 // as a revision with source `flow{proposal}` through the apply core and the revision fence (the bundle commit path),
-// writes its plan bytes back to the live plan file (as `steer --class` does), and journals `flow-applied{proposal,
-// revision, preimage}`. A classifier refusal (a suite edit while a candidate is under way, a routing-changed risk) is
+// and journals `flow-applied{proposal, revision, preimage}` (the owner's plan file is never written: an apply rebases
+// onto the revision, src/input/rebase.ts). A classifier refusal (a suite edit while a candidate is under way, a routing-changed risk) is
 // retried at the next tick, never stored; a `build-class` change waits while its tier has units whose build started.
 // Crash after the commit: the revision with source `flow{proposal}` is the postcondition, and `flow-applied` follows.
 import type { FlowFact, PlanAppliedFact } from '../core/events.ts';
@@ -17,7 +17,6 @@ import { canonicalJson } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
 import type { AbsPath } from '../core/values.ts';
 import { type FencedCommitContext, commitUnderFence, evaluateRevision } from '../commands/apply.ts';
-import { writeBack } from '../commands/steer.ts';
 import { PLAN_INPUT, inForceFiles, keptInput, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
 import { type PlanM1, parsePlan } from '../input/plan.ts';
 import { buildStarted } from '../pipeline/dispatch.ts';
@@ -122,9 +121,8 @@ async function applyOne(ctx: FlowApplyContext, proposal: FlowProposal): Promise<
   settle(ctx, proposal, out.fact);
 }
 
-/** After the commit (or a crash past it): the plan file written back, then `flow-applied` with the preimage. */
+/** After the commit (or a crash past it): `flow-applied` with the preimage. */
 function settle(ctx: FlowApplyContext, proposal: FlowProposal, fact: PlanAppliedFact): void {
-  writeBack(ctx, fact);
   ctx.journal.fact({ kind: 'flow-applied', proposal: proposal.id, revision: fact.rev, preimage: preimageOf(planBefore(ctx, fact), proposal.action) });
 }
 

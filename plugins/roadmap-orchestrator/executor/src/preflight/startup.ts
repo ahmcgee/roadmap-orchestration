@@ -138,8 +138,8 @@ export type StartupContext = Readonly<{
   runDir: AbsPath;
   hostDir: AbsPath;
   /**
-   * M4a rev 3 (I2): the ledger bytes the revision being checked holds (an `apply --ruling` lands rulings the live file
-   * gets only at write-back); absent: the file `plan.rulings` names.
+   * M4a rev 3 (I2): the ledger bytes the revision being checked holds (an apply's, rebased onto the ledger in force with
+   * its `--ruling` records landed: the live file is the owner's, never written after start); absent: the file `plan.rulings` names.
    */
   ledger?: Buffer;
 }>;

@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { sessionContainment } from '../../src/contain/session.ts';
 import type { StageOutcomeFact } from '../../src/core/events.ts';
 import type { CommandContext } from '../../src/commands/apply.ts';
-import { type PlanRev, type UnitId, arcId, unitId } from '../../src/core/ids.ts';
-import type { CommandBody } from '../../src/core/records.ts';
+import { type UnitId, arcId, unitId } from '../../src/core/ids.ts';
+import type { CommandBody, RevisionManifest } from '../../src/core/records.ts';
 import { backendEnv } from '../../src/preflight/smoke.ts';
 import type { JsonValue } from '../../src/core/json.ts';
 import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
@@ -154,11 +154,11 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
   };
 }
 
-/** An `apply` of the plan and specs as the files hold them now (what `roadmap apply` submits). */
-export function applyBody(d: ArcDescriptor, expectRev: PlanRev | null = null): CommandBody {
+/** An `apply` of the plan and specs as the files hold them now (what `roadmap apply [--base]` submits). */
+export function applyBody(d: ArcDescriptor, base: RevisionManifest | null = null): CommandBody {
   const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath), absPath(d.repo)));
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
-  return { type: 'apply', expectRev, manifest };
+  return { type: 'apply', base, manifest };
 }
 
 export const U1: UnitId = unitId('u1');

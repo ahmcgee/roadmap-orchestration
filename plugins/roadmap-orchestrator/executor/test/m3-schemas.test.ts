@@ -378,13 +378,18 @@ describe('M3 file records', () => {
       { type: 'audit', lenses: ['drift', 'vision'] },
       { type: 'audit', lenses: null },
       { type: 'close-admissions' },
-      { type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 } },
+      { type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 } },
+      {
+        type: 'apply', base: { planSha256: H2, specs: { u1: H2 }, rulings: { ledgerSha256: H2, sidecars: {} }, obligations: null, vision: H },
+        manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 },
+      },
     ];
     for (const b of bodies) assert.deepEqual(commandBody(b, 'b'), b);
     assert.throws(() => commandBody({ type: 'steer', unit: 'u1', brief: { path: '/r/b', sha256: H }, budgetMin: 0, class: null, resume: false }, 'b'), /budgetMin/);
     assert.throws(() => commandBody({ type: 'audit', lenses: ['vision', 'drift'] }, 'b'), /lenses/);
-    assert.throws(() => commandBody({ type: 'apply', expectRev: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} } } }, 'b'), /obligations/);
-    assert.throws(() => commandBody({ type: 'apply', expectRev: 3, manifest: { planSha256: H, specs: { u1: H } } }, 'b'), /rulings/);
+    assert.throws(() => commandBody({ type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} } } }, 'b'), /obligations/);
+    assert.throws(() => commandBody({ type: 'apply', base: null, manifest: { planSha256: H, specs: { u1: H } } }, 'b'), /rulings/);
+    assert.throws(() => commandBody({ type: 'apply', manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H, sidecars: {} }, obligations: null, vision: H2 } }, 'b'), /base/);
   });
 
   it('spec: obligations and repairs, absent when none', () => {

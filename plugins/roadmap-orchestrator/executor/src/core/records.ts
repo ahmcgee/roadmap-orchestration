@@ -3,7 +3,7 @@
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
   type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
-  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type PlanRev, type ProposalId, type ResourceInstance,
+  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type ProposalId, type ResourceInstance,
   type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, type WitnessItemId, arcId, clauseId,
   commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
   obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
@@ -19,7 +19,7 @@ import {
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
-import { dev6SmokeBounds } from './upgrade.ts';
+import { applyExpectRevDefault, dev6SmokeBounds } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
   type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, isRepairRole, modelClass,
@@ -1276,13 +1276,14 @@ export type CommandBody =
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
   /**
-   * `roadmap apply`: make the plan and specs the manifest hashes the plan in force (the executor re-reads the
-   * files and requires these hashes). `expectRev`: the plan revision the architect built on (`--expect-rev`),
-   * or null to apply over whatever is in force. A mutation. M4a rev 3 (I2): `rulings`, the ruling sidecar files of
-   * `--ruling` (each hashed like a `rule` record, in the order given; absent: none, lasting), landed with the edits as one
-   * revision.
+   * `roadmap apply`: the owner's files the manifest hashes (the executor re-reads them and requires these hashes), rebased
+   * onto the files in force and put in force (src/input/rebase.ts). `base`: the files the edit started from, an export's
+   * (`--base <export.json>`), or null for the owner's files of the latest revision applied from them. A mutation. M4a rev 3
+   * (I2): `rulings`, the ruling sidecar files of `--ruling` (each hashed like a `rule` record, in the order given; absent:
+   * none, lasting), landed with the edits as one revision. A command queued before 2026-10-16 carries `expectRev` instead
+   * of `base`: read as base null (`applyExpectRevDefault`).
    */
-  | Readonly<{ type: 'apply'; expectRev: PlanRev | null; manifest: RevisionManifest; rulings?: readonly HashedFile[] }>
+  | Readonly<{ type: 'apply'; base: RevisionManifest | null; manifest: RevisionManifest; rulings?: readonly HashedFile[] }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
@@ -1349,9 +1350,10 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   resume: object((f): CommandBody => ({ type: f.get('type', literal('resume')), target: f.get('target', resumeTarget) })),
   sweep: object((f): CommandBody => ({ type: f.get('type', literal('sweep')), resource: f.get('resource', nullable(resource)) })),
   apply: object((f): CommandBody => {
+    const legacy = f.optional('expectRev', nullable((v, p) => planRev(v, p)));
     const out = {
       type: f.get('type', literal('apply')),
-      expectRev: f.get('expectRev', nullable((v, p) => planRev(v, p))),
+      base: legacy !== undefined ? applyExpectRevDefault() : f.get('base', nullable(applyManifest)),
       manifest: f.get('manifest', applyManifest),
     };
     const rulings = f.optional('rulings', arrayOf(hashedFile, { nonEmpty: true }));

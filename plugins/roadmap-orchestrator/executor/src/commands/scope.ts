@@ -12,41 +12,35 @@
 //              ruling (`rulingReasons`), evaluated by the apply core with the Phase-0 rows (as an `apply --ruling`), then
 //              committed through the fence: `plan-applied` (source the command). The spec revision is pending; the unit
 //              re-opens on it when the hold is released, and its plan-check's dispatch check re-pins the wider scope.
-//           2. Write-back: the ledger, sidecars and obligations as `rule` writes them back, the plan as `steer --class`
-//              writes it back, and the unit's live spec file when it still holds the spec the growth was built on (a file
-//              the architect changed since is left alone; the receipt says so).
-//   both    3. The hold's needs-user acknowledged by this command.
-//           4. `scope-decided{unit, attempt, command, decision, reason}`, the postcondition: the fold releases the hold and
+//           Nothing is written into the owner's files (2026-10-16): an apply of files without the growth rebases onto it
+//           (src/input/rebase.ts), and `roadmap inputs export` writes the files in force.
+//   both    2. The hold's needs-user acknowledged by this command.
+//           3. `scope-decided{unit, attempt, command, decision, reason}`, the postcondition: the fold releases the hold and
 //              keeps the decision with its proposals. Accepted: the unit re-opens at plan-check on the grown spec. Rejected:
 //              the plan-check runs again on the same spec, told what was rejected; a proposal of a rejected pattern no
 //              longer holds it, so it decides within the scope (approve, redirect, or infeasible: an escalation).
 // A rejection of the revision (the classifier's or the Phase-0 rows' reasons) rejects the command, listing every reason;
 // the unit stays held, and the root agent rejects instead or lands its own `apply --ruling`.
-import { existsSync, readFileSync } from 'node:fs';
 import { canonicalJson } from '../core/json.ts';
 import type { ScopeGrowthProposal } from '../core/events.ts';
 import { type CommandId, type RulingId, type UnitId, specRev } from '../core/ids.ts';
 import { type CommandBody, type SpecM1, specRemoves } from '../core/records.ts';
-import type { PlanAppliedFact } from '../core/events.ts';
 import { type RepoPath, type RepoPattern, branchRef, matchesPattern, repoPath } from '../core/values.ts';
 import { git, refTarget } from '../git/git.ts';
 import { type RulingSidecar, RULING_SCHEMA, parseRulingSidecar } from '../holistic/types.ts';
 import { type RulingRecord, withRulings } from '../input/classify.ts';
 import {
-  type InputFiles, PLAN_INPUT, SPEC_INPUT, inForceFiles, keptInput, keptPayload, ledgerPath, requirePlanInForce, revisionInForce, sidecarPath, specFilePath,
+  type InputFiles, inForceFiles, ledgerPath, requirePlanInForce, revisionInForce, sidecarPath,
 } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
 import { raisedFor } from '../needsuser.ts';
 import { APPLY, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
 import { rulingContextAt } from '../pipeline/publish.ts';
 import { quotedTextReason } from '../docs/contracts.ts';
-import { durableWrite } from '../core/fsx.ts';
-import { SpecFileError, bytesSha256, fileSha256, parseSpec, specBytes } from '../spec/spec.ts';
-import { SchemaError } from '../core/validate.ts';
+import { parseSpec, specBytes } from '../spec/spec.ts';
 import { consistencyRevs, nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { type CommandContext, type Effect, acknowledge, commitUnderFence, evaluateRevision, parentOf, rejectedText } from './apply.ts';
-import { rulingReasons, writeBackAfter } from './rule.ts';
-import { writeBack as writeBackPlan } from './steer.ts';
+import { rulingReasons } from './rule.ts';
 
 type ScopeBody = Extract<CommandBody, { type: 'scope-decide' }>;
 
@@ -56,12 +50,9 @@ export async function decideScope(ctx: CommandContext, id: CommandId, body: Scop
   const what = `scope ${body.decision} ${body.unit}`;
   if (!ctx.plan().units.some((u) => u.id === body.unit)) return { kind: 'rejected', reason: `${what}: unknown unit ${body.unit}` };
   const u = ctx.journal.view.unit(body.unit);
-  // Run again after a crash past the fact: it is the postcondition (an accept's write-back is finished from the log).
+  // Run again after a crash past the fact: it is the postcondition.
   const decided = u.scopeDecisions.find((d) => d.command === id);
-  if (decided !== undefined) {
-    const landed = ctx.journal.view.planAppliedBy(id);
-    return { kind: 'applied', verified: [...(landed === null ? [] : writeBacks(ctx, landed, body.unit)), decidedText(body.unit, decided.attempt, decided.decision)] };
-  }
+  if (decided !== undefined) return { kind: 'applied', verified: [decidedText(body.unit, decided.attempt, decided.decision)] };
   const held = u.interrupted;
   if (u.status !== 'held' || held === null || held.stage !== 'plan-check' || held.outcome !== 'scope-growth' || held.detail?.kind !== 'scope-growth') {
     return { kind: 'rejected', reason: `${what}: the unit is ${u.status}${held === null ? '' : ` (held at ${held.stage}#${held.attempt} ${held.outcome})`}, not held for a scope-growth proposal of its plan-check` };
@@ -112,13 +103,13 @@ function growthDocRef(
   return null;
 }
 
-/** The accepted growth as one ruled revision (steps 1-2), or why it may not land. */
+/** The accepted growth as one ruled revision (step 1), or why it may not land. */
 async function landGrowth(
   ctx: CommandContext, id: CommandId, unit: UnitId, attempt: number, proposals: readonly ScopeGrowthProposal[], reason: string,
 ): Promise<Effect> {
   const view = ctx.journal.view;
   const done = view.planAppliedBy(id);
-  if (done !== null) return { kind: 'applied', verified: [`plan rev ${done.rev} in force: the scope growth of ${unit} landed`, ...writeBacks(ctx, done, unit)] };
+  if (done !== null) return { kind: 'applied', verified: [`plan rev ${done.rev} in force: the scope growth of ${unit} landed`] };
   const u = view.unit(unit);
   if (u.pendingRevision !== null) {
     return { kind: 'rejected', reason: `scope accept ${unit}: its spec revision ${u.pendingRevision.rev} is pending (applied, not yet re-opened on); reject this growth, or withdraw that revision first` };
@@ -181,49 +172,7 @@ async function landGrowth(
     kind: 'applied',
     verified: [
       `plan rev ${committed.fact.rev} in force: unit ${unit}'s scope grows by ${added.join(', ')}, ruled by ${ruling}`,
-      ...committed.fact.changes.map((c) => canonicalJson(c)), ...writeBacks(ctx, committed.fact, unit),
+      ...committed.fact.changes.map((c) => canonicalJson(c)),
     ],
   };
-}
-
-/**
- * Step 2 (also a run again after a crash): the ledger, sidecars and obligations (`rule`'s write-back), the plan (`steer`'s),
- * and the unit's live spec file when it holds the spec the revision grew (its bytes, or the same spec as written), never a
- * file the architect changed since.
- */
-function writeBacks(ctx: CommandContext, fact: PlanAppliedFact, unit: UnitId): readonly string[] {
-  const out = [...writeBackAfter(ctx, fact.rev), writeBackPlan(ctx, fact)];
-  const planUnit = parsePlan(JSON.parse(keptOf(ctx, fact.planSha256, PLAN_INPUT).toString('utf8'))).units.find((p) => p.id === unit);
-  if (planUnit === undefined) throw new Error(`plan rev ${fact.rev} does not hold ${unit}`);
-  const sha = keptPayload(ctx.runDir, fact.payloadSha256).manifest.specs[unit];
-  if (sha === undefined) throw new Error(`plan rev ${fact.rev} names no spec of ${unit}`);
-  const bytes = keptOf(ctx, sha, SPEC_INPUT);
-  const grown = parseSpec(bytes, specFilePath(ctx.planFile, planUnit));
-  const file = specFilePath(ctx.planFile, planUnit);
-  if (existsSync(file) && fileSha256(file) === bytesSha256(bytes)) return [...out, `spec file ${file} holds rev ${grown.rev}`];
-  const ruling = grown.cites.rulings.at(-1);
-  if (ruling === undefined) throw new Error(`the grown spec of ${unit} cites no ruling`);
-  const live = existsSync(file) ? liveSpec(file) : null;
-  const before = live === null ? null : specBytes(grownSpec(live, grown.scope.filter((p) => !live.scope.includes(p)) as RepoPattern[], ruling));
-  if (live === null || live.rev + 1 !== grown.rev || before === null || !before.equals(bytes)) {
-    return [...out, `spec file ${file} left alone: it changed since the spec the growth was built on, so it does not hold rev ${grown.rev}'s scope, and an apply of it as it is drops that`];
-  }
-  durableWrite(file, bytes);
-  return [...out, `spec file ${file} written back: it holds rev ${grown.rev}`];
-}
-
-/** The live spec file, or null while it does not load (the architect's edit in progress): it is then left alone. */
-function liveSpec(file: ReturnType<typeof specFilePath>): SpecM1 | null {
-  try {
-    return parseSpec(readFileSync(file), file);
-  } catch (error) {
-    if (error instanceof SchemaError || error instanceof SpecFileError) return null;
-    throw error;
-  }
-}
-
-function keptOf(ctx: CommandContext, sha: Parameters<typeof keptInput>[1], ext: string): Buffer {
-  const bytes = keptInput(ctx.runDir, sha, ext);
-  if (bytes === null) throw new Error(`the revision names ${ext} ${sha}, which is not kept`);
-  return bytes;
 }
