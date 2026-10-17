@@ -47,7 +47,7 @@ const planCheck = (reason: string): M1Step => ({
   answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [] },
 });
 const build = (message: string, files: Readonly<Record<string, string>>): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files }] });
-const gate = (reason: string): M1Step => ({ role: 'gate', answer: { decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [] } });
+const gate = (reason: string): M1Step => ({ role: 'gate', answer: { decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], unreviewed: [] } });
 
 /** The files of fake build `name` (evals/m3/files/units/<name>/), by repo path. */
 const unitFiles = (name: string): Readonly<Record<string, string>> => filesOf(join(FILES, 'units', name));

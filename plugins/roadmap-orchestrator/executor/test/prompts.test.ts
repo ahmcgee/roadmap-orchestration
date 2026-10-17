@@ -14,11 +14,11 @@ import { SchemaError } from '../src/core/validate.ts';
 import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
 import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
-import { BUILD_DELEGATION, JUDGE_DELEGATION } from '../src/prompts/delegation.ts';
+import { BUILD_DELEGATION } from '../src/prompts/delegation.ts';
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
+  CHECKPOINT_SCHEMA, GATE_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
   validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
 import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
@@ -315,7 +315,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [],
+    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [], unreviewed: [],
   },
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
@@ -574,6 +574,20 @@ describe('output validators', () => {
     validateGateOutput({ ...ok.gate, decision: 'escalate', directives: [], findings: ok.gate['findings'] });
   });
 
+  it('gate (dev.12 round 2): a pre-existing finding never blocks an approve; unreviewed is recorded as given, and a dev.11 answer without it reads as unknown (null)', () => {
+    const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
+    const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
+    const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
+    assert.deepEqual(out.findings, pre);
+    assert.deepEqual(out.unreviewed, unreviewed);
+    const { unreviewed: _u, ...dev11 } = ok.gate;
+    assert.equal(validateGateOutput(dev11).unreviewed, null);
+    assert.throws(() => validateGateOutput({ ...ok.gate, unreviewed: [{ path: 'a' }] }), SchemaError);
+    assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...pre[0], severity: 'minor' }] }), SchemaError);
+    const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
+    assert.ok(schema.required.includes('unreviewed'), 'a live gate answers it');
+  });
+
   it('build and decisions.json: ids checked, unknown keys refused', () => {
     validateBuildOutput(ok.build);
     assert.throws(() => validateBuildOutput({ ...ok.build, extra: 1 }), SchemaError);
@@ -727,10 +741,10 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.ok(text.includes(`<not_inlined>\nFiles with changed content not shown above; each file named holds its whole diff.\n- dist/b.js (derived output, regenerated from sources this diff changes, 900 bytes): ${dir}/files/dist/b.js.diff\n- src/it's.js (new source, over the budget, 200000 bytes): ${dir}/files/src/it's.js.diff\n- and 2 more, all listed in ${dir}/not-inlined.txt\n</not_inlined>`));
     assert.doesNotMatch(text, /git diff/, 'no git command: a judgment has no shell');
     assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat|Moved|Deleted/, 'a range shown whole lists nothing');
-    // W3: the bounded diff's three parts, and the whole range read by the lens or a subagent before it reports.
+    // W3: the bounded diff's three parts, and the whole range read before the lens reports (no subagent steering, 2026-10-17).
     for (const needle of [/<orientation> is a map of the whole range/, /it is not a verdict on any file/, /the absolute path of a readable \.diff file/,
       /it names the file that lists them all/,
-      /the executor records the whole range as reviewed by your lens, so your report covers every part of it/, /by you or by a subagent/,
+      /the executor records the whole range as reviewed by your lens, so your report covers every part of it/, /each file is read before you report, the ones/,
       /Never judge a file from its name or its stat line alone/, /split by publication/, /The same applies to <owner_branches>/]) assert.match(mod.system, needle);
     assert.doesNotMatch(mod.system, /git diff|command beside it/);
   });
@@ -1162,26 +1176,35 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
 });
 
 describe('W3 seat prompts (2026-10-16)', () => {
-  it('prompts.delegation: every Claude role prompt carries its delegation text; the Codex build brief, which has no Agent tool, does not', () => {
+  it('prompts.delegation: the Claude builder carries its delegation text; no judgment prompt steers subagent use (2026-10-17); the Codex build brief, which has no Agent tool, names none', () => {
     for (const role of ROLES.filter((r) => r !== 'build')) {
-      for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] as const) assert.ok(promptFor(role, model).system.includes(JUDGE_DELEGATION), `${role}/${model}`);
+      for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] as const) {
+        assert.doesNotMatch(promptFor(role, model).system, /subagent|Agent tool|<subagents>|model: haiku|model: opus/i, `${role}/${model}`);
+      }
     }
     for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5'] as const) assert.ok(promptFor('build', model).system.includes(BUILD_DELEGATION), `build/${model}`);
     assert.doesNotMatch(promptFor('build', 'gpt-5.6-luna').system, /Agent tool|subagent/);
-    for (const text of [JUDGE_DELEGATION, BUILD_DELEGATION]) {
-      for (const needle of [/You own/, /the Agent tool/, /model: haiku/, /model: opus/, /One subagent is enough when one suffices/, /Do not use subagents to re-check your own/]) assert.match(text, needle);
-    }
-    assert.match(JUDGE_DELEGATION, /A subagent's answer is a lead, not evidence/);
-    assert.match(JUDGE_DELEGATION, /quoted to you with their file and line/);
-    assert.match(JUDGE_DELEGATION, /read-only, as you are/);
+    for (const needle of [/You own/, /the Agent tool/, /model: haiku/, /model: opus/, /One subagent is enough when one suffices/, /Do not use subagents to re-check your own/]) assert.match(BUILD_DELEGATION, needle);
   });
 
-  it('prompts.gate-bounded-diff: the gate reads <orientation> as a map, <diff> and every <not_inlined> file, derived outputs through their sources', () => {
+  it('prompts.gate-bounded-diff: the gate reads <orientation> as a map, <diff> and every <not_inlined> file, derived outputs against their sources', () => {
     const sys = promptFor('gate', 'claude-opus-5-5').system;
     for (const needle of [/<orientation> is a map of the whole change/, /it is not a verdict on any file/, /<diff> holds per-file diffs inlined, in priority order/,
       /<not_inlined> lists every file whose diff is not inlined/, /the absolute path of a readable \.diff file/, /Your verdict covers the whole diff/,
-      /by you or by a subagent/, /judged through its sources/, /Never judge a file by its name or its stat line/]) assert.match(sys, needle);
+      /every part of it is read before you decide: each file under <not_inlined>/, /judged against its sources/, /Never judge a file by its name or its stat line/]) assert.match(sys, needle);
     assert.doesNotMatch(sys, /Stop reading once every clause is graded/, 'the whole diff is read');
+  });
+
+  it('prompts.gate-round-2: a changed derived output checked against its generator, with why; the pre-existing class; an honest unreviewed list', () => {
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] as const) {
+      const sys = promptFor('gate', model).system;
+      for (const needle of [
+        /check that each changed output is what the generator would produce from the changed sources/, /A changed output is where a hand edit hides, because a reader skims it as generated/,
+        /classify each as blocking, note or pre-existing/, /one already present at the base, is pre-existing: report it, classify it pre-existing, and say in its text why you believe it predates the unit/,
+        /Notes and pre-existing findings are recorded, and never a fix round/, /unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason/,
+        /Be honest about coverage/, /If you approve, name here what you did not look at, and do not approve on the strength of a part you did not read when that part could hold a defect/,
+      ]) assert.match(sys, needle, `${model}: ${needle}`);
+    }
   });
 
   it('prompts.lens-brief-last: the vision opens the lens message and the lens brief sits after the data, just before the ask', () => {

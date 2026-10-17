@@ -18,11 +18,10 @@
 // dispositions each earlier finding exactly once (resolved, still-open, withdrawn); a still-open one is not reported again.
 // W3 (2026-10-16, reviewed against "Prompting best practices" and "Prompting Claude Opus 5"): the unenforced finding cap is
 // gone (the Opus 5 guide: a review asked to report less reports less; the architect adjudicates every finding, and the
-// blocking/note split already says which hold admission); delegation (JUDGE_DELEGATION).
+// blocking/note split already says which hold admission); delegation (withdrawn 2026-10-17).
 import { canonicalJson } from '../../core/json.ts';
 import type { PackReviewPromptInputs, PromptModule } from '../inputs.ts';
 import { documentsXml, packReviewDeltaText, rulesIndexText, visionText } from '../inputs.ts';
-import { JUDGE_DELEGATION } from '../delegation.ts';
 import { PACK_REVIEW_SCHEMA } from '../schemas.ts';
 const system = `You review the work pack of a roadmap build before its first unit is admitted, and report what the engineers who build its units would trip over. You change nothing. Everything you report goes to the architect who drafted the pack, who adjudicates it: a blocking finding holds the arc's first admission until the architect fixes the pack or acknowledges the finding; a note goes to the architect's brief.
 
@@ -57,9 +56,7 @@ A finding is blocking when the pack cannot run as written: a contradiction, a un
 When the message holds <delta>, review what changed against the frame, and give every earlier finding listed in <previous_findings> exactly one disposition, naming it by its job and index: resolved when the pack as it stands now no longer has the problem, still-open when it still does, withdrawn when on reading it again it was never a problem. A still-open blocking finding keeps holding the first admission, so do not report it again as a new finding; report as findings only problems that are new. Judge a resolution by the changed files, not by the change's intent.
 
 # Output
-findings as above. dispositions: on a re-review one entry per earlier finding in <previous_findings>, none missing and none twice; on a first review it is empty. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, each with the file and line you read it at, or is empty. Write every claim and reason as plain, literal sentences.
-
-${JUDGE_DELEGATION}`;
+findings as above. dispositions: on a re-review one entry per earlier finding in <previous_findings>, none missing and none twice; on a first review it is empty. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, each with the file and line you read it at, or is empty. Write every claim and reason as plain, literal sentences.`;
 
 export const PROMPT: PromptModule<'packReview'> = {
   system,

@@ -294,3 +294,13 @@ export function gateDiffShownOf(inputs: JudgmentInputs): DiffShown {
   warnDefaulted('judgment-inputs.diffShown', `${inputs.unit} gate#${inputs.attempt}: a gate a dev.11 executor recorded, shown its whole diff inline; read as nothing recorded`);
   return { inlined: [], notInlined: [] };
 }
+
+/**
+ * A gate answer's `unreviewed` (1.0.0-dev.12 round 2): absent on an answer a dev.11 gate gave, which was never asked what it
+ * did not read. Read as null: unknown, never "everything reviewed". Scaffolding: deleted once no arc started on
+ * 1.0.0-dev.11 is in flight (BACKLOG "Scaffolding to delete"); `unreviewed` then becomes required in `gateOutput`.
+ */
+export function gateUnreviewedDefault(): null {
+  warnDefaulted('gate.unreviewed', 'a gate answer without unreviewed (a dev.11 gate); read as unknown');
+  return null;
+}

@@ -299,7 +299,8 @@ unattended week is only safe if the owner can see, in one place, everything deci
   `apply` re-derive it and refuse drift, and the snapshot keeps every byte, so a judge's view of the target is
   reproducible from the ref alone. The vision document lives in the corpus, and its confirmation is now checked
   against the pinned bytes instead of stored on trust.
-- **Phase 0 is the agent's, checked by code.** The agent fans the reading out to subagents; `phase0 check` runs
+- **Phase 0 is the agent's, checked by code.** The skill states each step's outcome and leaves the method to the
+  agent (subagent prescriptions withdrawn 2026-10-17); `phase0 check` runs
   the same rows `start` runs, so a Phase 0 is green before it costs a start. The pack review became an executor
   job on the frontier class with kept inputs, holding admission until a review matches the current pack.
 - **Issues are trusted or refused.** Owner ruling L6: a repository whose policy lets anyone open issues refuses

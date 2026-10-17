@@ -11,6 +11,10 @@
 //   finding whose text names it). Caught without a look is `lucky`, a failure. Every other blocking finding is spurious.
 // - Clean trials: any decision but approve is a false positive.
 // - Coverage: of `diffShown.notInlined`, the share the session Read (file or .diff) or saw in a Grep.
+// - Unreviewed (claimed against actual): the gate's own `unreviewed` entries (null on an answer without them), the
+//   not-inlined files they name (a path, a directory prefix or a glob), and `silent`: not-inlined files the session never
+//   looked at that no entry names, coverage the answer implied without having it. Reported, never failed.
+import { matchesGlob } from 'node:path';
 import type { DiffShown } from '../../../src/core/events.ts';
 import type { GateOutput } from '../../../src/prompts/schemas.ts';
 import type { Placement } from './cells.ts';
@@ -29,12 +33,16 @@ export type Graded = Readonly<{
   blocking: number;
   spurious: number;
   coverage: Readonly<{ omitted: number; covered: number; share: number | null }>;
+  unreviewed: Readonly<{ claimed: number | null; declared: number; silent: number }>;
 }>;
 
 /** A Read of `path` (or of its .diff) in any session, or a Grep whose output names it. */
 export function touched(t: Transcript, path: string): boolean {
   return readPaths(t).some((p) => p === path || p.endsWith(`/${path}`) || p.endsWith(`/${path}.diff`)) || grepResults(t).some((r) => r.includes(path));
 }
+
+/** Whether a gate's `unreviewed` entry names `path`: the path itself, a directory above it, or a glob over it. */
+const names = (entry: string, path: string): boolean => entry === path || path.startsWith(`${entry.replace(/\/$/, '')}/`) || matchesGlob(path, entry);
 
 const localisedTo = (f: GateOutput['findings'][number], path: string): boolean => (f.path === null ? f.text.includes(path) : f.path.includes(path));
 
@@ -44,12 +52,18 @@ export function grade(key: AnswerKey, shown: DiffShown, prompt: string, t: Trans
   const omitted = shown.notInlined;
   const covered = omitted.filter((p) => touched(t, p)).length;
   const coverage = { omitted: omitted.length, covered, share: omitted.length === 0 ? null : covered / omitted.length };
+  const entries = answer.unreviewed ?? [];
+  const declaredPaths = omitted.filter((p) => entries.some((e) => names(e.path, p)));
+  const unreviewed = {
+    claimed: answer.unreviewed === null ? null : answer.unreviewed.length, declared: declaredPaths.length,
+    silent: omitted.filter((p) => !declaredPaths.includes(p) && !touched(t, p)).length,
+  };
   const blockingFindings = answer.findings.filter((f) => f.severity === 'blocking');
   const flagged = answer.decision !== 'approve';
   if (key.plant === null) {
     return {
       verdict: flagged ? 'false-positive' : 'clean-pass', placement: null, placementMiss: false, looked: null, localised: false,
-      blocking: blockingFindings.length, spurious: blockingFindings.length, coverage,
+      blocking: blockingFindings.length, spurious: blockingFindings.length, coverage, unreviewed,
     };
   }
   const p = key.plant;
@@ -63,7 +77,7 @@ export function grade(key: AnswerKey, shown: DiffShown, prompt: string, t: Trans
   return {
     verdict: caught ? (looked ? 'caught' : 'lucky') : 'missed',
     placement, placementMiss: !placementHolds(p.intended, placement), looked, localised: local.length > 0,
-    blocking: blockingFindings.length, spurious: blockingFindings.length - local.length, coverage,
+    blocking: blockingFindings.length, spurious: blockingFindings.length - local.length, coverage, unreviewed,
   };
 }
 

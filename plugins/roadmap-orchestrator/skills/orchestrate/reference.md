@@ -244,7 +244,10 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
 - `plan{rev, planSha256}`; `routing{profile, rev, seats, sources, bindings}` (classes, never models).
 - `units[]`: `unit, stage, status, attempts, chargeableFailures, risk, seat{role, tier}, state, waitingFor, holds,
   priority{priority, origin, waitStartSeq, bypassMerges, promoted}, park, lineage, supersededBy, buildTier, running,
-  failures`. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
+  failures, gate`. `gate{attempt, decision, findings[{severity: blocking|note|pre-existing, path, text, contractRef}],
+  unreviewed[{path, reason}]}` is the unit's latest gate answer, or null before one: a `pre-existing` finding is a real
+  defect already at the base (never blocking); `unreviewed` is what the gate says it did not review (null on an answer
+  from dev.11: unknown), recorded and never enforced. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
   `parked`, `merged`, `cut` or `superseded`. `waitingFor{deps, edges, resources, envBlocked, admission, drainFor}`;
   `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare. `running{stage,
   attempt, elapsed (ms), deadline, resources, lane}`, `lane{id, set: spec|suite|journey|mutant, inv, startedAt}` the

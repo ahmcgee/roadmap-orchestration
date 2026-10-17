@@ -112,22 +112,19 @@ made false is a fact-currency fix in the next corpus window, never debt.
 
 ## Phase 0 (each arc)
 
-Fan out to subagents for the reading-heavy work: corpus intake, curation passes, obligation extraction, issue
-intake on a large capture. Give each subagent a closed task, a time budget, and an instruction to report its
-elapsed time with the result. A branch over budget gets re-planned (split, narrowed, or taken back), never just
-waited on.
+Each step below says what must be true when it is done; how you get there is yours. `phase0 check` runs the
+rows code checks.
 
 Keep the arc's inputs in their own directory outside the product working tree, for example
 `<repo>/../roadmap-inputs/<arc>/`. For the shapes, read `reference.md` ("Files", "The corpus guide") and the
 `executor/SCHEMAS.md` sections it names; nothing else of the plugin is an example to copy.
 
 1. **Corpus intake and curation** by tier (above). Rules blocks for every normative claim.
-2. **Orphan sweep.** After curation, an independent subagent (not the one that curated) reads every corpus file's
-   prose outside the rules blocks and lists each normative claim no rule states: a requirement, a principle, an
-   operational or production fact, a prohibition. You settle every entry: a rule (census `untestable` for a
-   principle, `prod-only` for a production or operational claim), or a `curation` note naming the rule it is pure
-   rationale for. It also lists every rule that states more than one claim; split each. Repeat until the sweep
-   lists nothing unsettled.
+2. **Orphan sweep.** Done when every normative claim in the corpus prose outside the rules blocks (a requirement,
+   a principle, an operational or production fact, a prohibition) is settled: a rule states it (census `untestable`
+   for a principle, `prod-only` for a production or operational claim), or a `curation` note names the rule it is
+   pure rationale for; and no rule states more than one claim (split each that does). Repeat until nothing is
+   unsettled.
 3. **Commit.** First arc: commit on your work branch. Chained arc: see "Chaining" for the single between-arc
    commit. The commit is the arc's `baseline`.
 4. **Pin.** `roadmap corpus pin --repo <repo> --commit <corpus commit> --baseline <baseline sha> --out
@@ -135,8 +132,8 @@ Keep the arc's inputs in their own directory outside the product working tree, f
    Re-pin after every corpus change; `start` re-derives the pin and refuses drift.
 5. **Obligations.** Extract a testable obligation from every rule the slice needs: witness, `deliveredBy`, proof
    judgment, impact mapping, cut line (SCHEMAS.md "M3: the holistic layer"). Each obligation anchors at
-   `rule: {id, textSha256}` from the pin. A second subagent cross-checks the extraction against the rules; you
-   settle every disagreement.
+   `rule: {id, textSha256}` from the pin. Done when every extraction agrees with its rule and every disagreement
+   between them is settled.
 6. **Census.** One entry per active pinned rule: `obligation{id}`, `out-of-slice`, `untestable` or `prod-only`.
    A claim about something not built yet is a `future` obligation, never `must-hold`. What an existing test already
    checks of a property the code must keep is a `must-hold` obligation witnessed by that test, never `untestable` or

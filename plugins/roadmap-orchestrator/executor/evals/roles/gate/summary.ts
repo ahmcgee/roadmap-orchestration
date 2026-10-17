@@ -9,8 +9,9 @@
 //   cost-check         every call's per-model costs sum to its total_cost_usd
 //   holdout-gap        (with a dev summary to compare) holdout detection within 15 points of dev
 //
-// Coverage (the median share of not-inlined files the session read; target 90%) and the method (tools, subagents) are
-// reported, never failed.
+// Coverage (the median share of not-inlined files the session read; target 90%), the gate's claimed coverage against it
+// (`silent`: not-inlined files neither read nor declared unreviewed, median per trial) and the method (tools, subagents)
+// are reported, never failed.
 import { type Interval, fmtRate, median, quantile, wilson } from '../stats.ts';
 import type { TrialRow, VoidReason } from './arc.ts';
 
@@ -25,6 +26,8 @@ export type CellSummary = Readonly<{
   rate: Interval;
   lucky: number;
   coverageMedian: number | null;
+  /** Median per trial of not-inlined files the gate neither read nor named in `unreviewed`. */
+  silentMedian: number | null;
   cost: Readonly<{ median: number | null; p90: number | null; perCatch: number | null }>;
   costByModel: Readonly<Record<string, Readonly<{ median: number | null; p90: number | null }>>>;
   wallMedianS: number | null;
@@ -74,6 +77,7 @@ function cellSummary(rows: readonly TrialRow[]): CellSummary {
     rate: first.planted ? wilson(caught, g.length) : wilson(fps, g.length),
     lucky: g.filter((r) => r.graded!.verdict === 'lucky').length,
     coverageMedian: median(shares),
+    silentMedian: median(rows.flatMap((r) => (r.graded === null ? [] : [r.graded.unreviewed.silent]))),
     cost: { median: median(costs), p90: quantile(costs, 0.9), perCatch: first.planted && caught > 0 ? costs.reduce((a, b) => a + b, 0) / caught : null },
     costByModel,
     wallMedianS: median(rows.map((r) => r.wallMs / 1000)),
@@ -134,7 +138,7 @@ export function reportLines(s: Summary): readonly string[] {
   const out: string[] = [];
   for (const c of s.cells) {
     out.push(`CELL ${c.cell} ${c.planted ? 'planted' : 'clean'} trials=${c.trials} graded=${c.graded} ${c.planted ? 'caught' : 'fp'}=${fmtRate(c.rate)} lucky=${c.lucky} `
-      + `coverage=${pct(c.coverageMedian)} cost=${usd(c.cost.median)}/p90 ${usd(c.cost.p90)} perCatch=${usd(c.cost.perCatch)} wall=${c.wallMedianS?.toFixed(0) ?? '-'}s `
+      + `coverage=${pct(c.coverageMedian)} silent=${c.silentMedian ?? '-'} cost=${usd(c.cost.median)}/p90 ${usd(c.cost.p90)} perCatch=${usd(c.cost.perCatch)} wall=${c.wallMedianS?.toFixed(0) ?? '-'}s `
       + `turns=${c.turnsMedian ?? '-'} subagents=${c.subagentsMedian ?? '-'}${c.subagentModels.length > 0 ? ` (${c.subagentModels.join(',')})` : ''} voids=${JSON.stringify(c.voids)}`);
     for (const [m, x] of Object.entries(c.costByModel)) out.push(`COST ${c.cell} ${m} median=${usd(x.median)} p90=${usd(x.p90)}`);
   }

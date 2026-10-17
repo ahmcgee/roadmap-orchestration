@@ -51,10 +51,10 @@ const finding = (path: string, text: string): JsonValue => ({ severity: 'blockin
 /** A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). */
 function fakeAnswer(kind: FakeGate, key: AnswerKey): JsonValue {
   const decoy = key.changed.find((p) => p !== key.plant?.path) ?? 'ARCHITECTURE.md';
-  const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [] });
+  const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [] });
   switch (kind) {
     case 'approve-all':
-      return { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [] };
+      return { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [] };
     case 'revise-all':
       return revise([finding(decoy, 'This change is wrong.')]);
     case 'cite-every-path':

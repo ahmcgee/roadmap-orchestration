@@ -409,6 +409,9 @@ at triage stay in git history.
   started on 1.0.0-dev.10 is in flight (every later checkpoint reads the arc's applied answers): a checkpoint `reenter`
   op recorded without `fixes` is adopted as recorded. With it, `fixes` becomes required in `bundleOp`. (`plan.json`'s
   `reenters.fixes` stays optional: re-entries in force before it are lasting records.)
+- `gateUnreviewedDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a dev.11 gate answer
+  has no `unreviewed` and reads as null (unknown). With it, `unreviewed` becomes required in `gateOutput` and
+  `GateUnreviewed[] | null` narrows to the list.
 - `RECORDED_DROP_REASONS`' `elevate-early` (src/flow/types.ts), once no arc started on 1.0.0-dev.11 is in flight: a
   dev.11 `flow-ended` may record that drop reason, which dev.12 no longer writes. With it, `flowDropped` reads
   `FLOW_DROP_REASONS` and `checkProposal` returns a plain `FlowDropped`.

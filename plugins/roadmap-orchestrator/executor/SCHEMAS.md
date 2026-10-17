@@ -273,7 +273,7 @@ repair turn, seat prompts).** `SCHEMA_VERSION` stays 1; every change is additive
 `NeedsUserReason`: a dev.11 log whose latest gate or plan-check outcome is `read-denied` still folds and takes its retry
 by the old row, and a unit parked `read-denied` resumes like any env park); the dev.11 arms of `repairTurnOf` and
 `isRepairTurnOf` (src/pipeline/dispatch.ts) and of the lens loop (src/holistic/audit.ts); `RECORDED_DROP_REASONS`'s
-`elevate-early`.
+`elevate-early`; `gateUnreviewedDefault` (src/core/upgrade.ts, round 2).
 
 The bounded diff (src/git/boundeddiff.ts) is the one way a judgment is shown a diff: the gate's unit diff (budget
 `GATE_DIFF_BUDGET`, 384 KiB) and a lens's chunk and owner diffs (`LENS_DIFF_BUDGET`). Renames detected (`-M`: a move is
@@ -315,6 +315,9 @@ Every judgment role's refused answer (its schema, or the role's validator) takes
 | `flow-ended` drops, `FLOW_DROP_REASONS` | `- elevate-early` and the constraint half of `target`: a target station is the flow role's method | a dev.11 `flow-ended` recording `elevate-early` reads by `RECORDED_DROP_REASONS` (scaffolding) |
 | Judgment system text (not persisted) | ends with `<readable_directories>` listing the call's read surface (`judgmentSurface`, src/pipeline/dispatch.ts): `--system-prompt` drops Claude Code's own list of added dirs | none |
 | `decisions.json` (`readDecisions`) | an entry naming a lane, an acceptance clause or a fact, or a struck or deferred decision, does not validate: the build is `malformed` and its resume round quotes why (dev.11 skipped the entry at append) | none: read per build |
+| Judgment system text, delegation (round 2, 2026-10-17) | `JUDGE_DELEGATION` is deleted: no judgment prompt (gate, plan-check, lens, checkpoint, pack review, flow) carries subagent guidance; the judge keeps `JUDGMENT_TOOLS` and arrives at its own method. `BUILD_DELEGATION` unchanged | none |
+| Gate answer (result.json `outcome.value`; `GATE_SCHEMA`, `gateOutput`) | `findings[].severity` `+ pre-existing` (a real defect present at the base: never blocking, allowed on an approve, banked like a note in a corpus arc as `gate-note` debt); `+ unreviewed: [{path, reason}]` (a repository path or path pattern the gate did not review, and why; required of a live answer, recorded, never enforced) | a dev.11 answer: no `pre-existing` finding (the enum only widened); `unreviewed` absent reads as null, unknown (`gateUnreviewedDefault`, warned once; scaffolding) |
+| `status.units[]` | `+ gate: {attempt, decision, findings, unreviewed} \| null`: the unit's latest valid gate answer (`latestGateAnswer`, src/pipeline/gate.ts), read from its result.json | derived (a dev.11 answer shows `unreviewed: null`) |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
