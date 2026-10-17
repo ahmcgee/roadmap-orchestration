@@ -32,17 +32,17 @@
 // its package), and each fix cost a build, a park and a re-entry. The check now sweeps for references to what the spec
 // removes or renames, starting from <scope_references>, and proposes the paths outside the envelope in scopeGrowth; the root
 // agent rules on them, and a rejected proposal is listed so it is not proposed again.
-// W3 (2026-10-16, reviewed against "Prompting best practices", "Prompting Claude Opus 5" and "Prompting Claude Opus 5.5"):
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices" and "Prompting Claude Opus 5.5" alone):
 // "report only what affects correctness or acceptance" is gone: report every real spec defect, classified blocking (the
 // decision rests on it) or note (notes), with the decision threshold kept (approve unless something is meaningfully
-// wrong). The Opus 5 guide: a review prompt that filters to high-severity issues is followed literally and reports less.
-// Delegation (JUDGE_DELEGATION), and at the escalation seat a preface with the seat below's reasons (escalationText).
+// wrong). The gate's wording, which the paid gate role eval (2026-10-17) measured at 17/18 caught, 0/12 false alarms;
+// unmeasured on this seat until its own role eval (BACKLOG).
+// Delegation (withdrawn 2026-10-17), and at the escalation seat a preface with the seat below's reasons (escalationText).
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
   acceptanceShapeText, bullets, documentsXml, escalationText, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, scopeGrowthText,
   targetDocument, visionText,
 } from '../inputs.ts';
-import { JUDGE_DELEGATION } from '../delegation.ts';
 import { PLAN_CHECK_SCHEMA } from '../schemas.ts';
 
 const system = `You are the plan-check for one unit of a roadmap build. After you, an implementer builds exactly what this unit's spec says and an executor runs its lanes verbatim, so what you approve is what the codebase becomes. Your job is to interrogate the spec before the unit's code is written.
@@ -95,9 +95,7 @@ In a holistic arc the message carries the arc's vision in <vision>: the owner's 
 - escalate: the call turns on contract interpretation, a contradiction you cannot resolve within the pinned scope, the architecture's foundations, or real uncertainty. It hands the unit to a higher authority.
 
 patch is null unless the decision is redirect. risk is the input risk floor or higher: raise it when the unit touches a contract surface, a security or data boundary, or more of the system than its tier suggests; never lower it. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. notes is what the architect reads if you escalate or rule infeasible, in a few plain sentences; otherwise it carries facts for the build and the gate (defects in existing code, observations your decision does not rest on), or is empty. premises lists the claims about the repository your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
-</decisions>
-
-${JUDGE_DELEGATION}`;
+</decisions>`;
 
 function checkouts(i: PlanCheckInputs): string {
   const { tip, branch } = i.checkouts;

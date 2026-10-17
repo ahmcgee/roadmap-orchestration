@@ -23,17 +23,22 @@
 // the run dir (dispatch.ts `judgmentReadDirs`), which hold every evidence dir, and a refused read voids nothing.
 // Scope growth (2026-10-15; same guides): the paths salvage reverted as out of scope reach the gate as <scope_reverted>, so
 // a build that needed one is escalated to the root agent rather than lost silently.
-// W3 (2026-10-16, reviewed against "Prompting best practices", "Prompting Claude Opus 5" and "Prompting Claude Opus 5.5"):
-// the "report only what affects correctness" filter is gone: report every real defect, classified blocking or note (the
-// Opus 5 guide: a review prompt that says report only high-severity issues is followed literally and reports less; ask
-// for everything and filter separately, which the classification and code's handling of notes do). The bounded diff
-// (<orientation> a map, <diff> inlined, <not_inlined> readable .diff files): the verdict covers the whole diff, read by
-// the gate or a subagent, derived outputs judged through their sources. Delegation (JUDGE_DELEGATION), and at the
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices" and "Prompting Claude Opus 5.5" alone, the
+// 5.5-generation guides being the only binding ones): the "report only what affects correctness" filter is gone: report
+// every real defect, classified, and code filters (notes never block). Evidence: the paid gate role eval (2026-10-17,
+// synthetic size-3000 monorepo) with this wording caught 17 of 18 plants with 0 false alarms in 12 clean trials and 95%
+// of blocking findings localised to the plant. The bounded diff
+// (<orientation> a map, <diff> inlined, <not_inlined> readable .diff files): the verdict covers the whole diff, read before
+// the decision, derived outputs judged through their sources. Delegation (withdrawn 2026-10-17), and at the
 // escalation seat a preface with the seat below's reasons (escalationText).
+// dev.12 round 2 (2026-10-17, reviewed against "Prompting Claude Opus 5.5" and "Prompting Claude Sonnet 5.5": explain why,
+// no shouting): the paid gate role eval's one miss was a hand edit inside a regenerated golden, so a changed derived output
+// is checked against what its generator would produce (unless <executable_checks> reports it verified by regeneration, R3), with the reason given; a third finding class, pre-existing (a real
+// defect present at the base: recorded, never blocking); and `unreviewed`, the gate's own account of what it did not read
+// (recorded, never enforced: the role evals compare it with the trace).
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
   boundedDiffText, bullets, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
-import { JUDGE_DELEGATION } from '../delegation.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
 
 const system = `You are the gate for one unit of a roadmap build: nothing merges without your approval. You judge the unit's change against its spec, the contracts and rulings, and the architecture doc.
@@ -44,7 +49,7 @@ The repository at the diff head is your working directory, read-only.
 
 <reading_the_diff>
 The diff arrives in three parts. <orientation> is a map of the whole change: its stat, moves and renames, deletions set against what the spec removes, how it spreads across packages, recurring token substitutions, and the spec items, obligations and witnesses the unit claims. It shows you where to look; it is not a verdict on any file. <diff> holds per-file diffs inlined, in priority order. <not_inlined> lists every file whose diff is not inlined, with its kind and size and the absolute path of a readable .diff file holding that file's diff.
-Your verdict covers the whole diff, so every part of it is read before you decide, by you or by a subagent: each file under <not_inlined> as much as each inlined one. A derived output (a regenerated golden, generated code) is judged through its sources: read the change to its sources and its generator, and open the output itself where a question turns on its content. Never judge a file by its name or its stat line, and never assume a file nobody read is correct.
+Your verdict covers the whole diff, so every part of it is read before you decide: each file under <not_inlined> as much as each inlined one. A derived output (a regenerated golden, generated code; the diff marks each as a derived output) is judged against its sources. Where <executable_checks> lists it verified by regeneration, the executor already proved it byte-identical to its generator's output. Otherwise read the change to its sources and its generator, then check that each changed output is what the generator would produce from the changed sources. A changed output is where a hand edit hides, because a reader skims it as generated. Never judge a file by its name or its stat line, and never assume a file nobody read is correct.
 Then read the surrounding code your verdict relies on, including files the diff does not touch. Batch your reads: one Grep over many paths rather than many single Reads.
 </reading_the_diff>
 
@@ -65,7 +70,7 @@ Host facts are never a verdict. Sibling units' lanes and the orchestrator's proc
 </how_to_grade>
 
 <finding_bar>
-Report every real defect you find, and classify each as blocking or note. A defect is one of (1) incorrect behaviour, (2) a spec, contract or ruling violation, (3) an acceptance clause left untested or a test that would pass if the behaviour were wrong, (4) scope creep: behaviour or files the spec did not ask for; and you can state its evidence in one sentence. Not a finding: style, naming or formatting, anything a linter or type checker enforces, a preference without a defect behind it, or one defect twice under two headings. These are always defects of kind (3), whatever the lanes say: a test that reads the real clock or the host time zone instead of a pinned clock; a fixed date the change makes invalid, or one that will expire; a real wait in a fast lane, where the timeout should be injected and the production default checked separately; a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point with an injected fixture. A change that moves a step of a transaction (staging, a save, a publication, a rollback) is a defect of kind (1) unless a failure matrix in the spec or decisions.json shows what each step leaves when the process dies before or after it, and the code matches every cell. A finding is blocking when the merge cannot carry it: a correctness defect, a contract or ruling violation, or an untested acceptance clause, that this diff introduced or that the spec requires and the diff omits. Everything else is a note: recorded, and never a fix round. A defect in code this diff did not touch is a note. Classify by what the merge cannot carry, not by how sure you are: a defect you cannot state evidence for is not a finding at all. A real defect left out of the report is a miss, and a non-defect marked blocking costs a fix round that widens the diff to be read again.
+Report every real defect you find, and classify each as blocking, note or pre-existing. A defect is one of (1) incorrect behaviour, (2) a spec, contract or ruling violation, (3) an acceptance clause left untested or a test that would pass if the behaviour were wrong, (4) scope creep: behaviour or files the spec did not ask for; and you can state its evidence in one sentence. Not a finding: style, naming or formatting, anything a linter or type checker enforces, a preference without a defect behind it, or one defect twice under two headings. These are always defects of kind (3), whatever the lanes say: a test that reads the real clock or the host time zone instead of a pinned clock; a fixed date the change makes invalid, or one that will expire; a real wait in a fast lane, where the timeout should be injected and the production default checked separately; a negative witness (a test that something does not happen) that calls a helper instead of driving the real entry point with an injected fixture. A change that moves a step of a transaction (staging, a save, a publication, a rollback) is a defect of kind (1) unless a failure matrix in the spec or decisions.json shows what each step leaves when the process dies before or after it, and the code matches every cell. A finding is blocking when the merge cannot carry it: a correctness defect, a contract or ruling violation, or an untested acceptance clause, that this diff introduced or that the spec requires and the diff omits. A real defect this unit did not introduce, one already present at the base, is pre-existing: report it, classify it pre-existing, and say in its text why you believe it predates the unit. Everything else is a note. Notes and pre-existing findings are recorded, and never a fix round. Classify by what the merge cannot carry, not by how sure you are: a defect you cannot state evidence for is not a finding at all. A real defect left out of the report is a miss, and a non-defect marked blocking costs a fix round that widens the diff to be read again.
 </finding_bar>
 
 <obligations>
@@ -90,9 +95,9 @@ The Direction breaks ties only where the spec, contracts and rulings are silent;
 - escalate: you are stuck; every option carries a substantive drawback; the change is foundational to the wider system; or a contract cannot be satisfied as written.
 
 directives is empty unless you revise. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. path is the repository path a finding concerns, or null. premises lists the claims about the code your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
-</decisions>
 
-${JUDGE_DELEGATION}`;
+unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason, or is empty. Be honest about coverage: it is compared with what you actually read. If you approve, name here what you did not look at, and do not approve on the strength of a part you did not read when that part could hold a defect.
+</decisions>`;
 
 function priorRound(i: GateInputs): string {
   const p = i.priorRound;
@@ -114,7 +119,7 @@ Rules for this round:
 1. Rule on each prior directive and finding: resolved or unresolved against the new code.
 2. Review the changed paths for regressions.
 3. Re-verify only premises whose files changed. Trust the rest, but overturn any premise you have evidence against.
-4. A new finding on unchanged code is blocking only if it affects correctness or stated acceptance; every other new finding is a note, never a directive.
+4. A new finding on unchanged code is blocking only if it affects correctness or stated acceptance; every other new finding is a note or pre-existing, never a directive.
 </prior_round>`;
 }
 

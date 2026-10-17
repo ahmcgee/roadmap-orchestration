@@ -33,8 +33,8 @@
 // M4a: a corpus arc's gate reads the rules index and the pinned corpus materialised read-only without the vision
 // document (`gateTarget`, M3 R17), its directory added to the session's readable dirs.
 //
-// Debt (M4a R7, DEBT_BANK): an approval in a corpus arc banks each `note` finding of the approving answer as a
-// `gate-note` debt item, keyed by its source `(unit, attempt, index)` and deduped by `debtKey` against the baseline's
+// Debt (M4a R7, DEBT_BANK): an approval in a corpus arc banks each `note` and (dev.12 round 2) `pre-existing` finding of
+// the approving answer as a `gate-note` debt item, keyed by its source `(unit, attempt, index)` and deduped by `debtKey` against the baseline's
 // ledger and the arc's banked items (`mintDebt`), right after the `approval` fact. A crash between the two is finished
 // from the consumed answer at recovery: `gateRead` re-reads it, keeps the approval, and banks only what is missing.
 //
@@ -86,7 +86,7 @@ import { laneRecordIn, latestSpecSeries, observedViews, seriesLedger, seriesTree
 import { gateSmokeChecks } from './smoke.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 import {
-  type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
+  type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, type JudgmentReader, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
   escalationOf, fastSuiteRoot, judgedAnswer, salvageRejections, stillOutside, writeJudgmentInputs,
 } from './stages.ts';
@@ -204,7 +204,23 @@ export function fingerprintValid(ctx: StageContext, unit: PlanUnit): (fingerprin
 // ---------------------------------------------------------------------------------------------------
 // Earlier gate rounds, read back from their results
 
-const gateSpawns = (ctx: StageContext, unit: UnitId) => judgmentSpawns(ctx, unit, 'gate');
+const gateSpawns = (ctx: JudgmentReader, unit: UnitId) => judgmentSpawns(ctx, unit, 'gate');
+
+/** A unit's latest gate answer as status shows it (dev.12 round 2): its attempt, decision, findings and `unreviewed`. */
+export type GateAnswerView = Readonly<{ attempt: number; decision: GateOutput['decision']; findings: GateOutput['findings']; unreviewed: GateOutput['unreviewed'] }>;
+
+/** The unit's latest gate spawn that gave a valid answer, read back from its result; null before any. */
+export function latestGateAnswer(ctx: JudgmentReader, unit: UnitId): GateAnswerView | null {
+  const spawns = gateSpawns(ctx, unit);
+  for (let i = spawns.length - 1; i >= 0; i--) {
+    const spawn = spawns[i]!;
+    const out = judgmentOutput(ctx, spawn, validateGateOutput);
+    if (out === null) continue;
+    if (spawn.parent.type !== 'stage') throw new Error(`${unit}: a gate spawn outside a stage attempt`);
+    return { attempt: spawn.parent.attempt, decision: out.decision, findings: out.findings, unreviewed: out.unreviewed };
+  }
+  return null;
+}
 
 /** The directives of the gate attempt `parent`, which revised. */
 export function gateDirectives(ctx: StageContext, parent: StageParent): readonly string[] {
@@ -435,14 +451,15 @@ export async function gateRead(
 }
 
 /**
- * Banks the approving answer's `note` findings of a corpus arc as `gate-note` debt (R7), after its `approval`: each
+ * Banks the approving answer's `note` and `pre-existing` findings of a corpus arc as `gate-note` debt (R7), after its
+ * `approval` (a pre-existing defect is the same kind of recorded, non-blocking debt as a note; dev.12 round 2): each
  * keyed by `(unit, attempt, index)`, its index the finding's place in the answer, and minted against the baseline's
  * ledger and the arc's banked items (`mintDebt`: a source or a key already banked mints nothing). A note whose text is
  * blank names no debt and is not banked. Only a corpus arc banks: its Phase 0 dispositions the ledger it publishes.
  */
 function bankGateNotes(ctx: StageContext, unit: UnitId, attempt: number, findings: GateOutput['findings']): void {
   if (ctx.plan().target !== 'corpus') return;
-  const notes = findings.flatMap((f, index) => (f.severity === 'note' && normalizeText(f.text) !== '' ? [{ index, what: f.text }] : []));
+  const notes = findings.flatMap((f, index) => (f.severity !== 'blocking' && normalizeText(f.text) !== '' ? [{ index, what: f.text }] : []));
   if (notes.length === 0) return;
   crashPoint('debt.after-approval', unit);
   const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);

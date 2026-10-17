@@ -178,6 +178,7 @@ export type GateAnswer = Readonly<{
   directives?: readonly string[];
   findings?: readonly JsonValue[];
   premises?: readonly JsonValue[];
+  unreviewed?: readonly JsonValue[];
 }>;
 
 /** A gate the fake Claude answers after `before`: a fresh judgment call. `expect` adds to the judgment argv check. */
@@ -191,6 +192,7 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
 
 const gateAnswer = (a: GateAnswer): JsonValue => ({
   decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+  unreviewed: [...(a.unreviewed ?? [])],
 }) as JsonValue;
 
 /**

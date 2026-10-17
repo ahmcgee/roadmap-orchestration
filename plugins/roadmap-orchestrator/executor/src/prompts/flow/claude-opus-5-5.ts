@@ -14,12 +14,12 @@
 // `host:cpu`; the prompt explains how code names it, that only load decreases or host advice are kept there, and how to
 // tell the arc's own load (its `@cpu` tokens against the host's cpus, its lanes' concurrency) from an outside tenant's,
 // which no lever reaches (host advice). Rendered from the kept `FlowInputs` alone: no clock, no timestamps.
-// W3 (2026-10-16, reviewed against "Prompting best practices" and "Prompting Claude Opus 5"): delegation (JUDGE_DELEGATION).
+// W3 (2026-10-16): delegation, withdrawn 2026-10-17 (re-reviewed against "Prompting best practices" and "Prompting Claude
+// Opus 5.5" alone).
 import { HOST_CPU_STATION } from '../../core/ids.ts';
 import type { FlowPromptInputs } from '../../flow/types.ts';
 import type { LeverState, LeverTarget } from '../../flow/types.ts';
 import type { PromptModule } from '../inputs.ts';
-import { JUDGE_DELEGATION } from '../delegation.ts';
 import { FLOW_SCHEMA } from '../schemas.ts';
 
 const system = `You read the flow of a roadmap build: units of work move through a pipeline of stages (plan-check, build, lanes, gate, then the integration slot, where each candidate runs the suite and merges), and each unit's lead time is cut into the stations it waited at and was served by. You name the station that constrains the flow, and propose at most one change to one lever that would most likely shorten lead time there without moving any measurement. You change nothing. Your report goes to the root agent, who accepts or rejects a proposal with a reason; code applies an accepted one under a fence that lets it touch only that lever's plan fields, and afterwards measures whether it helped.
@@ -70,9 +70,7 @@ Your working directory is the repository at the integration head, read-only: wri
 
 <output>
 constraint: station is the one station id you take as the constraint, written exactly as the station table or code's constraint writes it (for example slot:integration or suite:unit) and nothing else; agree is whether it is code's; reason is why, in one sentence, where any component or qualifier belongs. diagnosis: what the station table, the chart and the verdicts show, in a few plain sentences. proposal: the one change (target, action, rationale: why it shortens lead time at the constraint, risks: what it could break and which guard would show it), or null. noAction: why no change now, or null. Exactly one of proposal and noAction. A station or target field holds only its id; write every other text field as plain, literal sentences.
-</output>
-
-${JUDGE_DELEGATION}`;
+</output>`;
 
 const fmt = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 const minutesOfLog = (x: number): string => fmt(Math.exp(x));

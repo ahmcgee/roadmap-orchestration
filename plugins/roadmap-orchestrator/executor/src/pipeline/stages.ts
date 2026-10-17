@@ -569,15 +569,18 @@ export function changedPremiseFiles(ctx: StageContext, premises: readonly Premis
   }).sort();
 }
 
+/** What reading a judgment's recorded answers needs: the journal and the run dir (a stage's context, or status's). */
+export type JudgmentReader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>;
+
 /** A unit's backend spawns of one judgment role, in log order. */
-export const judgmentSpawns = (ctx: StageContext, unit: UnitId, role: JudgmentRole): readonly IntentOf<'proc.spawn'>[] =>
+export const judgmentSpawns = (ctx: JudgmentReader, unit: UnitId, role: JudgmentRole): readonly IntentOf<'proc.spawn'>[] =>
   ctx.journal.view.opsOf('proc.spawn').filter((i) => {
     const s = i.expect.subject;
     return s.purpose === 'backend' && s.role === role && s.unit === unit;
   });
 
 /** The validated output of a judgment spawn, or null when it has none (a fault, a refusal, a malformed answer). */
-export function judgmentOutput<T>(ctx: StageContext, intent: IntentOf<'proc.spawn'>, validate: (value: unknown) => T): T | null {
+export function judgmentOutput<T>(ctx: JudgmentReader, intent: IntentOf<'proc.spawn'>, validate: (value: unknown) => T): T | null {
   if (ctx.journal.view.doneOf(intent.op)?.outcome.kind !== 'result') return null;
   const inv = invocationId(intent.op, intent.ordinal);
   const result = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('result.json');

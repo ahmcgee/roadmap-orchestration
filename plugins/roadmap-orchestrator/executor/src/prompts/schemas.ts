@@ -28,7 +28,7 @@ import {
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
-  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
   FIXES_UNRECORDED,
   reenterFixesDefault,
 } from '../core/upgrade.ts';
@@ -375,8 +375,11 @@ export function validateDecisionsFile(value: unknown): DecisionsFile {
 // gate
 
 export const GATE_DECISIONS = ['approve', 'revise', 'escalate'] as const;
-/** `blocking`: the merge cannot carry it (it has a directive). `note`: recorded, never blocks. */
-export const FINDING_SEVERITIES = ['blocking', 'note'] as const;
+/**
+ * `blocking`: the merge cannot carry it (it has a directive). `note`: recorded, never blocks. `pre-existing` (dev.12 round
+ * 2): a real defect the unit did not introduce, present at the base; recorded and handled as a note, never blocks.
+ */
+export const FINDING_SEVERITIES = ['blocking', 'note', 'pre-existing'] as const;
 
 export type GateFinding = Readonly<{
   severity: (typeof FINDING_SEVERITIES)[number];
@@ -385,7 +388,13 @@ export type GateFinding = Readonly<{
   /** A C-nn id, a contract path (with an optional #anchor) or a corpus rule T-n the finding rests on. */
   contractRef: string | null;
 }>;
-type GateCommon = Readonly<{ findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
+/** A part of the change the gate says it did not review (dev.12 round 2): recorded and reported, never enforced. */
+export type GateUnreviewed = Readonly<{ path: string; reason: string }>;
+type GateCommon = Readonly<{
+  findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[];
+  /** What the gate did not review, by repository path or path pattern; null on a dev.11 answer (`gateUnreviewedDefault`): unknown. */
+  unreviewed: readonly GateUnreviewed[] | null;
+}>;
 export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'approve' | 'escalate'; directives: readonly [] }>)
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
@@ -396,6 +405,7 @@ export const GATE_SCHEMA: Schema = sObj({
   directives: sArr(S_STR),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
+  unreviewed: sArr(sObj({ path: S_STR, reason: S_STR })),
 });
 
 const finding: Read<GateFinding> = object((f) => ({
@@ -404,6 +414,7 @@ const finding: Read<GateFinding> = object((f) => ({
   text: f.get('text', str),
   contractRef: f.get('contractRef', nullable(str)),
 }));
+const unreviewedEntry: Read<GateUnreviewed> = object((f) => ({ path: f.get('path', str), reason: f.get('reason', str) }));
 const emptyList: Read<readonly []> = (value, path) => {
   if (!Array.isArray(value) || value.length !== 0) throw new SchemaError(path, 'an empty array (directives only with revise)', value);
   return [];
@@ -413,6 +424,7 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const decision = f.get('decision', oneOf(GATE_DECISIONS));
   const common = {
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
+    unreviewed: f.optional('unreviewed', arrayOf(unreviewedEntry)) ?? gateUnreviewedDefault(),
   };
   if (decision === 'revise') return { ...common, decision, directives: f.get('directives', arrayOf(str, { nonEmpty: true })) };
   if (decision === 'approve') {

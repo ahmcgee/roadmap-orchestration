@@ -94,6 +94,7 @@
 //                      src/pipeline/failures.ts: the log and each red run's red.json, never raw evidence); the lanes
 //                      park's needs-user lists the same
 //   units[].running.lane  the lane, journey or mutant run open in the running attempt now (8c)
+//   units[].gate  (dev.12 round 2) the latest gate answer: decision, findings by class, and `unreviewed` (src/pipeline/gate.ts)
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
 //   checkpointWaits  each checkpoint rejected `busy` still waiting for the attempts it named (C5): "checkpoint <job>
@@ -132,6 +133,7 @@ import { type AbsPath, type IsoTime, type RepoPattern, absPath, branchRef, isoTi
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededPackItems } from './needsuser.ts';
 import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
+import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
@@ -290,9 +292,15 @@ export type UnitStatusLine = Readonly<{
   running: UnitRunning | null;
   /** M4a rev 3 (F3): its lanes attempts' red, flaky and repeat lanes, host-suspected ones marked (src/pipeline/failures.ts). */
   failures: readonly LaneFailure[];
+  /**
+   * dev.12 round 2: its latest gate answer (src/pipeline/gate.ts `latestGateAnswer`): attempt, decision, every finding
+   * (blocking, note, pre-existing) and what the gate said it did not review (null on a dev.11 answer: unknown); null before
+   * any gate answer.
+   */
+  gate: GateAnswerView | null;
 }>;
-/** A unit's line as `derive` (and `watch`) reads it: everything but the failures, which read each red lane's `red.json`. */
-type UnitCore = Omit<UnitStatusLine, 'failures'>;
+/** A unit's line as `derive` (and `watch`) reads it: everything but the failures and the gate answer, which read files. */
+type UnitCore = Omit<UnitStatusLine, 'failures' | 'gate'>;
 
 /** The routing in force for the latest start, as classes: never a model. */
 export type RoutingView = Readonly<{
@@ -1673,7 +1681,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   return {
     arc,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
-    units: d.units.map((l) => ({ ...l, failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }) })),
+    units: d.units.map((l) => ({ ...l, failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
     needsUser,
