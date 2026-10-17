@@ -25,11 +25,12 @@
 // outstanding range is reviewed one chunk of publications per call. 1.0.0-dev.12: each attachment is the shared bounded
 // diff (src/git/boundeddiff.ts) with its <orientation>, and a file not shown is a readable diff file, not a git command
 // (a judgment has no shell).
-// W3 (2026-10-16, reviewed against "Prompting best practices", "Prompting Claude Opus 5" and "Prompting Claude Opus 5.5"):
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices" and "Prompting Claude Opus 5.5" alone):
 // the lens brief moves from after the vision to just before the ask (long-context guidance: longform data at the top,
 // the query at the end; the vision stays first, A14); the bounded diff's three parts (<orientation> a map, <diff> inlined,
-// <not_inlined> readable .diff files), the whole range read before the report; the unenforced finding cap is gone
-// (the Opus 5 guide: a review asked to report less reports less, and the checkpoint, not the lens, weighs the findings);
+// <not_inlined> readable .diff files), the whole range read before the report; the finding cap is gone (code never
+// enforced it, and the checkpoint, not the lens, weighs the findings; the gate role eval measured the report-everything
+// wording, 2026-10-17);
 // delegation (withdrawn 2026-10-17: the judge keeps the Agent tool and arrives at its own method).
 import type { LensInputs, PromptModule } from '../inputs.ts';
 import {

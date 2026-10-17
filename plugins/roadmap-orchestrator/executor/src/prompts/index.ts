@@ -14,7 +14,12 @@ import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
 
 /** Every Codex judgment triple is unsupported in M1 (R21); layers.ts reports it as `codex-judgment`. */
 const CODEX_JUDGMENT = 'no read-only Codex judgment profile exists yet (R21)';
-/** What a Sonnet judgment seat adds to the Opus module it reads: the line ends its system prompt (`sonnet`). */
+/**
+ * What a Sonnet judgment seat adds to the Opus module it reads: the line ends its system prompt (`sonnet`). Verbatim from
+ * "Prompting Claude Sonnet 5.5", Reasoning tasks with JSON output (re-checked 2026-10-17): with structured outputs and
+ * adaptive thinking the model often answers without thinking at low and medium effort; the line makes it think first
+ * (at high, the judgment effort, it brings accuracy close to xhigh's).
+ */
 export const SONNET_THINK_FIRST = 'Think the problem through before you answer.';
 
 /**

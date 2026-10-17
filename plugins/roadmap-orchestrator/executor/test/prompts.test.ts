@@ -1184,7 +1184,8 @@ describe('W3 seat prompts (2026-10-16)', () => {
     }
     for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5'] as const) assert.ok(promptFor('build', model).system.includes(BUILD_DELEGATION), `build/${model}`);
     assert.doesNotMatch(promptFor('build', 'gpt-5.6-luna').system, /Agent tool|subagent/);
-    for (const needle of [/You own/, /the Agent tool/, /model: haiku/, /model: opus/, /One subagent is enough when one suffices/, /Do not use subagents to re-check your own/]) assert.match(BUILD_DELEGATION, needle);
+    for (const needle of [/You own/, /the Agent tool/, /model: haiku/, /model: opus/, /A subagent's report is a lead/, /Make the edits in your own session/]) assert.match(BUILD_DELEGATION, needle);
+    assert.doesNotMatch(BUILD_DELEGATION, /One subagent is enough|Do not use subagents/, 'no Opus 5 damping (2026-10-17: only the 5.5 guides bind)');
   });
 
   it('prompts.gate-bounded-diff: the gate reads <orientation> as a map, <diff> and every <not_inlined> file, derived outputs against their sources', () => {

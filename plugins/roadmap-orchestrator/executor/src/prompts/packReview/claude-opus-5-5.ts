@@ -16,9 +16,9 @@
 // F20, D3).
 // M4a rev 3 (H3, F07): a re-review is a delta (the changed specs, what changed, the unresolved earlier findings) and
 // dispositions each earlier finding exactly once (resolved, still-open, withdrawn); a still-open one is not reported again.
-// W3 (2026-10-16, reviewed against "Prompting best practices" and "Prompting Claude Opus 5"): the unenforced finding cap is
-// gone (the Opus 5 guide: a review asked to report less reports less; the architect adjudicates every finding, and the
-// blocking/note split already says which hold admission); delegation (withdrawn 2026-10-17).
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices" and "Prompting Claude Opus 5.5" alone): the
+// finding cap is gone (code never enforced it; the architect adjudicates every finding, and the blocking/note split
+// already says which hold admission); delegation (withdrawn 2026-10-17).
 import { canonicalJson } from '../../core/json.ts';
 import type { PackReviewPromptInputs, PromptModule } from '../inputs.ts';
 import { documentsXml, packReviewDeltaText, rulesIndexText, visionText } from '../inputs.ts';

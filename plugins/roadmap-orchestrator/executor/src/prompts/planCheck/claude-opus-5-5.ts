@@ -32,10 +32,11 @@
 // its package), and each fix cost a build, a park and a re-entry. The check now sweeps for references to what the spec
 // removes or renames, starting from <scope_references>, and proposes the paths outside the envelope in scopeGrowth; the root
 // agent rules on them, and a rejected proposal is listed so it is not proposed again.
-// W3 (2026-10-16, reviewed against "Prompting best practices", "Prompting Claude Opus 5" and "Prompting Claude Opus 5.5"):
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices" and "Prompting Claude Opus 5.5" alone):
 // "report only what affects correctness or acceptance" is gone: report every real spec defect, classified blocking (the
 // decision rests on it) or note (notes), with the decision threshold kept (approve unless something is meaningfully
-// wrong). The Opus 5 guide: a review prompt that filters to high-severity issues is followed literally and reports less.
+// wrong). The gate's wording, which the paid gate role eval (2026-10-17) measured at 17/18 caught, 0/12 false alarms;
+// unmeasured on this seat until its own role eval (BACKLOG).
 // Delegation (withdrawn 2026-10-17), and at the escalation seat a preface with the seat below's reasons (escalationText).
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {

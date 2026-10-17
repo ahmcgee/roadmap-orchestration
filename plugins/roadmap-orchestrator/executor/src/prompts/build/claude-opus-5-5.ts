@@ -23,7 +23,8 @@
 // the per-lane witness check commands, run after the last change beside the fast lanes, a missing id a blocker (D1, R56);
 // a negative witness drives the real entry point with an injected fixture, never a helper (F20); `experiments` for every
 // other command run; and the in-session assessment, a read-only first invocation answered as planAssessment (E, R55).
-// W3 (2026-10-16, reviewed against "Prompting best practices" and "Prompting Claude Opus 5"): delegation (BUILD_DELEGATION);
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices", "Prompting Claude Opus 5.5" and "Prompting
+// Claude Sonnet 5.5" alone): delegation (BUILD_DELEGATION, re-derived from those guides);
 // <safety> no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". Further trims wait for the
 // builder eval (BACKLOG).
 import type { BuildInputs, PromptModule } from '../inputs.ts';

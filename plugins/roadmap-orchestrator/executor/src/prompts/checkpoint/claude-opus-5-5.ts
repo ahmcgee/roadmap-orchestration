@@ -1,11 +1,12 @@
-// checkpoint × claude-opus-5-5 (M3, §2.8, OR-V). Guides: Anthropic "Prompting best practices", "Prompting Claude Opus 5.5"
-// and "Prompting Claude Opus 5" (platform.claude.com). The checkpoint sits on summit, which Opus 5.5 holds at xhigh
+// checkpoint × claude-opus-5-5 (M3, §2.8, OR-V). Guides: Anthropic "Prompting best practices" and "Prompting Claude Opus
+// 5.5" (platform.claude.com). Only the 5.5-generation guides bind (owner ruling 2026-10-17): "Prompting Claude Opus 5.5", "Prompting Claude Sonnet 5.5",
+// "Prompting Claude Haiku 5.5" and "Prompting best practices" as it applies to current models; earlier-generation guides do not. The checkpoint sits on summit, which Opus 5.5 holds at xhigh
 // (OR-Q17); Fable reads this module unchanged (src/prompts/index.ts). First written for Fable 5.1 (reviewed 2026-09-30,
 // when Fable held summit) and served to Opus since M4a; W3 (2026-10-16) made it the Opus module by name. Kept from the Fable
 // writing, and what the Opus 5.5 guide also asks of an unattended run: the autonomous-operation opening, adapted to a
 // steward (weigh every open finding before deciding; the guide's unattended runs end early otherwise); plain literal prose
-// for reasons and interpretations; ops held to what the cited clauses demand (the Opus 5 guide: constrain scope on narrow
-// tasks); recognising a name is not knowing its state (open the evidence you cite). W3: delegation (withdrawn 2026-10-17). The vision
+// for reasons and interpretations; ops held to what the cited clauses demand (the bundle's own citation rule, §2.8: every
+// op cites the V-n that demand it; re-derived 2026-10-17, no guide needed); recognising a name is not knowing its state (open the evidence you cite). W3: delegation (withdrawn 2026-10-17). The vision
 // goes first and in full and wins every conflict; the checkpoint steers toward it, not toward the original plan
 // (owner ruling OR-V). Its authority and limits are the plan's: it amends, re-anchors, splits and drops,
 // retires, waives or defers obligations and amends contracts, each op citing the active V-n that demand it

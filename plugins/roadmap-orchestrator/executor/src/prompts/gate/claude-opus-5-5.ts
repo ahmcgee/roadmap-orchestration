@@ -23,10 +23,11 @@
 // the run dir (dispatch.ts `judgmentReadDirs`), which hold every evidence dir, and a refused read voids nothing.
 // Scope growth (2026-10-15; same guides): the paths salvage reverted as out of scope reach the gate as <scope_reverted>, so
 // a build that needed one is escalated to the root agent rather than lost silently.
-// W3 (2026-10-16, reviewed against "Prompting best practices", "Prompting Claude Opus 5" and "Prompting Claude Opus 5.5"):
-// the "report only what affects correctness" filter is gone: report every real defect, classified blocking or note (the
-// Opus 5 guide: a review prompt that says report only high-severity issues is followed literally and reports less; ask
-// for everything and filter separately, which the classification and code's handling of notes do). The bounded diff
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices" and "Prompting Claude Opus 5.5" alone, the
+// 5.5-generation guides being the only binding ones): the "report only what affects correctness" filter is gone: report
+// every real defect, classified, and code filters (notes never block). Evidence: the paid gate role eval (2026-10-17,
+// synthetic size-3000 monorepo) with this wording caught 17 of 18 plants with 0 false alarms in 12 clean trials and 95%
+// of blocking findings localised to the plant. The bounded diff
 // (<orientation> a map, <diff> inlined, <not_inlined> readable .diff files): the verdict covers the whole diff, read before
 // the decision, derived outputs judged through their sources. Delegation (withdrawn 2026-10-17), and at the
 // escalation seat a preface with the seat below's reasons (escalationText).

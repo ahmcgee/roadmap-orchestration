@@ -14,7 +14,8 @@
 // `host:cpu`; the prompt explains how code names it, that only load decreases or host advice are kept there, and how to
 // tell the arc's own load (its `@cpu` tokens against the host's cpus, its lanes' concurrency) from an outside tenant's,
 // which no lever reaches (host advice). Rendered from the kept `FlowInputs` alone: no clock, no timestamps.
-// W3 (2026-10-16, reviewed against "Prompting best practices" and "Prompting Claude Opus 5"): delegation (withdrawn 2026-10-17).
+// W3 (2026-10-16): delegation, withdrawn 2026-10-17 (re-reviewed against "Prompting best practices" and "Prompting Claude
+// Opus 5.5" alone).
 import { HOST_CPU_STATION } from '../../core/ids.ts';
 import type { FlowPromptInputs } from '../../flow/types.ts';
 import type { LeverState, LeverTarget } from '../../flow/types.ts';
