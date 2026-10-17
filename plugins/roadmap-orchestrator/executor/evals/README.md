@@ -509,8 +509,9 @@ diff labels deletions against) and an acceptance clause.
 or, for a hand-edited golden, after. Each is lane-invisible (only in code no test covers, a golden no lane reads, an
 assertion weakened but passing, a deletion nothing tested imports) and randomised per trial: the file uniform over the
 eligible files minus the first and last tenth in path order, the symbol and surface form from templates. A cell's
-placement (`inlined`, `omitted`, `any`) is predicted with the production bounded diff at the gate's own budget,
-`GATE_DIFF_BUDGET` (`gate/fixture.ts`), and read back from what the gate recorded it was shown, its `judgment-inputs`
+placement (`inlined`, `omitted`, `any`) is checked on each candidate's planted tree with the production bounded diff at
+the gate's own budget, `GATE_DIFF_BUDGET` (`gate/fixture.ts`; the first candidate that lands on the asked side is kept),
+and read back from what the gate recorded it was shown, its `judgment-inputs`
 `diffShown`: a plant in `diffShown.inlined` was inlined. A trial whose plant landed on the other side is void
 (`placement-miss`).
 
@@ -518,7 +519,10 @@ placement (`inlined`, `omitted`, `any`) is predicted with the production bounded
 same-signature sibling (inlined / not); G3a/b a collateral logic edit in a renamed file (inlined / not); G4 a hand-edited
 golden, G4c its clean twin (both carry a declared, consistent golden change as a decoy); G5 a weakened assertion in the
 test sweep, G5c clean; G6 a deletion outside the declared removals, G6c clean (both declare the removal of a live-looking
-file). A family's cells share the sweep, the decoy, the spec and the commit message. The holdout set is untracked
+file). A family's cells share the sweep, the decoy, the spec and the commit message, except G2b and G3b: they sweep with
+every doc comment reworded as well (`REWORDED_SWEEP`), since the bounded diff inlines first what the sweep's
+substitutions do not explain (1.0.0-dev.12), so a plant in a pure rename always lands inlined and lands not inlined only
+when such changes outgrow the budget. The holdout set is untracked
 (`evals/roles/holdout/cells.ts`, gitignored, exporting `HOLDOUT_CELLS`): one defect class the dev cells lack and a mixed
 sweep, so no prompt is tuned against it.
 

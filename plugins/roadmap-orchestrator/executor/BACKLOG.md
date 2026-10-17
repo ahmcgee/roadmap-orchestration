@@ -202,6 +202,16 @@ at triage stay in git history.
   under a monorepo container, not the nearest manifest; a deletion matches a `removes` entry only as the path, a
   directory above it, or the file name without its extension (a route string or symbol never matches a path). Trigger:
   a gate eval (evals/roles/) or a paid run showing a reviewer misled by a wrong kind, spread or label.
+- **Leftover first explains identifier substitutions only** (1.0.0-dev.12, src/git/boundeddiff.ts). A file is explained
+  only when each changed line equals its pair once the listed identifier substitutions apply, so a mechanical change of
+  another shape (an assertion migration `assert.ok(x === v)` to `assert.equal(x, v)`, a reformat or rewrap after a
+  rename, an import line added to every file) leaves its files unexplained; thousands of them fill the budget in kind
+  and path order again. Trigger: a gate eval or a paid run whose inlined budget is spent on mechanical changes of one
+  shape. Then mine recurring line rewrites (normalised removed and added line pairs) as a second kind of pattern.
+- **Bounded diff spawns one process per file** (1.0.0-dev.12). Each content-changed file costs a diff process (and a
+  second to write its readable file when not inlined): about 30 s for a 3000-file sweep on the dev host. Trigger: gate
+  latency that matters against the gate call itself. Then split one bulk diff per file (rename pairing in a bulk diff
+  can differ from a per-file pathspec's, so each readable file must stay what the per-path diff prints).
 - **Lens chunks fit by the dev.11 measure** (1.0.0-dev.12). `fitsWhole` (src/holistic/lensdiff.ts) still sizes a chunk by
   the `--no-renames`, three-line-context diff so a resumed dev.11 audit finds its chunks again; the attachment is the
   smaller bounded diff, so chunks are shorter than they need be. Trigger: once no audit a dev.11 executor started is

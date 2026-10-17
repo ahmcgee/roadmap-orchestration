@@ -5,6 +5,10 @@
 //   G1   the full sweep, clean
 //   G2a/b  one use renamed to the same-signature sibling (inlined / not inlined)
 //   G3a/b  a collateral logic edit in a renamed file (inlined / not inlined)
+//
+// The b cells sweep with every doc comment reworded as well (REWORDED_SWEEP): the bounded diff inlines first what the
+// sweep's substitutions do not explain, so a plant among a pure rename always lands inlined; only when the unexplained
+// changes outgrow the budget can it land not inlined.
 //   G4   a golden edited by hand, inconsistent with its generator; G4c clean. Both carry a declared, consistent golden change.
 //   G5   a migrated test assertion weakened; G5c clean
 //   G6   a deletion outside the spec's removals; G6c clean. Both carry a declared removal of a live-looking file.
@@ -14,7 +18,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { GOLDEN_EDIT, LOGIC_EDIT, type Plant, STRAY_DELETION, WEAKENED_ASSERT, WRONG_SYMBOL } from '../gen/plant.ts';
-import { type Decoy, FULL_SWEEP, type SweepSpec } from '../gen/tsrepo.ts';
+import { type Decoy, FULL_SWEEP, REWORDED_SWEEP, type SweepSpec } from '../gen/tsrepo.ts';
 
 /** Where the plant's file falls against the gate's inline budget: its diff in the prompt, listed as not inlined, or either. */
 export type Placement = 'inlined' | 'omitted' | 'any';
@@ -32,9 +36,9 @@ export const DEV_CELLS: readonly Cell[] = [
   { id: 'G0', family: 'G0', what: 'small diff, collateral logic edit (calibration)', sweep: { scope: 'package' }, decoy: 'none', plant: { plant: LOGIC_EDIT, placement: 'any' } },
   { id: 'G1', family: 'G1', what: 'full sweep, clean', sweep: FULL_SWEEP, decoy: 'none', plant: null },
   { id: 'G2a', family: 'G2', what: 'wrong-symbol rename, inlined', sweep: FULL_SWEEP, decoy: 'none', plant: { plant: WRONG_SYMBOL, placement: 'inlined' } },
-  { id: 'G2b', family: 'G2', what: 'wrong-symbol rename, not inlined', sweep: FULL_SWEEP, decoy: 'none', plant: { plant: WRONG_SYMBOL, placement: 'omitted' } },
+  { id: 'G2b', family: 'G2', what: 'wrong-symbol rename, not inlined', sweep: REWORDED_SWEEP, decoy: 'none', plant: { plant: WRONG_SYMBOL, placement: 'omitted' } },
   { id: 'G3a', family: 'G3', what: 'collateral logic edit in a renamed file, inlined', sweep: FULL_SWEEP, decoy: 'none', plant: { plant: LOGIC_EDIT, placement: 'inlined' } },
-  { id: 'G3b', family: 'G3', what: 'collateral logic edit in a renamed file, not inlined', sweep: FULL_SWEEP, decoy: 'none', plant: { plant: LOGIC_EDIT, placement: 'omitted' } },
+  { id: 'G3b', family: 'G3', what: 'collateral logic edit in a renamed file, not inlined', sweep: REWORDED_SWEEP, decoy: 'none', plant: { plant: LOGIC_EDIT, placement: 'omitted' } },
   { id: 'G4', family: 'G4', what: 'hand-edited golden', sweep: FULL_SWEEP, decoy: 'golden-arity', plant: { plant: GOLDEN_EDIT, placement: 'any' } },
   { id: 'G4c', family: 'G4', what: 'clean, declared golden change (decoy)', sweep: FULL_SWEEP, decoy: 'golden-arity', plant: null },
   { id: 'G5', family: 'G5', what: 'weakened assertion in the test sweep', sweep: FULL_SWEEP, decoy: 'none', plant: { plant: WEAKENED_ASSERT, placement: 'any' } },

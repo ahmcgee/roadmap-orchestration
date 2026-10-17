@@ -23,7 +23,7 @@ import type { PinnedRule } from '../corpus/types.ts';
 import type { FlowPromptInputs } from '../flow/types.ts';
 import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
-import type { BoundedDiff } from '../git/boundeddiff.ts';
+import { type BoundedDiff, EXAMPLES } from '../git/boundeddiff.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
@@ -803,12 +803,13 @@ export function boundedDiffText(label: string, d: BoundedDiff, claims: DiffClaim
       ...(o.packages.more === 0 ? [] : [`- and ${o.packages.more} more packages`]),
     ]),
     ...section('Recurring identifier substitutions in the changed files (removed → added, times; where to look, not a verification):',
-      o.substitutions.map((s) => `- ${s.from} → ${s.to} ×${s.count}`)),
+      [...o.substitutions.map((s) => `- ${s.from} → ${s.to} ×${s.count}`),
+        ...(o.substitutions.length === 0 ? [] : [`- ${o.explained} changed file${o.explained === 1 ? '' : 's'} with every changed line explained by these substitutions (a pointer; each is still part of the diff to judge)`])]),
     ...(claims === null ? [] : [`Claimed by the unit (stated in full above): acceptance ${idList(claims.acceptance)}; witness items ${idList(claims.witnesses)}; obligations ${idList(claims.obligations)}`]),
   ];
   const diff = d.text === ''
     ? 'No per-file diff is inlined.'
-    : `Per-file diffs with one line of context: new source first, then modified source, tests, fixtures and other files. A file headed "word diff" shows changed words: a line starting - or + is removed or added text, a line starting with a space is unchanged text (a long run cut to its ends, marked …[n chars]…), and ~ ends a line.\n${pasted(label, d.text)}`;
+    : `Per-file diffs with one line of context. First the files whose changes the substitutions above do not fully explain, then up to ${EXAMPLES} files showing each substitution, then the rest; within each group new source first, then modified source, tests, fixtures and other files. A file headed "word diff" shows changed words: a line starting - or + is removed or added text, a line starting with a space is unchanged text (a long run cut to its ends, marked …[n chars]…), and ~ ends a line.\n${pasted(label, d.text)}`;
   const notInlined = d.omitted.shown.length + d.omitted.more === 0 ? '' : `\n<not_inlined>\nFiles with changed content not shown above; each file named holds its whole diff.\n${[
     ...d.omitted.shown.map((x) => `- ${x.path} (${KIND_TEXT[x.kind]}, ${x.why === 'derived' ? 'regenerated from sources this diff changes' : 'over the budget'}, ${x.bytes} bytes): ${x.diff}`),
     ...more(d.omitted.more, 'not-inlined.txt'),

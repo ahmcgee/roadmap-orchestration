@@ -2,7 +2,7 @@
 // collapsed, deletions named and labelled, long-line files as word diffs), its priority order, its budget, and the
 // readable files that hold what it does not inline, each exactly what `git diff` prints. Named tests:
 // boundeddiff.bounded, boundeddiff.many-files, boundeddiff.mass-move, boundeddiff.long-lines, boundeddiff.deletions,
-// boundeddiff.test-sweep.
+// boundeddiff.test-sweep, boundeddiff.leftover-first.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -153,7 +153,7 @@ describe('bounded diffs', () => {
     assert.equal(lens.orientation.deletions.shown[0]!.path, 'src/OldWidget.tsx');
   });
 
-  test('boundeddiff.test-sweep: new source, modified source, tests, fixtures and other in that order within a tight budget; the sweep\'s recurring substitution named', () => {
+  test('boundeddiff.test-sweep: within a tight budget, what the sweep\'s substitution does not explain first (by kind), then examples of it, then the rest; the substitution named and its files counted', () => {
     const tests = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`test/unit/case-${i.toString().padStart(3, '0')}.test.ts`,
       `import { oldHelper } from '../../src/helper.ts';\n${source(`t${i}_`, 1_500)}test('x', () => oldHelper(${i}));\nconst again = oldHelper;\n`]));
     const dir = makeRepo(tmpDir('bd-sweep'), {
@@ -167,12 +167,17 @@ describe('bounded diffs', () => {
     }, 'rename the helper');
     const budget = 64 * 1024;
     const d = attach(dir, from, to, budget, { derived: [repoPattern('dist')] });
-    const kinds = d.inlined.map((f) => f.kind);
-    assert.deepEqual(kinds.slice(0, 2), ['new-source', 'modified-source']);
-    assert.ok(kinds.indexOf('test') > 1, 'tests after source');
+    // Leftover first: what the rename does not explain (by kind: new source, then fixtures and other by path), then three
+    // examples of the rename (the source before the tests), then the rest of the sweep by kind and path.
+    assert.deepEqual(d.inlined.slice(0, 6).map((f) => [f.path, f.kind]), [
+      ['src/added.ts', 'new-source'], ['docs/notes.md', 'other'], ['test/fixtures/input.txt', 'fixture'],
+      ['src/helper.ts', 'modified-source'], ['test/unit/case-000.test.ts', 'test'], ['test/unit/case-001.test.ts', 'test'],
+    ]);
+    const rest = d.inlined.slice(6).map((f) => f.path);
+    assert.deepEqual(rest, [...rest].sort(), 'the rest in path order');
+    assert.ok(d.inlined.slice(6).every((f) => f.kind === 'test'));
     assert.ok(d.omitted.shown.length + d.omitted.more > 0, 'the sweep does not fit');
-    const order = ['new-source', 'modified-source', 'test', 'fixture', 'other'];
-    for (let i = 1; i < kinds.length; i++) assert.ok(Math.min(order.indexOf(kinds[i]!), 3) >= Math.min(order.indexOf(kinds[i - 1]!), 3), `${kinds[i - 1]} before ${kinds[i]}`);
+    assert.equal(d.orientation.explained, 201, 'the helper and every test are the rename alone');
     const listing = readFileSync(join(d.dir, 'not-inlined.txt'), 'utf8');
     assert.ok(d.inlined.some((f) => f.path === 'test/fixtures/input.txt' && f.kind === 'fixture') || listing.includes('test/fixtures/input.txt\tfixture\t'), 'the fixture classed as one');
     assert.match(listing, /^dist\/bundle\.js\tderived\tderived\t/m, 'the derived output never inlined');
@@ -181,5 +186,39 @@ describe('bounded diffs', () => {
     for (const o of d.omitted.shown) assert.equal(readFileSync(o.diff, 'utf8'), gitDiff(dir, from, to, o.path), o.path);
     const text = rendered(d, budget);
     assert.ok(text.includes('- oldHelper → newHelper ×601'));
+    assert.ok(text.includes('- 201 changed files with every changed line explained by these substitutions'));
+  });
+
+  test('boundeddiff.leftover-first: among many files one substitution explains, the one with a hand edit is inlined first though it sorts last; examples of the substitution follow', () => {
+    const mod = (i: number, call: string, arg: number): string =>
+      `import { ${call} } from '../helper.ts';\n${source(`m${i}_`, 1_500)}export const r${i} = ${call}(${arg});\nexport const again${i} = ${call};\n`;
+    const n = 300;
+    const path = (i: number): string => `src/mods/mod-${i.toString().padStart(3, '0')}.ts`;
+    const files = Object.fromEntries(Array.from({ length: n }, (_, i) => [path(i), mod(i, 'oldHelper', i)]));
+    const dir = makeRepo(tmpDir('bd-leftover'), { files: { ...files, 'src/helper.ts': 'export function oldHelper(n: number) { return n; }\n' } });
+    const from = sha(revParse(dir, 'HEAD'));
+    const swept = Object.fromEntries(Array.from({ length: n }, (_, i) => [path(i), mod(i, 'newHelper', i)]));
+    // The last file's call also changes its argument, on the line the rename changes: what the rename does not explain.
+    const last = path(n - 1);
+    swept[last] = mod(n - 1, 'newHelper', n);
+    const to = at(dir, { ...swept, 'src/helper.ts': 'export function newHelper(n: number) { return n; }\n' }, 'rename the helper');
+    const budget = 32 * 1024;
+    const d = attach(dir, from, to, budget);
+    assert.deepEqual(d.orientation.substitutions.map((s) => [s.from, s.to]), [['oldHelper', 'newHelper']]);
+    assert.equal(d.inlined[0]!.path, last, 'the unexplained file first, though it sorts last');
+    assert.match(d.text, new RegExp(`^\\+export const r${n - 1} = newHelper\\(${n}\\);$`, 'm'));
+    assert.deepEqual(d.inlined.slice(1, 4).map((f) => f.path), ['src/helper.ts', path(0), path(1)], 'three examples of the substitution');
+    const rest = d.inlined.slice(4).map((f) => f.path);
+    assert.deepEqual(rest, [...rest].sort(), 'then the rest in path order');
+    assert.ok(rest.length > 0 && rest[0]! > path(1));
+    assert.ok(d.inlined.length < n / 2 && d.omitted.shown.length + d.omitted.more === n + 1 - d.inlined.length, 'most of the sweep is listed, not inlined');
+    assert.equal(d.orientation.explained, n, 'every file but the hand-edited one is the rename alone');
+    assert.ok(!d.notInlined.some((p) => p === last));
+    const text = rendered(d, budget);
+    assert.ok(text.includes(`- ${n} changed files with every changed line explained by these substitutions`));
+    // Deterministic: the same diff and budget give the same attachment.
+    const again = attach(dir, from, to, budget);
+    assert.equal(again.text, d.text);
+    assert.deepEqual(again.notInlined, d.notInlined);
   });
 });
