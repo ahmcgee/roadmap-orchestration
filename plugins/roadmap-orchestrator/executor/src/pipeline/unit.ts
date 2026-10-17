@@ -75,6 +75,7 @@ import { type AbsPath, absPath } from '../core/values.ts';
 import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
 import { failuresText, laneFailures } from './failures.ts';
 import { capturedEvidence } from '../git/evidence.ts';
+import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type NextStage, nextStage } from '../schedule/ready.ts';
 import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
@@ -316,7 +317,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
   const root = specSeriesRoot(ctx.runDir, parent);
   const ledger = seriesLedger(ctx, parent, spec.lanes, 'spec', tip, root);
   const suiteRoot = fastSuiteRoot(ctx.runDir, parent, 'suite');
-  const series = [...ledger, ...seriesLedger(ctx, parent, ctx.plan().suite.lanes, 'suite', tip, suiteRoot)];
+  const series = [...ledger, ...seriesLedger(ctx, parent, [...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes], 'suite', tip, suiteRoot)];
   const dirty = [...seriesDirty(view, root), ...seriesDirty(view, suiteRoot)];
   switch (f.outcome) {
     case 'witnesses-missing': {

@@ -71,7 +71,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
 /** A row for a trial whose worker died before writing one. */
 function errorRow(a: WorkerArgs, family: string, planted: boolean, detail: string): TrialRow {
   return {
-    set: a.set, cell: a.cell, family, trial: a.trial, planted, gate: a.gate, outcome: null, decision: null, void: { reason: 'error', detail }, graded: null, usage: null,
+    set: a.set, cell: a.cell, family, trial: a.trial, planted, gate: a.gate, outcome: null, caught: null, decision: null, void: { reason: 'error', detail }, graded: null, usage: null,
     wallMs: 0, turns: 0, load: 0, calls: 0, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: a.out,
   };
 }

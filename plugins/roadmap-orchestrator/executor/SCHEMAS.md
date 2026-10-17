@@ -314,6 +314,10 @@ Every judgment role's refused answer (its schema, or the role's validator) takes
 | Judgment outputs (not persisted; `src/prompts/schemas.ts`) | every key still present, but `premises` and a checkpoint's `interpretations` may be empty, no list is capped and a reason need not cite; a cite given still resolves (see Judgment outputs) | none |
 | `flow-ended` drops, `FLOW_DROP_REASONS` | `- elevate-early` and the constraint half of `target`: a target station is the flow role's method | a dev.11 `flow-ended` recording `elevate-early` reads by `RECORDED_DROP_REASONS` (scaffolding) |
 | Judgment system text (not persisted) | ends with `<readable_directories>` listing the call's read surface (`judgmentSurface`, src/pipeline/dispatch.ts): `--system-prompt` drops Claude Code's own list of added dirs | none |
+| `plan.json` `derived[]` | `+ regenerate?: ToolCommand` (`{argv (non-empty), cwd, env}`, a resource probe's shape); a suite lane id equal to an entry's `regenerateLaneId` is refused | absent: no regenerate check (`regenerate` absent is lasting: an entry may have no runnable generator) |
+| `proc.spawn` `lane{set: suite}` at the lanes stage | `lane` may be a regenerate lane (`regenerate.<hex>`), read back with `regenerateLanes(plan)` beside the suite lanes | none: dev.11 runs no regenerate lane |
+| `GateChecks` (not persisted) | `+ regenerated: RegeneratedCheck[]` = `{state: verified, outputs, argv} \| {state: differs, outputs, argv, evidenceDir} \| {state: not-run, outputs, argv} \| {state: no-generator, outputs}`, one per derived entry whose outputs the diff touches, in entry order; rendered in `<executable_checks>` | none: rendered per call |
+| Phase-0 advisories (`Phase0Advisory`) | `+ derived-unregenerated{outputs, units}` (row 13) beside row 10's `scope-references-outside` | none: never persisted, never a refusal |
 | `decisions.json` (`readDecisions`) | an entry naming a lane, an acceptance clause or a fact, or a struck or deferred decision, does not validate: the build is `malformed` and its resume round quotes why (dev.11 skipped the entry at append) | none: read per build |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
@@ -3711,6 +3715,23 @@ SHA and outside the unit's effective scope (`units: [the unit]`). Any defect mak
 source takes the entry's outputs; `firstPin` and every re-pin (`pinUpdate`) record them as `DispatchRecord.derived`.
 `effectiveScope(record)` (scope + derived) bounds salvage, recovery's salvage rules, the gate's growth and reverted paths,
 the transient check, plan-check's growth verification and the prompts' scope.
+
+**Regenerate checks** (dev.12; src/input/derived.ts, src/pipeline/regenerate.ts). An entry's `regenerate` is the lane
+`regenerate.<12 hex of the entry's canonical hash>` (`regenerateLaneId`; a suite lane may not take the id): the executor's
+node runs `src/entry/regenerate.ts <git> <request>` from the checkout's root under the generator's declared env, tier
+fast, no resources, no evidence globs, expected exit 0. The lanes stage runs it first among the fast suite lanes at the
+salvage SHA, for each entry whose sources or outputs the unit's diff touches (`unitRegenerateLanes`), so it takes the
+fast suite's red-lane protocol, base check (`base-red` when the base's outputs do not regenerate either), evidence under
+`_suite/<lane>/` and fix round. The check: a clean checkout (else exit 2), the generator run, then every path `git
+status` shows is a difference (an output not as the commit holds it, or a file outside the outputs the generator wrote),
+each named in the lane's stdout with a bounded difference (`SHOWN_FILES` 20, `SHOWN_LINES` 60, `LINE_CHARS` 400), and the
+checkout put back as the commit holds it, so the series certifies and the red lane is the one finding. Exit 1 on a
+difference or a generator that failed or could not start. Startup runs the generator's argv[0] and declared variables as
+that lane's `spec-lane-unrunnable{unit: null, lane}` row; Phase-0 row 13 advises `derived-unregenerated{outputs, units}`
+for an entry without `regenerate` whose outputs a live unit's effective scope may reach (never a refusal). The gate's
+`checks.regenerated` (gate.ts `regeneratedChecks`) tells, per entry whose outputs the diff touches, whether its lane in
+the latest lanes attempt passed at the head (`verified`), was red (`differs`, with its evidence dir), did not run
+(`not-run`), or the entry has no generator (`no-generator`).
 
 **Repeated reverts** (src/pipeline/stages.ts `repeatedReverts`). A lanes attempt whose unit's last two salvages both
 reverted a path as out of scope that could land (still outside the effective scope, never rejected for the unit,

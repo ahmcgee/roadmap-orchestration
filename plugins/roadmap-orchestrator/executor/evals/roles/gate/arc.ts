@@ -1,6 +1,7 @@
 // One gate trial end to end, through the production unit driver: the arc harness of the gate tests
 // (test/fixtures/unit-common.ts contextFor, stepUntil) over the fixture's repo. Plan-check and build are fake steps (the
-// build lays down the generated unit commit: the `checkoutTree` act), the lanes run for real and must be green, and the
+// build lays down the generated unit commit: the `checkoutTree` act), the lanes run for real and must be green (or red on
+// the goldens' regenerate check, dev.12: the trial ends there, `caught: 'regenerate'`, with no gate call), and the
 // gate step is the `real` act: the fake entry execs the real `claude` with the production argv, stdin, cwd and
 // environment, so the eval tests the production prompt, capture, bounded diff, tools and add-dirs byte for byte. A
 // degenerate fake gate (`FakeGate`) answers instead, to test the harness and the graders for free.
@@ -205,6 +206,11 @@ export type TrialRow = Readonly<{
   gate: GateKind;
   /** The gate's stage outcome (approve, revise, escalate, malformed, ...), null when it recorded none. */
   outcome: string | null;
+  /**
+   * dev.12: `regenerate` when the executor's regenerate check (a red regenerate lane at the lanes stage) stopped the unit
+   * before any gate: the plant was caught by code, so the trial is neither graded nor void. null otherwise.
+   */
+  caught: 'regenerate' | null;
   decision: GateOutput['decision'] | null;
   void: Readonly<{ reason: VoidReason; detail: string }> | null;
   graded: Graded | null;
@@ -263,7 +269,7 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const started = Date.now();
   let error: string | null = null;
   try {
-    await stepUntil(r, 'u1', (f: StageOutcomeFact) => f.stage === 'gate');
+    await stepUntil(r, 'u1', (f: StageOutcomeFact) => f.stage === 'gate' || (f.stage === 'lanes' && f.outcome === 'red'));
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   } finally {
@@ -296,6 +302,11 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const answer = last === undefined ? null : judgmentOutput(r.ctx, last, validateGateOutput);
   writeFileSync(join(o.out, 'answer.json'), `${JSON.stringify(answer, null, 2)}\n`);
   const decided = r.journal.view.unit(U1).decided;
+  // A lanes red is the regenerate check's when that attempt ran a regenerate lane (the spec lane passed: the fast suite ran).
+  const caught: TrialRow['caught'] = decided?.stage === 'lanes' && decided.outcome === 'red' && r.journal.view.opsOf('proc.spawn').some((i) => {
+    const s = i.expect.subject;
+    return s.purpose === 'lane' && s.lane.startsWith('regenerate.') && i.parent.type === 'stage' && i.parent.stage === 'lanes' && i.parent.attempt === decided.attempt;
+  }) ? 'regenerate' : null;
   const shown = gateShown(r);
   const stages = outcomes(d);
   r.journal.close();
@@ -306,6 +317,7 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const brake = monitor.brake();
   const voided: TrialRow['void'] = brake !== null ? { reason: 'runaway', detail: `${brake.rule}: ${brake.detail}` }
     : error !== null ? { reason: 'error', detail: error }
+    : caught !== null ? null
     : answer === null ? { reason: 'error', detail: `the gate gave no valid answer (outcome ${decided?.outcome ?? 'none'})` }
     : hits.length > 0 ? { reason: 'needle', detail: hits.slice(0, 5).join('; ') }
     : graded?.placementMiss === true ? { reason: 'placement-miss', detail: `the plant's diff was ${graded.placement}, the cell asks ${fx.key.plant?.intended}` }
@@ -313,7 +325,7 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const firsts = monitor.firsts();
   const row: TrialRow = {
     set: o.set, cell: o.cell.id, family: o.cell.family, trial: o.trial, planted: fx.key.plant !== null, gate: o.gate,
-    outcome: decided !== null && decided.stage === 'gate' ? decided.outcome : null, decision: answer?.decision ?? null, void: voided, graded,
+    outcome: decided !== null && decided.stage === 'gate' ? decided.outcome : null, caught, decision: answer?.decision ?? null, void: voided, graded,
     usage: sumUsage(perCall.flatMap((c) => (c.usage === null ? [] : [c.usage]))), wallMs, turns: t.turns, load: t.load, calls: spawns.length,
     models: [...new Set(perCall.flatMap((c) => (c.model === null ? [] : [c.model])))],
     method: {

@@ -75,6 +75,10 @@ export type SetupOptions = Readonly<{
   gitignore?: string;
   /** The plan's suite lanes (default none). */
   suite?: readonly LaneJson[];
+  /** Files the base commit holds beside the fixture repo's (default none). */
+  files?: Readonly<Record<string, string>>;
+  /** The plan's `derived` entries as plan.json writes them (default none). */
+  derived?: readonly JsonValue[];
 }>;
 
 export type StageRun = Readonly<{
@@ -167,7 +171,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const repo = tmpDir('stage-repo');
   cpSync(REPO_FILES, repo, { recursive: true });
   writeFileSync(join(repo, '.gitignore'), opts.gitignore ?? 'out/\n');
-  makeRepo(repo, { files: {} });
+  makeRepo(repo, { files: opts.files ?? {} });
   const base = sha(revParse(repo, 'HEAD'));
 
   const planDir = tmpDir('stage-plan');
@@ -190,6 +194,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
     suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [] }],
+    ...(opts.derived === undefined ? {} : { derived: opts.derived }),
   }));
   const plan: PlanM1 = parsePlan(JSON.parse(readFileSync(planPath, 'utf8')));
   const unit = plan.units[0]!;

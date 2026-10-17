@@ -1,6 +1,7 @@
 // Plan defects (2026-10-16): a plan defect code can check is refused at Phase 0 (`plan-defect`, src/phase0/rows.ts row
 // 11), over a corpus arc's real files and git (test/helpers/corpusarc.ts). Named tests: plan-defect.witness-in-lane,
-// plan-defect.argv-forms, plan-defect.witness-reachable, plan-defect.undeclared, plan-defect.derived.
+// plan-defect.argv-forms, plan-defect.witness-reachable, plan-defect.undeclared, plan-defect.derived,
+// plan-defect.regenerate.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ import { repoPath, repoPattern } from '../src/core/values.ts';
 import { type ArcLaneDef, type PlanDefect, laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { laneMisses } from '../src/holistic/witnessfiles.ts';
 import { derivedWidening } from '../src/input/derived.ts';
-import { parsePlan } from '../src/input/plan.ts';
+import { parsePlan, regenerateLaneId } from '../src/input/plan.ts';
 import { APPLY, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
 import { type CorpusArc, WITNESS_FILE, check, corpusArc, editJsonFile, editPlan, filesOf, kinds, rowOf } from './helpers/corpusarc.ts';
 
@@ -133,5 +134,36 @@ describe('derived files', () => {
     const c = await corpusArc();
     editPlan(c, plan([{ sources: ['src/**'], outputs: ['docs/corpus/generated.md'] }]));
     assert.deepEqual(await defects(c), [{ type: 'derived-overlaps-corpus', output: repoPattern('docs/corpus/generated.md') }]);
+  });
+
+  it('plan-defect.regenerate: a regenerate argv is well-formed and runnable; an entry a unit takes in without one is advised, never refused', T, async () => {
+    const GEN = { argv: ['node', 'tools/gen.mjs'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
+    const entry = (regenerate?: Json): Json => ({ sources: ['src/**'], outputs: ['dist/bundle.js'], ...(regenerate === undefined ? {} : { regenerate }) });
+    const a = await corpusArc();
+    // No regenerate: an advisory naming the outputs and the unit that takes them in; no row.
+    editPlan(a, (p) => ({ ...p, derived: [entry()] }));
+    const advised = await check(a);
+    assert.deepEqual(advised.rows, []);
+    assert.deepEqual(advised.advisories, [{ kind: 'derived-unregenerated', outputs: [repoPattern('dist/bundle.js')], units: [unitId('u1')] }]);
+    // A runnable generator: neither.
+    editPlan(a, (p) => ({ ...p, derived: [entry(GEN)] }));
+    const clean = await check(a);
+    assert.deepEqual([clean.rows, clean.advisories], [[], []]);
+    // A generator whose argv[0] resolves nowhere is refused as the suite lane its check runs under.
+    editPlan(a, (p) => ({ ...p, derived: [entry({ ...GEN, argv: ['no-such-generator-r3'] })] }));
+    const lane = regenerateLaneId(parsePlan(JSON.parse(readFileSync(a.planPath, 'utf8'))).derived![0]!);
+    assert.match(lane, /^regenerate\.[0-9a-f]{12}$/);
+    assert.deepEqual((await check(a)).rows, [{ kind: 'spec-lane-unrunnable', unit: null, lane, problem: { type: 'argv0-unresolvable', argv0: 'no-such-generator-r3' } }]);
+
+    // The schema: a non-empty argv, a cwd and an env; the lane id is the entry's (reordering keeps it); no suite lane takes one.
+    const base = JSON.parse(readFileSync(a.planPath, 'utf8')) as Json;
+    assert.throws(() => parsePlan({ ...base, derived: [entry({ ...GEN, argv: [] })] }), /plan\.derived\[0\]\.regenerate\.argv/);
+    assert.throws(() => parsePlan({ ...base, derived: [entry({ argv: ['node'] })] }), /plan\.derived\[0\]\.regenerate\.cwd/);
+    const other = { sources: ['lib/**'], outputs: ['dist/lib.js'], regenerate: GEN };
+    const ids = (derived: readonly Json[]) => parsePlan({ ...base, derived }).derived!.map(regenerateLaneId);
+    assert.deepEqual(ids([entry(GEN), other]), [...ids([other, entry(GEN)])].reverse());
+    const suite = base['suite'] as { lanes: Json[] };
+    const taken = { ...(suite.lanes[0] ?? { argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }), id: ids([entry(GEN)])[0] };
+    assert.throws(() => parsePlan({ ...base, suite: { lanes: [...suite.lanes, taken] }, derived: [entry(GEN)] }), /plan\.suite\.lanes/);
   });
 });

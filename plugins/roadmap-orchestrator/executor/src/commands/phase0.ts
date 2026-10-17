@@ -1,6 +1,6 @@
 // `roadmap phase0 check --repo <path> (--plan <file> | --from-ref <arc>)` (M4a, OR-Q16, K20): read-only, no host lock,
 // deterministic. Exit 0 with no rows, else 78; JSON rows plus `sliceCandidates` (src/holistic/vision.ts, R15) and the
-// advisory `advisories` (row 10, `scope-references-outside`: never a refusal, so never the exit code's).
+// advisory `advisories` (row 10, `scope-references-outside`; row 13, `derived-unregenerated`: never a refusal, so never the exit code's).
 //
 //   --plan      the files as a fresh start reads them: `runChecks`' pure rows (the `.roadmap/` layout, plan-invalid, the
 //               revisioned inputs, routing, lanes), `holistic-needs-corpus` (H4: a holistic plan targets a corpus), then
@@ -20,7 +20,7 @@ import {
   CORPUS_GUIDE_INPUT, CORPUS_INPUT, ISSUES_INPUT, OBLIGATIONS_INPUT, PHASE0_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, arcRolesOf, readInputFiles,
 } from '../input/inforce.ts';
 import {
-  holisticNeedsCorpus, FRESH_START, FROM_REF, type Phase0Input, type ScopeReference, phase0InputOf, phase0Rows, visionAndObligations,
+  holisticNeedsCorpus, FRESH_START, FROM_REF, type Phase0Input, type Phase0Advisory, phase0InputOf, phase0Rows, visionAndObligations,
 } from '../phase0/rows.ts';
 import { gitCommonDir, legacyRoadmapDir, loadPlan, planInvalidCheck, readRepoConfig, revisionInputRows, routingCheck, specLaneCheck } from '../preflight/checks.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
@@ -31,9 +31,9 @@ import { sliceCandidates } from '../holistic/vision.ts';
 export type Phase0CheckArgs = Readonly<{ repo: AbsPath; source: Phase0Source }>;
 /**
  * The rows found (empty: green), the active world clauses whose census rules are not all held on the baseline (R15), and
- * row 10's advisories (files outside a unit's scope naming what it removes).
+ * rows 10's and 13's advisories (files outside a unit's scope naming what it removes; derived outputs no regeneration checks).
  */
-export type Phase0CheckReport = Readonly<{ rows: readonly StartupRejection[]; sliceCandidates: readonly VisionClauseId[]; advisories: readonly ScopeReference[] }>;
+export type Phase0CheckReport = Readonly<{ rows: readonly StartupRejection[]; sliceCandidates: readonly VisionClauseId[]; advisories: readonly Phase0Advisory[] }>;
 
 export async function phase0Check(args: Phase0CheckArgs): Promise<Phase0CheckReport> {
   const { rows, input, advisories } = args.source.type === 'plan' ? await fromPlan(args.repo, absPath(args.source.plan)) : fromRef(args.repo, args.source);
@@ -42,7 +42,7 @@ export async function phase0Check(args: Phase0CheckArgs): Promise<Phase0CheckRep
   return { rows, sliceCandidates: vision === null ? [] : sliceCandidates(vision, obligations), advisories };
 }
 
-type Checked = Readonly<{ rows: readonly StartupRejection[]; input: Phase0Input | null; advisories: readonly ScopeReference[] }>;
+type Checked = Readonly<{ rows: readonly StartupRejection[]; input: Phase0Input | null; advisories: readonly Phase0Advisory[] }>;
 
 async function fromPlan(repo: AbsPath, planFile: AbsPath): Promise<Checked> {
   const plan = loadPlan(planFile);

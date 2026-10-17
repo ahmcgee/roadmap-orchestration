@@ -2,7 +2,7 @@
 // processes, real git, real lanes), the graders on a gate that cites the plant without reading it, the stream-json
 // transcript and cost parser on a captured subagent run, the fake backend's `real` and `checkoutTree` acts, and the
 // triggers. Named tests: roles.approve-all, roles.revise-all, roles.cite-every-path, roles.lucky, roles.transcript-cost,
-// roles.real-act, roles.checkout-tree-act, roles.triggers, roles.wilson.
+// roles.real-act, roles.checkout-tree-act, roles.triggers, roles.wilson, roles.regenerate-check.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -72,6 +72,20 @@ test('roles.cite-every-path: citing every changed path catches the plant and fai
   assert.equal(criterion(summary, 'precision'), false);
 });
 
+test('roles.regenerate-check: the hand-edited golden (G4) is caught by the regenerate check before any gate; its clean twin reaches the gate told the goldens were verified', T, async () => {
+  const { summary, rows } = await fakeRun('approve-all', ['G4', 'G4c']);
+  const g4 = rows.find((r) => r.cell === 'G4')!;
+  assert.equal(g4.caught, 'regenerate', g4.stages.join(' '));
+  assert.deepEqual([g4.void, g4.graded, g4.calls], [null, null, 0]);
+  assert.ok(g4.stages.includes('lanes:red'));
+  assert.equal(summary.cells.find((c) => c.cell === 'G4')!.regenerate, 1);
+  const g4c = rows.find((r) => r.cell === 'G4c')!;
+  assert.equal(g4c.void, null, JSON.stringify(g4c.void));
+  assert.equal(g4c.caught, null);
+  assert.ok(g4c.stages.includes('lanes:green'), g4c.stages.join(' '));
+  assert.match(readFileSync(join(g4c.dir, 'prompt.txt'), 'utf8'), /- goldens\/\*\*: verified by regeneration\. The executor ran \["node","tools\/gen-goldens\.ts"\]/);
+});
+
 // ---------------------------------------------------------------------------------------------------
 // Graders on synthetic sessions
 
@@ -108,7 +122,7 @@ test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Rea
   assert.equal(blind.verdict, 'lucky');
 
   const row = (verdict: ReturnType<typeof grade>): TrialRow => ({
-    set: 'dev', cell: 'G3b', family: 'G3', trial: 0, planted: true, gate: 'cite-plant', outcome: 'revise', decision: 'revise', void: null, graded: verdict, usage: null,
+    set: 'dev', cell: 'G3b', family: 'G3', trial: 0, planted: true, gate: 'cite-plant', outcome: 'revise', caught: null, decision: 'revise', void: null, graded: verdict, usage: null,
     wallMs: 1000, turns: 1, load: 0, calls: 1, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: '/x',
   });
   const s = summarise('dev', [row(lucky), row(caught)]);

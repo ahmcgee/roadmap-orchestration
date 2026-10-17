@@ -197,7 +197,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
-      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
+      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
       escalation: null,
     },
     {
@@ -219,6 +219,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
           missing: [{ lane: laneId('journey'), testId: 'WITNESS-B' }], failed: [],
         },
         smoke: { killed: [], survived: [{ lane: laneId('journey'), testId: 'SURVIVOR-B' }], inconclusive: [], notRun: null },
+        regenerated: [],
       },
       escalation: { kind: 'risk-trigger' },
     },
@@ -1066,8 +1067,23 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       assert.doesNotMatch(mod.render(SAMPLES.gate[0]), /executable_checks/, `${model}: no block when neither check applied`);
       const text = mod.render(SAMPLES.gate[1]);
       assert.match(text, /<executable_checks>\nWitness presence: 1 required witness test on the arc lanes at this head\.\n- missing \(absent, skipped, selected zero times, or a malformed record\): journey WITNESS-B \(W-1, target\)\n- failing: none\nMutation smoke \(the unit's production change reverted, its test files kept, the target witness tests run again\):\n- killed: none\n- survived: journey SURVIVOR-B\n- inconclusive: none\n<\/executable_checks>/, model);
-      const notRun = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: { killed: [], survived: [], inconclusive: [], notRun: 'no-test-paths' } } });
+      const notRun = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: { killed: [], survived: [], inconclusive: [], notRun: 'no-test-paths' }, regenerated: [] } });
       assert.match(notRun, /<executable_checks>\nMutation smoke did not run: a target lane declares no testPaths, so its test files cannot be told from production code\.\n<\/executable_checks>/);
+      // dev.12: the regenerate checks, one line per derived entry the diff touches, in each state.
+      const gen = ['node', 'tools/gen.ts'];
+      const regenerated = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: null, regenerated: [
+        { state: 'verified', outputs: [repoPattern('goldens/**')], argv: gen },
+        { state: 'differs', outputs: [repoPattern('dist/a.js')], argv: gen, evidenceDir: absPath('/run/ev/regen') },
+        { state: 'not-run', outputs: [repoPattern('dist/b.js')], argv: gen },
+        { state: 'no-generator', outputs: [repoPattern('docs/api.md')] },
+      ] } });
+      assert.match(regenerated, new RegExp([
+        '<executable_checks>', 'Regenerated outputs this diff touches \\(plan `derived` entries\\):',
+        '- goldens/\\*\\*: verified by regeneration\\. The executor ran \\["node","tools/gen\\.ts"\\] in a clean checkout of this head and every output came out byte-identical to the commit[^\\n]*',
+        '- dist/a\\.js: NOT verified\\. [^\\n]*the differences are in /run/ev/regen\\.',
+        '- dist/b\\.js: not verified\\. The plan declares \\["node","tools/gen\\.ts"\\] as their generator, but it did not run at this head\\.',
+        '- docs/api\\.md: not verified\\. The plan declares no generator for them[^\\n]*', '</executable_checks>',
+      ].join('\\n')), model);
       for (const needle of [/A killed test failed without the change/, /A survived test passed without it/, /unless the behaviour it checks existed before this unit/,
         /An inconclusive result proves nothing either way/, /a required test still missing or failing is a blocking finding/, /marks reused/,
         /real clock or the host time zone/, /fixed date the change makes invalid/, /real wait in a fast lane/, /calls a helper instead of driving the real entry point/,
