@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import type { DiffShown, StageOutcomeFact } from '../../../src/core/events.ts';
 import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
 import type { RiskTier } from '../../../src/routing/types.ts';
+import { modelInfo } from '../../../src/routing/models.ts';
 import { type InvocationId, invocationId } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
 import { STDOUT_FILE } from '../../../src/core/records.ts';
@@ -85,6 +86,12 @@ export function gateArm(risk: RiskTier, config: RepoConfig | null): string {
   return `gate.${risk} ${r.classes.gate[risk]}${r.bindings[r.classes.gate[risk]] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}`;
 }
 
+/** The scripted build call's backend and argv: the build seat the unit's risk picks under the run's routing. */
+function buildCall(risk: RiskTier, config: RepoConfig | null): Pick<Step, 'as' | 'expect'> {
+  const backend = modelInfo(resolveRouting(arcStack('default', config, null)).table.build[risk].model).backend;
+  return backend === 'codex' ? { as: 'codex', expect: { argv: ['exec', '-C'] } } : { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions'] } };
+}
+
 /** Lays out the fixture's repo, plan, spec and scenario (plan-check approves; the build commits the unit's tree). */
 export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config: RepoConfig | null = null): ArcDescriptor {
   const repo = tmpDir('roles-repo');
@@ -109,7 +116,8 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
   const steps: Step[] = [
     // The plan-check's risk is the dispatch's: it picks the gate's seat.
     { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: planCheckAnswer({ decision: 'approve', risk }) }] },
-    { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'checkoutTree', sha: head, message: f.message }, { type: 'emit', value: BUILD_REPORT }] },
+    // The build's backend is the one its risk routes to (built-in: codex low/med under the default profile, Claude Opus high).
+    { ...buildCall(risk, config), acts: [{ type: 'checkoutTree', sha: head, message: f.message }, { type: 'emit', value: BUILD_REPORT }] },
     ...gateSteps(kind, f.key),
   ];
   const scenario = writeScenario(scenarioDir, steps);

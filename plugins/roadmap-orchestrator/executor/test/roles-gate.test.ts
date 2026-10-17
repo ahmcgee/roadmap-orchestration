@@ -39,6 +39,17 @@ async function fakeRun(gate: GateKind, cells: readonly string[]): Promise<Readon
 
 const criterion = (s: Summary, name: string): boolean | null => s.criteria.find((c) => c.name === name)!.pass;
 
+test('roles.risk-arms: a trial runs at every risk tier, its scripted build on the backend that tier\'s build seat routes to (codex low/med, Claude high)', T, async () => {
+  for (const risk of ['low', 'med', 'high'] as const) {
+    const out = join(tmpDir('roles-out'), `run-${risk}`);
+    await run({ set: 'dev', n: 1, cells: ['G1'], parallel: 1, size: 150, seed: 'harness', risk, config: null, out, compare: null, gate: 'approve-all' }, () => {});
+    const rows = readFileSync(join(out, 'trials.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as TrialRow);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.void, null, `${risk}: ${JSON.stringify(rows[0]!.void)}`);
+    assert.equal(rows[0]!.outcome, 'approve', risk);
+  }
+});
+
 test('roles.approve-all: an approve-everything gate catches nothing and passes the clean cell; the trial runs real lanes and keeps the key out of the arc', T, async () => {
   const { summary, rows, out } = await fakeRun('approve-all', ['G1', 'G3a', 'G6']);
   assert.equal(summary.detection.k, 0);
