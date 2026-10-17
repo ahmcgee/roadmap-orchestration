@@ -338,6 +338,16 @@ type Phase1 = Readonly<{
 }>;
 
 /**
+ * A gate answer as a release before 1.0.0-dev.12 round 2 gives it: without `unreviewed`, which its strict gate schema
+ * refuses (HEAD's scenarios carry it for HEAD's gate). Every other step is unchanged.
+ */
+function asPreviousGate(step: M1Step): M1Step {
+  if (step.role !== 'gate') return step;
+  const { unreviewed: _u, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
+  return { ...step, answer };
+}
+
+/**
  * Lays out the fixture with `release`'s setup (the previous release by default), lets `edit` change its inputs before
  * anything runs, and writes the fakes for `m1` (or what it makes of the laid-out fixture) then `extra` (raw fake steps).
  */
@@ -358,7 +368,7 @@ async function preparePrevious(
   const fakeDir = join(dir, 'fake-previous');
   mkdirSync(fakeDir, { recursive: true });
   const m1File = join(fakeDir, 'm1.json');
-  writeFileSync(m1File, JSON.stringify({ steps: typeof m1 === 'function' ? m1(l) : m1 }));
+  writeFileSync(m1File, JSON.stringify({ steps: (typeof m1 === 'function' ? m1(l) : m1).map(asPreviousGate) }));
   const { fakeSteps, readScenario, writeShims } = prev.modules;
   const scenario = join(fakeDir, 'scenario.json');
   writeFileSync(scenario, JSON.stringify({ steps: [...fakeSteps(readScenario(m1File), 'default'), ...extra] }, null, 2));
@@ -1441,9 +1451,14 @@ test('upgrade.checkpoint-reentry-with-fixes: a holistic arc whose checkpoint the
 // 1.0.0-dev.12's adoption paths: a refused read the previous release voided, a judgment it did not persist, an audit
 // it left between chunks
 
-/** page-id's gate as the previous release plays it, `acts` before its answer (its judgment tools, before the Agent tool). */
-const previousGate = (answer: JsonValue, acts: readonly ClaudeAct[] = []): Step =>
-  ({ as: 'claude', expect: { argv: ['-p', '--tools', 'Read,Grep,Glob'] }, acts: [...acts, { type: 'emit', value: answer }] });
+/**
+ * page-id's gate as the previous release plays it, `acts` before its answer (its judgment tools, before the Agent tool),
+ * the answer in that release's shape (asPreviousGate).
+ */
+const previousGate = (answer: JsonValue, acts: readonly ClaudeAct[] = []): Step => {
+  const shaped = asPreviousGate({ role: 'gate', answer });
+  return { as: 'claude', expect: { argv: ['-p', '--tools', 'Read,Grep,Glob'] }, acts: [...acts, { type: 'emit', value: (shaped as Exclude<M1Step, { role: 'build' }>).answer }] };
+};
 const gateAnswer = (c: Clean): JsonValue => (c.pageId.gate as Exclude<M1Step, { role: 'build' }>).answer;
 
 test('upgrade.read-denied-retry: a gate approve the previous release voided as read-denied, crashed before its retry, takes that retry on HEAD by the old row (uncharged) and merges', T, async () => {
