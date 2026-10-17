@@ -150,7 +150,7 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
       const row = died === null && existsSync(rowFile) ? (JSON.parse(readFileSync(rowFile, 'utf8')) as TrialRow) : errorRow(a, job.cell.family, job.cell.plant !== null, died ?? 'no row.json');
       rows.push(row);
       appendFileSync(join(o.out, 'trials.jsonl'), `${JSON.stringify(row)}\n`);
-      log(`TRIAL ${row.cell}#${row.trial} ${row.void === null ? row.graded?.verdict : `void:${row.void.reason} ${row.void.detail}`} `
+      log(`TRIAL ${row.cell}#${row.trial} ${row.void !== null ? `void:${row.void.reason} ${row.void.detail}` : row.caught !== null ? `caught-by:${row.caught}` : row.graded?.verdict} `
         + `outcome=${row.outcome} cost=$${(row.usage?.totalUsd ?? 0).toFixed(3)} wall=${Math.round(row.wallMs / 1000)}s models=${row.models.join(',')}`);
     }
   };
