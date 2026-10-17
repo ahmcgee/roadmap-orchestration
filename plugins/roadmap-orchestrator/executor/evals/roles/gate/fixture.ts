@@ -88,7 +88,7 @@ export function changedPaths(a: FileMap, b: FileMap): readonly string[] {
   return [...all].filter((p) => a.get(p) !== b.get(p)).sort();
 }
 
-/** The first and last tenth of `paths` (path order) dropped, from ten paths up: a plant never sits at either end. */
+/** The first and last tenth of `paths` (path order) dropped, from ten paths up: a plant never sits at either end of its candidates. */
 export function trimEnds(paths: readonly string[]): readonly string[] {
   const s = [...paths].sort();
   const cut = s.length >= 10 ? Math.floor(s.length / 10) : 0;
@@ -132,7 +132,9 @@ export function buildFixture(cell: Cell, o: FixtureOptions): Fixture {
   // Placement `any` predicts nothing (the bounded diff of a large sweep takes seconds per tree).
   const oracle = placement === 'any' ? null : placementOracle(o.scratch, repo.files, swept.removes);
   const before = oracle === null ? null : oracle(unplanted);
-  const eligible = trimEnds(plant.eligible(ctx, at)).filter((p) => before === null || side(before, p) === placement);
+  // The ends are trimmed after the placement filter: the bounded diff inlines files in path order within a kind, so on a
+  // large repo the inlined set is a prefix of the path order that trimming first would cut away whole.
+  const eligible = trimEnds(plant.eligible(ctx, at).filter((p) => before === null || side(before, p) === placement));
   for (const path of ctx.rng.shuffle(eligible).slice(0, CANDIDATES)) {
     const applied = plant.apply(ctx, at, path);
     if (applied === null) continue;
