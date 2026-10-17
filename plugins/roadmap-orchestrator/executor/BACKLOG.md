@@ -156,11 +156,17 @@ at triage stay in git history.
   --risk low --seat gate.low=economy` with `--rebind economy=claude-haiku-5-5:<effort>` for the effort arm. Pass bar: the
   clean-cell false-alarm rate matches Sonnet's and the catch rate holds. The plan-check ladder waits on the same answer:
   efficient low and med, frontier high until a plan-check role eval measures a cheaper low seat.
-- **Code-dispatched coverage readers for a gate's unreviewed set.** In the same eval G2b/G3b (a plant in a file the
-  bounded diff omits, on a line shaped like the substitution) were missed by Sonnet 6/6 and Haiku 5/6; both honestly listed
-  ~2,700 files in `unreviewed`. Idea: when a gate's unreviewed set is large, code dispatches closed-checklist Haiku chunk
-  readers (~290 files a chunk, ~$0.45 a chunk; 6/6 plants, 0 false alarms in our 2026-10-17 experiment) and hands their
-  findings to the gate. Trigger: after dev.12, informed by the Opus high-risk arm's result on G2b/G3b.
+- **Large-diff gate: measure it (built in dev.12, superseding "code-dispatched coverage readers").** In the same eval
+  G2b/G3b (a plant in a file the bounded diff omits, on a line shaped like the substitution) were missed by Sonnet 6/6 and
+  Haiku 5/6, both listing ~2,700 files in `unreviewed`; Opus caught 5/6 by fanning out to subagents that inherited its
+  model ($6-61 a trial); a closed-brief Haiku reader caught 6/6 at ~$0.45 a 290-file chunk. Built instead of code-dispatched
+  readers (owner steer 2026-10-17): over the bounded diff's overflow the gate sits at least at `high`, reads the owner's
+  large-diff method (`<large_diff>`: clusters, Haiku describers with the detected substitutions, Sonnet or Opus reviewers on
+  raw hunks, a cross-cluster contract pass) and must answer a cluster map code checks covers every changed path exactly
+  once (DESIGN-1.0.md §4 Gate inputs). Next: the paid dev arm on G2b/G3b at `--risk low` and `med` (both now seat Opus over
+  the threshold) with `--cap` and `--trial-cap` set, reading catch rate, cost per trial, `clusters=complete/required` and
+  the review-depth mix. If Opus still fans out on its own model or the cost stays at the old $6-61, the fallback is the
+  code-dispatched readers idea: code runs the closed-brief Haiku chunk readers and hands their departures to the gate.
 
 ## Convergence and integrity (unscheduled, wanted)
 
@@ -473,6 +479,10 @@ at triage stay in git history.
 - `gateUnreviewedDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a dev.11 gate answer
   has no `unreviewed` and reads as null (unknown). With it, `unreviewed` becomes required in `gateOutput` and
   `GateUnreviewed[] | null` narrows to the list.
+- `gateLargeDiffOf`'s absent arm and `gateClustersDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in
+  flight: a dev.11 gate's `judgment-inputs` has no `largeDiff` (read as under the threshold) and its answer no `clusters`
+  (read as null). With them, `largeDiff` becomes required on a gate's `judgment-inputs` and `clusters` a required key in
+  `gateOutput`.
 - `RECORDED_DROP_REASONS`' `elevate-early` (src/flow/types.ts), once no arc started on 1.0.0-dev.11 is in flight: a
   dev.11 `flow-ended` may record that drop reason, which dev.12 no longer writes. With it, `flowDropped` reads
   `FLOW_DROP_REASONS` and `checkProposal` returns a plain `FlowDropped`.

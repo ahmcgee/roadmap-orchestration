@@ -476,7 +476,7 @@ what it must and how often it cries wolf, at what cost. The gate is the first ro
 Agent tool).
 
 ```sh
-node evals/roles/run.ts gate --set dev --n 3 [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] [--rebind <class>=<model>:<effort>] [--out <dir>]
+node evals/roles/run.ts gate --set dev --n 3 [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] [--rebind <class>=<model>:<effort>] [--out <dir>] [--cap <usd>] [--trial-cap <usd>]
 node evals/roles/run.ts gate --set holdout --n 3 --compare <dev run>/summary.json      # acceptance only
 node evals/roles/triggers.ts <base>                                                    # from executor/: the roles a branch triggers
 ```
@@ -494,7 +494,9 @@ passes its stdout and exit status through. So the eval tests the production prom
 add-dirs byte for byte, with no test seam in production code. A repair turn or a retry gets up to two more real calls.
 Each trial runs in its own worker process (`trial.ts`) under a 60-minute timeout; `--risk` sets the plan's and the
 plan-check's risk, which picks the gate's seat (`low` and `med` efficient: Sonnet 5.5 high; `high` frontier: Opus 5.5
-medium). The 2026-10-17 run had Haiku 5.5 (economy) on `low` and failed it on clean-cell false alarms (4/12 at `high`,
+medium). A diff over the large-diff threshold (1.0.0-dev.12: the bounded diff left files out for size, as the size-3000
+sweeps do) seats the gate on `high` whatever `--risk` says, so the `low` and `med` arms then run Opus with the large-diff
+method; a row's `largeDiff` says which trials were over it. The 2026-10-17 run had Haiku 5.5 (economy) on `low` and failed it on clean-cell false alarms (4/12 at `high`,
 1/9 at `medium`; Sonnet on `med` 0/12), so `low` reverted to efficient; BACKLOG "Haiku at the low-risk gate: retry".
 
 **Arms.** `--risk` picks the arm's seat; `--rebind <class>=<model>:<effort>` (repeatable) rebinds a class for the run
@@ -540,15 +542,20 @@ at: the plant inlined, or a Read of its file or `.diff` in the main session or a
 `parent_tool_use_id`), or a Grep whose output carried the planted text; a deletion is looked at when the prompt names it.
 A catch without a look is `lucky`, a failure. Other blocking findings are spurious. On a clean cell any decision but
 approve is a false positive. Coverage: of the files the gate recorded as not inlined (`diffShown.notInlined`: changed
-content not inlined, and deletions; a pure move is neither), the share the session read or grepped. The answer key (`<trial>/key.json`) lives only in the eval run dir, outside every dir the gate can read; the
+content not inlined, and deletions; a pure move is neither), the share the session read or grepped. Clusters (the
+large-diff gate): of the paths the answer's cluster map had to cover (the diff's paths, renames by their new path), how
+many no cluster covers and how many more than one does, and the files per review depth (`description`, `routine`,
+`close`); reported per cell as `clusters=<complete>/<over the threshold> mapped=<answers with a map>` and `mix=`, never
+failed (code already refuses an incomplete map). The answer key (`<trial>/key.json`) lives only in the eval run dir, outside every dir the gate can read; the
 transcript's tool traffic is scanned for the run dir, the trial dir, `evals/roles` and this repository's paths
 (`evals/m4a/transcript.ts scanTranscript`), and any hit voids the trial (`needle`).
 
 **Criteria** (`gate/summary.ts`, PASS|FAIL lines; exit 1 on any FAIL): planted detection at least 80% (Wilson interval
 reported); zero lucky; clean false positives at most 1/12; precision (blocking findings localised to the plant, on planted
 trials) at least 50%; voids at most a quarter of the trials; every call's per-model costs summing to its `total_cost_usd`;
-with `--compare`, holdout detection within 15 points of dev. Coverage (median, target 90%) and method (tools by name,
-subagents with model and tokens, time to the first Read and Agent) are reported, never failed.
+with `--compare`, holdout detection within 15 points of dev. Coverage (median, target 90%), cluster coverage and the
+review-depth mix, and method (tools by name, subagents with model and tokens, time to the first Read and Agent) are
+reported, never failed.
 
 **Cost.** Per model from `result.modelUsage` (subagents included; the top-level `usage` excludes them), cross-checked
 against `total_cost_usd`: CELL lines carry the median and p90 cost, the cost per caught defect, wall time and turns; COST
@@ -561,6 +568,14 @@ the prompt left files out;
 coverage flat over 8 tool turns; token load over 3x the cell's median so far (token load stands in for cost, which the CLI
 reports only at the end).
 
+**Spend caps** (inside the arm; the 2026-10-17 run overran because a cap was checked only between arms). `--cap <usd>`:
+no new trial starts once the spend of the trials finished so far reaches the cap; running trials finish, and a `CAP` line,
+an `INFO cap` line and `summary.json`'s `capped` count the trials not started. `--trial-cap <usd>`: the monitor's live
+spend of the trial (every gate call so far, main session and subagents, each assistant message's tokens at list price,
+`transcript.ts` `PRICES`) over the cap kills the session and voids the trial as `cap` (a `BRAKE … cap` line; the TRACE
+line shows `spent=`). A trial's spend is the larger of its CLI-reported cost and that estimate, so a trial killed before
+its result still counts what it spent (row `estimatedUsd`). Without the flags nothing is capped; a paid run sets both.
+
 **Output.** `<out>/trials.jsonl` (a row per trial as it finishes), `<out>/summary.json`, and per trial `key.json`,
 `prompt.txt`, `gate-<n>.jsonl` (each call's raw stdout), `transcript.jsonl`, `answer.json` and `row.json`. The trials'
 repos and arc dirs are scratch, removed when the worker exits.
@@ -570,7 +585,9 @@ omitted placement really omitted, lanes green on every planted tree, goldens con
 edit) and `test/roles-gate.test.ts` (run.ts end to end on degenerate fake gates via `--fake`: approve-all catches nothing,
 revise-all is 100% false positives and fails precision, cite-every-path fails precision; a gate citing a not-inlined plant
 without reading it is lucky; the transcript and cost parser on a captured subagent run; the `real` and `checkoutTree`
-acts; the triggers). `--fake <kind>` runs the same harness on a degenerate gate for free.
+acts; the triggers; `--cap` stopping new trials, `--trial-cap` killing the `overspend` fake gate (a session that streams
+one $20 message and hangs), the live price estimate, and the cluster grading). `--fake <kind>` runs the same harness on a
+degenerate gate for free; over the large-diff threshold a fake answers one cluster over everything.
 
 ## The run observer
 

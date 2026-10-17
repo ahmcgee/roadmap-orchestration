@@ -250,7 +250,9 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   failures, gate`. `gate{attempt, decision, findings[{severity: blocking|note|pre-existing, path, text, contractRef}],
   unreviewed[{path, reason}]}` is the unit's latest gate answer, or null before one: a `pre-existing` finding is a real
   defect already at the base (never blocking); `unreviewed` is what the gate says it did not review (null on an answer
-  from dev.11: unknown), recorded and never enforced. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
+  from dev.11: unknown), recorded and never enforced. A gate whose diff is too large for its attachment (files left out for
+  size) sits at least at the high seat whatever the unit's risk (`seat` shows it once the gate has started), and its answer
+  carries a cluster map that code checks covers every changed path exactly once; a file in a cluster counts as reviewed. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
   `parked`, `merged`, `cut` or `superseded`. `waitingFor{deps, edges, resources, envBlocked, admission, drainFor}`;
   `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare. `running{stage,
   attempt, elapsed (ms), deadline, resources, lane}`, `lane{id, set: spec|suite|journey|mutant, inv, startedAt}` the

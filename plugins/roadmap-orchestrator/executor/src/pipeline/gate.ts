@@ -1,7 +1,8 @@
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
 //
 // A fresh judgment session (resumed only for its repair turn) on the gate role's seat, which a pending risk promotion or a
-// route-up moves to the escalation seat (judgmentDispatch). Its inputs, snapshotted at the integration tip
+// route-up moves to the escalation seat (judgmentDispatch), and a diff over the large-diff threshold to at least `high`
+// (1.0.0-dev.12, "The large-diff gate" below). Its inputs, snapshotted at the integration tip
 // T the gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full
 // and an index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
 // approving plan-check's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so

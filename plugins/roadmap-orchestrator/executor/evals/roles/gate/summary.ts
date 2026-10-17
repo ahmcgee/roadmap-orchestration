@@ -5,7 +5,7 @@
 //   zero-lucky         no catch without a look at the plant
 //   clean-fp           false positives / graded clean trials <= 1/12
 //   precision          blocking findings localised to the plant / all blocking findings on planted trials >= 50%
-//   voids              void trials (runaway, error, needle, placement-miss) <= 25% of all
+//   voids              void trials (runaway, cap, error, needle, placement-miss) <= 25% of all
 //   cost-check         every call's per-model costs sum to its total_cost_usd
 //   holdout-gap        (with a dev summary to compare) holdout detection within 15 points of dev
 //
