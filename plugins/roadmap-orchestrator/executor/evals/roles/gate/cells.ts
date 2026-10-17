@@ -10,6 +10,8 @@
 // sweep's substitutions do not explain, so a plant among a pure rename always lands inlined; only when the unexplained
 // changes outgrow the budget can it land not inlined.
 //   G4   a golden edited by hand, inconsistent with its generator; G4c clean. Both carry a declared, consistent golden change.
+//        dev.12: the plan declares the goldens' generator, so the executor's regenerate check catches G4 at the lanes stage
+//        and no gate runs (a `regenerate` row, never graded); G4c reaches the gate with the goldens verified.
 //   G5   a migrated test assertion weakened; G5c clean
 //   G6   a deletion outside the spec's removals; G6c clean. Both carry a declared removal of a live-looking file.
 //

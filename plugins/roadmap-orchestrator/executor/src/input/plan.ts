@@ -18,6 +18,7 @@ import {
 import {
   BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
 } from '../core/records.ts';
+import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
 import {
@@ -147,8 +148,20 @@ export type PlanCheckShape = (typeof PLAN_CHECK_SHAPES)[number];
  * Plan defects (2026-10-16): files the build derives from others (a bundle from its sources). A unit whose scope covers a
  * source pattern takes the outputs into its effective scope (`derivedWidening`, src/input/derived.ts, pinned on its
  * dispatch record as `derived`), so salvage keeps, and the gate and candidate allow, a regenerated output.
+ *
+ * `regenerate` (dev.12): the generator, run from the repo root's `cwd` with no shell. A unit whose diff touches a source or
+ * an output has it run at the lanes stage, in a clean checkout of its commit, and the outputs must come out byte-identical
+ * to what the commit holds (`regenerateLane`, src/input/derived.ts). Absent: no check (lasting: an entry may have no
+ * runnable generator).
  */
-export type DerivedFiles = Readonly<{ sources: readonly RepoPattern[]; outputs: readonly RepoPattern[] }>;
+export type DerivedFiles = Readonly<{ sources: readonly RepoPattern[]; outputs: readonly RepoPattern[]; regenerate?: ToolCommand }>;
+
+/**
+ * The lane id a derived entry's regenerate check runs under: `regenerate.` and the first 12 hex digits of the entry's
+ * canonical hash, so an apply reordering the entries keeps each id, and one changing an entry gives it a new one. A suite
+ * lane may not take one (parsePlan).
+ */
+export const regenerateLaneId = (entry: DerivedFiles): LaneId => laneId(`regenerate.${sha256Hex(canonicalJson(entry)).slice(0, 12)}`);
 
 /** The plan's derived files; none when absent. */
 export const derivedOf = (plan: PlanM1): readonly DerivedFiles[] => plan.derived ?? [];
@@ -371,7 +384,10 @@ const patterns: Read<readonly RepoPattern[]> = (value, path) => {
   assertUnique(out, (x) => x, path);
   return out;
 };
-const derivedFiles: Read<DerivedFiles> = object((f) => ({ sources: f.get('sources', patterns), outputs: f.get('outputs', patterns) }));
+const derivedFiles: Read<DerivedFiles> = object((f) => {
+  const regenerate = f.optional('regenerate', toolCommand);
+  return { sources: f.get('sources', patterns), outputs: f.get('outputs', patterns), ...(regenerate === undefined ? {} : { regenerate }) };
+});
 
 const knownDefect: Read<KnownDefect> = object((f) => ({
   id: f.get('id', (v, p) => knownDefectId(v, p)),
@@ -456,7 +472,7 @@ export function parsePlan(value: unknown): PlanM1 {
     out.suite.lanes.forEach((l, i) => refuseLaneInputs(l, `plan.suite.lanes[${i}]`, 'suite'));
     assertUnique(knownDefectsOf(out), (k) => k.id, 'plan.knownDefects');
     assertUnique(out.contracts, (c) => c, 'plan.contracts');
-    assertUnique(out.suite.lanes, (l) => l.id, 'plan.suite.lanes');
+    assertUnique([...out.suite.lanes.map((l) => l.id), ...derivedOf(out).filter((d) => d.regenerate !== undefined).map(regenerateLaneId)], (id) => id, 'plan.suite.lanes');
     assertUnique(out.resources, (r) => r.name, 'plan.resources');
     assertUnique(out.units, (u) => u.id, 'plan.units');
     assertUnique(out.units, (u) => u.spec, 'plan.units');

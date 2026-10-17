@@ -9,7 +9,7 @@
 // the unrunnable unit was refused for that unit's own lanes).
 import type { UnitId } from '../core/ids.ts';
 import type { LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
-import type { PlanM1, PlanUnit } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, derivedOf, regenerateLaneId } from '../input/plan.ts';
 import { checkLaneTiers } from '../resources/reserve.ts';
 import { resolveArgv0 } from './argv0.ts';
 import type { CommandProblem, StartupRejection } from './startup.ts';
@@ -35,11 +35,16 @@ const laneProblems = (unit: UnitId | null, lane: LaneDef, env: Env): LaneRow[] =
 export const isLive = (plan: PlanM1, unit: PlanUnit): boolean => unit.cut === undefined && !plan.units.some((u) => u.reenters?.unit === unit.id);
 
 /**
- * The suite lanes, the active lanes of each live unit of `units` (argv[0], declared host variables, the fast/estate
- * boundary), then every resource's probe and teardown command. `specOf` is the unit's spec under `plan`.
+ * The suite lanes and the derived entries' regenerate commands (each under its regenerate lane's id), the active lanes of
+ * each live unit of `units` (argv[0], declared host variables, the fast/estate boundary), then every resource's probe and
+ * teardown command. `specOf` is the unit's spec under `plan`.
  */
 export function laneRows(plan: PlanM1, units: readonly UnitId[], specOf: (unit: PlanUnit) => SpecM1, env: Env): readonly LaneRow[] {
   const out = plan.suite.lanes.flatMap((lane) => laneProblems(null, lane, env));
+  // dev.12: a derived entry's generator, as the suite lane its regenerate check runs under (`regenerateLaneId`).
+  for (const d of derivedOf(plan)) {
+    if (d.regenerate !== undefined) out.push(...commandProblems(d.regenerate, env).map((problem): LaneRow => ({ kind: 'spec-lane-unrunnable', unit: null, lane: regenerateLaneId(d), problem })));
+  }
   for (const unit of plan.units) {
     if (!units.includes(unit.id) || !isLive(plan, unit)) continue;
     const spec = specOf(unit);

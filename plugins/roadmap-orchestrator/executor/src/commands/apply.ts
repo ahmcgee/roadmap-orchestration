@@ -129,7 +129,7 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { APPLY, type ScopeReference, phase0InputOf, phase0Rows, visionLeak } from '../phase0/rows.ts';
+import { APPLY, type Phase0Advisory, phase0InputOf, phase0Rows, visionLeak } from '../phase0/rows.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
@@ -708,11 +708,11 @@ export type ApplyVerdict =
   /** `smoke`: backends the new routings seat that the routing in force did not; they must pass a smoke first. */
   /** `corpusFiles`: a corpus arc's corpus files as its pin re-derived them (kept before the commit, M4a). */
   /** `rulings`: the ids its `--ruling` records land (I2), for the commit's proposer; `numbered`: each `C-?` record's assigned id. */
-  /** `advisories` (scope growth, 2026-10-15): Phase-0 row 10's, which never refuse (the receipt and the dry run list them). */
+  /** `advisories` (scope growth, 2026-10-15): Phase-0 rows 10's and 13's, which never refuse (the receipt and the dry run list them). */
   /** `rebuild`: the proposal built again under the fence. */
   | Readonly<{
     kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[]; corpusFiles: readonly SourceFile[];
-    rulings: readonly RulingId[]; numbered: readonly string[]; advisories: readonly ScopeReference[]; rebuild: Rebuild;
+    rulings: readonly RulingId[]; numbered: readonly string[]; advisories: readonly Phase0Advisory[]; rebuild: Rebuild;
   }>;
 
 /** One rejection per line of text, for a receipt's reason and the dry run. */
@@ -909,7 +909,7 @@ export const rejectedText = (reasons: readonly string[], what: 'apply' | 'revers
   `${what} rejected (${reasons.length} ${reasons.length === 1 ? 'reason' : 'reasons'}): ${reasons.map((r, i) => `(${i + 1}) ${r}`).join('; ')}`;
 
 /** A Phase-0 advisory as a receipt line (scope growth, 2026-10-15): never a refusal. */
-export const advisoryText = (a: ScopeReference): string => `advisory: ${canonicalJson(a)}`;
+export const advisoryText = (a: Phase0Advisory): string => `advisory: ${canonicalJson(a)}`;
 
 const appliedText = (rev: PlanRev, changes: readonly PlanChange[]): readonly string[] =>
   [`plan rev ${rev} in force`, ...changes.map((c) => canonicalJson(c))];

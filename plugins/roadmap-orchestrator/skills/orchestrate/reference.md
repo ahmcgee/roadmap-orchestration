@@ -53,7 +53,8 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke,
   advisories, numbered}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
-  files outside a unit's scope that still name what its spec `removes`. They never refuse. A revision
+  files outside a unit's scope that still name what its spec `removes`; and `derived-unregenerated{outputs, units}`: a
+  `derived` entry with no `regenerate` whose outputs those units take in. They never refuse. A revision
   that changes the plan or the vision cancels a checkpoint deciding on the earlier one (rejected `stale`); its trigger
   is decided again on your revision.
 - `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
@@ -91,7 +92,8 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   the `.roadmap/` layout, `plan-invalid`, routing, lanes, `holistic-needs-corpus`, and every corpus, Phase-0,
   vision, issue-policy, chain and `tree-uncommitted` row (not the host, residue or smoke rows). Prints `{rows, sliceCandidates, advisories}`; exit 0 with no rows, else 78.
   `advisories` never refuse: `scope-references-outside{unit, removed, referrers}`, the files outside a unit's scope that
-  still name something its spec `removes` (searched at the integration tip, or the baseline before it exists).
+  still name something its spec `removes` (searched at the integration tip, or the baseline before it exists), and
+  `derived-unregenerated{outputs, units}`, a `derived` entry declaring no `regenerate` that a live unit takes in.
   `sliceCandidates`: the active world clauses whose census rules are not all held on the baseline.
 - `roadmap phase0 check --repo <path> --from-ref <arc>`: the same over every input the arc's `refs/roadmap/<arc>`
   recorded, never the live files; only the corpus, census, obligation, debt, question, amendment, intake and vision
@@ -448,6 +450,7 @@ Blocking unless noted. Read the item file before acting.
 - "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck`, spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
 - "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row and park, plan `derived`
-  and the dispatch record's `derived`, the lanes `scope-growth` hold.
+  and the dispatch record's `derived`, the lanes `scope-growth` hold; a derived entry's `regenerate` and its check
+  ("Regenerate checks").
 - "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,
   proofs, verdicts, givens and the flow facts.

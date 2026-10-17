@@ -197,6 +197,16 @@ at triage stay in git history.
 
 ## Watch (act only on the trigger)
 
+- **Regenerate checks: deferred parts** (1.0.0-dev.12, src/input/derived.ts). (a) The build prompt does not name a touched
+  entry's `regenerate` command; a builder learns it from the spec, or from its first red check's evidence (which says what
+  to run). Trigger: a paid run or arc where a regenerate red costs a fix round a named command would have saved: add it
+  to the build inputs beside the suite lanes. (b) The candidate merge does not re-run it: two units each consistent with
+  the generator can merge into outputs that are not (both edit sources; the merge combines the outputs textually).
+  Trigger: a candidate whose merged outputs do not regenerate (seen as a later unit's base check going `base-red` on a
+  regenerate lane): run the regenerate lanes of the entries the merge touches in the candidate's suite. (c) The lane takes
+  the fast tier's `@cpu`, no resources and no cross-SHA reuse. Trigger: a generator heavy enough to matter: let
+  `regenerate` declare `cpu`, or reuse with `inputs` = the entry's sources and outputs.
+
 - **Bounded diff heuristics** (1.0.0-dev.12, src/git/boundeddiff.ts). A file's kind is read from its path (test and
   fixture directories and names, a fixed list of source extensions); a package is a top-level directory or two levels
   under a monorepo container, not the nearest manifest; a deletion matches a `removes` entry only as the path, a

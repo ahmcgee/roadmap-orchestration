@@ -14,11 +14,19 @@ import { boundedDiff } from '../../../src/git/boundeddiff.ts';
 import { GATE_DIFF_BUDGET } from '../../../src/pipeline/gate.ts';
 import type { PlantContext, Planted } from '../gen/plant.ts';
 import { rng } from '../gen/prng.ts';
-import { type FileMap, REWORDED, type Repo, type Swept, finish, generate, gitOut, importCommits, initRepo, sweep } from '../gen/tsrepo.ts';
+import { type FileMap, GOLDEN_SCRIPT_PATH, REWORDED, type Repo, type Swept, finish, generate, gitOut, importCommits, initRepo, sweep } from '../gen/tsrepo.ts';
 import type { Cell, Placement } from './cells.ts';
 
-/** The plan's derived files: goldens/ is regenerated from the generator and the modules. */
-export const DERIVED = [{ sources: ['tools/gen-goldens.ts', 'packages/**'], outputs: ['goldens/**'] }] as const;
+/**
+ * The plan's derived files: goldens/ is regenerated from the generator and the modules, by the generator the synthetic repo
+ * carries (tools/gen-goldens.ts, gen/golden-script.ts). So the executor's regenerate check catches a hand-edited golden
+ * (G4) at the lanes stage, before any gate: the G4 cell measures that check, and its clean twin G4c the gate told the
+ * goldens were verified by regeneration.
+ */
+export const DERIVED = [{
+  sources: ['tools/gen-goldens.ts', 'packages/**'], outputs: ['goldens/**'],
+  regenerate: { argv: ['node', GOLDEN_SCRIPT_PATH], cwd: '.', env: { set: {}, pass: ['PATH'] } },
+}] as const;
 /** The derived outputs as the gate passes them to the bounded diff. */
 export const DERIVED_PATTERNS = DERIVED.flatMap((x) => x.outputs.map((o) => repoPattern(o)));
 

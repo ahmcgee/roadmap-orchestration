@@ -58,8 +58,9 @@
 //   teardown    cleanup of the build's reservation.
 //   lanes       lanes.ts in a detached checkout of the salvage SHA; the lane ledger for the gate. M4a rev 3: a plan known
 //               defect the unit matches (by lane before any lane runs, by a red lane's output after) is `known-defect`,
-//               uncharged, to prepare (F4, `knownDefectHit`); a green certified series then runs the plan's fast suite
-//               lanes (`fastSuite`, below: a red one on the unit's diff base too is `base-red`, uncharged), and in a
+//               uncharged, to prepare (F4, `knownDefectHit`); a green certified series then runs the regenerate checks
+//               of the derived entries the diff touches and the plan's fast suite lanes (`fastSuite`, below: a red one on
+//               the unit's diff base too is `base-red`, uncharged), and in a
 //               corpus arc the executable checks: witness presence (witnesscheck.ts, D1) and mutation smoke (smoke.ts,
 //               D2). The verification checkout is kept only when the gate is next.
 //
@@ -108,6 +109,7 @@ import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../gi
 import { mergeHead, resolvedHead } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { readGuideBytes } from '../corpus/guide.ts';
+import { unitRegenerateLanes } from '../input/derived.ts';
 import { withinEnvelope } from '../input/envelope.ts';
 import { corpusFileSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
@@ -1678,6 +1680,12 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
 // halt, `needs-user`). A park here could not heal: the unit's commit never contains a later fix of its base, and only
 // the candidate merges the tip. A base check's verdict is shared by every unit of the run (`BASE_CHECKS`): units red on
 // the same lanes over the same base run it once.
+//
+// Regenerate checks (dev.12): the regenerate lane of each derived entry whose sources or outputs the unit's diff touches
+// (`unitRegenerateLanes`, src/input/derived.ts) runs first in the same series, as a fast suite lane: a hand edit hidden in
+// a regenerated output is the unit's red, a fix round whose evidence names each differing output and its difference. Red on
+// the base too (the base's outputs do not regenerate either), it is `base-red` like any suite lane, and the gate is told
+// the outputs went unverified (gate.ts `regeneratedChecks`).
 
 /** Where a lanes attempt keeps the evidence of its fast suite: at the salvage SHA (`suite`), on the diff base alone (`base`). */
 export const fastSuiteRoot = (runDir: AbsPath, parent: StageParent, at: 'suite' | 'base'): AbsPath => absPath(join(evidenceRoot(runDir, parent), `_${at}`));
@@ -1749,7 +1757,9 @@ async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lane
 async function fastSuite(
   ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime,
 ): Promise<Readonly<{ verdict: LanesVerdict; series: Series | null }>> {
-  const lanes = fastSuiteLanes(ctx.plan().suite.lanes, spec);
+  // dev.12: the regenerate checks of the derived entries the unit's diff touches go first (src/input/derived.ts).
+  const regenerate = unitRegenerateLanes(ctx.plan(), unitDiffPaths(ctx.repo, integrationTip(ctx), salvaged));
+  const lanes = [...regenerate, ...fastSuiteLanes(ctx.plan().suite.lanes, spec)];
   if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
   const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt);
   const fault = suiteFault(ctx, unit.id, series);

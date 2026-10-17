@@ -931,6 +931,18 @@ export function seriesLedger(ctx: StageContext, parent: StageParent, lanes: read
 }
 
 /**
+ * One lane's record in the series `parent` at `at` (null when it did not run there), whatever else ran beside it: a reader
+ * of one lane (the gate's regenerate checks, gate.ts) is not refused for a lane a revision has since dropped from the plan.
+ */
+export function laneRecordIn(ctx: StageContext, parent: StageParent, lane: LaneDef, set: LaneSet, at: Sha, root: AbsPath): LaneRecord | null {
+  const spawns = ctx.journal.view.opsOf('proc.spawn').filter((i) => {
+    const s = i.expect.subject;
+    return s.purpose === 'lane' && s.set === set && s.at === at && s.lane === lane.id && sameParent(i.parent, parent);
+  });
+  return spawns.length === 0 ? null : spawnRecord(ctx, parent, lane, spawns, root);
+}
+
+/**
  * The checkout the series `parent` ran in at `path` (its own: a lanes attempt may make other checkouts, Q3), while the
  * journal says it is still there (created, and not removed since), with the series' last done evidence snapshot for its
  * removal to cite.

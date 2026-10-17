@@ -63,14 +63,15 @@ import { selectObligations } from '../holistic/impact.ts';
 import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPath, absPath, matchesPattern, repoPath } from '../core/values.ts';
 import { boundedDiff } from '../git/boundeddiff.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
+import { regenerateLane } from '../input/derived.ts';
 import { type PlanUnit, derivedOf, targetDocumentPaths } from '../input/plan.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
-import type { GateChecks, GatePriorRound } from '../prompts/inputs.ts';
+import type { GateChecks, GatePriorRound, RegeneratedCheck } from '../prompts/inputs.ts';
 import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -81,13 +82,13 @@ import {
   judgmentDispatch, unitBranch, verdictOf, verificationWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
-import { latestSpecSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
+import { laneRecordIn, latestSpecSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { gateSmokeChecks } from './smoke.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  escalationOf, judgedAnswer, salvageRejections, stillOutside, writeJudgmentInputs,
+  escalationOf, fastSuiteRoot, judgedAnswer, salvageRejections, stillOutside, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -287,9 +288,25 @@ type GateCapture =
  * (a gate follows only a green check, so none missing or failing) and its smoke's verdict, or why the smoke did not run;
  * both null outside a corpus arc.
  */
-function gateChecks(ctx: StageContext, unit: PlanUnit, series: StageParent, head: Sha): GateChecks {
+function gateChecks(ctx: StageContext, unit: PlanUnit, series: StageParent, head: Sha, paths: readonly RepoPath[]): GateChecks {
   const witnesses = gateWitnessChecks(ctx, unit, head);
-  return { witnesses, smoke: witnesses === null ? null : gateSmokeChecks(ctx, unit, series, head, witnesses.required) };
+  return { witnesses, smoke: witnesses === null ? null : gateSmokeChecks(ctx, unit, series, head, witnesses.required), regenerated: regeneratedChecks(ctx, series, head, paths) };
+}
+
+/**
+ * dev.12: per plan `derived` entry whose outputs the diff's `paths` touch, in entry order, what its regenerate check found
+ * in lanes attempt `series` at `head` (a fast suite lane at the salvage SHA, stages.ts `fastSuite`).
+ */
+export function regeneratedChecks(ctx: StageContext, series: StageParent, head: Sha, paths: readonly RepoPath[]): readonly RegeneratedCheck[] {
+  const root = fastSuiteRoot(ctx.runDir, series, 'suite');
+  return derivedOf(ctx.plan()).filter((d) => paths.some((p) => d.outputs.some((o) => matchesPattern(p, o)))).map((d): RegeneratedCheck => {
+    const lane = regenerateLane(d);
+    if (lane === null || d.regenerate === undefined) return { state: 'no-generator', outputs: d.outputs };
+    const { argv } = d.regenerate;
+    const run = laneRecordIn(ctx, series, lane, 'suite', head, root);
+    if (run === null) return { state: 'not-run', outputs: d.outputs, argv };
+    return run.verdict === 'pass' ? { state: 'verified', outputs: d.outputs, argv } : { state: 'differs', outputs: d.outputs, argv, evidenceDir: run.evidenceDir };
+  });
 }
 
 export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone | Cancelled> {
@@ -345,7 +362,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       laneLedger, evidence, scope: { patterns: scope, growth, rejected: stillOutside(ctx, unit.id, salvageRejections(ctx, unit.id).flatMap((r) => r.paths)) },
       priorRound: priorRound(ctx, unit.id, head),
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
-      checks: gateChecks(ctx, unit, series, head),
+      checks: gateChecks(ctx, unit, series, head, paths),
       escalation: escalationOf(ctx, unit.id, 'gate', seat.tier, validateGateOutput),
     });
     const fingerprint = fingerprintAt(ctx, unit, tip);

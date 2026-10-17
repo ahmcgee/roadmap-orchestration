@@ -10,7 +10,8 @@
 //   holdout-gap        (with a dev summary to compare) holdout detection within 15 points of dev
 //
 // Coverage (the median share of not-inlined files the session read; target 90%) and the method (tools, subagents) are
-// reported, never failed.
+// reported, never failed. A trial the executor's regenerate check stopped before the gate (dev.12, `caught`) is counted per
+// cell (`regenerate`) and is in no criterion: it measures code, not the gate.
 import { type Interval, fmtRate, median, quantile, wilson } from '../stats.ts';
 import type { TrialRow, VoidReason } from './arc.ts';
 
@@ -20,6 +21,8 @@ export type CellSummary = Readonly<{
   planted: boolean;
   trials: number;
   graded: number;
+  /** dev.12: trials the executor's regenerate check stopped before any gate (caught by code, never graded). */
+  regenerate: number;
   voids: Readonly<Partial<Record<VoidReason, number>>>;
   /** Planted cells: caught of graded. Clean cells: false positives of graded. */
   rate: Interval;
@@ -70,7 +73,7 @@ function cellSummary(rows: readonly TrialRow[]): CellSummary {
   const shares = rows.flatMap((r) => (r.graded?.coverage.share === null || r.graded === null ? [] : [r.graded.coverage.share]));
   const costs = rows.map(costOf);
   return {
-    cell: first.cell, family: first.family, planted: first.planted, trials: rows.length, graded: g.length, voids,
+    cell: first.cell, family: first.family, planted: first.planted, trials: rows.length, graded: g.length, regenerate: rows.filter((r) => r.caught === 'regenerate').length, voids,
     rate: first.planted ? wilson(caught, g.length) : wilson(fps, g.length),
     lucky: g.filter((r) => r.graded!.verdict === 'lucky').length,
     coverageMedian: median(shares),
@@ -133,7 +136,7 @@ export function summarise(set: 'dev' | 'holdout', rows: readonly TrialRow[], com
 export function reportLines(s: Summary): readonly string[] {
   const out: string[] = [];
   for (const c of s.cells) {
-    out.push(`CELL ${c.cell} ${c.planted ? 'planted' : 'clean'} trials=${c.trials} graded=${c.graded} ${c.planted ? 'caught' : 'fp'}=${fmtRate(c.rate)} lucky=${c.lucky} `
+    out.push(`CELL ${c.cell} ${c.planted ? 'planted' : 'clean'} trials=${c.trials} graded=${c.graded} regenerate=${c.regenerate} ${c.planted ? 'caught' : 'fp'}=${fmtRate(c.rate)} lucky=${c.lucky} `
       + `coverage=${pct(c.coverageMedian)} cost=${usd(c.cost.median)}/p90 ${usd(c.cost.p90)} perCatch=${usd(c.cost.perCatch)} wall=${c.wallMedianS?.toFixed(0) ?? '-'}s `
       + `turns=${c.turnsMedian ?? '-'} subagents=${c.subagentsMedian ?? '-'}${c.subagentModels.length > 0 ? ` (${c.subagentModels.join(',')})` : ''} voids=${JSON.stringify(c.voids)}`);
     for (const [m, x] of Object.entries(c.costByModel)) out.push(`COST ${c.cell} ${m} median=${usd(x.median)} p90=${usd(x.p90)}`);

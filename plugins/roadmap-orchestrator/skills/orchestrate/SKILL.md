@@ -398,6 +398,18 @@ covers a source takes the outputs into its effective scope (its dispatch record'
 salvage keeps a regenerated output and the candidate allows it. Phase 0 refuses an output that may reach the corpus,
 and one inside the scope of a unit that covers none of its sources (`plan-defect`).
 
+Declare the generator too whenever the repo has one: `regenerate: {argv, cwd, env}` on the entry (the shape of a
+resource probe: no shell, `cwd` relative to the repo root, `env: {set, pass}`; pass `PATH` when argv[0] is a bare name).
+For every unit whose diff touches the entry's sources or outputs, the executor runs it in a clean checkout of the unit's
+commit and requires every output byte-identical to the commit, before any gate: a hand edit hidden in a generated file
+(a golden, a snapshot, generated types) is the unit's red lane, `regenerate.<hash>`, whose evidence names each
+differing output and the difference, and the builder's fix round gets it. The gate is told the outputs were verified,
+so it need not read them line by line. A generator must be deterministic and write only its declared outputs (any
+other file it writes is a difference too). An entry without `regenerate` is checked by nothing but a reader: Phase 0
+advises `derived-unregenerated{outputs, units}` for it (never a refusal); leave it off only when no runnable generator
+exists. Startup refuses a generator whose argv[0] or declared variables do not resolve (`spec-lane-unrunnable`, naming
+the lane `regenerate.<hash>`).
+
 ## PR fixes after completion
 
 An arc's life ends when its PR merges, not at `arc-completed`. A red CI run on an open arc PR, or the owner asking

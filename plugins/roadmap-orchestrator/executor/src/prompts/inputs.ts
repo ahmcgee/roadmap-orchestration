@@ -233,7 +233,22 @@ export type SmokeNotRun = (typeof SMOKE_NOT_RUN)[number];
 export type GateChecks = Readonly<{
   witnesses: Readonly<{ required: readonly RequiredWitness[]; missing: readonly TestRef[]; failed: readonly TestRef[] }> | null;
   smoke: Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[]; notRun: SmokeNotRun | null }> | null;
+  /** dev.12: per plan `derived` entry whose outputs the diff touches, in entry order, whether regeneration verified them. */
+  regenerated: readonly RegeneratedCheck[];
 }>;
+
+/**
+ * dev.12: what the regenerate check (src/input/derived.ts) found for one derived entry whose outputs the diff touches.
+ * `verified`: its lane passed at the head, so every output is byte for byte what the generator writes. `differs`: its lane
+ * was red at the head and on the unit's base too (`base-red`), its evidence naming each difference. `not-run`: the entry
+ * declares a generator, but no run of it at the head is on record (an earlier suite lane's base red stopped the series).
+ * `no-generator`: the plan declares no `regenerate` for it, so nothing checked the outputs.
+ */
+export type RegeneratedCheck =
+  | Readonly<{ state: 'verified'; outputs: readonly RepoPattern[]; argv: readonly string[] }>
+  | Readonly<{ state: 'differs'; outputs: readonly RepoPattern[]; argv: readonly string[]; evidenceDir: AbsPath }>
+  | Readonly<{ state: 'not-run'; outputs: readonly RepoPattern[]; argv: readonly string[] }>
+  | Readonly<{ state: 'no-generator'; outputs: readonly RepoPattern[] }>;
 
 export type GateInputs = Readonly<{
   spec: RenderedSpec;
@@ -633,8 +648,24 @@ function requiredRefText(ref: TestRef, required: readonly RequiredWitness[]): st
 }
 
 /** The gate's executable checks (D1, D2), or nothing when neither applied (an `architecture-doc` arc). */
+/** One derived entry's regenerate check as a line of the gate's executable checks. */
+function regeneratedText(r: RegeneratedCheck): string {
+  const outputs = r.outputs.join(', ');
+  switch (r.state) {
+    case 'verified':
+      return `- ${outputs}: verified by regeneration. The executor ran ${JSON.stringify(r.argv)} in a clean checkout of this head and every output came out byte-identical to the commit, so no hand edit hides in them; read them only where the spec's claims depend on their content.`;
+    case 'differs':
+      return `- ${outputs}: NOT verified. ${JSON.stringify(r.argv)} does not reproduce them at this head, nor on the unit's base; the differences are in ${r.evidenceDir}.`;
+    case 'not-run':
+      return `- ${outputs}: not verified. The plan declares ${JSON.stringify(r.argv)} as their generator, but it did not run at this head.`;
+    case 'no-generator':
+      return `- ${outputs}: not verified. The plan declares no generator for them, so a hand edit in them is caught only by reading them.`;
+  }
+}
+
 export function gateChecksText(c: GateChecks): string {
-  if (c.witnesses === null && c.smoke === null) return '';
+  const regenerated = c.regenerated.length === 0 ? [] : ['Regenerated outputs this diff touches (plan `derived` entries):', ...c.regenerated.map(regeneratedText)];
+  if (c.witnesses === null && c.smoke === null && regenerated.length === 0) return '';
   const w = c.witnesses;
   const witnesses = w === null ? [] : [
     `Witness presence: ${w.required.length} required witness ${w.required.length === 1 ? 'test' : 'tests'} on the arc lanes at this head.`,
@@ -648,7 +679,7 @@ export function gateChecksText(c: GateChecks): string {
     `- survived: ${refsText(s.survived)}`,
     `- inconclusive: ${refsText(s.inconclusive)}`,
   ];
-  return `\n\n<executable_checks>\n${[...witnesses, ...smoke].join('\n')}\n</executable_checks>`;
+  return `\n\n<executable_checks>\n${[...witnesses, ...smoke, ...regenerated].join('\n')}\n</executable_checks>`;
 }
 
 /** The implementer's witness checks: one exact command per fast required witness lane (R56), or nothing. */

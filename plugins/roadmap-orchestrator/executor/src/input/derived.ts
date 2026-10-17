@@ -4,9 +4,20 @@
 // pins them as `derived` (src/pipeline/dispatch.ts), and salvage, the gate, the transient check and recovery read
 // the record's `effectiveScope` (src/core/records.ts). Phase 0 keeps outputs off the corpus and out of the scope of a
 // unit that covers none of the entry's sources (src/phase0/rows.ts).
-import type { RepoPattern } from '../core/values.ts';
+//
+// Regenerate checks (dev.12): an entry declaring `regenerate` becomes a fast lane, `regenerateLane`, which the lanes stage
+// runs first among the fast suite lanes (src/pipeline/stages.ts `fastSuite`) for a unit whose diff touches one of the
+// entry's sources or outputs. The lane runs the executor's own check (src/pipeline/regenerate.ts) in the clean checkout
+// of the unit's commit: the generator runs, and every output must come out byte-identical to what the commit holds. So a
+// hand edit hidden in a regenerated file is a red lane, with the same red-lane protocol, evidence, base check and fix
+// round as any fast suite lane, before any gate reads the diff.
+import { fileURLToPath } from 'node:url';
+import { canonicalJson } from '../core/json.ts';
+import { type AbsPath, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath } from '../core/values.ts';
+import { resolveArgv0 } from '../preflight/argv0.ts';
+import type { FastLane } from '../prompts/inputs.ts';
 import { mayOverlap } from './classify.ts';
-import { type DerivedFiles, type PlanM1, derivedOf } from './plan.ts';
+import { type DerivedFiles, type PlanM1, derivedOf, regenerateLaneId } from './plan.ts';
 
 /** Whether a scope may reach one of an entry's sources. */
 export const coversSource = (scope: readonly RepoPattern[], entry: DerivedFiles): boolean =>
@@ -17,3 +28,43 @@ export function derivedWidening(plan: PlanM1, scope: readonly RepoPattern[]): re
   const out = new Set(derivedOf(plan).filter((d) => coversSource(scope, d)).flatMap((d) => d.outputs));
   return [...out].filter((p) => !scope.includes(p)).sort();
 }
+
+/** The check a regenerate lane runs (src/entry/regenerate.ts over src/pipeline/regenerate.ts): `node <entry> <git> <request json>`. */
+export const REGENERATE_ENTRY: AbsPath = absPath(fileURLToPath(new URL('../entry/regenerate.ts', import.meta.url)));
+
+/** What the check reads from its one argument: the generator's argv and cwd, and the outputs it must reproduce. */
+export type RegenerateRequest = Readonly<{ argv: readonly string[]; cwd: RepoPath; outputs: readonly RepoPattern[] }>;
+
+/** The executor's own git, at its real path: the check reads the checkout with it whatever PATH the generator declares. */
+function executorGit(): string {
+  const git = resolveArgv0({ argv: ['git'], env: { set: {}, pass: ['PATH'] } }, process.env);
+  if (git.kind !== 'program') throw new Error(`the executor's PATH has no git (${process.env['PATH'] ?? 'unset'})`);
+  return git.realpath;
+}
+
+/**
+ * An entry's regenerate check as a fast lane (null when it declares no `regenerate`): the executor's node running the
+ * check from the checkout's root with the executor's git, under the generator's declared env, expecting exit 0. No
+ * resources, the fast tier's `@cpu`, no evidence globs (the check's stdout names each differing output and its
+ * difference), no `inputs` (a suite lane).
+ */
+export function regenerateLane(entry: DerivedFiles): FastLane | null {
+  const r = entry.regenerate;
+  if (r === undefined) return null;
+  const request: RegenerateRequest = { argv: r.argv, cwd: r.cwd, outputs: entry.outputs };
+  return {
+    id: regenerateLaneId(entry), argv: [process.execPath, REGENERATE_ENTRY, executorGit(), canonicalJson(request)], cwd: repoPath('.'), env: r.env, expectedExit: 0,
+    tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [],
+  };
+}
+
+/** Every regenerate lane of the plan, in entry order: what a series' ledger is read back with. */
+export const regenerateLanes = (plan: PlanM1): readonly FastLane[] => derivedOf(plan).flatMap((d) => regenerateLane(d) ?? []);
+
+/** Whether a diff of `paths` touches one of the entry's sources or outputs. */
+export const touchesEntry = (paths: readonly RepoPath[], entry: DerivedFiles): boolean =>
+  paths.some((p) => [...entry.sources, ...entry.outputs].some((pattern) => matchesPattern(p, pattern)));
+
+/** The regenerate lanes a unit diff of `paths` runs: the entries it touches that declare `regenerate`, in entry order. */
+export const unitRegenerateLanes = (plan: PlanM1, paths: readonly RepoPath[]): readonly FastLane[] =>
+  derivedOf(plan).filter((d) => touchesEntry(paths, d)).flatMap((d) => regenerateLane(d) ?? []);
