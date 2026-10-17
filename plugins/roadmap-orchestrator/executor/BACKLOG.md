@@ -410,6 +410,28 @@ at triage stay in git history.
 - **Deterministic safety fixtures for the plan-check shape** (understated risk, infeasible specs) beyond unit tests
   (Q27 remainder). Trigger: `by-builder` reverted after run 10, or a missed-risk term fires.
 
+- **Builder role eval: the gate's marginal value** (2026-10-17; research notes outside the repo,
+  review-pass-research.md). About 30 to 40 trap units on the role-eval harness (an untested spec clause, an
+  impossible criterion, the temptation to edit a test, scope-creep bait, false-done bait) plus clean controls, built by
+  real builders, in three arms: tests only, + gate, + cross-family gate. For each stratum (risk tier, trap kind) count the
+  catches the gate adds over the lanes; drop or thin the gate where that count is zero. Trigger: the paid gate role eval
+  settles the gate ladder, or a real arc's gate spend passes its build spend.
+- **Deterministic check: removed or skipped tests** (2026-10-17). A unit whose diff removes a test or adds a skip fails
+  in code unless its spec allows it (a `removes` entry or a clause naming the test). Trigger: a gate catch, role-eval
+  trial or arc where a builder dropped or skipped a test to get green.
+- **Time signals for judges and multi-agent work** (Opus 5.5 guide, 2026-10-17): give a judgment session elapsed time
+  against its deadline, and the skill's fan-out elapsed time against a budget. Trigger: a judgment killed at its deadline
+  with no answer, or a role eval showing a judge spending past its budget on reading it never cites.
+- **Effort xhigh only where measured** (Opus 5.5 guide, 2026-10-17: xhigh where it shows a measured gain). The escalation
+  seats and the checkpoint run summit (xhigh) unmeasured. Trigger: a role eval for the escalation gate or the checkpoint;
+  then compare `--rebind summit=claude-opus-5-5:high` with xhigh and keep xhigh only where it catches more.
+- **Three-state verifier** (CONFIRMED / PLAUSIBLE / REFUTED): a separate, evaluated pass over a judge's findings that
+  tries to refute each. Only if a false-alarm problem is measured: a role eval or arc where blocking findings that are not
+  real cost fix rounds (the 2026-10-17 gate eval saw 0 false alarms in 12 clean trials).
+- **Vacuity lens: "the smallest regression this test would miss"** (BMAD-style): have the vacuity lens name, per test it
+  judges, the smallest change to the code that the test would still pass. Trigger: a lens role eval, or a real arc where a
+  vacuous witness test passed the vacuity lens.
+
 ## Scaffolding to delete
 
 - `gateDiffShownOf`'s absent arm (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a gate's

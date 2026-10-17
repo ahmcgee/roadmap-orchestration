@@ -37,7 +37,7 @@ function sonnet<M extends Readonly<{ system: string }>>(opus: M): { readonly typ
 }
 
 /** What a Haiku judgment seat adds to the Opus module it reads: these lines end its system prompt (`haiku`). */
-export const HAIKU_FINISH = [
+const HAIKU_FINISH = [
   'Keep working until every part of what you were asked to judge has been read and judged; do not answer before then.',
   'Once it has, give your one answer and stop. Judge what you were asked to judge, nothing beyond it.',
   'Report as read only what you actually read.',
