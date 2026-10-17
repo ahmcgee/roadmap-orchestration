@@ -5,13 +5,14 @@
 import type { ClassTable, JudgmentSeat, ModelClass } from './types.ts';
 
 /**
- * Efficient plan-checks and gates low risk and frontier med and high (owner ruling 2026-10-15: plan-check's med seat
- * too); an escalation (route-up or risk trigger) goes to summit. Owner ruling (arc-1 feedback items 8, 9): independence
- * is a clean context, not a different model, so the stronger classes are spent where the risk is and where a judgment
- * escalates.
+ * Efficient plan-checks low and med risk, frontier high (owner ruling 2026-10-15). The gate's risk ladder (owner direction
+ * 2026-10-17, 1.0.0-dev.12, subject to the paid gate role eval: a tier whose model fails it reverts): economy (Haiku 5.5)
+ * gates low, efficient (Sonnet 5.5) med, frontier (Opus 5.5) high. An escalation (route-up or risk trigger) goes to
+ * summit. Owner ruling (arc-1 feedback items 8, 9): independence is a clean context, not a different model, so the
+ * stronger classes are spent where the risk is and where a judgment escalates.
  */
 const PLAN_CHECK: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' };
-const GATE: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'efficient', med: 'frontier', high: 'frontier', escalation: 'summit' };
+const GATE: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'economy', med: 'efficient', high: 'frontier', escalation: 'summit' };
 
 /**
  * The efficient class builds low/med, frontier builds high. The arc roles: the lenses (M3) and the flow role (M4b) on

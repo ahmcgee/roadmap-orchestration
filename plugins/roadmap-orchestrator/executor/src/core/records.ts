@@ -22,8 +22,8 @@ import type { SchemaVersion } from './version.ts';
 import { applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, type UsageClass, ROLES, backend,
-  modelClass, profileName, riskTier, usageClass, USAGE_CLASSES,
+  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
+  buildClass, type BuildClass, modelClass, profileName, riskTier, MODEL_CLASSES,
 } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -351,7 +351,7 @@ export type TokenUsage = Readonly<{
 }>;
 /** One usage class's tokens and list-price cost (Claude `modelUsage`, per model, summed per class). */
 export type ClassUsage = Readonly<{
-  class: UsageClass;
+  class: ModelClass;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -388,17 +388,17 @@ export const tokenUsage: Read<TokenUsage> = object((f) => ({
   costUsd: f.get('costUsd', nullable(usd)),
 }));
 export const classUsage: Read<ClassUsage> = object((f) => ({
-  class: f.get('class', usageClass),
+  class: f.get('class', modelClass),
   inputTokens: f.get('inputTokens', nat),
   outputTokens: f.get('outputTokens', nat),
   cacheReadTokens: f.get('cacheReadTokens', nat),
   cacheWriteTokens: f.get('cacheWriteTokens', nat),
   costUsd: f.get('costUsd', usd),
 }));
-/** Per-class usage, one entry per class, ascending in `USAGE_CLASSES` order. */
+/** Per-class usage, one entry per class, ascending in `MODEL_CLASSES` order. */
 export const classUsages: Read<readonly ClassUsage[]> = (value, path) => {
   const list = arrayOf(classUsage)(value, path);
-  const order = list.map((c) => USAGE_CLASSES.indexOf(c.class));
+  const order = list.map((c) => MODEL_CLASSES.indexOf(c.class));
   for (let i = 1; i < order.length; i++) if (!((order[i - 1] as number) < (order[i] as number))) throw new SchemaError(`${path}[${i}]`, 'classes ascending, each once', value);
   return list;
 };
@@ -1387,7 +1387,7 @@ export type CommandBody =
    * record; `class` null keeps the unit's routing; `resume`: a green steer continues instead of parking (R11).
    * Scope {u}.
    */
-  | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: ModelClass | null; resume: boolean }>
+  | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
   /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
   /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
@@ -1460,7 +1460,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     unit: f.get('unit', unit),
     brief: f.get('brief', object((g) => ({ path: g.get('path', abs), sha256: g.get('sha256', (v, p) => sha256(v, p)) }))),
     budgetMin: f.get('budgetMin', positive),
-    class: f.get('class', nullable(modelClass)),
+    class: f.get('class', nullable(buildClass)),
     resume: f.get('resume', bool),
   })),
   'merge-in': object((f): CommandBody => ({ type: f.get('type', literal('merge-in')), unit: f.get('unit', unit) })),

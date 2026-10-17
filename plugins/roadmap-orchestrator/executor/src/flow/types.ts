@@ -13,7 +13,7 @@ import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, null
 import { type IsoTime, isoTime } from '../core/values.ts';
 import type { Reporter } from '../holistic/types.ts';
 import { UNIT_PRIORITIES, type UnitPriority } from '../input/plan.ts';
-import { type ModelClass, type RiskTier, modelClass, riskTier } from '../routing/types.ts';
+import { type BuildClass, type RiskTier, buildClass, riskTier } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Numbers
@@ -203,7 +203,7 @@ export type FlowAction =
   | Readonly<{ lever: 'resource-pool'; resource: ResourceName; size: number }>
   | Readonly<{ lever: 'suite-lane'; lane: LaneId; argv?: readonly string[]; reporter?: FlowReporter; cpu?: number }>
   | Readonly<{ lever: 'sequence'; unit: UnitId; priority: 'high' }>
-  | Readonly<{ lever: 'build-class'; tier: RiskTier; class: ModelClass }>
+  | Readonly<{ lever: 'build-class'; tier: RiskTier; class: BuildClass }>
   | Readonly<{ lever: 'host'; note: string }>;
 
 /** A proposal; its id is `<job>.0`, assigned by code. */
@@ -226,7 +226,7 @@ export const flowAction: Read<FlowAction> = tagged('lever', {
     );
   }),
   sequence: object((f): FlowAction => ({ lever: f.get('lever', literal('sequence')), unit: f.get('unit', unitR), priority: f.get('priority', literal('high')) })),
-  'build-class': object((f): FlowAction => ({ lever: f.get('lever', literal('build-class')), tier: f.get('tier', riskTier), class: f.get('class', modelClass) })),
+  'build-class': object((f): FlowAction => ({ lever: f.get('lever', literal('build-class')), tier: f.get('tier', riskTier), class: f.get('class', buildClass) })),
   host: object((f): FlowAction => ({ lever: f.get('lever', literal('host')), note: f.get('note', str) })),
 });
 
@@ -278,7 +278,7 @@ export type FlowPreimage =
   | Readonly<{ lever: 'resource-pool'; resource: ResourceName; size: number }>
   | Readonly<{ lever: 'suite-lane'; lane: LaneId; argv: readonly string[]; cpu: number | null }>
   | Readonly<{ lever: 'sequence'; unit: UnitId; priority: UnitPriority | null }>
-  | Readonly<{ lever: 'build-class'; tier: RiskTier; class: ModelClass | null }>;
+  | Readonly<{ lever: 'build-class'; tier: RiskTier; class: BuildClass | null }>;
 export const flowPreimage: Read<FlowPreimage> = tagged('lever', {
   concurrency: object((f): FlowPreimage => ({ lever: f.get('lever', literal('concurrency')), cpu: f.get('cpu', nullable(positive)) })),
   'resource-pool': object((f): FlowPreimage => ({ lever: f.get('lever', literal('resource-pool')), resource: f.get('resource', resourceR), size: f.get('size', positive) })),
@@ -286,7 +286,7 @@ export const flowPreimage: Read<FlowPreimage> = tagged('lever', {
     lever: f.get('lever', literal('suite-lane')), lane: f.get('lane', laneR), argv: f.get('argv', arrayOf(str, { nonEmpty: true })), cpu: f.get('cpu', nullable(positive)),
   })),
   sequence: object((f): FlowPreimage => ({ lever: f.get('lever', literal('sequence')), unit: f.get('unit', unitR), priority: f.get('priority', nullable(oneOf(UNIT_PRIORITIES))) })),
-  'build-class': object((f): FlowPreimage => ({ lever: f.get('lever', literal('build-class')), tier: f.get('tier', riskTier), class: f.get('class', nullable(modelClass)) })),
+  'build-class': object((f): FlowPreimage => ({ lever: f.get('lever', literal('build-class')), tier: f.get('tier', riskTier), class: f.get('class', nullable(buildClass)) })),
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -381,7 +381,7 @@ export type LeverState =
   | Readonly<{ lever: 'resource-pool'; resource: ResourceName; size: number }>
   | Readonly<{ lever: 'suite-lane'; lane: LaneId; argv: readonly string[]; cpu: number | null }>
   | Readonly<{ lever: 'sequence'; unit: UnitId; priority: UnitPriority }>
-  | Readonly<{ lever: 'build-class'; tier: RiskTier; class: ModelClass; builtin: ModelClass }>;
+  | Readonly<{ lever: 'build-class'; tier: RiskTier; class: BuildClass; builtin: BuildClass }>;
 const leverState: Read<LeverState> = tagged('lever', {
   concurrency: object((f): LeverState => ({ lever: f.get('lever', literal('concurrency')), cpu: f.get('cpu', positive), set: f.get('set', bool), hostCpus: f.get('hostCpus', positive) })),
   'resource-pool': object((f): LeverState => ({ lever: f.get('lever', literal('resource-pool')), resource: f.get('resource', resourceR), size: f.get('size', positive) })),
@@ -390,7 +390,7 @@ const leverState: Read<LeverState> = tagged('lever', {
   })),
   sequence: object((f): LeverState => ({ lever: f.get('lever', literal('sequence')), unit: f.get('unit', unitR), priority: f.get('priority', oneOf(UNIT_PRIORITIES)) })),
   'build-class': object((f): LeverState => ({
-    lever: f.get('lever', literal('build-class')), tier: f.get('tier', riskTier), class: f.get('class', modelClass), builtin: f.get('builtin', modelClass),
+    lever: f.get('lever', literal('build-class')), tier: f.get('tier', riskTier), class: f.get('class', buildClass), builtin: f.get('builtin', buildClass),
   })),
 });
 
@@ -554,7 +554,7 @@ const actionOutput: Read<FlowAction> = tagged('lever', {
     );
   }),
   sequence: object((f): FlowAction => ({ lever: f.get('lever', literal('sequence')), unit: f.get('unit', unitR), priority: f.get('priority', literal('high')) })),
-  'build-class': object((f): FlowAction => ({ lever: f.get('lever', literal('build-class')), tier: f.get('tier', riskTier), class: f.get('class', modelClass) })),
+  'build-class': object((f): FlowAction => ({ lever: f.get('lever', literal('build-class')), tier: f.get('tier', riskTier), class: f.get('class', buildClass) })),
   host: object((f): FlowAction => ({ lever: f.get('lever', literal('host')), note: f.get('note', str) })),
 });
 

@@ -19,7 +19,7 @@ import { canonicalJson } from '../core/json.ts';
 import { type PlanM1, visionFile } from '../input/plan.ts';
 import { laneCpu } from '../resources/pool.ts';
 import { BUILTIN_SEATS } from '../routing/profiles.ts';
-import { MODEL_CLASSES, ROLES, type RiskTier } from '../routing/types.ts';
+import { BUILD_CLASSES, ROLES, type RiskTier } from '../routing/types.ts';
 import {
   type FlowAction, type FlowDropReason, type FlowDropped, type FlowLever, type FlowMetric, type FlowPreimage,
   type FlowProposal, type FlowWindow, type GivenInForce, type HostFingerprint, type LeverState, type Rejection, type RejectionKey,
@@ -318,9 +318,9 @@ export function checkProposal(proposal: FlowProposal, context: ProposalContext):
     case 'build-class': {
       const state = context.levers.find((l): l is Extract<LeverState, { lever: 'build-class' }> => l.lever === 'build-class' && l.tier === action.tier);
       if (state === undefined) throw new Error(`checkProposal: the lever catalogue has no build-class row for tier ${action.tier}`);
-      const step = MODEL_CLASSES.indexOf(action.class) - MODEL_CLASSES.indexOf(state.class);
+      const step = BUILD_CLASSES.indexOf(action.class) - BUILD_CLASSES.indexOf(state.class);
       if (Math.abs(step) !== 1) return drop('build-class-step', `${state.class} → ${action.class} is not one class step`);
-      if (MODEL_CLASSES.indexOf(action.class) < MODEL_CLASSES.indexOf(builtinBuildClass(action.tier))) {
+      if (BUILD_CLASSES.indexOf(action.class) < BUILD_CLASSES.indexOf(builtinBuildClass(action.tier))) {
         return drop('build-class-step', `${action.class} is below the built-in ${builtinBuildClass(action.tier)} for build.${action.tier}`);
       }
       return null;

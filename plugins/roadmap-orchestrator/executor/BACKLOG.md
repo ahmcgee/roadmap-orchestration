@@ -142,6 +142,12 @@ at triage stay in git history.
 - A look at the plant counts a Read of its file or `.diff` and a Grep that showed it, in any session; a Glob listing or a
   subagent's summary does not. Revisit if a real run grades a legitimate catch `lucky`.
 - Rotate the holdout classes after each acceptance that used them (a holdout seen in a failure analysis is half spent).
+- Plan-check tiers (2026-10-17): the gate took a risk ladder (economy/Haiku low, efficient/Sonnet med, frontier/Opus
+  high), the plan-check kept efficient low and med, frontier high. Trigger: a plan-check role eval exists to measure Haiku
+  at its low seat; then decide the plan-check ladder the same way (`--risk` arms, `--rebind` comparisons).
+- Haiku gate effort: economy binds Haiku 5.5 at `high` (the Haiku 5.5 guide); our closed-checklist chunk experiment ran it
+  at `medium`. Trigger: the paid gate role eval's `--rebind economy=claude-haiku-5-5:medium` arm matches `high`'s catch
+  rate at lower cost, then move the binding.
 
 ## Convergence and integrity (unscheduled, wanted)
 
@@ -432,9 +438,12 @@ at triage stay in git history.
 - `laneTestPathsUndeclared` and `witnessFilesUndeclared` (src/core/upgrade.ts) with Phase-0 row 11's undeclared arm
   (src/phase0/rows.ts `witnessDefects`), once no arc started on 1.0.0-dev.10 is in flight: obligations that declare no
   witness files read as undeclared. With them, `testPaths` and `files` become required in the readers.
-- `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) with status's `preDev10RevAlias` and `resolveRoutingUnder`
-  (src/routing/layers.ts), once no arc started on 1.0.0-dev.9 is in flight: the built-in seats before the efficient
-  class took the low-risk judgments (2026-10-15), kept only so `status` joins an earlier executor's recorded routing revs.
+- `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) and its place in `EARLIER_BUILTIN_SEATS`, once no arc started on
+  1.0.0-dev.9 is in flight: the built-in seats before the efficient class took the low-risk judgments (2026-10-15), kept
+  only so `status` joins an earlier executor's recorded routing revs (`earlierRevAliases`, src/status.ts).
+- `PRE_DEV12_BUILTIN_SEATS` (src/core/upgrade.ts) and its place in `EARLIER_BUILTIN_SEATS`, once no arc started on
+  1.0.0-dev.11 is in flight: the built-in seats before the gate risk ladder (dev.10 and dev.11's). With both gone,
+  `EARLIER_BUILTIN_SEATS`, status's `earlierRevAliases` and `resolveRoutingUnder` (src/routing/layers.ts) go too.
 - `lensPatchMutantDefault` (src/core/upgrade.ts) and `LensMutant`'s `kind: patch` arm with `admitMutant`'s `checkPatch`
   branch, once no audit an executor before paid M4b run 3's fix started is running: a recorded lens answer's mutant
   `{patch, lane}` (a hand-written diff) reads as written. With it, a lens mutant is edits only.

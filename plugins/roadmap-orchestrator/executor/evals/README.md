@@ -31,7 +31,8 @@ node evals/probe.ts [--profile default|claude-only]
 
 Runs the production argv builder, runner and adapter against the real `claude` and `codex` (both must be on
 PATH and logged in): the backend smoke, Codex fresh and resume, a real shell lane, the Claude judgment and
-implementer argvs, the Fable id pin, and (M3) one real call each of the lens, checkpoint and vision-aware plan-check
+implementer argvs, the Fable id pin, the economy class (dev.12: the default gate.low binding, Haiku 5.5 high, one call under
+the Haiku gate prompt module's system prompt), and (M3) one real call each of the lens, checkpoint and vision-aware plan-check
 prompt modules over tiny fixtures on their own seats (since 1.0.0-dev.10 the lens and med plan-check seats are the efficient
 class, Sonnet 5.5 high, as is the Claude smoke on planCheck.low); (M4a) the forge functions read-only against the real repository
 (identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
@@ -44,7 +45,7 @@ two-file product, `--test-concurrency=1` to `=2` under the node-test reporter: `
 `gate.bounded`) one real gate through the production gate stage as the gate role eval drives it (below), on a tiny generated repo whose
 regenerated golden (a derived output) is not inlined: the answer validates, a not-inlined file is read or grepped in the main session or a
 subagent, the init event lists Agent, `result.modelUsage` is present and sums to `total_cost_usd` (it needs the merged dev.12 tree: the bounded
-gate diff and the Agent tool; an Opus medium gate over a 50 KB prompt, about $0.35). Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
+gate diff and the Agent tool; a med-risk gate, Sonnet 5.5 high since dev.12, over a 50 KB prompt). Prints `PASS|FAIL <check> <detail>` per check and `USAGE` lines, keeps
 its run dir for inspection, and exits non-zero on any FAIL. Cost: pennies. `--profile claude-only` (default `default`, unchanged)
 is for hosts without Codex: every Codex check (`smoke.codex`, `codex.fresh`, `codex.resume`, `codex.killed-resume`,
 `effort.codex.*`) prints `NOT RUN (claude-only profile) <check>`, which is neither a pass nor a fail; the exit status ignores
@@ -475,7 +476,7 @@ what it must and how often it cries wolf, at what cost. The gate is the first ro
 Agent tool).
 
 ```sh
-node evals/roles/run.ts gate --set dev --n 3 [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] [--out <dir>]
+node evals/roles/run.ts gate --set dev --n 3 [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] [--rebind <class>=<model>:<effort>] [--out <dir>]
 node evals/roles/run.ts gate --set holdout --n 3 --compare <dev run>/summary.json      # acceptance only
 node evals/roles/triggers.ts <base>                                                    # from executor/: the roles a branch triggers
 ```
@@ -492,7 +493,14 @@ which execs the real `claude` (the first on PATH after the shims) with the call'
 passes its stdout and exit status through. So the eval tests the production prompt, capture, bounded diff, tools and
 add-dirs byte for byte, with no test seam in production code. A repair turn or a retry gets up to two more real calls.
 Each trial runs in its own worker process (`trial.ts`) under a 60-minute timeout; `--risk` sets the plan's and the
-plan-check's risk, which picks the gate's seat (`low` efficient, `med` and `high` frontier).
+plan-check's risk, which picks the gate's seat (`low` economy: Haiku 5.5 high; `med` efficient: Sonnet 5.5 high; `high`
+frontier: Opus 5.5 medium).
+
+**Arms.** `--risk` picks the arm's seat; `--rebind <class>=<model>:<effort>` (repeatable) rebinds a class for the run
+through the production mechanism, the repo config's `routing.classes`, which the trial arc resolves its routing under
+(e.g. `--risk low --rebind economy=claude-opus-5-5:medium` puts Opus on the low seat; a model with no gate prompt is
+refused before any trial). The report's `ARM` line and `summary.json`'s `arm` name the seat, its class and the
+model:effort serving it (`gate.low economy claude-haiku-5-5:high`); the `holdout-gap` criterion names both runs' arms.
 
 **The fixture** (`gen/`): a seeded synthetic TypeScript monorepo (`gen/tsrepo.ts`, word-list names,
 `packages/<pkg>/src/<mod>.ts`, a tenth under `legacy/`, a shared `measure.ts` with a helper and its same-signature sibling,

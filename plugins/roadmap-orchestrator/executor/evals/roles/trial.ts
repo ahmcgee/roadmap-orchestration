@@ -2,6 +2,7 @@
 // Trace and brake lines go to stdout; the trial's row is <out>/row.json. Its scratch dirs (repo, worktrees, arc run dir)
 // are removed when it exits 0 (test/helpers/repo.ts tmpDir); its artifacts stay in <out>.
 import { enableCompileCache } from 'node:module';
+import type { RepoConfig } from '../../src/routing/layers.ts';
 import type { RiskTier } from '../../src/routing/types.ts';
 import type { GateKind } from './gate/arc.ts';
 import type { CellSet } from './gate/cells.ts';
@@ -15,6 +16,8 @@ export type WorkerArgs = Readonly<{
   size: number;
   gate: GateKind;
   risk: RiskTier;
+  /** The repo config of `--rebind` (`routing.classes`), or null. */
+  config: RepoConfig | null;
   out: string;
   medianLoad: number | null;
 }>;

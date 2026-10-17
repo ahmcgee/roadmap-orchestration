@@ -164,10 +164,11 @@ registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the e
 unknown keys refused; read at `start`. `flow.givens` are the owner's repo givens, never yours to add. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
 effort}` and is the only place a model is named (ids in `executor/src/routing/models.ts`). A rebind applies at every seat
 that names the class, judgment seats included: a Codex triple there is refused `unsupported-routing{codex-judgment}`, so
-move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `efficient` builds low
-and med, plan-checks low and med, gates low, and runs the lenses and flow; `frontier` builds high, plan-checks high, gates
-med and high, and runs the pack review; `summit` holds both escalation seats and the checkpoint. A class binds a build
+move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `economy` gates low; `efficient`
+builds low and med, plan-checks low and med, gates med, and runs the lenses and flow; `frontier` builds high, plan-checks
+high, gates high, and runs the pack review; `summit` holds both escalation seats and the checkpoint. A class binds a build
 model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
+`economy` (Haiku) is judgment-only: no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`.
 
 **Run dir** `$(git rev-parse --path-format=absolute --git-common-dir)/roadmap-runtime/<arc>/`. Read, never write:
 
@@ -257,9 +258,8 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
 - `edges[]` (`after{unit, on, effective, met}`, `contingent{unit, edge, condition, resolved}`), `runOnly`.
 - `commands{pending[{id, type}], receipts}` (the last 10 terminal receipts).
 - `spend{byRole, byModel{models, unresolvedRevs}, byClass{classes, unresolvedRevs}, byJob, bySmoke}`: token totals and
-  list-price cost. A Claude call's totals include its subagents'; `byClass` splits spend by usage class (`efficient`,
-  `frontier`, `summit`, and `economy` for Haiku subagents): each seat's own share on its class, subagent spend on the
-  subagent model's class. `byModel` counts each seat's own share and is the only place `status` names a model.
+  list-price cost. A Claude call's totals include its subagents'; `byClass` splits spend by class (`efficient`, `frontier`,
+  `summit`, `economy`): each seat's own share on its class, subagent spend on the subagent model's class (Haiku economy). `byModel` counts each seat's own share and is the only place `status` names a model.
 - `host{containment, resources, pools, queue, probes, backends, log{bytes, events, foldMs, compactionDue}}`,
   `parkedBackends`, `rejection`.
 - `timings[{stage, count, p50Ms, maxMs}]`: completed attempts per stage.

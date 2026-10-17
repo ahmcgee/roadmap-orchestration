@@ -133,9 +133,9 @@ describe('meter', () => {
     const economy: ClassUsage = { class: 'economy', inputTokens: 10, outputTokens: 5, cacheReadTokens: 100, cacheWriteTokens: 20, costUsd: 0.01 };
     const frontier: ClassUsage = { class: 'frontier', inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 10, costUsd: 0.1 };
     const log = [
-      // gate.low sits on efficient; its subagents spent on economy (Haiku) and frontier (Opus).
+      // gate.low sits on economy (Haiku 5.5, 1.0.0-dev.12); its subagents spent on economy (Haiku) and frontier (Opus).
       factEvent({ kind: 'meter', inv: inv(1), routingRev: rev, subject: seat('gate', 'low', U1, 1), usage: tokens(111, 56, 1100, 230, 4, 1.11), session: S1, delegated: [frontier, economy] }),
-      // gate.med sits on frontier; nothing delegated.
+      // gate.med sits on efficient (Sonnet 5.5); nothing delegated.
       factEvent({ kind: 'meter', inv: inv(2), routingRev: rev, subject: seat('gate', 'med', U2, 1), usage: tokens(50, 5, 0, 0, 2, 0.5), session: S2, delegated: [] }),
     ];
     const m = meterOf(log);
@@ -146,10 +146,11 @@ describe('meter', () => {
     ]);
     const classes = byClass(m, new Map([[rev, def.classes]]));
     assert.deepEqual(classes.map((c) => [c.class, c.input, c.output, c.cacheRead, c.cacheWrite, Number(c.costUsd.toFixed(6))]), [
-      ['efficient', 100, 50, 1000, 200, 1], ['frontier', 51, 6, 0, 10, 0.6], ['economy', 10, 5, 100, 20, 0.01],
+      // economy holds gate.low's own share and its Haiku subagent's alike: a seat's own class and a delegated class are one bucket.
+      ['efficient', 50, 5, 0, 0, 0.5], ['frontier', 1, 1, 0, 10, 0.1], ['economy', 110, 55, 1100, 220, 1.01],
     ]);
-    // byModel counts a seat's own share on the seat's model: Sonnet (efficient) 100 input, Opus (frontier gate.med) 50.
-    assert.deepEqual(byModel(ownShare(m), new Map([[rev, def.table]])).map((x) => [x.model, x.input]), [['claude-opus-5-5', 50], ['claude-sonnet-5-5', 100]]);
+    // byModel counts a seat's own share on the seat's model: Haiku (economy gate.low) 100 input, Sonnet (efficient gate.med) 50.
+    assert.deepEqual(byModel(ownShare(m), new Map([[rev, def.table]])).map((x) => [x.model, x.input]), [['claude-haiku-5-5', 100], ['claude-sonnet-5-5', 50]]);
     assert.throws(() => byClass(m, new Map()), /no class table for revision/);
     assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
   });

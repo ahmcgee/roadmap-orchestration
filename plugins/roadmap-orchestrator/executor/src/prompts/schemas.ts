@@ -35,7 +35,7 @@ import {
 import type { MutantEdit } from '../git/mutant.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
-  JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
+  BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
 } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -808,7 +808,7 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
           const g = new Fields(v, p);
           const role = g.get('role', oneOf(ROLES));
           const tier = g.get('tier', oneOf(SEATS[role] as readonly Seat[]));
-          const out = { role, tier, class: g.get('class', oneOf(MODEL_CLASSES)) };
+          const out = { role, tier, class: g.get('class', classAt(role)) };
           g.end();
           return out;
         }, { nonEmpty: true })),
@@ -940,7 +940,7 @@ export const FLOW_SCHEMA: Schema = sObj({
         sObj({ lever: sEnum(['resource-pool']), resource: S_STR, size: S_INT }),
         sObj({ lever: sEnum(['suite-lane']), lane: S_STR, argv: sNullable(sArr(S_STR)), reporter: sNullable(sEnum(FLOW_REPORTERS)), cpu: sNullable(S_INT) }),
         sObj({ lever: sEnum(['sequence']), unit: S_STR, priority: sEnum(['high']) }),
-        sObj({ lever: sEnum(['build-class']), tier: sEnum(RISK_TIERS), class: sEnum(MODEL_CLASSES) }),
+        sObj({ lever: sEnum(['build-class']), tier: sEnum(RISK_TIERS), class: sEnum(BUILD_CLASSES) }),
         sObj({ lever: sEnum(['host']), note: S_STR }),
       ],
     },

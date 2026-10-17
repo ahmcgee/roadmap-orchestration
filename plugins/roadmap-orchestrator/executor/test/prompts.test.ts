@@ -13,7 +13,7 @@ import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
-import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
+import { HAIKU_FINISH, PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
 import { BUILD_DELEGATION, JUDGE_DELEGATION } from '../src/prompts/delegation.ts';
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
@@ -444,6 +444,20 @@ describe('prompts', () => {
       assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5', `${role}/fable: inherits Opus`);
     }
     assert.equal(promptFor('build', 'claude-sonnet-5-5'), promptFor('build', 'claude-opus-5-5'), 'the Sonnet build reads the Opus brief unchanged');
+  });
+
+  it('prompts.haiku: every judgment role resolves for Haiku 5.5 (economy, 1.0.0-dev.12): the Opus module with the finish-the-review lines ending its system prompt; no Haiku build prompt', () => {
+    for (const role of ROLES.filter((r) => r !== 'build')) {
+      const opus = promptFor(role, 'claude-opus-5-5');
+      const s = PROMPTS[role]['claude-haiku-5-5'];
+      assert.ok(s.type === 'prompt', `${role}/haiku: a module of its own`);
+      assert.equal(s.prompt.system, `${opus.system}\n\n${HAIKU_FINISH}`, `${role}/haiku: the Opus system prompt, then the lines`);
+      assert.equal(s.prompt.render, opus.render, `${role}/haiku: the Opus message`);
+      assert.equal(s.prompt.schema, opus.schema, role);
+      assert.doesNotMatch(s.prompt.system, new RegExp(SONNET_THINK_FIRST), `${role}/haiku: Sonnet's line is Sonnet's guide's`);
+    }
+    for (const needle of [/every part of what you were asked to judge/, /give your one answer and stop/, /Report as read only what you actually read/]) assert.match(HAIKU_FINISH, needle);
+    assert.throws(() => promptFor('build', 'claude-haiku-5-5'), (e: unknown) => e instanceof UnsupportedPromptError && /economy, is judgment-only/.test(e.message));
   });
 
   it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => {

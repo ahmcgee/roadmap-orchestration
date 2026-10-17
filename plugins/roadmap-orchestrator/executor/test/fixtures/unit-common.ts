@@ -21,7 +21,7 @@ import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
 import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
-import { resolveRouting } from '../../src/routing/layers.ts';
+import { type RepoConfig, arcStack, resolveRouting } from '../../src/routing/layers.ts';
 import type { RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
@@ -63,6 +63,8 @@ export type ArcDescriptor = Readonly<{
   binDir: string;
   scenarioPath: string;
   scenarioDir: string;
+  /** The repo config the arc resolves its routing under, as `.roadmap/config.json` holds it once parsed; absent: none. */
+  config?: RepoConfig;
 }>;
 
 /** A lane as plan and spec files carry it, defaults filled. */
@@ -119,9 +121,9 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
   if (journal.view.planApplied() === null) {
-    recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo));
+    recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo), 'default', d.config ?? null);
   }
-  const routing = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' });
+  const routing = resolveRouting({ ...arcStack('default', d.config ?? null, null), arcRoles: 'm4b' });
   const resources = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan: () => plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
@@ -132,7 +134,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
     hostEnv: { ...process.env, PATH: `${d.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(join(d.planPath, '..')),
     planFile: absPath(d.planPath),
-    routingBase: { profile: 'default', config: null, arcRoles: 'm4b' },
+    routingBase: { profile: 'default', config: d.config ?? null, arcRoles: 'm4b' },
     ...serialRuntime(resources),
   };
   const unit = (id: string): PlanUnit => {
