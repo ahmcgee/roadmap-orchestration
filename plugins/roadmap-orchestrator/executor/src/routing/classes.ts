@@ -56,12 +56,15 @@ export function boundAt(binding: ClassBinding, role: Role): Triple {
  * session's own model is metered to its seat's class instead (meter.ts), which is why Opus 5.5, bound by frontier and
  * summit alike, can sit here under one: frontier, the class it binds at its own default effort. Fable 5.1 binds no class
  * (a repo rebind reaches it) and is the costliest model a subagent can pick: summit, the strongest class. Static, unlike
- * the bindings: a repo rebind moves seats, not where a subagent's spend is counted.
+ * the bindings: a repo rebind moves seats, not where a subagent's spend is counted. The CLI also spends on a model of its
+ * own choosing with no subagent started: an Opus 5.5 judgment's `modelUsage` named `claude-opus-4-8` beside its own model
+ * (Claude Code 2.1.301, the dev.12 probe, about as much as the session itself), metered as frontier, an Opus-tier model.
  */
 export const DELEGATE_CLASSES = {
   'claude-haiku-5-5': 'economy',
   'claude-sonnet-5-5': 'efficient',
   'claude-opus-5-5': 'frontier',
+  'claude-opus-4-8': 'frontier',
   'claude-fable-5-1': 'summit',
 } as const satisfies Readonly<Record<string, UsageClass>>;
 
