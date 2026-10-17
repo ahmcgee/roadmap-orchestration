@@ -5,9 +5,9 @@
 //                           [--risk low|med|high] [--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <dev summary.json>]
 //                           [--fake approve-all|revise-all|cite-every-path|cite-plant]
 //
-// The arm: `--risk` picks the gate seat (built-in: low economy/Haiku 5.5, med efficient/Sonnet 5.5, high frontier/Opus 5.5)
+// The arm: `--risk` picks the gate seat (built-in: low and med efficient/Sonnet 5.5, high frontier/Opus 5.5)
 // and `--rebind` (repeatable) rebinds a class for the run through the production mechanism, the repo config's
-// `routing.classes` (e.g. `--risk low --rebind economy=claude-opus-5-5:medium` runs Opus on the low seat). The ARM line,
+// `routing.classes` (e.g. `--risk low --rebind efficient=claude-opus-5-5:medium` runs Opus on the low seat). The ARM line,
 // summary.json's `arm` and the compare criterion name the seat, its class and the model:effort serving it.
 //
 // Writes <out>/trials.jsonl (one row per trial, as each finishes), <out>/summary.json and <out>/<cell>-<trial>/ (key.json,

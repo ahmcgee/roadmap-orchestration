@@ -17,7 +17,7 @@
 // Both releases schedule a DAG and keep every M3, M4a and M4b record, so their arcs run on HEAD as they ran on
 // them; an arc started without the holistic layer runs with M2 semantics and no new spend unless the architect opts
 // in. Their role sets and pressure records are HEAD's; their seat tables are not (HEAD's gate risk ladder, 1.0.0-dev.12,
-// moved gate.low and gate.med), so under OR-L3 their units re-pin under HEAD's rev without a park and status aliases
+// moved gate.med), so under OR-L3 their units re-pin under HEAD's rev without a park and status aliases
 // the revs they recorded (PRE_DEV12_BUILTIN_SEATS).
 //
 // What both record differently from 1.0.0-dev.12: their judgments ran without the Agent tool and, but for
@@ -1206,7 +1206,7 @@ test('upgrade.routing-stable: an arc the previous release started keeps its role
   assert.deepEqual(rev2.routingProvenance.arcRoles, rev1.routingProvenance.arcRoles, 'HEAD\'s revision carries the role set the previous release recorded');
   const stack = provenanceStack(rev2.routingProvenance, 'none', null);
   const resolved = resolveRouting(stack);
-  // OR-L3 binds every revision through HEAD's seat table, which moved gate.low and gate.med (the gate risk ladder,
+  // OR-L3 binds every revision through HEAD's seat table, which moved gate.med (the gate risk ladder,
   // 1.0.0-dev.12): the seats the previous release hashed reproduce its rev, HEAD's give another.
   assert.ok(revs.has(resolveRoutingUnder(PRE_DEV12_BUILTIN_SEATS, stack).rev), 'under the seats the previous release hashed, HEAD resolves the rev it recorded');
   assert.ok(!revs.has(resolved.rev), 'HEAD\'s seat table moved the rev');

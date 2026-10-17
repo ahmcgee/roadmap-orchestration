@@ -81,7 +81,7 @@ export const SEAT_REFS: readonly SeatRef[] = ROLES.flatMap((r) => SEATS[r].map((
 export const BUILD_CLASSES = ['efficient', 'frontier', 'summit'] as const;
 export type BuildClass = (typeof BUILD_CLASSES)[number];
 /**
- * Every class: the build classes and (1.0.0-dev.12) `economy`, a judgment-only class (Haiku 5.5, the low-risk gate). A
+ * Every class: the build classes and (1.0.0-dev.12) `economy`, a judgment-only class (Haiku 5.5; no built-in seat names it, owner 2026-10-17). A
  * build seat names a `BuildClass` by type (`ClassOf`), so economy at a build seat is unrepresentable. These are also the
  * classes a call's usage is metered to: a seat's own share on its seat's class, a subagent's on its model's family
  * (classes.ts `DELEGATE_CLASSES`). Recorded per-class usage lists keep this order (records.ts), so a class is only ever

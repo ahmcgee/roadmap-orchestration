@@ -77,7 +77,7 @@ function gateSteps(kind: GateKind, key: AnswerKey): readonly Step[] {
 /**
  * The arm a run measures: the gate seat its risk picks, the class there and the triple that class binds under the run's
  * repo config (the production routing stack: built-in seats, the `default` profile's catalogue, `routing.classes`
- * rebinds), e.g. `gate.low economy claude-haiku-5-5:high`.
+ * rebinds), e.g. `gate.low efficient claude-sonnet-5-5:high`.
  */
 export function gateArm(risk: RiskTier, config: RepoConfig | null): string {
   const r = resolveRouting(arcStack('default', config, null));
@@ -266,7 +266,7 @@ export type TrialOptions = Readonly<{
   seed: string;
   size: number;
   gate: GateKind;
-  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (built-in: low economy, med efficient, high frontier). */
+  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (built-in: low and med efficient, high frontier). */
   risk: RiskTier;
   /** The repo config whose `routing.classes` rebinds classes for the trial (run.ts `--rebind`), or null: the built-in bindings. */
   config: RepoConfig | null;

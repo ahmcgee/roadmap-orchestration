@@ -259,7 +259,8 @@ test('dispatch.dev9-adopted: a unit dispatched and built under the built-in seat
   assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' }, 'gate.med moves to efficient (the 1.0.0-dev.12 gate ladder)');
 });
 
-// The gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): gate.low moved to economy, gate.med to efficient.
+// The gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): gate.med moved to efficient; gate.low stays efficient
+// (it moved to economy, then reverted after the paid gate role eval).
 
 test('dispatch.dev11-adopted: a unit dispatched and built under the seats 1.0.0-dev.10 and dev.11 hashed re-pins under HEAD\'s without a park, its build resumes, and its med gate moves from Opus medium to Sonnet high', T, async () => {
   const run = setupUnit({

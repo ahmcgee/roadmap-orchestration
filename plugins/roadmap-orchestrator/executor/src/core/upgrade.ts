@@ -234,8 +234,8 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   flow: { arc: 'frontier' },
 };
 
-// Gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): the built-in seats moved gate.low to economy (Haiku 5.5)
-// and gate.med to efficient (Sonnet 5.5). As with efficient judgment above, OR-L3 binds every revision through HEAD's
+// Gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): the built-in seats moved gate.med to efficient (Sonnet
+// 5.5); gate.low stays efficient (it moved to economy, then reverted after the paid gate role eval). As with efficient judgment above, OR-L3 binds every revision through HEAD's
 // seats: an arc started on 1.0.0-dev.10 or dev.11 re-pins its units under the new rev without a park and judges under
 // the ladder from then on, and status aliases the revs it recorded. Delete (with `PRE_DEV12_BUILTIN_SEATS`'s place in
 // `EARLIER_BUILTIN_SEATS`) once no arc started on 1.0.0-dev.11 is in flight.
@@ -243,7 +243,7 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
 /**
  * The built-in seats 1.0.0-dev.10 and dev.11 hashed: efficient gated low, frontier med. Kept only so `status` can join such
  * a meter row's recorded `routingRev` to its revision's current table; nothing routes under it. The economy class did not
- * exist then, and these seats name only classes whose bindings HEAD's catalogue keeps, so HEAD resolves them to the
+ * exist then (no built-in seat names it now either), and these seats name only classes whose bindings HEAD's catalogue keeps, so HEAD resolves them to the
  * triples dev.11 hashed.
  */
 export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {

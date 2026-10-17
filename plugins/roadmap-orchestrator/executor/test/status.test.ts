@@ -158,7 +158,7 @@ describe('status.subset', () => {
     assert.equal(s.rejection, null);
     // The routing view: classes per seat, the layer that chose each and where each class is bound; no model.
     assert.equal(s.routing?.profile, 'default');
-    assert.deepEqual(s.routing?.seats.gate, { low: 'economy', med: 'efficient', high: 'frontier', escalation: 'summit' });
+    assert.deepEqual(s.routing?.seats.gate, { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' });
     assert.deepEqual(s.routing?.seats.planCheck, { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' });
     assert.deepEqual(s.routing?.seats.build, { low: 'efficient', med: 'efficient', high: 'frontier' });
     assert.equal(s.routing?.sources.planCheck.escalation, 'builtin');

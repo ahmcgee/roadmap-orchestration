@@ -16,15 +16,17 @@
 // Anthropic's Opus 5.5 effort guidance: `medium` is the model's own default, and
 // `xhigh` is the level for the hardest coding and agentic work, which is where a judgment escalates to summit.
 //
-// economy (owner direction 2026-10-17, 1.0.0-dev.12): a judgment-only class, Haiku 5.5, holding the low-risk gate. It binds
+// economy (owner direction 2026-10-17, 1.0.0-dev.12): a judgment-only class, Haiku 5.5. It held the low-risk gate until the
+// paid gate role eval (2026-10-17) failed it there (clean-cell false alarms); no built-in seat names it now, and it is kept,
+// reachable by a repo, plan or route rebind or seat assignment, for a retry (BACKLOG "Haiku at the low-risk gate: retry"). It binds
 // no build triple (`JudgmentClassBinding`), and a build seat names a `BuildClass` by type. Effort `high`: Anthropic's
 // "Prompting Claude Haiku 5.5" names `high` for "knowledge work, longer agent tasks, and strict instruction following"
 // and warns that at `low`, in long agent prompts, the model is more likely to skip a search, stop early or skip a check.
 // A gate is a long read-heavy session ending in a strict schema-bound verdict, so it takes `high` over the `medium` default.
 // Our 2026-10-17 experiment ran Haiku 5.5 at `medium` on a narrower task, a closed checklist of 290 files: 6/6 plants caught,
 // 0 false alarms, ~$0.45 a chunk, but one run claimed 290/290 files read when its trace showed 284. The open gate session
-// is longer and less guided than that chunk, which is where the guide places `high`; the paid gate role eval after merge
-// decides (`--risk low`, `--rebind economy=claude-haiku-5-5:medium` for the comparison arm).
+// is longer and less guided than that chunk, which is where the guide places `high`. The eval ran Haiku on the low seat at
+// `high` (4/12 clean-cell false alarms) and `medium` (1/9); a retry rebinds a seat's class to it (`--rebind`).
 //
 // Owner ruling OR-L3: there are no routing generations; this catalogue applies retroactively to every plan revision.
 // Fable 5.1 keeps its model entry and prompt modules and is reached only by a repo rebind. GPT-5.6 Sol has no class of

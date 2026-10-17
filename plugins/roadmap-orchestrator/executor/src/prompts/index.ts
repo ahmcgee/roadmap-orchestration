@@ -45,8 +45,8 @@ const HAIKU_FINISH = [
 
 /**
  * The Haiku 5.5 module of a judgment role: the role's Opus module with HAIKU_FINISH at the end of its system prompt, so
- * every edit to the shared Opus text reaches the Haiku seat unchanged. Haiku 5.5 judges on the economy class (owner
- * direction 2026-10-17: the low-risk gate) at effort `high` (classes.ts). Anthropic's "Prompting Claude Haiku 5.5"
+ * every edit to the shared Opus text reaches the Haiku seat unchanged. Haiku 5.5 judges on the economy class at effort
+ * `high` (classes.ts), which no built-in seat names since the 2026-10-17 gate eval (kept for a retry at the low-risk gate). Anthropic's "Prompting Claude Haiku 5.5"
  * (2026-10-17): with a long agent system prompt the model sometimes stops before the work is done; its suggested text
  * ("keep working until everything the user asked for is done ... when the work is done and checked, stop and report;
  * don't add what wasn't asked for") is adapted here to a read-only reviewer, whose work is reading and judging every

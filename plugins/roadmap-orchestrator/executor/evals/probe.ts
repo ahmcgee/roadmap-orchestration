@@ -20,7 +20,8 @@
 //   claude.build.fresh/resume  claude-opus-5-5 (effort high) implementer argv: writes a file (bypassPermissions), then
 //                       the resumed session recalls it
 //   fable.pin           claude-fable-5-1 resolves: one judgment call that returns {ok: true}
-//   routing.economy / economy.judgment  (1.0.0-dev.12) the default table's gate.low is the economy class, claude-haiku-5-5 high;
+//   routing.economy / economy.judgment  (1.0.0-dev.12) the economy class's judgment binding in the default profile is
+//                       claude-haiku-5-5 high (no built-in seat names it since the 2026-10-17 gate eval; kept for a retry);
 //                       one judgment call on that triple under the Haiku gate prompt module's system prompt returns {ok: true}
 //   sonnet.build        claude-sonnet-5-5 (effort medium, claude-only's efficient class) implementer argv:
 //                       writes a file (bypassPermissions) and returns {ok: true}
@@ -114,6 +115,7 @@ import {
   type BackendInvocation, type InvocationContext, type Invoked, SMOKE_SCHEMA, backendEnv, invokeBackend, invokeCommand, smoke, smokeRejections,
 } from '../src/preflight/smoke.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
+import { boundAt } from '../src/routing/classes.ts';
 import { arcStack, resolveRouting, type ResolvedRouting } from '../src/routing/layers.ts';
 import { type Backend, type JudgmentRole, type Role, type JudgmentSeat, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
@@ -439,10 +441,11 @@ async function main(): Promise<void> {
     request: { kind: 'claude-judgment', role: 'planCheck', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
   }, isOk);
 
-  // The economy class (1.0.0-dev.12): the default table's gate.low binding launches through the Haiku gate prompt module
-  // (its system prompt, the seat's own triple) and answers a strict schema.
-  const economy = resolved.table.gate.low;
-  report(economy.backend === 'claude' && economy.model === 'claude-haiku-5-5' && economy.effort === 'high', 'routing.economy', `gate.low=${JSON.stringify(economy)}`);
+  // The economy class (1.0.0-dev.12): its judgment binding, which no built-in seat names (a rebind or seat assignment
+  // reaches it), launches through the Haiku gate prompt module (its system prompt, the class's triple) and answers a
+  // strict schema.
+  const economy = boundAt('default', 'economy', 'gate');
+  report(economy.backend === 'claude' && economy.model === 'claude-haiku-5-5' && economy.effort === 'high', 'routing.economy', `economy=${JSON.stringify(economy)}`);
   if (economy.backend === 'claude') {
     await backend(ctx, 'economy.judgment', {
       check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('gate', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',

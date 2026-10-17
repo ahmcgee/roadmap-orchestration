@@ -142,12 +142,25 @@ at triage stay in git history.
 - A look at the plant counts a Read of its file or `.diff` and a Grep that showed it, in any session; a Glob listing or a
   subagent's summary does not. Revisit if a real run grades a legitimate catch `lucky`.
 - Rotate the holdout classes after each acceptance that used them (a holdout seen in a failure analysis is half spent).
-- Plan-check tiers (2026-10-17): the gate took a risk ladder (economy/Haiku low, efficient/Sonnet med, frontier/Opus
-  high), the plan-check kept efficient low and med, frontier high. Trigger: a plan-check role eval exists to measure Haiku
-  at its low seat; then decide the plan-check ladder the same way (`--risk` arms, `--rebind` comparisons).
-- Haiku gate effort: economy binds Haiku 5.5 at `high` (the Haiku 5.5 guide); our closed-checklist chunk experiment ran it
-  at `medium`. Trigger: the paid gate role eval's `--rebind economy=claude-haiku-5-5:medium` arm matches `high`'s catch
-  rate at lower cost, then move the binding.
+- **Haiku at the low-risk gate: retry.** The paid gate role eval (2026-10-17, dev set, n 3, `--risk low`) failed Haiku 5.5
+  (economy) at gate.low: 4/12 false alarms on clean cells at effort `high` (1/9 at `medium`), all five the same mistake, a
+  blocking finding on a tension between the spec (A2 moves the arithmetic helpers to `core/`) and ruling C-1 (helpers live
+  in `src/`) when the build did what the spec said; that tension belongs in `premises`, not in a blocking finding. It caught
+  no plant Sonnet missed. Sonnet 5.5 high on gate.med: 0/12 false alarms. gate.low reverted to efficient; the economy
+  class, its Haiku binding, the Haiku prompt rows, family metering and `--rebind` stay. Trigger: a reason to want the
+  cheaper low seat back (a Haiku release, or gate spend becoming the constraint). What to change: the Haiku gate variant
+  sends spec-vs-ruling tensions to `premises` (a Haiku-row line, judged by the eval, not a prose test), then rerun the
+  low arm with Haiku on gate.low (~$6). The harness rebinds classes only: `--rebind efficient=claude-haiku-5-5:high` would
+  also put Haiku on build.low, which has no build prompt, so the retry needs a seat override first (a `--seat
+  gate.low=economy` flag writing the repo config's `routing.seats`), then `node evals/roles/run.ts gate --set dev --n 3
+  --risk low --seat gate.low=economy` with `--rebind economy=claude-haiku-5-5:<effort>` for the effort arm. Pass bar: the
+  clean-cell false-alarm rate matches Sonnet's and the catch rate holds. The plan-check ladder waits on the same answer:
+  efficient low and med, frontier high until a plan-check role eval measures a cheaper low seat.
+- **Code-dispatched coverage readers for a gate's unreviewed set.** In the same eval G2b/G3b (a plant in a file the
+  bounded diff omits, on a line shaped like the substitution) were missed by Sonnet 6/6 and Haiku 5/6; both honestly listed
+  ~2,700 files in `unreviewed`. Idea: when a gate's unreviewed set is large, code dispatches closed-checklist Haiku chunk
+  readers (~290 files a chunk, ~$0.45 a chunk; 6/6 plants, 0 false alarms in our 2026-10-17 experiment) and hands their
+  findings to the gate. Trigger: after dev.12, informed by the Opus high-risk arm's result on G2b/G3b.
 
 ## Convergence and integrity (unscheduled, wanted)
 

@@ -455,15 +455,15 @@ describe('status: routing revs recorded before 1.0.0-dev.10 (efficient judgment)
       assert.deepEqual(s.spend.byModel.unresolvedRevs, [], 'the earlier rev resolves through its alias');
       assert.equal(s.spend.byModel.models.reduce((x, m) => x + m.input, 0), s.spend.byRole.reduce((x, t) => x + t.input, 0), 'byModel totals equal the meter\'s');
       // dev.9 judged plan-check med and gate low on Opus; OR-L3 attributes them to today's bindings: plan-check on efficient
-      // (Sonnet), gate low on economy (Haiku).
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-haiku-5-5', 1, 3], ['claude-sonnet-5-5', 2, 104], ['gpt-5.6-luna', 1, 20]]);
+      // (Sonnet), gate low on efficient (Sonnet).
+      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-sonnet-5-5', 3, 107], ['gpt-5.6-luna', 1, 20]]);
       noModelIds(s);
     } finally {
       r.journal.close();
     }
   });
 
-  it('status.dev11-alias: meter rows under the rev 1.0.0-dev.10 and dev.11 recorded (gate low efficient, med frontier) join today\'s table: nothing unresolved; byModel and byClass render the ladder, economy included', T, () => {
+  it('status.dev11-alias: meter rows under the rev 1.0.0-dev.10 and dev.11 recorded (gate low efficient, med frontier) join today\'s table: nothing unresolved; byModel and byClass render the ladder (every gate row on efficient)', T, () => {
     const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
     const r = contextFor(d);
     try {
@@ -482,9 +482,9 @@ describe('status: routing revs recorded before 1.0.0-dev.10 (efficient judgment)
       const s = statusOf(r);
       assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
       assert.deepEqual(s.spend.byClass.unresolvedRevs, []);
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-haiku-5-5', 2, 7], ['claude-sonnet-5-5', 1, 50], ['gpt-5.6-luna', 1, 20]]);
-      assert.deepEqual(s.spend.byClass.classes.map((c) => [c.class, c.input]), [['efficient', 70], ['economy', 7]]);
-      assert.equal(s.routing?.seats.gate.low, 'economy');
+      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-sonnet-5-5', 3, 57], ['gpt-5.6-luna', 1, 20]]);
+      assert.deepEqual(s.spend.byClass.classes.map((c) => [c.class, c.input]), [['efficient', 77]]);
+      assert.equal(s.routing?.seats.gate.low, 'efficient');
       assert.equal(s.routing?.bindings.economy, 'builtin');
       noModelIds(s);
     } finally {

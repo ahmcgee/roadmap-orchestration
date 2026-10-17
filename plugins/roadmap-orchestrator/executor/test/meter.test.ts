@@ -126,14 +126,15 @@ describe('meter', () => {
   });
 
   it('meter.subagents-by-class: a call\'s totals include its subagents\'; byClass puts each seat\'s own share on its class and the delegated share on its own', () => {
-    const def = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null });
+    // A repo seats gate.low on economy (Haiku 5.5): no built-in seat names it since the 2026-10-17 gate eval.
+    const def = resolveRouting({ profile: 'default', classes: null, repoConfig: { gate: { low: 'economy' } }, plan: null, unit: null });
     const rev = def.rev;
     const S1 = claudeSessionId('11111111-1111-4111-8111-111111111111');
     const S2 = claudeSessionId('22222222-2222-4222-8222-222222222222');
     const economy: ClassUsage = { class: 'economy', inputTokens: 10, outputTokens: 5, cacheReadTokens: 100, cacheWriteTokens: 20, costUsd: 0.01 };
     const frontier: ClassUsage = { class: 'frontier', inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 10, costUsd: 0.1 };
     const log = [
-      // gate.low sits on economy (Haiku 5.5, 1.0.0-dev.12); its subagents spent on economy (Haiku) and frontier (Opus).
+      // gate.low sits on economy (Haiku 5.5, by the repo's seat); its subagents spent on economy (Haiku) and frontier (Opus).
       factEvent({ kind: 'meter', inv: inv(1), routingRev: rev, subject: seat('gate', 'low', U1, 1), usage: tokens(111, 56, 1100, 230, 4, 1.11), session: S1, delegated: [frontier, economy] }),
       // gate.med sits on efficient (Sonnet 5.5); nothing delegated.
       factEvent({ kind: 'meter', inv: inv(2), routingRev: rev, subject: seat('gate', 'med', U2, 1), usage: tokens(50, 5, 0, 0, 2, 0.5), session: S2, delegated: [] }),
@@ -149,7 +150,7 @@ describe('meter', () => {
       // economy holds gate.low's own share and its Haiku subagent's alike: a seat's own class and a delegated class are one bucket.
       ['efficient', 50, 5, 0, 0, 0.5], ['frontier', 1, 1, 0, 10, 0.1], ['economy', 110, 55, 1100, 220, 1.01],
     ]);
-    // byModel counts a seat's own share on the seat's model: Haiku (economy gate.low) 100 input, Sonnet (efficient gate.med) 50.
+    // byModel counts a seat's own share on the seat's model: Haiku (gate.low, repo-seated on economy) 100 input, Sonnet (efficient gate.med) 50.
     assert.deepEqual(byModel(ownShare(m), new Map([[rev, def.table]])).map((x) => [x.model, x.input]), [['claude-haiku-5-5', 100], ['claude-sonnet-5-5', 50]]);
     assert.throws(() => byClass(m, new Map()), /no class table for revision/);
     assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
