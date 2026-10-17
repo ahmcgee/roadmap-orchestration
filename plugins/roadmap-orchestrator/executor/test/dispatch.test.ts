@@ -14,10 +14,11 @@ import {
 } from '../src/pipeline/dispatch.ts';
 import { build, planCheck } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
+import { largeDiffSeat } from '../src/pipeline/transitions.ts';
 import { type RoutingStack, arcStack, parseRepoConfig, resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
 import { PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS } from '../src/core/upgrade.ts';
 import {
-  CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, MODEL_IDS, RISK_TIERS, type RoutingLayer, type Triple, routingLayer,
+  CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, JUDGMENT_SEATS, type JudgmentSeat, MODEL_IDS, RISK_TIERS, type RoutingLayer, type Triple, routingLayer,
 } from '../src/routing/types.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit, started } from './fixtures/stage-common.ts';
 
@@ -43,6 +44,12 @@ test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRe
   assert.equal(dispatches(run).length, 1);
   assert.equal(seated(judgmentDispatch(run.ctx, U1, 'plan-check')).tier, 'low');
   assert.equal(seated(implementerDispatch(run.ctx, U1)).triple.backend, 'codex', 'default profile: the efficient class builds low');
+  // 1.0.0-dev.12: a gate over the large-diff threshold sits at least at high; only a gate takes a large diff.
+  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate')).tier, 'low');
+  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate', { overflow: 1 })).tier, 'high');
+  assert.throws(() => judgmentDispatch(run.ctx, U1, 'plan-check', { overflow: 1 }), /a large diff given to a plan-check seat/);
+  assert.deepEqual(JUDGMENT_SEATS.map((t: JudgmentSeat) => largeDiffSeat(t, { overflow: 3 })), ['high', 'high', 'high', 'escalation']);
+  assert.deepEqual(JUDGMENT_SEATS.map((t: JudgmentSeat) => largeDiffSeat(t, null)), ['low', 'med', 'high', 'escalation']);
 });
 
 test('dispatch.risk-raise: a plan-check that raises the risk records a new dispatch fact; every later seat follows it', T, async () => {
