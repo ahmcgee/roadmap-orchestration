@@ -42,7 +42,8 @@ inputs (plan, specs, ledger).
   archive`), stops it mid-arc, and finishes it on HEAD. Move `PREVIOUS_RELEASE` at each release.
 - Only the previous release is adopted (owner ruling OR-L4): 1.0.0-dev.6 by M4a, 1.0.0-dev.7 since M4b (1.0.0-dev.8,
   `PREVIOUS_RELEASE` b55ad88). Since 1.0.0-dev.12 `PREVIOUS_RELEASE` is 1f7f696 (1.0.0-dev.11, PR #113); arcs started on
-  dev.7 to dev.10 stay adopted through their defaults until none is in flight, though the test no longer starts one. An
+  dev.7 to dev.10 stay adopted through their defaults until none is in flight. An arc started on dev.10 is in flight, so
+  the test also starts arcs on dev.10 (`DEV10_RELEASE` b1c3666, the `upgrade.dev10.*` cells); it starts none on dev.7 to dev.9. An
   arc started on an earlier release finishes on the executor release it started on. M4a step X0 deleted every older read-time layer (the 1.0.0-dev.1, dev.3, dev.4 and
   dev.5 defaults recorded below as history), so each field those releases lacked is required where it was defaulted:
   `launch.json` `stallMs`; a first start records revision 1 before anything runs (no arc without a `plan-applied`);

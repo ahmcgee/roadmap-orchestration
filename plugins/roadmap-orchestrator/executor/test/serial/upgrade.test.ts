@@ -1,28 +1,43 @@
 // Upgrade in place (owner ruling, 2026-09-26): arcs run for days and executor fixes land mid-run, so an
-// executor update never forces a new arc. HEAD's executor must adopt an arc the previous release started
-// and finish it. The previous release's executor is extracted from git (`git archive PREVIOUS_RELEASE`) and
-// run with its own setup, fakes and CLI; the fixture is generated at test time because the runtime state
-// it leaves holds absolute paths. Each test runs the M1 fixture (evals/m1) on the previous release to a
-// mid-arc point with live state, stops it (or lets it crash at a crash point, below), then finishes the arc on
-// HEAD (same repo, run dir and host dir; setup does not re-run; the spec inputs stay as the previous release
-// left them), with HEAD's driver, graded by HEAD's check.ts (every criterion passes, and the upgrade forced no
-// park and no new session), or, where the story needs arc judgments the M1 scenario format cannot express, with
-// HEAD's CLI and fakes directly. The previous release (1.0.0-dev.11) schedules a DAG and keeps every M3, M4a and M4b
-// record, so its arcs run on HEAD as they ran on it; an arc it started without the holistic layer runs with M2
-// semantics and no new spend unless the architect opts in. Its role set, seat table and pressure records are HEAD's,
-// so its routing revs stand unchanged, and its applies, re-entries, obligations and in-force inputs are HEAD's shape.
-// What it records differently from 1.0.0-dev.12: its judgments ran without the Agent tool and, but for plan-check and
-// the checkpoint, without session persistence (a refused answer it left unread takes no repair turn on HEAD, warned);
-// it voided an approve whose session had a read refused (`read-denied`, whose retry row HEAD keeps); its gates
-// recorded no `diffShown` (read as nothing recorded); and its lens calls attached the dev.11 diff (an audit it left
-// between chunks finds the same chunks on HEAD).
+// executor update never forces a new arc. HEAD's executor must adopt an arc an earlier release started and
+// finish it. The starting release's executor is extracted from git (`git archive`, RELEASES) and run with its own
+// setup, fakes and CLI; the fixture is generated at test time because the runtime state it leaves holds absolute
+// paths. Each test runs the M1 fixture (evals/m1) on the starting release to a mid-arc point with live state, stops
+// it (or lets it crash at a crash point, below), then finishes the arc on HEAD (same repo, run dir and host dir;
+// setup does not re-run; the spec inputs stay as the starting release left them), with HEAD's driver, graded by
+// HEAD's check.ts (every criterion passes, and the upgrade forced no park and no new session), or, where the story
+// needs arc judgments the M1 scenario format cannot express, with HEAD's CLI and fakes directly.
 //
-// A crashed previous release: its executor is armed with a crash trigger (src/core/crash.ts), and its supervisor
-// is frozen (SIGSTOP) as soon as it is ready, so no generation of the previous release recovers the crash; once
-// the executor is gone the supervisor is SIGKILLed. HEAD's start takes over the dead claim of the same arc and its
-// recovery finishes what the previous release left open.
+// Which releases: HEAD (1.0.0-dev.12) adopts arcs started on 1.0.0-dev.7 to dev.11, through the defaults of
+// src/core/upgrade.ts. Two are covered here. Every unlabelled cell starts its arc on the previous release
+// (PREVIOUS_RELEASE, 1.0.0-dev.11). The cells labelled `upgrade.dev10.*` start theirs on 1.0.0-dev.10
+// (DEV10_RELEASE): an arc started on dev.10 is in flight, so the dev.10 defaults are live code. No arc started on
+// dev.7 to dev.9 is in flight, and no cell starts one.
 //
-// The variants:
+// Both releases schedule a DAG and keep every M3, M4a and M4b record, so their arcs run on HEAD as they ran on
+// them; an arc started without the holistic layer runs with M2 semantics and no new spend unless the architect opts
+// in. Their role sets, seat tables and pressure records are HEAD's, so their routing revs stand unchanged.
+//
+// What both record differently from 1.0.0-dev.12: their judgments ran without the Agent tool and, but for
+// plan-check and the checkpoint, without session persistence (a refused answer left unread takes no repair turn on
+// HEAD, warned); they voided an approve whose session had a read refused (`read-denied`, whose retry row HEAD
+// keeps); their gates recorded no `diffShown` (read as nothing recorded); and their lens calls attached the diff,
+// not HEAD's bounded diff (an audit dev.11 left between chunks finds the same chunks on HEAD).
+//
+// What dev.10 also lacks of 1.0.0-dev.11, each read with its default and warned once on the executor's stderr: an
+// apply its CLI queued carries `expectRev` (rebased from the default base) and no `visionEdit` (a declared vision
+// edit); its arc lanes declare no `testPaths` and its witnesses no `files` (undeclared, unchecked); its re-entries
+// and its checkpoints' `reenter` ops name no `fixes` (adopted as recorded, applied or not: the `fixes` rows bind
+// only what dev.11 and later record); and it wrote rulings and spec patches back into the owner's files, which
+// HEAD's rebase takes as the files in force. dev.11's applies, re-entries, obligations and in-force inputs are
+// HEAD's shape.
+//
+// A crashed starting release: its executor is armed with a crash trigger (src/core/crash.ts), and its supervisor
+// is frozen (SIGSTOP) as soon as it is ready, so no generation of that release recovers the crash; once the
+// executor is gone the supervisor is SIGKILLed. HEAD's start takes over the dead claim of the same arc and its
+// recovery finishes what that release left open.
+//
+// The variants (PREVIOUS_RELEASE starts the arc):
 //   upgrade.stop-mid-build     unit `slug` merged; `page-id` stopped mid-build (its Codex thread started, its
 //                              worktree dirty), so held with an interrupted attempt; `resume` queued through
 //                              the previous release's CLI. HEAD continues the same thread.
@@ -112,7 +127,33 @@
 //                              first chunk read). HEAD finds the same chunks, consumes the recorded first, asks the lost
 //                              second again as a bounded diff (`<orientation>`), settles the checkpoint, completes the arc.
 //
-// Not covered: a backend parked on a usage limit, the Claude-only profile.
+// The dev.10 variants (DEV10_RELEASE starts the arc):
+//   upgrade.dev10.apply-queued as apply-queued, the body `expectRev` with no `base` and no `visionEdit`: HEAD rebases
+//                              it from the default base and applies it as plan revision 2, its bytes unchanged, the
+//                              default warned.
+//   upgrade.dev10.vision-edit-queued
+//                              as opt-in-holistic, the opt-in apply queued through dev.10's CLI (no `visionEdit` field):
+//                              adopted as a declared vision edit, never `vision-leak`; warned.
+//   upgrade.dev10.reentry-before-fixes
+//                              as reentry-with-fixes, the re-entry with no `fixes`: in force on HEAD, merged, never
+//                              classified again; a later apply is accepted.
+//   upgrade.dev10.written-back-inputs
+//                              as inputs-in-force, but dev.10 writes the spec patch and C-3 back into the owner's spec,
+//                              ledger and sidecar: HEAD's apply rebases those files cleanly as plan revision 3, C-3 in
+//                              force and published once, and HEAD writes nothing into the owner's files.
+//   upgrade.dev10.checkpoint-reentry-before-fixes
+//                              as checkpoint-reentry-with-fixes, the bundle's re-entry with no `fixes` (and, on dev.10,
+//                              the drift audit's own no-op checkpoint): HEAD's final checkpoint reads the applied answer
+//                              with the default, warned; an apply then classifies as accepted.
+//   upgrade.dev10.corpus-witnesses-undeclared
+//                              as corpus-witnesses-declared, the arc lane without `testPaths` and the witness without
+//                              `files`: an apply's Phase 0 reads both as undeclared, unchecked, each default warned.
+//   upgrade.dev10.checkpoint-answer-unapplied
+//                              as checkpoint-answer-unapplied, the recorded re-entry with no `fixes`: HEAD decides and
+//                              applies it from the record (neither `fixes` row binds it), merges `page-id-2`; warned.
+//
+// Not covered: a backend parked on a usage limit, the Claude-only profile, an audit dev.10 started and left running
+// (`audit-started.diffBudget`).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -156,14 +197,24 @@ import { type CallRecord, type ClaudeAct, type ScenarioFile, type Step, readCall
 
 after(assertNoSurvivors);
 
+/** A released executor this test starts arcs on: its merge commit on main and the version its package.json names. */
+type Release = Readonly<{ sha: string; version: string }>;
+
 /**
- * The previous release: its executor starts the arc, HEAD's finishes it. At each release, move it to the
- * last released commit, the merge of the previous release's PR into main. Merges here are merge commits, so
- * a merged branch's shas stay reachable and `git archive` finds them. Now: 1.0.0-dev.11, merged to main as
- * PR #113 (schema version 1). Arcs started on 1.0.0-dev.7 to dev.10 stay adopted through their defaults in
- * src/core/upgrade.ts until none is in flight; this test exercises the previous release only.
+ * The previous release: its executor starts the arc, HEAD's finishes it, in every cell not labelled with an older
+ * release. At each release, move it to the last released commit, the merge of the previous release's PR into main.
+ * Merges here are merge commits, so a merged branch's shas stay reachable and `git archive` finds them. Now:
+ * 1.0.0-dev.11, merged to main as PR #113 (schema version 1).
  */
-const PREVIOUS_RELEASE = '1f7f69681fbf637126046dfc0c01617b1adfdb17';
+const PREVIOUS_RELEASE: Release = { sha: '1f7f69681fbf637126046dfc0c01617b1adfdb17', version: '1.0.0-dev.11' };
+/**
+ * 1.0.0-dev.10, merged to main as PR #112: an arc started on it is in flight (adopted by dev.11, then by HEAD), so the
+ * cells labelled `upgrade.dev10.*` start their arc on it and exercise the dev.10 defaults of src/core/upgrade.ts end to
+ * end. Delete it, with those cells, when those defaults go (BACKLOG "Scaffolding to delete"). Arcs started on dev.7 to
+ * dev.9 stay adopted through their defaults too, but no arc of theirs is in flight and this test starts none.
+ */
+const DEV10_RELEASE: Release = { sha: 'b1c3666843fa458c46eb2e541c97f62dd0244328', version: '1.0.0-dev.10' };
+const RELEASES: readonly Release[] = [PREVIOUS_RELEASE, DEV10_RELEASE];
 const EXECUTOR_PATH = 'plugins/roadmap-orchestrator/executor';
 
 const EXECUTOR = fileURLToPath(new URL('../../', import.meta.url));
@@ -183,37 +234,53 @@ type PreviousModules = Readonly<{
   fakeSteps: typeof import('../../evals/m1/scenario.ts').fakeSteps;
   readScenario: typeof import('../../evals/m1/scenario.ts').readScenario;
   writeShims: typeof import('../fakes/shim.ts').writeShims;
-  /** The previous release's host sample and its busy/clear thresholds (the host park's classification). */
+  /** The release's host sample and its busy/clear thresholds (the host park's classification). */
   sample: Readonly<{
     readHostSample: typeof import('../../src/host/sample.ts').readHostSample;
     isBusy: (s: ReturnType<typeof import('../../src/host/sample.ts').readHostSample>) => boolean;
     isClear: (s: ReturnType<typeof import('../../src/host/sample.ts').readHostSample>) => boolean;
   }>;
 }>;
+/** A release's executor tree, extracted, and the modules the harness uses from it. */
 type Previous = Readonly<{ root: string; modules: PreviousModules }>;
+/** A release's holistic test helpers and obligation types, loaded from its tree where a cell builds its steps or lanes. */
+type PreviousHelpers = typeof import('../helpers/holistic.ts');
+type PreviousTypes = typeof import('../../src/holistic/types.ts');
 
-let previous: Previous;
+const extracted = new Map<Release, Previous>();
 
-/** The previous release's executor tree, extracted into a temp dir, and the modules the harness uses from it. */
+/** The extracted tree of `release` (one of RELEASES). */
+function previousOf(release: Release): Previous {
+  const got = extracted.get(release);
+  assert.ok(got !== undefined, `release ${release.version} is not in RELEASES`);
+  return got;
+}
+
+/** Imports a module of `release`'s extracted tree. */
+const loadFrom = <M>(release: Release, ...path: string[]): Promise<M> => import(pathToFileURL(join(previousOf(release).root, ...path)).href) as Promise<M>;
+
+/** Each release's executor tree, extracted into a temp dir, and the modules the harness uses from it. */
 before(async () => {
   const top = spawnSync('git', ['-C', EXECUTOR, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   assert.equal(top.status, 0, top.stderr);
-  const archive = spawnSync('git', ['-C', top.stdout.trim(), 'archive', '--format=tar', PREVIOUS_RELEASE, EXECUTOR_PATH], { maxBuffer: 1 << 30 });
-  assert.equal(archive.status, 0, `git archive ${PREVIOUS_RELEASE}: ${archive.stderr}`);
-  const dir = tmpDir('upgrade-previous');
-  const tar = spawnSync('tar', ['-x', '-C', dir], { input: archive.stdout });
-  assert.equal(tar.status, 0, `tar: ${tar.stderr}`);
-  const root = join(dir, EXECUTOR_PATH);
-  assert.match(readFileSync(join(root, 'package.json'), 'utf8'), /"version": "1\.0\.0-dev\.11"/);
-  const load = (path: string): Promise<Record<string, unknown>> => import(pathToFileURL(join(root, path)).href);
-  const [scenario, shim, sample] = await Promise.all([load('evals/m1/scenario.ts'), load('test/fakes/shim.ts'), load('src/host/sample.ts')]);
-  previous = {
-    root,
-    modules: {
-      fakeSteps: scenario['fakeSteps'], readScenario: scenario['readScenario'], writeShims: shim['writeShims'],
-      sample: { readHostSample: sample['readHostSample'], isBusy: sample['isBusy'], isClear: sample['isClear'] },
-    } as PreviousModules,
-  };
+  for (const release of RELEASES) {
+    const archive = spawnSync('git', ['-C', top.stdout.trim(), 'archive', '--format=tar', release.sha, EXECUTOR_PATH], { maxBuffer: 1 << 30 });
+    assert.equal(archive.status, 0, `git archive ${release.sha}: ${archive.stderr}`);
+    const dir = tmpDir('upgrade-previous');
+    const tar = spawnSync('tar', ['-x', '-C', dir], { input: archive.stdout });
+    assert.equal(tar.status, 0, `tar: ${tar.stderr}`);
+    const root = join(dir, EXECUTOR_PATH);
+    assert.equal((JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }).version, release.version);
+    const load = (path: string): Promise<Record<string, unknown>> => import(pathToFileURL(join(root, path)).href);
+    const [scenario, shim, sample] = await Promise.all([load('evals/m1/scenario.ts'), load('test/fakes/shim.ts'), load('src/host/sample.ts')]);
+    extracted.set(release, {
+      root,
+      modules: {
+        fakeSteps: scenario['fakeSteps'], readScenario: scenario['readScenario'], writeShims: shim['writeShims'],
+        sample: { readHostSample: sample['readHostSample'], isBusy: sample['isBusy'], isClear: sample['isClear'] },
+      } as PreviousModules,
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -255,24 +322,27 @@ const midPlanCheck: Step = { as: 'claude', expect: { argv: ['-p', '--tools', 'Re
 // Phase 1: the previous release
 
 type Phase1 = Readonly<{
+  /** The release that started the arc. */
+  prev: Previous;
   dir: string;
   l: Layout;
   host: string;
   fakeDir: string;
-  /** The previous release's `roadmap` CLI against the fixture's host dir, its fakes first on PATH. */
+  /** The starting release's `roadmap` CLI against the fixture's host dir, its fakes first on PATH. */
   cli: (args: readonly string[], timeoutMs?: number, env?: Readonly<Record<string, string>>) => Promise<Exit>;
   run: readonly string[];
 }>;
 
 /**
- * Lays out the fixture with the previous release's setup, lets `edit` change its inputs before anything runs, and
- * writes the fakes for `m1` (or what it makes of the laid-out fixture) then `extra` (raw fake steps).
+ * Lays out the fixture with `release`'s setup (the previous release by default), lets `edit` change its inputs before
+ * anything runs, and writes the fakes for `m1` (or what it makes of the laid-out fixture) then `extra` (raw fake steps).
  */
 async function preparePrevious(
-  m1: readonly M1Step[] | ((l: Layout) => readonly M1Step[]), extra: readonly Step[], edit: (l: Layout) => void = () => {},
+  m1: readonly M1Step[] | ((l: Layout) => readonly M1Step[]), extra: readonly Step[], edit: (l: Layout) => void = () => {}, release: Release = PREVIOUS_RELEASE,
 ): Promise<Phase1> {
+  const prev = previousOf(release);
   const dir = join(tmpDir('upgrade'), 'fx');
-  const setup = await runUntilExit(process.execPath, [join(previous.root, 'evals', 'm1', 'setup.ts'), dir], { env: process.env, timeoutMs: CLI_MS });
+  const setup = await runUntilExit(process.execPath, [join(prev.root, 'evals', 'm1', 'setup.ts'), dir], { env: process.env, timeoutMs: CLI_MS });
   assert.equal(setup.code, 0, setup.stderr);
   const l = layout(dir);
   const planArc = (JSON.parse(readFileSync(l.plan, 'utf8')) as { arc: string }).arc;
@@ -285,14 +355,14 @@ async function preparePrevious(
   mkdirSync(fakeDir, { recursive: true });
   const m1File = join(fakeDir, 'm1.json');
   writeFileSync(m1File, JSON.stringify({ steps: typeof m1 === 'function' ? m1(l) : m1 }));
-  const { fakeSteps, readScenario, writeShims } = previous.modules;
+  const { fakeSteps, readScenario, writeShims } = prev.modules;
   const scenario = join(fakeDir, 'scenario.json');
   writeFileSync(scenario, JSON.stringify({ steps: [...fakeSteps(readScenario(m1File), 'default'), ...extra] }, null, 2));
   writeShims(join(fakeDir, 'bin'), scenario);
   const env = { ...process.env, PATH: `${join(fakeDir, 'bin')}:${process.env['PATH'] ?? ''}` };
   const cli = (args: readonly string[], timeoutMs = CLI_MS, extraEnv: Readonly<Record<string, string>> = {}): Promise<Exit> =>
-    runUntilExit(process.execPath, [join(previous.root, 'test', 'fixtures', 'exec-cli.ts'), host, ...args], { env: { ...env, ...extraEnv }, timeoutMs });
-  return { dir, l, host, fakeDir, cli, run: ['--repo', l.repo, '--arc', l.arc] };
+    runUntilExit(process.execPath, [join(prev.root, 'test', 'fixtures', 'exec-cli.ts'), host, ...args], { env: { ...env, ...extraEnv }, timeoutMs });
+  return { prev, dir, l, host, fakeDir, cli, run: ['--repo', l.repo, '--arc', l.arc] };
 }
 
 /** HEAD's `roadmap` CLI against the fixture's host dir. */
@@ -459,12 +529,14 @@ const outcomesOf = (events: readonly Event[], unit: string): readonly string[] =
 // ---------------------------------------------------------------------------------------------------
 
 /**
- * Phase 1 of stop-mid-build: the previous release merges `slug` and is stopped mid-build of `page-id` (held,
+ * Phase 1 of stop-mid-build: the previous release (or `release`) merges `slug` and is stopped mid-build of `page-id` (held,
  * interrupted); `resume` is queued through its CLI unless `queueResume` is false (the caller releases it later).
  * Returns the phase and HEAD's steps to finish it (the build resumed with the continue directive, then the gate).
  */
-async function stoppedMidBuild(c: Clean, edit?: (l: Layout) => void, queueResume = true, extra: readonly Step[] = []): Promise<Readonly<{ p: Phase1; head: readonly M1Step[] }>> {
-  const p = await preparePrevious([...c.slug, c.pageId.planCheck], [midBuild(pageIdFiles(c)), ...extra], edit);
+async function stoppedMidBuild(
+  c: Clean, edit?: (l: Layout) => void, queueResume = true, extra: readonly Step[] = [], release: Release = PREVIOUS_RELEASE,
+): Promise<Readonly<{ p: Phase1; head: readonly M1Step[] }>> {
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck], [midBuild(pageIdFiles(c)), ...extra], edit, release);
   const scope = scopeOf(p);
   track(scope);
   try {
@@ -584,9 +656,9 @@ function editJson<T>(path: string, edit: (value: T) => T): void {
   writeFileSync(path, `${JSON.stringify(edit(JSON.parse(readFileSync(path, 'utf8')) as T), null, 2)}\n`);
 }
 
-/** Waits until the previous release's host sample is clear and not busy; fails naming the last sample if it never is. */
-async function clearHost(): Promise<void> {
-  const { readHostSample, isBusy, isClear } = previous.modules.sample;
+/** Waits until the starting release's host sample is clear and not busy; fails naming the last sample if it never is. */
+async function clearHost(p: Phase1): Promise<void> {
+  const { readHostSample, isBusy, isClear } = p.prev.modules.sample;
   const deadline = Date.now() + CLEAR_HOST_MS;
   for (;;) {
     const s = readHostSample();
@@ -609,7 +681,7 @@ test('upgrade.park-adopted: a unit the previous release parked lane-blocked (ope
   });
   // The premise: a calm host. The previous release reads a lane killed by a signal on a busy host as host pressure
   // (a retryable host park), so the run starts only once its own sample says the host is clear.
-  await clearHost();
+  await clearHost(p);
   const scope = scopeOf(p);
   track(scope);
   try {
@@ -953,14 +1025,14 @@ function obligations(lane: object = SLUG_LANE, witness: object = SLUG_WITNESS, r
 }
 
 /**
- * The opt-in story: stopped mid-build, `page-id` left held; on HEAD the architect writes a vision, the obligations and
+ * The opt-in story: stopped mid-build on `release`, `page-id` left held; on HEAD the architect writes a vision, the obligations and
  * `holistic`, `queue` submits the apply (and waits for it applied; returns its command id), then `resume page-id`: the
  * baseline job, the drift audit (audit-1, L ∩ {drift, vision} empty: all of L) and its no-op checkpoint (ckpt-1), the
  * brake on page-id's candidate, the final audit (audit-2) and its no-op checkpoint (ckpt-2), `arc-completed`.
  */
-async function optInHolistic(queue: (p: Phase1) => Promise<string>): Promise<Readonly<{ p: Phase1; r: HeadRun; id: string }>> {
+async function optInHolistic(queue: (p: Phase1) => Promise<string>, release: Release = PREVIOUS_RELEASE): Promise<Readonly<{ p: Phase1; r: HeadRun; id: string }>> {
   // page-id stays held until the apply lands: an arc-scoped apply waits for every unit to be idle.
-  const { p, head } = await stoppedMidBuild(clean(), undefined, false);
+  const { p, head } = await stoppedMidBuild(clean(), undefined, false, [], release);
   const steps: readonly Step[] = [
     ...headFakeSteps({ steps: head }, 'default'),
     ...(['1', '2'] as const).flatMap((n) => [lensStep(`audit-${n}`, 'invariants'), checkpointStep(`ckpt-${n}`, checkpointAnswer({ decision: 'no-op' }))]),
@@ -1270,18 +1342,14 @@ test('upgrade.inputs-in-force: a plan-check\'s spec patch and a ruling the previ
   assert.equal(constraints.split(`${RULING} — ${RULING_TEXT}`).length - 1, 1, 'C-3 published once');
 });
 
-/** An arc lane over the fixture's initial tests (green from the baseline): `node --test test/text.test.js`. */
 /** A corpus arc's lane and witness, declared (`testPaths`, `files`) as Phase 0 requires of a fresh corpus arc since 1.0.0-dev.11. */
 const TEXT_LANE = { ...SLUG_LANE, id: 'text-journey', argv: ['node', '--test', 'test/text.test.js'], testPaths: ['test/text.test.js'] } as const;
 const TEXT_WITNESS = { lane: TEXT_LANE.id, testIds: ['words splits on runs of whitespace'], files: ['test/text.test.js'] };
 
 test('upgrade.checkpoint-reentry-with-fixes: a holistic arc whose checkpoint the previous release ran re-entered page-id, naming the failure it fixes, finishes on HEAD: the bundle\'s re-entry stays in force, HEAD\'s final checkpoint reads the applied answer as recorded, and a later apply is accepted', T, async () => {
   const c = clean();
-  type Helpers = typeof import('../helpers/holistic.ts');
-  type Types = typeof import('../../src/holistic/types.ts');
   const [prev, prevTypes] = await Promise.all([
-    import(pathToFileURL(join(previous.root, 'test', 'helpers', 'holistic.ts')).href) as Promise<Helpers>,
-    import(pathToFileURL(join(previous.root, 'src', 'holistic', 'types.ts')).href) as Promise<Types>,
+    loadFrom<PreviousHelpers>(PREVIOUS_RELEASE, 'test', 'helpers', 'holistic.ts'), loadFrom<PreviousTypes>(PREVIOUS_RELEASE, 'src', 'holistic', 'types.ts'),
   ]);
   // page-id's second plan-check (the escalation seat's infeasible) is the failure its park recorded last.
   const fixes = 'page-id/plan-check#2';
@@ -1426,35 +1494,34 @@ const BULK = Array.from({ length: 6000 }, (_, i) => `export const word${i} = 'w$
 // ---------------------------------------------------------------------------------------------------
 // A corpus arc the previous release started: its obligations declare their testPaths and witness files
 
-type PreviousHelpers = typeof import('../helpers/holistic.ts');
-
 /**
- * The M1 fixture as a corpus arc of the previous release (its corpus target: pin, Phase-0 record, fake forge, whose `gh`
- * is in the returned bin dir), its one obligation witnessed on the fixture's initial text tests (green from the
- * baseline), L = {invariants}; `m1` and `extra(helpers)` (the previous release's holistic step builders) its fake steps,
+ * The M1 fixture as a corpus arc of `release` (its corpus target: pin, Phase-0 record, fake forge, whose `gh` is in the
+ * returned bin dir), its one obligation witnessed through `lane` by `witness` on the fixture's initial text tests (green
+ * from the baseline), L = {invariants}; `m1` and `extra(helpers)` (the release's holistic step builders) its fake steps,
  * after the pack review `review-1`.
  */
-async function corpusArc(m1: readonly M1Step[], extra: (prev: PreviousHelpers) => readonly Step[]): Promise<Readonly<{ p: Phase1; gh: string }>> {
-  type Types = typeof import('../../src/holistic/types.ts');
+async function corpusArc(
+  m1: readonly M1Step[], extra: (prev: PreviousHelpers) => readonly Step[], release: Release = PREVIOUS_RELEASE, lane: object = TEXT_LANE, witness: object = TEXT_WITNESS,
+): Promise<Readonly<{ p: Phase1; gh: string }>> {
   type Target = typeof import('../fixtures/corpus-target.ts');
   type Brake = typeof import('../fixtures/brake-common.ts');
-  const load = <M>(...path: string[]): Promise<M> => import(pathToFileURL(join(previous.root, ...path)).href) as Promise<M>;
+  const load = <M>(...path: string[]): Promise<M> => loadFrom<M>(release, ...path);
   const [prev, prevTypes, target, brake] = await Promise.all([
-    load<PreviousHelpers>('test', 'helpers', 'holistic.ts'), load<Types>('src', 'holistic', 'types.ts'), load<Target>('test', 'fixtures', 'corpus-target.ts'),
+    load<PreviousHelpers>('test', 'helpers', 'holistic.ts'), load<PreviousTypes>('src', 'holistic', 'types.ts'), load<Target>('test', 'fixtures', 'corpus-target.ts'),
     load<Brake>('test', 'fixtures', 'brake-common.ts'),
   ]);
   let gh = '';
   const p = await preparePrevious(m1, [...extra(prev), prev.packReviewStep('review-1')], (l) => {
     gh = join(l.dir, 'bin-gh');
     mkdirSync(gh, { recursive: true });
-    const file = obligations(TEXT_LANE, TEXT_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!)) as Record<string, unknown>;
+    const file = obligations(lane, witness, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!)) as Record<string, unknown>;
     target.corpusTarget(
       { arc: l.arc, repo: l.repo, planPath: l.plan, runDir: l.runDir, hostDir: join(l.fake, 'host'), binDir: gh, scenarioPath: '', scenarioDir: '' },
       { obligations: file, advances: brake.ADVANCES, audit: { lenses: ['invariants'] } },
     );
     // The integration branch starts at the corpus baseline.
     git(l.repo, 'branch', '-f', 'integration', 'main');
-  });
+  }, release);
   return { p, gh };
 }
 
@@ -1599,4 +1666,330 @@ test('upgrade.audit-mid-chunk: the final audit whose executor died during its se
   assert.deepEqual([ended?.job, ended?.outcome], ['audit-1', 'completed']);
   assert.ok(ended!.covered.some((cv) => cv.lens === 'invariants' && cv.to === audits[0]!.started.integrationSha), JSON.stringify(ended!.covered));
   assert.equal(factsOf(r.after, 'arc-completed').length, 1);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// 1.0.0-dev.10's arcs (DEV10_RELEASE): what dev.10 lacks of dev.11 reads with the defaults of src/core/upgrade.ts
+
+/** An arc lane and witness as 1.0.0-dev.10 wrote them: no `testPaths`, no `files` (it had neither). */
+const UNDECLARED_TEXT_LANE = { ...SLUG_LANE, id: 'text-journey', argv: ['node', '--test', 'test/text.test.js'] } as const;
+const UNDECLARED_TEXT_WITNESS = { lane: UNDECLARED_TEXT_LANE.id, testIds: ['words splits on runs of whitespace'] };
+
+/** The architect re-enters `page-id` as REENTRY (its spec and scope) as on dev.10: with no `fixes`, which it had not. */
+function reenterPageIdBeforeFixes(l: Layout): void {
+  type Unit = { id: string; spec: string };
+  const spec = JSON.parse(readFileSync(join(l.input, 'page-id.json'), 'utf8')) as object;
+  writeFileSync(join(l.input, `${REENTRY}.json`), `${JSON.stringify({ ...spec, unit: REENTRY, rev: 1 }, null, 2)}\n`);
+  editJson<{ units: Unit[] }>(l.plan, (plan) => {
+    const old = plan.units.find((u) => u.id === 'page-id')!;
+    return { ...plan, units: [...plan.units, { ...old, id: REENTRY, spec: `${REENTRY}.json`, reenters: { unit: 'page-id' } }] };
+  });
+}
+
+test('upgrade.dev10.apply-queued: an apply dev.10\'s CLI queues (`expectRev`, no `base`, no `visionEdit`) on HEAD\'s running arc is rebased from the default base and applied as revision 2, its bytes unchanged', T, async () => {
+  // page-id stays held until the apply lands: an arc-scoped apply waits for every unit to be idle. The edit is made
+  // on the running arc, so HEAD's start finds the files in force and the revision is the command's.
+  const { p, head } = await stoppedMidBuild(clean(), undefined, false, [], DEV10_RELEASE);
+  let id = '';
+  let queued: Buffer | null = null;
+  const scope = scopeOf(p);
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, head, async () => {
+      await until('HEAD\'s executor runs the arc', PHASE_MS, () => (factsOf(journalOf(p).events, 'executor-started').length > 1 ? true : null));
+      newDirection(p.l);
+      id = await submitOnPrevious(p, ['apply']);
+      queued = commandBytes(p, id);
+      await submitOnHead(p, ['resume', 'page-id']);
+    });
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  const body = (JSON.parse(queued!.toString('utf8')) as { body: Readonly<Record<string, unknown>> }).body;
+  assert.deepEqual([body['type'], 'expectRev' in body, 'base' in body, 'visionEdit' in body], ['apply', true, false, false], 'dev.10\'s CLI queued the apply it knew');
+  const [fact, ...more] = factsOf(f.after, 'plan-applied');
+  assert.ok(fact !== undefined && more.length === 0);
+  assert.deepEqual([fact.rev, fact.command, fact.changes], [2, id, [{ type: 'plan-field', field: 'direction' }]]);
+  assert.ok(queued !== null && commandBytes(p, id).equals(queued), 'dev.10\'s command file is never rewritten');
+  assert.match(hostLogs(p), /roadmap: upgrade default \(apply\.expectRev\)/, 'HEAD read the command\'s expectRev as the default base, with a warning');
+});
+
+test('upgrade.dev10.vision-edit-queued: the opt-in apply dev.10\'s CLI queues (no `visionEdit` field: its CLI had no flag) changes the vision and is adopted as a declared vision edit, never refused as vision-leak; the default warned', T, async () => {
+  let body: Readonly<Record<string, unknown>> = {};
+  const { p } = await optInHolistic(async (q) => {
+    const id = await submitOnPrevious(q, ['apply']);
+    body = (JSON.parse(commandBytes(q, id).toString('utf8')) as { body: Readonly<Record<string, unknown>> }).body;
+    return id;
+  }, DEV10_RELEASE);
+  assert.deepEqual([body['type'], 'expectRev' in body, 'visionEdit' in body], ['apply', true, false], 'dev.10\'s CLI queued no visionEdit');
+  assert.match(hostLogs(p), /roadmap: upgrade default \(apply\.visionEdit\)/, 'HEAD read the absent field as a declared vision edit, with a warning');
+});
+
+test('upgrade.dev10.reentry-before-fixes: a re-entry dev.10 applied without `fixes` over a lineage with a recorded failure stays in force on HEAD, never classified again: HEAD finishes it, and a later apply is accepted', T, async () => {
+  const c = clean();
+  const p = await preparePrevious([...c.slug, INFEASIBLE, INFEASIBLE, c.pageId.planCheck], [midBuild(pageIdFiles(c))], undefined, DEV10_RELEASE);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await until('page-id parks infeasible', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'park-pending' ? true : null));
+    reenterPageIdBeforeFixes(p.l);
+    await submitOnPrevious(p, ['apply']);
+    await midCall(p);
+    await ackOpenItems(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  assert.ok(mid.unit(unitId('page-id')).failures.length > 0, 'page-id\'s lineage recorded a failure: a re-entry added now must name it in `fixes`');
+  const held = mid.unit(unitId(REENTRY));
+  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['build', 'held', 'interrupted']);
+  const inForce = requirePlanInForce(absPath(p.l.runDir), mid).plan.units.find((u) => u.id === REENTRY);
+  assert.deepEqual(inForce?.reenters, { unit: unitId('page-id') }, 'the re-entry in force names no failure');
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+
+  const steps = headFakeSteps({ steps: [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate] }, 'default');
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, steps, async () => {});
+  } finally {
+    await teardown(scope);
+  }
+  assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
+  assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found dev.10\'s revision in force');
+  newDirection(p.l);
+  const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
+  assert.equal(dry.code, 0, dry.stderr);
+  const out = JSON.parse(dry.stdout) as { kind: string; changes: unknown[] };
+  assert.deepEqual([out.kind, out.changes], ['accepted', [{ type: 'plan-field', field: 'direction' }]], dry.stdout);
+});
+
+test('upgrade.dev10.written-back-inputs: the owner\'s files dev.10 wrote back (a plan-check\'s spec patch, a ruling\'s ledger line and sidecar) rebase cleanly on HEAD: its start and an architect apply take them as in force, and HEAD writes nothing into them', T, async () => {
+  const c = clean();
+  const redirect: M1Step = { role: 'planCheck', answer: { ...((c.pageId.planCheck as Exclude<M1Step, { role: 'build' }>).answer as object), decision: 'redirect', patch: [{ op: 'add', section: 'facts', item: REDIRECT_FACT }] } };
+  const p = await preparePrevious([...c.slug, redirect, c.pageId.planCheck], [midBuild(pageIdFiles(c))], undefined, DEV10_RELEASE);
+  const ledger = join(p.l.input, 'rulings.md');
+  const sidecar = join(`${ledger}.d`, `${RULING}.json`);
+  const specPath = join(p.l.input, 'page-id.json');
+  const ledgerBefore = readFileSync(ledger);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await midCall(p);
+    const file = join(p.dir, 'C-3.json');
+    writeFileSync(file, `${JSON.stringify(rulingRecord(p, ledgerBefore), null, 2)}\n`);
+    await submitOnPrevious(p, ['rule', file]);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  // What dev.10 wrote back into the owner's files.
+  const writtenLedger = readFileSync(ledger);
+  assert.equal(writtenLedger.toString('utf8'), `${ledgerBefore.toString('utf8')}${RULING} — ${RULING_TEXT}\n`, 'dev.10 wrote its ruling into the ledger');
+  assert.ok(existsSync(sidecar), 'and its sidecar beside it');
+  const writtenSidecar = readFileSync(sidecar);
+  const writtenSpec = readFileSync(specPath);
+  const spec = JSON.parse(writtenSpec.toString('utf8')) as { rev: number; facts: { id: string }[] };
+  assert.deepEqual([spec.rev, spec.facts.some((x) => x.id === REDIRECT_FACT.id)], [2, true], 'dev.10 wrote the plan-check\'s patch into page-id\'s spec');
+  assert.equal(journalOf(p).view.planApplied()?.rev, 2, 'the ruling\'s revision');
+
+  let id = '';
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate], async () => {
+      await until('HEAD\'s executor runs the arc', PHASE_MS, () => (factsOf(journalOf(p).events, 'executor-started').length > 1 ? true : null));
+      newDirection(p.l);
+      id = await submitOnHead(p, ['apply']);
+      await submitOnHead(p, ['resume', 'page-id']);
+    });
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  const [fact, ...more] = factsOf(f.after, 'plan-applied');
+  assert.ok(fact !== undefined && more.length === 0, 'HEAD\'s start found the files in force: only the apply revised the plan');
+  assert.deepEqual([fact.rev, fact.command, fact.changes, fact.rulingsSha256], [3, id, [{ type: 'plan-field', field: 'direction' }], bytesSha256(writtenLedger)]);
+  assert.equal(f.view.unit(unitId('page-id')).spec?.rev, 2, 'page-id merged at the patched rev');
+  assert.ok(readFileSync(ledger).equals(writtenLedger) && readFileSync(sidecar).equals(writtenSidecar) && readFileSync(specPath).equals(writtenSpec), 'HEAD wrote nothing into the owner\'s files');
+  const constraints = git(p.l.repo, 'show', 'integration:.roadmap/constraints.md');
+  assert.equal(constraints.split(`${RULING} — ${RULING_TEXT}`).length - 1, 1, 'C-3 published once');
+});
+
+test('upgrade.dev10.checkpoint-reentry-before-fixes: a holistic arc whose checkpoint dev.10 ran re-entered page-id without `fixes` finishes on HEAD: the bundle\'s re-entry stays in force, HEAD\'s final checkpoint reads the applied answer with the default, and a later apply is accepted', T, async () => {
+  const c = clean();
+  const [prev, prevTypes] = await Promise.all([
+    loadFrom<PreviousHelpers>(DEV10_RELEASE, 'test', 'helpers', 'holistic.ts'), loadFrom<PreviousTypes>(DEV10_RELEASE, 'src', 'holistic', 'types.ts'),
+  ]);
+  const reenter = { op: 'reenter', unit: REENTRY, reenters: 'page-id', enterAt: null, reset: null, cites: ['V-1'], evidence: ['page-id parked infeasible: it starts over'] };
+  // Once holistic, page-id's park has a checkpoint (ckpt-1, the re-entry); the opt-in's drift audit (audit-1, which the
+  // bundle's revision joins) and, on dev.10, its checkpoint (ckpt-2, no-op).
+  const p = await preparePrevious([...c.slug, INFEASIBLE, INFEASIBLE, c.pageId.planCheck], [
+    midBuild(pageIdFiles(c)),
+    prev.checkpointStep('ckpt-1', prev.checkpointAnswer({ decision: 'bundle', ops: [reenter] })),
+    prev.lensStep('audit-1', 'invariants'),
+    prev.checkpointStep('ckpt-2', prev.checkpointAnswer({ decision: 'no-op' })),
+  ], undefined, DEV10_RELEASE);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await until('page-id parks infeasible', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'park-pending' ? true : null));
+    // The architect opts in through dev.10's CLI, the obligations as it wrote them.
+    writeFileSync(join(p.l.input, 'vision.json'), `${JSON.stringify(VISION, null, 2)}\n`);
+    const file = obligations(SLUG_LANE, SLUG_WITNESS, (o) => prevTypes.laneRevOf(prevTypes.parseObligations(o).lanes[0]!));
+    writeFileSync(join(p.l.input, 'obligations.json'), `${JSON.stringify(file, null, 2)}\n`);
+    editJson<object>(p.l.plan, (plan) => ({ ...plan, holistic: { vision: 'vision.json', advances: ['V-1', 'V-2'], obligations: 'obligations.json', audit: { lenses: ['invariants'] } } }));
+    await submitOnPrevious(p, ['apply']);
+    await midCall(p);
+    // The park checkpoint and the drift audit run side by side; the audit's own checkpoint follows it. Every audit
+    // started by then (the bundle's revision's drift included) has ended and its checkpoint settled.
+    await until('dev.10 ends its audits and settles their checkpoints', PHASE_MS, () => {
+      const h = journalOf(p).view.holistic();
+      const audited = new Set(h.checkpoints.flatMap((ck) => (ck.inputs.trigger.type === 'audit' ? [ck.inputs.trigger.job] : [])));
+      const settled = h.audits.length > 0 && h.audits.every((a) => a.ended !== null && audited.has(a.started.job)) && h.checkpoints.every((ck) => ck.decided !== null);
+      return settled ? true : null;
+    });
+    await ackOpenItems(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  assert.ok(mid.unit(unitId('page-id')).failures.length > 0, 'page-id\'s lineage recorded a failure');
+  const h = mid.holistic();
+  assert.deepEqual(h.checkpoints.map((ck) => [ck.inputs.job, ck.inputs.trigger.type, ck.decided?.kind]), [['ckpt-1', 'park', 'applied'], ['ckpt-2', 'audit', 'no-op']], 'the park checkpoint re-entered page-id; the drift audit\'s checkpoint changed nothing');
+  assert.deepEqual(h.audits.map((a) => a.started.job), ['audit-1']);
+  const held = mid.unit(unitId(REENTRY));
+  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['build', 'held', 'interrupted']);
+  assert.deepEqual(requirePlanInForce(absPath(p.l.runDir), mid).plan.units.find((u) => u.id === REENTRY)?.reenters, { unit: unitId('page-id') }, 'the bundle\'s re-entry names no failure');
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+
+  const steps: readonly Step[] = [
+    ...headFakeSteps({ steps: [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate] }, 'default'),
+    lensStep('audit-2', 'invariants'), checkpointStep('ckpt-3', checkpointAnswer({ decision: 'no-op' })),
+  ];
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, steps, async () => {});
+  } finally {
+    await teardown(scope);
+  }
+  assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
+  assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found dev.10\'s revision in force');
+  assert.ok(factsOf(r.after, 'witnessed').some((w) => w.for.type === 'candidate' && w.for.unit === REENTRY), 'the brake ran on the re-entry\'s candidate');
+  assert.deepEqual(factsOf(r.after, 'audit-started').map((a) => [a.job, a.triggers.map((t) => t.type)]), [['audit-2', ['final']]]);
+  assert.deepEqual(factsOf(r.after, 'bundle-decided').map((b) => [b.job, b.outcome]), [['ckpt-3', { kind: 'no-op' }]]);
+  assert.equal(factsOf(r.after, 'arc-completed').length, 1);
+  assert.match(hostLogs(p), /roadmap: upgrade default \(checkpoint\.reenter\.fixes\)/, 'HEAD\'s checkpoint read the applied answer\'s re-entry as naming no failure, and warned');
+  // The architect's next apply classifies the plan holding the bundle's re-entry: accepted.
+  newDirection(p.l);
+  const dry = await headCli(p, ['apply', '--dry-run', ...p.run]);
+  assert.equal(dry.code, 0, dry.stderr);
+  const out = JSON.parse(dry.stdout) as { kind: string; changes: unknown[] };
+  assert.deepEqual([out.kind, out.changes], ['accepted', [{ type: 'plan-field', field: 'direction' }]], dry.stdout);
+});
+
+test('upgrade.dev10.corpus-witnesses-undeclared: a corpus arc dev.10 started (its arc lane without testPaths, its witness without files) finishes on HEAD, and an apply\'s Phase 0 reads both as undeclared: unchecked, warned, accepted', T, async () => {
+  const c = clean();
+  const { p, gh } = await corpusArc([...c.slug, c.pageId.planCheck], () => [midBuild(pageIdFiles(c))], DEV10_RELEASE, UNDECLARED_TEXT_LANE, UNDECLARED_TEXT_WITNESS);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p, { PATH: corpusPath(p, gh) });
+    await midCall(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.equal(mid.unit(unitId('slug')).status, 'retired');
+  const held = mid.unit(unitId('page-id'));
+  assert.deepEqual([held.stage, held.status, held.interrupted?.outcome], ['build', 'held', 'interrupted']);
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+
+  const steps: readonly Step[] = [
+    ...headFakeSteps({ steps: [{ ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE] }, c.pageId.gate] }, 'default'),
+    lensStep('audit-1', 'invariants'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' })),
+  ];
+  let r: HeadRun;
+  track(scope);
+  try {
+    r = await runOnHead(p, steps, async () => {}, 'fake-head', [gh]);
+  } finally {
+    await teardown(scope);
+  }
+  assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.equal(r.view.unit(unitId('page-id')).status, 'retired');
+  assert.deepEqual(factsOf(r.after, 'plan-applied'), [], 'HEAD\'s start found dev.10\'s revision in force');
+  assert.ok(factsOf(r.after, 'witnessed').some((w) => w.for.type === 'candidate' && w.for.unit === 'page-id'), 'the brake ran on page-id\'s candidate');
+  assert.equal(factsOf(r.after, 'arc-completed').length, 1);
+  newDirection(p.l);
+  const dry = await runUntilExit(process.execPath, [fixture('exec-cli.ts'), p.host, 'apply', '--dry-run', ...p.run], {
+    env: { ...process.env, PATH: [gh, process.env['PATH'] ?? ''].join(':') }, timeoutMs: CLI_MS,
+  });
+  assert.equal(dry.code, 0, dry.stderr);
+  const out = JSON.parse(dry.stdout) as { kind: string; changes: unknown[] };
+  assert.deepEqual([out.kind, out.changes], ['accepted', [{ type: 'plan-field', field: 'direction' }]], dry.stdout);
+  for (const kind of ['obligations.lanes.testPaths', 'obligations.witness.files']) {
+    assert.ok(dry.stderr.includes(`roadmap: upgrade default (${kind})`), `the apply read the obligations with the ${kind} default, and warned: ${dry.stderr}`);
+  }
+});
+
+test('upgrade.dev10.checkpoint-answer-unapplied: a park checkpoint\'s answer dev.10 recorded but did not apply (it crashed after the call), re-entering page-id without `fixes` and changing nothing, is adopted on HEAD: decided from the recorded answer with no new call, applied, the re-entry merged', T, async () => {
+  const c = clean();
+  // A bare re-entry of the infeasible park: HEAD refuses it from an answer of its own (no `fixes`).
+  const reenter = { op: 'reenter', unit: REENTRY, reenters: 'page-id', enterAt: null, reset: null, cites: ['V-1'], evidence: ['page-id parked infeasible: it starts over'] };
+  const { p, gh } = await corpusArc(
+    [...c.slug, INFEASIBLE, INFEASIBLE], (prev) => [prev.checkpointStep('ckpt-1', prev.checkpointAnswer({ decision: 'bundle', ops: [reenter] }))],
+    DEV10_RELEASE, UNDECLARED_TEXT_LANE, UNDECLARED_TEXT_WITNESS,
+  );
+  await crashPrevious(p, { label: 'checkpoint.after-call', occurrence: 1 }, async () => {}, { PATH: corpusPath(p, gh) });
+  const mid = journalOf(p).view;
+  assert.ok(mid.unit(unitId('page-id')).failures.length > 0, 'page-id\'s lineage recorded a failure');
+  assert.deepEqual(mid.holistic().checkpoints.map((ck) => [ck.inputs.job, ck.inputs.trigger.type, ck.decided]), [['ckpt-1', 'park', null]], 'the park checkpoint answered, undecided');
+  assert.equal(requirePlanInForce(absPath(p.l.runDir), mid).plan.units.some((u) => u.id === REENTRY), false);
+
+  const steps: readonly Step[] = [
+    ...headFakeSteps({ steps: [c.pageId.planCheck, c.pageId.build, c.pageId.gate] }, 'default'),
+    // The bundle's drift audit finds nothing new after ckpt-1 settled (no checkpoint: `checkpoint-skipped`); the final
+    // audit's checkpoint is ckpt-2.
+    lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants'), checkpointStep('ckpt-2', checkpointAnswer({ decision: 'no-op' })),
+  ];
+  let r: HeadRun;
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    r = await runOnHead(p, steps, async () => {
+      // The superseded park's escalation item holds the arc open until acknowledged.
+      await until('HEAD applies the recorded bundle', PHASE_MS, () => (journalOf(p).view.unit(unitId('page-id')).status === 'superseded' ? true : null));
+      for (const n of journalOf(p).view.needsUser().filter((x) => x.blocking && x.ack === null)) await submitOnHead(p, ['ack', n.id]);
+    }, 'fake-head', [gh]);
+  } finally {
+    await teardown(scope);
+  }
+  assert.equal(r.exit.kind, 'complete', JSON.stringify(r.exit));
+  assert.deepEqual(r.calls.filter((call) => call.unit === 'ckpt-1'), [], 'HEAD decided ckpt-1 from the recorded answer: no new call, no repair turn');
+  const [applied] = factsOf(r.after, 'plan-applied');
+  assert.deepEqual(applied?.source, { type: 'bundle', job: 'ckpt-1', admits: [], conversions: [] }, 'HEAD applied the recorded bundle');
+  assert.deepEqual(r.view.holistic().checkpoints.find((ck) => ck.inputs.job === 'ckpt-1')?.decided?.kind, 'applied');
+  assert.deepEqual(requirePlanInForce(absPath(p.l.runDir), r.view).plan.units.find((u) => u.id === REENTRY)?.reenters, { unit: unitId('page-id') }, 'the re-entry enters the plan without fixes');
+  assert.equal(r.view.unit(unitId(REENTRY)).status, 'retired', 'HEAD merged the re-entry');
+  assert.deepEqual(factsOf(r.after, 'checkpoint-skipped').map((k) => k.audit), ['audit-1']);
+  assert.deepEqual(factsOf(r.after, 'bundle-decided').map((b) => [b.job, b.outcome]), [['ckpt-2', { kind: 'no-op' }]]);
+  assert.equal(factsOf(r.after, 'arc-completed').length, 1);
+  assert.match(hostLogs(p), /roadmap: upgrade default \(checkpoint\.reenter\.fixes\)/, 'the default warned');
 });

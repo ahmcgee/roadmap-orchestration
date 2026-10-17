@@ -100,6 +100,8 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     assert.ok(check !== undefined && check.as === 'claude' && !isGateCall(check));
     const dir = viewDir(a, a.pinSha256, 'full');
     assert.ok(readable(addDirs(check), dir), `plan-check may read ${dir}: ${addDirs(check).join(' ')}`);
+    // The run dir, which holds both views, is readable (2026-10-16): plan-check is pointed at the full view.
+    assert.ok(check.stdin.includes(dir), `plan-check is told of the full view ${dir}`);
     assert.deepEqual(filesUnder(dir), a.pin.files.map((f) => f.path).sort(), 'every pinned file, the vision doc among them');
     for (const f of a.pin.files) {
       const path = join(dir, f.path);
