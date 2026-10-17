@@ -69,7 +69,7 @@ Your working directory is the repository at the integration head, read-only: wri
 </workspace>
 
 <output>
-constraint: the station you take as the constraint, whether you agree with code's, and why in one sentence. diagnosis: what the station table, the chart and the verdicts show, in a few plain sentences. proposal: the one change (target, action, rationale: why it shortens lead time at the constraint, risks: what it could break and which guard would show it), or null. noAction: why no change now, or null. Exactly one of proposal and noAction. Write every field as plain, literal sentences.
+constraint: station is the one station id you take as the constraint, written exactly as the station table or code's constraint writes it (for example slot:integration or suite:unit) and nothing else; agree is whether it is code's; reason is why, in one sentence, where any component or qualifier belongs. diagnosis: what the station table, the chart and the verdicts show, in a few plain sentences. proposal: the one change (target, action, rationale: why it shortens lead time at the constraint, risks: what it could break and which guard would show it), or null. noAction: why no change now, or null. Exactly one of proposal and noAction. A station or target field holds only its id; write every other text field as plain, literal sentences.
 </output>
 
 ${JUDGE_DELEGATION}`;

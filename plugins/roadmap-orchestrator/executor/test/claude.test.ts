@@ -60,12 +60,21 @@ describe('claude', () => {
       const invDir = editClaudeResult(fixtureInvocation('claude-judgment-subagents', EXIT0), (o) => ({ ...o, total_cost_usd: 0.05 }));
       assert.throws(() => adapt(invDir), /usage does not add up: result_index 1: modelUsage costUSD sums to 0\.032\d*, total_cost_usd is 0\.05/);
     });
-    it('a subagent model the class catalogue does not know fails loud', () => {
+    it('a model of an uncatalogued version is metered by its family: claude-haiku-9-9 to economy', () => {
       const invDir = editClaudeResult(fixtureInvocation('claude-judgment-subagents', EXIT0), (o) => {
         const m = o['modelUsage'] as Record<string, unknown>;
         return { ...o, modelUsage: { 'claude-sonnet-5-5': m['claude-sonnet-5-5'], 'claude-haiku-9-9': m['claude-haiku-5-5'] } };
       });
-      assert.throws(() => adapt(invDir), /modelUsage names "claude-haiku-9-9", which src\/routing\/classes\.ts DELEGATE_CLASSES does not catalogue/);
+      const r = readClaude(readFileSync(join(invDir, 'stdout'), 'utf8'));
+      assert.ok(r.usage.kind === 'known');
+      assert.deepEqual(r.usage.delegated, [{ class: 'economy', inputTokens: 4, outputTokens: 152, cacheReadTokens: 4313, cacheWriteTokens: 4494, costUsd: 0.0006812799999999999 }]);
+    });
+    it('a model of no catalogued family fails loud', () => {
+      const invDir = editClaudeResult(fixtureInvocation('claude-judgment-subagents', EXIT0), (o) => {
+        const m = o['modelUsage'] as Record<string, unknown>;
+        return { ...o, modelUsage: { 'claude-sonnet-5-5': m['claude-sonnet-5-5'], 'claude-zephyr-1-0': m['claude-haiku-5-5'] } };
+      });
+      assert.throws(() => adapt(invDir), /modelUsage names "claude-zephyr-1-0", of no family src\/routing\/classes\.ts DELEGATE_CLASSES catalogues/);
     });
   });
 

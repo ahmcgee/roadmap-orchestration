@@ -51,33 +51,33 @@ export function boundAt(binding: ClassBinding, role: Role): Triple {
 }
 
 /**
- * Where a subagent's usage is metered: the class of every model a Claude session's Agent tool can put a subagent on
- * (aliases haiku, sonnet, opus and fable, Claude Code 2.1.301), keyed by the id the result's `modelUsage` names it by. A
- * session's own model is metered to its seat's class instead (meter.ts), which is why Opus 5.5, bound by frontier and
- * summit alike, can sit here under one: frontier, the class it binds at its own default effort. Fable 5.1 binds no class
- * (a repo rebind reaches it) and is the costliest model a subagent can pick: summit, the strongest class. Static, unlike
- * the bindings: a repo rebind moves seats, not where a subagent's spend is counted. The CLI also spends on a model of its
- * own choosing with no subagent started: an Opus 5.5 judgment's `modelUsage` named `claude-opus-4-8` beside its own model
- * (Claude Code 2.1.301, the dev.12 probe, about as much as the session itself), metered as frontier, an Opus-tier model.
+ * The class a subagent's (or the CLI's own) spend on a model is metered to, by the model's family: Claude model ids are
+ * `claude-<family>-<version>`, and a family's tier holds across versions. A session's own model is metered to its seat's
+ * class instead (meter.ts), which is why Opus, bound by frontier and summit alike, sits here under one: frontier, the
+ * class it binds at its own default effort. Fable binds no class (a repo rebind reaches it) and is the costliest model a
+ * subagent can pick: summit, the strongest class. Static, unlike the bindings: a repo rebind moves seats, not where a
+ * subagent's spend is counted. By family, not by id, because the CLI also spends on models of its own choosing with no
+ * subagent started (an Opus 5.5 judgment's `modelUsage` named `claude-opus-4-8` beside its own model, Claude Code
+ * 2.1.301, the dev.12 probe): dollars are metered exactly either way, and only the class bucket is inferred.
  */
 export const DELEGATE_CLASSES = {
-  'claude-haiku-5-5': 'economy',
-  'claude-sonnet-5-5': 'efficient',
-  'claude-opus-5-5': 'frontier',
-  'claude-opus-4-8': 'frontier',
-  'claude-fable-5-1': 'summit',
+  haiku: 'economy',
+  sonnet: 'efficient',
+  opus: 'frontier',
+  fable: 'summit',
 } as const satisfies Readonly<Record<string, UsageClass>>;
 
-/** A model `modelUsage` names that the catalogue does not know: a CLI or account change the meter must not guess at. */
+/** A model `modelUsage` names outside every catalogued family: a CLI or account change the meter must not guess at. */
 export class UnknownModelError extends Error {
   constructor(model: string) {
-    super(`modelUsage names ${JSON.stringify(model)}, which src/routing/classes.ts DELEGATE_CLASSES does not catalogue; add it with its class`);
+    super(`modelUsage names ${JSON.stringify(model)}, of no family src/routing/classes.ts DELEGATE_CLASSES catalogues; add the family with its class`);
     this.name = 'UnknownModelError';
   }
 }
 
-/** The class a subagent's usage on `model` is metered to; an uncatalogued model fails loud. */
+/** The class spend on `model` is metered to, by its family; a model of no catalogued family fails loud. */
 export function delegateClass(model: string): UsageClass {
-  if (!Object.hasOwn(DELEGATE_CLASSES, model)) throw new UnknownModelError(model);
-  return DELEGATE_CLASSES[model as keyof typeof DELEGATE_CLASSES];
+  const family = /^claude-([a-z]+)-\d/.exec(model)?.[1];
+  if (family === undefined || !Object.hasOwn(DELEGATE_CLASSES, family)) throw new UnknownModelError(model);
+  return DELEGATE_CLASSES[family as keyof typeof DELEGATE_CLASSES];
 }
