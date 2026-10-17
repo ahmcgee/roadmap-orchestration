@@ -281,6 +281,9 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
       claudeGlob(call, session(), dirname(dirname(first)));
       return;
     }
+    case 'stream':
+      out(act.events.map((e) => `${JSON.stringify(e)}\n`).join(''));
+      return;
     case 'exitZeroNoop':
       process.exit(0);
     case 'real':

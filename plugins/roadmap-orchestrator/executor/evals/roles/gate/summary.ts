@@ -13,6 +13,12 @@
 // (`silent`: not-inlined files neither read nor declared unreviewed, median per trial) and the method (tools, subagents)
 // are reported, never failed. A trial the executor's regenerate check stopped before the gate (dev.12, `caught`) is counted
 // per cell (`regenerate`) and is in no criterion: it measures code, not the gate.
+//
+// The large-diff gate (1.0.0-dev.12), reported per cell, never failed: of the trials whose diff was over the threshold, how
+// many answers carried a cluster map and how many maps covered every path exactly once, and the files per review depth
+// summed over the maps. A trial's cost is `spentOf`: its CLI-reported cost, or its transcript estimate when that is larger
+// (a session the spend brake killed has no result). With `--cap`, `capped` counts the trials the cap kept from starting.
+import { CLUSTER_REVIEWS, type ClusterReview } from '../../../src/prompts/schemas.ts';
 import { type Interval, fmtRate, median, quantile, wilson } from '../stats.ts';
 import type { TrialRow, VoidReason } from './arc.ts';
 
@@ -39,6 +45,10 @@ export type CellSummary = Readonly<{
   /** Method, reported: subagents spawned per trial (median) and the models they ran on. */
   subagentsMedian: number | null;
   subagentModels: readonly string[];
+  /** The large-diff gate: trials over the threshold, answers with a cluster map, maps covering every path exactly once. */
+  clusters: Readonly<{ required: number; mapped: number; complete: number }>;
+  /** Files per review depth, summed over the cell's cluster maps. */
+  reviewMix: Readonly<Record<ClusterReview, number>>;
 }>;
 
 export type Criterion = Readonly<{ name: string; pass: boolean | null; detail: string }>;
@@ -57,10 +67,14 @@ export type Summary = Readonly<{
   criteria: readonly Criterion[];
   usage: Readonly<Record<string, ModelTotals>>;
   totalUsd: number;
+  /** `--cap`: the cap and how many trials it kept from starting; null without one (absent in a summary written before caps). */
+  capped: Readonly<{ capUsd: number; notStarted: number }> | null;
 }>;
 
 const graded = (rows: readonly TrialRow[]): readonly TrialRow[] => rows.filter((r) => r.void === null && r.graded !== null);
-const costOf = (r: TrialRow): number => r.usage?.totalUsd ?? 0;
+/** What a finished trial spent: its CLI-reported cost, or its transcript estimate when that is larger (a call killed before its result). */
+export const spentOf = (r: TrialRow): number => Math.max(r.usage?.totalUsd ?? 0, r.estimatedUsd);
+const costOf = spentOf;
 
 function cellSummary(rows: readonly TrialRow[]): CellSummary {
   const first = rows[0]!;
@@ -77,6 +91,8 @@ function cellSummary(rows: readonly TrialRow[]): CellSummary {
   }
   const shares = rows.flatMap((r) => (r.graded?.coverage.share === null || r.graded === null ? [] : [r.graded.coverage.share]));
   const costs = rows.map(costOf);
+  const maps = rows.flatMap((r) => (r.clusters === null ? [] : [r.clusters]));
+  const reviewMix = Object.fromEntries(CLUSTER_REVIEWS.map((d) => [d, maps.reduce((a, m) => a + m.depth[d], 0)])) as Record<ClusterReview, number>;
   return {
     cell: first.cell, family: first.family, planted: first.planted, trials: rows.length, graded: g.length, regenerate: rows.filter((r) => r.caught === 'regenerate').length, voids,
     rate: first.planted ? wilson(caught, g.length) : wilson(fps, g.length),
@@ -90,6 +106,8 @@ function cellSummary(rows: readonly TrialRow[]): CellSummary {
     loadMedian: median(rows.map((r) => r.load)),
     subagentsMedian: median(rows.map((r) => r.method.subagents.length)),
     subagentModels: [...new Set(rows.flatMap((r) => r.method.subagents.flatMap((a) => (a.model === null ? [] : [a.model]))))].sort(),
+    clusters: { required: rows.filter((r) => r.largeDiff).length, mapped: maps.length, complete: maps.filter((m) => m.uncovered === 0 && m.duplicated === 0).length },
+    reviewMix,
   };
 }
 
@@ -97,7 +115,9 @@ const pct = (x: number | null): string => (x === null ? '-' : `${(x * 100).toFix
 const usd = (x: number | null): string => (x === null ? '-' : `$${x.toFixed(3)}`);
 
 /** The summary of `rows`; `compare`, a dev summary, adds the holdout-gap criterion. */
-export function summarise(set: 'dev' | 'holdout', rows: readonly TrialRow[], compare: Summary | null = null, arm: string | null = null): Summary {
+export function summarise(
+  set: 'dev' | 'holdout', rows: readonly TrialRow[], compare: Summary | null = null, arm: string | null = null, capped: Summary['capped'] = null,
+): Summary {
   const cellIds = [...new Set(rows.map((r) => r.cell))];
   const cells = cellIds.map((id) => cellSummary(rows.filter((r) => r.cell === id)));
   const g = graded(rows);
@@ -135,7 +155,7 @@ export function summarise(set: 'dev' | 'holdout', rows: readonly TrialRow[], com
       };
     }
   }
-  return { set, arm, trials: rows.length, cells, detection, falsePositives, coverageMedian, criteria, usage, totalUsd: rows.reduce((a, r) => a + costOf(r), 0) };
+  return { set, arm, trials: rows.length, cells, detection, falsePositives, coverageMedian, criteria, usage, totalUsd: rows.reduce((a, r) => a + costOf(r), 0), capped };
 }
 
 /** The report: the ARM line, one CELL line per cell, COST lines per cell and model, a PASS|FAIL|INFO line per criterion, USAGE per model. */
@@ -144,11 +164,13 @@ export function reportLines(s: Summary): readonly string[] {
   for (const c of s.cells) {
     out.push(`CELL ${c.cell} ${c.planted ? 'planted' : 'clean'} trials=${c.trials} graded=${c.graded} regenerate=${c.regenerate} ${c.planted ? 'caught' : 'fp'}=${fmtRate(c.rate)} lucky=${c.lucky} `
       + `coverage=${pct(c.coverageMedian)} silent=${c.silentMedian ?? '-'} cost=${usd(c.cost.median)}/p90 ${usd(c.cost.p90)} perCatch=${usd(c.cost.perCatch)} wall=${c.wallMedianS?.toFixed(0) ?? '-'}s `
-      + `turns=${c.turnsMedian ?? '-'} subagents=${c.subagentsMedian ?? '-'}${c.subagentModels.length > 0 ? ` (${c.subagentModels.join(',')})` : ''} voids=${JSON.stringify(c.voids)}`);
+      + `turns=${c.turnsMedian ?? '-'} subagents=${c.subagentsMedian ?? '-'}${c.subagentModels.length > 0 ? ` (${c.subagentModels.join(',')})` : ''} voids=${JSON.stringify(c.voids)} `
+      + `clusters=${c.clusters.complete}/${c.clusters.required} mapped=${c.clusters.mapped} mix=${CLUSTER_REVIEWS.map((d) => `${d}:${c.reviewMix[d]}`).join(',')}`);
     for (const [m, x] of Object.entries(c.costByModel)) out.push(`COST ${c.cell} ${m} median=${usd(x.median)} p90=${usd(x.p90)}`);
   }
   for (const k of s.criteria) out.push(`${k.pass === null ? 'INFO' : k.pass ? 'PASS' : 'FAIL'} ${k.name} ${k.detail}`);
   out.push(`INFO coverage-median ${pct(s.coverageMedian)} (target 90%)`);
+  if (s.capped !== null) out.push(`INFO cap $${s.capped.capUsd.toFixed(2)}: ${s.capped.notStarted} trials not started`);
   for (const [m, u] of Object.entries(s.usage)) {
     out.push(`USAGE ${m} costUsd=${u.costUsd.toFixed(4)} input=${u.inputTokens} output=${u.outputTokens} cacheRead=${u.cacheReadTokens} cacheWrite=${u.cacheWriteTokens}`);
   }

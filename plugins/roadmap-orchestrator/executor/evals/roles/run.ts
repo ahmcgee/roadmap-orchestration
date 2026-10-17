@@ -3,7 +3,7 @@
 //
 //   node evals/roles/run.ts gate --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1]
 //                           [--risk low|med|high] [--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <dev summary.json>]
-//                           [--fake approve-all|revise-all|cite-every-path|cite-plant]
+//                           [--fake approve-all|revise-all|cite-every-path|cite-plant] [--cap <usd>] [--trial-cap <usd>]
 //
 // The arm: `--risk` picks the gate seat (built-in: low and med efficient/Sonnet 5.5, high frontier/Opus 5.5)
 // and `--rebind` (repeatable) rebinds a class for the run through the production mechanism, the repo config's
@@ -15,6 +15,12 @@
 // line per trial, then the report (summary.ts: CELL, COST, PASS|FAIL|INFO, USAGE, TOTAL). Exits 1 on any FAIL.
 // `--fake` swaps the real gate for a degenerate one (free: the harness and graders' own check); a real gate needs
 // --size 2000..5000. Each trial is bounded by a 60-minute worker timeout on top of the gate's own judgment deadline.
+//
+// Spend caps, inside the arm: `--cap <usd>` starts no new trial once the spend of the trials finished so far reaches it
+// (a running trial finishes; the CAP line and summary.json's `capped` count the trials not started), and `--trial-cap
+// <usd>` kills a running trial's session once its live spend at list price passes it (arc.ts spend brake; the trial is
+// void `cap`). A finished trial's spend is the larger of its CLI-reported cost and its transcript estimate, so a trial
+// killed before its result still counts what it spent. Without the flags nothing is capped.
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,14 +33,14 @@ import { modelInfo } from '../../src/routing/models.ts';
 import { MODEL_IDS, type ModelId, RISK_TIERS, type RiskTier } from '../../src/routing/types.ts';
 import { FAKE_GATES, type GateKind, type TrialRow, gateArm } from './gate/arc.ts';
 import { type CellSet, cellsFor } from './gate/cells.ts';
-import { type Summary, failed, reportLines, summarise } from './gate/summary.ts';
+import { type Summary, failed, reportLines, spentOf, summarise } from './gate/summary.ts';
 import { median } from './stats.ts';
 import type { WorkerArgs } from './trial.ts';
 
 const WORKER = fileURLToPath(new URL('./trial.ts', import.meta.url));
 const TRIAL_TIMEOUT_MS = 60 * 60_000;
 const USAGE = 'usage: node evals/roles/run.ts gate --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] '
-  + '[--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <summary.json>] [--fake <kind>]';
+  + '[--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <summary.json>] [--fake <kind>] [--cap <usd>] [--trial-cap <usd>]';
 
 export type RunOptions = Readonly<{
   set: CellSet;
@@ -49,6 +55,10 @@ export type RunOptions = Readonly<{
   out: string;
   compare: string | null;
   gate: GateKind;
+  /** `--cap`: no trial starts once the finished trials' spend reaches this many USD; null: no cap. */
+  cap: number | null;
+  /** `--trial-cap`: a running trial is killed once its live spend passes this many USD; null: no cap. */
+  trialCap: number | null;
 }>;
 
 export function parseRun(argv: readonly string[]): RunOptions {
@@ -58,6 +68,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
       set: { type: 'string' }, n: { type: 'string', default: '3' }, cells: { type: 'string' }, parallel: { type: 'string', default: '4' },
       size: { type: 'string', default: '3000' }, seed: { type: 'string', default: 'roles-1' }, risk: { type: 'string', default: 'med' },
       rebind: { type: 'string', multiple: true }, out: { type: 'string' }, compare: { type: 'string' }, fake: { type: 'string' },
+      cap: { type: 'string' }, 'trial-cap': { type: 'string' },
     },
   });
   if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(only the gate role has evals so far)`);
@@ -65,6 +76,12 @@ export function parseRun(argv: readonly string[]): RunOptions {
   const int = (name: string, v: string, lo: number, hi: number): number => {
     const x = Number(v);
     if (!Number.isInteger(x) || x < lo || x > hi) throw new Error(`--${name} ${v}: an integer in ${lo}..${hi}`);
+    return x;
+  };
+  const usd = (name: string, v: string | undefined): number | null => {
+    if (v === undefined) return null;
+    const x = Number(v);
+    if (!Number.isFinite(x) || x <= 0) throw new Error(`--${name} ${v}: a positive amount of USD`);
     return x;
   };
   const gate = values.fake === undefined ? 'real' : (FAKE_GATES as readonly string[]).includes(values.fake) ? (values.fake as GateKind) : null;
@@ -77,6 +94,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
   return {
     set: values.set, n: int('n', values.n, 1, 100), cells: values.cells === undefined ? null : values.cells.split(','), parallel: int('parallel', values.parallel, 1, 16),
     size, seed: values.seed, risk: values.risk as RiskTier, config: rebindConfig(values.rebind ?? []), out, compare: values.compare ?? null, gate,
+    cap: usd('cap', values.cap), trialCap: usd('trial-cap', values['trial-cap']),
   };
 }
 
@@ -101,8 +119,8 @@ export function rebindConfig(flags: readonly string[]): RepoConfig | null {
 /** A row for a trial whose worker died before writing one. */
 function errorRow(a: WorkerArgs, family: string, planted: boolean, detail: string): TrialRow {
   return {
-    set: a.set, cell: a.cell, family, trial: a.trial, planted, gate: a.gate, outcome: null, caught: null, decision: null, void: { reason: 'error', detail }, graded: null, usage: null,
-    wallMs: 0, turns: 0, load: 0, calls: 0, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: a.out,
+    set: a.set, cell: a.cell, family, trial: a.trial, planted, gate: a.gate, outcome: null, caught: null, decision: null, void: { reason: 'error', detail }, graded: null,
+    largeDiff: false, clusters: null, usage: null, estimatedUsd: 0, wallMs: 0, turns: 0, load: 0, calls: 0, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: a.out,
   };
 }
 
@@ -139,11 +157,19 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
   const queue = cells.flatMap((c) => Array.from({ length: o.n }, (_, trial) => ({ cell: c, trial })));
   const rows: TrialRow[] = [];
   const medianLoad = (cell: string): number | null => median(rows.filter((r) => r.cell === cell && r.void === null).map((r) => r.load)) ?? null;
+  const spent = (): number => rows.reduce((a, r) => a + spentOf(r), 0);
+  let notStarted = 0;
   const next = async (): Promise<void> => {
     for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
+      if (o.cap !== null && spent() >= o.cap) {
+        notStarted += queue.length + 1;
+        queue.length = 0;
+        log(`CAP spend $${spent().toFixed(2)} reached --cap $${o.cap.toFixed(2)}: ${notStarted} trials not started`);
+        return;
+      }
       const a: WorkerArgs = {
         role: 'gate', set: o.set, cell: job.cell.id, trial: job.trial, seed: o.seed, size: o.size, gate: o.gate, risk: o.risk, config: o.config,
-        out: join(o.out, `${job.cell.id}-${job.trial}`), medianLoad: medianLoad(job.cell.id),
+        out: join(o.out, `${job.cell.id}-${job.trial}`), medianLoad: medianLoad(job.cell.id), trialCap: o.trialCap,
       };
       const died = await runWorker(a, log);
       const rowFile = join(a.out, 'row.json');
@@ -151,12 +177,12 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
       rows.push(row);
       appendFileSync(join(o.out, 'trials.jsonl'), `${JSON.stringify(row)}\n`);
       log(`TRIAL ${row.cell}#${row.trial} ${row.void !== null ? `void:${row.void.reason} ${row.void.detail}` : row.caught !== null ? `caught-by:${row.caught}` : row.graded?.verdict} `
-        + `outcome=${row.outcome} cost=$${(row.usage?.totalUsd ?? 0).toFixed(3)} wall=${Math.round(row.wallMs / 1000)}s models=${row.models.join(',')}`);
+        + `outcome=${row.outcome} cost=$${spentOf(row).toFixed(3)} wall=${Math.round(row.wallMs / 1000)}s models=${row.models.join(',')}`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(o.parallel, queue.length) }, next));
   rows.sort((x, y) => (x.cell === y.cell ? x.trial - y.trial : cells.findIndex((c) => c.id === x.cell) - cells.findIndex((c) => c.id === y.cell)));
-  const summary = summarise(o.set, rows, compare, arm);
+  const summary = summarise(o.set, rows, compare, arm, o.cap === null ? null : { capUsd: o.cap, notStarted });
   writeFileSync(join(o.out, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
   for (const l of reportLines(summary)) log(l);
   log(`run dir ${o.out}`);

@@ -860,7 +860,7 @@ async function main(): Promise<void> {
     const g0 = DEV_CELLS.find((c) => c.id === 'G0')!;
     const row = await runGateTrial({
       set: 'dev', cell: { ...g0, id: 'probe', plant: null }, trial: 0, seed: 'probe', size: 100, gate: 'real', risk: 'med', config: null,
-      out: join(root, 'gate-bounded'), medianLoad: null, log: (l) => process.stdout.write(`${l}\n`),
+      out: join(root, 'gate-bounded'), medianLoad: null, trialCap: null, log: (l) => process.stdout.write(`${l}\n`),
     });
     const cov = row.graded?.coverage ?? null;
     report(row.void === null && row.decision !== null, 'gate.bounded.validates', `outcome=${row.outcome} decision=${row.decision} void=${JSON.stringify(row.void)} dir=${row.dir}`);

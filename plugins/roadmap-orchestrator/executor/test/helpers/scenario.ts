@@ -90,8 +90,11 @@ export type WorldAct =
  * call's exact argv, stdin, cwd and environment, its stdout and stderr passed through and its exit status the fake's.
  * Nothing after it runs. The production prompt, capture, tools and add-dirs reach the real model byte for byte, with no
  * test seam in production code.
+ * `stream` (the role evals' spend brake): print `events` to stdout as stream-json lines, as a running session prints its
+ * messages before any result.
  */
-export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real' }>;
+export type ClaudeOnlyAct =
+  | Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real' }> | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>;
 /**
  * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on
  * stderr, exit 1). `threadStarted`: print the `thread.started` event now, as the real CLI does first, so a

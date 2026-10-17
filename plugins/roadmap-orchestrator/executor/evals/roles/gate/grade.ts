@@ -14,9 +14,13 @@
 // - Unreviewed (claimed against actual): the gate's own `unreviewed` entries (null on an answer without them), the
 //   not-inlined files they name (a path, a directory prefix or a glob), and `silent`: not-inlined files the session never
 //   looked at that no entry names, coverage the answer implied without having it. Reported, never failed.
+// - Clusters (the large-diff gate, 1.0.0-dev.12; `gradeClusters`): of the paths the gate's cluster map had to cover (the
+//   diff's paths, as the executor listed them), how many no cluster covers and how many more than one does, and the files
+//   per review depth (description, routine, close). Reported, never failed: code already refuses an incomplete map.
 import { matchesGlob } from 'node:path';
 import type { DiffShown } from '../../../src/core/events.ts';
-import type { GateOutput } from '../../../src/prompts/schemas.ts';
+import { type RepoPath, matchesPattern } from '../../../src/core/values.ts';
+import { CLUSTER_REVIEWS, type ClusterReview, type GateOutput, clusterCoverage } from '../../../src/prompts/schemas.ts';
 import type { Placement } from './cells.ts';
 import type { AnswerKey } from './fixture.ts';
 import { type Transcript, grepResults, readPaths } from '../transcript.ts';
@@ -82,3 +86,18 @@ export function grade(key: AnswerKey, shown: DiffShown, prompt: string, t: Trans
 }
 
 const placementHolds = (intended: Placement, actual: 'inlined' | 'omitted'): boolean => intended === 'any' || intended === actual;
+
+/** How a gate answer's cluster map covered its diff's paths, and the files per review depth (a file under its first cluster). */
+export type ClusterGrade = Readonly<{ files: number; uncovered: number; duplicated: number; depth: Readonly<Record<ClusterReview, number>> }>;
+
+/** The answer's cluster map against `paths` (the diff's paths, `diffPaths`); null when the answer carries no map. */
+export function gradeClusters(answer: GateOutput, paths: readonly RepoPath[]): ClusterGrade | null {
+  if (answer.clusters === null) return null;
+  const { uncovered, duplicated } = clusterCoverage(answer.clusters, paths);
+  const depth = Object.fromEntries(CLUSTER_REVIEWS.map((r) => [r, 0])) as Record<ClusterReview, number>;
+  for (const path of paths) {
+    const c = answer.clusters.find((x) => x.paths.some((p) => matchesPattern(path, p)));
+    if (c !== undefined) depth[c.review] += 1;
+  }
+  return { files: paths.length, uncovered: uncovered.length, duplicated: duplicated.length, depth };
+}

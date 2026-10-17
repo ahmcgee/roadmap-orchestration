@@ -4,7 +4,9 @@
 // main session's turns, and the final result's per-model usage and cost.
 //
 // Cost comes from `result.modelUsage` (per model, subagents included), never the top-level `usage`, which excludes
-// subagent tokens; the per-model costs must sum to `total_cost_usd`.
+// subagent tokens; the per-model costs must sum to `total_cost_usd`. A running session has no result yet, so `liveUsd`
+// estimates its spend so far from each assistant message's tokens at list price (`PRICES`): what the role eval's per-trial
+// cap reads (run.ts `--trial-cap`), never what a finished trial reports.
 
 export type ToolCall = Readonly<{
   id: string;
@@ -42,9 +44,32 @@ export type Transcript = Readonly<{
   /** Main-session assistant messages that called a tool, in order, each with the ids of the calls it made. */
   toolTurns: readonly (readonly string[])[];
   usage: Usage | null;
+  /** Spend so far at list price from every assistant message's tokens (main session and subagents): an estimate (`PRICES`). */
+  liveUsd: number;
   denials: number;
   numTurns: number | null;
 }>;
+
+/** USD per million tokens: input, output, cache read, cache write (5-minute writes, 1.25x input). */
+export type Price = Readonly<{ input: number; output: number; cacheRead: number; cacheWrite: number }>;
+
+/**
+ * List prices of the Claude models a role-eval session runs on (Anthropic first-party rates as of 2026-10-06), by model id
+ * prefix (a message's `model` may carry a suffix). For the live estimate only: a finished call's cost is the CLI's own.
+ */
+export const PRICES: Readonly<Record<string, Price>> = {
+  'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  'claude-haiku-5-5': { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+};
+
+/** The price of `model` (a loud failure for one `PRICES` does not list: the cap would silently undercount it). */
+export function priceOf(model: string): Price {
+  const key = Object.keys(PRICES).find((k) => model === k || model.startsWith(`${k}-`) || model.startsWith(`${k}[`));
+  if (key === undefined) throw new Error(`no list price for model ${model} (evals/roles/transcript.ts PRICES)`);
+  return PRICES[key]!;
+}
 
 type Event = Readonly<Record<string, unknown>>;
 type Item = Readonly<{ type?: unknown; id?: unknown; name?: unknown; input?: unknown; tool_use_id?: unknown; content?: unknown; text?: unknown }>;
@@ -117,6 +142,8 @@ export function readTranscript(events: readonly Event[]): Transcript {
   let turns = 0;
   let load = 0;
   let result: Event | null = null;
+  // Each message's latest usage and model: the stream repeats a message once per content block, its usage growing.
+  const priced = new Map<string, { model: string; usage: Readonly<Record<string, unknown>> }>();
   for (const e of events) {
     const parent = typeof e['parent_tool_use_id'] === 'string' ? e['parent_tool_use_id'] : null;
     if (e['type'] === 'system' && e['subtype'] === 'init') {
@@ -134,6 +161,7 @@ export function readTranscript(events: readonly Event[]): Transcript {
       const id = typeof (message as { id?: unknown } | undefined)?.id === 'string' ? (message as { id: string }).id : null;
       const first = id === null || !seen.has(id);
       if (id !== null) seen.add(id);
+      if (message?.usage !== undefined && typeof message.model === 'string') priced.set(id ?? `#${priced.size}`, { model: message.model, usage: message.usage });
       if (first) {
         const u = message?.usage;
         const input = num(u?.['input_tokens']) + num(u?.['cache_read_input_tokens']) + num(u?.['cache_creation_input_tokens']);
@@ -177,9 +205,16 @@ export function readTranscript(events: readonly Event[]): Transcript {
     }
   }
   const denials = result === null ? 0 : Array.isArray(result['permission_denials']) ? (result['permission_denials'] as unknown[]).length : 0;
+  let liveUsd = 0;
+  for (const { model: m, usage: u } of priced.values()) {
+    if (m === '<synthetic>') continue; // the CLI's own messages (an API error it reports): no model call, no cost
+    const p = priceOf(m);
+    liveUsd += (num(u['input_tokens']) * p.input + num(u['output_tokens']) * p.output + num(u['cache_read_input_tokens']) * p.cacheRead
+      + num(u['cache_creation_input_tokens']) * p.cacheWrite) / 1e6;
+  }
   return {
     tools, model, calls: [...calls.values()], subagents: [...subagents.values()], turns, load, toolTurns,
-    usage: result === null ? null : usageOf(result), denials, numTurns: result === null ? null : num(result['num_turns']),
+    usage: result === null ? null : usageOf(result), liveUsd, denials, numTurns: result === null ? null : num(result['num_turns']),
   };
 }
 

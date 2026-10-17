@@ -9,12 +9,16 @@
 // While the gate runs, a monitor reads its stream every 5 s: a trace line every 30 s (tools by name, subagents with model
 // and tokens, time to the first Read and Agent, coverage so far, token load, denials, calls of unavailable tools) and the
 // harness's brakes (no Read or Agent in 3 minutes while files are not inlined; coverage flat over 8 tool turns; token load
-// over 3x the cell's median), which kill the session and void the trial as `runaway`. Brakes are the harness's, never
-// the gate's: method choices are reported, not failed.
+// over 3x the cell's median), which kill the session and void the trial as `runaway`; and the spend brake (`trialCap`,
+// run.ts `--trial-cap`): the session's live spend at list price (transcript.ts `liveUsd`, every gate call of the trial)
+// over the cap kills it and voids the trial as `cap`. Brakes are the harness's, never the gate's: method choices are
+// reported, not failed.
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DiffShown, StageOutcomeFact } from '../../../src/core/events.ts';
+import type { DiffShown, JudgmentInputs, StageOutcomeFact } from '../../../src/core/events.ts';
+import { gateLargeDiffOf } from '../../../src/core/upgrade.ts';
+import { diffBase } from '../../../src/git/transient.ts';
 import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
 import type { RiskTier } from '../../../src/routing/types.ts';
 import { modelInfo } from '../../../src/routing/models.ts';
@@ -36,13 +40,17 @@ import { TEST_ARGV } from '../gen/tsrepo.ts';
 import { type Transcript, type Usage, parseEvents, readTranscript, sumUsage, toolCounts, unavailableCalls, usageOf } from '../transcript.ts';
 import type { Cell } from './cells.ts';
 import { type AnswerKey, DERIVED, DERIVED_PATTERNS, type Fixture, buildFixture, materialise } from './fixture.ts';
-import { boundedDiff } from '../../../src/git/boundeddiff.ts';
+import { boundedDiff, diffPaths } from '../../../src/git/boundeddiff.ts';
 import { GATE_DIFF_BUDGET, largeDiffOf } from '../../../src/pipeline/gate.ts';
 import { absPath } from '../../../src/core/values.ts';
-import { type Graded, grade, touched } from './grade.ts';
+import { type ClusterGrade, type Graded, grade, gradeClusters, touched } from './grade.ts';
 
-/** Degenerate gates: approve everything; revise everything (one blocking finding off the plant); cite every changed path; cite the plant without reading. */
-export const FAKE_GATES = ['approve-all', 'revise-all', 'cite-every-path', 'cite-plant'] as const;
+/**
+ * Degenerate gates: approve everything; revise everything (one blocking finding off the plant); cite every changed path; cite
+ * the plant without reading; and `overspend`, a session that streams one message billed far over any trial cap and then
+ * hangs, never answering (the spend brake's own check).
+ */
+export const FAKE_GATES = ['approve-all', 'revise-all', 'cite-every-path', 'cite-plant', 'overspend'] as const;
 export type FakeGate = (typeof FAKE_GATES)[number];
 export type GateKind = 'real' | FakeGate;
 
@@ -59,7 +67,7 @@ const finding = (path: string, text: string): JsonValue => ({ severity: 'blockin
  * A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). `large`: the diff is over
  * the large-diff threshold, so the answer carries a cluster map (one cluster over everything) that code accepts.
  */
-function fakeAnswer(kind: FakeGate, key: AnswerKey, large: boolean): JsonValue {
+function fakeAnswer(kind: Exclude<FakeGate, 'overspend'>, key: AnswerKey, large: boolean): JsonValue {
   const decoy = key.changed.find((p) => p !== key.plant?.path) ?? 'ARCHITECTURE.md';
   const clusters: JsonValue = large ? [{ id: 'all', paths: ['**'], review: 'routine' }] : null;
   const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters });
@@ -75,9 +83,16 @@ function fakeAnswer(kind: FakeGate, key: AnswerKey, large: boolean): JsonValue {
   }
 }
 
+/** `overspend`'s one message: a million Opus 5.5 output tokens, $20 at list price. */
+const OVERSPEND: JsonValue = {
+  type: 'assistant', parent_tool_use_id: null,
+  message: { id: 'msg-overspend', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'thinking at length' }], usage: { input_tokens: 10, output_tokens: 1_000_000 } },
+};
+
 /** The gate's steps: the real CLI (the first call and up to two follow-ups: a repair turn or a retry) or one fake answer. */
 function gateSteps(kind: GateKind, key: AnswerKey, large: boolean): readonly Step[] {
   if (kind === 'real') return [0, 1, 2].map((): Step => ({ as: 'claude', expect: {}, acts: [{ type: 'real' }] }));
+  if (kind === 'overspend') return [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'stream', events: [OVERSPEND] }, { type: 'hang', ms: 10 * 60_000 }] }];
   return [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: fakeAnswer(kind, key, large) }] }];
 }
 
@@ -140,7 +155,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
 // ---------------------------------------------------------------------------------------------------
 // The monitor: trace and brakes
 
-export type Brake = Readonly<{ rule: 'no-read' | 'flat-coverage' | 'load'; detail: string }>;
+export type Brake = Readonly<{ rule: 'no-read' | 'flat-coverage' | 'load' | 'cap'; detail: string }>;
 
 const NO_READ_MS = 3 * 60_000;
 const FLAT_TURNS = 8;
@@ -150,13 +165,21 @@ const TRACE_MS = 30_000;
 
 type Live = { inv: InvocationId; startedAt: number; firstRead: number | null; firstAgent: number | null; coverage: number[] };
 
-/** What the latest gate attempt recorded it was shown (null before its inputs are captured): what placement and coverage read. */
-function gateShown(r: ArcRun): DiffShown | null {
+/** The latest gate attempt's `judgment-inputs` (null before a gate spawn). */
+function gateInputs(r: ArcRun): JudgmentInputs | null {
   const parent = judgmentSpawns(r.ctx, U1, 'gate').at(-1)?.parent;
   if (parent === undefined) return null;
   if (parent.type !== 'stage') throw new Error(`a gate spawn under ${parent.type}`);
   const inputs = r.journal.view.judgmentInputs(U1, 'gate', parent.attempt);
-  if (inputs?.diffShown === undefined) throw new Error(`gate#${parent.attempt}: a gate spawn without its judgment-inputs diffShown`);
+  if (inputs === null) throw new Error(`gate#${parent.attempt}: a gate spawn without its judgment-inputs`);
+  return inputs;
+}
+
+/** What the latest gate attempt recorded it was shown (null before its inputs are captured): what placement and coverage read. */
+function gateShown(r: ArcRun): DiffShown | null {
+  const inputs = gateInputs(r);
+  if (inputs === null) return null;
+  if (inputs.diffShown === undefined) throw new Error(`gate#${inputs.attempt}: a gate spawn without its judgment-inputs diffShown`);
   return inputs.diffShown;
 }
 
@@ -164,8 +187,12 @@ function gatePrompt(d: ArcDescriptor): string | null {
   return readCalls(d.scenarioPath).find(isGateCall)?.stdin ?? null;
 }
 
-function startMonitor(r: ArcRun, label: string, medianLoad: number | null, log: (line: string) => void): { stop: () => void; brake: () => Brake | null; firsts: () => Readonly<{ read: number | null; agent: number | null }> } {
+function startMonitor(
+  r: ArcRun, label: string, medianLoad: number | null, trialCap: number | null, log: (line: string) => void,
+): { stop: () => void; brake: () => Brake | null; firsts: () => Readonly<{ read: number | null; agent: number | null }> } {
   let live: Live | null = null;
+  // The finished gate calls' spend so far (a repair turn or a retry follows a finished call), by invocation.
+  const finished = new Map<InvocationId, number>();
   let braked: Brake | null = null;
   let lastTrace = Date.now();
   let firstRead: number | null = null;
@@ -185,14 +212,11 @@ function startMonitor(r: ArcRun, label: string, medianLoad: number | null, log: 
     if (open === undefined || open.kind !== 'proc.spawn') return;
     const inv = invocationId(open.op, open.ordinal);
     if (braked !== null) return kill(inv);
-    if (live === null || live.inv !== inv) live = { inv, startedAt: Date.now(), firstRead: null, firstAgent: null, coverage: [] };
-    let text = '';
-    try {
-      text = readFileSync(join(invocationDir(r.ctx.runDir, inv), STDOUT_FILE), 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (live === null || live.inv !== inv) {
+      if (live !== null) finished.set(live.inv, readTranscript(parseEvents(readStdout(r, live.inv))).liveUsd);
+      live = { inv, startedAt: Date.now(), firstRead: null, firstAgent: null, coverage: [] };
     }
-    const t = readTranscript(parseEvents(text, true));
+    const t = readTranscript(parseEvents(readStdout(r, inv), true));
     const now = Date.now();
     const s = (ms: number | null): string => (ms === null ? '-' : `${Math.round(ms / 1000)}s`);
     if (live.firstRead === null && t.calls.some((c) => c.name === 'Read' || c.name === 'Grep')) live.firstRead = now - live.startedAt;
@@ -211,6 +235,8 @@ function startMonitor(r: ArcRun, label: string, medianLoad: number | null, log: 
       braked = { rule: 'flat-coverage', detail: `coverage flat at ${covered}/${omitted.length} over ${FLAT_TURNS} tool turns` };
     }
     if (braked === null && medianLoad !== null && t.load > LOAD_FACTOR * medianLoad) braked = { rule: 'load', detail: `token load ${t.load} over ${LOAD_FACTOR}x the cell median ${medianLoad}` };
+    const spent = [...finished.values()].reduce((a, b) => a + b, t.liveUsd);
+    if (braked === null && trialCap !== null && spent > trialCap) braked = { rule: 'cap', detail: `live spend $${spent.toFixed(2)} over the trial cap $${trialCap.toFixed(2)}` };
     if (braked !== null) {
       log(`BRAKE ${label} ${braked.rule}: ${braked.detail}`);
       kill(inv);
@@ -220,17 +246,28 @@ function startMonitor(r: ArcRun, label: string, medianLoad: number | null, log: 
       lastTrace = now;
       const agents = t.subagents.map((a) => `${a.type ?? '?'}/${a.model ?? '?'}:${a.inputTokens + a.outputTokens}`).join(',');
       log(`TRACE ${label} t=${s(now - live.startedAt)} tools=${JSON.stringify(toolCounts(t))} agents=[${agents}] firstRead=${s(live.firstRead)} firstAgent=${s(live.firstAgent)} `
-        + `coverage=${covered}/${omitted.length} load=${t.load} turns=${t.turns} denials=${t.denials} unavailable=${JSON.stringify(unavailableCalls(t))}`);
+        + `coverage=${covered}/${omitted.length} load=${t.load} spent=$${spent.toFixed(2)} turns=${t.turns} denials=${t.denials} unavailable=${JSON.stringify(unavailableCalls(t))}`);
     }
   };
   const timer = setInterval(tick, POLL_MS);
   return { stop: () => clearInterval(timer), brake: () => braked, firsts: () => ({ read: firstRead, agent: firstAgent }) };
 }
 
+/** A gate call's stdout so far ('' before it is written). */
+function readStdout(r: ArcRun, inv: InvocationId): string {
+  try {
+    return readFileSync(join(invocationDir(r.ctx.runDir, inv), STDOUT_FILE), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return '';
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------
 // A trial
 
-export type VoidReason = 'runaway' | 'error' | 'needle' | 'placement-miss';
+/** `cap`: the spend brake killed the trial's session (run.ts `--trial-cap`). */
+export type VoidReason = 'runaway' | 'cap' | 'error' | 'needle' | 'placement-miss';
 
 export type TrialRow = Readonly<{
   set: 'dev' | 'holdout';
@@ -249,7 +286,12 @@ export type TrialRow = Readonly<{
   decision: GateOutput['decision'] | null;
   void: Readonly<{ reason: VoidReason; detail: string }> | null;
   graded: Graded | null;
+  /** The large-diff gate: whether the gate's diff was over the threshold (its inputs' `largeDiff`), and its answer's cluster map graded (null: no map). */
+  largeDiff: boolean;
+  clusters: ClusterGrade | null;
   usage: Usage | null;
+  /** The trial's spend at list price from its transcripts (`liveUsd`): what a call killed before its result cost, which `usage` cannot say. */
+  estimatedUsd: number;
   wallMs: number;
   /** Main-session turns over every gate call; gate calls made; the token load (transcript.ts `load`, the load brake's measure). */
   turns: number;
@@ -287,6 +329,8 @@ export type TrialOptions = Readonly<{
   out: string;
   /** The cell's median token load so far (the load brake), or null. */
   medianLoad: number | null;
+  /** The spend brake (run.ts `--trial-cap`): live spend in USD over which the session is killed, or null for none. */
+  trialCap: number | null;
   log: (line: string) => void;
 }>;
 
@@ -302,7 +346,7 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   writeFileSync(join(o.out, 'key.json'), `${JSON.stringify(fx.key, null, 2)}\n`);
   const d = setupGateArc(fx, o.gate, o.risk, o.config);
   const r = contextFor(d);
-  const monitor = startMonitor(r, label, o.medianLoad, o.log);
+  const monitor = startMonitor(r, label, o.medianLoad, o.trialCap, o.log);
   const started = Date.now();
   let error: string | null = null;
   try {
@@ -345,6 +389,10 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
     return s.purpose === 'lane' && s.lane.startsWith('regenerate.') && i.parent.type === 'stage' && i.parent.stage === 'lanes' && i.parent.attempt === decided.attempt;
   }) ? 'regenerate' : null;
   const shown = gateShown(r);
+  const inputs = gateInputs(r);
+  const largeDiff = inputs !== null && gateLargeDiffOf(inputs) !== null;
+  const clusters = answer === null || answer.clusters === null || inputs === null || inputs.head === null ? null
+    : gradeClusters(answer, diffPaths(absPath(d.repo), diffBase(absPath(d.repo), inputs.tip, inputs.head), inputs.head));
   const stages = outcomes(d);
   r.journal.close();
 
@@ -352,7 +400,7 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const graded = answer === null ? null : grade(fx.key, shown!, prompt, t, answer);
   const hits = scanTranscript(transcriptFile, [o.out, dirname(o.out), 'evals/roles', ...repositoryPaths()]);
   const brake = monitor.brake();
-  const voided: TrialRow['void'] = brake !== null ? { reason: 'runaway', detail: `${brake.rule}: ${brake.detail}` }
+  const voided: TrialRow['void'] = brake !== null ? { reason: brake.rule === 'cap' ? 'cap' : 'runaway', detail: `${brake.rule}: ${brake.detail}` }
     : error !== null ? { reason: 'error', detail: error }
     : caught !== null ? null
     : answer === null ? { reason: 'error', detail: `the gate gave no valid answer (outcome ${decided?.outcome ?? 'none'})` }
@@ -362,8 +410,9 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const firsts = monitor.firsts();
   const row: TrialRow = {
     set: o.set, cell: o.cell.id, family: o.cell.family, trial: o.trial, planted: fx.key.plant !== null, gate: o.gate,
-    outcome: decided !== null && decided.stage === 'gate' ? decided.outcome : null, caught, decision: answer?.decision ?? null, void: voided, graded,
-    usage: sumUsage(perCall.flatMap((c) => (c.usage === null ? [] : [c.usage]))), wallMs, turns: t.turns, load: t.load, calls: spawns.length,
+    outcome: decided !== null && decided.stage === 'gate' ? decided.outcome : null, caught, decision: answer?.decision ?? null, void: voided, graded, largeDiff, clusters,
+    usage: sumUsage(perCall.flatMap((c) => (c.usage === null ? [] : [c.usage]))), estimatedUsd: perCall.reduce((a, c) => a + readTranscript(c.events).liveUsd, 0),
+    wallMs, turns: t.turns, load: t.load, calls: spawns.length,
     models: [...new Set(perCall.flatMap((c) => (c.model === null ? [] : [c.model])))],
     method: {
       available: t.tools, tools: toolCounts(t), subagents: t.subagents.map((a) => ({ type: a.type, model: a.model, tokens: a.inputTokens + a.outputTokens })),

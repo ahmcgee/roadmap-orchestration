@@ -20,6 +20,8 @@ export type WorkerArgs = Readonly<{
   config: RepoConfig | null;
   out: string;
   medianLoad: number | null;
+  /** `--trial-cap`: the live spend in USD over which the trial's session is killed (void `cap`), or null. */
+  trialCap: number | null;
 }>;
 
 async function main(): Promise<void> {
