@@ -1,11 +1,12 @@
 // One gate trial's fixture: the base repo (the seed's, shared by every cell and trial), the cell's sweep, the trial's plant
 // (file, symbol and form from the trial's seed), the spec, the commit message and the answer key.
 //
-// Placement: a cell asks for its plant's file inlined, not inlined, or either. The fixture predicts it with the production
-// bounded diff (src/git/boundeddiff.ts) at the gate's own budget (`GATE_DIFF_BUDGET`) over a scratch repository, picks a
-// file on the asked side, and checks the planted tree lands there too. The trial then reads the truth from what the gate
-// recorded it was shown (its `judgment-inputs` `diffShown`, grade.ts): a trial whose plant landed on the other side is void
-// (`placement-miss`), never graded.
+// Placement: a cell asks for its plant's file inlined, not inlined, or either. The fixture tries candidate files and keeps
+// the first whose planted tree lands on the asked side under the production bounded diff (src/git/boundeddiff.ts) at the
+// gate's own budget (`GATE_DIFF_BUDGET`) over a scratch repository. The unplanted tree predicts nothing: the bounded
+// diff inlines first what the sweep's substitutions do not explain, which a plant itself is. The trial then reads the
+// truth from what the gate recorded it was shown (its `judgment-inputs` `diffShown`, grade.ts): a trial whose plant
+// landed on the other side is void (`placement-miss`), never graded.
 import { join } from 'node:path';
 import { sha } from '../../../src/core/ids.ts';
 import { absPath, repoPattern } from '../../../src/core/values.ts';
@@ -13,7 +14,7 @@ import { boundedDiff } from '../../../src/git/boundeddiff.ts';
 import { GATE_DIFF_BUDGET } from '../../../src/pipeline/gate.ts';
 import type { PlantContext, Planted } from '../gen/plant.ts';
 import { rng } from '../gen/prng.ts';
-import { type FileMap, type Repo, type Swept, finish, generate, gitOut, importCommits, initRepo, sweep } from '../gen/tsrepo.ts';
+import { type FileMap, REWORDED, type Repo, type Swept, finish, generate, gitOut, importCommits, initRepo, sweep } from '../gen/tsrepo.ts';
 import type { Cell, Placement } from './cells.ts';
 
 /** The plan's derived files: goldens/ is regenerated from the generator and the modules. */
@@ -64,6 +65,7 @@ function clauses(repo: Repo, s: Swept): Clause[] {
   if (s.spec.tests !== 'none') {
     out.push({ id: `A${out.length + 1}`, clause: `Migrate every test assertion of the form \`assert.ok(x === v, m)\` to \`assert.${s.spec.tests}(x, v, m)\`, keeping its operands and its message.` });
   }
+  if (s.spec.reword === true) out.push({ id: `A${out.length + 1}`, clause: `Reword every exported function's doc comment to read \`/** <name>: ${REWORDED.replace('$1: ', '')} */\`.` });
   if (s.arity !== null) out.push({ id: `A${out.length + 1}`, clause: `Give \`${s.arity.name}\` (${s.arity.path}) an optional third parameter \`c = 0\`, unused for now: a later unit uses it.` });
   if (s.removes.length > 0) {
     out.push({ id: `A${out.length + 1}`, clause: `Remove exactly ${s.removes.map((r) => `\`${r}\``).join(' and ')} (a directory with everything under it): the unit deletes nothing else.` });
@@ -77,6 +79,7 @@ function message(s: Swept): string {
   const parts = [`rename ${s.from} to ${s.to}`];
   if (s.spec.move) parts.push('move legacy/ to core/');
   if (s.spec.tests !== 'none') parts.push('migrate test assertions');
+  if (s.spec.reword === true) parts.push('reword doc comments');
   if (s.spec.remove) parts.push('remove the deprecated package');
   parts.push('regenerate goldens');
   return `Sweep: ${parts.join(', ')}\n`;
@@ -95,7 +98,7 @@ export function trimEnds(paths: readonly string[]): readonly string[] {
   return s.slice(cut, s.length - cut);
 }
 
-/** Predicts which changed files the gate's bounded diff inlines (a scratch repo holding the base, one commit per tree). */
+/** Which changed files the gate's bounded diff inlines (a scratch repo holding the base, one commit per tree). */
 function placementOracle(scratch: string, base: FileMap, removes: readonly string[]): (head: FileMap) => ReadonlySet<string> {
   initRepo(scratch);
   const [baseSha] = importCommits(scratch, [{ ref: 'refs/heads/main', message: 'base\n', files: base, parent: null }]);
@@ -127,14 +130,10 @@ export function buildFixture(cell: Cell, o: FixtureOptions): Fixture {
 
   const { plant, placement } = cell.plant;
   const ctx: PlantContext = { repo, swept, rng: rng(`${o.seed}/${cell.id}/${o.trial}`) };
-  const unplanted = finish(swept.files);
-  const at = plant.phase === 'source' ? swept.files : unplanted;
-  // Placement `any` predicts nothing (the bounded diff of a large sweep takes seconds per tree).
+  const at = plant.phase === 'source' ? swept.files : finish(swept.files);
+  // Placement `any` checks nothing (the bounded diff of a large sweep takes seconds per tree).
   const oracle = placement === 'any' ? null : placementOracle(o.scratch, repo.files, swept.removes);
-  const before = oracle === null ? null : oracle(unplanted);
-  // The ends are trimmed after the placement filter: the bounded diff inlines files in path order within a kind, so on a
-  // large repo the inlined set is a prefix of the path order that trimming first would cut away whole.
-  const eligible = trimEnds(plant.eligible(ctx, at).filter((p) => before === null || side(before, p) === placement));
+  const eligible = trimEnds(plant.eligible(ctx, at));
   for (const path of ctx.rng.shuffle(eligible).slice(0, CANDIDATES)) {
     const applied = plant.apply(ctx, at, path);
     if (applied === null) continue;

@@ -7,8 +7,9 @@
 // package), and a deprecated package a sweep removes.
 //
 // Sweeps are codemods over the files' text, never a model: `sweep` renames the shared `fit<Stem>` to `bound<Stem>` at every
-// use, moves legacy/ to core/, migrates the test assertions, removes the deprecated package and regenerates the goldens
-// (scope `repo`), or renames one package's local helper (scope `package`, the small diff). Plants (gen/plant.ts) apply
+// use, moves legacy/ to core/, migrates the test assertions, removes the deprecated package, optionally rewords every
+// function's doc comment, and regenerates the goldens (scope `repo`), or renames one package's local helper (scope
+// `package`, the small diff). Plants (gen/plant.ts) apply
 // after the sweep's source edits and before the goldens are regenerated. Commits go in through `git fast-import` with a
 // fixed identity and date, so the same seed and size give the same tree hash and the same commit ids.
 import { spawnSync } from 'node:child_process';
@@ -196,15 +197,24 @@ export const sorted = (files: ReadonlyMap<string, string>): FileMap => new Map([
 /**
  * A sweep: `package` renames one live package's local `<pkg>Base` to `<pkg>Root` in that package (the small diff);
  * `repo` renames the shared `fit<Stem>` to `bound<Stem>` everywhere, and optionally moves legacy/ to core/, migrates the test
- * assertions (`equal`: `assert.ok(x === v, m)` to `assert.equal(x, v, m)`; `deepEqual` the same to `assert.deepEqual`) and
- * removes the deprecated package.
+ * assertions (`equal`: `assert.ok(x === v, m)` to `assert.equal(x, v, m)`; `deepEqual` the same to `assert.deepEqual`),
+ * removes the deprecated package and (`reword`) rewords every exported function's doc comment (`REWORDED`).
  */
 export type SweepSpec =
   | Readonly<{ scope: 'package' }>
-  | Readonly<{ scope: 'repo'; move: boolean; tests: 'equal' | 'deepEqual' | 'none'; remove: boolean }>;
+  | Readonly<{ scope: 'repo'; move: boolean; tests: 'equal' | 'deepEqual' | 'none'; remove: boolean; /** Absent: no reword. */ reword?: true }>;
 
 /** The full sweep of the dev cells (the dev.11 consumer's shape: rename, move, regenerated goldens, test sweep, mass deletion). */
 export const FULL_SWEEP: SweepSpec = { scope: 'repo', move: true, tests: 'equal', remove: true };
+/**
+ * The full sweep with every doc comment reworded: a change in every module that no identifier substitution explains, so
+ * the bounded diff's leftover-first order (src/git/boundeddiff.ts) has more unexplained content than its budget and a
+ * plant can land not inlined.
+ */
+export const REWORDED_SWEEP: SweepSpec = { ...FULL_SWEEP, reword: true };
+/** A doc comment as rendered (`fnText`), and as a `reword` sweep leaves it. */
+const DOC = /\/\*\* (\w+): a derived quantity of its two inputs\. \*\//g;
+export const REWORDED = '$1: derived from a and b, unchanged in value.';
 
 /** A decoy present in a family's planted and clean cells alike, declared by the spec (see `sweep`). */
 export type Decoy = 'none' | 'golden-arity' | 'declared-compat-removal';
@@ -248,6 +258,7 @@ export function sweep(r: Repo, spec: SweepSpec, decoy: Decoy, seed: string): Swe
     let t = path.startsWith('packages/') ? text.replace(word(r.fit), r.bound) : text;
     if (spec.move && /^packages\/[^/]+\/legacy\//.test(p)) p = p.replace('/legacy/', '/core/');
     if (spec.move && p.includes('/test/')) t = t.replace(/from '\.\.\/legacy\//g, "from '../core/");
+    if (spec.reword === true && path.startsWith('packages/') && !p.includes('/test/')) t = t.replace(DOC, `/** ${REWORDED} */`);
     if (spec.tests !== 'none' && p.includes('/test/')) t = t.replace(/assert\.ok\((.+) === (-?\d+), ('[^']*')\);/g, `assert.${spec.tests}($1, $2, $3);`);
     files.set(p, t);
   }

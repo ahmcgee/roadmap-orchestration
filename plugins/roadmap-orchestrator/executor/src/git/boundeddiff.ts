@@ -11,15 +11,25 @@
 //   have one line of context (`-U1`). A file whose line diff has a changed line over `LONG_LINE` characters (a
 //   regenerated golden, minified output) is inlined as a word diff instead (`--word-diff=porcelain`, words being runs of
 //   letters, digits and `_` or single other characters), its unchanged runs cut to their ends (`WORD_CONTEXT`).
-// - Order and budget. Candidates go by kind (`DIFF_KINDS`: new source, modified source, tests, fixtures and other), then
-//   path; each is inlined while it fits what remains (one that does not fit is skipped, a later smaller one may still
-//   fit). A plan-declared derived output (regenerated from sources the diff also changes) is never inlined, nor a file
-//   whose blobs together exceed four budgets (never diffed in memory). The orientation and the `<not_inlined>` listing
+// - Order and budget (leftover first, 1.0.0-dev.12). The budget goes first to what the mechanical pattern does not
+//   explain.
+//   A file is explained when every changed line of its `-U0` diff pairs, in its hunk, with a line that reads the same
+//   once the orientation's substitutions are applied (an identifier and every identifier a listed substitution connects
+//   it to read as one; whitespace, numbers and punctuation must match exactly), so a hunk that only adds, only removes,
+//   or reorders lines is unexplained, as is a binary or mode-only change. Candidates go: the unexplained files; then up
+//   to `EXAMPLES` explained files showing each substitution (most frequent first), so the reader sees what the pattern
+//   looks like; then the rest. Each group goes by kind (`DIFF_KINDS`: new source, modified source, tests, fixtures and
+//   other), then path. The groups run across kinds, so a hand edit in a test goes before the thousandth renamed source
+//   file. Presentation only, never a verdict: nothing is hidden or labelled, the orientation only counts the explained
+//   files. Each candidate is inlined while it fits what remains (one that does not fit is skipped, a later smaller one
+//   may still fit). A plan-declared derived output (regenerated from sources the diff also changes) is never inlined,
+//   nor a file whose blobs together exceed four budgets (never diffed in memory). The orientation and the `<not_inlined>` listing
 //   each keep within an eighth of the budget; the inlined diffs take what is left.
 // - The orientation: the stat (the shortstat when the full one is over a sixteenth of the budget), the moves, the
 //   deletions, the spread of files and lines per package (a top-level directory, or two levels under a monorepo
-//   container such as `packages/`), and the recurring identifier substitutions mined from the removed and added words of
-//   the changed files: a pointer list for the reviewer, never verification. Lists past their share are counted.
+//   container such as `packages/`), the recurring identifier substitutions mined from the removed and added words of
+//   the changed files, and how many changed files those substitutions fully explain: a pointer list for the reviewer,
+//   never verification. Lists past their share are counted.
 // - Readable files. A judgment has no shell (Read, Grep, Glob and read-only subagents: src/backends/argv.ts
 //   JUDGMENT_TOOLS), so what is not inlined is written under the attachment's directory, inside the run dir its read
 //   surface holds (src/pipeline/dispatch.ts `judgmentSurface`):
@@ -63,6 +73,8 @@ export type Orientation = Readonly<{
   deletions: Listed<Deletion> & Readonly<{ labelled: boolean }>;
   packages: Listed<PackageSpread>;
   substitutions: readonly Substitution[];
+  /** How many files with changed content (derived outputs aside) the substitutions fully explain (see the header). */
+  explained: number;
 }>;
 
 /** A diff attached within a byte budget (see the header). `notInlined` names every file with changed content not inlined. */
@@ -183,6 +195,12 @@ const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 /** How many recurring substitutions the orientation names, and how often one must recur to be named. */
 const SUBSTITUTIONS = 12;
 const RECURS = 2;
+/** How many explained files per substitution go before the rest, as examples of the pattern. */
+export const EXAMPLES = 3;
+
+/** The derived outputs as git exclude globs, so the argv stays small however many files the diff has. */
+const excludeDerived = (derived: readonly RepoPattern[]): string[] =>
+  derived.flatMap((p) => [`:(exclude,glob)${p.replace(/\/+$/, '')}`, `:(exclude,glob)${p.replace(/\/+$/, '')}/**`]);
 
 /**
  * The identifier substitutions the word diff of `from..to` shows outside the derived outputs (a removed identifier
@@ -191,8 +209,7 @@ const RECURS = 2;
  * files the diff has.
  */
 function substitutions(repo: AbsPath, from: Sha, to: Sha, derived: readonly RepoPattern[]): readonly Substitution[] {
-  const exclude = derived.flatMap((p) => [`:(exclude,glob)${p.replace(/\/+$/, '')}`, `:(exclude,glob)${p.replace(/\/+$/, '')}/**`]);
-  const out = git(repo, [...renames, '-U0', '--word-diff=porcelain', '--word-diff-regex=[A-Za-z_$][A-Za-z0-9_$]*', from, to, '--', '.', ...exclude]).split('\n');
+  const out = git(repo, [...renames, '-U0', '--word-diff=porcelain', '--word-diff-regex=[A-Za-z_$][A-Za-z0-9_$]*', from, to, '--', '.', ...excludeDerived(derived)]).split('\n');
   const counts = new Map<string, number>();
   let inHunk = false;
   for (let i = 0; i + 1 < out.length; i++) {
@@ -211,6 +228,111 @@ function substitutions(repo: AbsPath, from: Sha, to: Sha, derived: readonly Repo
     })
     .sort((x, y) => y.count - x.count || (x.from < y.from ? -1 : x.from > y.from ? 1 : x.to < y.to ? -1 : x.to > y.to ? 1 : 0))
     .slice(0, SUBSTITUTIONS);
+}
+
+/** What the substitutions explain of one file: all its changed lines, or not; if all, the substitutions (indices) it shows. */
+type Explanation = Readonly<{ explained: boolean; shows: readonly number[] }>;
+const UNEXPLAINED: Explanation = { explained: false, shows: [] };
+const WORD = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+const ESCAPES: { readonly [c: string]: number } = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+
+/** A path as git prints it in a patch header: C-quoted (`"…"`, escapes and octal UTF-8 bytes) when it holds special characters. */
+function unquoted(s: string): string {
+  if (!s.startsWith('"')) return s;
+  const bytes: number[] = [];
+  for (let i = 1; i < s.length - 1; i++) {
+    const c = s[i]!;
+    if (c !== '\\') bytes.push(...Buffer.from(c, 'utf8'));
+    else if (/[0-7]/.test(s[i + 1]!)) {
+      bytes.push(parseInt(s.slice(i + 1, i + 4), 8));
+      i += 3;
+    } else {
+      const e = ESCAPES[s[i + 1]!];
+      if (e === undefined) throw new Error(`git diff path ${s}: unknown escape \\${s[i + 1]}`);
+      bytes.push(e);
+      i += 1;
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/**
+ * Each changed file's explanation by `subs` (see the header), from one `-U0` diff of `from..to` outside the derived
+ * outputs. A file the diff shows no changed line of (binary, mode only) has no entry: unexplained.
+ */
+function explanations(repo: AbsPath, from: Sha, to: Sha, derived: readonly RepoPattern[], subs: readonly Substitution[]): ReadonlyMap<string, Explanation> {
+  // Identifiers a substitution connects read as one: a placeholder no identifier can be.
+  const groups: Set<string>[] = [];
+  for (const s of subs) {
+    const joined = groups.filter((g) => g.has(s.from) || g.has(s.to));
+    const merged = new Set([s.from, s.to, ...joined.flatMap((g) => [...g])]);
+    for (const g of joined) groups.splice(groups.indexOf(g), 1);
+    groups.push(merged);
+  }
+  const canon = new Map(groups.flatMap((g, i) => [...g].map((w) => [w, `\0${i}`] as const)));
+  const norm = (line: string): string => line.replace(WORD, (w) => canon.get(w) ?? w);
+  const words = (line: string): ReadonlySet<string> => new Set(line.match(WORD) ?? []);
+
+  const out = git(repo, [...renames, '-U0', from, to, '--', '.', ...excludeDerived(derived)]).split('\n');
+  const result = new Map<string, Explanation>();
+  let path: string | null = null;
+  let header = false;
+  let explained = true;
+  const shows = new Set<number>();
+  let removed: string[] = [];
+  let added: string[] = [];
+  const hunk = (): void => {
+    if (removed.length !== added.length) explained = false;
+    for (let i = 0; explained && i < removed.length; i++) {
+      if (norm(removed[i]!) !== norm(added[i]!)) explained = false;
+      else {
+        const [r, a] = [words(removed[i]!), words(added[i]!)];
+        subs.forEach((s, k) => { if (r.has(s.from) && a.has(s.to)) shows.add(k); });
+      }
+    }
+    removed = [];
+    added = [];
+  };
+  const file = (): void => {
+    hunk();
+    if (path !== null) result.set(path, explained ? { explained, shows: [...shows].sort((a, b) => a - b) } : UNEXPLAINED);
+    path = null;
+    explained = true;
+    shows.clear();
+  };
+  for (const line of out) {
+    if (line.startsWith('diff --git ')) {
+      file();
+      header = true;
+    } else if (header && line.startsWith('+++ ')) {
+      const name = unquoted(line.slice(4));
+      path = name === '/dev/null' ? null : name.replace(/^b\//, '');
+    } else if (line.startsWith('@@')) {
+      header = false;
+      hunk();
+    } else if (!header && line.startsWith('-')) removed.push(line.slice(1));
+    else if (!header && line.startsWith('+')) added.push(line.slice(1));
+  }
+  file();
+  return result;
+}
+
+/**
+ * The inlining order (see the header): the unexplained files, then up to `EXAMPLES` explained files per substitution
+ * (`subs` of them, most frequent first), then the rest; each group by kind, then path. Derived outputs, never inlined,
+ * go last.
+ */
+function inlineOrder<T extends Readonly<{ path: RepoPath; kind: DiffKind; why: Explanation }>>(all: readonly T[], subs: number): readonly T[] {
+  const sorted = [...all].sort((a, b) => RANK[a.kind] - RANK[b.kind] || byPath(a.path, b.path));
+  const first = sorted.filter((c) => c.kind !== 'derived' && !c.why.explained);
+  const taken = new Set<T>(first);
+  for (let k = 0; k < subs; k++) {
+    for (const c of sorted.filter((x) => x.kind !== 'derived' && !taken.has(x) && x.why.shows.includes(k)).slice(0, EXAMPLES)) {
+      first.push(c);
+      taken.add(c);
+    }
+  }
+  return [...first, ...sorted.filter((c) => !taken.has(c))];
 }
 
 /** A run of `s` over twice `keep` characters, cut to its ends with how much was cut. */
@@ -245,7 +367,7 @@ function within<T>(all: readonly T[], share: number, size: (t: T) => number): Li
 }
 
 const EMPTY_ORIENTATION: Orientation = {
-  stat: { text: '', full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false }, packages: { shown: [], more: 0 }, substitutions: [],
+  stat: { text: '', full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false }, packages: { shown: [], more: 0 }, substitutions: [], explained: 0,
 };
 
 /**
@@ -288,24 +410,27 @@ export function boundedDiff(repo: AbsPath, from: Sha, to: Sha, opts: BoundedDiff
     .sort((a, b) => b.added + b.deleted - (a.added + a.deleted) || b.files - a.files || (a.name < b.name ? -1 : 1));
   const contentChanged = changed.filter((f) => f.status !== 'D' && !(f.status === 'R' && f.similarity === 100));
   const kinds = new Map(contentChanged.map((f) => [f.path, diffKind(f.path, f.status === 'A', derived)]));
+  const subs = substitutions(repo, from, to, derived);
+  const explainedBy = explanations(repo, from, to, derived, subs);
   const orientation: Orientation = {
     stat,
     moves: within(moves, budget / 32, (m) => bytesOf(m.from) + bytesOf(m.to) + 8),
     deletions: { ...within(ordered, budget / 32, (d) => bytesOf(d.path) + bytesOf(d.diff) + (d.removes === null ? 0 : bytesOf(d.removes)) + 64), labelled: removes !== null },
     packages: within(packages, budget / 64, (p) => bytesOf(p.name) + 40),
-    substitutions: substitutions(repo, from, to, derived),
+    substitutions: subs,
+    explained: contentChanged.filter((f) => kinds.get(f.path) !== 'derived' && explainedBy.get(f.path)?.explained === true).length,
   };
   const orientationBytes = bytesOf(stat.text) + 512
     + orientation.moves.shown.reduce((n, m) => n + bytesOf(m.from) + bytesOf(m.to) + 8, 0)
     + orientation.deletions.shown.reduce((n, d) => n + bytesOf(d.path) + bytesOf(d.diff) + 64, 0)
     + orientation.packages.shown.length * 64 + orientation.substitutions.reduce((n, s) => n + s.from.length + s.to.length + 16, 0);
 
-  // The inlined diffs, by kind then path, within what is left.
+  // The inlined diffs, leftover first (see the header), within what is left.
   let remaining = budget - orientationBytes - share;
   const inlined: InlinedFile[] = [];
   const parts: string[] = [];
   const omitted: OmittedFile[] = [];
-  const candidates = [...contentChanged].sort((a, b) => RANK[kinds.get(a.path)!] - RANK[kinds.get(b.path)!] || byPath(a.path, b.path));
+  const candidates = inlineOrder(contentChanged.map((f) => ({ path: f.path, f, kind: kinds.get(f.path)!, why: explainedBy.get(f.path) ?? UNEXPLAINED })), subs.length).map((c) => c.f);
   for (const f of candidates) {
     const kind = kinds.get(f.path)!;
     if (kind === 'derived') {

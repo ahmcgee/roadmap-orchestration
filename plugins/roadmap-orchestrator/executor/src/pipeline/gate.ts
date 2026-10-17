@@ -251,11 +251,13 @@ function priorRound(ctx: StageContext, unit: UnitId, head: Sha): GatePriorRound 
 export type GateDone = StageDone<'gate'> & Readonly<{ session: JudgmentSessionId | null; fingerprint: ApprovalFingerprint | null }>;
 
 /**
- * The byte budget of the gate's attached diff (src/git/boundeddiff.ts): the diff is the gate's whole subject, so it gets
- * three lens attachments' worth (about 110K tokens), while the spec, contracts, architecture doc and the session's own
- * reads keep most of the gate seats' 1M-token window; what does not fit is read from the attachment's files.
+ * The byte budget of the gate's attached diff (src/git/boundeddiff.ts), the lens's (`LENS_DIFF_BUDGET`, about 37K tokens):
+ * the inlined diff is a fixed cost on every turn of the session, and the bounded diff spends it first on what the
+ * mechanical pattern does not explain, so a larger budget buys more of the same substitution (dev.12 role eval: 329 KB of
+ * a 384 KiB budget went to the alphabetically-first files of one rename). What does not fit is read from the
+ * attachment's files.
  */
-export const GATE_DIFF_BUDGET = 393_216;
+export const GATE_DIFF_BUDGET = 131_072;
 
 /** Where a gate attempt's attached diff writes what it does not inline: beside the attempt's evidence, readable to the gate. */
 const gateDiffDir = (ctx: StageContext, parent: StageParent): AbsPath => absPath(join(evidenceRoot(ctx.runDir, parent), 'diff'));

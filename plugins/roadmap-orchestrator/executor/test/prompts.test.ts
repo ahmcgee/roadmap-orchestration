@@ -113,7 +113,7 @@ const shown = (from: Sha, to: Sha, text: string): BoundedDiff => ({
   from, to, dir: absPath(`/run/diff-${text}`),
   orientation: {
     stat: { text: ` 1 file changed\n`, full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false },
-    packages: { shown: [{ name: 'src', files: 1, added: 1, deleted: 0 }], more: 0 }, substitutions: [],
+    packages: { shown: [{ name: 'src', files: 1, added: 1, deleted: 0 }], more: 0 }, substitutions: [], explained: 0,
   },
   inlined: [{ path: repoPath('src/a.js'), kind: 'modified-source', representation: 'line', full: null }], text, omitted: { shown: [], more: 0 }, notInlined: [],
 });
@@ -132,7 +132,7 @@ const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDi
         more: 0, labelled,
       },
       packages: { shown: [{ name: 'packages/core', files: 12, added: 300, deleted: 120 }], more: 4 },
-      substitutions: [{ from: 'oldName', to: 'newName', count: 17 }],
+      substitutions: [{ from: 'oldName', to: 'newName', count: 17 }], explained: 9,
     },
     omitted: {
       shown: [
@@ -722,7 +722,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.ok(text.includes(`Moved or renamed without content change (no diff below): 4\n- src/old.js → src/new.js\n- and 3 more, all listed in ${dir}/moves.txt\n`));
     assert.ok(text.includes(`Deleted (no diff below; each file holds the whole deleted content): 2\n- src/gone.js (40 lines): ${dir}/files/src/gone.js.diff\n- legacy/x.js (1 line): ${dir}/files/legacy/x.js.diff\n`), 'a lens has no spec: deletions unlabelled');
     assert.ok(text.includes(`- packages/core: 12 files; +300 -120\n- and 4 more packages\n`));
-    assert.ok(text.includes(`(removed → added, times; where to look, not a verification):\n- oldName → newName ×17\n</orientation>`), 'a lens orientation claims nothing');
+    assert.ok(text.includes(`(removed → added, times; where to look, not a verification):\n- oldName → newName ×17\n- 9 changed files with every changed line explained by these substitutions (a pointer; each is still part of the diff to judge)\n</orientation>`), 'a lens orientation claims nothing');
     assert.match(text, /<diff>\nPer-file diffs with one line of context[^\n]*\n<pasted_content id="[0-9a-f]{8}">\nRANGE-B\n<\/pasted_content id="[0-9a-f]{8}">\n<\/diff>/, 'the inlined diffs, as pasted data');
     assert.ok(text.includes(`<not_inlined>\nFiles with changed content not shown above; each file named holds its whole diff.\n- dist/b.js (derived output, regenerated from sources this diff changes, 900 bytes): ${dir}/files/dist/b.js.diff\n- src/it's.js (new source, over the budget, 200000 bytes): ${dir}/files/src/it's.js.diff\n- and 2 more, all listed in ${dir}/not-inlined.txt\n</not_inlined>`));
     assert.doesNotMatch(text, /git diff/, 'no git command: a judgment has no shell');

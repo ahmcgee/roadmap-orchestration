@@ -276,12 +276,18 @@ by the old row, and a unit parked `read-denied` resumes like any env park); the 
 `elevate-early`.
 
 The bounded diff (src/git/boundeddiff.ts) is the one way a judgment is shown a diff: the gate's unit diff (budget
-`GATE_DIFF_BUDGET`, 384 KiB) and a lens's chunk and owner diffs (`LENS_DIFF_BUDGET`). Renames detected (`-M`: a move is
+`GATE_DIFF_BUDGET`, 128 KiB, the lens's: the inlined diff is a fixed cost on every turn, so the budget buys only what
+the order puts first) and a lens's chunk and owner diffs (`LENS_DIFF_BUDGET`, 128 KiB). Renames detected (`-M`: a move is
 one orientation line, a moved-and-edited file a rename diff); a deleted file is named with its line count (labelled
 against the spec's `removes` at the gate: the entry is the path, a directory above it, or the file name without its
 extension; unexpected first), never inlined; a file whose line diff changes a line over `LONG_LINE` (1000) characters is
-a word diff, unchanged runs cut to their ends; `-U1`; candidates by kind (new source, modified source, tests, fixtures
-and other; derived outputs never inlined), then path, each while it fits; the orientation and the `<not_inlined>` listing
+a word diff, unchanged runs cut to their ends; `-U1`; candidates leftover first: the files the orientation's substitutions do
+not fully explain (a file is explained when every changed line of its `-U0` diff pairs, in its hunk, with a line equal to
+it once identifiers a listed substitution connects read as one; an add-only, remove-only or reordering hunk, a binary or
+mode-only change is not), then up to `EXAMPLES` (3) explained files per substitution, most frequent first, then the
+rest; each group by kind (new source, modified source, tests, fixtures and other), then path; derived outputs never
+inlined; each while it fits. One order for the gate and the lens. Presentation only: no file is labelled, the
+orientation counts the explained files (`explained`); the orientation and the `<not_inlined>` listing
 each within an eighth of the budget. What is not inlined is written under the attachment's directory, readable to the
 call (`--add-dir`): `files/<path>.diff` (the whole `git diff -M` of each file not inlined, deleted, or inlined as a word
 diff), `stat.txt`, `moves.txt`, `deletions.txt`, `not-inlined.txt`. The gate's directory is
@@ -295,7 +301,7 @@ Every judgment role's refused answer (its schema, or the role's validator) takes
 |---|---|---|
 | `judgment-inputs` | `+ diffShown?: {inlined: RepoPath[], notInlined: RepoPath[]}` (each ascending; only on a gate's): the files the attached diff inlined, and the files with changed content it did not inline plus the deleted files (a pure move is neither) | absent (a gate a dev.11 executor recorded, shown its whole diff inline): empty lists, nothing recorded either way (`gateDiffShownOf`, warned once; scaffolding) |
 | `GateInputs` (not persisted) | `diff: {bounded: BoundedDiff, claims: DiffClaims}` in place of `{base, head, text}`; `DiffClaims = {acceptance: ClauseId[], witnesses: WitnessItemId[], obligations: ObligationId[]}` (the active clauses and witness items, the selected obligations) | none |
-| `LensInputs` (not persisted), `BoundedDiff` | `BoundedDiff = {from, to, dir, orientation{stat{text, full}, moves, deletions{…, labelled}, packages, substitutions}, inlined[{path, kind, representation: line\|word, full}], text, omitted{shown[{path, kind, why: derived\|size, bytes, diff}], more}, notInlined}`; lists past their share are `{shown, more}` | none |
+| `LensInputs` (not persisted), `BoundedDiff` | `BoundedDiff = {from, to, dir, orientation{stat{text, full}, moves, deletions{…, labelled}, packages, substitutions, explained: number}, inlined[{path, kind, representation: line\|word, full}], text, omitted{shown[{path, kind, why: derived\|size, bytes, diff}], more}, notInlined}`; lists past their share are `{shown, more}` | none |
 | Gate and lens prompts (not persisted) | rendered as `<orientation>`, `<diff>`, `<not_inlined>` (src/prompts/inputs.ts `boundedDiffText`); a file not shown is a readable diff file, never a `git diff` command (a judgment has no shell) | none |
 | Judgment argv (`JUDGMENT_TOOLS`) | `--tools Read,Grep,Glob,Agent`: every judgment role may delegate to subagents of the type and model it picks; `--tools` alone keeps them read-only (a subagent's tools are its type's list intersected with the session's, verified on Claude Code 2.1.301) | none |
 | Judgment `--add-dir` (`judgmentReadDirs`) | the repository and the run dir lead every judgment call's read surface, then each named dir outside both | none |

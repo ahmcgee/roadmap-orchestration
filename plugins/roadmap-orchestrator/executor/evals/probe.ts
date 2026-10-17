@@ -488,7 +488,7 @@ async function main(): Promise<void> {
       from: TREE, to: HEAD, dir: absPath(join(m3Dir, 'diff')),
       orientation: {
         stat: { text: ' convert.ts | 2 ++\n 1 file changed, 2 insertions(+)\n', full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false },
-        packages: { shown: [{ name: '.', files: 1, added: 2, deleted: 0 }], more: 0 }, substitutions: [],
+        packages: { shown: [{ name: '.', files: 1, added: 2, deleted: 0 }], more: 0 }, substitutions: [], explained: 0,
       },
       inlined: [{ path: repoPath('convert.ts'), kind: 'new-source', representation: 'line', full: null }], text: MINI_DIFF, omitted: { shown: [], more: 0 }, notInlined: [],
     } }, owners: [], priorFindings: [],

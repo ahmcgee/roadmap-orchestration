@@ -72,7 +72,8 @@ test('roles.twins-identical: a family\'s planted and clean cells share the spec 
 });
 
 test('roles.placement-omitted: an omitted placement is really not inlined by the bounded diff, an inlined one is', () => {
-  // Size 400: large enough under this seed that the sweep overflows the gate's budget (GATE_DIFF_BUDGET, 384 KiB; 300 does not).
+  // Size 400: G3b's reworded sweep overflows the gate's budget (GATE_DIFF_BUDGET, 128 KiB) with changes no substitution
+  // explains, so its plant can land not inlined; G2a's plant, the one such change in a pure rename, is inlined first.
   for (const [id, inlined] of [['G3b', false], ['G2a', true]] as const) {
     const f = build(id, 400);
     const dir = tmpDir('roles-place');

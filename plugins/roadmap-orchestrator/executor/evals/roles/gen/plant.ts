@@ -1,6 +1,6 @@
 // Plants: one defect laid into a swept tree, invisible to the lanes (only in uncovered code, a golden no lane reads, a test
 // assertion weakened but still passing, or a deletion nothing tested imports). Each plant picks its file from the files it
-// is eligible for (the caller trims the first and last tenth in path order and filters by placement), its symbol and its
+// is eligible for (the caller trims the first and last tenth in path order and checks the planted tree's placement), its symbol and its
 // surface form from templates, all from the trial's seed.
 //
 // A plant applies at one of two phases: `source` (after the sweep's source edits, before goldens are regenerated, so the
