@@ -170,7 +170,7 @@ import type { Event, Fact } from '../../src/core/events.ts';
 import { arcId, commandId, invocationId, opId, resourceName, unitId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
-import { PRE_DEV12_BUILTIN_SEATS, gateDiffShownOf } from '../../src/core/upgrade.ts';
+import { PRE_DEV12_BUILTIN_SEATS, gateDiffShownOf, gateLargeDiffOf } from '../../src/core/upgrade.ts';
 import type { ProcIdentity } from '../../src/core/records.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
@@ -338,12 +338,12 @@ type Phase1 = Readonly<{
 }>;
 
 /**
- * A gate answer as a release before 1.0.0-dev.12 round 2 gives it: without `unreviewed`, which its strict gate schema
- * refuses (HEAD's scenarios carry it for HEAD's gate). Every other step is unchanged.
+ * A gate answer as a release before 1.0.0-dev.12 gives it: without `unreviewed` (round 2) or `clusters` (the large-diff
+ * gate), which its strict gate schema refuses (HEAD's scenarios carry them for HEAD's gate). Every other step is unchanged.
  */
 function asPreviousGate(step: M1Step): M1Step {
   if (step.role !== 'gate') return step;
-  const { unreviewed: _u, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
+  const { unreviewed: _u, clusters: _c, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
   return { ...step, answer };
 }
 
@@ -586,6 +586,7 @@ test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous relea
   assert.deepEqual(builds.map((b) => b.argv.slice(0, 3)), [['exec', 'resume', MID_BUILD_THREAD]], 'HEAD resumed the thread the previous release started, and started no fresh session');
   const gated = factsOf(f.after, 'judgment-inputs').filter((i) => i.stage === 'gate');
   assert.ok(gated.length === 1 && gated[0]!.diffShown !== undefined && gated[0]!.diffShown.inlined.length > 0, 'HEAD\'s gate records what its bounded diff showed');
+  assert.equal(gated[0]!.largeDiff, null, 'HEAD\'s gate records its diff under the large-diff threshold');
 });
 
 test('upgrade.reopen-mid-plan-check: a unit the previous release parked, re-opened and stopped mid-judgment finishes on HEAD', T, async () => {
@@ -1118,6 +1119,8 @@ test('upgrade.fingerprint-open-ff: the previous release approved page-id and cra
   const gateInputs = factsOf(journalOf(p).events, 'judgment-inputs').filter((i) => i.unit === 'page-id' && i.stage === 'gate');
   assert.ok(gateInputs.length === 1 && gateInputs[0]!.diffShown === undefined, 'the previous release\'s gate recorded no diffShown');
   assert.deepEqual(gateDiffShownOf(gateInputs[0]!), { inlined: [], notInlined: [] }, 'read as nothing recorded (the dev.12 default)');
+  assert.equal(gateInputs[0]!.largeDiff, undefined, 'the previous release\'s gate recorded no largeDiff');
+  assert.equal(gateLargeDiffOf(gateInputs[0]!), null, 'read as under the large-diff threshold (the dev.12 default)');
 
   const scope = scopeOf(p);
   let f: Finished;

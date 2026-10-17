@@ -5,11 +5,12 @@
 // gate.obligations-selected, plan-check.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
 // gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
 // voids nothing): gate.read-surface, plan-check.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
-// context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn.
+// context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
+// gate.large-diff-seat, gate.cluster-coverage.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { test } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { applyCommand, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
 import { holdFence } from '../src/core/fence.ts';
@@ -17,8 +18,12 @@ import { holderUnits, resourceTable } from '../src/resources/reserve.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { type Wired, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { rulingId } from '../src/core/ids.ts';
-import { gateDiffShownOf } from '../src/core/upgrade.ts';
-import { absPath } from '../src/core/values.ts';
+import { gateDiffShownOf, gateLargeDiffOf } from '../src/core/upgrade.ts';
+import type { JsonValue } from '../src/core/json.ts';
+import { SchemaError } from '../src/core/validate.ts';
+import { absPath, repoPath } from '../src/core/values.ts';
+import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
+import { clusterCoverage } from '../src/prompts/schemas.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
@@ -418,6 +423,10 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
     // A dev.11 executor's gate recorded none: read as nothing recorded (scaffolding).
     const { diffShown: _, ...dev11 } = inputs;
     assert.deepEqual(gateDiffShownOf(dev11), { inlined: [], notInlined: [] });
+    // Under the large-diff threshold: the unit's own seat (med: efficient), the plain prompt, no map.
+    assert.equal(inputs.largeDiff, null);
+    assert.ok(g!.argv.includes('claude-sonnet-5-5'), 'a small diff keeps the unit\'s seat');
+    assert.ok(!g!.stdin.includes('<large_diff>'), 'and the plain prompt');
   } finally {
     r.journal.close();
   }
@@ -552,4 +561,115 @@ test('gate.partial-supersession-regates: an approved unit citing C-1; C-2 partia
     stop();
     r.journal.close();
   }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// The large-diff gate (1.0.0-dev.12)
+
+/** Generated sources too large to inline together: 40 new files of ~8 KB each under src/gen/ (the gate's budget is 128 KiB). */
+const BIG: Readonly<Record<string, string>> = Object.fromEntries(Array.from({ length: 40 }, (_, f) => [
+  `src/gen/table-${f.toString().padStart(2, '0')}.js`,
+  Array.from({ length: 160 }, (_, i) => `export const t${f}_${i.toString().padStart(4, '0')} = ${f * 1000 + i}; // generated row\n`).join(''),
+]));
+/** A cluster map covering MUL and BIG exactly once. */
+const COVERING: readonly JsonValue[] = [
+  { id: 'generated', paths: ['src/gen/**'], review: 'description' },
+  { id: 'mul', paths: ['src/mul.js', 'test/'], review: 'close' },
+];
+
+test('gate.large-diff: at low risk a diff over the threshold seats the gate on high, renders the large-diff method, records the threshold, and a map missing a path takes the repair turn naming it', T, async () => {
+  const d = setupArc({
+    units: [{ id: 'u1', risk: 'low' }],
+    steps: [
+      planCheckStep({ decision: 'approve', risk: 'low' }),
+      mulBuild(BIG),
+      gateStep({ decision: 'approve', clusters: [COVERING[0]!] }, { stdinContains: ['<large_diff>'] }),
+      gateRepairStep({ decision: 'approve', clusters: COVERING }, ['2 paths in no cluster: src/mul.js, test/mul.test.js']),
+    ],
+  });
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+    assert.equal(outcomes(d).at(-1), 'gate:approve', 'the repaired map covers every path');
+    const [fresh] = readCalls(d.scenarioPath).filter(isGate);
+    assert.ok(fresh!.argv.includes('claude-opus-5-5') && !fresh!.argv.includes('xhigh'), `the gate sat on the high seat (frontier), not escalation: ${fresh!.argv.join(' ')}`);
+    const attempt = r.journal.view.unit(U1).decided!.attempt;
+    const inputs = r.journal.view.judgmentInputs(U1, 'gate', attempt)!;
+    assert.ok(inputs.largeDiff !== null && inputs.largeDiff !== undefined && inputs.largeDiff.overflow > 0, `largeDiff recorded: ${JSON.stringify(inputs.largeDiff)}`);
+    assert.deepEqual(gateLargeDiffOf(inputs), inputs.largeDiff);
+    const list = `${d.runDir}/evidence/u1/${attempt}-gate/diff/${CHANGED_LIST}`;
+    assert.ok(fresh!.stdin.includes(list), 'the prompt names the list of paths the map covers');
+    assert.deepEqual(readFileSync(list, 'utf8').split('\n').filter((l) => l !== ''), [...Object.keys(BIG), ...Object.keys(MUL)].sort());
+    assert.ok(fresh!.stdin.includes(`${inputs.largeDiff.overflow} of its files did not fit`), 'the section carries the overflow');
+    // The seat follows from the recorded inputs: a dev.11 gate recorded none, read as under the threshold (scaffolding).
+    const { largeDiff: _, ...dev11 } = inputs;
+    assert.equal(gateLargeDiffOf(dev11), null);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('gate.large-diff-seat: at med risk the large diff seats the gate on high; a pending risk promotion keeps the escalation seat', T, async () => {
+  const med = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(BIG), gateStep({ decision: 'approve', clusters: COVERING }, { stdinContains: ['<large_diff>'] })] });
+  const r = contextFor(med);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+    assert.equal(outcomes(med).at(-1), 'gate:approve');
+    const [g] = readCalls(med.scenarioPath).filter(isGate);
+    assert.ok(g!.argv.includes('claude-opus-5-5') && !g!.argv.includes('xhigh'), `med moved to high: ${g!.argv.join(' ')}`);
+  } finally {
+    r.journal.close();
+  }
+  const contract = { 'contracts/api.md': '# API contract\n\nAlso `mul(a, b)`.\n' };
+  const covering = [...COVERING, { id: 'contract', paths: ['contracts/api.md'], review: 'close' }];
+  const promoted = setupArc({
+    steps: [planCheckStep({ decision: 'approve' }), mulBuild({ ...BIG, ...contract }), gateStep({ decision: 'approve', clusters: covering }, { stdinContains: ['<large_diff>', '<escalation>'] })],
+  });
+  const p = contextFor(promoted);
+  try {
+    await stepUntil(p, 'u1', (f) => f.stage === 'gate');
+    assert.equal(outcomes(promoted).at(-1), 'gate:approve');
+    const [g] = readCalls(promoted.scenarioPath).filter(isGate);
+    assert.ok(g!.argv.includes('xhigh'), 'the escalation seat stays');
+  } finally {
+    p.journal.close();
+  }
+});
+
+describe('gate.cluster-coverage: the large-diff answer\'s cluster map against the diff\'s paths', () => {
+  const answer = (clusters: JsonValue): JsonValue => ({ decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters });
+  const paths = ['packages/a/src/x.ts', 'packages/a/src/y.ts', 'packages/b/[id].tsx', 'README.md'].map((p) => repoPath(p));
+  const large = { overflow: 2 };
+  const refused = (f: () => unknown, pattern: RegExp): void => {
+    assert.throws(f, (e: unknown) => e instanceof SchemaError && pattern.test(e.message));
+  };
+
+  it('valid: exact paths, directories and globs, each path in one cluster', () => {
+    const out = gateAnswerFor(large, paths)(answer([
+      { id: 'a', paths: ['packages/a/src/*.ts'], review: 'description' }, { id: 'b', paths: ['packages/b/[id].tsx'], review: 'close' }, { id: 'docs', paths: ['README.md'], review: 'routine' },
+    ]));
+    assert.deepEqual(out.clusters?.map((c) => c.id), ['a', 'b', 'docs']);
+    assert.deepEqual(clusterCoverage(out.clusters!, paths), { uncovered: [], duplicated: [] });
+  });
+
+  it('missing: the paths no cluster covers are named', () => {
+    refused(() => gateAnswerFor(large, paths)(answer([{ id: 'a', paths: ['packages/a/'], review: 'routine' }])), /2 paths in no cluster: packages\/b\/\[id\]\.tsx, README\.md/);
+  });
+
+  it('duplicate: a path in two clusters is named with both', () => {
+    refused(() => gateAnswerFor(large, paths)(answer([
+      { id: 'all', paths: ['**'], review: 'routine' }, { id: 'a', paths: ['packages/a/src/x.ts'], review: 'close' },
+    ])), /1 paths in more than one: packages\/a\/src\/x\.ts \(all, a\)/);
+  });
+
+  it('a long list is cut to CLUSTER_PATHS_SHOWN and counted', () => {
+    const many = Array.from({ length: CLUSTER_PATHS_SHOWN + 5 }, (_, i) => repoPath(`src/f${i.toString().padStart(3, '0')}.ts`));
+    refused(() => gateAnswerFor(large, many)(answer([{ id: 'none', paths: ['docs/'], review: 'routine' }])), new RegExp(`${many.length} paths in no cluster: [^;]* and 5 more`));
+  });
+
+  it('threshold: a map is required over it and refused under it; under it null passes', () => {
+    refused(() => gateAnswerFor(large, paths)(answer(null)), /a cluster map covering each of the diff's 4 changed paths/);
+    refused(() => gateAnswerFor(null, [])(answer([{ id: 'a', paths: ['**'], review: 'routine' }])), /null: the diff fit/);
+    assert.equal(gateAnswerFor(null, [])(answer(null)).clusters, null);
+  });
 });

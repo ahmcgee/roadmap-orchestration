@@ -137,12 +137,12 @@ import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
-import { EARLIER_BUILTIN_SEATS, bundleClassesOf } from './core/upgrade.ts';
+import { EARLIER_BUILTIN_SEATS, bundleClassesOf, gateLargeDiffOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
 import { type ClassTotal, type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byClass, byModel, meterOf, ownShare } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
-import { judgmentSeat } from './pipeline/transitions.ts';
+import { judgmentSeat, largeDiffSeat } from './pipeline/transitions.ts';
 import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
 import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
@@ -588,7 +588,10 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
   if (u.risk === null) return null;
   if ((JUDGMENT_STAGES as readonly string[]).includes(u.stage)) {
     const stage = u.stage as JudgmentStage;
-    return { role: stage === 'plan-check' ? 'planCheck' : 'gate', tier: judgmentSeat(u, stage) };
+    if (stage === 'plan-check') return { role: 'planCheck', tier: judgmentSeat(u, stage) };
+    // A running gate attempt's captured inputs say whether its diff is over the large-diff threshold (1.0.0-dev.12).
+    const inputs = u.open?.stage === 'gate' ? view.judgmentInputs(unit, 'gate', u.open.attempt) : null;
+    return { role: 'gate', tier: largeDiffSeat(judgmentSeat(u, stage), inputs === null ? null : gateLargeDiffOf(inputs)) };
   }
   return u.stage === 'build' ? { role: 'build', tier: u.risk } : null;
 }

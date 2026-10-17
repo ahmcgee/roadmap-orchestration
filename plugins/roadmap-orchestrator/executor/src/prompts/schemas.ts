@@ -20,7 +20,7 @@ import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, 
 import {
   Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
-import { type RepoPath, type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
+import { type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
   ACTIVATIONS, type Activation, DOC_RELATIONS, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
   OWNER_ONLY_CLASSES, PACK_DISPOSITIONS, PACK_SEVERITIES, type DocRef, type PackDisposition, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
@@ -28,7 +28,7 @@ import {
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
-  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, gateClustersDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
   FIXES_UNRECORDED,
   reenterFixesDefault,
 } from '../core/upgrade.ts';
@@ -390,10 +390,29 @@ export type GateFinding = Readonly<{
 }>;
 /** A part of the change the gate says it did not review (dev.12 round 2): recorded and reported, never enforced. */
 export type GateUnreviewed = Readonly<{ path: string; reason: string }>;
+/**
+ * How deeply a cluster of a large diff was reviewed (1.0.0-dev.12, the large-diff gate): `description` (a subagent's
+ * description of the cluster sufficed: a purely mechanical cluster its substitutions fully explain, with no deviation),
+ * `routine` or `close` review of the cluster's raw hunks. Review depths, never models: records name roles.
+ */
+export const CLUSTER_REVIEWS = ['description', 'routine', 'close'] as const;
+export type ClusterReview = (typeof CLUSTER_REVIEWS)[number];
+/** One cluster of a large diff's cluster map: its id, the paths it covers (exact paths, directories or globs) and its review depth. */
+export type GateCluster = Readonly<{ id: string; paths: readonly RepoPattern[]; review: ClusterReview }>;
 type GateCommon = Readonly<{
   findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[];
-  /** What the gate did not review, by repository path or path pattern; null on a dev.11 answer (`gateUnreviewedDefault`): unknown. */
+  /**
+   * What the gate did not review, by repository path or path pattern; null on a dev.11 answer (`gateUnreviewedDefault`):
+   * unknown. Above the large-diff threshold a file in a cluster counts as reviewed at the cluster's depth, and `unreviewed`
+   * names only the gaps the gate admits beyond that.
+   */
   unreviewed: readonly GateUnreviewed[] | null;
+  /**
+   * 1.0.0-dev.12: the cluster map, above the large-diff threshold only (null below it, and on a dev.11 answer:
+   * `gateClustersDefault`). Code holds it to the diff: every changed path in exactly one cluster (src/pipeline/gate.ts
+   * `gateAnswerFor`, `clusterCoverage`).
+   */
+  clusters: readonly GateCluster[] | null;
 }>;
 export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'approve' | 'escalate'; directives: readonly [] }>)
@@ -406,6 +425,7 @@ export const GATE_SCHEMA: Schema = sObj({
   reasons: sArr(S_STR),
   premises: S_PREMISES,
   unreviewed: sArr(sObj({ path: S_STR, reason: S_STR })),
+  clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
 });
 
 const finding: Read<GateFinding> = object((f) => ({
@@ -415,6 +435,16 @@ const finding: Read<GateFinding> = object((f) => ({
   contractRef: f.get('contractRef', nullable(str)),
 }));
 const unreviewedEntry: Read<GateUnreviewed> = object((f) => ({ path: f.get('path', str), reason: f.get('reason', str) }));
+const clusterEntry: Read<GateCluster> = object((f) => ({
+  id: f.get('id', str), paths: f.get('paths', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), review: f.get('review', oneOf(CLUSTER_REVIEWS)),
+}));
+const clusterMap: Read<readonly GateCluster[]> = (value, path) => {
+  const clusters = arrayOf(clusterEntry, { nonEmpty: true })(value, path);
+  assertUnique(clusters, (c) => c.id, path);
+  return clusters;
+};
+/** Absent (a dev.11 answer): no map, with the upgrade warning; null: no map. */
+const readClusters = (read: readonly GateCluster[] | null | undefined): readonly GateCluster[] | null => (read === undefined ? gateClustersDefault() : read);
 const emptyList: Read<readonly []> = (value, path) => {
   if (!Array.isArray(value) || value.length !== 0) throw new SchemaError(path, 'an empty array (directives only with revise)', value);
   return [];
@@ -425,6 +455,7 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const common = {
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
     unreviewed: f.optional('unreviewed', arrayOf(unreviewedEntry)) ?? gateUnreviewedDefault(),
+    clusters: readClusters(f.optional('clusters', nullable(clusterMap))),
   };
   if (decision === 'revise') return { ...common, decision, directives: f.get('directives', arrayOf(str, { nonEmpty: true })) };
   if (decision === 'approve') {
@@ -436,6 +467,21 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
 
 export function validateGateOutput(value: unknown): GateOutput {
   return gateOutput(value, 'gate');
+}
+
+/** How a cluster map covers a diff's paths: the paths no cluster matches, and those more than one does (with their ids). */
+export type ClusterCoverage = Readonly<{ uncovered: readonly RepoPath[]; duplicated: readonly Readonly<{ path: RepoPath; clusters: readonly string[] }>[] }>;
+
+/** Matches each of `paths` against the clusters' patterns (`matchesPattern`: an exact path, a directory or a glob). */
+export function clusterCoverage(clusters: readonly GateCluster[], paths: readonly RepoPath[]): ClusterCoverage {
+  const uncovered: RepoPath[] = [];
+  const duplicated: { path: RepoPath; clusters: readonly string[] }[] = [];
+  for (const path of paths) {
+    const hits = clusters.filter((c) => c.paths.some((p) => matchesPattern(path, p))).map((c) => c.id);
+    if (hits.length === 0) uncovered.push(path);
+    else if (hits.length > 1) duplicated.push({ path, clusters: hits });
+  }
+  return { uncovered, duplicated };
 }
 
 // ---------------------------------------------------------------------------------------------------

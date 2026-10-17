@@ -506,7 +506,7 @@ async function main(): Promise<void> {
         stat: { text: ' convert.ts | 2 ++\n 1 file changed, 2 insertions(+)\n', full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false },
         packages: { shown: [{ name: '.', files: 1, added: 2, deleted: 0 }], more: 0 }, substitutions: [], explained: 0,
       },
-      inlined: [{ path: repoPath('convert.ts'), kind: 'new-source', representation: 'line', full: null }], text: MINI_DIFF, omitted: { shown: [], more: 0 }, notInlined: [],
+      inlined: [{ path: repoPath('convert.ts'), kind: 'new-source', representation: 'line', full: null }], text: MINI_DIFF, omitted: { shown: [], more: 0 }, notInlined: [], overflow: 0,
     } }, owners: [], priorFindings: [],
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir, specsOnly: null,
   };

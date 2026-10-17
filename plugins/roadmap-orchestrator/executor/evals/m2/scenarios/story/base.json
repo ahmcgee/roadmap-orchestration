@@ -39,7 +39,8 @@
           "A1 and A2 hold."
         ],
         "premises": [],
-        "unreviewed": []
+        "unreviewed": [],
+        "clusters": null
       }
     }
   ]

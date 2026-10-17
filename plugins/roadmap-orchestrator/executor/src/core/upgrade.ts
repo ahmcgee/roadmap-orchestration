@@ -8,7 +8,7 @@
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
-import type { DiffShown, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
+import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu } from './records.ts';
@@ -318,6 +318,30 @@ export function gateDiffShownOf(inputs: JudgmentInputs): DiffShown {
   if (inputs.diffShown !== undefined) return inputs.diffShown;
   warnDefaulted('judgment-inputs.diffShown', `${inputs.unit} gate#${inputs.attempt}: a gate a dev.11 executor recorded, shown its whole diff inline; read as nothing recorded`);
   return { inlined: [], notInlined: [] };
+}
+
+/**
+ * A gate's `judgment-inputs` `largeDiff` (1.0.0-dev.12, the large-diff gate): absent on one a dev.11 executor recorded, which
+ * had no large-diff threshold. Read as null: under the threshold, so its seat was the unit's own and its answer carries no
+ * cluster map. Scaffolding: deleted once no arc started on 1.0.0-dev.11 is in flight (BACKLOG "Scaffolding to delete");
+ * `largeDiff` then becomes required on a gate's.
+ */
+export function gateLargeDiffOf(inputs: JudgmentInputs): GateLargeDiff | null {
+  if (inputs.stage !== 'gate') throw new Error(`${inputs.unit} ${inputs.stage}#${inputs.attempt}: only a gate's judgment-inputs record a large diff`);
+  if (inputs.largeDiff !== undefined) return inputs.largeDiff;
+  warnDefaulted('judgment-inputs.largeDiff', `${inputs.unit} gate#${inputs.attempt}: a gate a dev.11 executor recorded, before the large-diff threshold; read as under it`);
+  return null;
+}
+
+/**
+ * A gate answer's `clusters` (1.0.0-dev.12, the large-diff gate): absent on an answer a dev.11 gate gave, never asked for a
+ * cluster map. Read as null: no map, which is what an answer under the large-diff threshold carries. Scaffolding: deleted
+ * once no arc started on 1.0.0-dev.11 is in flight (BACKLOG "Scaffolding to delete"); `clusters` then becomes required in
+ * `gateOutput`.
+ */
+export function gateClustersDefault(): null {
+  warnDefaulted('gate.clusters', 'a gate answer without clusters (a dev.11 gate); read as no cluster map');
+  return null;
 }
 
 /**

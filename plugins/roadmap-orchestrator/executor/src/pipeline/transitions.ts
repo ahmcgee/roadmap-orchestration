@@ -42,7 +42,7 @@
 //   gate revise parks `steered` instead of a fix round, and so does a green gate unless the steer said `--resume`.
 //   The steer round itself is an entry outside the table (`UnitState.entry`, src/pipeline/unit.ts).
 import {
-  type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
+  type GateLargeDiff, type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
   type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey,
 } from '../core/events.ts';
 import { type Bounds, DEFAULT_BOUNDS, type NeedsUserReason } from '../core/records.ts';
@@ -348,6 +348,15 @@ function risk(u: UnitState): RiskTier {
 /** The seat a judgment stage is dispatched on in state `u`. */
 export function judgmentSeat(u: UnitState, stage: JudgmentStage): JudgmentSeat {
   return u.routedUp.includes(stage) || u.promotion ? 'escalation' : risk(u);
+}
+
+/**
+ * The gate's seat once its diff is attached (1.0.0-dev.12, the large-diff gate): a diff over the large-diff threshold
+ * (`largeDiff` non-null: files its attachment left out for size) is high risk whatever the unit's tier, so a low or med
+ * seat moves to `high`; `high` and the escalation seat stay. Deterministic from the gate's recorded `judgment-inputs`.
+ */
+export function largeDiffSeat(seat: JudgmentSeat, largeDiff: GateLargeDiff | null): JudgmentSeat {
+  return largeDiff !== null && (seat === 'low' || seat === 'med') ? 'high' : seat;
 }
 
 function isJudgment(stage: OutcomeStage): stage is JudgmentStage {

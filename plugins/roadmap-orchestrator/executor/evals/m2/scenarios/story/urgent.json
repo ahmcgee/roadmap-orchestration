@@ -39,7 +39,8 @@
           "A1 and A2 hold; the registry stays one line."
         ],
         "premises": [],
-        "unreviewed": []
+        "unreviewed": [],
+        "clusters": null
       }
     }
   ]

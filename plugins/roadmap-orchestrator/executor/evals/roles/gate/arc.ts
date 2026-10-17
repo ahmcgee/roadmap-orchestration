@@ -18,7 +18,7 @@ import type { DiffShown, StageOutcomeFact } from '../../../src/core/events.ts';
 import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
 import type { RiskTier } from '../../../src/routing/types.ts';
 import { modelInfo } from '../../../src/routing/models.ts';
-import { type InvocationId, invocationId } from '../../../src/core/ids.ts';
+import { type InvocationId, invocationId, sha } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
 import { STDOUT_FILE } from '../../../src/core/records.ts';
 import { invocationDir } from '../../../src/pipeline/invoke.ts';
@@ -35,7 +35,10 @@ import { repositoryPaths, scanTranscript } from '../../m4a/transcript.ts';
 import { TEST_ARGV } from '../gen/tsrepo.ts';
 import { type Transcript, type Usage, parseEvents, readTranscript, sumUsage, toolCounts, unavailableCalls, usageOf } from '../transcript.ts';
 import type { Cell } from './cells.ts';
-import { type AnswerKey, DERIVED, type Fixture, buildFixture, materialise } from './fixture.ts';
+import { type AnswerKey, DERIVED, DERIVED_PATTERNS, type Fixture, buildFixture, materialise } from './fixture.ts';
+import { boundedDiff } from '../../../src/git/boundeddiff.ts';
+import { GATE_DIFF_BUDGET, largeDiffOf } from '../../../src/pipeline/gate.ts';
+import { absPath } from '../../../src/core/values.ts';
 import { type Graded, grade, touched } from './grade.ts';
 
 /** Degenerate gates: approve everything; revise everything (one blocking finding off the plant); cite every changed path; cite the plant without reading. */
@@ -52,13 +55,17 @@ const LANE = { id: 'unit', argv: TEST_ARGV } as const;
 
 const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null });
 
-/** A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). */
-function fakeAnswer(kind: FakeGate, key: AnswerKey): JsonValue {
+/**
+ * A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). `large`: the diff is over
+ * the large-diff threshold, so the answer carries a cluster map (one cluster over everything) that code accepts.
+ */
+function fakeAnswer(kind: FakeGate, key: AnswerKey, large: boolean): JsonValue {
   const decoy = key.changed.find((p) => p !== key.plant?.path) ?? 'ARCHITECTURE.md';
-  const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [] });
+  const clusters: JsonValue = large ? [{ id: 'all', paths: ['**'], review: 'routine' }] : null;
+  const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters });
   switch (kind) {
     case 'approve-all':
-      return { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [] };
+      return { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters };
     case 'revise-all':
       return revise([finding(decoy, 'This change is wrong.')]);
     case 'cite-every-path':
@@ -69,9 +76,15 @@ function fakeAnswer(kind: FakeGate, key: AnswerKey): JsonValue {
 }
 
 /** The gate's steps: the real CLI (the first call and up to two follow-ups: a repair turn or a retry) or one fake answer. */
-function gateSteps(kind: GateKind, key: AnswerKey): readonly Step[] {
+function gateSteps(kind: GateKind, key: AnswerKey, large: boolean): readonly Step[] {
   if (kind === 'real') return [0, 1, 2].map((): Step => ({ as: 'claude', expect: {}, acts: [{ type: 'real' }] }));
-  return [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: fakeAnswer(kind, key) }] }];
+  return [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: fakeAnswer(kind, key, large) }] }];
+}
+
+/** Whether the gate's attached diff of `base..head` will be over the large-diff threshold (a fake gate's answer needs a map then). */
+function overThreshold(repo: string, base: string, head: string, removes: readonly string[]): boolean {
+  const d = boundedDiff(absPath(repo), sha(base), sha(head), { budget: GATE_DIFF_BUDGET, derived: DERIVED_PATTERNS, removes, dir: absPath(tmpDir('roles-threshold')) });
+  return largeDiffOf(d) !== null;
 }
 
 /**
@@ -118,7 +131,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
     { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: planCheckAnswer({ decision: 'approve', risk }) }] },
     // The build's backend is the one its risk routes to (built-in: codex low/med under the default profile, Claude Opus high).
     { ...buildCall(risk, config), acts: [{ type: 'checkoutTree', sha: head, message: f.message }, { type: 'emit', value: BUILD_REPORT }] },
-    ...gateSteps(kind, f.key),
+    ...gateSteps(kind, f.key, kind !== 'real' && overThreshold(repo, base, head, f.swept.removes)),
   ];
   const scenario = writeScenario(scenarioDir, steps);
   return { arc, repo, planPath, runDir: tmpDir('roles-run'), hostDir: join(tmpDir('roles-host'), 'roadmap'), binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir, ...(config === null ? {} : { config }) };

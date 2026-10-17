@@ -621,10 +621,19 @@ export type JudgmentInputs = Readonly<{
    * dev.11 executor recorded: read through `gateDiffShownOf`.
    */
   diffShown?: DiffShown;
+  /**
+   * 1.0.0-dev.12 (the large-diff gate): null when the attached diff inlined every file it could, else how many files with
+   * changed content it left out for size (`BoundedDiff.overflow`). Above that threshold the gate sits at least at `high`
+   * (transitions.ts `largeDiffSeat`), renders its large-diff method and must answer a cluster map covering the diff. Only
+   * on a gate's; absent on one a dev.11 executor recorded: read through `gateLargeDiffOf`.
+   */
+  largeDiff?: GateLargeDiff | null;
 }>;
 
 /** The paths a gate's attached diff inlined and did not (`JudgmentInputs.diffShown`). */
 export type DiffShown = Readonly<{ inlined: readonly RepoPath[]; notInlined: readonly RepoPath[] }>;
+/** A gate's diff over the large-diff threshold (`JudgmentInputs.largeDiff`): the files its attachment left out for size. */
+export type GateLargeDiff = Readonly<{ overflow: number }>;
 
 export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
@@ -1984,9 +1993,11 @@ export const fact: Read<Fact> = tagged('kind', {
     const paths = sortedBy((v, p) => repoPath(v, p), (x) => x);
     const diffShown = f.optional('diffShown', object((g): DiffShown => ({ inlined: g.get('inlined', paths), notInlined: g.get('notInlined', paths) })));
     if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a plan-check', diffShown);
+    const largeDiff = f.optional('largeDiff', nullable(object((g): GateLargeDiff => ({ overflow: g.get('overflow', positive) }))));
+    if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a plan-check', largeDiff);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
-    return { ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }) };
+    return { ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }) };
   }),
   'edge-resolved': object((f): Fact => ({
     kind: f.get('kind', literal('edge-resolved')), edge: f.get('edge', (v, p) => edgeId(v, p)), command: f.get('command', cmdR), evidence: f.get('evidence', str),

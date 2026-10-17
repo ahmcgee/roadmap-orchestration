@@ -48,13 +48,14 @@
 // after a crash is consumed against those inputs (`consumeJudgment`): its approval records the captured fingerprint;
 // ff then finds a contract another unit's publication changed, or a ruling a docs publication superseded
 // (`fingerprint-invalid`, a re-gate).
+import { writeFileSync } from 'node:fs';
 import { join, matchesGlob } from 'node:path';
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
 import { normalizeText } from '../corpus/rules.ts';
 import { mintDebt } from '../debt/mint.ts';
 import { baselineDebtAt } from '../phase0/rows.ts';
-import type { IntentOf } from '../core/events.ts';
+import type { GateLargeDiff, IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type JudgmentSessionId, type ObligationId, type Sha, type UnitId, invocationId, canonicalIds, compareIds } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -64,7 +65,8 @@ import { effectiveRulingRevs } from '../spec/rulings.ts';
 import { type ObligationDef, isExempt } from '../holistic/types.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, matchesPattern, repoPath } from '../core/values.ts';
-import { boundedDiff } from '../git/boundeddiff.ts';
+import { type BoundedDiff, boundedDiff, diffPaths } from '../git/boundeddiff.ts';
+import { gateLargeDiffOf } from '../core/upgrade.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import { regenerateLane } from '../input/derived.ts';
@@ -72,7 +74,7 @@ import { type PlanUnit, derivedOf, targetDocumentPaths } from '../input/plan.ts'
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
 import type { GateChecks, GatePriorRound, RegeneratedCheck } from '../prompts/inputs.ts';
-import { type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
+import { type GateOutput, clusterCoverage, validateGateOutput } from '../prompts/schemas.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { JsonValue } from '../core/json.ts';
@@ -249,7 +251,9 @@ function priorRound(ctx: StageContext, unit: UnitId, head: Sha): GatePriorRound 
   const spawns = gateSpawns(ctx, unit);
   for (let i = spawns.length - 1; i >= 0; i--) {
     const spawn = spawns[i]!;
-    const out = judgmentOutput(ctx, spawn, validateGateOutput);
+    // Read as its attempt read it: an answer its cluster map made invalid was no revise (it was recorded malformed).
+    if (spawn.parent.type !== 'stage') throw new Error(`${unit}: a gate spawn outside a stage attempt`);
+    const out = judgmentOutput(ctx, spawn, gateAnswerAt(ctx, unit, spawn.parent.attempt));
     if (out === null) continue;
     if (out.decision !== 'revise') return null;
     const then = judgedHead(ctx, spawn);
@@ -276,6 +280,61 @@ export type GateDone = StageDone<'gate'> & Readonly<{ session: JudgmentSessionId
  */
 export const GATE_DIFF_BUDGET = 131_072;
 
+// ---------------------------------------------------------------------------------------------------
+// The large-diff gate (1.0.0-dev.12)
+//
+// A unit's diff too large to cover in one context is high risk whatever its tier. The threshold is the bounded diff's own
+// overflow: any file with changed content it left out for size (`BoundedDiff.overflow`; derived outputs and deletions,
+// never inlined at any budget, do not count). Over it the gate sits at least at `high` (transitions.ts `largeDiffSeat`;
+// the escalation seat stays), its prompt carries the large-diff method (the gate module's <large_diff>), and its answer
+// must carry a cluster map that covers every path of the diff (`diffPaths`: a renamed file by its new path, a deleted one
+// by its old) exactly once; under it the answer's `clusters` is null. A map that misses or doubles a path is refused like
+// any answer off its schema: the one repair turn names the paths, and refused again it is `malformed`. The threshold is
+// recorded on the attempt's `judgment-inputs` (`largeDiff`), so the seat, the prompt and the check all follow from it on
+// replay and recovery. Above the threshold a file in a cluster counts as reviewed at the cluster's depth; `unreviewed`
+// names only the gaps the gate admits beyond that.
+
+/** The file beside a large diff's attachment listing every path its cluster map covers, one per line. */
+export const CHANGED_LIST = 'changed.txt';
+/** How many uncovered and how many doubly covered paths a refused cluster map's reason names, each. */
+export const CLUSTER_PATHS_SHOWN = 20;
+
+/** The attachment's large-diff threshold: null when it left nothing out for size. */
+export const largeDiffOf = (bounded: BoundedDiff): GateLargeDiff | null => (bounded.overflow === 0 ? null : { overflow: bounded.overflow });
+
+const listed = <T>(xs: readonly T[], show: (x: T) => string): string =>
+  `${xs.slice(0, CLUSTER_PATHS_SHOWN).map(show).join(', ')}${xs.length > CLUSTER_PATHS_SHOWN ? ` and ${xs.length - CLUSTER_PATHS_SHOWN} more` : ''}`;
+
+/**
+ * The gate answer's validator for a diff: the schema (`validateGateOutput`), then the cluster map against the threshold.
+ * Under it (`largeDiff` null) the map is null; over it, every one of `paths` is in exactly one cluster (`clusterCoverage`).
+ */
+export function gateAnswerFor(largeDiff: GateLargeDiff | null, paths: readonly RepoPath[]): (value: unknown) => GateOutput {
+  return (value) => {
+    const out = validateGateOutput(value);
+    if (largeDiff === null) {
+      if (out.clusters !== null) throw new SchemaError('gate.clusters', 'null: the diff fit the gate\'s budget, so no cluster map', `${out.clusters.length} clusters`);
+      return out;
+    }
+    if (out.clusters === null) throw new SchemaError('gate.clusters', `a cluster map covering each of the diff's ${paths.length} changed paths exactly once (the diff is over the large-diff threshold)`, null);
+    const { uncovered, duplicated } = clusterCoverage(out.clusters, paths);
+    if (uncovered.length === 0 && duplicated.length === 0) return out;
+    const parts = [
+      ...(uncovered.length === 0 ? [] : [`${uncovered.length} paths in no cluster: ${listed(uncovered, (p) => p)}`]),
+      ...(duplicated.length === 0 ? [] : [`${duplicated.length} paths in more than one: ${listed(duplicated, (d) => `${d.path} (${d.clusters.join(', ')})`)}`]),
+    ];
+    throw new SchemaError('gate.clusters', `every changed path in exactly one cluster; ${parts.join('; ')}`, `${out.clusters.length} clusters`);
+  };
+}
+
+/** The validator gate attempt `attempt` of `unit` read its answer with, from its recorded `judgment-inputs`. */
+function gateAnswerAt(ctx: StageContext, unit: UnitId, attempt: number): (value: unknown) => GateOutput {
+  const inputs = ctx.journal.view.judgmentInputs(unit, 'gate', attempt);
+  if (inputs === null || inputs.head === null) throw new Error(`gate ${unit}#${attempt}: a gate answer without its judgment-inputs`);
+  const largeDiff = gateLargeDiffOf(inputs);
+  return gateAnswerFor(largeDiff, largeDiff === null ? [] : diffPaths(ctx.repo, diffBase(ctx.repo, inputs.tip, inputs.head), inputs.head));
+}
+
 /** Where a gate attempt's attached diff writes what it does not inline: beside the attempt's evidence, readable to the gate. */
 const gateDiffDir = (ctx: StageContext, parent: StageParent): AbsPath => absPath(join(evidenceRoot(ctx.runDir, parent), 'diff'));
 
@@ -295,6 +354,8 @@ type GateCapture =
   | Readonly<{ kind: 'routing-changed'; needsUser: NeedsUserContent }>
   | Readonly<{
     kind: 'captured'; fingerprint: ApprovalFingerprint; seat: JudgmentDispatch; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[]; cwd: AbsPath;
+    /** The answer's validator for this diff (`gateAnswerFor`). */
+    validate: (value: unknown) => GateOutput;
     /** Beside the evidence: the target's readable dirs (a corpus arc's materialised pin). */
     dirs: readonly AbsPath[];
   }>;
@@ -345,23 +406,29 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const series = latestSpecSeries(ctx, unit.id);
     const tree = series === null ? null : seriesTree(ctx.journal.view, series, verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, series.attempt));
     if (series === null || tree === null || tree.at !== head) return { kind: 'unverified' };
-    const seated = judgmentDispatch(ctx, unit.id, 'gate');
+    // The attached diff first: whether it is over the large-diff threshold decides the seat.
+    const diffDir = gateDiffDir(ctx, parent);
+    const base = diffBase(ctx.repo, tip, head);
+    const bounded = boundedDiff(ctx.repo, base, head, {
+      budget: GATE_DIFF_BUDGET, derived: [...new Set(derivedOf(ctx.plan()).flatMap((d) => d.outputs))].sort(), removes: specRemoves(spec), dir: diffDir,
+    });
+    const largeDiff = largeDiffOf(bounded);
+    const seated = judgmentDispatch(ctx, unit.id, 'gate', largeDiff);
     if (seated.kind !== 'pinned') return { kind: 'routing-changed', needsUser: seated.needsUser };
     const pinned = dispatchOf(ctx.journal.view, unit.id);
     const laneLedger = seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series));
     // The attached diff's files (what it does not inline) are listed and readable as evidence.
-    const diffDir = gateDiffDir(ctx, parent);
     const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id), diffDir];
-    const base = diffBase(ctx.repo, tip, head);
     const scope = effectiveScope(pinned);
     const growth = paths.filter((p) => !scope.some((g) => matchesGlob(p, g)));
     const seat = seated.dispatch;
     const prompt = promptFor('gate', seat.triple.model);
     const target = gateTarget(ctx, tip);
     const chosen = selected(ctx, unit, tip, head);
-    const bounded = boundedDiff(ctx.repo, base, head, {
-      budget: GATE_DIFF_BUDGET, derived: [...new Set(derivedOf(ctx.plan()).flatMap((d) => d.outputs))].sort(), removes: specRemoves(spec), dir: diffDir,
-    });
+    // Over the threshold, the paths the cluster map covers, listed beside the attachment for the session to read.
+    const covered = largeDiff === null ? [] : diffPaths(ctx.repo, base, head);
+    const list = absPath(join(diffDir, CHANGED_LIST));
+    if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const rendered = prompt.render({
       spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, ...library(ctx, spec, tip), target,
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
@@ -380,13 +447,17 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head, paths),
       escalation: escalationOf(ctx, unit.id, 'gate', seat.tier, validateGateOutput),
+      largeDiff: largeDiff === null ? null : { overflow: largeDiff.overflow, changed: covered.length, list },
     });
     const fingerprint = fingerprintAt(ctx, unit, tip);
     writeJudgmentInputs(ctx, parent, {
       tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint,
-      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined },
+      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff,
     });
-    return { kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, cwd: tree.path, dirs: targetDirs(target) };
+    return {
+      kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, cwd: tree.path, dirs: targetDirs(target),
+      validate: gateAnswerFor(largeDiff, covered),
+    };
   });
   if (captured.kind !== 'captured') {
     const done = captured.kind === 'routing-changed' ? record(ctx, parent, 'routing-changed', captured.needsUser) : record(ctx, parent, captured.kind);
@@ -403,7 +474,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
   });
   const called = await call(session, captured.rendered);
   // A refused answer goes back once, in the same session, with every reason (the repair turn), before anything is recorded.
-  return gateRead(ctx, unit, parent, called, session.id, fingerprint, (reasons) => call(resumedJudgmentSession(session.id), judgmentRepairDirective(reasons)));
+  return gateRead(ctx, unit, parent, called, session.id, fingerprint, captured.validate, (reasons) => call(resumedJudgmentSession(session.id), judgmentRepairDirective(reasons)));
 }
 
 /**
@@ -418,11 +489,11 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
  */
 export async function gateRead(
   ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'gate' }>, called: BackendCallOutcome, session: JudgmentSessionId,
-  fingerprint: ApprovalFingerprint, repair: ((reasons: readonly string[]) => Promise<BackendCallOutcome>) | null = null,
+  fingerprint: ApprovalFingerprint, validate: (value: unknown) => GateOutput, repair: ((reasons: readonly string[]) => Promise<BackendCallOutcome>) | null = null,
 ): Promise<GateDone> {
   if (repair !== null) {
-    const first = judgedAnswer(called, validateGateOutput);
-    if (first.kind === 'refused') return gateRead(ctx, unit, parent, await repair(first.reasons), session, fingerprint);
+    const first = judgedAnswer(called, validate);
+    if (first.kind === 'refused') return gateRead(ctx, unit, parent, await repair(first.reasons), session, fingerprint, validate);
   }
   // The session has ended: its @cpu goes before anything is recorded.
   await releaseJudgment(ctx, parent);
@@ -432,7 +503,7 @@ export async function gateRead(
 
   let out: GateOutput;
   try {
-    out = validateGateOutput(v.value);
+    out = validate(v.value);
   } catch (error) {
     if (error instanceof SchemaError) return done(record(ctx, parent, 'malformed'));
     throw error;
@@ -492,7 +563,7 @@ export async function consumeJudgment(
       const fingerprint = inputs.fingerprint;
       if (fingerprint === undefined) throw new Error(`gate ${unit.id}#${parent.attempt}: judgment-inputs without a fingerprint`);
       if (fingerprint.unitCommit !== inputs.head) throw new Error(`gate ${unit.id}#${parent.attempt}: the unit branch moved from ${inputs.head} since its judgment-inputs`);
-      return gateRead(ctx, unit, at(parent, 'gate'), called, result.session, fingerprint);
+      return gateRead(ctx, unit, at(parent, 'gate'), called, result.session, fingerprint, gateAnswerAt(ctx, unit.id, parent.attempt));
     }
     default:
       throw new Error(`${unit.id} ${parent.stage}#${parent.attempt}: no judgment call to consume`);

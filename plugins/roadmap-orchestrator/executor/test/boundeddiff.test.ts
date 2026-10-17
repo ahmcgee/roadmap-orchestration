@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { type Sha, sha } from '../src/core/ids.ts';
 import { type RepoPattern, absPath, repoPattern } from '../src/core/values.ts';
-import { type BoundedDiff, boundedDiff } from '../src/git/boundeddiff.ts';
+import { type BoundedDiff, boundedDiff, diffPaths } from '../src/git/boundeddiff.ts';
 import { LENS_DIFF_BUDGET } from '../src/holistic/lensdiff.ts';
 import { GATE_DIFF_BUDGET } from '../src/pipeline/gate.ts';
 import { boundedDiffText } from '../src/prompts/inputs.ts';
@@ -57,6 +57,7 @@ describe('bounded diffs', () => {
     assert.ok(!text.includes('big000100'), 'the oversized file is not attached');
     assert.ok(text.includes(`- src/big.js (new source, over the budget, `) && text.includes(d.omitted.shown[0]!.diff));
     assert.deepEqual(d.notInlined, ['dist/bundle.js', 'src/big.js']);
+    assert.equal(d.overflow, 1, 'the oversized file overflowed; a derived output never inlines, so it is no overflow');
   });
 
   test('boundeddiff.many-files: the shortstat in place of the stat, the listing cut short and counted, every file inlined, listed or counted', () => {
@@ -70,6 +71,7 @@ describe('bounded diffs', () => {
     assert.match(readFileSync(join(d.dir, 'stat.txt'), 'utf8'), /module-01499\.js/);
     assert.ok(d.omitted.shown.length > 0 && d.omitted.more > 0);
     assert.equal(d.inlined.length + d.omitted.shown.length + d.omitted.more, 1500, 'every file is inlined, listed or counted');
+    assert.equal(d.overflow, d.omitted.shown.length + d.omitted.more, 'every file left out was left out for size');
     assert.equal(readFileSync(join(d.dir, 'not-inlined.txt'), 'utf8').split('\n').filter((l) => l !== '').length, d.omitted.shown.length + d.omitted.more);
     const text = rendered(d, LENS_DIFF_BUDGET);
     assert.ok(text.includes(`- and ${d.omitted.more} more, all listed in ${d.dir}/not-inlined.txt`));
@@ -97,6 +99,10 @@ describe('bounded diffs', () => {
     assert.match(d.text, /^@@ -3,3 \+3,3 @@/m, 'one line of context');
     assert.deepEqual(d.orientation.deletions.shown, [], 'a move is no deletion');
     assert.deepEqual(d.notInlined, []);
+    assert.equal(d.overflow, 0);
+    const paths = diffPaths(absPath(dir), from, to);
+    assert.equal(paths.length, 400, 'diffPaths: a move is its new path only');
+    assert.ok(paths.every((p) => p.startsWith('src/new/')));
     const text = rendered(d, GATE_DIFF_BUDGET);
     assert.ok(Buffer.byteLength(text) < 64 * 1024, `${Buffer.byteLength(text)} bytes for a mass move`);
     assert.ok(text.includes('- src/old/mod-0000.ts → src/new/mod-0000.ts'));
@@ -143,6 +149,8 @@ describe('bounded diffs', () => {
     for (const x of dels.shown) assert.equal(readFileSync(x.diff, 'utf8'), gitDiff(dir, from, to, x.path), x.path);
     assert.deepEqual(inlinedFiles(d), ['src/app.ts'], 'no deletion inlined');
     assert.equal(d.notInlined.length, 40);
+    assert.equal(d.overflow, 0, 'a deletion is never inlined, so it is no overflow');
+    assert.equal(diffPaths(absPath(dir), from, to).length, 41, 'diffPaths: each deleted file by its path, and the edit');
     assert.match(readFileSync(join(d.dir, 'deletions.txt'), 'utf8'), /^src\/keep\/util\.ts\t80\tunexpected\t/);
     const text = rendered(d, GATE_DIFF_BUDGET);
     assert.ok(text.includes(`- src/keep/util.ts (80 lines, not in the spec's removes): ${dels.shown[0]!.diff}`));

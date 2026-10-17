@@ -39,7 +39,8 @@
           "A1, A2 and A3 hold; contract one slugify rules 1 to 3 are tested."
         ],
         "premises": [],
-        "unreviewed": []
+        "unreviewed": [],
+        "clusters": null
       }
     },
     {
@@ -81,7 +82,8 @@
           "B1 to B4 hold; pageId imports slugify."
         ],
         "premises": [],
-        "unreviewed": []
+        "unreviewed": [],
+        "clusters": null
       }
     }
   ]

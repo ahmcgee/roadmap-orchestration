@@ -12,7 +12,9 @@
 // Judgment sessions (gate, plan-check, lens, checkpoint, pack review, flow) carry no delegation text (owner ruling
 // 2026-10-17, after the paid gate role eval: one trial fanned out to 25 readers for $32, against ~$2.7 for a typical
 // trial). Nothing tells the judge to delegate or not to. A judge keeps the Agent tool with read-only subagents
-// (argv.ts `JUDGMENT_TOOLS`, metered as before) and arrives at its own method; the prompt does not steer it.
+// (argv.ts `JUDGMENT_TOOLS`, metered as before) and arrives at its own method; the prompt does not steer it. One exception
+// (1.0.0-dev.12): a gate whose diff is over the large-diff threshold gets the owner's delegation method in its own module
+// (src/prompts/gate/claude-opus-5-5.ts <large_diff>), since one context cannot cover that diff.
 
 /** The Claude implementer: it writes in its worktree, and a subagent helps it read and think. */
 export const BUILD_DELEGATION = `<subagents>

@@ -23,7 +23,8 @@
 //   file. Presentation only, never a verdict: nothing is hidden or labelled, the orientation only counts the explained
 //   files. Each candidate is inlined while it fits what remains (one that does not fit is skipped, a later smaller one
 //   may still fit). A plan-declared derived output (regenerated from sources the diff also changes) is never inlined,
-//   nor a file whose blobs together exceed four budgets (never diffed in memory). The orientation and the `<not_inlined>` listing
+//   nor a file whose blobs together exceed four budgets (never diffed in memory). How many files were left out for size
+//   is the attachment's `overflow` (1.0.0-dev.12): the gate's large-diff threshold (src/pipeline/gate.ts). The orientation and the `<not_inlined>` listing
 //   each keep within an eighth of the budget; the inlined diffs take what is left.
 // - The orientation: the stat (the shortstat when the full one is over a sixteenth of the budget), the moves, the
 //   deletions, the spread of files and lines per package (a top-level directory, or two levels under a monorepo
@@ -88,6 +89,11 @@ export type BoundedDiff = Readonly<{
   text: string;
   omitted: Listed<OmittedFile>;
   notInlined: readonly RepoPath[];
+  /**
+   * How many files with changed content were left out because they did not fit (`why: 'size'`): derived outputs and
+   * deletions, never inlined at any budget, are not counted. The gate's large-diff threshold (src/pipeline/gate.ts).
+   */
+  overflow: number;
 }>;
 
 export type BoundedDiffOptions = Readonly<{
@@ -111,6 +117,15 @@ const byPath = (a: RepoPath, b: RepoPath): number => (a < b ? -1 : a > b ? 1 : 0
 const bytesOf = (s: string): number => Buffer.byteLength(s, 'utf8');
 const spec = (p: RepoPath): string => `:(literal)${p}`;
 const renames = ['diff', '--no-color', '-M'];
+
+/**
+ * Every path `from..to` changes, as this module represents the diff (`-M`): a renamed file by its new path, a deleted one
+ * by its old path; ascending. The set a gate's cluster map covers (src/pipeline/gate.ts).
+ */
+export function diffPaths(repo: AbsPath, from: Sha, to: Sha): readonly RepoPath[] {
+  if (from === to) return [];
+  return git(repo, [...renames, '--name-only', '-z', from, to]).split('\0').filter((p) => p !== '').map((p) => repoPath(p)).sort(byPath);
+}
 
 function changedFiles(repo: AbsPath, from: Sha, to: Sha): readonly Changed[] {
   const raw = git(repo, [...renames, '--raw', '--no-abbrev', '-z', from, to]).split('\0');
@@ -379,7 +394,7 @@ export function boundedDiff(repo: AbsPath, from: Sha, to: Sha, opts: BoundedDiff
   const { budget, derived, removes, dir } = opts;
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const empty: BoundedDiff = { from, to, dir, orientation: EMPTY_ORIENTATION, inlined: [], text: '', omitted: { shown: [], more: 0 }, notInlined: [] };
+  const empty: BoundedDiff = { from, to, dir, orientation: EMPTY_ORIENTATION, inlined: [], text: '', omitted: { shown: [], more: 0 }, notInlined: [], overflow: 0 };
   if (from === to) return empty;
   const changed = changedFiles(repo, from, to);
   if (changed.length === 0) return empty;
@@ -462,5 +477,6 @@ export function boundedDiff(repo: AbsPath, from: Sha, to: Sha, opts: BoundedDiff
     from, to, dir, orientation, inlined, text: parts.join(''),
     omitted: within(omitted, share, (o) => bytesOf(o.path) + bytesOf(o.diff) + 64),
     notInlined: [...omitted.map((o) => o.path), ...deletions.map((d) => d.path)].sort(byPath),
+    overflow: omitted.filter((o) => o.why === 'size').length,
   };
 }

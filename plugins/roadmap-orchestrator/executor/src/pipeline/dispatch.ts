@@ -24,7 +24,8 @@
 //   `steer --class` moves the implementer seat on purpose.
 // - Seats: the implementer sits on the unit's risk tier for the whole unit (it keeps its model); a
 //   judgment stage sits on `judgmentSeat` (transitions.ts): the role's `escalation` seat once it routed up
-//   (for the rest of the unit) or while a risk trigger is pending (the next judgment dispatch only).
+//   (for the rest of the unit) or while a risk trigger is pending (the next judgment dispatch only). A gate whose diff is
+//   over the large-diff threshold sits at least at `high` (`largeDiffSeat`, 1.0.0-dev.12), recorded on its judgment-inputs.
 // - The backend call: prompt text and schema are content-addressed input files written before the spawn
 //   intent; the launch names the role and routingRev, never the model, except in argv (launch.json is the
 //   one executor-written file allowed a model id). The workload env is `backendEnv(host)`; the implementer's
@@ -45,7 +46,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
 import {
-  BACKEND_PARK_CLASSES, type BackendParkClass, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
+  BACKEND_PARK_CLASSES, type BackendParkClass, type GateLargeDiff, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
 } from '../core/events.ts';
 import { type ArcId, type InvocationId, type JobId, type RoutingRev, type SeatRev, type UnitId, invocationId, opKey, seatRev } from '../core/ids.ts';
 import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
@@ -73,7 +74,7 @@ import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
 import { abortReason } from './redlane.ts';
 import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
 import { callRuling, pressureCause } from './starved.ts';
-import { judgmentSeat } from './transitions.ts';
+import { judgmentSeat, largeDiffSeat } from './transitions.ts';
 
 /**
  * Everything a unit's stages need: processes, resources, the resolved routing and the host environment. In the
@@ -315,12 +316,16 @@ export type ImplementerDispatch = Readonly<{ role: 'build'; tier: RiskTier; trip
 
 const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'planCheck', gate: 'gate' };
 
-/** The seat of a judgment dispatch: the unit's risk, or the escalation seat after a route-up or a risk trigger. */
-export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: JudgmentStage): Pinned<JudgmentDispatch> {
+/**
+ * The seat of a judgment dispatch: the unit's risk, or the escalation seat after a route-up or a risk trigger. A gate passes
+ * its diff's `largeDiff` (1.0.0-dev.12): over the threshold a low or med seat moves to `high` (`largeDiffSeat`).
+ */
+export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: JudgmentStage, largeDiff: GateLargeDiff | null = null): Pinned<JudgmentDispatch> {
   const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
   if (pinned.kind !== 'pinned') return pinned;
   const role = ROLE_OF[stage];
-  const tier = judgmentSeat(ctx.journal.view.unit(unit), stage);
+  if (largeDiff !== null && stage !== 'gate') throw new Error(`${unit}: a large diff given to a ${stage} seat`);
+  const tier = largeDiffSeat(judgmentSeat(ctx.journal.view.unit(unit), stage), largeDiff);
   const triple = ctx.routing(unit).table[role][tier];
   // Startup refuses every Codex judgment seat (unsupported-routing), so this is a bug if it happens.
   if (triple.backend !== 'claude') throw new Error(`the ${role} seat ${tier} resolves to ${triple.backend}; judgment is Claude only in M1`);

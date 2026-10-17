@@ -20,7 +20,7 @@ import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, GATE_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
+  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
   validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
 import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
@@ -117,7 +117,7 @@ const shown = (from: Sha, to: Sha, text: string): BoundedDiff => ({
     stat: { text: ` 1 file changed\n`, full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false },
     packages: { shown: [{ name: 'src', files: 1, added: 1, deleted: 0 }], more: 0 }, substitutions: [], explained: 0,
   },
-  inlined: [{ path: repoPath('src/a.js'), kind: 'modified-source', representation: 'line', full: null }], text, omitted: { shown: [], more: 0 }, notInlined: [],
+  inlined: [{ path: repoPath('src/a.js'), kind: 'modified-source', representation: 'line', full: null }], text, omitted: { shown: [], more: 0 }, notInlined: [], overflow: 0,
 });
 /** A bounded diff with every part of its orientation and a cut listing. */
 const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDiff => {
@@ -200,7 +200,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
-      escalation: null,
+      escalation: null, largeDiff: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -224,6 +224,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         regenerated: [],
       },
       escalation: { kind: 'risk-trigger' },
+      largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') },
     },
   ],
   lens: [
@@ -318,7 +319,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [], unreviewed: [],
+    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [], unreviewed: [], clusters: null,
   },
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
@@ -583,6 +584,20 @@ describe('output validators', () => {
     assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...pre[0], severity: 'minor' }] }), SchemaError);
     const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
     assert.ok(schema.required.includes('unreviewed'), 'a live gate answers it');
+  });
+
+  it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters reads as none (null)', () => {
+    const clusters = [{ id: 'sweep', paths: ['packages/*/src/**'], review: 'description' }, { id: 'core', paths: ['packages/core/index.ts'], review: 'close' }];
+    assert.deepEqual(validateGateOutput({ ...ok.gate, clusters }).clusters, clusters);
+    assert.equal(validateGateOutput({ ...ok.gate, clusters: null }).clusters, null);
+    const { clusters: _c, ...dev11 } = ok.gate;
+    assert.equal(validateGateOutput(dev11).clusters, null);
+    for (const bad of [
+      [], [{ id: 'a', paths: [], review: 'routine' }], [{ id: 'a', paths: ['x'], review: 'opus' }], [{ id: 'a', paths: ['/abs'], review: 'routine' }],
+      [{ id: 'a', paths: ['x'], review: 'routine' }, { id: 'a', paths: ['y'], review: 'close' }], [{ id: '', paths: ['x'], review: 'routine' }],
+    ]) assert.throws(() => validateGateOutput({ ...ok.gate, clusters: bad }), SchemaError, JSON.stringify(bad));
+    const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
+    assert.ok(schema.required.includes('clusters'), 'a live gate answers it (null under the threshold)');
   });
 
   it('build and decisions.json: ids checked, unknown keys refused', () => {
@@ -1195,6 +1210,20 @@ describe('W3 seat prompts (2026-10-16)', () => {
         /classify each as blocking, note or pre-existing/, /Notes and pre-existing findings are recorded, and never a fix round/,
         /unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason/,
       ]) assert.match(sys, needle, `${model}: ${needle}`);
+    }
+  });
+
+  it('prompts.gate-large-diff: <large_diff> only over the threshold, with its overflow, path count and list, before the ask; the system text says clusters is null otherwise', () => {
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const) {
+      const mod = promptFor('gate', model) as { system: string; render: (i: RoleInputs['gate']) => string };
+      assert.match(mod.system, /clusters is null unless[^.]*<large_diff>/);
+      const [small, large] = SAMPLES.gate;
+      assert.doesNotMatch(mod.render(small), /<large_diff>/, `${model}: under the threshold the plain prompt`);
+      const text = mod.render({ ...small, largeDiff: large.largeDiff });
+      const section = /<large_diff>\n[^]*<\/large_diff>/.exec(text)?.[0] ?? '';
+      for (const needle of ['2741', '3012', '/run/ev/b/diff/CHANGED-LIST-B.txt']) assert.ok(section.includes(needle), `${model}: the section carries ${needle}`);
+      for (const depth of CLUSTER_REVIEWS) assert.ok(section.includes(depth), `${model}: the schema's review depth ${depth}`);
+      assert.ok(text.indexOf('<large_diff>') < text.lastIndexOf('Gate unit'), 'before the ask');
     }
   });
 

@@ -279,7 +279,16 @@ export type GateInputs = Readonly<{
   checks: GateChecks;
   /** W3: why this gate runs at the escalation seat; null below it. */
   escalation: EscalationInput | null;
+  /** 1.0.0-dev.12: the diff over the large-diff threshold (`GateLargeDiffInput`); null under it, and the plain prompt. */
+  largeDiff: GateLargeDiffInput | null;
 }>;
+
+/**
+ * A gate's diff over the large-diff threshold (src/pipeline/gate.ts): `overflow` files with changed content its attachment
+ * left out for size, of `changed` changed paths, listed one per line in `list` (readable beside the attachment): the
+ * paths the answer's cluster map must cover, each in exactly one cluster.
+ */
+export type GateLargeDiffInput = Readonly<{ overflow: number; changed: number; list: AbsPath }>;
 
 // ---------------------------------------------------------------------------------------------------
 // M3: the arc roles' inputs (frozen in step 0a). The vision comes first and in full in both (A14); on a
@@ -502,7 +511,7 @@ export const ROLE_INPUTS = {
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation',
+    'checks', 'escalation', 'largeDiff',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
