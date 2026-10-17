@@ -48,7 +48,7 @@ import {
 } from '../fixtures/pm-holistic.ts';
 import { type LogSnapshot, readJournal } from '../../src/core/log.ts';
 import {
-  BUMPY, BUMPY_OUTCOMES, CANCEL, CANCEL_OUTCOMES, type Hook, MALFORMED, MALFORMED_OUTCOMES, type Recorded, STALE, STALE_LANE, STALE_OUTCOMES, STRAIGHT,
+  BUMPY, BUMPY_OUTCOMES, CANCEL, CANCEL_OUTCOMES, type Hook, MALFORMED, MALFORMED_CONSUMED, MALFORMED_OUTCOMES, type Recorded, STALE, STALE_LANE, STALE_OUTCOMES, STRAIGHT,
   STRAIGHT_OUTCOMES, type Scenario, blockedAt, buildRunner, callsMatchSteps, finalReason, layout, moveIntegration, readRecord, release, supervisedRun,
 } from '../fixtures/pm-common.ts';
 import { gone, kill, ownerOf, startCli, startLine, startedGenerations, stateOf, supervisorOf } from '../fixtures/sup-common.ts';
@@ -382,7 +382,8 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
     ...crashCells(ADVERSARIAL_MALFORMED).map((c): CellSpec => {
       const occurrence = c.label === 'unit.after-stage' ? stageAt(malformed, 'gate:malformed') : gateAt;
       const trace = c.label === 'unit.after-stage' ? NONE : R('reconciled');
-      return { name: `malformed ${c.boundary} ${c.label}#${occurrence}`, run: (t) => crashCell(t, malformed, MALFORMED, c.label, occurrence, trace) };
+      const scenario = c.label === 'spawn.after-result' ? MALFORMED_CONSUMED : MALFORMED;
+      return { name: `malformed ${c.boundary} ${c.label}#${occurrence}`, run: (t) => crashCell(t, malformed, scenario, c.label, occurrence, trace) };
     }),
     ...crashCells(ADVERSARIAL_CANCEL).map((c): CellSpec => {
       const traces: Readonly<Record<string, Trace>> = {

@@ -53,6 +53,8 @@ const BASELINE_DEBT: DebtLedger = {
 };
 
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((a, i) => (a === '--add-dir' ? [c.argv[i + 1]!] : []));
+/** Whether `path` is inside a call's read surface: one of its `--add-dir`s or below one (2026-10-16: the repository and the run dir hold most). */
+const readable = (dirs: readonly string[], path: string): boolean => dirs.some((d) => path === d || path.startsWith(`${d}/`));
 /** Every file under `dir`, as paths relative to it. */
 const filesUnder = (dir: string): readonly string[] =>
   readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => relative(dir, join(e.parentPath, e.name))).sort();
@@ -97,7 +99,7 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     const [check] = readCalls(a.d.scenarioPath);
     assert.ok(check !== undefined && check.as === 'claude' && !isGateCall(check));
     const dir = viewDir(a, a.pinSha256, 'full');
-    assert.ok(addDirs(check).includes(dir), `plan-check may read ${dir}: ${check.argv.join(' ')}`);
+    assert.ok(readable(addDirs(check), dir), `plan-check may read ${dir}: ${addDirs(check).join(' ')}`);
     assert.deepEqual(filesUnder(dir), a.pin.files.map((f) => f.path).sort(), 'every pinned file, the vision doc among them');
     for (const f of a.pin.files) {
       const path = join(dir, f.path);
@@ -113,8 +115,9 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     const [g] = readCalls(a.d.scenarioPath).filter(isGateCall);
     assert.ok(g !== undefined);
     const dir = viewDir(a, a.pinSha256, 'without-vision');
-    assert.ok(addDirs(g).includes(dir), `the gate may read ${dir}`);
-    assert.ok(!addDirs(g).includes(viewDir(a, a.pinSha256, 'full')), 'never the full view');
+    assert.ok(readable(addDirs(g), dir), `the gate may read ${dir}`);
+    // The run dir, which holds both views, is readable (2026-10-16): the gate is pointed only at the view without the vision.
+    assert.ok(g.stdin.includes(dir) && !new RegExp(`${viewDir(a, a.pinSha256, 'full')}[/\\s]`).test(g.stdin), 'never told of the full view');
     assert.deepEqual(filesUnder(dir), a.pin.files.filter((f) => f.path !== a.pin.vision.path).map((f) => f.path).sort());
     for (const rule of a.pin.rules) assert.ok(g.stdin.includes(rule.text), `the rules index carries ${rule.id}`);
     const vision = readFileSync(join(a.d.repo, VISION_PATH), 'utf8').split('\n').find((l) => l.startsWith('A calm'))!;
@@ -190,7 +193,7 @@ test('gate.fingerprint-corpus: a re-pin invalidates the approval at ff and the r
     assert.deepEqual(approvals, [a.pinSha256, nextSha], 'the re-gate binds the pin then in force');
     const gates = readCalls(a.d.scenarioPath).filter(isGateCall);
     assert.equal(gates.length, 2);
-    assert.ok(addDirs(gates[1]!).includes(viewDir(a, nextSha, 'without-vision')), 'the re-gate reads the new pin');
+    assert.ok(readable(addDirs(gates[1]!), viewDir(a, nextSha, 'without-vision')) && gates[1]!.stdin.includes(viewDir(a, nextSha, 'without-vision')), 'the re-gate reads the new pin');
     // Each approval banked under its own source, the re-gate's note deduped by key: one item.
     assert.deepEqual(r.journal.view.holistic().debt.map((d) => d.id), ['B-2']);
 

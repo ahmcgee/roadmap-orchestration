@@ -409,8 +409,8 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
     assert.match(g!.stdin, /<pasted_content id="[0-9a-f]{8}">\ndiff --git a\/src\/mul\.js b\/src\/mul\.js/);
     assert.ok(!g!.stdin.includes('<not_inlined>'), 'a small diff is inlined whole');
     const addDirs = g!.argv.flatMap((a, i) => (g!.argv[i - 1] === '--add-dir' ? [a] : []));
-    const attempt = Number(addDirs.map((a) => new RegExp(`^${d.runDir}/evidence/u1/(\\d+)-gate/diff$`).exec(a)?.[1]).find((x) => x !== undefined));
-    assert.ok(attempt > 0, `the attachment's dir is readable: ${addDirs.join(', ')}`);
+    const attempt = Number(new RegExp(`- ${d.runDir}/evidence/u1/(\\d+)-gate/diff\\n`).exec(g!.stdin)?.[1]);
+    assert.ok(attempt > 0 && addDirs.includes(d.runDir), `the attachment's dir is readable, inside the run dir: ${addDirs.join(', ')}`);
     assert.match(g!.stdin, new RegExp(`<evidence_dirs>[^<]*- ${d.runDir}/evidence/u1/${attempt}-gate/diff\\n[^<]*</evidence_dirs>`), 'and listed with the evidence');
     const inputs = r.journal.view.judgmentInputs(U1, 'gate', attempt)!;
     assert.deepEqual(inputs.diffShown, { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] });

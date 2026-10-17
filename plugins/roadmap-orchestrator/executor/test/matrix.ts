@@ -1213,13 +1213,13 @@ export const MATRIX: readonly Row[] = [
       B2: {
         status: 'crash',
         labels: ['spawn.after-intent'],
-        recovery: 'the malformed gate\'s spawn, intent durable and no runner: closed lost (reconciled); the gate runs again as a new attempt, gets the malformed answer, retries once uncharged and approves; the arc ends as uncrashed',
+        recovery: 'the malformed gate\'s spawn, intent durable and no runner: closed lost (reconciled); the gate runs again as a new attempt, gets the malformed answer, takes its repair turn (malformed again), retries once uncharged and approves; the arc ends as uncrashed',
       },
       B3: { status: 'excluded', why: 'inside the malformed call are the runner\'s own points (the proc.spawn row); a malformed answer changes nothing there' },
       B4: {
         status: 'crash',
         labels: ['spawn.after-result'],
-        recovery: 'the malformed result is written, the done is not: closed reconciled and consumed as gate:malformed (never asked again), then the one uncharged retry; the arc ends as uncrashed',
+        recovery: 'the malformed result is written, the done is not: closed reconciled and consumed as gate:malformed (never asked again, no repair turn: a call consumed after a crash takes none), then the one uncharged retry; the arc ends as uncrashed',
       },
       B5: {
         status: 'crash',

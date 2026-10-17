@@ -41,7 +41,7 @@ import { type ExecOptions, type ExecRun, SMOKE_DEFAULT, cli, execEnv, journalOf,
 import { claimOf, ownerOf, stateOf } from './sup-common.ts';
 import { type LaneJson, planCheckStep } from './stage-common.ts';
 import {
-  ADD_BROKEN, ADD_FIXED, MUL, SUITE_LANE, U1, appendSteps, codexStep, gateStep, literal, mulBuild, outcomes, workDirPattern,
+  ADD_BROKEN, ADD_FIXED, MUL, SUITE_LANE, U1, appendSteps, codexStep, gateRepairStep, gateStep, literal, mulBuild, outcomes, workDirPattern,
 } from './unit-common.ts';
 
 /** How long one supervised run (all its starts and restarts) may take before the cell calls it hung. */
@@ -178,11 +178,23 @@ export const BUMPY_OUTCOMES = {
   ],
 } as const;
 
-/** The gate's first answer is not JSON: its one uncharged retry approves. */
+/** The gate's first answer is not JSON, nor its repair turn's (dev.12): malformed, and its one uncharged retry approves. */
 export const MALFORMED: Scenario = {
   arc: () => ({}),
-  steps: () => [planCheckStep({ decision: 'approve' }), mulBuild(), { ...gateStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] }, gateStep({ decision: 'approve' })],
+  steps: () => [
+    planCheckStep({ decision: 'approve' }), mulBuild(), { ...gateStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] },
+    // dev.12: the one judgment repair turn, refused again, before the attempt is malformed.
+    { ...gateRepairStep({ decision: 'approve' }, ['the answer does not match its schema']), acts: [{ type: 'malformed' }] }, gateStep({ decision: 'approve' }),
+  ],
   hooks: () => [],
+};
+/**
+ * MALFORMED crashed after its malformed result was written (`spawn.after-result`): recovery consumes the call, and a call
+ * consumed after a crash takes no repair turn (src/pipeline/gate.ts `gateRead`), so the repair step is never asked.
+ */
+export const MALFORMED_CONSUMED: Scenario = {
+  ...MALFORMED,
+  steps: () => [planCheckStep({ decision: 'approve' }), mulBuild(), { ...gateStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] }, gateStep({ decision: 'approve' })],
 };
 export const MALFORMED_OUTCOMES = {
   u1: ['plan-check:approve', ...BUILT, 'lanes:green', 'gate:malformed', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],

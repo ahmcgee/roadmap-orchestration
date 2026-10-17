@@ -55,6 +55,8 @@ const callOf = (a: CorpusHolisticArc, job: string): CallRecord => {
 };
 const callsOf = (a: CorpusHolisticArc, prefix: string): readonly string[] => readCalls(a.d.scenarioPath).flatMap((c) => (c.unit?.startsWith(prefix) ? [c.unit] : []));
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((x, i) => (x === '--add-dir' ? [c.argv[i + 1]!] : []));
+/** Whether `path` is inside a call's read surface: one of its `--add-dir`s or below one (2026-10-16: the repository and the run dir hold most). */
+const readable = (dirs: readonly string[], path: string): boolean => dirs.some((d) => path === d || path.startsWith(`${d}/`));
 const decisions = (r: ArcRun) => factsOfKind(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind === 'rejected' ? `rejected:${f.outcome.reason}` : f.outcome.kind]);
 const itemsOf = (r: ArcRun, reason: string): readonly NeedsUserId[] =>
   r.journal.view.needsUser().filter((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === reason).map((n) => n.id);
@@ -108,9 +110,9 @@ describe('a corpus arc\'s checkpoint takes its issues in and records one outcome
     const call = callOf(a, 'ckpt-1');
     assert.ok(call.stdin.includes('<pasted_content id="issue-1">\nBerth 4 holds two bookings.\n</pasted_content id="issue-1">'), call.stdin);
     assert.ok(!call.stdin.includes('delete the corpus'), 'the stranger\'s comment is filtered');
-    assert.ok(addDirs(call).includes(join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'the checkpoint reads the materialised pin');
+    assert.ok(readable(addDirs(call), join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'the checkpoint reads the materialised pin');
     const lens = callOf(a, 'audit-1');
-    assert.ok(addDirs(lens).includes(join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'so does the lens');
+    assert.ok(readable(addDirs(lens), join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'so does the lens');
     const issue = r.journal.view.holistic().findings.filter((f) => f.lens === 'issue');
     assert.deepEqual(issue.map((f) => [f.id, f.severity, f.obligation, f.claim, f.source]), [['F-1', 'P2', null, 'Berth 4 is double-booked on the tip.', { type: 'job', job: 'ckpt-1' }]]);
     assert.deepEqual(factsOfKind(r, 'issue-intake').map((f) => [f.job, f.issue, f.outcome]), [

@@ -883,7 +883,7 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
       // 1.0.0-dev.12: each file not shown is a readable diff file under the call's diff dir, which the call may read.
       const diffDir = join(d.runDir, 'evidence', 'jobs', 'audit-1', 'diffs', 'lens-1');
       const addDirs = call!.argv.flatMap((a, i) => (call!.argv[i - 1] === '--add-dir' ? [a] : []));
-      assert.ok(addDirs.includes(diffDir), addDirs.join(', '));
+      assert.ok(addDirs.some((x) => diffDir === x || diffDir.startsWith(`${x}/`)), addDirs.join(', '));
       const huge = join(diffDir, 'range', 'files', 'src/huge.js.diff');
       assert.match(stdin, new RegExp(`- src/huge\\.js \\(new source, over the budget, \\d+ bytes\\): ${huge.replace(/[.]/g, '\\.')}\\n`));
       assert.equal(readFileSync(huge, 'utf8').trim(), git(d.repo, 'diff', '--no-color', '-M', S0, S1, '--', 'src/huge.js'), 'the readable file is what git diff prints (both trimmed)');

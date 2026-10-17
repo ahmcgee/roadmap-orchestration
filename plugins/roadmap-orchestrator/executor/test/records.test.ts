@@ -161,11 +161,12 @@ describe('records', () => {
       const terminal = launch['terminal'] as Record<string, unknown>;
       assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, model: 'gpt-5.6-luna' } }, 'launch.json'), /terminal\.model: expected no such field/);
     });
-    it('launch.json: a judgment role takes only a fresh Claude judgment session', () => {
+    it('launch.json: a judgment role takes only a Claude judgment session, fresh or (dev.12, every role) resumed for its repair turn', () => {
       const launch = RUNNER_SAMPLES['launch.json'];
       const terminal = { ...(launch['terminal'] as Record<string, unknown>), role: 'gate' };
-      assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'claude', mode: 'resume', id: UUID } } }, 'launch.json'), /session\.mode/);
-      assert.ok(RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'claude', mode: 'fresh', id: UUID } } }, 'launch.json'));
+      for (const mode of ['fresh', 'resume'] as const) assert.ok(RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'claude', mode, id: UUID } } }, 'launch.json'));
+      assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'claude', mode: 'continue', id: UUID } } }, 'launch.json'), /session\.mode/);
+      assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'codex', mode: 'fresh' } } }, 'launch.json'), /session\.backend/);
     });
     it('launch.json: declared env may not set ROADMAP_* (the runner owns them)', () => {
       assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...RUNNER_SAMPLES['launch.json'], env: { ROADMAP_INV: 'x' } }, 'launch.json'), /env\.ROADMAP_INV/);
