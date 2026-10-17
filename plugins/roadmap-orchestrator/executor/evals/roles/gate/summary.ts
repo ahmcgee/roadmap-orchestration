@@ -47,6 +47,8 @@ export type ModelTotals = Readonly<{ costUsd: number; inputTokens: number; outpu
 
 export type Summary = Readonly<{
   set: 'dev' | 'holdout';
+  /** The arm measured (arc.ts `gateArm`: seat, class, model:effort), null when the caller names none; absent in a summary written before arms. */
+  arm: string | null;
   trials: number;
   cells: readonly CellSummary[];
   detection: Interval;
@@ -95,7 +97,7 @@ const pct = (x: number | null): string => (x === null ? '-' : `${(x * 100).toFix
 const usd = (x: number | null): string => (x === null ? '-' : `$${x.toFixed(3)}`);
 
 /** The summary of `rows`; `compare`, a dev summary, adds the holdout-gap criterion. */
-export function summarise(set: 'dev' | 'holdout', rows: readonly TrialRow[], compare: Summary | null = null): Summary {
+export function summarise(set: 'dev' | 'holdout', rows: readonly TrialRow[], compare: Summary | null = null, arm: string | null = null): Summary {
   const cellIds = [...new Set(rows.map((r) => r.cell))];
   const cells = cellIds.map((id) => cellSummary(rows.filter((r) => r.cell === id)));
   const g = graded(rows);
@@ -121,7 +123,7 @@ export function summarise(set: 'dev' | 'holdout', rows: readonly TrialRow[], com
   ];
   if (compare !== null) {
     const gap = detection.rate === null || compare.detection.rate === null ? null : Math.abs(detection.rate - compare.detection.rate);
-    criteria.push({ name: 'holdout-gap', pass: gap === null ? false : gap <= 0.15, detail: `holdout ${pct(detection.rate)} vs dev ${pct(compare.detection.rate)}` });
+    criteria.push({ name: 'holdout-gap', pass: gap === null ? false : gap <= 0.15, detail: `holdout ${pct(detection.rate)} [${arm ?? 'unlabelled'}] vs dev ${pct(compare.detection.rate)} [${compare.arm ?? 'unlabelled'}]` });
   }
   const usage: Record<string, ModelTotals> = {};
   for (const r of rows) {
@@ -133,12 +135,12 @@ export function summarise(set: 'dev' | 'holdout', rows: readonly TrialRow[], com
       };
     }
   }
-  return { set, trials: rows.length, cells, detection, falsePositives, coverageMedian, criteria, usage, totalUsd: rows.reduce((a, r) => a + costOf(r), 0) };
+  return { set, arm, trials: rows.length, cells, detection, falsePositives, coverageMedian, criteria, usage, totalUsd: rows.reduce((a, r) => a + costOf(r), 0) };
 }
 
-/** The report: one CELL line per cell, COST lines per cell and model, a PASS|FAIL|INFO line per criterion, USAGE per model. */
+/** The report: the ARM line, one CELL line per cell, COST lines per cell and model, a PASS|FAIL|INFO line per criterion, USAGE per model. */
 export function reportLines(s: Summary): readonly string[] {
-  const out: string[] = [];
+  const out: string[] = [`ARM ${s.arm ?? 'unlabelled'}`];
   for (const c of s.cells) {
     out.push(`CELL ${c.cell} ${c.planted ? 'planted' : 'clean'} trials=${c.trials} graded=${c.graded} regenerate=${c.regenerate} ${c.planted ? 'caught' : 'fp'}=${fmtRate(c.rate)} lucky=${c.lucky} `
       + `coverage=${pct(c.coverageMedian)} silent=${c.silentMedian ?? '-'} cost=${usd(c.cost.median)}/p90 ${usd(c.cost.p90)} perCatch=${usd(c.cost.perCatch)} wall=${c.wallMedianS?.toFixed(0) ?? '-'}s `

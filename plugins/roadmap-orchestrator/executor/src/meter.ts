@@ -22,7 +22,7 @@ import type { Event, Fact } from './core/events.ts';
 import type { JobId, RoutingRev, UnitId } from './core/ids.ts';
 import type { ClassUsage } from './core/records.ts';
 import {
-  type Backend, type ClassTable, type ModelId, type Role, type RoutingTable, type SeatRef, type UsageClass, USAGE_CLASSES, atSeat, seatRef,
+  type Backend, type ClassTable, type ModelId, type Role, type RoutingTable, type SeatRef, type ModelClass, MODEL_CLASSES, atSeat, seatRef,
 } from './routing/types.ts';
 
 export type UsageTotals = Readonly<{
@@ -47,8 +47,8 @@ export type JobTotal = Readonly<{ job: JobId; role: Role; routingRev: RoutingRev
 /** Tokens and list-price cost: what a usage class's share counts (no calls or turns: those are a seat's). */
 export type ClassTotals = Readonly<{ input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number }>;
 /** One seat's delegated spend on one usage class. */
-export type DelegatedTotal = SeatRef & Readonly<{ routingRev: RoutingRev; class: UsageClass }> & ClassTotals;
-export type ClassTotal = Readonly<{ class: UsageClass }> & ClassTotals;
+export type DelegatedTotal = SeatRef & Readonly<{ routingRev: RoutingRev; class: ModelClass }> & ClassTotals;
+export type ClassTotal = Readonly<{ class: ModelClass }> & ClassTotals;
 
 export type Meter = Readonly<{
   /** Ascending by role, then routingRev. */
@@ -111,7 +111,7 @@ export function meterOf(events: Iterable<Event>): Meter {
     const sk = `${s.role} ${s.tier} ${f.routingRev}`;
     seats.set(sk, { ...seatRef(s.role, s.tier), routingRev: f.routingRev, ...add(seats.get(sk) ?? ZERO, f) });
     for (const c of f.kind === 'meter' ? f.delegated ?? [] : []) {
-      const dk = `${sk} ${USAGE_CLASSES.indexOf(c.class)}`;
+      const dk = `${sk} ${MODEL_CLASSES.indexOf(c.class)}`;
       delegated.set(dk, { ...seatRef(s.role, s.tier), routingRev: f.routingRev, class: c.class, ...plusClass(delegated.get(dk) ?? NO_CLASS_SPEND, c) });
     }
     if (s.type === 'job') {
@@ -146,13 +146,13 @@ export function ownShare(meter: Pick<Meter, 'bySeat' | 'delegatedBySeat'>): read
 }
 
 /**
- * The render-time class view of the meter, in `USAGE_CLASSES` order (a class with no spend left out): each seat's own share
+ * The render-time class view of the meter, in `MODEL_CLASSES` order (a class with no spend left out): each seat's own share
  * on the class its revision seats there (`classes`), each delegated share on its class. A revision missing from `classes`
  * is a caller bug and throws; the caller passes only resolvable seats (`meter.bySeat` filtered as for `byModel`).
  */
 export function byClass(meter: Pick<Meter, 'bySeat' | 'delegatedBySeat'>, classes: ReadonlyMap<RoutingRev, ClassTable>): readonly ClassTotal[] {
-  const sums = new Map<UsageClass, Mutable<ClassTotals>>();
-  const into = (c: UsageClass, t: ClassTotals): void => {
+  const sums = new Map<ModelClass, Mutable<ClassTotals>>();
+  const into = (c: ModelClass, t: ClassTotals): void => {
     const sum = sums.get(c) ?? { ...NO_CLASS_SPEND };
     for (const k of Object.keys(NO_CLASS_SPEND) as (keyof ClassTotals)[]) sum[k] += t[k];
     sums.set(c, sum);
@@ -163,7 +163,7 @@ export function byClass(meter: Pick<Meter, 'bySeat' | 'delegatedBySeat'>, classe
     into(atSeat(table, t), t);
   }
   for (const d of meter.delegatedBySeat) if (meter.bySeat.some((t) => sameSeat(t, d))) into(d.class, d);
-  return USAGE_CLASSES.flatMap((c) => {
+  return MODEL_CLASSES.flatMap((c) => {
     const t = sums.get(c);
     return t === undefined ? [] : [{ class: c, ...t }];
   });

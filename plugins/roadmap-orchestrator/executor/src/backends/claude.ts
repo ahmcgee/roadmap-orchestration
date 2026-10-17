@@ -20,7 +20,7 @@
 // parent of its evidence dirs). Its Read, Grep and Glob entries are reads.json's `denied`.
 import type { ClassUsage, TokenUsage, ToolRead, Usage, UsageUnavailableReason } from '../core/records.ts';
 import { delegateClass } from '../routing/classes.ts';
-import { USAGE_CLASSES, type UsageClass } from '../routing/types.ts';
+import { MODEL_CLASSES, type ModelClass } from '../routing/types.ts';
 import type { BackendReading } from './adapter.ts';
 import { MalformedOutputError, UsageMismatchError, classifyBackendError } from './errors.ts';
 import { type StreamEvent, jsonLines } from './jsonl.ts';
@@ -90,13 +90,13 @@ function readUsage(results: readonly StreamEvent[], ownModel: string | null): Us
   const all = [...models.values()].reduce(plus, ZERO_TOKENS);
   const costUsd = cost(last['total_cost_usd']) ? last['total_cost_usd'] : null;
   const tokens: TokenUsage = { inputTokens: all.input, outputTokens: all.output, cacheReadTokens: all.cacheRead, cacheWriteTokens: all.cacheWrite, turns, costUsd };
-  const byClass = new Map<UsageClass, ModelTokens>();
+  const byClass = new Map<ModelClass, ModelTokens>();
   for (const [model, t] of models) {
     if (model === ownModel) continue;
     const c = delegateClass(model);
     byClass.set(c, plus(byClass.get(c) ?? ZERO_TOKENS, t));
   }
-  const delegated: ClassUsage[] = USAGE_CLASSES.flatMap((c) => {
+  const delegated: ClassUsage[] = MODEL_CLASSES.flatMap((c) => {
     const t = byClass.get(c);
     return t === undefined ? [] : [{ class: c, inputTokens: t.input, outputTokens: t.output, cacheReadTokens: t.cacheRead, cacheWriteTokens: t.cacheWrite, costUsd: t.cost }];
   });

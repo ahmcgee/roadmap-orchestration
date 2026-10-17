@@ -2,7 +2,7 @@
 // processes, real git, real lanes), the graders on a gate that cites the plant without reading it, the stream-json
 // transcript and cost parser on a captured subagent run, the fake backend's `real` and `checkoutTree` acts, and the
 // triggers. Named tests: roles.approve-all, roles.revise-all, roles.cite-every-path, roles.lucky, roles.transcript-cost,
-// roles.real-act, roles.checkout-tree-act, roles.triggers, roles.wilson, roles.regenerate-check.
+// roles.real-act, roles.checkout-tree-act, roles.triggers, roles.arm, roles.wilson, roles.regenerate-check.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -12,11 +12,12 @@ import { fileURLToPath } from 'node:url';
 import type { DiffShown } from '../src/core/events.ts';
 import { repoPath } from '../src/core/values.ts';
 import type { GateOutput } from '../src/prompts/schemas.ts';
-import type { GateKind, TrialRow } from '../evals/roles/gate/arc.ts';
+import { type GateKind, type TrialRow, gateArm } from '../evals/roles/gate/arc.ts';
 import type { AnswerKey } from '../evals/roles/gate/fixture.ts';
 import { grade } from '../evals/roles/gate/grade.ts';
 import { type Summary, summarise } from '../evals/roles/gate/summary.ts';
-import { run } from '../evals/roles/run.ts';
+import { rebindConfig, run } from '../evals/roles/run.ts';
+import { contextFor, setupArc } from './fixtures/unit-common.ts';
 import { wilson } from '../evals/roles/stats.ts';
 import { parseEvents, readTranscript, unavailableCalls, usageOf } from '../evals/roles/transcript.ts';
 import { triggeredRoles } from '../evals/roles/triggers.ts';
@@ -29,7 +30,8 @@ const SUBAGENT_STREAM = fileURLToPath(new URL('./fixtures/roles/subagent-stream.
 async function fakeRun(gate: GateKind, cells: readonly string[]): Promise<Readonly<{ summary: Summary; rows: readonly TrialRow[]; out: string }>> {
   const out = join(tmpDir('roles-out'), 'run');
   const lines: string[] = [];
-  const summary = await run({ set: 'dev', n: 1, cells, parallel: 1, size: 150, seed: 'harness', risk: 'med', out, compare: null, gate }, (l) => lines.push(l));
+  const summary = await run({ set: 'dev', n: 1, cells, parallel: 1, size: 150, seed: 'harness', risk: 'med', config: null, out, compare: null, gate }, (l) => lines.push(l));
+  assert.ok(lines.includes('ARM gate.med efficient claude-sonnet-5-5:high'), 'the report names the arm: the med seat, Sonnet 5.5 high');
   const rows = readFileSync(join(out, 'trials.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as TrialRow);
   assert.ok(lines.some((l) => l.startsWith('PASS ') || l.startsWith('FAIL ')), lines.join('\n'));
   return { summary, rows, out };
@@ -158,6 +160,32 @@ test('roles.transcript-cost: a captured subagent run: subagent calls by parent_t
   const topLevel = (result['usage'] as { output_tokens: number }).output_tokens;
   assert.ok(u.byModel['claude-haiku-5-5']!.outputTokens + u.byModel['claude-sonnet-5-5']!.outputTokens > topLevel, 'the top-level usage excludes the subagent');
   assert.equal(usageOf({ ...result, total_cost_usd: 0.5 })!.check, 'mismatch');
+});
+
+test('roles.arm: --risk picks the built-in gate seat (Haiku, Sonnet, Opus); --rebind rebinds a class through the repo config, which the trial arc routes under; a bad rebind is refused', () => {
+  assert.equal(gateArm('low', null), 'gate.low economy claude-haiku-5-5:high');
+  assert.equal(gateArm('med', null), 'gate.med efficient claude-sonnet-5-5:high');
+  assert.equal(gateArm('high', null), 'gate.high frontier claude-opus-5-5:medium');
+  const config = rebindConfig(['economy=claude-opus-5-5:medium']);
+  assert.deepEqual(config, { routing: { classes: { economy: { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' } } } });
+  assert.equal(gateArm('low', config), 'gate.low economy (rebound) claude-opus-5-5:medium');
+  assert.equal(gateArm('med', config), 'gate.med efficient claude-sonnet-5-5:high', 'a rebind moves only its class');
+  assert.equal(rebindConfig([]), null);
+  assert.throws(() => rebindConfig(['economy=claude-opus-5-5']), /<class>=<model>:<effort>/);
+  assert.throws(() => rebindConfig(['economy=claude-opus-9:high']), /model one of/);
+  assert.throws(() => rebindConfig(['cheap=claude-opus-5-5:high']), /cheap/);
+  assert.throws(() => rebindConfig(['economy=claude-haiku-5-5:huge']), /effort/);
+  assert.throws(() => rebindConfig(['economy=claude-opus-5-5:high', 'economy=claude-haiku-5-5:low']), /rebound twice/);
+  assert.throws(() => gateArm('low', rebindConfig(['economy=gpt-5.6-luna:low'])), /no prompt for gate on gpt-5.6-luna/);
+  // The trial arc (test/fixtures/unit-common.ts contextFor) resolves its routing under the descriptor's config.
+  const d = setupArc({ steps: [] });
+  const r = contextFor({ ...d, config: config! });
+  try {
+    assert.deepEqual(r.ctx.routing(null).table.gate.low, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' });
+    assert.deepEqual(r.ctx.routingBase.config, config);
+  } finally {
+    r.journal.close();
+  }
 });
 
 test('roles.wilson: Wilson intervals', () => {

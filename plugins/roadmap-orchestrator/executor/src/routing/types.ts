@@ -6,7 +6,7 @@ import { type UnitId, unitId } from '../core/ids.ts';
 import { Fields, type Read, SchemaError, literal, nullable, object, oneOf } from '../core/validate.ts';
 import { effortSupported, modelInfo } from './models.ts';
 
-export const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'] as const;
+export const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const;
 export const CODEX_MODELS = ['gpt-5.6-luna', 'gpt-5.6-sol'] as const;
 export const MODEL_IDS = [...CLAUDE_MODELS, ...CODEX_MODELS] as const;
 
@@ -54,7 +54,7 @@ export type RiskTier = (typeof RISK_TIERS)[number];
 /** A unit judgment role's seats: the three risk tiers and `escalation`, where route-ups and risk triggers go. */
 export const JUDGMENT_SEATS = [...RISK_TIERS, 'escalation'] as const;
 export type JudgmentSeat = (typeof JUDGMENT_SEATS)[number];
-/** An arc role's one seat (M3): lens → frontier, checkpoint → summit, packReview → frontier (M4a), flow → frontier (M4b) in the built-in table. */
+/** An arc role's one seat (M3); profiles.ts names its class in the built-in table. */
 export const ARC_SEATS = ['arc'] as const;
 export type ArcSeat = (typeof ARC_SEATS)[number];
 /** Any role's seat name; `SeatRef` pairs one with a role that has it. */
@@ -76,17 +76,21 @@ export const SEAT_REFS: readonly SeatRef[] = ROLES.flatMap((r) => SEATS[r].map((
 /**
  * What a routing layer names at a seat. The class catalogue (classes.ts) binds each class to a triple; a
  * repo may rebind one in `.roadmap/config.json`. `efficient`: the cheap implementer; `frontier`: the strong
- * default; `summit`: the escalation.
+ * default; `summit`: the escalation. These three bind a build triple too, so a build seat names one of them.
  */
-export const MODEL_CLASSES = ['efficient', 'frontier', 'summit'] as const;
-export type ModelClass = (typeof MODEL_CLASSES)[number];
+export const BUILD_CLASSES = ['efficient', 'frontier', 'summit'] as const;
+export type BuildClass = (typeof BUILD_CLASSES)[number];
 /**
- * The classes a call's usage is metered to (2026-10-16): the seat classes and `economy`, Haiku's. Haiku holds no seat (no
- * prompt module); a judge or a builder reaches it only as a subagent model (the Agent tool's `model`), so `economy` is a
- * meter class, never a seat's (classes.ts `DELEGATE_CLASSES`).
+ * Every class: the build classes and (1.0.0-dev.12) `economy`, a judgment-only class (Haiku 5.5, the low-risk gate). A
+ * build seat names a `BuildClass` by type (`ClassOf`), so economy at a build seat is unrepresentable. These are also the
+ * classes a call's usage is metered to: a seat's own share on its seat's class, a subagent's on its model's family
+ * (classes.ts `DELEGATE_CLASSES`). Recorded per-class usage lists keep this order (records.ts), so a class is only ever
+ * appended.
  */
-export const USAGE_CLASSES = [...MODEL_CLASSES, 'economy'] as const;
-export type UsageClass = (typeof USAGE_CLASSES)[number];
+export const MODEL_CLASSES = [...BUILD_CLASSES, 'economy'] as const;
+export type ModelClass = (typeof MODEL_CLASSES)[number];
+/** The classes a role's seats may name: a build class at a build seat, any class at a judgment seat. */
+export type ClassOf<R extends Role> = R extends ImplementerRole ? BuildClass : ModelClass;
 /** Where a class's binding came from. */
 export type ClassSource = 'builtin' | 'repo-config';
 
@@ -97,10 +101,10 @@ export type ProfileName = (typeof PROFILES)[number];
 export type SeatTable<V> = { readonly [R in Role]: { readonly [S in SeatOf<R>]: V } };
 /** The resolved triples: the table `routingRev` hashes. */
 export type RoutingTable = SeatTable<Triple>;
-/** The built-in seats, or a resolved stack before binding: the class at every seat. */
-export type ClassTable = SeatTable<ModelClass>;
-/** One layer of the routing stack: a class at any subset of seats. */
-export type RoutingLayer = { readonly [R in Role]?: { readonly [S in SeatOf<R>]?: ModelClass } };
+/** The built-in seats, or a resolved stack before binding: the class at every seat, a build class at a build seat. */
+export type ClassTable = { readonly [R in Role]: { readonly [S in SeatOf<R>]: ClassOf<R> } };
+/** One layer of the routing stack: a class at any subset of seats, a build class at a build seat. */
+export type RoutingLayer = { readonly [R in Role]?: { readonly [S in SeatOf<R>]?: ClassOf<R> } };
 /** A repo's class rebinds: any subset of classes, each bound to a triple. */
 export type ClassBindings = { readonly [C in ModelClass]?: Triple };
 /** Where a seat's class came from, lowest to highest precedence. */
@@ -149,7 +153,9 @@ export const backend: Read<Backend> = oneOf(BACKENDS);
 export const profileName: Read<ProfileName> = oneOf(PROFILES);
 export const modelId: Read<ModelId> = oneOf(MODEL_IDS);
 export const modelClass: Read<ModelClass> = oneOf(MODEL_CLASSES);
-export const usageClass: Read<UsageClass> = oneOf(USAGE_CLASSES);
+export const buildClass: Read<BuildClass> = oneOf(BUILD_CLASSES);
+/** The class reader for a seat of `r`: a build class at a build seat, any class at a judgment seat. */
+export const classAt = (r: Role): Read<ModelClass> => (r === 'build' ? buildClass : modelClass);
 
 /** Reads a record's `role` and `tier` fields as one seat: a tier the role does not have is refused. */
 export function seatFields(f: Fields): SeatRef {
@@ -184,12 +190,12 @@ export const triple: Read<Triple> = (value, path) => {
   }))(value, path);
 };
 
-/** A seat's value in a routing layer: a class name. A triple there is refused (hard cutover to classes). */
-const seatClass: Read<ModelClass> = (value, path) => {
+/** A seat's value in a routing layer: a class name, a build class at a build seat. A triple there is refused (hard cutover to classes). */
+const seatClass = (r: Role): Read<ModelClass> => (value, path) => {
   if (typeof value === 'object' && value !== null) {
-    throw new SchemaError(path, `a model class (${MODEL_CLASSES.join(' | ')}); triples are bound only in config.routing.classes`, value);
+    throw new SchemaError(path, `a model class (${(r === 'build' ? BUILD_CLASSES : MODEL_CLASSES).join(' | ')}); triples are bound only in config.routing.classes`, value);
   }
-  return modelClass(value, path);
+  return classAt(r)(value, path);
 };
 
 export const routingLayer: Read<RoutingLayer> = object((f) => {
@@ -198,7 +204,7 @@ export const routingLayer: Read<RoutingLayer> = object((f) => {
     const seats = f.optional(r, object((g) => {
       const named: Partial<Record<Seat, ModelClass>> = {};
       for (const t of SEATS[r]) {
-        const c = g.optional(t, seatClass);
+        const c = g.optional(t, seatClass(r));
         if (c !== undefined) named[t] = c;
       }
       return named;

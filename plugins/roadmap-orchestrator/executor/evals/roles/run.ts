@@ -2,7 +2,13 @@
 // eval run dir holds, aggregated with Wilson intervals and per-model cost.
 //
 //   node evals/roles/run.ts gate --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1]
-//                           [--risk med] [--out <dir>] [--compare <dev summary.json>] [--fake approve-all|revise-all|cite-every-path|cite-plant]
+//                           [--risk low|med|high] [--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <dev summary.json>]
+//                           [--fake approve-all|revise-all|cite-every-path|cite-plant]
+//
+// The arm: `--risk` picks the gate seat (built-in: low economy/Haiku 5.5, med efficient/Sonnet 5.5, high frontier/Opus 5.5)
+// and `--rebind` (repeatable) rebinds a class for the run through the production mechanism, the repo config's
+// `routing.classes` (e.g. `--risk low --rebind economy=claude-opus-5-5:medium` runs Opus on the low seat). The ARM line,
+// summary.json's `arm` and the compare criterion name the seat, its class and the model:effort serving it.
 //
 // Writes <out>/trials.jsonl (one row per trial, as each finishes), <out>/summary.json and <out>/<cell>-<trial>/ (key.json,
 // prompt.txt, gate-<n>.jsonl, transcript.jsonl, answer.json, row.json); prints the workers' TRACE and BRAKE lines, a TRIAL
@@ -15,8 +21,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { RISK_TIERS, type RiskTier } from '../../src/routing/types.ts';
-import { FAKE_GATES, type GateKind, type TrialRow } from './gate/arc.ts';
+import type { JsonValue } from '../../src/core/json.ts';
+import { type RepoConfig, parseRepoConfig } from '../../src/routing/layers.ts';
+import { modelInfo } from '../../src/routing/models.ts';
+import { MODEL_IDS, type ModelId, RISK_TIERS, type RiskTier } from '../../src/routing/types.ts';
+import { FAKE_GATES, type GateKind, type TrialRow, gateArm } from './gate/arc.ts';
 import { type CellSet, cellsFor } from './gate/cells.ts';
 import { type Summary, failed, reportLines, summarise } from './gate/summary.ts';
 import { median } from './stats.ts';
@@ -24,7 +33,8 @@ import type { WorkerArgs } from './trial.ts';
 
 const WORKER = fileURLToPath(new URL('./trial.ts', import.meta.url));
 const TRIAL_TIMEOUT_MS = 60 * 60_000;
-const USAGE = 'usage: node evals/roles/run.ts gate --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] [--out <dir>] [--compare <summary.json>] [--fake <kind>]';
+const USAGE = 'usage: node evals/roles/run.ts gate --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] '
+  + '[--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <summary.json>] [--fake <kind>]';
 
 export type RunOptions = Readonly<{
   set: CellSet;
@@ -34,6 +44,8 @@ export type RunOptions = Readonly<{
   size: number;
   seed: string;
   risk: RiskTier;
+  /** `--rebind`'s class rebinds as the repo config that carries them, or null without one. */
+  config: RepoConfig | null;
   out: string;
   compare: string | null;
   gate: GateKind;
@@ -45,7 +57,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
     options: {
       set: { type: 'string' }, n: { type: 'string', default: '3' }, cells: { type: 'string' }, parallel: { type: 'string', default: '4' },
       size: { type: 'string', default: '3000' }, seed: { type: 'string', default: 'roles-1' }, risk: { type: 'string', default: 'med' },
-      out: { type: 'string' }, compare: { type: 'string' }, fake: { type: 'string' },
+      rebind: { type: 'string', multiple: true }, out: { type: 'string' }, compare: { type: 'string' }, fake: { type: 'string' },
     },
   });
   if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(only the gate role has evals so far)`);
@@ -64,8 +76,26 @@ export function parseRun(argv: readonly string[]): RunOptions {
   if (resolve(tmpdir()).startsWith(out)) throw new Error(`--out ${out} contains the temp dir ${tmpdir()}, where the trials' arcs live`);
   return {
     set: values.set, n: int('n', values.n, 1, 100), cells: values.cells === undefined ? null : values.cells.split(','), parallel: int('parallel', values.parallel, 1, 16),
-    size, seed: values.seed, risk: values.risk as RiskTier, out, compare: values.compare ?? null, gate,
+    size, seed: values.seed, risk: values.risk as RiskTier, config: rebindConfig(values.rebind ?? []), out, compare: values.compare ?? null, gate,
   };
+}
+
+/**
+ * `--rebind <class>=<model>:<effort>` flags as the repo config `.roadmap/config.json` would hold (`routing.classes`), read
+ * by the production config reader (unknown class, model or effort refused); null without a flag.
+ */
+export function rebindConfig(flags: readonly string[]): RepoConfig | null {
+  if (flags.length === 0) return null;
+  const classes: Record<string, JsonValue> = {};
+  for (const flag of flags) {
+    const m = /^([a-z]+)=([a-z0-9.-]+):([a-z]+)$/.exec(flag);
+    if (m === null) throw new Error(`--rebind ${flag}: <class>=<model>:<effort>`);
+    const [, cls, model, effort] = m as unknown as [string, string, string, string];
+    if (!(MODEL_IDS as readonly string[]).includes(model)) throw new Error(`--rebind ${flag}: model one of ${MODEL_IDS.join(', ')}`);
+    if (Object.hasOwn(classes, cls)) throw new Error(`--rebind ${flag}: ${cls} rebound twice`);
+    classes[cls] = { backend: modelInfo(model as ModelId).backend, model, effort };
+  }
+  return parseRepoConfig({ routing: { classes } });
 }
 
 /** A row for a trial whose worker died before writing one. */
@@ -103,6 +133,7 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
   const cells = o.cells === null ? all : all.filter((c) => o.cells!.includes(c.id));
   if (existsSync(o.out) && readdirSync(o.out).length > 0) throw new Error(`--out ${o.out} is not empty`);
   mkdirSync(o.out, { recursive: true });
+  const arm = gateArm(o.risk, o.config);
   writeFileSync(join(o.out, 'run.json'), `${JSON.stringify(o, null, 2)}\n`);
   const compare = o.compare === null ? null : (JSON.parse(readFileSync(o.compare, 'utf8')) as Summary);
   const queue = cells.flatMap((c) => Array.from({ length: o.n }, (_, trial) => ({ cell: c, trial })));
@@ -111,7 +142,7 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
   const next = async (): Promise<void> => {
     for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
       const a: WorkerArgs = {
-        role: 'gate', set: o.set, cell: job.cell.id, trial: job.trial, seed: o.seed, size: o.size, gate: o.gate, risk: o.risk,
+        role: 'gate', set: o.set, cell: job.cell.id, trial: job.trial, seed: o.seed, size: o.size, gate: o.gate, risk: o.risk, config: o.config,
         out: join(o.out, `${job.cell.id}-${job.trial}`), medianLoad: medianLoad(job.cell.id),
       };
       const died = await runWorker(a, log);
@@ -125,7 +156,7 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
   };
   await Promise.all(Array.from({ length: Math.min(o.parallel, queue.length) }, next));
   rows.sort((x, y) => (x.cell === y.cell ? x.trial - y.trial : cells.findIndex((c) => c.id === x.cell) - cells.findIndex((c) => c.id === y.cell)));
-  const summary = summarise(o.set, rows, compare);
+  const summary = summarise(o.set, rows, compare, arm);
   writeFileSync(join(o.out, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
   for (const l of reportLines(summary)) log(l);
   log(`run dir ${o.out}`);

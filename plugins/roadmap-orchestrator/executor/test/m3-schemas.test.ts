@@ -497,6 +497,9 @@ describe('M3 judgment outputs', () => {
     };
     assert.deepEqual([fixesOf({}), fixesOf({ fixes: null }), fixesOf({ fixes: 'u1/gate#1' })], ['unrecorded', null, 'u1/gate#1']);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'arc', class: 'summit' }] }] }), /tier/);
+    // economy is judgment-only (1.0.0-dev.12): a route may seat it at a judgment seat, never at a build seat.
+    validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'gate', tier: 'low', class: 'economy' }] }] });
+    assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[3], seats: [{ role: 'build', tier: 'low', class: 'economy' }] }] }), /class/);
     assert.throws(() => validateCheckpointOutput({ ...ckpt, ops: [{ ...more[9], class: 'anything' }] }), /class/);
   });
 });

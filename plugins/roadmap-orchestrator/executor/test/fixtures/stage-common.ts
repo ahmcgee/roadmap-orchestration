@@ -24,7 +24,7 @@ import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { reserveNow } from '../../src/pipeline/lanes.ts';
 import { rankOf } from '../../src/schedule/ready.ts';
-import { resolveRouting } from '../../src/routing/layers.ts';
+import { type RepoConfig, resolveRouting } from '../../src/routing/layers.ts';
 import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
 import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
@@ -123,7 +123,7 @@ export function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, pr
  * Records the plan file as revision 1 (`scheduling: 'dag'`), as a first start does (src/input/inforce.ts `recordPlan`). A
  * corpus arc's files pass the shared Phase-0 rows first, which open its corpus source, and its corpus files are kept.
  */
-export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default'): void {
+export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default', config: RepoConfig | null = null): void {
   writeStart(runDir, repo, planPath, profile);
   const files = readInputFiles(planPath, repo);
   if (files.corpus !== null) {
@@ -131,7 +131,7 @@ export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: Abs
     if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
     keepCorpusFiles(runDir, rows.opened.files);
   }
-  recordPlan(journal, runDir, files, [], { profile, config: null, arcRoles: 'm4b' });
+  recordPlan(journal, runDir, files, [], { profile, config, arcRoles: 'm4b' });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */

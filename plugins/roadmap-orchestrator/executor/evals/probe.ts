@@ -20,6 +20,8 @@
 //   claude.build.fresh/resume  claude-opus-5-5 (effort high) implementer argv: writes a file (bypassPermissions), then
 //                       the resumed session recalls it
 //   fable.pin           claude-fable-5-1 resolves: one judgment call that returns {ok: true}
+//   routing.economy / economy.judgment  (1.0.0-dev.12) the default table's gate.low is the economy class, claude-haiku-5-5 high;
+//                       one judgment call on that triple under the Haiku gate prompt module's system prompt returns {ok: true}
 //   sonnet.build        claude-sonnet-5-5 (effort medium, claude-only's efficient class) implementer argv:
 //                       writes a file (bypassPermissions) and returns {ok: true}
 //   claude.build.killed-resume  claude-opus-5-5 implementer told to write a random token to a file then
@@ -437,6 +439,17 @@ async function main(): Promise<void> {
     request: { kind: 'claude-judgment', role: 'planCheck', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
   }, isOk);
 
+  // The economy class (1.0.0-dev.12): the default table's gate.low binding launches through the Haiku gate prompt module
+  // (its system prompt, the seat's own triple) and answers a strict schema.
+  const economy = resolved.table.gate.low;
+  report(economy.backend === 'claude' && economy.model === 'claude-haiku-5-5' && economy.effort === 'high', 'routing.economy', `gate.low=${JSON.stringify(economy)}`);
+  if (economy.backend === 'claude') {
+    await backend(ctx, 'economy.judgment', {
+      check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('gate', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',
+      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'gate', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
+    }, isOk);
+  }
+
   // Sonnet implementer (claude-only's efficient class): the id resolves at its effort and writes in its cwd.
   const sonnetDir = dir(join(root, 'sonnet-build'));
   const sonnet = await backend(ctx, 'sonnet.build', {
@@ -843,7 +856,7 @@ async function main(): Promise<void> {
   await rev3('gate.bounded', async () => {
     const g0 = DEV_CELLS.find((c) => c.id === 'G0')!;
     const row = await runGateTrial({
-      set: 'dev', cell: { ...g0, id: 'probe', plant: null }, trial: 0, seed: 'probe', size: 100, gate: 'real', risk: 'med',
+      set: 'dev', cell: { ...g0, id: 'probe', plant: null }, trial: 0, seed: 'probe', size: 100, gate: 'real', risk: 'med', config: null,
       out: join(root, 'gate-bounded'), medianLoad: null, log: (l) => process.stdout.write(`${l}\n`),
     });
     const cov = row.graded?.coverage ?? null;

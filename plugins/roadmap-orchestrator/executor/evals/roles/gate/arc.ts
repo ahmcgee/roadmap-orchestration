@@ -15,6 +15,7 @@ import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DiffShown, StageOutcomeFact } from '../../../src/core/events.ts';
+import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
 import type { RiskTier } from '../../../src/routing/types.ts';
 import { type InvocationId, invocationId } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
@@ -22,6 +23,7 @@ import { STDOUT_FILE } from '../../../src/core/records.ts';
 import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { judgmentOutput, judgmentSpawns } from '../../../src/pipeline/stages.ts';
 import { type GateOutput, validateGateOutput } from '../../../src/prompts/schemas.ts';
+import { promptFor } from '../../../src/prompts/index.ts';
 import { runnerFiles } from '../../../src/runner/files.ts';
 import { tmpDir } from '../../../test/helpers/repo.ts';
 import { type Step, readCalls, writeScenario } from '../../../test/helpers/scenario.ts';
@@ -71,8 +73,20 @@ function gateSteps(kind: GateKind, key: AnswerKey): readonly Step[] {
   return [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: fakeAnswer(kind, key) }] }];
 }
 
+/**
+ * The arm a run measures: the gate seat its risk picks, the class there and the triple that class binds under the run's
+ * repo config (the production routing stack: built-in seats, the `default` profile's catalogue, `routing.classes`
+ * rebinds), e.g. `gate.low economy claude-haiku-5-5:high`.
+ */
+export function gateArm(risk: RiskTier, config: RepoConfig | null): string {
+  const r = resolveRouting(arcStack('default', config, null));
+  const t = r.table.gate[risk];
+  promptFor('gate', t.model); // a rebind onto a model with no gate prompt fails here, before any trial
+  return `gate.${risk} ${r.classes.gate[risk]}${r.bindings[r.classes.gate[risk]] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}`;
+}
+
 /** Lays out the fixture's repo, plan, spec and scenario (plan-check approves; the build commits the unit's tree). */
-export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier): ArcDescriptor {
+export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config: RepoConfig | null = null): ArcDescriptor {
   const repo = tmpDir('roles-repo');
   const { base, head } = materialise(f, repo);
   const planDir = tmpDir('roles-plan');
@@ -99,7 +113,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier): ArcDes
     ...gateSteps(kind, f.key),
   ];
   const scenario = writeScenario(scenarioDir, steps);
-  return { arc, repo, planPath, runDir: tmpDir('roles-run'), hostDir: join(tmpDir('roles-host'), 'roadmap'), binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir };
+  return { arc, repo, planPath, runDir: tmpDir('roles-run'), hostDir: join(tmpDir('roles-host'), 'roadmap'), binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir, ...(config === null ? {} : { config }) };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -244,8 +258,10 @@ export type TrialOptions = Readonly<{
   seed: string;
   size: number;
   gate: GateKind;
-  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (low: efficient, med and high: frontier). */
+  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (built-in: low economy, med efficient, high frontier). */
   risk: RiskTier;
+  /** The repo config whose `routing.classes` rebinds classes for the trial (run.ts `--rebind`), or null: the built-in bindings. */
+  config: RepoConfig | null;
   /** The trial's directory in the eval run dir (the answer key and artifacts go here, outside every dir the gate reads). */
   out: string;
   /** The cell's median token load so far (the load brake), or null. */
@@ -263,7 +279,7 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const label = `${o.cell.id}#${o.trial}`;
   const fx = buildFixture(o.cell, { seed: o.seed, trial: o.trial, size: o.size, scratch: tmpDir('roles-scratch') });
   writeFileSync(join(o.out, 'key.json'), `${JSON.stringify(fx.key, null, 2)}\n`);
-  const d = setupGateArc(fx, o.gate, o.risk);
+  const d = setupGateArc(fx, o.gate, o.risk, o.config);
   const r = contextFor(d);
   const monitor = startMonitor(r, label, o.medianLoad, o.log);
   const started = Date.now();

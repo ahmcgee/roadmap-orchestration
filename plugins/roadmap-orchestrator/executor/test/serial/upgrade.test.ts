@@ -16,7 +16,9 @@
 //
 // Both releases schedule a DAG and keep every M3, M4a and M4b record, so their arcs run on HEAD as they ran on
 // them; an arc started without the holistic layer runs with M2 semantics and no new spend unless the architect opts
-// in. Their role sets, seat tables and pressure records are HEAD's, so their routing revs stand unchanged.
+// in. Their role sets and pressure records are HEAD's; their seat tables are not (HEAD's gate risk ladder, 1.0.0-dev.12,
+// moved gate.low and gate.med), so under OR-L3 their units re-pin under HEAD's rev without a park and status aliases
+// the revs they recorded (PRE_DEV12_BUILTIN_SEATS).
 //
 // What both record differently from 1.0.0-dev.12: their judgments ran without the Agent tool and, but for
 // plan-check and the checkpoint, without session persistence (a refused answer left unread takes no repair turn on
@@ -84,8 +86,10 @@
 //   upgrade.target-kind-fixed  an apply cannot switch the adopted arc to a corpus target (`target-kind-changed`).
 //   upgrade.routing-stable     stopped mid-build, `page-id` left held; on HEAD the architect's `apply` (a new
 //                              `direction`) and `resume page-id`: HEAD's revision records the role set the previous
-//                              release recorded and resolves the rev it recorded; every HEAD judgment runs under it, no
-//                              re-pin, no `routing-changed`; `status` spend resolves every metered call.
+//                              release recorded; under the seats it hashed HEAD resolves the rev it recorded, and under
+//                              its own (the gate risk ladder, 1.0.0-dev.12) another: `page-id` re-pins without a park and
+//                              its gate judges under HEAD's rev; no `routing-changed`; `status` spend resolves every
+//                              metered call (the previous rev aliased).
 //   upgrade.reentry-with-fixes
 //                              `page-id` parked infeasible at plan-check (a recorded failure); the architect's `apply`
 //                              through the previous release's CLI adds `page-id-2` re-entering it with `fixes` naming that
@@ -166,7 +170,7 @@ import type { Event, Fact } from '../../src/core/events.ts';
 import { arcId, commandId, invocationId, opId, resourceName, unitId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
-import { gateDiffShownOf } from '../../src/core/upgrade.ts';
+import { PRE_DEV12_BUILTIN_SEATS, gateDiffShownOf } from '../../src/core/upgrade.ts';
 import type { ProcIdentity } from '../../src/core/records.ts';
 import { openJournal, readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
@@ -181,7 +185,7 @@ import { overCapacity } from '../../src/resources/pool.ts';
 import { bytesSha256, loadSpec } from '../../src/spec/spec.ts';
 import { CONTINUE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { meterOf } from '../../src/meter.ts';
-import { provenanceStack, resolveRouting } from '../../src/routing/layers.ts';
+import { provenanceStack, resolveRouting, resolveRoutingUnder } from '../../src/routing/layers.ts';
 import { executorLogs, lastLine } from '../../src/supervisor.ts';
 import { corpusTarget } from '../fixtures/corpus-target.ts';
 import type { CheckResult } from '../../evals/m1/check.ts';
@@ -1166,7 +1170,7 @@ test('upgrade.target-kind-fixed: an apply cannot switch an adopted architecture-
 // ---------------------------------------------------------------------------------------------------
 // Routing: HEAD binds the previous release's revisions through the same seat table
 
-test('upgrade.routing-stable: an arc the previous release started keeps its role set and routing rev on HEAD: HEAD\'s revision records the same role set and resolves the same rev, it judges under it with no re-pin and no routing-changed; spend resolves', T, async () => {
+test('upgrade.routing-stable: an arc the previous release started keeps its role set on HEAD; its routing rev moves only by HEAD\'s seat table (the gate ladder) and re-pins without a park or routing-changed; spend resolves', T, async () => {
   const { p, head } = await stoppedMidBuild(clean(), undefined, false);
   const before = journalOf(p).events;
   const [rev1] = factsOf(before, 'plan-applied');
@@ -1190,11 +1194,16 @@ test('upgrade.routing-stable: an arc the previous release started keeps its role
   const [rev2, ...more] = factsOf(f.after, 'plan-applied');
   assert.ok(rev2 !== undefined && more.length === 0);
   assert.deepEqual(rev2.routingProvenance.arcRoles, rev1.routingProvenance.arcRoles, 'HEAD\'s revision carries the role set the previous release recorded');
-  const resolved = resolveRouting(provenanceStack(rev2.routingProvenance, 'none', null));
-  assert.ok(revs.has(resolved.rev), 'HEAD resolves the rev the previous release recorded');
+  const stack = provenanceStack(rev2.routingProvenance, 'none', null);
+  const resolved = resolveRouting(stack);
+  // OR-L3 binds every revision through HEAD's seat table, which moved gate.low and gate.med (the gate risk ladder,
+  // 1.0.0-dev.12): the seats the previous release hashed reproduce its rev, HEAD's give another.
+  assert.ok(revs.has(resolveRoutingUnder(PRE_DEV12_BUILTIN_SEATS, stack).rev), 'under the seats the previous release hashed, HEAD resolves the rev it recorded');
+  assert.ok(!revs.has(resolved.rev), 'HEAD\'s seat table moved the rev');
   const judged = factsOf(f.after, 'judgment-inputs');
   assert.ok(judged.length > 0);
-  for (const ji of judged) assert.ok(revs.has(ji.routingRev), `${ji.unit} ${ji.stage}: judged under the previous release's rev`);
+  for (const ji of judged) assert.ok(revs.has(ji.routingRev) || ji.routingRev === resolved.rev, `${ji.unit} ${ji.stage}: judged under the previous release's rev or HEAD's`);
+  assert.ok(judged.some((ji) => ji.stage === 'gate' && ji.routingRev === resolved.rev), 'page-id re-pinned: its gate judged under HEAD\'s rev');
   assert.deepEqual(factsOf(f.after, 'stage-outcome').filter((o) => o.outcome === 'routing-changed'), [], 'no routing-changed');
   const started = factsOf(f.after, 'executor-started');
   assert.ok(started.length > 0 && started.every((s) => s.host !== undefined), 'HEAD\'s starts record the host fingerprint');

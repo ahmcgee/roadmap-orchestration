@@ -3,7 +3,7 @@
 // from what the session's earlier facts already charged (`chargedUsage`, written by pipeline/invoke.ts `usageFact`), so
 // every reader of `meter` facts sums them as before; the fold keeps each session's running sum (`addCharged`).
 import type { ClassUsage, TokenUsage } from './records.ts';
-import { USAGE_CLASSES } from '../routing/types.ts';
+import { MODEL_CLASSES } from '../routing/types.ts';
 
 /** What a Claude session's facts have charged so far: tokens over every model, and the delegated share per class. */
 export type SessionCharge = Readonly<{ tokens: TokenUsage; delegated: readonly ClassUsage[] }>;
@@ -23,9 +23,9 @@ function addTokens(a: TokenUsage, b: TokenUsage): TokenUsage {
   };
 }
 
-/** Per-class sums, ascending in `USAGE_CLASSES` order; `sign` -1 subtracts `b`. */
+/** Per-class sums, ascending in `MODEL_CLASSES` order; `sign` -1 subtracts `b`. */
 function combineClasses(a: readonly ClassUsage[], b: readonly ClassUsage[], sign: 1 | -1): readonly ClassUsage[] {
-  return USAGE_CLASSES.flatMap((c): ClassUsage[] => {
+  return MODEL_CLASSES.flatMap((c): ClassUsage[] => {
     const x = a.find((u) => u.class === c);
     const y = b.find((u) => u.class === c);
     if (x === undefined && y === undefined) return [];

@@ -215,12 +215,12 @@ export function reenterFixesDefault(): typeof FIXES_UNRECORDED {
 // Efficient judgment (owner ruling 2026-10-15, 1.0.0-dev.10): the built-in seat table moved planCheck.low/med, gate.low,
 // lens.arc and flow.arc to the efficient class. Records carry a `routingRev`, never a table, and OR-L3 binds every revision
 // through HEAD's seats and catalogue, so a rev an earlier executor recorded is one HEAD no longer rebuilds. Delete (with
-// `resolveRoutingUnder` and status's `preDev10RevAlias`) once no arc started on 1.0.0-dev.9 is in flight.
+// `resolveRoutingUnder`, when no other earlier table is left, and its place in `EARLIER_BUILTIN_SEATS`) once no arc started on 1.0.0-dev.9 is in flight.
 
 /**
  * The built-in seats 1.0.0-dev.9 (and dev.7 and dev.8) hashed: frontier at every judgment tier but escalation, the
  * lenses, the pack review and the flow seat on frontier. Kept only so `status` can join such a meter row's recorded
- * `routingRev` to its revision's current table (src/status.ts `preDev10RevAlias`); nothing routes under it. No judgment
+ * `routingRev` to its revision's current table (src/status.ts `earlierRevAliases`); nothing routes under it. No judgment
  * seat could name the efficient class then (a Codex or Sonnet judgment was refused at startup), so HEAD's catalogue
  * resolves these seats to the triples dev.9 hashed.
  */
@@ -233,6 +233,31 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   packReview: { arc: 'frontier' },
   flow: { arc: 'frontier' },
 };
+
+// Gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): the built-in seats moved gate.low to economy (Haiku 5.5)
+// and gate.med to efficient (Sonnet 5.5). As with efficient judgment above, OR-L3 binds every revision through HEAD's
+// seats: an arc started on 1.0.0-dev.10 or dev.11 re-pins its units under the new rev without a park and judges under
+// the ladder from then on, and status aliases the revs it recorded. Delete (with `PRE_DEV12_BUILTIN_SEATS`'s place in
+// `EARLIER_BUILTIN_SEATS`) once no arc started on 1.0.0-dev.11 is in flight.
+
+/**
+ * The built-in seats 1.0.0-dev.10 and dev.11 hashed: efficient gated low, frontier med. Kept only so `status` can join such
+ * a meter row's recorded `routingRev` to its revision's current table; nothing routes under it. The economy class did not
+ * exist then, and these seats name only classes whose bindings HEAD's catalogue keeps, so HEAD resolves them to the
+ * triples dev.11 hashed.
+ */
+export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {
+  planCheck: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
+  build: { low: 'efficient', med: 'efficient', high: 'frontier' },
+  gate: { low: 'efficient', med: 'frontier', high: 'frontier', escalation: 'summit' },
+  lens: { arc: 'efficient' },
+  checkpoint: { arc: 'summit' },
+  packReview: { arc: 'frontier' },
+  flow: { arc: 'efficient' },
+};
+
+/** Every built-in seat table an earlier adopted release hashed, oldest first: what status aliases recorded revs under. */
+export const EARLIER_BUILTIN_SEATS: readonly ClassTable[] = [PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS];
 
 // Plan defects (2026-10-16, 1.0.0-dev.11): a fresh arc's arc lanes declare `testPaths` and its witnesses `files`, and
 // Phase 0 checks every witness file against its lane and its deliverers (src/phase0/rows.ts). Obligations an arc started
