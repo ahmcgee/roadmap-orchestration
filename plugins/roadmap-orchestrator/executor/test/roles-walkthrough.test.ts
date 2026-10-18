@@ -402,6 +402,16 @@ test('roles.walk-plants: on every dev seed\'s running product, each slot does wh
       // The overview follows the reference's layout too: one card, holding the page's figure and its primary action.
       const overview = await (await get(u, '/')).text();
       assert.match(overview, /<section class="card" aria-label="This month">\s*<p class="card-figure">[^<]* spent of [^<]* across 3 teams\.<\/p>\s*<p><a class="button button-primary" href="\/entries\/new">Record entry<\/a><\/p>\s*<\/section>/, `${cell.id}: the overview's card`);
+      // On an empty ledger, Budgets invites the next action (DESIGN.md: "Empty states invite the next action"): it says nothing
+      // is recorded, offers Record entry, and still lists every team with its limit and a way to change it.
+      assert.equal(cli(u, ['init', '--data', 'var/empty']).status, 0);
+      const render = "const { loadConfig } = await import('./src/config.js'); const { openLedger } = await import('./src/ledger.js');"
+        + " const { get } = await import('./web/pages/budgets.js'); process.stdout.write(get({ config: loadConfig().config, ledger: openLedger('var/empty') }).html);";
+      const empty = spawnSync('node', ['--input-type=module', '-e', render], { cwd: u.dir, encoding: 'utf8' });
+      assert.equal(empty.status, 0, empty.stderr);
+      assert.match(empty.stdout, /<p class="card-figure">No spend recorded yet: 3 teams, nothing against their limits\.<\/p>/, `${cell.id}: the empty Budgets names what is missing`);
+      assert.match(empty.stdout, /<a class="button button-primary" href="\/entries\/new">Record entry<\/a>/, `${cell.id}: and the next action`);
+      for (const t of u.f.data.teams) assert.match(empty.stdout, new RegExp(`href="/budgets/${t.id}">[^<]+</a></h2>\\s*<p>Limit: <span class="figure">[^<]+</span> a month\\. <a href="/budgets/${t.id}/edit">Change limit</a>`), `${cell.id}: ${t.id} listed with its limit`);
       // A list parameter the API does not know is refused, each named, never ignored (design/api.md, "Errors").
       const stray = await fetch(`${u.base}/api/v1/entries?mnth=${u.f.data.month}&team=platform&colour=red`, { headers: { ...CLOSE, authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}` } });
       assert.equal(stray.status, 400, `${cell.id}: an unknown list parameter`);
