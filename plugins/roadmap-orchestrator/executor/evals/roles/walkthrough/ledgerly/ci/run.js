@@ -1,0 +1,69 @@
+#!/usr/bin/env node
+// The local CI runner: runs ci/pipeline.yml's steps in order from the project root, the way CI does, and stops at the
+// first failing step (design/ci.md). The file format is a small YAML subset: `name:`, then `steps:` with `- name:` and
+// `run:` per step. A step's command runs without a shell; node expands its own test globs.
+//
+//   node ci/run.js [--file ci/pipeline.yml]
+import { spawnSync } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+
+const args = process.argv.slice(2);
+const file = args[0] === '--file' && args[1] !== undefined ? args[1] : 'ci/pipeline.yml';
+
+function parsePipeline(text) {
+  const pipeline = { name: null, steps: [] };
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.replace(/\s+#.*$/, '');
+    if (line.trim() === '' || line.trim().startsWith('#')) return;
+    let m;
+    if ((m = /^name:\s*(\S.*)$/.exec(line)) !== null) pipeline.name = m[1].trim();
+    else if (/^steps:\s*$/.test(line)) return;
+    else if ((m = /^ {2}- name:\s*(\S.*)$/.exec(line)) !== null) pipeline.steps.push({ name: m[1].trim(), run: null, line: i + 1 });
+    else if ((m = /^ {4}run:\s*(\S.*)$/.exec(line)) !== null && pipeline.steps.length > 0) pipeline.steps.at(-1).run = m[1].trim();
+    else {
+      process.stderr.write(`${file}:${i + 1}: unexpected line "${raw}"; a step is "  - name: <name>" followed by "    run: <command>"\n`);
+      process.exit(2);
+    }
+  });
+  for (const step of pipeline.steps) {
+    if (step.run === null) {
+      process.stderr.write(`${file}:${step.line}: step "${step.name}" has no run: line; add "    run: <command>" under it\n`);
+      process.exit(2);
+    }
+  }
+  return pipeline;
+}
+
+/** The test files a `node --test <globs>` step runs (a glob is a directory and a `*` file pattern). */
+function testFilesOf(argv) {
+  const patterns = argv.slice(argv.indexOf('--test') + 1).filter((a) => !a.startsWith('--'));
+  return patterns.flatMap((p) => {
+    if (!p.includes('*')) return [p];
+    const re = new RegExp(`^${basename(p).split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+    return readdirSync(dirname(p)).filter((f) => re.test(f)).sort().map((f) => join(dirname(p), f));
+  });
+}
+
+const seconds = (ms) => `${(ms / 1000).toFixed(2)}s`;
+const tail = (text, n) => text.trimEnd().split('\n').slice(-n).map((l) => `    ${l}`).join('\n');
+
+function reportFailure(step, argv, result, ms) {
+{{failure-report}}
+}
+
+const pipeline = parsePipeline(readFileSync(file, 'utf8'));
+process.stdout.write(`${pipeline.name ?? 'pipeline'}: ${pipeline.steps.length} steps\n`);
+const started = Date.now();
+for (const step of pipeline.steps) {
+  const argv = step.run.split(/\s+/);
+  const t0 = Date.now();
+  const result = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' });
+  const ms = Date.now() - t0;
+  if (result.status !== 0) {
+    reportFailure(step, argv, result, ms);
+    process.exit(result.status ?? 1);
+  }
+  process.stdout.write(`  ${step.name.padEnd(10)} ok      ${seconds(ms)}\n`);
+}
+process.stdout.write(`Pipeline passed in ${seconds(Date.now() - started)}.\n`);
