@@ -8,8 +8,9 @@
 // - **The rounds brake** (plan §4, in code): after round k's walk ended (`reported` or `bring-up-failed`), the units
 //   admitted from it are the polish units carrying its applied proposals and the units whose specs repair one of its
 //   findings. While an author has yet to act (a finding of the walk is still open, no unit owning it, and no checkpoint
-//   decided since the walk ended; or an applied proposal is in no unit of the plan yet: agent D's code-applied polish
-//   revision) or one of those units is in flight, round k is open. Then round k+1's walk is due when at least one of them
+//   that settled a decision under the vision in force weighed it: the walk's checkpoint trigger; or an applied proposal is
+//   in no unit of the plan yet and was not refused: agent D's code-applied polish revision, src/walk/polish.ts) or one of
+//   those units is in flight, round k is open. Then round k+1's walk is due when at least one of them
 //   landed (merged) and k < `walkRounds`; otherwise the milestone settles. A milestone settles at most once: no fact
 //   records it; `settledMilestones` is the demo's hook (agent G promotes on it).
 // - **The node** (src/walk/node.ts) passes when a walk ends `reported` and the milestone has no active walkthrough P1
@@ -64,7 +65,10 @@ export type RoundView = Readonly<{
   applied: readonly PolishId[];
   /** The units admitted from the round (polish and repairs), in plan order. */
   units: readonly UnitId[];
-  /** `checkpoint`: a finding of the walk is open and no checkpoint decided since; `polish`: an applied proposal is in no unit yet. */
+  /**
+   * `checkpoint`: a finding of the walk no checkpoint has weighed (`unweighedWalkFindings`); `polish`: an applied proposal
+   * is in no unit of the plan yet and was not refused (agent D's polish revision, src/walk/polish.ts, has yet to act).
+   */
   pending: 'checkpoint' | 'polish' | null;
   /** The admitted units (lineage heads) neither merged nor cut. */
   inFlight: readonly UnitId[];
@@ -83,9 +87,24 @@ export type MilestoneProgress =
   /** Done: no further walk. `last`: the last round's walk. */
   | Readonly<{ kind: 'settled'; last: WalkRecord }>;
 
-/** Whether a checkpoint captured after `seq` decided (applied, no-op or requested): it weighed the findings open then. */
-const checkpointDecidedAfter = (view: JournalView, seq: number): boolean =>
-  view.holistic().checkpoints.some((c) => c.inputs.seq > seq && c.decided !== null && c.decided.kind !== 'rejected');
+/**
+ * The findings of walk `w` no checkpoint has weighed (agent D): each active and open (no unit owns it) and captured by no
+ * checkpoint that settled a decision (applied, no-op or requested) under the vision in force, in id order. The walk's
+ * checkpoint trigger is due while any is (src/holistic/checkpoint.ts); none, the trigger is skipped as an audit that found
+ * nothing new is.
+ */
+export function unweighedWalkFindings(view: JournalView, w: WalkRecord): readonly FindingId[] {
+  if (w.ended === null) return [];
+  const vision = view.planApplied()?.visionSha256;
+  const weighed = new Set<string>(view.holistic().checkpoints
+    .filter((c) => c.decided !== null && c.decided.kind !== 'rejected' && c.inputs.visionSha256 === vision).flatMap((c) => c.inputs.findings));
+  const mine = new Set<string>(w.ended.findings);
+  return canonicalIds(view.holistic().findings.filter((f) => mine.has(f.id) && isActive(f) && f.state === 'open' && !weighed.has(f.id)).map((f) => f.id));
+}
+
+/** The polish proposals the code-applied polish revision refused (`polish-refused`): settled, never applied. */
+export const refusedProposals = (view: JournalView): ReadonlySet<PolishId> =>
+  new Set(view.walkFacts().flatMap((x) => (x.fact.kind === 'polish-refused' ? [x.fact.proposal] : [])));
 
 /** Round `walk.round`'s view (its walk ended as a round: reported or bring-up-failed). */
 export function roundOf(view: JournalView, plan: PlanM1, walk: WalkRecord, repairs: readonly RepairUnit[]): RoundView {
@@ -99,9 +118,8 @@ export function roundOf(view: JournalView, plan: PlanM1, walk: WalkRecord, repai
   const units = plan.units.map((u) => u.id).filter((u) => polishUnits.includes(u) || repairUnits.includes(u));
   const heads = units.map((u) => headOf(view, u));
   const status = (u: UnitId): string => view.unit(u).status;
-  const openFinding = view.holistic().findings.some((f) => findings.has(f.id) && isActive(f) && f.state === 'open');
-  const carried = new Set(plan.units.flatMap((u) => (u.polish === undefined ? [] : [u.polish.proposal])));
-  const pending = openFinding && !checkpointDecidedAfter(view, ended.seq) ? 'checkpoint' : applied.some((p) => !carried.has(p)) ? 'polish' : null;
+  const settledProposals = new Set([...plan.units.flatMap((u) => (u.polish === undefined ? [] : [u.polish.proposal])), ...refusedProposals(view)]);
+  const pending = unweighedWalkFindings(view, walk).length > 0 ? 'checkpoint' : applied.some((p) => !settledProposals.has(p)) ? 'polish' : null;
   return {
     job: walk.job, round: walk.round, applied, units, pending,
     inFlight: [...new Set(heads.filter((h) => status(h) !== 'retired' && status(h) !== 'cut'))],

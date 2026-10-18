@@ -51,7 +51,9 @@
 // this order of preference: in a corpus arc before its first admission, the pack review (`runPackReview`, M4a OR-Q16,
 // R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
 // (`runCheckpoint`, B6) while one is due or running; (dev.13) the milestone walk (`runWalk`, src/walk/walk.ts) while one is
-// due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
+// due or running; (dev.13, agent D) the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
+// applied proposals are unsettled, and a polish unit's compare or a dropped tweak's cut (`runCompare`, src/walk/compare.ts)
+// while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
 // `processClock`). A job that waits on a condition a command changes (skipped for a
 // parked backend or a paused arc, an interrupted call, nothing due) is not asked again for HOLISTIC_RETRY_MS. One whose
 // lane gave no verdict is retried on the retryable-park backoff (`noVerdictDelayMs`: 1, 2, 4, 8, 16, then every 30
@@ -135,6 +137,8 @@ import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
 import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
+import { applyPolish, polishPending } from '../walk/polish.ts';
+import { comparePending, runCompare } from '../walk/compare.ts';
 import { walksPending } from '../walk/milestones.ts';
 import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
@@ -1099,6 +1103,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         trackRetrying('holistic:walk', 'holistic', async () => {
           const out = await runWalk(h.audit);
           return out.kind === 'ended' && out.outcome !== 'abandoned' ? PROGRESS : WAIT;
+        });
+      } else if (polishPending(h.checkpoint)) {
+        trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+      } else if (comparePending(h.checkpoint)) {
+        trackRetrying('holistic:compare', 'holistic', async () => {
+          const out = await runCompare(h.checkpoint);
+          return out.kind === 'judged' || (out.kind === 'cut' && out.committed) ? PROGRESS : WAIT;
         });
       } else if (auditPending(h.audit)) {
         trackRetrying('holistic:audit', 'holistic', async () => {

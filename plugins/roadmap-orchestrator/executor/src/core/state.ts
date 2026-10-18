@@ -1153,6 +1153,25 @@ export class Fold implements JournalView {
         if (this.#walkFacts.some((x) => x.fact.kind === 'tweak-judged' && x.fact.unit === f.unit)) fail(`a second tweak-judged of ${f.unit}`);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
+      // Agent D: a refusal names a recorded proposal, once; a compare opens its job, one open at a time, on a unit not yet
+      // judged; `compare-abandoned` closes an open compare (a `tweak-judged` of its unit closes it too).
+      case 'polish-refused':
+        if (!this.#walkFacts.some((x) => x.fact.kind === 'polish-proposed' && x.fact.id === f.proposal)) fail(`polish-refused of ${f.proposal}, which no walk proposed`);
+        if (this.#walkFacts.some((x) => x.fact.kind === 'polish-refused' && x.fact.proposal === f.proposal)) fail(`a second polish-refused of ${f.proposal}`);
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'compare-started': {
+        const open = this.#openCompare();
+        if (open !== null) fail(`compare-started ${f.job} while ${open} is open`);
+        if (this.#walkFacts.some((x) => x.fact.kind === 'tweak-judged' && x.fact.unit === f.unit)) fail(`compare-started ${f.job} of ${f.unit}, already judged`);
+        this.#openJob(f.job, fail);
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      case 'compare-abandoned':
+        if (this.#openCompare() !== f.job) fail(`compare-abandoned of ${f.job}, which is not the open compare`);
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
       case 'demo-promoted':
       case 'demo-failed':
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
@@ -1165,6 +1184,17 @@ export class Fold implements JournalView {
   #seeJob(job: JobId): void {
     const { kind, n } = parseJobId(job);
     if (n > (this.#jobs.get(kind) ?? 0)) this.#jobs.set(kind, n);
+  }
+
+  /** The compare job started and not yet closed (by its unit's `tweak-judged` or its `compare-abandoned`), or null. */
+  #openCompare(): JobId | null {
+    const facts = this.#walkFacts.map((x) => x.fact);
+    for (const x of facts) {
+      if (x.kind !== 'compare-started') continue;
+      const closed = facts.some((y) => (y.kind === 'compare-abandoned' && y.job === x.job) || (y.kind === 'tweak-judged' && y.unit === x.unit));
+      if (!closed) return x.job;
+    }
+    return null;
   }
 
   /** A walk job started and not yet ended. */

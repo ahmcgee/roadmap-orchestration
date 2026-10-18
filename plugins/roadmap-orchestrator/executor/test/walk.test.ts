@@ -13,13 +13,17 @@ import type { FindingState } from '../src/core/state.ts';
 import { type AbsPath, absPath } from '../src/core/values.ts';
 import type { RepairUnit } from '../src/holistic/findings.ts';
 import type { Vision } from '../src/holistic/types.ts';
-import type { Milestone, PlanM1 } from '../src/input/plan.ts';
+import type { Milestone, PlanM1, PlanUnit } from '../src/input/plan.ts';
 import { validateWalkthroughOutput } from '../src/prompts/schemas.ts';
 import { substitutePorts } from '../src/walk/bringup.ts';
 import { milestoneProgress, milestoneState, walkItemsDue } from '../src/walk/milestones.ts';
 import { milestoneEdges, milestoneWaits } from '../src/walk/node.ts';
 import { coversReference, evidencePath, walkDraft, walkRefusals } from '../src/walk/report.ts';
 import { walkSessionMcp } from '../src/walk/walk.ts';
+import { polishDue } from '../src/walk/polish.ts';
+import { touchesReference } from '../src/walk/compare.ts';
+import { admitter } from '../src/schedule/ready.ts';
+import { canonicalJson } from '../src/core/json.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { J1_EVIDENCE, walkAnswer } from './fixtures/walk-common.ts';
 
@@ -45,10 +49,12 @@ function planOf(units: readonly U[], milestones: readonly Milestone[], walkRound
 }
 
 type WalkFactSpec = WalkFact;
+const VISION_IN_FORCE = 'v'.repeat(64);
 /** A view over walk facts, unit statuses, findings and decided checkpoints (seq order as given). */
 function viewOf(o: Readonly<{
   walks?: readonly WalkFactSpec[]; status?: Readonly<Record<string, string>>; superseded?: Readonly<Record<string, string>>; findings?: readonly Partial<FindingState>[];
-  checkpointsAfter?: readonly number[];
+  /** Decided checkpoints: their capture's seq, the findings it captured, and its vision (absent: the vision in force). */
+  checkpoints?: readonly Readonly<{ seq: number; findings: readonly string[]; vision?: string }>[];
 }>): JournalView {
   const walkFacts = (o.walks ?? []).map((fact, i) => ({ seq: 10 * (i + 1), at: new Date(Date.UTC(2026, 9, 1, 0, i)).toISOString(), fact }));
   return {
@@ -56,8 +62,9 @@ function viewOf(o: Readonly<{
     unit: (id: string) => ({ status: o.status?.[id] ?? 'active', supersededBy: o.superseded?.[id] ?? null }),
     holistic: () => ({
       findings: (o.findings ?? []).map((f) => ({ lens: 'walkthrough', severity: 'P1', state: 'open', ...f })),
-      checkpoints: (o.checkpointsAfter ?? []).map((seq) => ({ inputs: { seq }, decided: { kind: 'no-op' } })),
+      checkpoints: (o.checkpoints ?? []).map((c) => ({ inputs: { seq: c.seq, findings: c.findings, visionSha256: c.vision ?? VISION_IN_FORCE }, decided: { kind: 'no-op' } })),
     }),
+    planApplied: () => ({ visionSha256: VISION_IN_FORCE }),
   } as unknown as JournalView;
 }
 
@@ -133,13 +140,14 @@ describe('the rounds brake (src/walk/milestones.ts)', () => {
     assert.equal(p.kind, 'settled');
   });
 
-  test('brake.checkpoint-pending: an open finding of the round waits for a checkpoint decided after the walk; one that admits nothing settles it', () => {
+  test('brake.checkpoint-pending: an open finding of the round waits for a checkpoint that weighed it (captured it, decided, under the vision in force); one that admits nothing settles it', () => {
     const walks = [started(1, 1), ended(1, 'reported', ['F-1'])];
     const findings = [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId }];
     const open = progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings }));
     assert.ok(open.kind === 'round-open' && open.round.pending === 'checkpoint', JSON.stringify(open));
-    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpointsAfter: [5] })).kind, 'round-open', 'a checkpoint before the walk ended weighed nothing of it');
-    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpointsAfter: [25] })).kind, 'settled');
+    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 5, findings: [] }] })).kind, 'round-open', 'a checkpoint before the walk opened F-1 weighed nothing of it');
+    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 25, findings: ['F-1'], vision: 'w'.repeat(64) }] })).kind, 'round-open', 'one under another vision weighed it under that one only');
+    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpoints: [{ seq: 25, findings: ['F-1'] }] })).kind, 'settled');
   });
 
   test('brake.landed: the next round once every admitted unit is merged or cut and one landed; none landed settles', () => {
@@ -176,7 +184,7 @@ describe('the rounds brake (src/walk/milestones.ts)', () => {
     assert.equal(st(viewOf({ status: { a: 'retired' }, walks: polished }), plan(units)), 'polishing');
     assert.equal(st(viewOf({ status: { a: 'retired', p1: 'retired' }, walks: polished }), plan(units)), 'passed');
     assert.equal(st(viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'reported'), passed(1)] })), 'settled');
-    assert.equal(st(viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'bring-up-failed', ['F-1'])], findings: [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId }], checkpointsAfter: [30] })), 'blocked', 'settled unpassed');
+    assert.equal(st(viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'bring-up-failed', ['F-1'])], findings: [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId }], checkpoints: [{ seq: 30, findings: ['F-1'] }] })), 'blocked', 'settled unpassed');
   });
 
   test('brake.escalation: an unowned walk P1 past 6 h, and a milestone settled unpassed, each raise one finding-p1-escalated per walk job', () => {
@@ -189,7 +197,7 @@ describe('the rounds brake (src/walk/milestones.ts)', () => {
     assert.match(due[0]!.content.summary, /F-1/);
     const owned = viewOf({ status: { a: 'retired', r1: 'active' }, walks: [started(1, 1), ended(1, 'reported', ['F-1'])], findings: [{ ...findings[0], state: 'owned' }] });
     assert.deepEqual(walkItemsDue(owned, plan([{ id: 'a' }, { id: 'r1', origin: 'repair' }]), [repairing('r1', 'F-1')], at(7)), [], 'an owned P1 whose repair is in flight is not escalated');
-    const settled = viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'reported', ['F-1'])], findings: [{ ...findings[0], state: 'ruled' }], checkpointsAfter: [30] });
+    const settled = viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'reported', ['F-1'])], findings: [{ ...findings[0], state: 'ruled' }], checkpoints: [{ seq: 30, findings: ['F-1'] }] });
     const items = walkItemsDue(settled, plan(), [], at(1));
     assert.deepEqual(items.map((i) => i.job), ['walk-1']);
     assert.match(items[0]!.content.summary, /never passed/);
@@ -306,5 +314,66 @@ describe('placeholders', () => {
     });
     assert.equal(walkSessionMcp(servers, MILESTONE('MS-1', ['a']), ev), null);
     assert.throws(() => walkSessionMcp(undefined, browser, ev), /walk-tools-missing/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Agent D: the polish revision's due set, the brake with refused proposals, the compare's code drop and admission
+
+describe('polish and compare (src/walk/polish.ts, src/walk/compare.ts)', () => {
+  const m = MILESTONE('MS-1', ['a'], { references: ['design' as never, 'docs/api' as never] });
+  const plan = (units: readonly U[] = [{ id: 'a' }], rounds?: number) => planOf(units, [m], rounds);
+  const proposed = (n: number, job: number, unit: string): WalkFact => ({
+    kind: 'polish-proposed', id: `X-${n}` as never, job: W(job), milestone: 'MS-1' as MilestoneId, journey: 'J-1' as never, evidence: ['/e/shot.png'], text: `tweak ${n}`,
+    unit: { id: unit as UnitId, scope: ['design/**' as never], spec: '{}' },
+  });
+  const refused = (n: number): WalkFact => ({ kind: 'polish-refused', proposal: `X-${n}` as never, reasons: ['its scope covers none of the references'] });
+
+  test('brake.polish-refused: a refused proposal is settled; the round waits only for the rest, and settles when every one was refused', () => {
+    const walks = [started(1, 1), proposed(1, 1, 'p1'), proposed(2, 1, 'p2'), ended(1, 'reported', [], ['X-1', 'X-2'])];
+    const waiting = milestoneProgress(viewOf({ status: { a: 'retired' }, walks: [...walks, refused(1)] }), plan(), m, []);
+    assert.ok(waiting.kind === 'round-open' && waiting.round.pending === 'polish', 'X-2 is neither refused nor carried yet');
+    const units = [{ id: 'a' }, { id: 'p2', origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-2' } }];
+    const inFlight = milestoneProgress(viewOf({ status: { a: 'retired' }, walks: [...walks, refused(1)] }), plan(units), m, []);
+    assert.ok(inFlight.kind === 'round-open' && inFlight.round.pending === null && inFlight.round.inFlight.join() === 'p2', JSON.stringify(inFlight));
+    assert.deepEqual(milestoneProgress(viewOf({ status: { a: 'retired', p2: 'retired' }, walks: [...walks, refused(1)] }), plan(units), m, []), { kind: 'walk-due', round: 2 });
+    assert.equal(milestoneProgress(viewOf({ status: { a: 'retired' }, walks: [...walks, refused(1), refused(2)] }), plan(), m, []).kind, 'settled', 'all refused: nothing admitted, nothing landed');
+  });
+
+  test('polish.due: the first reported walk with an applied proposal neither carried nor refused; dropped proposals never', () => {
+    const walks = [started(1, 1), proposed(1, 1, 'p1'), proposed(2, 1, 'p2'), ended(1, 'reported', [], ['X-1', 'X-2'])];
+    const due = polishDue(viewOf({ walks }), plan());
+    assert.deepEqual([due?.walk.job, due?.proposals.map((p) => p.id)], ['walk-1', ['X-1', 'X-2']]);
+    const carried = plan([{ id: 'a' }, { id: 'p1', origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } }]);
+    assert.deepEqual(polishDue(viewOf({ walks: [...walks, refused(2)] }), carried), null, 'X-1 carried, X-2 refused');
+    const last = [started(1, 1), proposed(1, 1, 'p1'), ended(1, 'reported', [], ['X-1'], ['X-1'])];
+    assert.equal(polishDue(viewOf({ walks: last }), plan()), null, 'the last round\'s proposals are dropped, never applied');
+  });
+
+  test('compare.reference-untouched: a diff touches a reference only at or under one of its dirs', () => {
+    assert.equal(touchesReference(m, ['src/app.ts', 'design.md', 'designs/x.css']), false);
+    assert.equal(touchesReference(m, ['src/app.ts', 'design/tokens.css']), true);
+    assert.equal(touchesReference(m, ['docs/api']), true);
+    assert.equal(touchesReference(m, []), false);
+  });
+
+  test('compare.admission: a polish unit\'s candidate waits until its tweak is kept, for ever after a drop; other units and stages never', () => {
+    const tweak = (decision: 'keep' | 'drop'): WalkFact => ({ kind: 'tweak-judged', unit: 'p1' as UnitId, decision, reason: 'judged' });
+    const p1 = { id: 'p1', origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } } as unknown as PlanUnit;
+    const a = { id: 'a' } as unknown as PlanUnit;
+    const admit = admitter(() => ({}) as never, () => ({ reproduces: false, repairs: new Set() }));
+    const at = (v: JournalView, unit: PlanUnit, stage: 'candidate' | 'lanes') => {
+      const view = {
+        ...v, control: () => ({ pausedAll: false, pausedUnits: [] }), runOnly: () => null, backendParks: () => [],
+        unit: () => ({ approval: null, pressureHold: null, decided: null }),
+      } as unknown as JournalView;
+      const out = admit({ view, plan: plan(), unit, stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } });
+      return out.kind === 'admit' ? 'admit' : out.constraints.map((c) => canonicalJson(c));
+    };
+    assert.deepEqual(at(viewOf({}), p1, 'candidate'), ['{"decision":null,"type":"compare"}']);
+    assert.deepEqual(at(viewOf({ walks: [tweak('drop')] }), p1, 'candidate'), ['{"decision":"drop","type":"compare"}']);
+    assert.equal(at(viewOf({ walks: [tweak('keep')] }), p1, 'candidate'), 'admit');
+    assert.equal(at(viewOf({}), p1, 'lanes'), 'admit');
+    assert.equal(at(viewOf({}), a, 'candidate'), 'admit');
   });
 });

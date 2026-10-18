@@ -1019,6 +1019,16 @@ gets the walkthrough MCP servers. Milestones change only by
 for its walk to end. The vision gains `## Experience standards` (clause kind `experience`: outcomes and refusals, never
 mechanisms), distilled only when the world has a human-facing surface.
 
+**Fix units and polish.** A walk whose findings no checkpoint has weighed triggers the checkpoint, which reads the walk's
+evidence and plans repairs from claim, cause and evidence; it is never asked to judge looks. Polish skips it: code admits
+a walk's proposals as one revision under the fence, through the same admit path and classifier as a checkpoint `admit`
+(one admit path, two authors), refusing and recording a proposal whose scope covers no milestone reference, that is not
+from the milestone's latest round, or that the admit path refuses; the rounds brake counts a refused proposal as settled.
+A polish unit runs the normal pipeline, and its candidate waits for a **compare** job: a diff that touches no reference is
+dropped by code; otherwise code brings up before (the integration tip) and after (the approved commit) side by side and a
+fresh polish judge walks the cited journey on both. Keep goes on to the candidate; a worse or merely different after, or
+an after that does not come up, is dropped and its unit cut (`polish-dropped`), so nothing lands that has to be reverted.
+
 ## 3. What carries verbatim
 
 Proven in arc 1 or by a named incident; ported as code, not prose.

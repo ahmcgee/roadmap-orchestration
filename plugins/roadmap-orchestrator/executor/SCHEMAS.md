@@ -364,6 +364,11 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | launch.json / result.json command | `purpose + bring-up`; a cancelled command's `reason + teardown` (`COMMAND_CANCEL_REASONS`) | none |
 | `proc.kill`, cancel.json | `reason + teardown` (a bring-up serve, by its owner) | none |
 | `status` (derived) | `+ milestones`; `edges[] + {type: milestone}`; `units[].waitingFor + milestones`; `completion` blocker `+ walk-pending` | derived (an arc without milestones shows none) |
+| Facts (agent D) | `+ polish-refused, compare-started, compare-abandoned`; `tweak-judged.reason + bring-up-failed` | none |
+| `JobId` (agent D) | `+ compare-<n>` | none |
+| `CheckpointTrigger` (`checkpoint-inputs.trigger`) | `+ walk{job}` | none: dev.12 checkpoints name audits and parks |
+| `RevisionSource` (`plan-applied.source`, `revision.commit`) | `+ walk{job}`, `+ compare{unit}` | none |
+| `AdmissionConstraint` (derived, sched.json) | `+ compare{decision: drop \| null}` | derived |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -4062,10 +4067,10 @@ it has the servers and the bring-ups, and stops there (using them is the builder
   existing job convention), the servers' stdout and stderr captured there by code; teardown after the report (the runner
   reaps the session, code stops the product).
 - Compare: instances `<worktreeRoot>/<unit>.compare-<attempt>-before|after`; evidence under the unit's attempt evidence dir.
-- Records D freezes in its own step (shapes fixed here): `CheckpointTrigger + {type: 'walk'; job}` (the checkpoint's
-  readable dirs gain the walk's evidence dir); `RevisionSource + {type: 'walk'; job}` (the code-applied polish revision,
-  through the admit classifier, under the fence); the compare stage between gate approval and candidate admission, a cut
-  with reason `polish-dropped` on `drop`; `tweak-judged` is its postcondition.
+- Compare (agent D, changed from the line above): a durable job `compare-<n>`, its checkouts
+  `<worktreeRoot>/<arc>/<compare-n>.before|after` and its evidence under `<runDir>/evidence/jobs/<compare-n>/` (the job
+  convention), since the polish judge is an arc seat whose calls are metered to a job (`callActingJudge`). See "Fix units
+  and the polish loop" below.
 
 ### The milestone node (agent C, src/schedule/ready.ts)
 
@@ -4145,6 +4150,56 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   due or running unpassed, `blocked` a round open or settled unpassed, `passed` a walk due or running after the pass,
   `polishing` a round open after it, `settled` settled passed); `EdgeView + {type: 'milestone', unit, milestone,
   passed}`; `WaitingFor + milestones` (the unpassed nodes a unit waits on; its compact state `milestones=MS-1`).
+
+### Fix units and the polish loop (agent D: src/walk/polish.ts, src/walk/compare.ts; plan §4)
+
+- **The checkpoint's walk trigger.** `CheckpointTrigger + {type: 'walk'; job: walk-n}`: due for a walk that ended as a
+  round (`reported`, `bring-up-failed`) while one of its findings is unweighed (`unweighedWalkFindings`, src/walk/milestones.ts:
+  active, `open`, and captured by no checkpoint that settled a decision, applied, no-op or requested, under the vision in
+  force); a walk that opened nothing, or only weighed findings, has nothing new and no checkpoint (as an audit's
+  `nothingNew`; no `checkpoint-skipped` is written: that fact is an audit's). Order: parks, then walks, then audits; the
+  generation is the latest recorded (as a park's). `TriggerView + {type: 'walk'; job, milestone, round, findings,
+  evidenceDir}`; the session's readable dirs gain the walk's evidence dir (Read renders its screenshots). The checkpoint
+  plans repairs from claim, cause and evidence; nothing asks it to judge looks. The rounds brake's `pending: checkpoint`
+  is the same predicate.
+- **The polish revision** (code, no model call, `applyPolish`, a holistic job after the walk). Due: the first walk in log
+  order that ended `reported` with an applied proposal (proposals less `dropped`) carried by no plan unit and not refused.
+  A proposal is refused, `polish-refused{proposal: X-n, reasons (non-empty)}` (once per proposal; settled: never applied, and
+  the rounds brake's `pending: polish` treats it as settled), when the arc is draining, when it is not from its milestone's
+  latest round, when its scope covers no milestone reference (`coversReference`), or when the admit path or the classifier
+  refuses its unit admitted alone; the rest are admitted together (refused together, each is refused with the combined
+  reasons). THE admit path (src/holistic/bundle.ts `admitUnit`, `fillMappedObligations`; a checkpoint `admit` takes it
+  too): the unit not planned, its spec a unit spec of that unit at rev 1, then its entry `{id, spec: <id>.json, risk: high,
+  scope, resources: the milestone's, after: [], origin: polish, polish: {milestone, proposal}}`; then `evaluateRevision`
+  with proposer `walk{job}` and `commitUnderFence` with source `walk{job}` (parent the walk job). A commit the arc moved
+  under is retried at the next run.
+- **Classifier rows** (`polishRows`, src/input/classify.ts; `Proposer + walk{job} | compare{unit}`): a polish unit added
+  (not a re-entry) only by proposer `walk{job}` whose proposal it carries (`polish-proposed` of that job, of the unit's
+  milestone, whose unit id and scope are the unit's); proposer `walk` changes nothing but adding such units; proposer
+  `compare{unit}` changes nothing but cutting `unit`, judged `drop`, with reason `polish-dropped` (`POLISH_DROPPED`), no
+  open attempt: the in-a-task refusal does not apply to it (the unit waits at its candidate admission, in no stage).
+- **Candidate admission** (src/schedule/ready.ts): a polish unit's candidate waits under `AdmissionConstraint{type:
+  'compare'; decision: null | 'drop'}` until its `tweak-judged` is a `keep`; a `drop` never admits (its cut follows).
+- **The compare job** (`runCompare`, a holistic job after the polish revision). First a dropped tweak not cut is cut
+  (`cutDropped`: the unit's plan entry gains `cut: {reason: polish-dropped}`, proposer and source `compare{unit}`, parent
+  `arc`; a classifier refusal is a bug). Else a running compare resumes; else the first polish unit in plan order, active,
+  approved, its decided next stage `candidate`, no `tweak-judged`: its unit diff (`unitDiffPaths` of the integration tip and
+  the approval's `unitCommit`) touching no milestone reference is `tweak-judged{drop, reference-untouched}` with no job;
+  otherwise (skipped while the polishJudge backend is parked or the arc paused or stopped)
+  `compare-started{job: compare-n, unit, before: Sha (the integration tip), after: Sha (the approval's unit commit), ports:
+  {before, after}}` under the fence (fold: opens the job; one compare open at a time; never for a judged unit). Then the
+  milestone job reservation (`reserveJob`, src/walk/walk.ts), two detached checkouts, each brought up (bring-up keys
+  `bring-up:<job>:before|after`, logs `<evidence>/server-before|server-after/`): a failed before, or a stop, is
+  `compare-abandoned{job, detail}` (fold: closes the open compare; a later compare runs); a failed after with the before
+  up is `tweak-judged{drop, bring-up-failed}` (`TWEAK_REASONS + bring-up-failed`). The judge: `polishJudge` via
+  `callActingJudge` in the after checkout, `--mcp-config` for a `browser` journey, `--add-dir` its evidence dir and the
+  original walk's; one repair turn (a cited file must exist under either dir, `judgeRefusals`); refused again, failed,
+  interrupted or parked: `compare-abandoned`. Teardown, then `tweak-judged{decision, judged}` (which closes the compare), and
+  a drop's cut. `PolishJudgeInputs.references` are the after commit's; `referenceDiff` is the unit's bounded diff
+  (merge-base..after, `GATE_DIFF_BUDGET`, attachment under `<evidence>/diff/`), which holds the reference diff.
+- **Crash labels.** `polish.after-refused`, `polish.after-revision`, `compare.after-started`, `compare.after-judged`,
+  `compare.after-cut`.
+- **Prompt.** `prompts/polishJudge/claude-opus-5-5.ts` (Opus 5.5 guide only); Fable a dated `inherits`.
 
 ### The demo (agent G)
 

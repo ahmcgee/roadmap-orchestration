@@ -1261,6 +1261,10 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
       return { type: 'executor' };
     case 'flow':
       return { type: 'flow', proposal: source.proposal };
+    // dev.13 (agent D): the code-applied polish revision and a dropped tweak's cut are the executor's own.
+    case 'walk':
+    case 'compare':
+      return { type: 'executor' };
   }
 }
 

@@ -194,8 +194,12 @@ function readWalk(ctx: StageContext, job: JobId, called: BackendCallOutcome, che
   }
 }
 
-/** Takes the walk's reservation (see the header, step 1); null when a resource is occupied (the reservation released). */
-async function reserveWalk(ctx: WalkContext, job: JobId, m: Milestone): Promise<Reservation<'running', JobHolder> | 'occupied' | 'cleanup-failed'> {
+/**
+ * Takes a milestone job's reservation (see the header, step 2: a walk's, and a polish unit's compare, src/walk/compare.ts):
+ * the milestone's resources and `@cpu`×WALK_CPU, served first and probed; `occupied` when a resource is occupied (the
+ * reservation released).
+ */
+export async function reserveJob(ctx: WalkContext, job: JobId, m: Milestone): Promise<Reservation<'running', JobHolder> | 'occupied' | 'cleanup-failed'> {
   const holder: JobHolder = { type: 'job', job };
   const parent: Parent = { type: 'job', job };
   const grant = await ctx.acquireFirst(requestOf(ctx.plan(), m.resources, WALK_CPU), holder, NEVER);
@@ -272,7 +276,7 @@ export async function runWalk(ctx: WalkContext): Promise<WalkRunOutcome> {
     crashPoint('walk.after-started');
   }
   const walk = w;
-  const r = await reserveWalk(ctx, walk.job, milestoneOf(ctx.plan(), walk.milestone));
+  const r = await reserveJob(ctx, walk.job, milestoneOf(ctx.plan(), walk.milestone));
   if (r === 'occupied' || r === 'cleanup-failed') return { kind: 'incomplete', job: walk.job, detail: r };
   try {
     return await walkOnce(ctx, walk);

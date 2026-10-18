@@ -19,6 +19,9 @@
 // the fixer's lineage. A unit whose decided outcome is lanes `known-defect{id}` waits at `prepare` under
 // `known-defect{id, fixUnit}` while the plan's entry of that id is active for it; a removed entry releases it.
 //
+// dev.13 (agent D): a polish unit's candidate admission waits for its compare (`compare`): until its `tweak-judged`, and
+// for ever after a `drop` (its cut follows, src/walk/compare.ts); a `keep` admits it.
+//
 // M4b rev 3 (RC-11): a unit whose run was starved, or red under host pressure with its rerun pending, stays active and
 // re-runs its held stage once admitted; admission holds it under `host-pressure{inv}` until a scheduler tick since the
 // hold shows the host's cpu wait over a minute below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass (`pressureHoldWaits`, src/host/pressure.ts).
@@ -148,6 +151,11 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
     if (stage === 'candidate') {
       const block = findingBlock(view, unit.id, specOf(unit).repairs);
       if (block !== null) c.push(block);
+    }
+    if (stage === 'candidate' && unit.origin === 'polish') {
+      const judged = view.walkFacts().find((x) => x.fact.kind === 'tweak-judged' && x.fact.unit === unit.id)?.fact;
+      if (judged?.kind !== 'tweak-judged') c.push({ type: 'compare', decision: null });
+      else if (judged.decision === 'drop') c.push({ type: 'compare', decision: 'drop' });
     }
     if (stage === 'prepare') {
       const hold = knownDefectHold(view, plan, unit.id);
