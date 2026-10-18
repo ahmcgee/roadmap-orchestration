@@ -156,17 +156,33 @@ at triage stay in git history.
   --risk low --seat gate.low=economy` with `--rebind economy=claude-haiku-5-5:<effort>` for the effort arm. Pass bar: the
   clean-cell false-alarm rate matches Sonnet's and the catch rate holds. The plan-check ladder waits on the same answer:
   efficient low and med, frontier high until a plan-check role eval measures a cheaper low seat.
-- **Large-diff gate: measure it (built in dev.12, superseding "code-dispatched coverage readers").** In the same eval
-  G2b/G3b (a plant in a file the bounded diff omits, on a line shaped like the substitution) were missed by Sonnet 6/6 and
-  Haiku 5/6, both listing ~2,700 files in `unreviewed`; Opus caught 5/6 by fanning out to subagents that inherited its
-  model ($6-61 a trial); a closed-brief Haiku reader caught 6/6 at ~$0.45 a 290-file chunk. Built instead of code-dispatched
-  readers (owner steer 2026-10-17): over the bounded diff's overflow the gate sits at least at `high`, reads the owner's
-  large-diff method (`<large_diff>`: clusters, Haiku describers with the detected substitutions, Sonnet or Opus reviewers on
-  raw hunks, a cross-cluster contract pass) and must answer a cluster map code checks covers every changed path exactly
-  once (DESIGN-1.0.md §4 Gate inputs). Next: the paid dev arm on G2b/G3b at `--risk low` and `med` (both now seat Opus over
-  the threshold) with `--cap` and `--trial-cap` set, reading catch rate, cost per trial, `clusters=complete/required` and
-  the review-depth mix. If Opus still fans out on its own model or the cost stays at the old $6-61, the fallback is the
-  code-dispatched readers idea: code runs the closed-brief Haiku chunk readers and hands their departures to the gate.
+- **Large-diff gate: cheaper departures-only review (built and measured in dev.12; the cost lever deferred).** The
+  large-diff gate (DESIGN-1.0.md §4 Gate inputs: over the bounded diff's overflow the gate sits at least at `high`, reads
+  the owner's `<large_diff>` method and answers a cluster map code checks covers every changed path exactly once) was
+  measured 2026-10-17/18 at `--risk med` (escalated to Opus): G2b/G3b/G3a caught 9/9, 0/9 clean false alarms (G1 x3, and
+  G4c/G6c x3 each in the second run), $1.50-33 a trial, about $10 mean on the planted cells. Before it, Sonnet missed
+  G2b/G3b 6/6 and Haiku 5/6 (both honest in `unreviewed`); unguided Opus caught 5/6 via subagents inheriting its model
+  ($6-61 a trial). The cost driver: Opus labels whole mechanical clusters `routine` whenever Haiku reports any departure,
+  so Sonnet reads ~1,000 identical hunks (one trial: $27 of $33). A prompt line steering review onto the departing hunks
+  only (matching hunks stand on the description) was measured and reverted: G3b held 3/3 at ~$7.5 flat, clean trials
+  ran $1-2, but G2b fell to 1/3. Both misses escalated rather than approved: Opus would not trust the departure lists
+  because it could not have them checked (it asked Haiku for a byte-level substitution replay; judgment sessions have no
+  shell), and one trial answered while 35 background subagents were still running. Next, together:
+  1. **A code-owned rule verifier.** The bounded diff's identifier miner explains 1 of 3,196 files in the G2b fixture
+     (a prose doc-comment rewording rides every file), so it cannot certify a sweep. Instead the gate (or a Haiku
+     describer) states the sweep as literal before -> after rewrite rules with identifier placeholders (no regex or
+     wildcards); code applies them old -> new to every hunk and compares byte for byte; a rule counts only if it
+     recurs (N hunks across N files), so a one-off plant cannot be written as a rule; the rules are in the answer and
+     reviewed as a contract. Hunks the rules reproduce are explained; every other hunk is a departure and gets a
+     reviewer. Directed application also closes the placeholder-merge hole (connected identifiers reading as one).
+  2. **The departures-only prompt line** (reverted commit 80e1ac6), on top of the verifier.
+  3. **Background subagents:** the gate states as a fact that its answer ends the session and a subagent still running
+     is lost, or code holds the answer until they finish.
+  Trigger: real arcs show large-diff gate spend that matters (`status` spend by seat), or the next gate batch. Measure on
+  G2b/G3b/G3a with clean twins; pass bar: catches hold at 9/9-level, cost per planted trial roughly halves.
+- **The role eval's per-trial cap undercounts.** `--trial-cap` estimates live spend from the stream, which carries only
+  part of the subagents' tokens: one trial read $15 live against $33 reported, so a $25 cap never fired. `--cap` (between
+  trials) works. Fix: price the per-agent token totals the monitor already traces, or call the per-trial cap approximate.
 
 ## Convergence and integrity (unscheduled, wanted)
 
