@@ -22,7 +22,7 @@ import type { SchemaVersion } from './version.ts';
 import { applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
+  type Backend, type ImplementerRole, JUDGMENT_SESSION_ROLES, type JudgmentSessionRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
   buildClass, type BuildClass, modelClass, profileName, riskTier, MODEL_CLASSES,
 } from '../routing/types.ts';
 
@@ -107,8 +107,6 @@ export const RESOURCE_STATES = ['free', 'reserved', 'running', 'cleaning', 'clea
 export type ResourceState = (typeof RESOURCE_STATES)[number];
 
 const role: Read<Role> = oneOf(ROLES);
-/** The roles whose call runs a fresh judgment session: every role but `build`. */
-const FRESH_ROLES = ROLES.filter((r): r is FreshRole => r !== 'build');
 const opId: Read<OpId> = (v, p) => opIdOf(v, p);
 const inv: Read<InvocationId> = (v, p) => invocationIdOf(v, p);
 const arc: Read<ArcId> = (v, p) => arcId(v, p);
@@ -161,7 +159,7 @@ type BackendTerminalBase = Readonly<{
   outputPath: AbsPath;
 }>;
 export type BackendTerminal =
-  | (BackendTerminalBase & Readonly<{ role: FreshRole; session: JudgmentSession }>)
+  | (BackendTerminalBase & Readonly<{ role: JudgmentSessionRole; session: JudgmentSession }>)
   | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession }>);
 export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number }>;
 export type LaunchTerminal = BackendTerminal | CommandTerminal;
@@ -221,7 +219,7 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
       };
       return r === 'build'
         ? { ...base, role: f.get('role', literal('build')), session: f.get('session', implementerSession) }
-        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', judgmentSession) };
+        : { ...base, role: f.get('role', oneOf(JUDGMENT_SESSION_ROLES)), session: f.get('session', judgmentSession) };
     })(value, path);
   },
 });
@@ -459,7 +457,7 @@ type BackendResultBase = InvocationBinding & Readonly<{
 }>;
 /** A judgment session is assigned at launch; an implementer's may be unknown if it died before reporting one. */
 export type BackendResult =
-  | (BackendResultBase & Readonly<{ role: FreshRole; session: JudgmentSessionId }>)
+  | (BackendResultBase & Readonly<{ role: JudgmentSessionRole; session: JudgmentSessionId }>)
   | (BackendResultBase & Readonly<{ role: ImplementerRole; session: ImplementerSessionId | null }>);
 export type CommandResult = InvocationBinding & Readonly<{
   type: 'command';
@@ -498,7 +496,7 @@ export const resultFile: Read<ResultFile> = tagged('type', {
       };
       return r === 'build'
         ? { ...base, role: f.get('role', literal('build')), session: f.get('session', nullable((v, p) => implementerSessionId(v, p))) }
-        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', (v, p) => judgmentSessionId(v, p)) };
+        : { ...base, role: f.get('role', oneOf(JUDGMENT_SESSION_ROLES)), session: f.get('session', (v, p) => judgmentSessionId(v, p)) };
     })(value, path);
   },
   command: object((f): ResultFile => {

@@ -4,10 +4,10 @@
 // Interfaces only; no behaviour here.
 import type {
   AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
-  PlanAppliedFact, RecoveredBy,
+  PlanAppliedFact, RecoveredBy, WalkFact,
 } from './events.ts';
 import type {
-  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, ResourceUnit, Sha, UnitId,
+  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
 } from './ids.ts';
 import type { SessionCharge } from './usage.ts';
 import type {
@@ -126,9 +126,14 @@ export interface JournalView {
   holistic(): HolisticFold;
   /** M4b: every flow fact, in log order, with its seq and time (src/flow/apply.ts derives the decisions' phases from them). */
   flowFacts(): readonly FlowFactAt[];
+  /** dev.13: every walk fact (walks, polish, tweaks, milestone passes, the demo), in log order, with its seq and time. */
+  walkFacts(): readonly WalkFactAt[];
+  /** dev.13: the id the next `polish-proposed` must carry (`X-<proposals + 1>`, arc-scoped). */
+  nextPolishId(): PolishId;
 }
 
 export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;
+export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
 
 /** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
 export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;

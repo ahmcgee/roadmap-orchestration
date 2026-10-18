@@ -22,7 +22,7 @@ import {
 } from '../core/validate.ts';
 import { type IsoTime, type RepoPath, type RepoPattern, isoTime, repoPath, repoPattern } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
-import { type FreshRole, ROLES } from '../routing/types.ts';
+import { FRESH_ROLES, type FreshRole } from '../routing/types.ts';
 
 const vid: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
 const oid: Read<ObligationId> = (v, p) => obligationId(v, p);
@@ -53,9 +53,11 @@ export const lensKind: Read<LensKind> = oneOf(LENS_KINDS);
 export const VISION_SCHEMA = 'roadmap/vision-m3';
 /**
  * `world` is a prose scene of the target world: who is there, what they do and experience, and why it is better than
- * today; it may describe a horizon beyond this arc. The other kinds are its facets.
+ * today; it may describe a horizon beyond this arc. The other kinds are its facets. dev.13: `experience`, an experience
+ * standard (the vision's `## Experience standards`): an outcome or a refusal of how the product feels to use, never a
+ * mechanism. Nothing requires one.
  */
-export const VISION_CLAUSE_KINDS = ['world', 'purpose', 'serves', 'good', 'non-negotiable', 'tradeoff'] as const;
+export const VISION_CLAUSE_KINDS = ['world', 'purpose', 'serves', 'good', 'non-negotiable', 'tradeoff', 'experience'] as const;
 export type VisionClauseKind = (typeof VISION_CLAUSE_KINDS)[number];
 export const CLAUSE_STATES = ['active', 'withdrawn'] as const;
 export type ClauseState = (typeof CLAUSE_STATES)[number];
@@ -685,7 +687,7 @@ export const consistency: Read<Consistency> = object((f) => ({
   by: f.get('by', tagged<'judgment' | 'architect', Consistency['by']>('type', {
     judgment: object((g) => ({
       type: g.get('type', literal('judgment')),
-      role: g.get('role', oneOf(ROLES.filter((r): r is FreshRole => r !== 'build'))),
+      role: g.get('role', oneOf(FRESH_ROLES)),
       routingRev: g.get('routingRev', (v, p) => { const s = str(v, p); if (!/^[0-9a-f]{16}$/.test(s)) throw new SchemaError(p, 'a routing revision (16 lowercase hex)', v); return s; }),
     })),
     architect: object((g) => ({ type: g.get('type', literal('architect')) })),
@@ -748,7 +750,12 @@ export const FINDING_SEVERITIES = ['P1', 'P2', 'P3'] as const;
 export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
 /** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), plan-check (R17), or issue intake (M4a). */
 /** M4a: `issue` (a checkpoint's issue intake opens a P2 or P3 finding, C3). */
-export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'plan-check', 'issue'] as const;
+/**
+ * dev.13: `walkthrough` (a milestone walk opens a P1 for a break, a P2 for a deviation, never a P3; code opens a P1 for a
+ * failed bring-up of a walk or the demo). A walkthrough finding names its milestone (`finding-opened.milestone`) and may
+ * have no obligation.
+ */
+export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'plan-check', 'issue', 'walkthrough'] as const;
 export type FindingLens = (typeof FINDING_LENSES)[number];
 /** `fixed-on-branch` (R5): the owner's gate approved. `resolved` and `ruled` are terminal. */
 export const FINDING_STATES = ['open', 'owned', 'fixed-on-branch', 'resolved', 'ruled'] as const;
@@ -759,7 +766,11 @@ export type FindingEvidence = Readonly<{ path: string; blob: Sha | null }>;
  * `stage`: a plan-check's vision conflict (R17), or (M4a rev 3, E) the in-session assessment's at the unit's build attempt;
  * both open P3 `plan-check`-lens findings.
  */
-export type FindingSource = Readonly<{ type: 'job'; job: JobId }> | Readonly<{ type: 'stage'; unit: UnitId; stage: 'plan-check' | 'build'; attempt: number }>;
+/** dev.13: `demo`, the demo's bring-up of `sha` failed (`demo-failed`): a walkthrough P1 with no job. */
+export type FindingSource =
+  | Readonly<{ type: 'job'; job: JobId }>
+  | Readonly<{ type: 'stage'; unit: UnitId; stage: 'plan-check' | 'build'; attempt: number }>
+  | Readonly<{ type: 'demo'; sha: Sha }>;
 /** A vacuity finding's mutant: the patch (kept content-addressed) and the lane that should kill it. */
 export type MutantRef = Readonly<{ patchSha256: Sha256Hex; lane: LaneId }>;
 /** Who ruled a finding: a checkpoint's `findingDispositions`, a ruling, or code (a mutant not reproduced). */
@@ -795,6 +806,7 @@ export const findingSource: Read<FindingSource> = tagged('type', {
     type: f.get('type', literal('stage')), unit: f.get('unit', (v, p) => unitId(v, p)), stage: f.get('stage', oneOf(['plan-check', 'build'] as const)),
     attempt: f.get('attempt', positive),
   })),
+  demo: object((f): FindingSource => ({ type: f.get('type', literal('demo')), sha: f.get('sha', shaR) })),
 });
 export const mutantRef: Read<MutantRef> = object((f) => ({ patchSha256: f.get('patchSha256', sha256R), lane: f.get('lane', (v, p) => laneId(v, p)) }));
 export const findingTo: Read<FindingTo> = tagged('state', {

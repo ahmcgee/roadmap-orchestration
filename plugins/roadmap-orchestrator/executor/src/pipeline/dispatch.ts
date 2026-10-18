@@ -67,7 +67,7 @@ import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
 import {
-  type ArcRole, type ArcSeatRef, type Backend, CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, RISK_TIERS, type Triple, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef,
+  type ArcRole, type ArcSeatRef, type WalkRole, type Backend, CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, RISK_TIERS, type Triple, type JudgmentRole, type JudgmentSeat, type RiskTier, type Role, type UnitSeatRef, seatRef,
 } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
@@ -415,6 +415,7 @@ function terminal(spec: BackendCallSpec, c: BackendCall, schemaPath: AbsPath, in
   const stdout = absPath(join(invDir, STDOUT_FILE));
   switch (c.kind) {
     case 'claude-judgment':
+    case 'claude-acting-judge':
       return { ...base, outputPath: stdout, role: c.role, session: c.session };
     case 'claude-build':
       return { ...base, outputPath: stdout, role: 'build', session: c.session };
@@ -548,7 +549,8 @@ export function arcSeat(ctx: StageContext, role: ArcRole): Readonly<{ seat: ArcS
  */
 export type ArcCallSpec = Readonly<{
   job: JobId;
-  role: ArcRole;
+  /** A judging arc role: the walk roles act, and are called as acting judges (dev.13), never through `callArcRole`. */
+  role: Exclude<ArcRole, WalkRole>;
   attempt: number;
   system: string;
   rendered: string;

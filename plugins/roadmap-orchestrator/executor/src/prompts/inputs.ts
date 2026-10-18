@@ -7,7 +7,11 @@
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
-import type { ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
+import type {
+  ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
+  WitnessItemId,
+} from '../core/ids.ts';
+import type { Journey } from '../input/plan.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
@@ -492,6 +496,52 @@ export type PreviousPackFinding = Readonly<{ job: JobId; finding: PackFinding }>
  */
 export type PackReviewDelta = Readonly<{ since: JobId; changed: readonly string[]; previous: readonly PreviousPackFinding[] }>;
 
+/**
+ * dev.13: one running instance of a milestone's product, as code brought it up: the checkout it runs from, the port code
+ * allocated to each serve entry, and the bring-up's `env` with `{port:<name>}` substituted.
+ */
+export type ProductInstance = Readonly<{ checkout: AbsPath; ports: Readonly<Record<ServeName, number>>; env: Readonly<Record<string, string>> }>;
+
+/** dev.13: a kept tweak of the milestone so far (a polish unit judged `keep` and merged): context for the walk, never enforced. */
+export type KeptTweak = Readonly<{ unit: UnitId; proposal: PolishId; text: string }>;
+
+/**
+ * dev.13: what a milestone walk reads (src/walk, agent C). `journeys`: the milestone's, each `entry` with `{port:<name>}`
+ * substituted for this instance. `references`: every file under the milestone's reference directories at the walked SHA.
+ * `findings`: the open walkthrough findings of the milestone. `units`: the specs of the milestone's merged units.
+ * `evidenceDir`: where the session keeps its evidence (screenshots, transcripts, notes); every cited path lies in it.
+ */
+export type WalkthroughInputs = Readonly<{
+  vision: VisionInput;
+  milestone: Readonly<{ id: MilestoneId; text: string }>;
+  round: number;
+  journeys: readonly Journey[];
+  references: readonly DocText[];
+  tweaks: readonly KeptTweak[];
+  findings: readonly FindingView[];
+  product: ProductInstance;
+  units: readonly RenderedSpec[];
+  evidenceDir: AbsPath;
+}>;
+
+/**
+ * dev.13: what the polish judge reads at a polish unit's compare stage (agent D): the proposal and the journey it cites,
+ * the unit's diff of the milestone references, the original walk's evidence dir, and two instances side by side
+ * (`before`: the integration tip; `after`: the unit's salvage tree), each with the journey's entry substituted.
+ */
+export type PolishJudgeInputs = Readonly<{
+  vision: VisionInput;
+  milestone: Readonly<{ id: MilestoneId; text: string }>;
+  journey: Journey;
+  proposal: Readonly<{ id: PolishId; unit: UnitId; text: string; evidence: readonly string[] }>;
+  references: readonly DocText[];
+  referenceDiff: BoundedDiff;
+  walkEvidenceDir: AbsPath;
+  before: ProductInstance & Readonly<{ entry: string }>;
+  after: ProductInstance & Readonly<{ entry: string }>;
+  evidenceDir: AbsPath;
+}>;
+
 export type RoleInputs = {
   readonly planCheck: PlanCheckInputs;
   readonly build: BuildInputs;
@@ -501,6 +551,8 @@ export type RoleInputs = {
   readonly packReview: PackReviewPromptInputs;
   /** M4b: a flow run's kept inputs (src/flow/types.ts `FlowInputs`) without their envelope. */
   readonly flow: FlowPromptInputs;
+  readonly walkthrough: WalkthroughInputs;
+  readonly polishJudge: PolishJudgeInputs;
 };
 
 export const ROLE_INPUTS = {
@@ -520,6 +572,8 @@ export const ROLE_INPUTS = {
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
+  walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
+  polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -532,6 +586,8 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   checkpoint: true,
   packReview: true,
   flow: true,
+  walkthrough: true,
+  polishJudge: true,
 };
 void ROLE_INPUTS_COMPLETE;
 

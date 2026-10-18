@@ -73,7 +73,7 @@ export type Acquire = (request: ResourceRequest, holder: Holder, rank: () => Ran
 // Priority and aging (F17)
 
 /** R6: repair units first, then checkpoint-originated, then planned. */
-export const ORIGIN_RANK = { repair: 0, checkpoint: 1, planned: 2 } as const satisfies Readonly<Record<UnitOrigin, number>>;
+export const ORIGIN_RANK = { repair: 0, checkpoint: 1, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
 /** A waiter is promoted once this many other units published inside its current waiting interval. */
 export const PROMOTION_BYPASS = 3;
 

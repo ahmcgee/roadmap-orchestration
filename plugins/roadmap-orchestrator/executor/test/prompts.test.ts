@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
+  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName,
 } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
 import { failureRef } from '../src/core/records.ts';
@@ -25,7 +25,7 @@ import {
 } from '../src/prompts/schemas.ts';
 import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
-import { MODEL_IDS, PROFILES, ROLES, type Role, atSeat } from '../src/routing/types.ts';
+import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
 
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
@@ -82,6 +82,28 @@ const corpusTarget = (dir: string, visionDoc: string | null) => ({
 });
 const findingView = (id: string, claim: string) => ({
   id: findingId(id), lens: 'invariants' as const, severity: 'P1' as const, state: 'open' as const, obligation: obligationId('I-1'), claim, owner: null,
+});
+
+const journeySample = (k: 'A' | 'B') => ({
+  id: journeyId(k === 'A' ? 'J-1' : 'J-2'), text: `JOURNEY-${k}`, via: k === 'A' ? 'browser' as const : 'shell' as const, entry: `/entry-${k}`,
+  budget: k === 'A' ? { steps: 5, seconds: 60 } : null,
+});
+const instanceSample = (k: 'A' | 'B', port: number) => ({ checkout: absPath(`/wt/${k}.walk`), ports: { [serveName('web')]: port }, env: { MODE: k } });
+const walkSample = (k: 'A' | 'B'): RoleInputs['walkthrough'] => ({
+  vision: vision(k === 'A' ? 1 : 2, `VISION-${k}`), milestone: { id: milestoneId(k === 'A' ? 'MS-1' : 'MS-2'), text: `MILESTONE-${k}` }, round: k === 'A' ? 1 : 2,
+  journeys: [journeySample(k)], references: [doc(`design/${k}.md`, `REFERENCE-${k}`)],
+  tweaks: [{ unit: unitId(`tweak-${k.toLowerCase()}`), proposal: polishId(k === 'A' ? 'X-1' : 'X-2'), text: `TWEAK-${k}` }],
+  findings: [findingView(k === 'A' ? 'F-1' : 'F-2', `FINDING-${k}`)], product: instanceSample(k, k === 'A' ? 4100 : 4200),
+  units: [spec(k === 'A' ? 1 : 2, `SPEC-${k}`)], evidenceDir: absPath(`/run/evidence/jobs/walk-${k === 'A' ? 1 : 2}`),
+});
+const polishSample = (k: 'A' | 'B'): RoleInputs['polishJudge'] => ({
+  vision: vision(k === 'A' ? 1 : 2, `VISION-${k}`), milestone: { id: milestoneId(k === 'A' ? 'MS-1' : 'MS-2'), text: `MILESTONE-${k}` }, journey: journeySample(k),
+  proposal: { id: polishId(k === 'A' ? 'X-1' : 'X-2'), unit: unitId(`tweak-${k.toLowerCase()}`), text: `PROPOSAL-${k}`, evidence: [`shot-${k}.png`] },
+  references: [doc(`design/${k}.md`, `REFERENCE-${k}`)], referenceDiff: k === 'A' ? shown(SHA_A, SHA_B, 'DIFF-A') : shown(SHA_B, SHA_A, 'DIFF-B'),
+  walkEvidenceDir: absPath(`/run/evidence/jobs/walk-${k === 'A' ? 1 : 2}`),
+  before: { ...instanceSample(k, k === 'A' ? 4101 : 4201), entry: `http://127.0.0.1:${k === 'A' ? 4101 : 4201}/` },
+  after: { ...instanceSample(k, k === 'A' ? 4102 : 4202), entry: `http://127.0.0.1:${k === 'A' ? 4102 : 4202}/` },
+  evidenceDir: absPath(`/run/evidence/jobs/cmp-${k}`),
 });
 
 const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
@@ -287,9 +309,22 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
   ],
   flow: [flowSample('A'), flowSample('B')],
+  walkthrough: [walkSample('A'), walkSample('B')],
+  polishJudge: [polishSample('A'), polishSample('B')],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
+  walkthrough: {
+    final: true,
+    journeys: [{ journey: 'J-1', outcome: 'blocked', evidence: ['j1-submit.png'], note: 'the submit posts to a 404' }],
+    findings: [{
+      class: 'breaks', journey: 'J-1', evidence: ['j1-submit.png'], claim: 'Submitting the form leads to a 404.', cause: 'form action', against: { type: 'journey' },
+      paths: ['src/form.html'],
+    }],
+    polish: [],
+    premises: [], reasons: ['J-1 cannot be completed'],
+  },
+  polishJudge: { final: true, decision: 'keep', evidence: ['before.png', 'after.png'], reasons: ['the after page reads as the reference asks'], premises: [] },
   flow: {
     constraint: { station: 'slot:integration', agree: true, reason: 'the suite lane holds the slot' },
     diagnosis: 'Units wait for the integration slot; the unit suite lane is most of its service.',
@@ -339,11 +374,11 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
 };
 
-/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc of the m4b role set (every arc role) included. */
+/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc of the m4b role set with milestones (every arc role) included. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
   for (const p of PROFILES) {
-    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
+    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
     for (const s of seatsInForce(resolved)) {
       const m = atSeat(resolved.table, s).model;
       seen.set(`${s.role}/${m}`, [s.role, m]);
@@ -435,7 +470,7 @@ describe('prompts', () => {
     }
     // W3: every judgment role has one written module, Opus's. Sonnet 5.5 (efficient, 2026-10-15) reads it with the think-first
     // line ending its system prompt (the Sonnet 5.5 guide, reasoning tasks with JSON output); Fable inherits it unchanged.
-    for (const role of ROLES.filter((r) => r !== 'build')) {
+    for (const role of FRESH_ROLES) {
       const opus = promptFor(role, 'claude-opus-5-5');
       assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt', role);
       const s = PROMPTS[role]['claude-sonnet-5-5'];
@@ -447,10 +482,15 @@ describe('prompts', () => {
       assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5', `${role}/fable: inherits Opus`);
     }
     assert.equal(promptFor('build', 'claude-sonnet-5-5'), promptFor('build', 'claude-opus-5-5'), 'the Sonnet build reads the Opus brief unchanged');
+    // dev.13 (plan §6): the walk roles have an Opus module only; no Sonnet, Haiku or Codex prompt.
+    for (const role of WALK_ROLES) {
+      assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt', role);
+      for (const model of ['claude-sonnet-5-5', 'claude-haiku-5-5', 'gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.equal(PROMPTS[role][model].type, 'unsupported', `${role}/${model}`);
+    }
   });
 
   it('prompts.haiku: every judgment role resolves a prompt for Haiku 5.5 (economy, 1.0.0-dev.12) with the role\'s schema; no Haiku build prompt', () => {
-    for (const role of ROLES.filter((r) => r !== 'build')) {
+    for (const role of FRESH_ROLES) {
       const s = PROMPTS[role]['claude-haiku-5-5'];
       assert.ok(s.type === 'prompt', `${role}/haiku: a module of its own`);
       assert.equal(s.prompt.schema, ROLE_SCHEMAS[role], role);

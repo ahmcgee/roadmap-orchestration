@@ -1224,6 +1224,8 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'known-defects':
       case 'plan-check-shape':
       case 'derived':
+      // dev.13 step 0: a milestones edit drains nothing yet; the edit class (agent B) decides what it drains.
+      case 'milestones':
         break;
       case 'unit-added':
       case 'unit-removed':

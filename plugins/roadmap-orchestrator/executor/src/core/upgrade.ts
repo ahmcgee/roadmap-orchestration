@@ -231,7 +231,9 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   lens: { arc: 'frontier' },
   checkpoint: { arc: 'summit' },
   packReview: { arc: 'frontier' },
-  flow: { arc: 'frontier' },
+  flow: { arc: 'frontier' },  // The walk roles (dev.13) are in force only under a plan with milestones, which no earlier release's arc has: never hashed here.
+  walkthrough: { arc: 'frontier' },
+  polishJudge: { arc: 'frontier' },
 };
 
 // Gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): the built-in seats moved gate.med to efficient (Sonnet
@@ -253,7 +255,9 @@ export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {
   lens: { arc: 'efficient' },
   checkpoint: { arc: 'summit' },
   packReview: { arc: 'frontier' },
-  flow: { arc: 'efficient' },
+  flow: { arc: 'efficient' },  // The walk roles (dev.13) are in force only under a plan with milestones, which no earlier release's arc has: never hashed here.
+  walkthrough: { arc: 'frontier' },
+  polishJudge: { arc: 'frontier' },
 };
 
 /** Every built-in seat table an earlier adopted release hashed, oldest first: what status aliases recorded revs under. */

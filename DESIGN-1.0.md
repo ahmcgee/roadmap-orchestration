@@ -990,6 +990,18 @@ owner sets (owner rulings OR-Q19/20).
 - **Stop.** The session stops at `chain-invalid{limit}` or when the vision is silent: no `sliceCandidates`
   (§3 Phase 0) the architect can justify from active clauses.
 
+### 2.12 Milestones, walkthroughs and the demo (1.0.0-dev.13)
+
+A plan may mark **milestones**: the smallest thing someone can experience end to end (a web flow, an API a developer
+integrates against, a CLI, a config format), built by its units to the design references its design unit writes (or the
+owner supplied). Only a holistic arc may have them. When a milestone's last unit retires, code brings the product up from
+the integration SHA and a **walkthrough** (an acting judge on frontier: a shell and the repo's walkthrough MCP servers, a
+browser for `browser` journeys) uses it along the milestone's journeys. A break is a P1 that keeps the milestone's
+**node** unpassed, so its DAG descendants wait; a deviation is a P2 the checkpoint repairs alongside; polish the
+walkthrough authors as units, which code admits and a **polish judge** keeps or drops by walking before and after. Rounds
+are bounded (`limits.walkRounds`). A settled milestone promotes the **demo**, a stable instance the owner picks up when
+they choose. Records and contracts: executor/SCHEMAS.md "dev.13"; plan: `/claude-state/plans/dev13-implementation.md`.
+
 ## 3. What carries verbatim
 
 Proven in arc 1 or by a named incident; ported as code, not prose.

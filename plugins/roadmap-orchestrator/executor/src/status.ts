@@ -138,7 +138,7 @@ import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
 import { EARLIER_BUILTIN_SEATS, bundleClassesOf, gateLargeDiffOf } from './core/upgrade.ts';
-import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
+import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
 import { type ClassTotal, type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byClass, byModel, meterOf, ownShare } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
@@ -635,9 +635,10 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
   for (const e of events) {
     if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') continue;
     const provenance = e.fact.routingProvenance;
-    const scope = arcScopeOf(keptPlan(runDir, e.fact));
+    const kept = keptPlan(runDir, e.fact);
+    const scope = arcScopeOf(kept);
     for (const unit of [null, ...(Object.keys(provenance.unitLayers) as UnitId[])]) {
-      const stack = provenanceStack(provenance, scope, unit);
+      const stack = provenanceStack(provenance, scope, unit, hasMilestones(kept));
       const r = resolveRouting(stack);
       out.set(r.rev, r);
       for (const rev of earlierRevAliases(stack)) aliases.set(rev, r);
@@ -936,7 +937,7 @@ function routingInForce(inForce: InForce): Readonly<{ profile: ProfileName; of: 
     of: (unit) => {
       let r = cache.get(unit);
       if (r === undefined) {
-        r = resolveRouting(provenanceStack(provenance, scope, unit));
+        r = resolveRouting(provenanceStack(provenance, scope, unit, hasMilestones(inForce.plan)));
         cache.set(unit, r);
       }
       return r;

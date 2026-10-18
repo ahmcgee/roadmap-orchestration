@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { arcId, invocationIdOf, issueId, laneId, obligationId, resourceName, ruleId, sha, sha256, unitId } from '../src/core/ids.ts';
+import { arcId, invocationIdOf, milestoneId, issueId, laneId, obligationId, resourceName, ruleId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { absPath, planPath, repoPath } from '../src/core/values.ts';
 import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection, type StartupRejectionKind, exitCodeFor } from '../src/preflight/startup.ts';
 
@@ -32,6 +32,8 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'holistic-needs-corpus': { kind: 'holistic-needs-corpus' },
   'plan-defect': { kind: 'plan-defect', defects: [{ type: 'witness-not-in-lane', obligation: obligationId('I-1'), lane: laneId('arc'), file: repoPath('test/a.test.ts'), missing: 'argv' }] },
   'arc-superseded': { kind: 'arc-superseded', by: arcId('arc-2') },
+  'milestones-need-holistic': { kind: 'milestones-need-holistic' },
+  'walk-tools-missing': { kind: 'walk-tools-missing', milestone: milestoneId('MS-1'), problem: { type: 'mcp-unconnected', server: 'playwright', detail: 'status failed' } },
   'vision-leak': { kind: 'vision-leak', inForce: sha256('a'.repeat(64)), committed: sha256('b'.repeat(64)), draft: absPath('/w/roadmap-inputs/_next/vision.md') },
 };
 

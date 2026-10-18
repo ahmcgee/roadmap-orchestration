@@ -62,7 +62,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { answerLog, latestAnswers, refQuestions, unappliedOf } from '../answers.ts';
 import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
-import { type ArcId, type DebtId, type IssueId, type Sha256Hex, type UnitId, issueId, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
+import { type ArcId, type DebtId, type IssueId, type MilestoneId, type Sha256Hex, type UnitId, issueId, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
 import { type SpecM1, specRemoves } from '../core/records.ts';
 import { sha256Hex } from '../core/json.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -147,8 +147,14 @@ export type ScopeReference = Readonly<{ kind: 'scope-references-outside'; unit: 
  */
 export type DerivedUnregenerated = Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }>;
 
-/** A Phase-0 advisory: never a refusal (rows 10 and 13). */
-export type Phase0Advisory = ScopeReference | DerivedUnregenerated;
+/**
+ * dev.13, advisory: a unit of milestone `milestone` that does not descend (through `after`, transitively) from the
+ * milestone's design unit `design`, so it may build before the design it builds to exists.
+ */
+export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-design'; milestone: MilestoneId; unit: UnitId; design: UnitId }>;
+
+/** A Phase-0 advisory: never a refusal (rows 10 and 13, and dev.13's `milestone-unit-before-design`). */
+export type Phase0Advisory = ScopeReference | DerivedUnregenerated | MilestoneUnitBeforeDesign;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).

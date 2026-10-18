@@ -11,15 +11,20 @@
 // vision, whose record is `<repo>/.roadmap/vision.json`). `holistic`'s slice, obligations and audit read the same in
 // both arms; the variant fields are read only through `targetDocuments` and `visionFile` (test target.no-direct-access).
 // `chain` (H7) names the previous arc of a chained start, fixed at revision 1.
+//
+// dev.13 (SCHEMAS.md "dev.13: milestone walkthroughs and design units"): `milestones` (absent: none; `milestonesOf`),
+// `limits.walkRounds` (absent: 3; `walkRoundsOf`), the unit origin `polish` with its `polish` field. The in-file milestone
+// refusals are here (`milestoneRefusals`); `milestones-need-holistic` is a Phase-0 row (src/phase0/rows.ts).
 import {
-  type ArcId, type EdgeId, type KnownDefectId, type LaneId, type ResourceName, type RulingId, type Sha, type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId,
-  edgeId, knownDefectId, laneId, resourceName, rulingId, sha, unitId, visionClauseId, idList,
+  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha,
+  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, polishId, resourceName, rulingId, serveName, sha,
+  unitId, visionClauseId, idList,
 } from '../core/ids.ts';
 import {
   BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
 } from '../core/records.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
+import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
 import {
   type AbsPath, type BranchName, type PlanPath, type RepoPath, type RepoPattern, absPath, branchName, planPath, repoPath,
@@ -46,10 +51,15 @@ export type ResourceDecl = Readonly<{ name: ResourceName; probe: ToolCommand; te
 
 /**
  * Where a unit came from (M2): `checkpoint` units rank before `planned` ones among unpromoted waiters; M3's
- * `repair` units (R6) rank first, and need a spec with non-empty `repairs` (a startup and apply row).
+ * `repair` units (R6) rank first, and need a spec with non-empty `repairs` (a startup and apply row). dev.13: `polish`, a
+ * unit a milestone walkthrough proposed and code admitted (it carries `polish`), ranks between checkpoint and planned
+ * (`ORIGIN_RANK`, src/schedule/types.ts).
  */
-export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair'] as const;
+export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish'] as const;
 export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
+
+/** dev.13: what a `polish` unit came from: the milestone it polishes and the walkthrough's proposal (`polish-proposed`). */
+export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId }>;
 
 /** A contingent edge (M2): the unit waits until `resolve-edge <id>` records the condition met. */
 export type ContingentEdge = Readonly<{ id: EdgeId; condition: string }>;
@@ -72,9 +82,13 @@ export type Cut = Readonly<{ reason: string; ruling?: RulingId }>;
  * the plan's for every unit. An apply may not lower a counter's bound below what a unit has spent.
  */
 export type UnitLimits = Readonly<{ [K in keyof Bounds]?: number }>;
-/** The plan's limits: the units' bounds, and the arc's convergence counter K (§2.8, default 3). */
-export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number }>;
+/**
+ * The plan's limits: the units' bounds, the arc's convergence counter K (§2.8, default 3) and (dev.13) the walks per
+ * milestone (`walkRounds`, default 3: round 1 and up to two polish or fix rounds).
+ */
+export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number; walkRounds?: number }>;
 export const DEFAULT_CONVERGENCE_K = 3;
+export const DEFAULT_WALK_ROUNDS = 3;
 
 /**
  * M3 (A5): the holistic layer is on exactly when the plan has `holistic`; obligations may be absent (none). The parts both
@@ -126,6 +140,8 @@ export type PlanUnit = Readonly<{
   limits?: UnitLimits;
   /** M4a rev 3 (F1b, R42): `high` ranks before every `normal` waiter, ahead of promotion; absent: `normal` (`priorityOf`). */
   priority?: UnitPriority;
+  /** dev.13: present exactly on a `polish` unit. */
+  polish?: PolishOrigin;
 }>;
 
 export const UNIT_PRIORITIES = ['normal', 'high'] as const;
@@ -165,6 +181,74 @@ export const regenerateLaneId = (entry: DerivedFiles): LaneId => laneId(`regener
 
 /** The plan's derived files; none when absent. */
 export const derivedOf = (plan: PlanM1): readonly DerivedFiles[] => plan.derived ?? [];
+
+/**
+ * dev.13: a command of a bring-up, run with no shell from the root of the checkout it brings up (a walk's, a compare
+ * instance's, the demo's). Non-empty; `{port:<name>}` in any element is substituted (`PORT_PLACEHOLDER`).
+ */
+export type Argv = readonly string[];
+/**
+ * How a `serve` entry is known to be ready: an HTTP GET of `http` (a URL, `{port:<name>}` substituted) answering below 500,
+ * or `log` appearing in its stdout or stderr (a substring, never a regex).
+ */
+export type ServeReady = Readonly<{ http: string }> | Readonly<{ log: string }>;
+/** A long-lived process of a bring-up: a web server, an API, a broker. Each takes one code-allocated free port, `{port:<name>}`. */
+export type ServeEntry = Readonly<{ name: ServeName; argv: Argv; ready: ServeReady }>;
+/**
+ * dev.13: how code brings a milestone's product up (a walk, a compare instance, the demo): `setup` (each run to exit 0, in
+ * order), then every `serve` entry as a contained spawn tied to its owner, each probed ready, then `seed` (each to exit 0).
+ * `serve: []`: nothing long-lived (a CLI, an SDK). `env` is added to every command's environment. `{port:<name>}` names a
+ * serve entry of this bring-up, in `env` values, every argv element, `ready.http` and a journey's `entry`.
+ */
+export type BringUp = Readonly<{ setup: readonly Argv[]; serve: readonly ServeEntry[]; env: Readonly<Record<string, string>>; seed: readonly Argv[] }>;
+/** `{port:<name>}`: the one placeholder of a bring-up, its name a serve entry's. */
+export const PORT_PLACEHOLDER = /\{port:([^}]*)\}/g;
+export const JOURNEY_DRIVES = ['browser', 'shell'] as const;
+/** `browser`: a page, walked through the walkthrough MCP servers; `shell`: a CLI, HTTP, a bus client, an SDK script, a config edit. */
+export type JourneyDrive = (typeof JOURNEY_DRIVES)[number];
+/**
+ * A journey (dev.13): plain language, as the user or client would say it; `entry` the URL path, command or base URL where it
+ * starts (`{port:<name>}` substituted); `budget` its step and time budget, null for none.
+ */
+export type Journey = Readonly<{ id: JourneyId; text: string; via: JourneyDrive; entry: string; budget: Readonly<{ steps: number; seconds: number }> | null }>;
+/** The milestone's design unit (a planned unit of the plan), or a design the owner supplied (its `references`). */
+export type MilestoneDesign = Readonly<{ unit: UnitId }> | Readonly<{ supplied: true }>;
+/**
+ * dev.13: a milestone, the smallest thing someone can experience end to end. Reached when every unit of `units` is retired;
+ * then walked (`walk-n`). `references`: the design reference directories it builds to and extends (they outlive it).
+ * `resources`: what a bring-up of it reserves, as a unit's resources.
+ */
+export type Milestone = Readonly<{
+  id: MilestoneId;
+  text: string;
+  units: readonly UnitId[];
+  design: MilestoneDesign;
+  references: readonly RepoPath[];
+  bringUp: BringUp;
+  journeys: readonly Journey[];
+  resources: readonly ResourceName[];
+}>;
+
+/** The plan's milestones; none when absent (every plan before dev.13: lasting). */
+export const milestonesOf = (plan: Pick<PlanM1, 'milestones'>): readonly Milestone[] => plan.milestones ?? [];
+/** Whether the plan has milestones: what puts the walk roles in force (src/routing/layers.ts). */
+export const hasMilestones = (plan: Pick<PlanM1, 'milestones'>): boolean => milestonesOf(plan).length > 0;
+/** The milestone `id` of the plan; an unknown id is a bug. */
+export function milestoneOf(plan: Pick<PlanM1, 'milestones'>, id: MilestoneId): Milestone {
+  const m = milestonesOf(plan).find((x) => x.id === id);
+  if (m === undefined) throw new Error(`no milestone ${id} in the plan`);
+  return m;
+}
+/** The milestones that list `unit` in their `units`, in plan order. */
+export const milestonesOfUnit = (plan: Pick<PlanM1, 'milestones'>, unit: UnitId): readonly Milestone[] => milestonesOf(plan).filter((m) => m.units.includes(unit));
+/** The milestone's design unit, or null when its design was supplied. */
+export const designUnitOf = (m: Milestone): UnitId | null => ('unit' in m.design ? m.design.unit : null);
+/** The walks a milestone may take (`limits.walkRounds`); 3 when absent. */
+export const walkRoundsOf = (plan: Pick<PlanM1, 'limits'>): number => plan.limits?.walkRounds ?? DEFAULT_WALK_ROUNDS;
+/** The serve names `text` names in `{port:<name>}` placeholders, in order of appearance. */
+export function portNames(text: string): readonly string[] {
+  return [...text.matchAll(PORT_PLACEHOLDER)].map((m) => m[1] as string);
+}
 
 /** The plan's known defects; none when absent. */
 export const knownDefectsOf = (plan: PlanM1): readonly KnownDefect[] => plan.knownDefects ?? [];
@@ -221,6 +305,8 @@ type PlanBase = Readonly<{
   planCheck?: Readonly<{ shape: PlanCheckShape }>;
   /** Plan defects (2026-10-16): derived files (absent: none, lasting; `derivedOf`). */
   derived?: readonly DerivedFiles[];
+  /** dev.13: the milestones, ids unique (absent: none, lasting; `milestonesOf`). Changed only by `apply`. */
+  milestones?: readonly Milestone[];
 }>;
 export type PlanM1 = PlanBase & PlanTarget;
 
@@ -285,7 +371,8 @@ function limitsFields(f: Fields): Record<string, number> {
 const unitLimits: Read<UnitLimits> = object((f) => limitsFields(f) as UnitLimits);
 const arcLimits: Read<ArcLimits> = object((f) => {
   const k = f.optional('convergenceK', positive);
-  return { ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }) } as ArcLimits;
+  const walkRounds = f.optional('walkRounds', positive);
+  return { ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }), ...(walkRounds === undefined ? {} : { walkRounds }) } as ArcLimits;
 });
 
 /** `holistic`, with its `vision` exactly when `withVision` (an `architecture-doc` plan's; a corpus plan's has none). */
@@ -368,6 +455,8 @@ const planUnit: Read<PlanUnit> = object((f) => {
   const routing = f.optional('routing', routingLayer);
   const limits = f.optional('limits', unitLimits);
   const priority = f.optional('priority', oneOf(UNIT_PRIORITIES));
+  const polish = f.optional('polish', object((g): PolishOrigin => ({ milestone: g.get('milestone', (v, p) => milestoneId(v, p)), proposal: g.get('proposal', (v, p) => polishId(v, p)) })));
+  if ((origin === 'polish') !== (polish !== undefined)) throw new SchemaError(`${f.path}.polish`, origin === 'polish' ? 'the milestone and proposal of a polish unit' : 'absent (only a polish unit carries it)', polish);
   assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
@@ -375,7 +464,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
   return {
     ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
-    ...(priority === undefined ? {} : { priority }),
+    ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }),
   };
 });
 
@@ -388,6 +477,97 @@ const derivedFiles: Read<DerivedFiles> = object((f) => {
   const regenerate = f.optional('regenerate', toolCommand);
   return { sources: f.get('sources', patterns), outputs: f.get('outputs', patterns), ...(regenerate === undefined ? {} : { regenerate }) };
 });
+
+const argvR: Read<Argv> = arrayOf(str, { nonEmpty: true });
+const serveReady: Read<ServeReady> = (value, path) => {
+  const keys = typeof value === 'object' && value !== null ? Object.keys(value) : [];
+  if (keys.length === 1 && keys[0] === 'http') return object((g): ServeReady => ({ http: g.get('http', str) }))(value, path);
+  if (keys.length === 1 && keys[0] === 'log') return object((g): ServeReady => ({ log: g.get('log', str) }))(value, path);
+  throw new SchemaError(path, '{http: <url>} or {log: <substring>}', value);
+};
+const bringUp: Read<BringUp> = object((f) => {
+  const out: BringUp = {
+    setup: f.get('setup', arrayOf(argvR)),
+    serve: f.get('serve', arrayOf(object((g): ServeEntry => ({ name: g.get('name', (v, p) => serveName(v, p)), argv: g.get('argv', argvR), ready: g.get('ready', serveReady) })))),
+    env: f.get('env', stringMap),
+    seed: f.get('seed', arrayOf(argvR)),
+  };
+  assertUnique(out.serve, (s) => s.name, `${f.path}.serve`);
+  return out;
+});
+const journey: Read<Journey> = object((f) => ({
+  id: f.get('id', (v, p) => journeyId(v, p)),
+  text: f.get('text', str),
+  via: f.get('via', oneOf(JOURNEY_DRIVES)),
+  entry: f.get('entry', str),
+  budget: f.get('budget', nullable(object((g) => ({ steps: g.get('steps', positive), seconds: g.get('seconds', positive) })))),
+}));
+const milestoneDesign: Read<MilestoneDesign> = (value, path) => {
+  if (typeof value === 'object' && value !== null && Object.hasOwn(value, 'supplied')) return object((g): MilestoneDesign => ({ supplied: g.get('supplied', literal(true)) }))(value, path);
+  return object((g): MilestoneDesign => ({ unit: g.get('unit', (v, p) => unitId(v, p)) }))(value, path);
+};
+const milestone: Read<Milestone> = object((f) => {
+  const out: Milestone = {
+    id: f.get('id', (v, p) => milestoneId(v, p)),
+    text: f.get('text', str),
+    units: f.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
+    design: f.get('design', milestoneDesign),
+    references: f.get('references', arrayOf((v, p) => repoPath(v, p))),
+    bringUp: f.get('bringUp', bringUp),
+    journeys: f.get('journeys', arrayOf(journey)),
+    resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
+  };
+  assertUnique(out.units, (u) => u, `${f.path}.units`);
+  assertUnique(out.references, (r) => r, `${f.path}.references`);
+  assertUnique(out.resources, (r) => r, `${f.path}.resources`);
+  return out;
+});
+
+/**
+ * The in-file refusals of a plan's milestones (dev.13), each one sentence naming the milestone: a unit or design unit the
+ * plan does not hold, a design unit that is not a planned unit or is listed in its own milestone's units, a milestone
+ * with no journeys or no references, a resource the plan does not declare, a `{port:<name>}` naming no serve entry of its
+ * bring-up. Ids (milestones, journeys across milestones) are unique. `parsePlan` throws the first as a SchemaError.
+ */
+export function milestoneRefusals(plan: PlanM1): readonly Readonly<{ path: string; expected: string; value: unknown }>[] {
+  const out: { path: string; expected: string; value: unknown }[] = [];
+  const units = new Map(plan.units.map((u) => [u.id, u]));
+  const declared = new Set(plan.resources.map((r) => r.name));
+  milestonesOf(plan).forEach((m, i) => {
+    const at = `plan.milestones[${i}]`;
+    m.units.forEach((u, j) => {
+      if (!units.has(u)) out.push({ path: `${at}.units[${j}]`, expected: `a unit of the plan (milestone ${m.id})`, value: u });
+    });
+    const design = designUnitOf(m);
+    if (design !== null) {
+      const d = units.get(design);
+      if (d === undefined) out.push({ path: `${at}.design.unit`, expected: `a unit of the plan (milestone ${m.id}'s design unit)`, value: design });
+      else if ((d.origin ?? 'planned') !== 'planned') out.push({ path: `${at}.design.unit`, expected: `a planned unit (milestone ${m.id}'s design unit)`, value: design });
+      if (m.units.includes(design)) out.push({ path: `${at}.design.unit`, expected: `a unit outside milestone ${m.id}'s own units (its design unit designs them)`, value: design });
+    }
+    if (m.journeys.length === 0) out.push({ path: `${at}.journeys`, expected: `at least one journey (milestone ${m.id})`, value: m.journeys });
+    if (m.references.length === 0) out.push({ path: `${at}.references`, expected: `at least one design reference directory (milestone ${m.id})`, value: m.references });
+    m.resources.forEach((r, j) => {
+      if (!declared.has(r)) out.push({ path: `${at}.resources[${j}]`, expected: `a resource the plan declares (milestone ${m.id})`, value: r });
+    });
+    const serves = new Set<string>(m.bringUp.serve.map((s) => s.name));
+    const texts: [string, string][] = [
+      ...Object.entries(m.bringUp.env).map(([k, v]): [string, string] => [`${at}.bringUp.env.${k}`, v]),
+      ...(['setup', 'seed'] as const).flatMap((k) => m.bringUp[k].flatMap((argv, j) => argv.map((a, n): [string, string] => [`${at}.bringUp.${k}[${j}][${n}]`, a]))),
+      ...m.bringUp.serve.flatMap((s, j) => [
+        ...s.argv.map((a, n): [string, string] => [`${at}.bringUp.serve[${j}].argv[${n}]`, a]),
+        ...('http' in s.ready ? [[`${at}.bringUp.serve[${j}].ready.http`, s.ready.http] as [string, string]] : []),
+      ]),
+      ...m.journeys.map((jr, j): [string, string] => [`${at}.journeys[${j}].entry`, jr.entry]),
+    ];
+    for (const [path, text] of texts) {
+      for (const name of portNames(text)) {
+        if (!serves.has(name)) out.push({ path, expected: `{port:<name>} naming a serve entry of milestone ${m.id}'s bring-up`, value: `{port:${name}}` });
+      }
+    }
+  });
+  return out;
+}
 
 const knownDefect: Read<KnownDefect> = object((f) => ({
   id: f.get('id', (v, p) => knownDefectId(v, p)),
@@ -448,6 +628,7 @@ export function parsePlan(value: unknown): PlanM1 {
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
     const planCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(PLAN_CHECK_SHAPES)) })));
     const derived = f.optional('derived', arrayOf(derivedFiles));
+    const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', (v, p) => arcId(v, p)),
@@ -467,6 +648,7 @@ export function parsePlan(value: unknown): PlanM1 {
       ...(knownDefects === undefined ? {} : { knownDefects }),
       ...(planCheck === undefined ? {} : { planCheck }),
       ...(derived === undefined ? {} : { derived }),
+      ...(milestones === undefined ? {} : { milestones }),
       ...target,
     };
     out.suite.lanes.forEach((l, i) => refuseLaneInputs(l, `plan.suite.lanes[${i}]`, 'suite'));
@@ -477,6 +659,10 @@ export function parsePlan(value: unknown): PlanM1 {
     assertUnique(out.units, (u) => u.id, 'plan.units');
     assertUnique(out.units, (u) => u.spec, 'plan.units');
     assertUnique(out.units.flatMap((u) => u.contingent), (e) => e.id, 'plan.units[].contingent');
+    assertUnique(milestonesOf(out), (m) => m.id, 'plan.milestones');
+    assertUnique(milestonesOf(out).flatMap((m) => m.journeys), (j) => j.id, 'plan.milestones[].journeys');
+    const refused = milestoneRefusals(out)[0];
+    if (refused !== undefined) throw new SchemaError(refused.path, refused.expected, refused.value);
     out.units.forEach((u, i) => {
       const earlier = out.units.slice(0, i).map((e) => e.id);
       u.after.forEach((id, j) => {

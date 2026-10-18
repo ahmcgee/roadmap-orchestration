@@ -262,13 +262,13 @@ describe('m4b routing: arcRoles gates the flow seat', () => {
   it('without a role set (an arc 1.0.0-dev.7 started) the rev and seats are dev.7\'s; m4b puts flow in force in every scope', () => {
     const dev7 = resolveRouting(arcStack('default', null, null));
     const m4b = resolveRouting({ ...arcStack('default', null, null), arcRoles: 'm4b' });
-    assert.equal(dev7.rev, routingRevOf(dev7.table, 'none', null));
+    assert.equal(dev7.rev, routingRevOf(dev7.table, 'none', null, false));
     assert.notEqual(m4b.rev, dev7.rev, 'the flow seat is hashed');
     assert.ok(!seatsInForce(dev7).some((s) => s.role === 'flow'));
     assert.deepEqual(seatsInForce(m4b).filter((s) => s.role === 'flow'), [{ role: 'flow', tier: 'arc' }]);
     assert.deepEqual(m4b.classes.flow, { arc: 'efficient' }, 'the flow seat on efficient (owner ruling 2026-10-15)');
     for (const scope of ['architecture-doc', 'corpus'] as const) {
-      assert.notEqual(routingRevOf(m4b.table, scope, 'm4b'), routingRevOf(m4b.table, scope, null), scope);
+      assert.notEqual(routingRevOf(m4b.table, scope, 'm4b', false), routingRevOf(m4b.table, scope, null, false), scope);
       assert.ok(seatsInForce(resolveRouting({ ...arcStack('default', null, null), arcScope: scope, arcRoles: 'm4b' })).some((s) => s.role === 'flow'), scope);
     }
     // A flow-seat rebind moves only an m4b arc's rev.

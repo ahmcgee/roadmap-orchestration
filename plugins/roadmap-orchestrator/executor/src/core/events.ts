@@ -8,9 +8,10 @@ import {
   knownDefectId, opportunityId,
   type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type RulingId, type Sha, type Sha256Hex, type SpecRev,
   type ProposalId, type UnitId, type VisionClauseId, INTEGRATION_SLOT, proposalId, proposalJob, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
-  findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseOpId,
+  findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseJobId, parseOpId,
   parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, rulingId, sha, sha256, specRev, unitId,
   visionClauseId, idList, type ClaudeSessionId, claudeSessionId,
+  type JourneyId, type MilestoneId, type PolishId, type ServeName, journeyId, milestoneId, polishId, serveName,
 } from './ids.ts';
 import { type BankReason, type DebtSource, BANK_REASONS, debtSource } from '../debt/types.ts';
 import {
@@ -38,7 +39,7 @@ import {
   packDisposition, packFinding, revisionVector, type PlanDefect, planDefect,
 } from '../holistic/types.ts';
 import {
-  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
+  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, int, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
   version,
 } from './validate.ts';
 import {
@@ -731,7 +732,8 @@ export type Fact =
   | StageOutcomeFact
   | HolisticFact
   | M4aFact
-  | FlowFact;
+  | FlowFact
+  | WalkFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
@@ -798,10 +800,11 @@ export type HolisticFact =
   | Readonly<{ kind: 'witnessed'; lane: LaneId; laneRev: LaneRev; envId: EnvId; treeSha: Sha; inv: InvocationId; recordsSha256: Sha256Hex; purpose: WitnessPurpose; for: WitnessFor }>
   /** A future obligation delivered and held on its publication: it is must-hold from here (after `ff{published}`, before the snapshot). */
   | Readonly<{ kind: 'obligation-latched'; obligation: ObligationId; unit: UnitId; treeSha: Sha }>
+  /** dev.13: `milestone` exactly on a `walkthrough` finding (absent on every other: none). */
   | Readonly<{
     kind: 'finding-opened'; id: FindingId; key: Sha256Hex; lens: FindingLens; severity: FindingSeverity; obligation: ObligationId | null;
     visionClauses: readonly VisionClauseId[]; claim: string; evidence: readonly FindingEvidence[]; mutant: MutantRef | null; source: FindingSource;
-    gateHadPassed: boolean;
+    gateHadPassed: boolean; milestone?: MilestoneId;
   }>
   | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
   | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
@@ -939,6 +942,43 @@ export type FlowFact =
   }>;
 export type FlowFactKind = FlowFact['kind'];
 
+/** How a milestone walk ended: its report read (`reported`), its product never came up (`bring-up-failed`), or neither. */
+export const WALK_OUTCOMES = ['reported', 'bring-up-failed', 'abandoned'] as const;
+export type WalkOutcome = (typeof WALK_OUTCOMES)[number];
+export const TWEAK_DECISIONS = ['keep', 'drop'] as const;
+export type TweakDecision = (typeof TWEAK_DECISIONS)[number];
+/** `judged`: the polish judge decided; `reference-untouched`: the diff touched no milestone reference (a drop, no call). */
+export const TWEAK_REASONS = ['judged', 'reference-untouched'] as const;
+export type TweakReason = (typeof TWEAK_REASONS)[number];
+/** A polish proposal's unit as the walkthrough authored it: `spec` is spec.json's canonical text (an admit's). */
+export type PolishUnitDraft = Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
+
+/**
+ * The dev.13 facts (SCHEMAS.md "dev.13: milestone walkthroughs and design units"); their behaviour is agents C, D and G's.
+ * The fold keeps them in log order (`walkFacts`) and holds their ids to order.
+ */
+export type WalkFact =
+  /** A milestone walk began (`walk-n`, round `round`, on integration SHA `sha` captured under the fence), its product up on `ports`. */
+  | Readonly<{ kind: 'walk-started'; job: JobId; milestone: MilestoneId; round: number; sha: Sha; ports: Readonly<Record<ServeName, number>> }>
+  /**
+   * A walk's end: the findings it opened (a failed bring-up's code-opened P1 included) and the polish it proposed, both in
+   * id order; `dropped` the proposals not applied (every proposal of the milestone's last round: the milestone settles).
+   */
+  | Readonly<{ kind: 'walk-ended'; job: JobId; outcome: WalkOutcome; findings: readonly FindingId[]; proposals: readonly PolishId[]; dropped: readonly PolishId[] }>
+  /** A walk's polish proposal, written before its `walk-ended`; never a finding, never debt. */
+  | Readonly<{
+    kind: 'polish-proposed'; id: PolishId; job: JobId; milestone: MilestoneId; journey: JourneyId; evidence: readonly string[]; text: string; unit: PolishUnitDraft;
+  }>
+  /** A polish unit's compare stage decided (once per unit): `keep` goes on to candidate admission, `drop` cuts it (`polish-dropped`). */
+  | Readonly<{ kind: 'tweak-judged'; unit: UnitId; decision: TweakDecision; reason: TweakReason }>
+  /** The milestone node passed: walk `job` completed and the milestone has no active walkthrough P1 (once per milestone). */
+  | Readonly<{ kind: 'milestone-passed'; milestone: MilestoneId; job: JobId }>
+  /** The demo (`refs/roadmap/demo`) moved to `sha`, the settled tip of `milestone` (or the completed arc's, its last settled milestone). */
+  | Readonly<{ kind: 'demo-promoted'; milestone: MilestoneId; sha: Sha }>
+  /** The demo's bring-up of `sha` failed (the old instance keeps serving); `log` its captured output. Opens a walkthrough P1 on `milestone`. */
+  | Readonly<{ kind: 'demo-failed'; milestone: MilestoneId; sha: Sha; log: AbsPath }>;
+export type WalkFactKind = WalkFact['kind'];
+
 export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
@@ -999,7 +1039,9 @@ export type PlanChange =
   /** M4a rev 3 (E): the plan's `planCheck.shape` changed (no drain; units whose plan-check has not decided). */
   | Readonly<{ type: 'plan-check-shape' }>
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
-  | Readonly<{ type: 'derived' }>;
+  | Readonly<{ type: 'derived' }>
+  /** dev.13: the plan's `milestones` changed (an `apply` only; the checkpoint cannot edit them). Classified by src/input/classify.ts. */
+  | Readonly<{ type: 'milestones' }>;
 
 /**
  * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
@@ -1557,6 +1599,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
   'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
   derived: object((f): PlanChange => ({ type: f.get('type', literal('derived')) })),
+  milestones: object((f): PlanChange => ({ type: f.get('type', literal('milestones')) })),
 });
 
 export const revisionPayload: Read<RevisionPayload> = object((f) => {
@@ -1823,6 +1866,56 @@ const FLOW_FACT_READERS: { readonly [K in FlowFactKind]: Read<Fact> } = {
   }),
 };
 
+const walkJobR: Read<JobId> = (v, p) => jobIdOfKind('walk')(v, p);
+const milestoneR: Read<MilestoneId> = (v, p) => milestoneId(v, p);
+const polishSet: Read<readonly PolishId[]> = idList((v, p): PolishId => polishId(v, p));
+const ports: Read<Readonly<Record<ServeName, number>>> = (value, path) => {
+  const f = new Fields(value, path);
+  const out: Record<ServeName, number> = {};
+  for (const key of Object.keys(value as object)) out[serveName(key, `${path}.${key}`)] = f.get(key, int(1, 65_535));
+  f.end();
+  return out;
+};
+
+/** The readers of the dev.13 facts, spread into `fact`. */
+const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
+  'walk-started': object((f): Fact => ({
+    kind: f.get('kind', literal('walk-started')), job: f.get('job', walkJobR), milestone: f.get('milestone', milestoneR), round: f.get('round', positive),
+    sha: f.get('sha', shaR), ports: f.get('ports', ports),
+  })),
+  'walk-ended': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('walk-ended')), job: f.get('job', walkJobR), outcome: f.get('outcome', oneOf(WALK_OUTCOMES)), findings: f.get('findings', findingSet),
+      proposals: f.get('proposals', polishSet), dropped: f.get('dropped', polishSet),
+    };
+    if (out.outcome !== 'reported' && out.proposals.length > 0) throw new SchemaError(`${f.path}.proposals`, `none for a walk ${out.outcome}`, out.proposals);
+    if (out.outcome === 'abandoned' && out.findings.length > 0) throw new SchemaError(`${f.path}.findings`, 'none for an abandoned walk', out.findings);
+    if (out.outcome === 'bring-up-failed' && out.findings.length === 0) throw new SchemaError(`${f.path}.findings`, 'the P1 a failed bring-up opens', out.findings);
+    const proposed = new Set<string>(out.proposals);
+    out.dropped.forEach((id, i) => {
+      if (!proposed.has(id)) throw new SchemaError(`${f.path}.dropped[${i}]`, 'a proposal of this walk', id);
+    });
+    return out;
+  }),
+  'polish-proposed': object((f): Fact => ({
+    kind: f.get('kind', literal('polish-proposed')), id: f.get('id', (v, p): PolishId => polishId(v, p)), job: f.get('job', walkJobR), milestone: f.get('milestone', milestoneR),
+    journey: f.get('journey', (v, p): JourneyId => journeyId(v, p)), evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })), text: f.get('text', str),
+    unit: f.get('unit', object((g): PolishUnitDraft => ({
+      id: g.get('id', unitR), scope: g.get('scope', sortedBy((v, p): RepoPattern => repoPattern(v, p), (x) => x, { nonEmpty: true })), spec: g.get('spec', str),
+    }))),
+  })),
+  'tweak-judged': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('tweak-judged')), unit: f.get('unit', unitR), decision: f.get('decision', oneOf(TWEAK_DECISIONS)), reason: f.get('reason', oneOf(TWEAK_REASONS)),
+    };
+    if (out.reason === 'reference-untouched' && out.decision !== 'drop') throw new SchemaError(`${f.path}.decision`, 'drop for a tweak that touched no reference', out.decision);
+    return out;
+  }),
+  'milestone-passed': object((f): Fact => ({ kind: f.get('kind', literal('milestone-passed')), milestone: f.get('milestone', milestoneR), job: f.get('job', walkJobR) })),
+  'demo-promoted': object((f): Fact => ({ kind: f.get('kind', literal('demo-promoted')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR) })),
+  'demo-failed': object((f): Fact => ({ kind: f.get('kind', literal('demo-failed')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR), log: f.get('log', absR) })),
+};
+
 /** The readers of the M3 facts, spread into `fact`. */
 const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = {
   witnessed: object((f): Fact => {
@@ -1847,6 +1940,14 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       evidence: f.get('evidence', arrayOf(findingEvidence)), mutant: f.get('mutant', nullable(mutantRef)), source: f.get('source', findingSource),
       gateHadPassed: f.get('gateHadPassed', bool),
     };
+    const milestone = f.optional('milestone', (v, p): MilestoneId => milestoneId(v, p));
+    // dev.13: a walkthrough finding names its milestone, is a P1 (breaks) or a P2 (deviates), and comes from a walk job or
+    // the demo; no other finding names a milestone or comes from the demo.
+    const walk = out.lens === 'walkthrough';
+    if (walk !== (milestone !== undefined)) throw new SchemaError(`${f.path}.milestone`, walk ? 'the milestone of a walkthrough finding' : 'absent (only a walkthrough finding names one)', milestone);
+    if (walk && out.severity === 'P3') throw new SchemaError(`${f.path}.severity`, 'P1 or P2 for a walkthrough finding', out.severity);
+    if (out.source.type === 'demo' && !(walk && out.severity === 'P1')) throw new SchemaError(`${f.path}.source`, 'a walk job (only a walkthrough P1 comes from the demo)', out.source);
+    if (walk && out.source.type === 'job' && parseJobId(out.source.job).kind !== 'walk') throw new SchemaError(`${f.path}.source.job`, 'a walk-<n> job', out.source.job);
     if (out.mutant !== null && out.lens !== 'vacuity') throw new SchemaError(`${f.path}.mutant`, 'null except for a vacuity finding', out.mutant);
     // R17: plan-check opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
     if ((out.lens === 'plan-check') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'plan-check' ? 'the plan-check attempt' : 'the job that opened it', out.source);
@@ -1856,7 +1957,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
     // M4a: a checkpoint's issue intake opens P2 or P3 only.
     if (out.lens === 'issue' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for an issue finding', out.severity);
-    return out;
+    return milestone === undefined ? out : { ...out, milestone };
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
   'audit-started': object((f): Fact => {
@@ -2049,6 +2150,7 @@ export const fact: Read<Fact> = tagged('kind', {
   ...HOLISTIC_FACT_READERS,
   ...M4A_FACT_READERS,
   ...FLOW_FACT_READERS,
+  ...WALK_FACT_READERS,
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {

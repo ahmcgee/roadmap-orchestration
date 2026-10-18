@@ -60,7 +60,7 @@ import { randomUUID } from 'node:crypto';
 import { type JudgmentSessionId, implementerSessionId, judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
-import type { FreshRole, Triple } from '../routing/types.ts';
+import type { ActingJudgeRole, FreshRole, Triple } from '../routing/types.ts';
 
 export type CodexTriple = Extract<Triple, { backend: 'codex' }>;
 export type ClaudeTriple = Extract<Triple, { backend: 'claude' }>;
@@ -82,6 +82,14 @@ export type ClaudeImplementerSession = Extract<ImplementerSession, { backend: 'c
  * The init event lists the Agent tool as `Task`; its tool_use blocks name it `Agent`.
  */
 export const JUDGMENT_TOOLS = 'Read,Grep,Glob,Agent';
+
+/**
+ * dev.13, the acting judge's tools: a judgment session that uses the product (a walkthrough, the polish judge, and the
+ * gate's ad hoc experiments) gets a shell and may write (its evidence, scratch scripts) besides reading and delegating.
+ * MCP tools are not restricted by `--tools`: an acting judge gets exactly the servers of its `--mcp-config` (none when it
+ * passes none, under `--strict-mcp-config`).
+ */
+export const ACTING_JUDGE_TOOLS = 'Read,Grep,Glob,Bash,Write,Edit,Agent';
 
 export type BackendCall =
   | Readonly<{
@@ -105,6 +113,24 @@ export type BackendCall =
     /** The prompt module's standing instructions: `--append-system-prompt`. */
     system: string;
     /** Directories outside the worktree the implementer reads or writes: one `--add-dir` each. */
+    evidenceDirs: readonly AbsPath[];
+  }>
+  | Readonly<{
+    /**
+     * dev.13: a judgment that acts (owner 2026-10-18): bypassPermissions, `ACTING_JUDGE_TOOLS`, `--setting-sources project`
+     * (project skills load: slash commands are not disabled), `--strict-mcp-config` with the given servers. Its cwd (the
+     * launch's) is the detached checkout it works in. Fresh, or resumed once for the repair turn, like a judgment.
+     */
+    kind: 'claude-acting-judge';
+    role: ActingJudgeRole;
+    triple: ClaudeTriple;
+    session: JudgmentSession;
+    schemaText: string;
+    /** The prompt module's standing instructions: `--append-system-prompt` (it does agentic work, as the implementer). */
+    system: string;
+    /** The `--mcp-config` JSON text (`{"mcpServers": {...}}`, substitutions done), or null for none (the gate's). */
+    mcpConfig: string | null;
+    /** Directories outside the cwd it reads or writes (its evidence dir, the walk evidence it compares): one `--add-dir` each. */
     evidenceDirs: readonly AbsPath[];
   }>
   | Readonly<{
@@ -143,6 +169,15 @@ export function backendArgv(call: BackendCall): Argv {
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }
+    case 'claude-acting-judge': {
+      const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
+      return [
+        'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', ...(call.mcpConfig === null ? [] : ['--mcp-config', call.mcpConfig]),
+        '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model, '--effort', call.triple.effort,
+        '--tools', ACTING_JUDGE_TOOLS, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
+        ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
+      ];
+    }
     case 'codex-build': {
       const model = ['-m', call.triple.model, '-c', `model_reasoning_effort=${call.triple.effort}`];
       const output = ['--json', '-o', call.outputPath, '--output-schema', call.schemaPath];
@@ -166,6 +201,7 @@ export function promptBytes(call: BackendCall, rendered: string): string {
   switch (call.kind) {
     case 'claude-judgment':
     case 'claude-build':
+    case 'claude-acting-judge':
       return rendered;
     case 'codex-build':
       return `${call.system}\n\n${rendered}`;

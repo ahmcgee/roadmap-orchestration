@@ -10,8 +10,8 @@
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
-  type ClauseId, type FindingId, type IssueId, type LaneId, type ObligationId, type RuleId, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  answerIds, findingId, issueId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
+  type ClauseId, type FindingId, type IssueId, type JourneyId, type LaneId, type ObligationId, type RuleId, type RulingId, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
+  answerIds, findingId, issueId, journeyId, laneId, obligationId, ruleId, rulingId, unitId, visionClauseId,
 } from '../core/ids.ts';
 import { type ActedOn, actedOn } from '../forge/types.ts';
 import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
@@ -1013,6 +1013,141 @@ export function validateFlowOutput(value: unknown): FlowOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// walkthrough and polishJudge (dev.13): acting judges with a final report (`final`, as the build's: the runner ends the
+// session 30 s after `final: true`, reaping the browser). The readers hold each answer to its shape and the rules inside
+// it; what needs the walk's inputs (every journey reported, cited evidence present under the evidence dir, a design path
+// inside a milestone reference, vision clauses active, a polish unit's scope covering a reference) is the walk job's
+// validation (agent C), with the one repair turn every judgment takes.
+
+export const WALK_JOURNEY_OUTCOMES = ['completed', 'blocked'] as const;
+export type WalkJourneyOutcome = (typeof WALK_JOURNEY_OUTCOMES)[number];
+/** `breaks` mints a P1 (class 1: the milestone node stays unpassed), `deviates` a P2 (class 2). There is no walkthrough P3. */
+export const WALK_FINDING_CLASSES = ['breaks', 'deviates'] as const;
+export type WalkFindingClass = (typeof WALK_FINDING_CLASSES)[number];
+/**
+ * What a walk finding is measured against: the journey itself (it cannot be completed), a floor (a standard every product
+ * keeps: contrast, focus, an exit code, ...; `source` the repository file or vision clause stating it), the milestone's
+ * design reference (`path` inside one of its references, `anchor` the place in it), or an active vision clause.
+ */
+export type WalkAgainst =
+  | Readonly<{ type: 'journey' }>
+  | Readonly<{ type: 'floor'; text: string; source: RepoPath | VisionClauseId }>
+  | Readonly<{ type: 'design'; path: RepoPath; anchor: string }>
+  | Readonly<{ type: 'vision'; clause: VisionClauseId }>;
+/** `breaks` cites the journey or a floor; `deviates` the design, the vision or a floor it does not break. */
+export const WALK_AGAINST: { readonly [C in WalkFindingClass]: readonly WalkAgainst['type'][] } = {
+  breaks: ['journey', 'floor'],
+  deviates: ['design', 'vision', 'floor'],
+};
+export type WalkJourneyReport = Readonly<{ journey: JourneyId; outcome: WalkJourneyOutcome; evidence: readonly string[]; note: string }>;
+export type WalkFinding = Readonly<{
+  class: WalkFindingClass; journey: JourneyId; evidence: readonly string[]; claim: string; cause: string; against: WalkAgainst; paths: readonly RepoPath[];
+}>;
+/**
+ * A polish proposal, authored as a full unit (R3): its id, scope (covering one of the milestone's references) and spec,
+ * the spec as an admit's (`S_ADMIT_SPEC`), read into spec.json's canonical text. Code admits it with origin `polish`.
+ */
+export type WalkPolish = Readonly<{
+  journey: JourneyId; evidence: readonly string[]; text: string; unit: Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
+}>;
+export type WalkthroughOutput = Readonly<{
+  final: true;
+  journeys: readonly WalkJourneyReport[];
+  findings: readonly WalkFinding[];
+  polish: readonly WalkPolish[];
+  premises: readonly Premise[];
+  reasons: readonly string[];
+}>;
+
+const S_EVIDENCE = sArr(S_STR);
+export const WALKTHROUGH_SCHEMA: Schema = sObj({
+  final: S_FINAL,
+  journeys: sArr(sObj({ journey: S_STR, outcome: sEnum(WALK_JOURNEY_OUTCOMES), evidence: S_EVIDENCE, note: S_STR })),
+  findings: sArr(sObj({
+    class: sEnum(WALK_FINDING_CLASSES), journey: S_STR, evidence: S_EVIDENCE, claim: S_STR, cause: S_STR,
+    against: {
+      anyOf: [
+        sObj({ type: sEnum(['journey']) }),
+        sObj({ type: sEnum(['floor']), text: S_STR, source: S_STR }),
+        sObj({ type: sEnum(['design']), path: S_STR, anchor: S_STR }),
+        sObj({ type: sEnum(['vision']), clause: S_STR }),
+      ],
+    },
+    paths: S_IDS,
+  })),
+  polish: sArr(sObj({ journey: S_STR, evidence: S_EVIDENCE, text: S_STR, unit: sObj({ id: S_STR, scope: S_IDS, spec: S_ADMIT_SPEC }) })),
+  premises: S_PREMISES,
+  reasons: sArr(S_STR),
+});
+
+const journeyR: Read<JourneyId> = (v, p) => journeyId(v, p);
+const evidenceList: Read<readonly string[]> = arrayOf(str);
+const walkAgainst: Read<WalkAgainst> = tagged('type', {
+  journey: object((g): WalkAgainst => ({ type: g.get('type', literal('journey')) })),
+  floor: object((g): WalkAgainst => ({
+    type: g.get('type', literal('floor')), text: g.get('text', str),
+    source: g.get('source', (v, p): RepoPath | VisionClauseId => (typeof v === 'string' && /^V-[0-9]+$/.test(v) ? visionClauseId(v, p) : repoPath(v, p))),
+  })),
+  design: object((g): WalkAgainst => ({ type: g.get('type', literal('design')), path: g.get('path', (v, p) => repoPath(v, p)), anchor: g.get('anchor', str) })),
+  vision: object((g): WalkAgainst => ({ type: g.get('type', literal('vision')), clause: g.get('clause', vid) })),
+});
+
+export const walkthroughOutput: Read<WalkthroughOutput> = object((f) => {
+  const out: WalkthroughOutput = {
+    final: f.get('final', literal(true)),
+    journeys: f.get('journeys', arrayOf(object((g): WalkJourneyReport => ({
+      journey: g.get('journey', journeyR), outcome: g.get('outcome', oneOf(WALK_JOURNEY_OUTCOMES)), evidence: g.get('evidence', evidenceList), note: g.get('note', str),
+    })), { nonEmpty: true })),
+    findings: f.get('findings', arrayOf(object((g): WalkFinding => ({
+      class: g.get('class', oneOf(WALK_FINDING_CLASSES)), journey: g.get('journey', journeyR), evidence: g.get('evidence', arrayOf(str, { nonEmpty: true })),
+      claim: g.get('claim', str), cause: g.get('cause', str), against: g.get('against', walkAgainst), paths: g.get('paths', uniqueIds((v, p): RepoPath => repoPath(v, p))),
+    })))),
+    polish: f.get('polish', arrayOf(object((g): WalkPolish => ({
+      journey: g.get('journey', journeyR), evidence: g.get('evidence', arrayOf(str, { nonEmpty: true })), text: g.get('text', str),
+      unit: g.get('unit', object((h) => ({ id: h.get('id', unitR), scope: h.get('scope', uniqueIds((v, p) => repoPattern(v, p), { nonEmpty: true })), spec: h.get('spec', admitSpec) }))),
+    })))),
+    premises: f.get('premises', arrayOf(premise)),
+    reasons: f.get('reasons', arrayOf(str)),
+  };
+  assertUnique(out.journeys, (j) => j.journey, `${f.path}.journeys`);
+  assertUnique(out.polish, (x) => x.unit.id, `${f.path}.polish`);
+  const reported = new Set<string>(out.journeys.map((j) => j.journey));
+  out.findings.forEach((x, i) => {
+    if (!reported.has(x.journey)) throw new SchemaError(`${f.path}.findings[${i}].journey`, 'a journey this report reports', x.journey);
+    if (!WALK_AGAINST[x.class].includes(x.against.type)) throw new SchemaError(`${f.path}.findings[${i}].against`, `${WALK_AGAINST[x.class].join(' | ')} for a ${x.class} finding`, x.against);
+  });
+  out.polish.forEach((x, i) => {
+    if (!reported.has(x.journey)) throw new SchemaError(`${f.path}.polish[${i}].journey`, 'a journey this report reports', x.journey);
+  });
+  out.journeys.forEach((j, i) => {
+    if (j.outcome === 'blocked' && !out.findings.some((x) => x.class === 'breaks' && x.journey === j.journey)) {
+      throw new SchemaError(`${f.path}.journeys[${i}].outcome`, 'a blocked journey with at least one breaks finding on it', j.outcome);
+    }
+  });
+  return out;
+});
+
+export function validateWalkthroughOutput(value: unknown): WalkthroughOutput {
+  return walkthroughOutput(value, 'walkthrough');
+}
+
+export const POLISH_DECISIONS = ['keep', 'drop'] as const;
+export type PolishDecision = (typeof POLISH_DECISIONS)[number];
+/** The polish judge's answer: keep or drop the tweak, from walking the journey on both instances; `evidence` its captures. */
+export type PolishJudgeOutput = Readonly<{ final: true; decision: PolishDecision; evidence: readonly string[]; reasons: readonly string[]; premises: readonly Premise[] }>;
+export const POLISH_JUDGE_SCHEMA: Schema = sObj({ final: S_FINAL, decision: sEnum(POLISH_DECISIONS), evidence: S_EVIDENCE, reasons: sArr(S_STR), premises: S_PREMISES });
+export const polishJudgeOutput: Read<PolishJudgeOutput> = object((f) => ({
+  final: f.get('final', literal(true)),
+  decision: f.get('decision', oneOf(POLISH_DECISIONS)),
+  evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })),
+  reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
+  premises: f.get('premises', arrayOf(premise)),
+}));
+export function validatePolishJudgeOutput(value: unknown): PolishJudgeOutput {
+  return polishJudgeOutput(value, 'polishJudge');
+}
+
+// ---------------------------------------------------------------------------------------------------
 
 export type RoleOutputs = {
   readonly planCheck: PlanCheckOutput;
@@ -1022,9 +1157,12 @@ export type RoleOutputs = {
   readonly checkpoint: CheckpointOutput;
   readonly packReview: PackReviewOutput;
   readonly flow: FlowOutput;
+  readonly walkthrough: WalkthroughOutput;
+  readonly polishJudge: PolishJudgeOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
   planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
+  walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
   planCheck: validatePlanCheckOutput,
@@ -1034,4 +1172,6 @@ export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOu
   checkpoint: validateCheckpointOutput,
   packReview: validatePackReviewOutput,
   flow: validateFlowOutput,
+  walkthrough: validateWalkthroughOutput,
+  polishJudge: validatePolishJudgeOutput,
 };

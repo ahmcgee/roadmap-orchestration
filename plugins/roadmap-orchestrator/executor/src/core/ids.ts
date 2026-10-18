@@ -257,9 +257,10 @@ export const divergenceSeq = D.n;
 
 /**
  * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch, the
- * baseline witness, (M4a) a pack review, or (M4b) a flow run and a suite-lane proof. `<kind>-<n>`, numbered per kind.
+ * baseline witness, (M4a) a pack review, (M4b) a flow run and a suite-lane proof, or (dev.13) a milestone walkthrough.
+ * `<kind>-<n>`, numbered per kind.
  */
-export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'flow', 'proof'] as const;
+export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'flow', 'proof', 'walk'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobId = Brand<string, 'JobId'>;
 const JOB = new RegExp(`^(${JOB_KINDS.join('|')})-(${POS})$`);
@@ -470,16 +471,46 @@ export const givenIdOf = G.of;
 export const givenSeq = G.n;
 
 // ---------------------------------------------------------------------------------------------------
-// The canonical order of numbered ids (`<letter>-<n>`: V, Q, I, F, D, T, B, M, P, K, O, W, G and the ruling ids C). Every list of
+// dev.13 ids (SCHEMAS.md "dev.13: milestone walkthroughs and design units").
+
+/** A plan milestone: `MS-<n>`, plan-scoped, unique in the plan, never reused. */
+export type MilestoneId = Brand<string, 'MilestoneId'>;
+const MS = numbered('MilestoneId', 'MS');
+export const milestoneId: IdReader<MilestoneId> = MS.read;
+export const milestoneIdOf = MS.of;
+
+/** A milestone journey: `J-<n>`, unique across the plan's milestones (a journey alone names its milestone). */
+export type JourneyId = Brand<string, 'JourneyId'>;
+const J = numbered('JourneyId', 'J');
+export const journeyId: IdReader<JourneyId> = J.read;
+export const journeyIdOf = J.of;
+
+/** A walkthrough's polish proposal: `X-<n>`, arc-scoped, numbered in the order the arc's `polish-proposed` facts record them. */
+export type PolishId = Brand<string, 'PolishId'>;
+const X = numbered('PolishId', 'X');
+export const polishId: IdReader<PolishId> = X.read;
+export const polishIdOf = X.of;
+export const polishSeq = X.n;
+
+/**
+ * A bring-up's long-lived process (`bringUp.serve[].name`): a slug, unique in its bring-up. `{port:<name>}` names the
+ * free port code allocates to it.
+ */
+export type ServeName = Brand<string, 'ServeName'>;
+export const serveName: IdReader<ServeName> = textual('ServeName', new RegExp(`^${SLUG}$`), SLUG_FORM);
+
+// ---------------------------------------------------------------------------------------------------
+// The canonical order of numbered ids (`<letter>-<n>`: V, Q, I, F, D, T, B, M, P, K, O, W, G, the ruling ids C and (dev.13)
+// the milestone, journey and polish ids MS, J and X). Every list of
 // them, in a record or in code, is in this one order: by letter, then by `<n>` as a number (T-9 < T-10 < T-100).
 // Validators read such lists with `idsAscending`; code writes them with `canonicalIds` (or sorts with `compareIds`).
 // Plain string order stays for keys that are not numbered ids (paths, slugs, job and needs-user ids).
 
 export type NumberedId =
   | VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | AmendmentId | PhaseQuestionId | RulingId | KnownDefectId
-  | OpportunityId | WitnessItemId | GivenId;
+  | OpportunityId | WitnessItemId | GivenId | MilestoneId | JourneyId | PolishId;
 
-const NUMBERED_ID = /^([A-Z])-([0-9]+)$/;
+const NUMBERED_ID = /^([A-Z]{1,2})-([0-9]+)$/;
 
 /** A numbered id's sort key: string order of keys is the canonical order, and equal keys mean equal ids. */
 export function idKey(id: NumberedId): string {

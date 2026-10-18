@@ -66,7 +66,7 @@ import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError,
 import { readHostFingerprint, readHostSample } from './host/sample.ts';
 import { pressureAvailability } from './host/pressure.ts';
 import { arcRolesOf, requirePlanInForce } from './input/inforce.ts';
-import type { PlanM1 } from './input/plan.ts';
+import { type PlanM1, hasMilestones } from './input/plan.ts';
 import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
 import { type ProberHandle, createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
@@ -305,7 +305,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     const routingOf = (unit: UnitId | null): ResolvedRouting => {
       const hit = resolved.get(unit);
       if (hit !== undefined) return hit;
-      const r = resolveRouting(provenanceStack(provenance, arcScopeOf(plan), unit));
+      const r = resolveRouting(provenanceStack(provenance, arcScopeOf(plan), unit, hasMilestones(plan)));
       resolved.set(unit, r);
       return r;
     };

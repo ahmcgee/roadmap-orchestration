@@ -14,10 +14,10 @@ import {
 import { atomicJson, monotonic } from './fsx.ts';
 import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
-  type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
-  JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId,
+  type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
+  JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf,
 } from './ids.ts';
-import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
+import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type SessionCharge, addCharged } from './usage.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
@@ -605,6 +605,7 @@ export class Fold implements JournalView {
   readonly #captures: IssueCaptureState[] = [];
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
+  readonly #walkFacts: WalkFactAt[] = [];
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
   #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
   // M4a rev 3
@@ -1123,6 +1124,39 @@ export class Fold implements JournalView {
       case 'flow-verdict':
         this.#flowFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
+      // dev.13 (SCHEMAS.md "dev.13"): the fold sees the walk jobs and keeps every walk fact (`walkFacts`), holding a walk to
+      // one start and one end, its proposals to id order and to its open walk, and a milestone pass and a tweak judgment to
+      // once each. What they mean for units and milestones is read from `walkFacts` (agents C, D and G).
+      case 'walk-started':
+        this.#openJob(f.job, fail);
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'polish-proposed': {
+        if (f.id !== this.nextPolishId()) fail(`polish-proposed ${f.id}; the next polish id is ${this.nextPolishId()}`);
+        if (!this.#walkOpen(f.job)) fail(`polish-proposed ${f.id} of ${f.job}, which is not a started, unended walk`);
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      case 'walk-ended': {
+        if (!this.#walkOpen(f.job)) fail(`walk-ended of ${f.job}, which is not a started, unended walk`);
+        const proposed = this.#walkFacts.flatMap((x) => (x.fact.kind === 'polish-proposed' && x.fact.job === f.job ? [x.fact.id] : []));
+        if (proposed.join(',') !== f.proposals.join(',')) fail(`walk-ended of ${f.job} names proposals ${f.proposals.join(', ')}; it proposed ${proposed.join(', ')}`);
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      }
+      case 'milestone-passed':
+        if (this.#walkFacts.some((x) => x.fact.kind === 'milestone-passed' && x.fact.milestone === f.milestone)) fail(`a second milestone-passed of ${f.milestone}`);
+        if (!this.#walkFacts.some((x) => x.fact.kind === 'walk-ended' && x.fact.job === f.job)) fail(`milestone-passed by ${f.job}, which has not ended`);
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'tweak-judged':
+        if (this.#walkFacts.some((x) => x.fact.kind === 'tweak-judged' && x.fact.unit === f.unit)) fail(`a second tweak-judged of ${f.unit}`);
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'demo-promoted':
+      case 'demo-failed':
+        this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
       default:
         this.#holisticFact(f, fail, at);
     }
@@ -1131,6 +1165,12 @@ export class Fold implements JournalView {
   #seeJob(job: JobId): void {
     const { kind, n } = parseJobId(job);
     if (n > (this.#jobs.get(kind) ?? 0)) this.#jobs.set(kind, n);
+  }
+
+  /** A walk job started and not yet ended. */
+  #walkOpen(job: JobId): boolean {
+    const facts = this.#walkFacts.map((x) => x.fact);
+    return facts.some((x) => x.kind === 'walk-started' && x.job === job) && !facts.some((x) => x.kind === 'walk-ended' && x.job === job);
   }
 
   /** A job that opens with this fact must be its kind's next (`nextJobId`). */
@@ -1770,6 +1810,14 @@ export class Fold implements JournalView {
 
   flowFacts(): readonly FlowFactAt[] {
     return this.#flowFacts;
+  }
+
+  walkFacts(): readonly WalkFactAt[] {
+    return this.#walkFacts;
+  }
+
+  nextPolishId(): PolishId {
+    return polishIdOf(this.#walkFacts.filter((x) => x.fact.kind === 'polish-proposed').length + 1);
   }
 
   holistic(): HolisticFold {
