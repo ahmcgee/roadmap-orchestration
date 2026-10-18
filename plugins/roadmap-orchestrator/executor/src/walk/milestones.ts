@@ -25,6 +25,9 @@ import { type RepairUnit, isActive } from '../holistic/findings.ts';
 import { lineageMembers } from '../input/envelope.ts';
 import { type Milestone, type PlanM1, milestonesOf, walkRoundsOf } from '../input/plan.ts';
 import { PARK_ESCALATE_MS } from '../schedule/types.ts';
+
+/** What the rounds read of the repairing units (`repairUnits`, or the brief's over a ref): each unit and what its spec repairs. */
+export type Repairs = readonly Pick<RepairUnit, 'unit' | 'repairs'>[];
 import { milestonePassed } from './node.ts';
 
 /** One walk as the log has it: its start, and its end once written. */
@@ -88,7 +91,7 @@ const checkpointDecidedAfter = (view: JournalView, seq: number): boolean =>
   view.holistic().checkpoints.some((c) => c.inputs.seq > seq && c.decided !== null && c.decided.kind !== 'rejected');
 
 /** Round `walk.round`'s view (its walk ended as a round: reported or bring-up-failed). */
-export function roundOf(view: JournalView, plan: PlanM1, walk: WalkRecord, repairs: readonly RepairUnit[]): RoundView {
+export function roundOf(view: JournalView, plan: PlanM1, walk: WalkRecord, repairs: Repairs): RoundView {
   const ended = walk.ended;
   if (ended === null || ended.outcome === 'abandoned') throw new Error(`${walk.job} did not end as a round`);
   const dropped = new Set(ended.dropped);
@@ -110,7 +113,7 @@ export function roundOf(view: JournalView, plan: PlanM1, walk: WalkRecord, repai
 }
 
 /** Where milestone `m` stands now (see the header). */
-export function milestoneProgress(view: JournalView, plan: PlanM1, m: Milestone, repairs: readonly RepairUnit[]): MilestoneProgress {
+export function milestoneProgress(view: JournalView, plan: PlanM1, m: Milestone, repairs: Repairs): MilestoneProgress {
   const walks = walksOf(view, m.id);
   const open = walks.find((w) => w.ended === null);
   if (open !== undefined) return { kind: 'walking', walk: open };
@@ -139,7 +142,7 @@ export const walksPending = (view: JournalView, plan: PlanM1, repairs: readonly 
  * The demo's hook (agent G): every settled milestone, with whether its node passed and its last round's walk (job and
  * walked SHA), in plan order.
  */
-export function settledMilestones(view: JournalView, plan: PlanM1, repairs: readonly RepairUnit[]): readonly Readonly<{ milestone: MilestoneId; passed: boolean; last: WalkRecord }>[] {
+export function settledMilestones(view: JournalView, plan: PlanM1, repairs: Repairs): readonly Readonly<{ milestone: MilestoneId; passed: boolean; last: WalkRecord }>[] {
   return milestonesOf(plan).flatMap((m) => {
     const p = milestoneProgress(view, plan, m, repairs);
     return p.kind === 'settled' ? [{ milestone: m.id, passed: milestonePassed(view, m.id), last: p.last }] : [];

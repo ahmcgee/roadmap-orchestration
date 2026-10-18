@@ -6,7 +6,7 @@ import {
   type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type IssueId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
   type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId, issueId, issueNumber,
   amendmentRefKey, compareIds, idList, jobIdOf, needsUserId, obligationId, phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, type BriefId,
-  type FindingId, type OpportunityId, type WitnessItemId, findingId, opportunityId, witnessItemId,
+  type FindingId, type OpportunityId, type WitnessItemId, findingId, opportunityId, witnessItemId, type MilestoneId, milestoneId,
 } from '../core/ids.ts';
 import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
 import { type IsoTime, type PlanPath, type RepoPath, isoTime, planPath, repoPath } from '../core/values.ts';
@@ -342,6 +342,22 @@ export type BriefArc = Readonly<{
   drift: readonly BriefDrift[];
   /** M4b: the arc's flow loop (src/brief.ts `briefFlow`); null for an arc with the loop off (one 1.0.0-dev.7 started). */
   flow: BriefFlow | null;
+  /**
+   * dev.13: the arc's demo at its ref (not a delta; src/demo/promote.ts `demoView`): the promoted milestone and SHA, whether
+   * promotion is held and the demo up, what changed since the promotion before it, and the rough edges (the open
+   * walkthrough P2s). Null before the arc's first promotion. Where it runs is status's (`status.demo.where`): the brief reads
+   * refs only.
+   */
+  demo: BriefDemo | null;
+}>;
+
+export type BriefDemo = Readonly<{
+  milestone: MilestoneId;
+  sha: Sha;
+  held: boolean;
+  up: boolean;
+  since: Readonly<{ milestones: readonly MilestoneId[]; tweaks: readonly UnitId[]; fixes: readonly UnitId[] }>;
+  roughEdges: readonly FindingId[];
 }>;
 
 /**
@@ -447,6 +463,14 @@ const briefArc: Read<BriefArc> = object((f) => ({
     findings: g.get('findings', arrayOf(object((h) => ({ id: h.get('id', (v, p) => findingId(v, p)), clauses: h.get('clauses', idList(vidR, { nonEmpty: true })) })), { nonEmpty: true })),
   })))),
   flow: f.get('flow', nullable(briefFlow)),
+  demo: f.get('demo', nullable(object((g): BriefDemo => ({
+    milestone: g.get('milestone', (v, p) => milestoneId(v, p)), sha: g.get('sha', (v, p) => sha(v, p)), held: g.get('held', bool), up: g.get('up', bool),
+    since: g.get('since', object((h) => ({
+      milestones: h.get('milestones', arrayOf((v, p) => milestoneId(v, p))), tweaks: h.get('tweaks', arrayOf((v, p) => unitId(v, p))),
+      fixes: h.get('fixes', arrayOf((v, p) => unitId(v, p))),
+    }))),
+    roughEdges: g.get('roughEdges', arrayOf((v, p) => findingId(v, p))),
+  })))),
 }));
 
 export const briefPayload: Read<BriefPayload> = object((f) => {

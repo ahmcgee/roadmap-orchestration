@@ -24,7 +24,7 @@ import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIde
 import { type PressureAvailability, PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
-  COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
+  COMMAND_VERDICTS, DEMO_ACTS, LENS_KIND_NAMES, type ApprovalFingerprint, type DemoAct, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
   type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
   type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
@@ -985,7 +985,9 @@ export type WalkFact =
   /** The demo (`refs/roadmap/demo`) moved to `sha`, the settled tip of `milestone` (or the completed arc's, its last settled milestone). */
   | Readonly<{ kind: 'demo-promoted'; milestone: MilestoneId; sha: Sha }>
   /** The demo's bring-up of `sha` failed (the old instance keeps serving); `log` its captured output. Opens a walkthrough P1 on `milestone`. */
-  | Readonly<{ kind: 'demo-failed'; milestone: MilestoneId; sha: Sha; log: AbsPath }>;
+  | Readonly<{ kind: 'demo-failed'; milestone: MilestoneId; sha: Sha; log: AbsPath }>
+  /** The owner's act on the demo (`roadmap demo <act>`, its command `command`): the fold reads `held` and `up` from these. */
+  | Readonly<{ kind: 'demo-acted'; command: CommandId; act: DemoAct }>;
 export type WalkFactKind = WalkFact['kind'];
 
 export type HolisticFactKind = HolisticFact['kind'];
@@ -1926,6 +1928,7 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
   'milestone-passed': object((f): Fact => ({ kind: f.get('kind', literal('milestone-passed')), milestone: f.get('milestone', milestoneR), job: f.get('job', walkJobR) })),
   'demo-promoted': object((f): Fact => ({ kind: f.get('kind', literal('demo-promoted')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR) })),
   'demo-failed': object((f): Fact => ({ kind: f.get('kind', literal('demo-failed')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR), log: f.get('log', absR) })),
+  'demo-acted': object((f): Fact => ({ kind: f.get('kind', literal('demo-acted')), command: f.get('command', cmdR), act: f.get('act', oneOf(DEMO_ACTS)) })),
 };
 
 /** The readers of the M3 facts, spread into `fact`. */

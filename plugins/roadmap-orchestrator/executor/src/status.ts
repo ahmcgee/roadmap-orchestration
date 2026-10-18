@@ -145,6 +145,7 @@ import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones
 import { type MilestoneState, milestoneProgress, milestoneState, walksOf } from './walk/milestones.ts';
 import { milestoneEdges, milestonePassed, milestoneWaits } from './walk/node.ts';
 import { type ClassTotal, type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byClass, byModel, meterOf, ownShare } from './meter.ts';
+import { type DemoStatus, demoStatus } from './demo/promote.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat, largeDiffSeat } from './pipeline/transitions.ts';
@@ -561,6 +562,12 @@ export type Status = Readonly<{
    * the givens, the ruler changes and the next trigger and cooldown. Null before a start.
    */
   flow: FlowStatus | null;
+  /**
+   * dev.13 (src/demo/promote.ts `demoStatus`): the demo the owner picks up, or null before the arc's first promotion (and on
+   * an arc without milestones): where it is, its milestone and SHA, held and up, what changed since the promotion before
+   * it, the open walkthrough P2s as known rough edges, what the host runs now and the latest failed bring-up.
+   */
+  demo: DemoStatus | null;
   /**
    * dev.13: the plan's milestones (src/walk/milestones.ts): each one's state (`building | walking | blocked | passed |
    * polishing | settled`), its node, its walks in log order (the last round's number), and its active walkthrough findings.
@@ -1765,6 +1772,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     checkpointWaits: checkpointWaitsOf(view),
     ...admitted,
+    demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs: repairUnits({ journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan }) }, hostDir),
     flow: start === null || plan === null ? null
       : flowStatus({ runDir, repo: start.record.repo, journal: { view } }, revParse(start.record.repo, branchRef(plan.integrationBranch)), isoTimeOf(new Date(now))),
     milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairUnits({

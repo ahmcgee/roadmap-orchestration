@@ -491,7 +491,19 @@ const serveReady: Read<ServeReady> = (value, path) => {
   if (keys.length === 1 && keys[0] === 'log') return object((g): ServeReady => ({ log: g.get('log', str) }))(value, path);
   throw new SchemaError(path, '{http: <url>} or {log: <substring>}', value);
 };
-const bringUp: Read<BringUp> = object((f) => {
+/**
+ * dev.13: the demo's name, reserved: `refs/roadmap/demo` (beside the arcs' `refs/roadmap/<arc>`) and `<worktreeRoot>/demo`
+ * (beside `<worktreeRoot>/<arc>`) are the demo's (src/demo/), so no arc takes it.
+ */
+export const DEMO_NAME = 'demo';
+const planArc: Read<ArcId> = (v, p) => {
+  const arc = arcId(v, p);
+  if (arc === DEMO_NAME) throw new SchemaError(p, `an arc id other than "${DEMO_NAME}" (reserved: refs/roadmap/${DEMO_NAME} and <worktreeRoot>/${DEMO_NAME} are the demo's)`, v);
+  return arc;
+};
+
+/** A milestone's bring-up as the plan holds it (also the demo's records, src/demo/records.ts). */
+export const bringUpR: Read<BringUp> = object((f) => {
   const out: BringUp = {
     setup: f.get('setup', arrayOf(argvR)),
     serve: f.get('serve', arrayOf(object((g): ServeEntry => ({ name: g.get('name', (v, p) => serveName(v, p)), argv: g.get('argv', argvR), ready: g.get('ready', serveReady) })))),
@@ -519,7 +531,7 @@ const milestone: Read<Milestone> = object((f) => {
     units: f.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
     design: f.get('design', milestoneDesign),
     references: f.get('references', arrayOf((v, p) => repoPath(v, p))),
-    bringUp: f.get('bringUp', bringUp),
+    bringUp: f.get('bringUp', bringUpR),
     journeys: f.get('journeys', arrayOf(journey)),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
   };
@@ -637,7 +649,7 @@ export function parsePlan(value: unknown): PlanM1 {
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
-      arc: f.get('arc', (v, p) => arcId(v, p)),
+      arc: f.get('arc', planArc),
       integrationBranch: f.get('integrationBranch', (v, p) => branchName(v, p)),
       baseline: f.get('baseline', (v, p) => sha(v, p)),
       worktreeRoot: f.get('worktreeRoot', (v, p) => absPath(v, p)),

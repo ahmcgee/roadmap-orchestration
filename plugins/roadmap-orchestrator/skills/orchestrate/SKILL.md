@@ -205,7 +205,9 @@ Keep the arc's inputs in their own directory outside the product working tree, f
       only that the reference paths exist once the design unit merged; the gate judges the rest against its spec.
     - **Bring-up and journeys.** `bringUp` brings the product up from a clean checkout of the integration tip with no
       shell: `setup` commands, long-lived `serve` entries each with a readiness probe (`[]` for a CLI or an SDK),
-      `env` with `{port:<name>}` for the ports code allocates, and `seed` data. Anything a journey needs beyond the
+      `env` with `{port:<name>}` for the ports code allocates, and `seed` data. Ports belong to `serve`'s env and argv:
+      `setup` must not bake a port into the build, because the demo builds on spare ports and then restarts `serve`
+      (and reseeds) on its stable ones. Anything a journey needs beyond the
       product (a local CI runner, a broker, Docker, a cluster) is part of the bring-up and the milestone's
       `resources`. Each journey is a task in the words the user or client would use, `via: browser` for a page and
       `shell` for everything else, with its `entry` and the step and time budget the vision's experience standards
@@ -410,6 +412,29 @@ assumptions for the rest, and start the next arc's Phase 0 then, never inside th
 brief. It acknowledges the brief's non-blocking digest and convergence items and moves "since"; acknowledged starts
 no longer count toward K. A `stale` reply (exit 78) means something changed: show the new brief and ask again.
 Blocking items are never acked by a brief.
+
+## The demo
+
+On an arc with milestones the owner gets a running build of what is being built, to check and steer when they choose.
+Walks and lanes never touch it, so it never shifts under them while agents test.
+
+- **What it runs.** Each milestone that settles (its walks done, no open walkthrough P1) is promoted: code moves
+  `refs/roadmap/demo` to the SHA its last walk confirmed, and the supervisor brings that version up beside the old one,
+  seeds it, and switches only once it is ready. The URL stays the same: its ports are allocated once and kept. A
+  completed arc promotes its final tip. A blocked milestone never promotes, so the demo stays at the last good one. A
+  CLI, SDK or pipeline product is the promoted checkout with its setup run; the owner runs it from its `bin/`.
+- **Where it is.** `status.demo` names the URL or path, the milestone and SHA, what changed since the last promotion
+  (settled milestones, kept tweaks, fixes) and the open walkthrough P2s as known rough edges; the brief's Demo section
+  repeats all but the address. Tell the owner the address at the first promotion and when a check-in has a new one.
+- **A version that does not come up** leaves the old one serving, and opens a walkthrough P1 on its milestone citing the
+  bring-up log (`status.demo.failed`): the checkpoint repairs it like any P1. A bring-up that works for walks but not for
+  the demo is a real defect.
+- **The owner's acts**, which you run when the owner asks: `roadmap demo hold` (keep this version and its data; promotion
+  freezes), `roadmap demo release` (promote the latest settled milestone now), `roadmap demo down` and `roadmap demo
+  up`. Steering what they saw goes through `steer` or an issue, as always. Each promotion reseeds the demo: an owner who
+  wants to keep their own data holds it first.
+- The demo outlives the arc and a host restart: the next `roadmap start` on this host brings it back from
+  `refs/roadmap/demo`.
 
 ## Chaining
 

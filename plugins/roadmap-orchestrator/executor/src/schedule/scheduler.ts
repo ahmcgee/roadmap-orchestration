@@ -65,6 +65,9 @@
 // the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a
 // holistic job runs, and no holistic job starts while it runs. While a proposal is pending its apply, new candidates
 // wait (`flowApply`). Right before `arc-completed`, the verdicts the completion closes and the compact flow series.
+// dev.13, the demo (src/demo/promote.ts): each iteration of an arc with milestones journals the demo failures the host
+// record lists, promotes the latest settled milestone (unless held) and rewrites the keeper's desired file; right before
+// `arc-completed`, the final tip is promoted (`promoteFinal`).
 // M4b rev 3: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
 // a restart starts it fresh), which admission reads to release a host-pressure hold (`AdmitInput.pressure`,
 // src/schedule/ready.ts) and a flow run's inputs bind as the host's cpu wait now (`FlowTrackInput.hostPressure`).
@@ -130,6 +133,7 @@ import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.t
 import { type CheckpointContext, type DesignParkRoute, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
 import { beforeCompletion, flowApplyHeld, flowOn, runFlowTrack } from '../flow/track.ts';
+import { demoTicker, promoteFinal, writeDesired } from '../demo/promote.ts';
 import { PressureTicks, hostPressure, readHostCpu } from '../host/pressure.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
@@ -716,6 +720,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const h = holisticContexts(x);
   const holistic = (): boolean => view().holistic().on;
   const route = designRoute(h);
+  const demo = demoTicker(x.stage);
   // A crash right after a checkpoint's decision leaves no checkpoint due, so `runCheckpoint` (which settles too) would
   // not run: the decision's aftermath a crash cut short (a no-op's divergences, dispositions, the digest) is settled here.
   if (holistic()) {
@@ -1189,7 +1194,11 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.checkpoint)) return null;
     if (blockers.length === 0) {
       // M4b: the verdicts the completion closes and the compact flow series, right before `arc-completed`.
-      if (view().holistic().completion?.active !== true) beforeCompletion(h.checkpoint);
+      if (view().holistic().completion?.active !== true) {
+        beforeCompletion(h.checkpoint);
+        promoteFinal(x.stage, integrationHeadNow(x.stage));
+        writeDesired(x.stage);
+      }
       completeArc(x.stage);
       if (view().holistic().completion !== null) await terminalSnapshot(x.stage);
       return { kind: 'complete', units: summary() };
@@ -1268,6 +1277,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       // 4. A halted unit's, the schedule's and the holistic layer's needs-user; the holistic jobs; the end.
       raiseHalted();
       raiseHolistic();
+      demo.tick();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
       const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()) };

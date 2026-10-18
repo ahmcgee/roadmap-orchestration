@@ -86,6 +86,9 @@
 //   scope-decide (scope growth, 2026-10-15) `scope accept|reject <u>`: the root agent's decision on a unit held by its
 //            plan-check's verified scope-growth proposal; an accept lands the ruled growth (src/commands/scope.ts). Mutation,
 //            scope {u}.
+//   demo     (dev.13) `demo up|down|hold|release`: the owner's act on the demo, `demo-acted{command, act}` (src/demo/promote.ts
+//            `actOnDemo`): hold freezes promotion, release resumes it and promotes the latest settled milestone when newer,
+//            up and down start and stop the host's instance (the supervisor's keeper). Mutation, no scope.
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
@@ -151,6 +154,7 @@ import { mergeIn } from './mergein.ts';
 import { reverse } from './reverse.ts';
 import { rule, rulingReasons } from './rule.ts';
 import { decideScope } from './scope.ts';
+import { actOnDemo } from '../demo/promote.ts';
 import { steer } from './steer.ts';
 
 /**
@@ -281,6 +285,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return requestFlow(ctx, command.id, body.reason);
     case 'scope-decide':
       return decideScope(ctx, command.id, body);
+    case 'demo':
+      return actOnDemo(ctx, command.id, body.act);
   }
 }
 
