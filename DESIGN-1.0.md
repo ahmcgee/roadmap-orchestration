@@ -1002,6 +1002,23 @@ walkthrough authors as units, which code admits and a **polish judge** keeps or 
 are bounded (`limits.walkRounds`). A settled milestone promotes the **demo**, a stable instance the owner picks up when
 they choose. Records and contracts: executor/SCHEMAS.md "dev.13"; plan: `/claude-state/plans/dev13-implementation.md`.
 
+**Phase 0 plans them.** The architect marks a milestone wherever units combine into an end-to-end experience, and plans
+its **design unit** (risk `high`) ahead of its units: every milestone unit runs `after` it, and the shared Phase-0 rows
+advise `milestone-unit-before-design` where one does not. The design unit writes the milestone's design references
+(UI, API, CLI, SDK, bus, CI/CD and config contents per the skill), extending an earlier milestone's rather than
+restarting, so the language stays one across milestones. The owner steers by supplying a design (`design: {supplied:
+true}`) or asking for a mediated one at Phase 0. Milestones on a plan without the holistic layer are the shared row
+`milestones-need-holistic` (start, `apply`, `phase0 check`); `walk-tools-missing` refuses a bring-up program or a
+`browser` journey's walkthrough MCP server the environment lacks, fixed in the project's devcontainer. When a
+milestone has a `browser` journey and the repo has no committed `frontend-design` project skill, the architect recommends
+among Phase 0's questions that the owner vendor Anthropic's into `.claude/skills/` (a plugin, at any scope, does not reach a
+unit worktree's project-only session), never a refusal. Builds load the project's skills; a milestone unit's plan-check,
+build and gate read its milestones' design references as documents, and a build in a milestone with a `browser` journey
+gets the walkthrough MCP servers. Milestones change only by
+`apply`, an edit class that drains nothing; a walked milestone keeps its units and design, and one being walked waits
+for its walk to end. The vision gains `## Experience standards` (clause kind `experience`: outcomes and refusals, never
+mechanisms), distilled only when the world has a human-facing surface.
+
 ## 3. What carries verbatim
 
 Proven in arc 1 or by a named incident; ported as code, not prose.
@@ -1018,8 +1035,10 @@ Proven in arc 1 or by a named incident; ported as code, not prose.
   `roadmap phase0 check` until green. `phase0 check` is read-only and deterministic and shares its rows with
   `start`: pin re-derivation and `T-n` discipline, corpus overlap, census, obligation rules resolved, debt
   dispositions and `P-n` allocation, amendment dispositions, intake coverage against the kept capture, vision
-  confirmed, issue policy trusted, chain (§2.11), `tree-uncommitted`. It reports `sliceCandidates` (active world
-  clauses whose census rules are not all held on the baseline). **Pack review** is the executor job `review-<n>`,
+  confirmed, issue policy trusted, chain (§2.11), `tree-uncommitted`; dev.13, `milestones-need-holistic` and
+  `walk-tools-missing` (§2.12). It reports `sliceCandidates` (active world clauses whose census rules are not all held
+  on the baseline) and advisories that never refuse, dev.13's `milestone-unit-before-design` among them. Phase 0 also
+  marks milestones and plans each one's design unit ahead of its units (§2.12). **Pack review** is the executor job `review-<n>`,
   role `packReview` on seat `arc` (frontier), corpus arcs only: it reads plan, specs, obligations with census, the
   rules index, the Phase-0 record and the vision, from inputs kept before spawn. Before the first admission,
   admission requires a completed review whose inputs hash to the current required-review key, with its blocking

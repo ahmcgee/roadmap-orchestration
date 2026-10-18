@@ -352,7 +352,7 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | `JobId` | `+ walk-<n>` | none |
 | Ids | `MilestoneId MS-n`, `JourneyId J-n`, `PolishId X-n`, `ServeName`; `NumberedId` two-letter prefixes | none |
 | vision | clause kind `+ experience` | none |
-| `finding-opened` | `+ milestone?` (exactly on a walkthrough finding); `lens + walkthrough`; `FindingSource + demo{sha}` | absent: none (lasting) |
+| `finding-opened` | `+ milestone?` (exactly on a walkthrough finding); `+ cause?` (only on a walkthrough finding, agent C); `lens + walkthrough`; `FindingSource + demo{sha}` | absent: none (lasting) |
 | Facts | `+ walk-started, walk-ended, polish-proposed, tweak-judged, milestone-passed, demo-promoted, demo-failed` (`WalkFact`) | none |
 | `Role` | `+ walkthrough, polishJudge` (seat `arc`, frontier), in force only under milestones | not in force: no rev, check or smoke moves |
 | `launch.json` terminal, result.json | backend `role` may be a walk role with a `JudgmentSession` (`JudgmentSessionRole`) | none: dev.12 records name earlier roles |
@@ -360,6 +360,10 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | `.roadmap/config.json` | `+ walkthrough?: {mcp}` | absent: no browser drive (lasting) |
 | `StartupRejection`, Phase-0 advisories | `+ milestones-need-holistic`, `+ walk-tools-missing`; advisory `+ milestone-unit-before-design` | none |
 | `ORIGIN_RANK` (not persisted) | `polish` 2, `planned` 3 | none |
+| `proc.spawn` subject | `+ bring-up{milestone, step}` (agent C) | none: dev.12 records name earlier purposes |
+| launch.json / result.json command | `purpose + bring-up`; a cancelled command's `reason + teardown` (`COMMAND_CANCEL_REASONS`) | none |
+| `proc.kill`, cancel.json | `reason + teardown` (a bring-up serve, by its owner) | none |
+| `status` (derived) | `+ milestones`; `edges[] + {type: milestone}`; `units[].waitingFor + milestones`; `completion` blocker `+ walk-pending` | derived (an arc without milestones shows none) |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -649,8 +653,8 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 
 ## Op kinds (`OP_KINDS`, `OP_SCHEMAS`)
 
-`proc.spawn` purposes: `backend | lane | teardown | probe | smoke` (M3 subjects add `arc-backend | journey | mutant`).
-`proc.kill` reasons: `deadline | stall | pause | stop | recovery | external-unknown | preempt | supersede` (`preempt`: M3, lanes only; `supersede`: M4b, a checkpoint call only).
+`proc.spawn` purposes: `backend | lane | teardown | probe | smoke` (M3 subjects add `arc-backend | journey | mutant`; M4b `proof`; dev.13 `bring-up`).
+`proc.kill` reasons: `deadline | stall | pause | stop | recovery | external-unknown | preempt | supersede | reported | teardown` (`preempt`: M3, lanes only; `supersede`: M4b, a checkpoint call only; `teardown`: dev.13, a bring-up's serve process only).
 
 | Kind | `expect` (`OpExpect`) | `post` (`OpPost`) | done `outcome` (`OpOutcome`) |
 |---|---|---|---|
@@ -729,7 +733,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 |---|---|---|---|
 | `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; required), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
-| `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only) |
+| `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede\|teardown, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only; `teardown`: dev.13, a bring-up's serve process only) |
 | `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below) |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
@@ -752,7 +756,7 @@ src/pipeline/dispatch.ts; every judgment's fresh call persists its session); `bu
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
 exitCode|null, expectedExit, verdict: pass|fail|stall|process-fault|cancelled}`, `reason: pause|stop` (a command's
-also `preempt`, M3) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or `fail`; cause `stall` ⇒ `stall`, whatever the exit: a lane
+also `preempt`, M3, and `teardown`, dev.13: a bring-up's serve process) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or `fail`; cause `stall` ⇒ `stall`, whatever the exit: a lane
 that hung is red, a verdict on the tree; cause `cancel` ⇒ `cancelled{reason}` from cancel.json, the same
 interruption a backend call records as outcome `cancelled{reason}`; `classifyCommand(exit, cancel, expectedExit)`).
 `outcome = success{value} | refusal{stopReason} | malformed{detail} | process-fault{detail} |
@@ -3868,12 +3872,33 @@ unit.origin + 'polish'; unit.polish?: { milestone: MS-n; proposal: X-n }   // pr
   `polish` without origin `polish` or the reverse. A unit may be in several milestones (step 0 decided: nothing forbids it).
 - **`milestones-need-holistic`** is a Phase-0 startup row (`StartupRejection{kind: milestones-need-holistic}`, beside
   `holistic-needs-corpus`), not a parse refusal (step 0 decided: it is named, like its sibling, in the start and apply
-  refusal output). Agent B implements the row; `arcRolesInForce` fails loud on milestones in a non-holistic scope.
+  refusal output). It is shared row 15 (`milestonesNeedHolisticRows`, src/phase0/rows.ts; the predicate
+  `milestonesNeedHolistic`, src/input/plan.ts), in every mode, so start (fresh or not), `apply` and `phase0 check` (both
+  sources) refuse it. The classifier names it too, as the reason `{"kind":"milestones-need-holistic"}`, and resolves no
+  routing on such a revision; `phase0 check --plan` skips the routing row for it. `arcRolesInForce` fails loud on
+  milestones in a non-holistic scope.
 - **Accessors**: `milestonesOf`, `hasMilestones`, `milestoneOf(plan, id)`, `milestonesOfUnit(plan, unit)`,
   `designUnitOf(m)` (null for `supplied`), `walkRoundsOf`, `portNames`.
-- **Plan edits**: `PlanChange + {type: 'milestones'}` (src/core/events.ts), written by an `apply` only, a new edit class
-  in src/input/classify.ts modelled on `unit-priority` (agent B: detection, validation and what it drains; step 0 only
-  added the variant, classified as draining nothing). The checkpoint cannot edit milestones (backlog).
+- **Plan edits**: `PlanChange + {type: 'milestones'}` (src/core/events.ts), the `milestones` edit class of
+  src/input/classify.ts (`milestoneRows`), modelled on `unit-priority`: pushed when `milestonesOf` differs, it **drains
+  nothing** (scope none: the milestone node gates readiness, and a walk reads the plan in force when it starts). The
+  checkpoint cannot edit milestones (backlog). Refused (all or nothing, each reason listed):
+  - a change by any proposer but an architect `apply`: `the milestones change only through an architect \`apply\`, not a <proposer>`;
+  - removing a milestone a `walk-started` names: `milestone <MS> has been walked (<walk-n, …>); it cannot be removed`;
+  - any edit of a milestone whose walk has started and not ended: `milestone <MS> is being walked (<walk-n>); edit it once
+    the walk ends`;
+  - a walked milestone's `units` or `design` changed (its text, references, bring-up, journeys and resources may change
+    between walks: a fix to a failed bring-up is an apply): `milestone <MS> has been walked (…): its units and design are
+    fixed; plan another milestone for more`;
+  - a milestone added, or whose `units` changed, never walked, whose units have all merged (no publication would reach
+    it): `milestone <MS>: every unit it lists has merged, so no publication would reach it; list a unit still to merge`;
+  - on every revision, by any proposer (a checkpoint's cut included): a milestone listing a cut unit (it would never be
+    reached): `milestone <MS> lists <unit, …>, cut: a cut unit never merges, so the milestone would never be reached; drop it
+    from the milestone's units in the same apply`.
+
+  A revision that gives the plan its first milestones (or removes its last) moves the walk seats into (out of) force and
+  so the routing rev, with no `routing` change (as adding `holistic` does): the classifier returns the new plan routing in
+  `routings`, so `apply` runs the routing row over it and smokes any backend it newly seats.
 - **`ORIGIN_RANK`** (src/schedule/types.ts): `repair 0, checkpoint 1, polish 2, planned 3`.
 - **Polish units** (step 0 decided, agent D applies): risk `high` (Opus builds design tweaks: only its guide carries design
   guidance), `after: []`, `resources` the milestone's, `scope` and `spec` as the walkthrough authored them.
@@ -3927,33 +3952,68 @@ proposals are recorded in its `walk-ended.dropped`, never applied or banked.
 
 ### `BackendCall` kind `claude-acting-judge` (`src/backends/argv.ts`; owner 2026-10-18: generic, the gate will use it too)
 
-`{kind, role: ActingJudgeRole, triple: ClaudeTriple, session: JudgmentSession, schemaText, system, mcpConfig: string | null,
-evidenceDirs}`. argv: `claude -p --output-format stream-json --verbose --strict-mcp-config [--mcp-config <json>]
+`{kind, role: ActingJudgeRole, triple: ClaudeTriple, session: JudgmentSession, schemaText, system, mcpConfig: AbsPath | null,
+evidenceDirs}`. argv: `claude -p --output-format stream-json --verbose --strict-mcp-config [--mcp-config <file>]
 --setting-sources project --json-schema <schema> --model --effort --tools Read,Grep,Glob,Bash,Write,Edit,Agent
 (ACTING_JUDGE_TOOLS) --permission-mode bypassPermissions --session-id|--resume <id> --append-system-prompt <system>
 [--add-dir <dir>]...`. Slash commands are not disabled (project skills load). The cwd (the launch's) is the detached
 checkout it works in. `mcpConfig` null: no MCP server (the gate's). Fresh, or resumed once for the repair turn. Its launch
-terminal and result records name the role with a `JudgmentSession` like a judgment. Agent A owns the walk smoke; the gate's
-move onto this kind belongs to another agent.
+terminal and result records name the role with a `JudgmentSession` like a judgment. The gate's move onto this kind belongs
+to another agent.
+
+- **MCP tools** need no `--tools` or `--allowed-tools` entry (agent A, verified on Claude Code 2.1.301, 2026-10-18): `--tools`
+  names built-in tools only and does not restrict MCP tools, and bypassPermissions allows them; with this argv and the
+  Playwright server the init event lists every `mcp__playwright__browser_*` tool and the server `connected`.
+- **The MCP config is a file** (agent A): `walkMcpConfig(servers, evidenceDir)` (src/backends/mcp.ts) is its text, kept
+  content-addressed as `<runDir>/inputs/<sha256>.mcp.json` (`MCP_CONFIG_INPUT`) like the schema and prompt, and
+  `mcpConfig` is its path, so launch.json names it and its bytes stay on record.
+- **A walk role's call** is `callActingJudge(ctx, ActingJudgeCallSpec)` (src/pipeline/dispatch.ts): the role's arc seat,
+  spawned, metered (`arc-backend`), retried and read back (`recordedArcCall`) exactly as `callArcRole`; `--add-dir` is a
+  judgment's surface (`judgmentReadDirs`: the repository, the run dir, then the spec's `evidenceDirs`), and the spec's
+  `mcpConfig` is the config text or null.
 
 ### Repo config (`.roadmap/config.json`, `src/routing/layers.ts`)
 
 `walkthrough?: { mcp: { <name>: { command: string; args?: string[]; env?: Record<EnvName, string> } } }` (non-empty; a
 name is `[A-Za-z0-9_-]{1,64}`; `args` and `env` absent: none). Absent: no browser drive, so a `browser` journey is refused
-at bootstrap. Code passes the servers as `--mcp-config '{"mcpServers": {<name>: {"type": "stdio", "command", "args",
-"env"}}}'` with `--strict-mcp-config`, substituting in `args` and `env` values only (`WALK_SUBSTITUTIONS`): `{evidence}` the
+at bootstrap. Code passes the servers as an `--mcp-config` file holding `{"mcpServers": {<name>: {"type": "stdio", "command",
+"args", "env"}}}` with `--strict-mcp-config`, substituting in `args` and `env` values only (`WALK_SUBSTITUTIONS`): `{evidence}` the
 session's evidence dir (absolute) and `{viewport}` `WALK_VIEWPORT` = `1280x800` (step 0 decided: the pinned desktop
 viewport; a narrow pass resizes in session, method). This repo's server: `playwright-mcp --headless --isolated --browser
 chromium --output-dir {evidence} --viewport-size {viewport}`. Builds in a milestone with a `browser` journey get the same
-servers (agent F).
+servers ("Build sessions" below).
+
+### Build sessions (agent F)
+
+- **`claude-build` + `mcpConfig: AbsPath | null`** (src/backends/argv.ts): the `--mcp-config` file right after
+  `--strict-mcp-config`, as an acting judge's. A Claude build of a unit that a milestone with a `browser` journey lists,
+  or that is such a milestone's design unit, gets `walkMcpConfig(walkthrough.mcp, <the build's evidence dir>)`, kept as
+  `<runDir>/inputs/<sha256>.mcp.json` (`BackendRequest.implementer.mcpConfig` is its text; `buildBrowser`,
+  src/pipeline/stages.ts); every other build gets null and no server. The servers are the repo config's the arc started
+  under (`routingBase.config`); a browser journey without `walkthrough.mcp` is refused at bootstrap, so a build that meets
+  one fails loud. A Codex seat gets none (an MCP config there throws). The assessment call and every round of the
+  attempt pass the same file.
+- **Slash commands are no longer disabled for builds** (owner 2026-10-18): `--disable-slash-commands` stays on judgments
+  only, so a build loads the project's skills, as an acting judge does. The pre-dev.13 implementer captures carry the flag;
+  argv.test compares the builder's argv with them less it.
+- **What loads, measured** (Claude Code 2.1.301, 2026-10-18; a temp git repo and one Haiku call per variant under the build
+  argv, killed after the init event): under `--setting-sources project` the init event's `skills` lists a skill committed
+  under the checkout's `.claude/skills/<name>/SKILL.md`, in a git worktree of the repo too (a unit worktree's case), beside
+  Claude Code's built-ins. A plugin does not reach a unit worktree: one the repo's `.claude/settings.json` `enabledPlugins`
+  names loads only in the directory it is installed for (installed_plugins.json `projectPath`), so with frontend-design
+  installed at project scope for the repo root, a session there lists `frontend-design:frontend-design`, and one in a git
+  worktree of that repo, or a fresh repo enabling it (as `frontend-design@claude-plugins-official` or
+  `@anthropic-plugin-directory`), lists no plugin. A user-scope plugin and the user's own skills (`~/.claude/skills`) never
+  load: user settings are not a source (with `user,project` they do). So a design skill reaches builds, gates and walks
+  only as a project skill committed to the repo (the m5 fixture vendors frontend-design's with its licence).
 
 ### Phase 0 and startup rows
 
 | Row | Shape | Owner |
 |---|---|---|
-| `milestones-need-holistic` | `StartupRejection{kind}` | B |
-| `walk-tools-missing` | `StartupRejection{kind, milestone, problem: program{step, argv0} \| mcp-unconfigured \| mcp-unconnected{server, detail}}`; `step` names the command: `setup[i]`, `serve.<name>`, `seed[i]` | A (the MCP smoke: a one-turn call on the cheapest seat reading the init event's `mcp_servers[].status`), B (the row's argv0 half) |
-| `milestone-unit-before-design` | advisory `Phase0Advisory{kind, milestone, unit, design}`: a milestone unit not a descendant (through `after`) of its design unit | B |
+| `milestones-need-holistic` | `StartupRejection{kind}`: shared row 15, every mode | B |
+| `walk-tools-missing` | `StartupRejection{kind, milestone, problem: program{step, argv0} \| mcp-unconfigured \| mcp-unconnected{server, detail}}`; `step` names the command: `setup[i]`, `serve.<name>`, `seed[i]` | A, both halves (src/preflight/walktools.ts `walkToolsCheck`; start group 2 and `phase0 check --plan`, against the working tree's repo config). Changed from the plan (agent A): the MCP check makes no model call. Code starts each configured server, substituted with a scratch evidence dir, sends the MCP `initialize` request over stdio and needs a JSON-RPC result within 30 s (`MCP_HANDSHAKE_MS`), then stops it (`mcpHandshake`, src/backends/mcp.ts). That is what Claude Code's init event reports as `connected`. `detail` names the spawn error, the error answer, the exit or the timeout, with stderr's tail. Each server is checked once, and every milestone with a `browser` journey gets a row per server that failed. The argv0 half resolves each bring-up command's argv[0] as a lane's is, on the bring-up `env`'s PATH or else the executor's; a relative path with a slash is a checkout file and is not checked |
+| `milestone-unit-before-design` | advisory `Phase0Advisory{kind, milestone, unit, design}`: shared row 14, every mode: a live (not cut, not re-entered) milestone unit not a descendant (through `after`, transitively) of its design unit; a supplied design has none | B |
 
 ### Outputs (`src/prompts/schemas.ts`)
 
@@ -3980,6 +4040,22 @@ units), evidenceDir}`. `PolishJudgeInputs = {vision, milestone, journey, proposa
 referenceDiff: BoundedDiff, walkEvidenceDir, before, after: ProductInstance & {entry}, evidenceDir}`. Rubric lenses are
 method, in the prompt, not inputs.
 
+Agent F: `PlanCheckInputs`, `BuildInputs` and `GateInputs` + `milestones: MilestonesInput | null` (`unitMilestones`,
+src/pipeline/stages.ts, at the revision the call reads: the plan-check's tip checkout, the build's integration tip, the
+gate's tip); `BuildInputs` + `browser: BuildBrowser | null`.
+```ts
+MilestonesInput = { of: UnitMilestone[] /* plan order, non-empty */; references: DocText[]; binary: RepoPath[] }
+UnitMilestone   = { as: 'member'; id: MS-n; text; dirs: RepoPath[] }                        // the milestone lists the unit
+                | { as: 'design'; id: MS-n; text; dirs: RepoPath[]; journeys: Journey[] }   // the unit is its design.unit
+BuildBrowser    = { servers: string[] /* walkthrough.mcp names */; bringUps: {milestone: MS-n; bringUp: BringUp}[] }
+```
+`references`: every file under any of the unit's milestones' reference dirs at that revision, in path order, once each
+(`referenceFiles`), embedded as documents beside the contracts (`design reference <path>`); `binary` names the files with a
+NUL in their first 8000 bytes (git's rule), read from the checkout. A dir not there yet (its design unit unmerged, or the
+design unit's own) has none. Null when the unit is in no milestone, and the prompt then carries no milestone block.
+`browser`: the milestones (member or design) with a `browser` journey, on a Claude seat only; its block tells the session
+it has the servers and the bring-ups, and stops there (using them is the builder's).
+
 ### Job, evidence and checkouts (step 0 decided; agents C and D implement)
 
 - Walk: checkout `<worktreeRoot>/<walk-n>.walk` at `walk-started.sha`; evidence dir `<runDir>/evidence/jobs/<walk-n>/` (the
@@ -4004,6 +4080,71 @@ round k (repairs and polish) is retired or cut, at least one landed, and k < `wa
 
 No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also for a walkthrough P1 nobody owns past
 `PARK_ESCALATE_MS`, and for a milestone node still unpassed when its rounds run out; its content names the milestone.
+
+### The walk job (agent C: src/walk/; implementation decisions)
+
+- **Modules.** `src/walk/node.ts` the node (readiness), `milestones.ts` where a milestone stands (rounds, states,
+  escalations, the demo's hook), `bringup.ts` the product's lifecycle (D's compare instances and G's demo reuse it),
+  `report.ts` validation and minting, `walk.ts` the job (`runWalk`, one per scheduler turn; the scheduler runs it as a
+  holistic job after the checkpoint and before the audit).
+- **Order.** Capture `walk-started` under the fence first (ports allocated just before it), then the reservation: the
+  milestone's `resources` and `@cpu`×4 (`WALK_CPU`, a build's) under `job{walk-n}`, served first and probed; an occupied
+  resource leaves the started walk waiting (`incomplete`), its occupancy item raised once. The detached checkout and the
+  bring-up are made lazily, before the first call the walk must make: a resumed walk whose call was recorded consumes it
+  and brings nothing up.
+- **Bring-up spawns.** `SpawnSubject + {purpose: 'bring-up'; milestone; step}` (`step` as `walk-tools-missing` names it:
+  `setup[i]`, `serve.<name>`, `seed[i]`; its op key brackets-free, `bring-up:<job>:setup.0`), a command terminal of
+  `COMMAND_PURPOSES + 'bring-up'`, parent the job, env PATH and HOME plus the substituted bring-up `env`, no stall
+  watchdog. setup and seed each within 30 min, readiness within 120 s (`READY_TIMEOUT_MS`), polled every 200 ms; a serve
+  process runs to its owner's `proc.kill{teardown}` (`KILL_REASONS + 'teardown'`, `CANCEL_REASONS + 'teardown'`; its
+  result `verdict: cancelled, reason: teardown`, `COMMAND_CANCEL_REASONS`; only a bring-up serve is torn down: a lane, a
+  backend call never is), its deadline the session's plus 15 min. Stop kills bring-up spawns (`STOP_KILLS`). Recovery
+  cancels a live bring-up runner (`cancel.json{recovery}`) before adopting it: the walk brings the product up again.
+- **Logs.** Each serve entry's stdout and stderr are linked into `<evidence>/server/serve.<name>.stdout|stderr` while it
+  runs and copied there when it stops; a failed step's output is copied to `<evidence>/server/<step>.stdout|stderr`,
+  which the bring-up P1 cites (claim names the step and why, `cause: "bring-up: <step> failed"`, no obligation).
+- **The session.** Agent A's `callActingJudge` (src/pipeline/dispatch.ts): `claude-acting-judge` as
+  `arc-backend{walkthrough.arc}` under `job{walk-n}`, cwd the checkout, `--add-dir` a judgment's surface plus the evidence
+  dir, `--mcp-config` only for a milestone with a `browser` journey (`walkSessionMcp` over src/backends/mcp.ts
+  `walkMcpConfig`, the servers of the repo config the arc started under, `routingBase.config`; a browser journey without
+  the config is a bug here, Phase 0 refuses it). The references input is src/pipeline/stages.ts `referenceFiles` at the
+  walked SHA (a binary file left out). The open findings are shown with their recorded cause (below), deadline 90 min (`WALK_SESSION_MIN`),
+  a lost call retried once. Call 1 is the walk; call 2 its one repair turn (`repairTurnOf`); refused again, interrupted,
+  failed or parked, the walk ends `abandoned` and the same round is due again.
+- **Validation** (`walkRefusals`): a cited evidence path is read relative to the evidence dir, or absolute inside it, and
+  must be a file there; a polish scope covers a reference when a pattern's literal part lies inside a reference dir or holds
+  one; a polish unit's spec must be its own unit's at rev 1 and its id no unit of the plan.
+- **A walkthrough finding keeps its cause** (`finding-opened + cause?`, present only on a walkthrough finding; absent:
+  none, lasting): the next walk is shown it (`WalkFindingView`) and re-reports a defect still present under exactly that
+  cause, so the key dedupes it.
+- **Minting.** A finding's evidence is its `paths` (blobs at the walked SHA), then its evidence files (absolute, blob null);
+  its claim is prefixed with its journey; a vision clause it cites (`vision`, or a floor's `V-n` source) is kept;
+  `gateHadPassed: true`. A finding merged into an active one of the same key is the walk's finding too (`walk-ended.findings`).
+  A resumed walk re-mints the same report: findings merge, proposals already recorded for the walk are skipped.
+- **Crash labels.** `walk.after-started`, `walk.after-mint`, `walk.before-ended`, `walk.after-ended`, `walk.after-passed`.
+  A crash between `walk-ended` and `milestone-passed` is settled at the scheduler's start (`settleWalks`): the latest walk
+  ended `reported`, no walk of the milestone started since, and the log read through that end held no active walkthrough P1.
+- **The rounds brake** (`milestoneProgress`). Round k's admitted units: the plan's polish units carrying k's applied
+  proposals (its proposals less `dropped`) and the units whose specs repair a finding of k (`repairUnits`), each followed
+  to its lineage head. Round k is open while an author has yet to act (`pending`: `checkpoint`, a finding of k still
+  `open` and no checkpoint captured after k's end decided; `polish`, an applied proposal in no unit of the plan: agent D's
+  revision applies them, and D extends this rule for a proposal its admit refuses) or one of its units is neither merged
+  nor cut. Then k+1 is due when one landed and k < `walkRounds`; else the milestone settles (derived, no fact). A
+  `bring-up-failed` walk is a round; an `abandoned` one is not.
+- **Milestone node.** Exemption is by the lineage root's origin: a re-entry of a gated planned unit stays gated, whatever
+  its own origin.
+- **Escalation** (`walkItemsDue`, raised by the scheduler's tick with the findings' items): `finding-p1-escalated`
+  (blocking) parented by the walk job (one item per walk job): a P1 of the walk still `open` PARK_ESCALATE_MS after the
+  walk ended; or the milestone settled with its node unpassed (parented by its last walk).
+- **Demo hook (agent G).** `settledMilestones(view, plan, repairs)`: each settled milestone, whether it passed, and its
+  last walk (job, SHA). A settled milestone is the promotion point; G decides the SHA it promotes.
+- **Completion.** `COMPLETION_BLOCKERS + 'walk-pending'` (after `checkpoint-pending`): a walk due or running, or a round
+  open.
+- **Status.** `Status.milestones: [{id, state, passed, round, walks: [{job, round, outcome | null}], findings}]` (state
+  `building` before the milestone is reached, then `walking | blocked | passed | polishing | settled`: `walking` a walk
+  due or running unpassed, `blocked` a round open or settled unpassed, `passed` a walk due or running after the pass,
+  `polishing` a round open after it, `settled` settled passed); `EdgeView + {type: 'milestone', unit, milestone,
+  passed}`; `WaitingFor + milestones` (the unpassed nodes a unit waits on; its compact state `milestones=MS-1`).
 
 ### The demo (agent G)
 

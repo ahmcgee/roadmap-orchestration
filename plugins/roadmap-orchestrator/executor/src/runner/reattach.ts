@@ -10,12 +10,15 @@
 //   alone re-runs the adapter (redone), and neither is lost with usage unavailable{no-result}. A valid
 //   result.json with live members is not quiescent: they are killed before it is certified.
 //
+//   runner alive of a `bring-up` command (dev.13, src/walk/bringup.ts) → cancelled{recovery} first, then adopted: its
+//   owner (a walk job) brings its product up again when it resumes, so a `serve` process is never waited out.
+//
 // A lost invocation is retried by the caller as a new ordinal with the same deadline, never here.
 import type { IntentOf } from '../core/events.ts';
 import { invocationId } from '../core/ids.ts';
 import { type ProcContext, type Settled, invocationDir, liveRunner, settle } from '../pipeline/invoke.ts';
 import { runnerFiles } from './files.ts';
-import { awaitRunner, launchSha256 } from './launch.ts';
+import { awaitRunner, cancel, launchSha256 } from './launch.ts';
 
 export type Reattached = Readonly<{ how: 'adopted' | 'runner-gone'; settled: Settled }>;
 
@@ -30,6 +33,8 @@ export async function reattach(ctx: ProcContext, intent: IntentOf<'proc.spawn'>)
   if (runner === null) return { how: 'runner-gone', settled: await settle(ctx, intent, { type: 'recovered' }) };
   // A live runner was started by this intent, so launch.json was written before it.
   if (launch === null) throw new Error(`${files.invDir}: runner ${runner.pid} is alive but launch.json is missing`);
-  await awaitRunner({ files, launch, runner });
+  const handle = { files, launch, runner };
+  if (intent.expect.subject.purpose === 'bring-up' && files.read('cancel.json') === null) cancel(handle, 'recovery');
+  await awaitRunner(handle);
   return { how: 'adopted', settled: await settle(ctx, intent, { type: 'adopted' }) };
 }

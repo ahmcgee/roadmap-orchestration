@@ -85,6 +85,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { freshJudgmentSession, resumedJudgmentSession } from '../backends/argv.ts';
+import { walkMcpConfig } from '../backends/mcp.ts';
 import {
   BACKEND_PARK_CLASSES, type DiffShown, type GateLargeDiff, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OutcomeStage, type ScopeGrowthProposal, type StageOutcomeDetail, type StageOutcomeKind,
 } from '../core/events.ts';
@@ -117,16 +118,16 @@ import {
   type CorpusInForce, type InputFiles, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles,
   inputPath, keptInput, keptPayload, parseUnitSpec, requirePlanInForce, revisionInForce, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
-import { type KnownDefect, type PlanUnit, advancesOf, knownDefectsOf, parsePlan, planCheckShapeOf, targetDocumentPaths, targetDocuments } from '../input/plan.ts';
+import {
+  type KnownDefect, type PlanUnit, advancesOf, designUnitOf, knownDefectsOf, milestonesOf, parsePlan, planCheckShapeOf, targetDocumentPaths, targetDocuments,
+} from '../input/plan.ts';
 import { type CorpusView, materialiseCorpus } from '../corpus/materialise.ts';
 import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, BuildAssess, Checkout, CorpusInput, DeliveredWitness, DocText, EscalationInput, FastLane, GateTargetInput, PlanCheckAcceptance, PlanCheckCheckouts, PlanCheckPriorRound,
-  PlanCheckScopeGrowth, ReferenceIndex,
-  RulingText,
-  TargetInput, VisionInput,
+  ArchitectureInput, BuildAssess, BuildBrowser, Checkout, CorpusInput, DeliveredWitness, DocText, EscalationInput, FastLane, GateTargetInput, MilestonesInput, PlanCheckAcceptance,
+  PlanCheckCheckouts, PlanCheckPriorRound, PlanCheckScopeGrowth, ReferenceIndex, RulingText, TargetInput, UnitMilestone, VisionInput,
 } from '../prompts/inputs.ts';
 import { visionInputOf } from '../prompts/inputs.ts';
 import {
@@ -136,7 +137,7 @@ import {
 import { ASSESSED_DIRECTIVE, judgmentRepairDirective } from '../prompts/directives.ts';
 import { type ParkFacts, NO_PARK_FACTS, repeatNeedsUser, stageOutcomeFact } from '../park/table.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
-import type { JudgmentRole, JudgmentSeat } from '../routing/types.ts';
+import type { JudgmentRole, JudgmentSeat, Triple } from '../routing/types.ts';
 import { buildCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import { type Reservation, type StageHolder, cleanup, fastLanes, heldReservation, holderUnits, run } from '../resources/reserve.ts';
@@ -400,6 +401,54 @@ export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
       rulings: rulings.filter((r) => !cited(r)).map((r) => ({ id: r.id, line: r.status === 'active' ? firstSentence(r.text) : `withdrawn by ${r.by}` })),
       ledger: ledgerPath(ctx),
     },
+  };
+}
+
+/**
+ * dev.13: the milestones `unit` takes part in under the plan in force (a member of their `units`, or their design unit), in
+ * plan order, with their design references at `tip` (`MilestonesInput`); null when it is in none. What its plan-check,
+ * build and gate read.
+ */
+export function unitMilestones(ctx: Pick<StageContext, 'plan' | 'repo'>, unit: UnitId, tip: Sha): MilestonesInput | null {
+  const of = milestonesOf(ctx.plan()).flatMap((m): UnitMilestone[] => {
+    if (designUnitOf(m) === unit) return [{ as: 'design', id: m.id, text: m.text, dirs: m.references, journeys: m.journeys }];
+    return m.units.includes(unit) ? [{ as: 'member', id: m.id, text: m.text, dirs: m.references }] : [];
+  });
+  if (of.length === 0) return null;
+  const files = referenceFiles(ctx.repo, tip, of.flatMap((m) => m.dirs));
+  return { of, references: files.flatMap((f) => (f.text === null ? [] : [{ path: f.path, text: f.text }])), binary: files.flatMap((f) => (f.text === null ? [f.path] : [])) };
+}
+
+/**
+ * Every file under the reference dirs `dirs` at `tip`, in path order, once each: its text, or null for a binary file (a NUL
+ * in its first 8000 bytes, git's own rule). A dir absent at `tip` has none.
+ */
+export function referenceFiles(repo: AbsPath, tip: Sha, dirs: readonly RepoPath[]): readonly Readonly<{ path: RepoPath; text: string | null }>[] {
+  if (dirs.length === 0) return [];
+  const paths = git(repo, ['ls-tree', '-r', '-z', '--name-only', tip, '--', ...new Set(dirs)]).split('\0').filter((f) => f !== '').sort();
+  return paths.map((p) => {
+    const text = git(repo, ['cat-file', 'blob', `${tip}:${p}`]);
+    return { path: repoPath(p), text: text.slice(0, 8000).includes('\0') ? null : text };
+  });
+}
+
+/**
+ * dev.13: the browser drive of a Claude build of `unit` in a milestone (a member or its design unit) with a `browser` journey:
+ * the `walkthrough.mcp` servers (the repo config the arc started under; bootstrap refuses a `browser` journey without
+ * them) and the `--mcp-config` text with `{evidence}` the build's evidence dir `evidenceDir`. Null on a Codex seat, or
+ * when no such milestone has the unit.
+ */
+export function buildBrowser(
+  ctx: Pick<StageContext, 'plan' | 'routingBase'>, unit: UnitId, backend: Triple['backend'], evidenceDir: AbsPath,
+): Readonly<{ input: BuildBrowser; mcpConfig: string }> | null {
+  if (backend !== 'claude') return null;
+  const browser = milestonesOf(ctx.plan()).filter((m) => (m.units.includes(unit) || designUnitOf(m) === unit) && m.journeys.some((j) => j.via === 'browser'));
+  if (browser.length === 0) return null;
+  const servers = ctx.routingBase.config?.walkthrough?.mcp;
+  if (servers === undefined) throw new Error(`${unit}: milestone ${browser[0]!.id} has a browser journey, but the repo config has no walkthrough.mcp (bootstrap refuses this: walk-tools-missing)`);
+  return {
+    input: { servers: Object.keys(servers), bringUps: browser.map((m) => ({ milestone: m.id, bringUp: m.bringUp })) },
+    mcpConfig: walkMcpConfig(servers, evidenceDir),
   };
 }
 
@@ -759,6 +808,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
       scopeGrowth: planCheckScopeGrowth(ctx, unit.id, effectiveScope(pinned), now.spec, checkouts.tip.at),
       escalation: escalationOf(ctx, unit.id, 'plan-check', seat.tier, validatePlanCheckOutput),
+      milestones: unitMilestones(ctx, unit.id, checkouts.tip.at),
     });
     writeJudgmentInputs(ctx, parent, { tip: checkouts.tip.at, head: null, specRev: now.spec.rev, specSha256: now.sha256, routingRev: seat.routingRev });
     return { checkouts, rendered, target };
@@ -1319,7 +1369,11 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const work = workDir(ctx.runDir, parent);
   durableMkdir(work);
   const prompt = promptFor('build', dispatch.triple.model);
-  const lib = library(ctx, spec, integrationTip(ctx));
+  const tip = integrationTip(ctx);
+  const lib = library(ctx, spec, tip);
+  const milestones = unitMilestones(ctx, unit.id, tip);
+  // dev.13: a build in a milestone with a browser journey gets the walkthrough MCP servers, its screenshots in `work`.
+  const browser = buildBrowser(ctx, unit.id, dispatch.triple.backend, work);
   // D1 (R56): the lane files of the fast required witness lanes, published before the call, and their commands.
   const witnessChecks = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
   const lanes = buildLaneIds(spec);
@@ -1327,11 +1381,11 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeFastLanes(spec), suiteLanes: fastSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
-    fixRound, witnessChecks, assess,
+    fixRound, witnessChecks, assess, milestones, browser: browser?.input ?? null,
   });
   const callFor = (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
-    request: { kind: 'implementer', dispatch, session: call.session, evidenceDirs: [work, ...call.evidenceDirs, ledgerDir(ctx)] },
+    request: { kind: 'implementer', dispatch, session: call.session, evidenceDirs: [work, ...call.evidenceDirs, ledgerDir(ctx)], mcpConfig: browser?.mcpConfig ?? null },
     system: prompt.system, rendered: render(call.fixRound, null), schema: buildSchemaFor(lanes), cwd: round.worktree, deadlineAt: round.deadlineAt,
   });
   if (!assessing) return buildRead(ctx, unit, parent, decidedRound(input), await callRound(ctx, round, callFor), held.reservation);
@@ -1348,7 +1402,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     const before = treeState(round.worktree);
     const called = await callBackend(ctx, {
       unit: unit.id, parent,
-      request: { kind: 'implementer', dispatch, session: freshSession(dispatch), evidenceDirs: [work, ledgerDir(ctx)] },
+      request: { kind: 'implementer', dispatch, session: freshSession(dispatch), evidenceDirs: [work, ledgerDir(ctx)], mcpConfig: browser?.mcpConfig ?? null },
       system: prompt.system, rendered: render(null, { risk: pinned.riskFloor, vision: visionInput(ctx) }), schema: PLAN_ASSESSMENT_SCHEMA,
       cwd: round.worktree, deadlineAt: round.deadlineAt,
     });

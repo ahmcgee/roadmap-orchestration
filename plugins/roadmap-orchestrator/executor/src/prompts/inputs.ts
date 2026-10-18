@@ -11,7 +11,7 @@ import type {
   ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
   WitnessItemId,
 } from '../core/ids.ts';
-import type { Journey } from '../input/plan.ts';
+import type { BringUp, Journey } from '../input/plan.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
@@ -133,6 +133,30 @@ export type EscalationInput =
   | Readonly<{ kind: 'route-up'; first: Readonly<{ decision: string; reasons: readonly string[] }> | null }>
   | Readonly<{ kind: 'risk-trigger' }>;
 
+/**
+ * dev.13: a milestone a unit takes part in. `member`: the milestone lists the unit in its `units`; `design`: the unit is
+ * the milestone's design unit (`design.unit`), which writes or extends the reference dirs `dirs` for the milestone's
+ * `journeys`. Contract input, not method.
+ */
+export type UnitMilestone =
+  | Readonly<{ as: 'member'; id: MilestoneId; text: string; dirs: readonly RepoPath[] }>
+  | Readonly<{ as: 'design'; id: MilestoneId; text: string; dirs: readonly RepoPath[]; journeys: readonly Journey[] }>;
+
+/**
+ * dev.13: the milestones a unit takes part in, in plan order (non-empty), and their design references at the dispatched
+ * revision: every file under any of their reference dirs, in path order, once each. `references` holds the text files in
+ * full; `binary` names the others (a wireframe image), which the session reads from its checkout. A dir that does not
+ * exist yet (its design unit has not merged, or this is the design unit) has no files. Null: the unit is in no milestone.
+ */
+export type MilestonesInput = Readonly<{ of: readonly UnitMilestone[]; references: readonly DocText[]; binary: readonly RepoPath[] }>;
+
+/**
+ * dev.13: a Claude build in a milestone (as a member or its design unit) with a `browser` journey: the `walkthrough.mcp`
+ * servers its session has (by name; `{evidence}` is the build's evidence dir), and each such milestone's bring-up, so it
+ * can bring the product up and look at its own work. Null otherwise, and always on a Codex seat (it gets no MCP config).
+ */
+export type BuildBrowser = Readonly<{ servers: readonly string[]; bringUps: readonly Readonly<{ milestone: MilestoneId; bringUp: BringUp }>[] }>;
+
 export type PlanCheckInputs = Readonly<{
   spec: RenderedSpec;
   /** The cited contracts and active rulings, in full; the rest in `index`. */
@@ -169,6 +193,8 @@ export type PlanCheckInputs = Readonly<{
   scopeGrowth: PlanCheckScopeGrowth;
   /** W3: why this check runs at the escalation seat; null below it. */
   escalation: EscalationInput | null;
+  /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
+  milestones: MilestonesInput | null;
 }>;
 
 /** What a plan-check reads for its scope-growth proposals. */
@@ -217,6 +243,10 @@ export type BuildInputs = Readonly<{
    * arc). Null: the build itself.
    */
   assess: BuildAssess | null;
+  /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
+  milestones: MilestonesInput | null;
+  /** dev.13: the browser drive and bring-ups of a build in a milestone with a `browser` journey; null otherwise. */
+  browser: BuildBrowser | null;
 }>;
 
 /** The plan-check slice an in-session assessment rules on (R55). */
@@ -285,6 +315,8 @@ export type GateInputs = Readonly<{
   escalation: EscalationInput | null;
   /** 1.0.0-dev.12: the diff over the large-diff threshold (`GateLargeDiffInput`); null under it, and the plain prompt. */
   largeDiff: GateLargeDiffInput | null;
+  /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
+  milestones: MilestonesInput | null;
 }>;
 
 /**
@@ -325,6 +357,9 @@ export type FindingView = Readonly<{
   claim: string;
   owner: UnitId | null;
 }>;
+
+/** dev.13: an open walkthrough finding as a walk sees it: its view and its cause (null for one recorded without it). */
+export type WalkFindingView = FindingView & Readonly<{ cause: string | null }>;
 
 export type LensInputs = Readonly<{
   vision: VisionInput;
@@ -518,7 +553,7 @@ export type WalkthroughInputs = Readonly<{
   journeys: readonly Journey[];
   references: readonly DocText[];
   tweaks: readonly KeptTweak[];
-  findings: readonly FindingView[];
+  findings: readonly WalkFindingView[];
   product: ProductInstance;
   units: readonly RenderedSpec[];
   evidenceDir: AbsPath;
@@ -558,12 +593,15 @@ export type RoleInputs = {
 export const ROLE_INPUTS = {
   planCheck: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
-    'scopeGrowth', 'escalation',
+    'scopeGrowth', 'escalation', 'milestones',
   ],
-  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  build: [
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
+    'milestones', 'browser',
+  ],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff',
+    'checks', 'escalation', 'largeDiff', 'milestones',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
@@ -654,6 +692,44 @@ export function documentsXml(docs: readonly Readonly<{ source: string; content: 
   const body = docs.map((d, i) =>
     `<document index="${i + 1}">\n<source>${d.source}</source>\n<document_content>\n${d.content}\n</document_content>\n</document>`);
   return `<documents>\n${body.join('\n')}\n</documents>`;
+}
+
+/** dev.13: a unit's milestone design references as documents, beside its contracts (none when it is in no milestone). */
+export function milestoneDocuments(m: MilestonesInput | null): readonly Readonly<{ source: string; content: string }>[] {
+  return m === null ? [] : m.references.map((r) => ({ source: `design reference ${r.path}`, content: r.text }));
+}
+
+/** dev.13: the `<milestones>` block (empty when the unit is in no milestone): each milestone's part, text and reference dirs. */
+export function milestonesText(m: MilestonesInput | null): string {
+  if (m === null) return '';
+  const entry = (u: UnitMilestone): string => {
+    const part = u.as === 'design' ? 'this unit is its design unit: it writes or extends the reference dirs for the journeys below' : 'this unit builds part of it';
+    const head = `- ${u.id} (${part}): ${u.text}\n  Reference dirs: ${u.dirs.join(', ')}`;
+    if (u.as === 'member') return head;
+    const journeys = u.journeys.map((j) => `  - ${j.id} [${j.via}] from ${j.entry}${j.budget === null ? '' : ` (budget: ${j.budget.steps} steps, ${j.budget.seconds} s)`}: ${j.text}`);
+    return `${head}\n  Journeys:\n${journeys.join('\n')}`;
+  };
+  const binary = m.binary.length === 0 ? '' : `\nReference files that are not text, to read from the checkout:\n${bullets(m.binary, '')}`;
+  return `\n\n<milestones>\nThe milestones this unit is part of. Their design references are embedded above as documents.\n${m.of.map(entry).join('\n')}${binary}\n</milestones>`;
+}
+
+/** One bring-up as command lines: setup, serve (with its ready probe), seed, and the env they run with. */
+function bringUpText(b: BringUp): string {
+  const cmd = (argv: readonly string[]): string => argv.map(shellQuote).join(' ');
+  const env = Object.keys(b.env).sort().map((k) => `${k}=${shellQuote(b.env[k] ?? '')}`);
+  return [
+    `  env: ${env.length === 0 ? '(none)' : env.join(' ')}`,
+    ...b.setup.map((a) => `  setup: ${cmd(a)}`),
+    ...b.serve.map((s) => `  serve ${s.name}: ${cmd(s.argv)} (ready: ${'http' in s.ready ? `GET ${s.ready.http} answers below 500` : `its output contains ${JSON.stringify(s.ready.log)}`})`),
+    ...b.seed.map((a) => `  seed: ${cmd(a)}`),
+  ].join('\n');
+}
+
+/** dev.13: the `<browser>` block of a build in a milestone with a `browser` journey (empty otherwise). */
+export function buildBrowserText(b: BuildBrowser | null): string {
+  if (b === null) return '';
+  const bringUps = b.bringUps.map((x) => `${x.milestone}:\n${bringUpText(x.bringUp)}`);
+  return `\n\n<browser>\nThis session has the MCP server${b.servers.length === 1 ? '' : 's'} ${b.servers.join(', ')} (a browser drive), so you can bring the product up and look at and screenshot your own work; screenshots it saves land in the evidence directory. Each milestone's bring-up runs from the worktree root with its env, and {port:<name>} stands for a free port you choose:\n${bringUps.join('\n')}\nStop whatever you start before your final report.\n</browser>`;
 }
 
 export function rulingsText(rulings: readonly RulingText[]): string {
