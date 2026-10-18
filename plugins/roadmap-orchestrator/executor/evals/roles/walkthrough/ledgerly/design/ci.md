@@ -24,7 +24,7 @@ first failing step and exits with that step's exit code.
 
 A failure must let the person fix it without opening CI's logs:
 
-- the step that failed, with its line in `ci/pipeline.yml` and its command;
+- the step that failed, with its command and the command's line in `ci/pipeline.yml` (the `run:` line);
 - for a test step, each failing test file, the tail of its output, and the command that reruns just that file;
 - for any other step, the tail of its output and the command that reruns it.
 

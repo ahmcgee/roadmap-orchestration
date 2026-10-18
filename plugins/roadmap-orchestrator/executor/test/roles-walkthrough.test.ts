@@ -280,7 +280,7 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
       return;
     }
     case 'W9': {
-      const create = async (entry: Record<string, string>): Promise<[Response, Record<string, unknown>]> => {
+      const create = async (entry: Record<string, string | number>): Promise<[Response, Record<string, unknown>]> => {
         const r = await fetch(`${u.base}/api/v1/entries`, {
           method: 'POST', headers: { ...CLOSE, authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}`, 'content-type': 'application/json' },
           body: JSON.stringify(entry),
@@ -290,11 +290,15 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
       const [r, body] = await create({ team: 'platform', month: 'Sept', vendor: 'Hetzner', amount: '12,50' });
       // A body with fields the API does not know is refused through the same response, never stored with them dropped.
       const [ru, unknown] = await create({ team: 'platform', month, vendor: 'Hetzner', amount: '12.50', notes: 'runners', currency: 'EUR' });
+      // A JSON number amount is refused (amounts are decimal strings, never floats), never recorded.
+      const [rn, numeric] = await create({ team: 'platform', month, vendor: 'Hetzner', amount: 12.5 });
       if (plant) {
         assert.equal(r.status, 200, label);
         assert.equal(typeof body['error'], 'string');
         assert.equal(ru.status, 200, label);
         assert.match(String(unknown['error']), /notes is not an entry field/);
+        assert.equal(rn.status, 200, label);
+        assert.match(String(numeric['error']), /Amount must be a decimal string/);
       } else {
         assert.equal(r.status, 422, label);
         assert.equal(r.headers.get('content-type'), 'application/problem+json');
@@ -302,6 +306,8 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
         assert.deepEqual((body['invalid_params'] as { name: string }[]).map((x) => x.name), ['month', 'amount']);
         assert.equal(ru.status, 422, label);
         assert.deepEqual((unknown['invalid_params'] as { name: string }[]).map((x) => x.name), ['notes', 'currency']);
+        assert.equal(rn.status, 422, label);
+        assert.deepEqual(numeric['invalid_params'], [{ name: 'amount', reason: 'Amount must be a decimal string, like "120.50", not a JSON number.' }]);
       }
       return;
     }
@@ -349,7 +355,11 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
         assert.equal(red.stdout.trim().split('\n').at(-1), 'exit 1', label);
         assert.doesNotMatch(red.stdout, /money\.test\.js|unit/, `${label}: names neither the step nor the file`);
       } else {
-        assert.match(red.stdout, /Step "unit" failed \(ci\/pipeline\.yml:\d+\)/, label);
+        // The failure cites the line holding the step's command, as design/ci.md's golden output does.
+        const runLine = readFileSync(join(copy, 'ci/pipeline.yml'), 'utf8').split('\n').indexOf('    run: node --test test/*.test.js') + 1;
+        assert.ok(runLine > 0);
+        assert.match(red.stdout, new RegExp(`Step "unit" failed \\(ci/pipeline\\.yml:${runLine}\\): node --test test/\\*\\.test\\.js\n`), label);
+        assert.match(readFileSync(join(copy, 'design/ci.md'), 'utf8'), new RegExp(`Step "unit" failed \\(ci/pipeline\\.yml:${runLine}\\)`), `${label}: the golden output agrees`);
         assert.match(red.stdout, /test\/money\.test\.js/);
         assert.match(red.stdout, /rerun it locally: node --test test\/money\.test\.js/);
       }

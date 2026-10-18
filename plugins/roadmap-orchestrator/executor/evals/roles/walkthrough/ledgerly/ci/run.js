@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // The local CI runner: runs ci/pipeline.yml's steps in order from the project root, the way CI does, and stops at the
 // first failing step (design/ci.md). The file format is a small YAML subset: `name:`, then `steps:` with `- name:` and
-// `run:` per step. A step's command runs without a shell; node expands its own test globs.
+// `run:` per step. A step's command runs without a shell; node expands its own test globs. A step keeps the line of its
+// `- name:` (`line`) and of its command (`runLine`, the line a failure cites).
 //
 //   node ci/run.js [--file ci/pipeline.yml]
 import { spawnSync } from 'node:child_process';
@@ -19,8 +20,8 @@ function parsePipeline(text) {
     let m;
     if ((m = /^name:\s*(\S.*)$/.exec(line)) !== null) pipeline.name = m[1].trim();
     else if (/^steps:\s*$/.test(line)) return;
-    else if ((m = /^ {2}- name:\s*(\S.*)$/.exec(line)) !== null) pipeline.steps.push({ name: m[1].trim(), run: null, line: i + 1 });
-    else if ((m = /^ {4}run:\s*(\S.*)$/.exec(line)) !== null && pipeline.steps.length > 0) pipeline.steps.at(-1).run = m[1].trim();
+    else if ((m = /^ {2}- name:\s*(\S.*)$/.exec(line)) !== null) pipeline.steps.push({ name: m[1].trim(), run: null, line: i + 1, runLine: null });
+    else if ((m = /^ {4}run:\s*(\S.*)$/.exec(line)) !== null && pipeline.steps.length > 0) Object.assign(pipeline.steps.at(-1), { run: m[1].trim(), runLine: i + 1 });
     else {
       process.stderr.write(`${file}:${i + 1}: unexpected line "${raw}"; a step is "  - name: <name>" followed by "    run: <command>"\n`);
       process.exit(2);

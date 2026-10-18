@@ -7,7 +7,8 @@
 - Resources are plural nouns (`/entries`, `/teams`); ids are the ledger's (`e-0042`). Field names are `snake_case`.
 - Standard methods only: `GET /entries` lists, `GET /entries/<id>` reads, `POST /entries` creates. Entries are never
   changed or deleted through the API.
-- Amounts are decimal strings with two places (`"1200.00"`), never floats. Months are `"YYYY-MM"`.
+- Amounts are decimal strings with two places (`"1200.00"`), never floats: a create sending a JSON number amount is
+  refused as `invalid-entry`, naming `amount`. Months are `"YYYY-MM"`.
 - Lists are paginated with an opaque cursor: `limit` (1 to 100, default 20) and `page_token`; the response carries
   `next_page_token`, null on the last page. Filters: `team`, `month`.
 - Creates take an optional `Idempotency-Key` header. The same key with the same body returns the first response again

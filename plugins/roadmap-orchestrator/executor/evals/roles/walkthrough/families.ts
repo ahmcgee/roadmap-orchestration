@@ -287,7 +287,7 @@ const W12: Family = {
       ? '  process.stdout.write(`exit ${result.status}\\n`);'
       : [
         '  process.stdout.write(`  ${step.name.padEnd(10)} FAILED  ${seconds(ms)} (exit ${result.status})\\n\\n`);',
-        '  const lines = [`Step "${step.name}" failed (${file}:${step.line}): ${step.run}`];',
+        '  const lines = [`Step "${step.name}" failed (${file}:${step.runLine}): ${step.run}`];',
         "  if (argv.includes('--test')) {",
         "    const failing = testFilesOf(argv).map((f) => ({ f, r: spawnSync(argv[0], ['--test', f], { encoding: 'utf8' }) })).filter((x) => x.r.status !== 0);",
         "    lines.push(`${failing.length} test ${failing.length === 1 ? 'file' : 'files'} failed:`);",

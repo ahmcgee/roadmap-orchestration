@@ -85,8 +85,13 @@ async function createEntry(req, res, url, { config, dir }) {
   // A field the API does not know is refused with the others, never dropped (design/api.md, "Errors").
   const unknown = Object.keys(body.value).filter((k) => !ENTRY_FIELDS.includes(k))
     .map((k) => ({ field: k, message: `${k} is not an entry field; send only team, month, vendor, amount and note.` }));
+  // Amounts are decimal strings, never JSON numbers (design/api.md, "Style"): a number amount is refused, not read.
+  const mistyped = body.value.amount === undefined || typeof body.value.amount === 'string' ? []
+    : [{ field: 'amount', message: 'Amount must be a decimal string, like "120.50", not a JSON number.' }];
   const valid = checkEntry(body.value, config);
-  const checked = unknown.length === 0 ? valid : { ok: false, errors: [...(valid.ok ? [] : valid.errors), ...unknown] };
+  const refused = [...mistyped, ...unknown];
+  const checked = refused.length === 0 ? valid
+    : { ok: false, errors: [...(valid.ok ? [] : valid.errors.filter((e) => !mistyped.some((m) => m.field === e.field))), ...refused] };
   if (!checked.ok) {
 {{validation-response}}
   }
