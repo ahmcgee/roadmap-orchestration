@@ -1,5 +1,6 @@
 {
   "name": "python",
   "image": "mcr.microsoft.com/devcontainers/python:3.13",
-  "remoteUser": "vscode"
+  "remoteUser": "vscode",
+  "postCreateCommand": ".devcontainer/post-create.sh"
 }
