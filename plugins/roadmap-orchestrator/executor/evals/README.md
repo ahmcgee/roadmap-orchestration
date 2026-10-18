@@ -739,9 +739,19 @@ a non-negotiable vision clause or `DESIGN.md` "Quality floor"), `deviates` for t
 | W10 config | an unknown key silently ignored | ignored with a warning naming file, line, key and the nearest key | breaks (contract; V-8) |
 | W11 CLI usage | no arguments: a stack trace; a typo runs the nearest command | the usage, examples first; a typo suggests without running | breaks (journey, contract) |
 | W12 CI output | a failing step reports only "exit 1" | the step, the failing file, its output, the rerun command | deviates |
-| W13 quickstart | the README, stale against a correct `cli.md`, uses a renamed flag | the command as written, an optional flag beside it | deviates (fix the docs) | The four dev seeds (S1 to S4) plant each family in exactly two of them (26 plants, 26 twins): at
-n = 3, 156 slot observations, 78 of each, six planted trials per family. The holdout set is untracked
-(`evals/roles/holdout/walkthrough.ts`, exporting `HOLDOUT_WALK_CELLS`).
+| W13 quickstart | the README, stale against a correct `cli.md`, uses a renamed flag | the command as written, an optional flag beside it | deviates (fix the docs) |
+
+The four dev seeds (S1 to S4) plant each family in exactly two of them (26 plants, 26 twins): at
+n = 3, 156 slot observations, 78 of each, six planted trials per family.
+
+The table gives each family's dev form. A cell may carry a family in another form (`fixture.ts` `WalkCell.forms`: its own
+plant, twin, positions, contributions and locus; the same id and expected class, or the build fails loud). A form's
+contribution is a hook's text or an edit of the resolved file (`product.ts` `Edit`, its `find` occurring exactly once),
+so it can change any place, not only a hook; W8 may take any CLI command (`import`, `report`, `config`), W13 any
+quickstart command. The holdout set is untracked (`evals/roles/holdout/walkthrough.ts`, exporting `HOLDOUT_WALK_CELLS`):
+two seeds, each family planted in one and twinned in the other, every family in a holdout form on pages, journeys and
+commands the dev seeds do not give it; `evals/roles/holdout/check-walk.ts` checks its slots on the running product as
+`roles.walk-plants` checks the dev seeds'.
 
 **The harness** (`walkthrough/arc.ts`) runs each trial through the production walk job, as the gate eval runs the
 production gate: a holistic arc whose repository is the product and whose plan has the one milestone, owner-supplied
@@ -829,9 +839,12 @@ Each cell is a proposal text (what a walk would write, citing the walk's note of
 to the product and to the reference `design/` (the reference diff the judge sees in its bounded tweak diff), as a polish
 unit's build commits them. Every after-state touches the reference, so code never drops one `reference-untouched`
 before the judge is asked. A worse or neutral after-state's reference edit only redescribes the product to the tweak
-(the prompt's "a reference change that only redescribes the product … does not make the after more faithful"). The
-holdout set is untracked (`evals/roles/holdout/polish.ts`, exporting `HOLDOUT_POLISH_CELLS`: six cells on the dev
-families, their own proposals and after edits, other seeds).
+(the prompt's "a reference change that only redescribes the product … does not make the after more faithful"). A cell
+names a dev family or carries a family of its own (`cells.ts` `PolishCell.family`: its id, journey, walk note and
+before); accuracy is reported per family id. The holdout set is untracked (`evals/roles/holdout/polish.ts`, exporting
+`HOLDOUT_POLISH_CELLS`: six cells on other seeds, two families the dev set lacks with a better and a worse each, and a
+better and a neutral on dev families at other steps; `evals/roles/holdout/check-polish.ts` checks them as
+`roles.polish-after-states` checks the dev cells).
 
 **The harness** (`polish/arc.ts`) runs each trial through the production compare job, as the walkthrough eval runs the
 production walk: the walkthrough eval's milestone arc over the cell's before product (`setupMilestoneArc`); u1 merges

@@ -8,7 +8,7 @@
 // - W7 needs a form, W6 a page with a primary action; W8 takes a CLI command, W13 a quickstart command.
 // The draw is a seeded backtracking search over shuffled candidates: the same seed gives the same assignment.
 import { rng } from '../gen/prng.ts';
-import { FAMILIES, FAMILY_IDS, FLOW_PAGE, type FamilyId, type PageId, type Position, type SlotState } from './families.ts';
+import { FAMILIES, FAMILY_IDS, FLOW_PAGE, type FamilyId, type FamilyTable, type PageId, type Position, type SlotState } from './families.ts';
 
 export type Slot = Readonly<{ family: FamilyId; state: SlotState; at: Position }>;
 
@@ -22,13 +22,16 @@ export function pageOf(s: Slot): PageId | null {
 /** The families with the fewest positions first, so the search prunes early. */
 const ORDER: readonly FamilyId[] = ['W1', 'W7', 'W6', 'W2', 'W3', 'W4', 'W5', 'W8', 'W13', 'W9', 'W10', 'W11', 'W12'];
 
-/** Every family's slot for a product whose `planted` families carry their plant (the rest their twin), drawn from `seed`. */
-export function assignSlots(seed: string, planted: readonly FamilyId[]): readonly Slot[] {
+/**
+ * Every family's slot for a product whose `planted` families carry their plant (the rest their twin), drawn from `seed`
+ * over the positions of `families` (a cell's forms, fixture.ts).
+ */
+export function assignSlots(seed: string, planted: readonly FamilyId[], families: FamilyTable = FAMILIES): readonly Slot[] {
   for (const f of planted) if (!(FAMILY_IDS as readonly string[]).includes(f)) throw new Error(`no family ${f}`);
   const g = rng(`slots:${seed}`);
   const state = (f: FamilyId): SlotState => (planted.includes(f) ? 'plant' : 'twin');
   const candidates = new Map(ORDER.map((f) => {
-    const fam = FAMILIES[f];
+    const fam = families[f];
     const at = state(f) === 'twin' && fam.twinAt !== null ? [fam.twinAt] : g.shuffle(fam.positions);
     return [f, at] as const;
   }));

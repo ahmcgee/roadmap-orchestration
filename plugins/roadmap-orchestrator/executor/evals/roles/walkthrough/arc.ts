@@ -153,7 +153,10 @@ function exerciseEvents(s: SlotKey, base: string, month: string, n: number): Jso
 
 function shellCommand(s: SlotKey, base: string): string {
   switch (s.family) {
-    case 'W8': return s.journeys[0] === 'J-4' ? 'node bin/ledgerly.js import samples/bad.csv' : 'node bin/ledgerly.js report --team nope';
+    case 'W8': {
+      if (s.at.kind !== 'command') throw new Error('W8 off a command');
+      return { import: 'node bin/ledgerly.js import samples/bad.csv', report: 'node bin/ledgerly.js report --team nope', config: 'node bin/ledgerly.js config check' }[s.at.command];
+    }
     case 'W9': return `curl -s -X POST ${base}/api/v1/entries -d '{}'`;
     case 'W10': return 'node bin/ledgerly.js config check';
     case 'W11': return 'node bin/ledgerly.js';

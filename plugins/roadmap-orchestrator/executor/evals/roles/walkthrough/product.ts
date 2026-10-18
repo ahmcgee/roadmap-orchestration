@@ -2,7 +2,9 @@
 // one trial. Data hooks take the seed's data (currency, teams, month); slot hooks take the families' contributions
 // (families.ts), every other slot hook its clean default. A hook alone on its line replaces the whole line (an empty text
 // removes it). Every hook a file holds must be resolved and every contribution must land on a hook its file holds: both
-// fail loud, so the product never carries a hook mark or a stray change. `gitignore` becomes `.gitignore`.
+// fail loud, so the product never carries a hook mark or a stray change. A contribution may instead be an edit of the
+// resolved file (`Edit`, applied in slot order once every hook is resolved), its `find` occurring exactly once, so a
+// family in another form than its dev one can change any place, not only a hook. `gitignore` becomes `.gitignore`.
 //
 // Seed data: the team `platform` and two more from a pool, budgets, alert shares, a currency, a month and the one before
 // it, and each month's entries (samples/<month>.csv), drawn so that this month one team is within its limit, one near it
@@ -11,12 +13,28 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Rng, rng } from '../gen/prng.ts';
-import { FAMILIES, type Contribution } from './families.ts';
+import { FAMILIES, type Contribution, type FamilyTable } from './families.ts';
 import type { Slot } from './slots.ts';
 
 export const BASE_DIR = fileURLToPath(new URL('./ledgerly/', import.meta.url));
 
 export type FileMap = ReadonlyMap<string, string>;
+
+/** A literal replacement in one file: `find` must occur exactly once when it is applied. */
+export type Edit = Readonly<{ file: string; find: string; replace: string }>;
+
+/** Applies `edits` in order; each `find` occurs exactly once in its file at that point, so a drift fails loud. */
+export function applyEdits(files: FileMap, edits: readonly Edit[]): FileMap {
+  const out = new Map(files);
+  for (const e of edits) {
+    const text = out.get(e.file);
+    if (text === undefined) throw new Error(`an edit of ${e.file}, which the product does not hold`);
+    const at = text.indexOf(e.find);
+    if (at < 0 || text.indexOf(e.find, at + 1) >= 0) throw new Error(`${e.file}: ${at < 0 ? 'no' : 'more than one'} occurrence of ${JSON.stringify(e.find)}`);
+    out.set(e.file, text.slice(0, at) + e.replace + text.slice(at + e.find.length));
+  }
+  return out;
+}
 
 export type Team = Readonly<{ id: string; name: string; budget: number; alertAt: number }>;
 export type Entry = Readonly<{ team: string; month: string; vendor: string; amount: number; note: string }>;
@@ -137,9 +155,11 @@ function resolve(path: string, text: string, values: Readonly<Record<string, str
   }).join('\n');
 }
 
-/** The product of a trial: the base files with the seed's data and every slot's contributions. */
-export function productFiles(data: SeedData, slots: readonly Slot[]): FileMap {
-  const contributions: Contribution[] = slots.flatMap((s) => FAMILIES[s.family].apply(s.state, s.at));
+/** The product of a trial: the base files with the seed's data and every slot's contributions (`families`: their forms). */
+export function productFiles(data: SeedData, slots: readonly Slot[], families: FamilyTable = FAMILIES): FileMap {
+  const all: readonly Contribution[] = slots.flatMap((s) => families[s.family].apply(s.state, s.at));
+  const contributions = all.filter((c) => 'hook' in c);
+  const edits = all.filter((c) => 'find' in c);
   const slotValues = new Map<string, Record<string, string>>(Object.entries(DEFAULTS).map(([f, h]) => [f, { ...h }]));
   const set = new Map<string, Set<string>>();
   for (const c of contributions) {
@@ -168,5 +188,5 @@ export function productFiles(data: SeedData, slots: readonly Slot[]): FileMap {
   }
   out.set(`samples/${data.prev}.csv`, csvOf(data.entries.filter((e) => e.month === data.prev)));
   out.set(`samples/${data.month}.csv`, csvOf(data.entries.filter((e) => e.month === data.month)));
-  return out;
+  return applyEdits(out, edits);
 }

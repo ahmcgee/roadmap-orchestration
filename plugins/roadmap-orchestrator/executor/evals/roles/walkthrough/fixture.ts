@@ -6,7 +6,7 @@ import { journeyId, milestoneId, serveName, unitId } from '../../../src/core/ids
 import { repoPath } from '../../../src/core/values.ts';
 import type { Journey, Milestone } from '../../../src/input/plan.ts';
 import { type RepoConfig, parseRepoConfig } from '../../../src/routing/layers.ts';
-import { FAMILIES, type Expected, type FamilyId, type Position, type SlotState } from './families.ts';
+import { FAMILIES, type Expected, type Family, type FamilyId, type FamilyTable, type Position, type SlotState } from './families.ts';
 import { type FileMap, type SeedData, productFiles, seedData } from './product.ts';
 import { assignSlots } from './slots.ts';
 
@@ -16,6 +16,11 @@ export type WalkCell = Readonly<{
   seed: string;
   /** The families carrying their plant; every other family carries its twin. */
   planted: readonly FamilyId[];
+  /**
+   * Families in another form than their dev one (families.ts): each its own plant, twin, positions, contributions and
+   * locus, of the same id and expected class. The holdout set's cells carry theirs; a family absent here takes its dev form.
+   */
+  forms?: Readonly<Partial<Record<FamilyId, Family>>>;
 }>;
 
 export type SlotKey = Readonly<{
@@ -127,13 +132,25 @@ export function walkRepoConfig(rebind: RepoConfig | null): RepoConfig {
   return parseRepoConfig({ walkthrough: { mcp: WALK_MCP }, ...(rebind?.routing?.classes === undefined ? {} : { routing: { classes: rebind.routing.classes } }) } as never);
 }
 
+/** The families of `cell`: its forms over the dev ones; a form of another id or expected class fails loud. */
+export function familiesOf(cell: WalkCell): FamilyTable {
+  const out: Record<FamilyId, Family> = { ...FAMILIES };
+  for (const [id, f] of Object.entries(cell.forms ?? {}) as [FamilyId, Family][]) {
+    if (f.id !== id) throw new Error(`${cell.id}: the form given for ${id} is ${f.id}'s`);
+    if (f.expected !== FAMILIES[id].expected) throw new Error(`${cell.id}: ${id}'s form expects ${f.expected}, the family ${FAMILIES[id].expected}`);
+    out[id] = f;
+  }
+  return out;
+}
+
 /** The fixture of `cell`: the same for every trial of the cell. */
 export function buildWalkFixture(cell: WalkCell): WalkFixture {
   const data = seedData(cell.seed);
-  const slots = assignSlots(cell.seed, cell.planted);
-  const files = productFiles(data, slots);
+  const families = familiesOf(cell);
+  const slots = assignSlots(cell.seed, cell.planted, families);
+  const files = productFiles(data, slots, families);
   const keys = slots.map((s): SlotKey => {
-    const f = FAMILIES[s.family];
+    const f = families[s.family];
     return { family: s.family, state: s.state, expected: f.expected, at: s.at, what: s.state === 'plant' ? f.plant : f.twin, ...f.locus(s.state, s.at) };
   });
   return { cell, data, files, milestone: milestoneOf(data), slots: keys };

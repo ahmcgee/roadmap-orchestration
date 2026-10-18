@@ -271,7 +271,7 @@ export async function runPolishTrial(o: Omit<PolishWorkerArgs, 'cell'> & Readonl
   const usage = sumUsage(perCall.flatMap((c) => (c.usage === null ? [] : [c.usage])));
   const answer = decision !== null && value !== null ? validatePolishJudgeOutput(value) : null;
   const row: PolishRow = {
-    set: o.set, cell: o.cell.id, family: o.cell.family, variant: o.cell.variant, trial: o.trial, judge: o.judge, void: voided,
+    set: o.set, cell: o.cell.id, family: f.family.id, variant: o.cell.variant, trial: o.trial, judge: o.judge, void: voided,
     decision, correct: decision === null ? null : decision === expectedDecision(o.cell.variant), reasons: answer?.reasons ?? [],
     usage, estimatedUsd: t.liveUsd, wallMs, turns: t.turns, load: t.load, calls: perCall.length,
     models: usage === null ? [] : Object.keys(usage.byModel),

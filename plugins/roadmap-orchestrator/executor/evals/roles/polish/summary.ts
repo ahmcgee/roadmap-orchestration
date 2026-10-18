@@ -110,7 +110,8 @@ export function summarisePolish(
     const mine = g.filter((r) => r.variant === v);
     return [v, wilson(mine.filter((r) => r.decision === 'keep').length, mine.length)];
   })) as Record<Variant, Interval>;
-  const families = POLISH_FAMILY_IDS.flatMap((family) => {
+  // The dev families in their order, then any other a cell carries (the holdout's), as the rows first name them.
+  const families = [...new Set<string>([...POLISH_FAMILY_IDS, ...rows.map((r) => r.family)])].flatMap((family) => {
     const mine = rows.filter((r) => r.family === family);
     return mine.length === 0 ? [] : [{ family, accuracy: wilson(mine.filter((r) => r.correct === true).length, mine.length) }];
   });

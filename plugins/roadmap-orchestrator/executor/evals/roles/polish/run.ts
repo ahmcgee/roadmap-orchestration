@@ -20,7 +20,7 @@ import type { CellSet } from '../gate/cells.ts';
 import { intOption, rebindConfig, runPool, runWorker, usdOption } from '../pool.ts';
 import { median } from '../stats.ts';
 import { FAKE_JUDGES, type JudgeKind, type PolishRow, type PolishWorkerArgs, polishSeat } from './arc.ts';
-import { type PolishCell, polishCellsFor } from './cells.ts';
+import { type PolishCell, familyOf, polishCellsFor } from './cells.ts';
 import { type PolishSummary, polishReportLines, spentOf, summarisePolish } from './summary.ts';
 
 const USAGE = 'usage: node evals/roles/run.ts polishJudge --set dev|holdout [--n 3] [--cells SP-B,HI-W] [--parallel 2] [--rebind <class>=<model>:<effort> ...] '
@@ -65,7 +65,7 @@ export function parsePolishRun(argv: readonly string[]): PolishRunOptions {
 /** A row for a trial whose worker died before writing one. */
 function errorRow(a: PolishWorkerArgs, cell: PolishCell, detail: string): PolishRow {
   return {
-    set: a.set, cell: a.cell, family: cell.family, variant: cell.variant, trial: a.trial, judge: a.judge, void: { reason: 'error', detail }, decision: null, correct: null,
+    set: a.set, cell: a.cell, family: familyOf(cell).id, variant: cell.variant, trial: a.trial, judge: a.judge, void: { reason: 'error', detail }, decision: null, correct: null,
     reasons: [], usage: null, estimatedUsd: 0, wallMs: 0, turns: 0, load: 0, calls: 0, models: [],
     method: { available: [], tools: {}, browserCalls: 0, shellCalls: 0, subagents: [], denials: 0, unavailable: [] }, evidence: { files: 0, screenshots: 0 }, dir: a.out,
   };

@@ -5,9 +5,12 @@
 // `neutral` one, cosmetic churn that changes nothing a person gains from. Every after-state also edits the reference
 // (`design/`), as a polish unit does: the compare drops a tweak whose diff leaves the reference untouched without asking.
 //
-// An edit is a literal replacement in one file of the product as the generator resolves it (walkthrough/product.ts):
-// its `find` must occur exactly once when it is applied, so a drift in the base product fails loud here.
-import type { FileMap } from '../walkthrough/product.ts';
+// An edit is a literal replacement in one file of the product as the generator resolves it (walkthrough/product.ts
+// `Edit`): its `find` must occur exactly once when it is applied, so a drift in the base product fails loud here.
+//
+// A cell names one of these families, or carries a family of its own (cells.ts): the holdout set's are a dev family's
+// starting state on another step, or a family the dev set lacks.
+import type { Edit } from '../walkthrough/product.ts';
 
 export const POLISH_FAMILY_IDS = ['spacing', 'hierarchy', 'cli-help', 'error-copy'] as const;
 export type PolishFamilyId = (typeof POLISH_FAMILY_IDS)[number];
@@ -17,10 +20,9 @@ export const VARIANTS = ['better', 'worse', 'neutral'] as const;
 export type Variant = (typeof VARIANTS)[number];
 export const expectedDecision = (v: Variant): 'keep' | 'drop' => (v === 'better' ? 'keep' : 'drop');
 
-export type Edit = Readonly<{ file: string; find: string; replace: string }>;
-
 export type PolishFamily = Readonly<{
-  id: PolishFamilyId;
+  /** A dev family's id, or (a cell's own family) its own name: the summary reports accuracy per id. */
+  id: string;
   /** The journey the proposal cites (fixture.ts's milestone: J-1 record an entry, J-2 change a limit, J-4 import, J-5 report). */
   journey: string;
   /** What the walk saw, its evidence note (the proposal cites it). */
@@ -28,19 +30,6 @@ export type PolishFamily = Readonly<{
   /** The starting state: edits to the clean product. */
   before: readonly Edit[];
 }>;
-
-/** Applies `edits` in order; each `find` occurs exactly once in its file at that point. */
-export function applyEdits(files: FileMap, edits: readonly Edit[]): FileMap {
-  const out = new Map(files);
-  for (const e of edits) {
-    const text = out.get(e.file);
-    if (text === undefined) throw new Error(`an edit of ${e.file}, which the product does not hold`);
-    const at = text.indexOf(e.find);
-    if (at < 0 || text.indexOf(e.find, at + 1) >= 0) throw new Error(`${e.file}: ${at < 0 ? 'no' : 'more than one'} occurrence of ${JSON.stringify(e.find)}`);
-    out.set(e.file, text.slice(0, at) + e.replace + text.slice(at + e.find.length));
-  }
-  return out;
-}
 
 const CSS = 'web/static/app.css';
 const DESIGN = 'design/DESIGN.md';

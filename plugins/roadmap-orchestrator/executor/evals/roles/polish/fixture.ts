@@ -4,8 +4,9 @@
 // which only the eval run dir holds.
 import { buildWalkFixture, type WalkFixture } from '../walkthrough/fixture.ts';
 import type { FileMap } from '../walkthrough/product.ts';
-import type { PolishCell } from './cells.ts';
-import { FAMILIES, applyEdits, expectedDecision, type PolishFamily, type Variant } from './families.ts';
+import { applyEdits } from '../walkthrough/product.ts';
+import { type PolishCell, familyOf } from './cells.ts';
+import { expectedDecision, type PolishFamily, type Variant } from './families.ts';
 
 /** The polish unit the walk proposes (its id no unit of the plan: u1 is the milestone's). */
 export const POLISH_UNIT = 'u2';
@@ -31,7 +32,7 @@ export type PolishFixture = Readonly<{
 export type PolishKey = Readonly<{ cell: string; family: string; variant: Variant; expected: 'keep' | 'drop'; seed: string; trial: number; sha: string }>;
 
 export function buildPolishFixture(cell: PolishCell): PolishFixture {
-  const family = FAMILIES[cell.family];
+  const family = familyOf(cell);
   if (!cell.after.some((e) => e.file.startsWith('design/'))) throw new Error(`${cell.id}: its after-state leaves the reference design/ untouched`);
   const clean = buildWalkFixture({ id: cell.id, seed: cell.seed, planted: [] });
   const before = applyEdits(clean.files, family.before);
@@ -41,5 +42,5 @@ export function buildPolishFixture(cell: PolishCell): PolishFixture {
 }
 
 export const keyOf = (f: PolishFixture, trial: number, sha: string): PolishKey => ({
-  cell: f.cell.id, family: f.cell.family, variant: f.cell.variant, expected: expectedDecision(f.cell.variant), seed: f.cell.seed, trial, sha,
+  cell: f.cell.id, family: f.family.id, variant: f.cell.variant, expected: expectedDecision(f.cell.variant), seed: f.cell.seed, trial, sha,
 });

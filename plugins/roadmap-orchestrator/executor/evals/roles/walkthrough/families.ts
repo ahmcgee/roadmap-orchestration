@@ -6,6 +6,11 @@
 //
 // Positions: W1 takes a browser journey's last step (the form or link that ends J-1, J-2 or J-3); W2 to W7 take a page,
 // one slot per page (slots.ts); W8 a CLI command; W13 a quickstart command; W9 to W12 are fixed.
+//
+// The families below are each family's dev form. A cell may carry a family in another form (fixture.ts `WalkCell.forms`:
+// its own plant, twin, positions, contributions and locus, of the same id and expected class); the holdout set's are.
+
+import type { Edit } from './product.ts';
 
 export const FAMILY_IDS = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13'] as const;
 export type FamilyId = (typeof FAMILY_IDS)[number];
@@ -54,15 +59,22 @@ export const STYLED_PAGES: readonly PageId[] = PAGES.filter((p) => p !== 'statem
 export const FLOW_PAGE: Readonly<Record<BrowserJourney, PageId>> = { 'J-1': 'entry-new', 'J-2': 'budget-edit', 'J-3': 'statement' };
 const FLOW_TARGET: Readonly<Record<BrowserJourney, string>> = { 'J-1': '/entries/record', 'J-2': '/budgets/[a-z][a-z0-9-]*/limits', 'J-3': '/statements/\\d{4}-\\d{2}/printable' };
 
+export type CliCommand = 'import' | 'report' | 'config';
+/** The shell journey each CLI command is walked in. */
+export const COMMAND_JOURNEY: Readonly<Record<CliCommand, string>> = { import: 'J-4', report: 'J-5', config: 'J-7' };
+
 export type Position =
   | Readonly<{ kind: 'page'; page: PageId }>
   | Readonly<{ kind: 'flow'; journey: BrowserJourney }>
-  | Readonly<{ kind: 'command'; command: 'import' | 'report' }>
-  | Readonly<{ kind: 'quickstart'; command: 'init' | 'report' }>
+  | Readonly<{ kind: 'command'; command: CliCommand }>
+  | Readonly<{ kind: 'quickstart'; command: 'init' | 'import' | 'report' }>
   | Readonly<{ kind: 'fixed' }>;
 
-/** A text a slot writes into a hook of the base product (product.ts). `css` contributions are appended, the rest set. */
-export type Contribution = Readonly<{ file: string; hook: string; text: string }>;
+/**
+ * What a slot writes into the base product (product.ts): a text for one of its hooks (`css` contributions are appended,
+ * the rest set), or an edit of a file as the hooks resolved it, its `find` occurring exactly once (product.ts `Edit`).
+ */
+export type Contribution = Readonly<{ file: string; hook: string; text: string }> | Edit;
 
 /**
  * What grading knows of a slot. `journeys`: where a finding on it is reported; `files`: paths that localise a finding to
@@ -84,7 +96,8 @@ export type Family = Readonly<{
   locus: (state: SlotState, at: Position) => SlotLocus;
 }>;
 
-const KEYWORDS: Readonly<Record<FamilyId, string>> = {
+/** Each family's words, a regex source: the markers a finding on it matches. */
+export const KEYWORDS: Readonly<Record<FamilyId, string>> = {
   W1: '404|not found|dead[- ]end|broken (link|form|submit)|nowhere|lost',
   W2: 'stylesheet|unstyled|\\bcss\\b|no styl|styling|raw html|browser default',
   W3: 'token|off-palette|palette|padding|gutter|spacing|lavender|purple|violet|card colou?r|highlight',
@@ -106,12 +119,12 @@ const page = (at: Position): PageId => {
 };
 
 /** A family that sits on one page: its locus is the page's journey, module, route and the family's words. */
-function pageLocus(id: FamilyId, p: PageId, extra: readonly string[] = [], files: readonly string[] = []): SlotLocus {
+export function pageLocus(id: FamilyId, p: PageId, extra: readonly string[] = [], files: readonly string[] = []): SlotLocus {
   const info = PAGE_INFO[p];
   return { journeys: [info.journey], files: [pageFile(p), ...files], markers: [info.route, KEYWORDS[id], ...extra], exercise: [info.route] };
 }
 
-const css = (text: string): Contribution => ({ file: 'web/static/app.css', hook: 'css', text });
+export const css = (text: string): Contribution => ({ file: 'web/static/app.css', hook: 'css', text });
 
 const W1: Family = {
   id: 'W1', expected: 'breaks',
@@ -209,6 +222,7 @@ const W8: Family = {
   apply: (state, at) => {
     if (at.kind !== 'command') throw new Error('W8 off a command');
     const file = `src/commands/${at.command}.js`;
+    if (at.command === 'config') throw new Error('W8 in its dev form takes import or report');
     if (state === 'plant') return [{ file, hook: 'input-error', text: '    io.out(`ledgerly: ${e.message}`);\n    return 0;' }];
     return at.command === 'import'
       ? [{ file, hook: 'progress-start', text: '    io.err(`Reading ${path}`);' }, { file, hook: 'progress-checked', text: '    io.err(`Checked ${rows.length} rows`);' }]
@@ -217,7 +231,7 @@ const W8: Family = {
   locus: (_state, at) => {
     if (at.kind !== 'command') throw new Error('W8 off a command');
     return {
-      journeys: [at.command === 'import' ? 'J-4' : 'J-5'], files: [`src/commands/${at.command}.js`],
+      journeys: [COMMAND_JOURNEY[at.command]], files: [`src/commands/${at.command}.js`],
       markers: [`\\b${at.command}\\b`, KEYWORDS.W8], exercise: [`ledgerly(?:\\.js)?\\s+${at.command}\\b`],
     };
   },
@@ -308,6 +322,7 @@ const W13: Family = {
   positions: [{ kind: 'quickstart', command: 'init' }, { kind: 'quickstart', command: 'report' }], twinAt: null,
   apply: (state, at) => {
     if (at.kind !== 'quickstart') throw new Error('W13 off the quickstart');
+    if (at.command === 'import') throw new Error('W13 in its dev form takes init or report');
     if (at.command === 'init') {
       return [{
         file: 'README.md', hook: 'qs-init',
@@ -328,4 +343,5 @@ const W13: Family = {
   },
 };
 
-export const FAMILIES: Readonly<Record<FamilyId, Family>> = { W1, W2, W3, W4, W5, W6, W7, W8, W9, W10, W11, W12, W13 };
+export type FamilyTable = Readonly<Record<FamilyId, Family>>;
+export const FAMILIES: FamilyTable = { W1, W2, W3, W4, W5, W6, W7, W8, W9, W10, W11, W12, W13 };

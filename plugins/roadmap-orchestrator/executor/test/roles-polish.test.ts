@@ -18,13 +18,13 @@ import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { allocatePorts, bringUp, tearDown } from '../src/walk/bringup.ts';
 import { rebindConfig } from '../evals/roles/run.ts';
 import { type PolishRow, polishSeat } from '../evals/roles/polish/arc.ts';
-import { DEV_POLISH_CELLS, type PolishCell } from '../evals/roles/polish/cells.ts';
-import { FAMILIES, POLISH_FAMILY_IDS, type PolishFamilyId, VARIANTS, type Variant, applyEdits } from '../evals/roles/polish/families.ts';
+import { DEV_POLISH_CELLS, type PolishCell, familyOf } from '../evals/roles/polish/cells.ts';
+import { POLISH_FAMILY_IDS, type PolishFamilyId, VARIANTS, type Variant } from '../evals/roles/polish/families.ts';
 import { buildPolishFixture } from '../evals/roles/polish/fixture.ts';
 import { runPolish } from '../evals/roles/polish/run.ts';
 import { type PolishSummary, summarisePolish } from '../evals/roles/polish/summary.ts';
 import type { Milestone } from '../src/input/plan.ts';
-import type { FileMap } from '../evals/roles/walkthrough/product.ts';
+import { type FileMap, applyEdits } from '../evals/roles/walkthrough/product.ts';
 import { tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: 600_000 };
@@ -46,7 +46,7 @@ test('roles.polish-cells: four families, each a better, a worse and a neutral af
     assert.doesNotMatch(cell.proposal, words, `${cell.id}: its proposal`);
     for (const [path, text] of Object.entries(f.changed)) assert.doesNotMatch(text, words, `${cell.id} ${path}`);
     for (const [path, text] of f.before) assert.doesNotMatch(text, /\{\{[a-z-]+\}\}/, `${cell.id} ${path}: an unresolved hook`);
-    assert.ok(f.walk.milestone.journeys.some((j) => j.id === FAMILIES[cell.family].journey), `${cell.id}: its journey is the milestone's`);
+    assert.ok(f.walk.milestone.journeys.some((j) => j.id === familyOf(cell).journey), `${cell.id}: its journey is the milestone's`);
   }
   // An edit whose text drifted from the product fails loud.
   assert.throws(() => applyEdits(new Map([['a', 'x x']]), [{ file: 'a', find: 'x', replace: 'y' }]), /more than one occurrence/);
@@ -230,7 +230,7 @@ test('roles.polish-after-states: each family\'s better after-state does what its
 function row(cell: PolishCell, trial: number, decision: 'keep' | 'drop' | null, extra: Partial<PolishRow> = {}): PolishRow {
   const correct = decision === null ? null : (decision === 'keep') === (cell.variant === 'better');
   return {
-    set: 'dev', cell: cell.id, family: cell.family, variant: cell.variant, trial, judge: 'real', void: decision === null ? { reason: 'invalid', detail: 'x' } : null,
+    set: 'dev', cell: cell.id, family: familyOf(cell).id, variant: cell.variant, trial, judge: 'real', void: decision === null ? { reason: 'invalid', detail: 'x' } : null,
     decision, correct, reasons: [], usage: null, estimatedUsd: 0.5, wallMs: 60_000, turns: 20, load: 1000, calls: 1, models: ['claude-opus-5-5'],
     method: { available: [], tools: {}, browserCalls: 4, shellCalls: 2, subagents: [], denials: 0, unavailable: [] }, evidence: { files: 4, screenshots: 2 }, dir: '/x', ...extra,
   };

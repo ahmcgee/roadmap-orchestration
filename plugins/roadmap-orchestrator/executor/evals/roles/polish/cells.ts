@@ -3,16 +3,19 @@
 // unit builds (product and reference edits on the family's before). Every cell's product is the clean `ledgerly` of one
 // seed (all 13 walkthrough slots their twins) with the family's before.
 //
-// The holdout set (evals/roles/holdout/polish.ts, untracked) exports HOLDOUT_POLISH_CELLS of the same type: six more cells
-// on the dev families (their own proposals and after edits, other seeds), run only at acceptance with --compare.
+// The holdout set (evals/roles/holdout/polish.ts, untracked) exports HOLDOUT_POLISH_CELLS of the same type: six more cells,
+// on families the cells carry themselves (families the dev set lacks, and dev families on other steps), other seeds, run
+// only at acceptance with --compare.
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { CellSet } from '../gate/cells.ts';
-import { AFTER, type Edit, POLISH_FAMILY_IDS, type PolishFamilyId, VARIANTS, type Variant } from './families.ts';
+import type { Edit } from '../walkthrough/product.ts';
+import { AFTER, FAMILIES, POLISH_FAMILY_IDS, type PolishFamily, type PolishFamilyId, VARIANTS, type Variant } from './families.ts';
 
 export type PolishCell = Readonly<{
   id: string;
-  family: PolishFamilyId;
+  /** A dev family (families.ts), or a family of the cell's own: its journey, the walk's note and its starting state. */
+  family: PolishFamilyId | PolishFamily;
   variant: Variant;
   /** The product's seed (walkthrough/product.ts): its data. */
   seed: string;
@@ -28,6 +31,9 @@ const SUFFIX: Readonly<Record<Variant, string>> = { better: 'B', worse: 'W', neu
 export const DEV_POLISH_CELLS: readonly PolishCell[] = POLISH_FAMILY_IDS.flatMap((family) => VARIANTS.map((variant): PolishCell => ({
   id: `${PREFIX[family]}-${SUFFIX[variant]}`, family, variant, seed: POLISH_SEED, ...AFTER[family][variant],
 })));
+
+/** The family of `cell`. */
+export const familyOf = (cell: PolishCell): PolishFamily => (typeof cell.family === 'string' ? FAMILIES[cell.family] : cell.family);
 
 /** The untracked holdout set: `export const HOLDOUT_POLISH_CELLS: readonly PolishCell[]`. */
 export const HOLDOUT_POLISH_FILE = fileURLToPath(new URL('../holdout/polish.ts', import.meta.url));
