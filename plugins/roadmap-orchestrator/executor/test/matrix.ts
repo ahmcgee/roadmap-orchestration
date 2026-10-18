@@ -86,6 +86,7 @@ export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under th
 export const WALK_JOB = 'milestone walk job (dev.13: walk-started under the fence, the bring-up, the walkthrough call, minting, walk-ended, milestone-passed)';
 export const POLISH_REVISION = 'polish revision (dev.13 agent D: polish-refused, then plan-applied{source: walk{job}} under the fence)';
 export const COMPARE_JOB = 'polish compare job (dev.13 agent D: compare-started under the fence, two bring-ups, the polish judge, tweak-judged, the polish-dropped cut)';
+export const DEMO_PROMOTE = 'demo promotion (dev.13 agent G: demo-promoted, then refs/roadmap/demo moved to it; the ref follows the facts)';
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
 export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
 export const SUPERVISOR_HOST = 'supervisor/host';
@@ -1546,6 +1547,23 @@ export const MATRIX: readonly Row[] = [
         labels: ['compare.after-cut'],
         recovery: 'the cut committed: nothing is due; the judge was asked once',
       },
+    },
+  },
+  {
+    // A settled MS-1: the demo tick runs in a child (test/fixtures/demo-child.ts) crashed between the promotion fact and
+    // the ref; the next start's first tick runs the promotion again.
+    row: DEMO_PROMOTE,
+    test: 'test/demo.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'a promotion writes no intent: its fact is the one durable record, and the ref follows it' },
+      B3: { status: 'excluded', why: 'nothing runs between the decision and the fact: the fact is one journal append (journal.append rows)' },
+      B4: {
+        status: 'crash',
+        labels: ['demo-promoted'],
+        recovery: 'demo-promoted durable, refs/roadmap/demo not moved: the next start\'s first tick moves the ref to the promoted SHA (syncDemoRef) and promotes nothing again',
+      },
+      B5: { status: 'excluded', why: 'the ref moved: the promotion is whole; a later tick finds nothing newer to promote (demo.promote-swap)' },
     },
   },
   {

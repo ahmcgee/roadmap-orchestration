@@ -2,7 +2,8 @@
 // the Phase-0 rows it shares with start and `phase0 check` (src/phase0/rows.ts): `milestones-need-holistic` and the
 // advisory `milestone-unit-before-design`; and the vision's `experience` clause, which the vision skill compiles from its
 // `## Experience standards` section. A corpus arc over unit-common's repo for the classifier; the rows are pure.
-// Named tests: classify.milestones-*, phase0.milestones-*, vision.experience-clause.
+// Named tests: classify.milestones-* (classify.milestones-rewalk: the walk abandonment brake's reset), phase0.milestones-*,
+// vision.experience-clause.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
@@ -13,7 +14,9 @@ import { absPath } from '../src/core/values.ts';
 import { parseVision } from '../src/holistic/types.ts';
 import { type Classified, type Proposer, changesScope, classify } from '../src/input/classify.ts';
 import { readInputFiles, recordPlan, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
-import { parsePlan } from '../src/input/plan.ts';
+import { milestonesOf, parsePlan } from '../src/input/plan.ts';
+import { openBlocking, raiseNeedsUser, supersededItems } from '../src/needsuser.ts';
+import { milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
 import { FROM_REF, phase0Rows } from '../src/phase0/rows.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
@@ -126,7 +129,40 @@ describe('classify.milestones: the milestones edit class', () => {
     withMilestones({ ...MILESTONE, design: { supplied: true } })(r.d);
     assert.deepEqual(reasons(classifyNow(r)), ['milestone MS-1 has been walked (walk-1): its units and design are fixed; plan another milestone for more']);
     withMilestones(retold)(r.d);
-    assert.deepEqual(accepted(classifyNow(r)).changes, [{ type: 'milestones' }]);
+    assert.deepEqual(accepted(classifyNow(r)).changes, [{ type: 'milestones', rewalk: ['MS-1'] }], 'a walked milestone\'s journeys edited: its brake resets');
+  }));
+
+  test('classify.milestones-rewalk: an apply editing a walked milestone\'s bring-up resets its walk abandonment brake: the round is due afresh with a fresh attempt count, its escalation superseded', T, () => onCorpusArc((r) => {
+    withMilestones(MILESTONE)(r.d);
+    accept(r);
+    merge(r, 'u2');
+    const plan = () => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
+    const progress = () => milestoneProgress(r.journal.view, plan(), milestonesOf(plan())[0]!, []);
+    const abandon = (n: number): void => {
+      r.journal.fact({ kind: 'walk-started', job: jobId('walk', n), milestone: milestoneId('MS-1'), round: 1, sha: SHA, ports: {} });
+      r.journal.fact({ kind: 'walk-ended', job: jobId('walk', n), outcome: 'abandoned', findings: [], proposals: [], dropped: [] });
+    };
+    abandon(1);
+    abandon(2);
+    assert.equal(progress().kind, 'abandoned');
+    const [item] = walkItemsDue(r.journal.view, plan(), [], new Date());
+    assert.equal(item!.job, 'walk-2');
+    const id = raiseNeedsUser(r.journal, r.ctx.runDir, item!.content, { type: 'job', job: item!.job });
+    assert.deepEqual(openBlocking(r.journal.view), [id]);
+
+    withMilestones({ ...MILESTONE, bringUp: { ...MILESTONE.bringUp, setup: [['node', '-e', '0']] } })(r.d);
+    assert.deepEqual(accepted(classifyNow(r)).changes, [{ type: 'milestones', rewalk: ['MS-1'] }]);
+    accept(r);
+    assert.deepEqual(progress(), { kind: 'walk-due', round: 1 });
+    assert.deepEqual([...supersededItems(r.journal.view)], [id]);
+    assert.deepEqual(openBlocking(r.journal.view), [], 'the escalation clears');
+    assert.deepEqual(walkItemsDue(r.journal.view, plan(), [], new Date()), []);
+    abandon(3);
+    assert.deepEqual(progress(), { kind: 'walk-due', round: 1 }, 'one failed walk since the edit: one retry left');
+    abandon(4);
+    const again = progress();
+    assert.ok(again.kind === 'abandoned' && again.last.job === 'walk-4', JSON.stringify(again));
+    assert.deepEqual(walkItemsDue(r.journal.view, plan(), [], new Date()).map((i) => i.job), ['walk-4'], 'the brake binds again, with its own escalation');
   }));
 
   test('classify.milestones-need-holistic: milestones on an arc without the holistic layer are refused before routing resolves', T, () => {

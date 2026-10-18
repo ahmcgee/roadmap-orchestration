@@ -14,7 +14,7 @@ import {
 import { atomicJson, monotonic } from './fsx.ts';
 import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
-  type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
+  type MilestoneId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf,
 } from './ids.ts';
 import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, WalkFactAt } from './interfaces.ts';
@@ -606,6 +606,8 @@ export class Fold implements JournalView {
   // M4b
   readonly #flowFacts: FlowFactAt[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
+  /** dev.13: per milestone, the seq of the latest `plan-applied` whose milestones change lists it in `rewalk`. */
+  readonly #rewalkSeqs = new Map<MilestoneId, number>();
   #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
   #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
   // M4a rev 3
@@ -1005,7 +1007,10 @@ export class Fold implements JournalView {
         return;
       case 'plan-applied':
         this.#planAppliedFact(f, at.seq, fail);
-        for (const c of f.changes) if (c.type === 'unit-changed') this.#unitChangedSeq.set(c.unit, at.seq);
+        for (const c of f.changes) {
+          if (c.type === 'unit-changed') this.#unitChangedSeq.set(c.unit, at.seq);
+          if (c.type === 'milestones') for (const m of c.rewalk ?? []) this.#rewalkSeqs.set(m, at.seq);
+        }
         return;
       // M4a: debt (C2); amendments, intake, pack reviews and checkpoint captures (C3).
       case 'debt-banked': {
@@ -1845,6 +1850,10 @@ export class Fold implements JournalView {
 
   walkFacts(): readonly WalkFactAt[] {
     return this.#walkFacts;
+  }
+
+  rewalkSeq(milestone: MilestoneId): number {
+    return this.#rewalkSeqs.get(milestone) ?? 0;
   }
 
   nextPolishId(): PolishId {

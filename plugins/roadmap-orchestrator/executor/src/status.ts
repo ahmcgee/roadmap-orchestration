@@ -134,7 +134,7 @@ import {
 } from './core/records.ts';
 import { type AbsPath, type IsoTime, type RepoPattern, absPath, branchRef, isoTimeOf } from './core/values.ts';
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
-import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededPackItems } from './needsuser.ts';
+import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededItems } from './needsuser.ts';
 import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
 import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
@@ -1014,7 +1014,7 @@ export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Reado
   const d = derive(runDir, arc, hostDir);
   const units: Record<string, string> = {};
   for (const l of d.units) units[l.unit] = compactState(l);
-  return { run: d.state, units, superseded: [...supersededPackItems(d.view)].sort(), seq: d.view.highWater() };
+  return { run: d.state, units, superseded: [...supersededItems(d.view)].sort(), seq: d.view.highWater() };
 }
 
 /** `running:build#3`, `waiting:deps=u1,u2`, `waiting:resources`, `awaiting-admission:paused,drain`, `parked:retryable`, or the bare state. */
@@ -1548,7 +1548,7 @@ export function stageTimings(events: readonly Event[], after = 0): readonly Stag
 
 function packReviewOf(ctx: CheckpointContext): PackReviewView {
   const view = ctx.journal.view;
-  const superseded = supersededPackItems(view);
+  const superseded = supersededItems(view);
   return {
     state: packReviewStatus(ctx).kind,
     reviews: view.holistic().packReviews.map((r) => {

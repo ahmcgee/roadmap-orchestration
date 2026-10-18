@@ -26,6 +26,7 @@ import { CliError, parseCommand } from '../src/input/cli.ts';
 import { setupCorpusArc } from './fixtures/corpus-unit.ts';
 import { type ArcRun, contextFor } from './fixtures/unit-common.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { DEMO_PROMOTE, crashCells } from './matrix.ts';
 import { runFixture } from './helpers/proc.ts';
 import { commitAll, tmpDir, writeFiles } from './helpers/repo.ts';
 
@@ -336,12 +337,14 @@ describe('demo: promotion and the keeper', () => {
     }
   });
 
-  test('demo.crash-promoted: a crash after the promotion fact and before the ref is mended by the next start\'s first tick', T, async () => {
+  const [cell, ...more] = crashCells(DEMO_PROMOTE);
+  assert.ok(cell !== undefined && more.length === 0, `${DEMO_PROMOTE}: one crash cell`);
+  test(`demo.crash-promoted: a crash at ${cell.label} (after the promotion fact, before the ref) is mended by the next start's first tick`, T, async () => {
     const r = await demoArc();
     const v1 = release(r, 'v1');
     settle(r, 'MS-1', v1);
     r.journal.close();
-    const trigger = writeTrigger(tmpDir('demo-crash'), { label: 'demo-promoted', occurrence: 1 });
+    const trigger = writeTrigger(tmpDir('demo-crash'), { label: cell.label, occurrence: 1 });
     const exit = await runFixture('demo-child.ts', [JSON.stringify(r.d)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 60_000 });
     assert.equal(exit.signal, 'SIGKILL', exit.stderr);
     assertFired(trigger);

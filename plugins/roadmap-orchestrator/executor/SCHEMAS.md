@@ -376,6 +376,8 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | `CheckpointTrigger` (`checkpoint-inputs.trigger`) | `+ walk{job}` | none: dev.12 checkpoints name audits and parks |
 | `RevisionSource` (`plan-applied.source`, `revision.commit`) | `+ walk{job}`, `+ compare{unit}` | none |
 | `AdmissionConstraint` (derived, sched.json) | `+ compare{decision: drop \| null}` | derived |
+| `PlanChange` `milestones` (agent J) | `+ rewalk?: MilestoneId[]` (non-empty): the walked milestones whose `bringUp` or `journeys` the apply edited | absent: none (lasting) |
+| `JournalView` (fold, not persisted) | `+ rewalkSeq(milestone)`; `supersededPackItems` is `supersededItems` (+ a reset walk's escalation) | derived |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -4248,8 +4250,14 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
     round's walk, `milestoneProgress` is `{kind: 'abandoned', round, last}`: no further walk is due, the milestone is not
     settled (`settledMilestones` omits it, so the demo never promotes on it), `walksPending` is false, its status state is
     `blocked` (unpassed) or `settled` (passed), and `walkItemsDue` raises one `finding-p1-escalated` parented by its last
-    walk, blocking while the node is unpassed, non-blocking once it passed. The brake is final for that round: the owner
-    plans another milestone for the experience if it still needs walking.
+    walk, blocking while the node is unpassed, non-blocking once it passed. The owner's way out (agent J, owner-facing): an
+    `apply` that edits the milestone's `bringUp` or `journeys` (allowed on a walked milestone exactly so a broken bring-up
+    can be fixed) lists it in its `milestones` change's `rewalk` (src/input/classify.ts `milestoneRows`); the fold keeps the
+    latest such revision's seq (`view.rewalkSeq(m)`), and the brake counts only the tries after it (and after the previous
+    round's walk): the round's walk is due again with a fresh WALK_ATTEMPTS, `walkItemsDue` no longer raises the escalation,
+    and the one raised is superseded (src/needsuser.ts `supersededItems`: the item parented by a failed abandoned walk job
+    whose milestone's `rewalkSeq` is after the walk's end; open no more, it holds and blocks nothing). Otherwise the brake
+    is final for that round: the owner plans another milestone for the experience if it still needs walking.
 - **Prompt.** `prompts/polishJudge/claude-opus-5-5.ts` (Opus 5.5 guide only); Fable a dated `inherits`.
 
 ### The demo (agent G: src/demo/promote.ts, executor side; src/demo/keeper.ts, the supervisor's keeper)

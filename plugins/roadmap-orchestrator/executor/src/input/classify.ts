@@ -76,7 +76,8 @@
 //                               unit still to merge; on every revision no milestone lists a cut unit. Milestones without
 //                               the holistic layer are refused `milestones-need-holistic` before routing resolves; a first
 //                               milestone added (or the last removed) moves the walk seats into (out of) force, so the
-//                               revision's routing is checked and smoked (`routingRows`)
+//                               revision's routing is checked and smoked (`routingRows`); a walked milestone whose bringUp
+//                               or journeys change is listed in the change's `rewalk` (its walk abandonment brake resets)
 //
 // dev.13, agent D (`polishRows`):
 //   polish units                a polish unit added (not a re-entry) only by the polish revision of the walk whose
@@ -1056,7 +1057,14 @@ function milestoneRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: P
     if ((prior !== undefined && same(prior.units, m.units)) || walks.some((w) => w.milestone === m.id)) continue;
     if (m.units.every(merged)) reasons.push(`milestone ${m.id}: every unit it lists has merged, so no publication would reach it; list a unit still to merge`);
   }
-  if (reasons.length === before) changes.push({ type: 'milestones' });
+  if (reasons.length !== before) return;
+  // A walked milestone whose bring-up or journeys the apply edits (allowed: a broken bring-up is fixed so) gets a fresh
+  // walk attempt count (src/walk/milestones.ts, the walk abandonment brake).
+  const rewalk = was.flatMap((m) => {
+    const next = now.find((x) => x.id === m.id);
+    return next !== undefined && walks.some((w) => w.milestone === m.id) && (!same(m.bringUp, next.bringUp) || !same(m.journeys, next.journeys)) ? [m.id] : [];
+  });
+  changes.push({ type: 'milestones', ...(rewalk.length === 0 ? {} : { rewalk }) });
 }
 
 /** The cut reason of a polish unit its compare judged `drop` (src/walk/compare.ts). */

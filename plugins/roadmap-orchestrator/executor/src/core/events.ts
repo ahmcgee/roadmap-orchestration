@@ -1083,8 +1083,12 @@ export type PlanChange =
   | Readonly<{ type: 'plan-check-shape' }>
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
   | Readonly<{ type: 'derived' }>
-  /** dev.13: the plan's `milestones` changed (an `apply` only; the checkpoint cannot edit them). Classified by src/input/classify.ts. */
-  | Readonly<{ type: 'milestones' }>;
+  /**
+   * dev.13: the plan's `milestones` changed (an `apply` only; the checkpoint cannot edit them). Classified by src/input/classify.ts.
+   * `rewalk`: the walked milestones whose `bringUp` or `journeys` the apply edited, each a fresh start for its walk abandonment
+   * brake (src/walk/milestones.ts); absent: none (lasting).
+   */
+  | Readonly<{ type: 'milestones'; rewalk?: readonly MilestoneId[] }>;
 
 /**
  * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
@@ -1647,7 +1651,10 @@ const planChange: Read<PlanChange> = tagged('type', {
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
   'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
   derived: object((f): PlanChange => ({ type: f.get('type', literal('derived')) })),
-  milestones: object((f): PlanChange => ({ type: f.get('type', literal('milestones')) })),
+  milestones: object((f): PlanChange => {
+    const rewalk = f.optional('rewalk', arrayOf(milestoneR, { nonEmpty: true }));
+    return { type: f.get('type', literal('milestones')), ...(rewalk === undefined ? {} : { rewalk }) };
+  }),
 });
 
 export const revisionPayload: Read<RevisionPayload> = object((f) => {
