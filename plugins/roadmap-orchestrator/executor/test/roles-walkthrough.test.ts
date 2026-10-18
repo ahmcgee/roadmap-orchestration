@@ -362,6 +362,10 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
         assert.match(readFileSync(join(copy, 'design/ci.md'), 'utf8'), new RegExp(`Step "unit" failed \\(ci/pipeline\\.yml:${runLine}\\)`), `${label}: the golden output agrees`);
         assert.match(red.stdout, /test\/money\.test\.js/);
         assert.match(red.stdout, /rerun it locally: node --test test\/money\.test\.js/);
+        // Each failing test by its file and line, its name and its error, as the golden output shows.
+        assert.match(red.stdout, /\n {4}test at test\/money\.test\.js:\d+:\d+\n {4}✖ amounts parse into minor units \(/, `${label}: the failing test named`);
+        assert.match(red.stdout, /AssertionError \[ERR_ASSERTION\]/);
+        assert.match(readFileSync(join(copy, 'design/ci.md'), 'utf8'), /\n {4}test at test\/report\.test\.js:\d+:1\n {4}✖ /, `${label}: the golden output shows it`);
       }
       return;
     }
@@ -393,7 +397,17 @@ test('roles.walk-plants: on every dev seed\'s running product, each slot does wh
         assert.equal(r.status, 200, `${cell.id} ${p}`);
         const text = await r.text();
         if (!(w2.state === 'plant' && w2.at.kind === 'page' && w2.at.page === p) && p !== 'statement-print') assert.match(text, /href="\/static\/app\.css"/, `${cell.id} ${p}`);
+        if (p !== 'statement-print') assert.equal(text.match(/<section class="card[ "]/g)?.length, 1, `${cell.id} ${p}: one card`);
       }
+      // The overview follows the reference's layout too: one card, holding the page's figure and its primary action.
+      const overview = await (await get(u, '/')).text();
+      assert.match(overview, /<section class="card" aria-label="This month">\s*<p class="card-figure">[^<]* spent of [^<]* across 3 teams\.<\/p>\s*<p><a class="button button-primary" href="\/entries\/new">Record entry<\/a><\/p>\s*<\/section>/, `${cell.id}: the overview's card`);
+      // A list parameter the API does not know is refused, each named, never ignored (design/api.md, "Errors").
+      const stray = await fetch(`${u.base}/api/v1/entries?mnth=${u.f.data.month}&team=platform&colour=red`, { headers: { ...CLOSE, authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}` } });
+      assert.equal(stray.status, 400, `${cell.id}: an unknown list parameter`);
+      const strayBody = (await stray.json()) as { type: string; invalid_params: { name: string }[] };
+      assert.equal(strayBody.type, 'https://ledgerly.dev/problems/invalid-query');
+      assert.deepEqual(strayBody.invalid_params.map((x) => x.name), ['mnth', 'colour']);
       for (const asset of ['/static/app.css', '/static/tokens.css', '/static/print.css', '/static/favicon.svg', '/favicon.ico']) assert.equal((await get(u, asset)).status, 200, asset);
       // The other two journeys' last steps go where they should.
       const w1 = u.f.slots.find((s) => s.family === 'W1')!;

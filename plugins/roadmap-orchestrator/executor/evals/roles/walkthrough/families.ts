@@ -306,7 +306,7 @@ const W12: Family = {
         "  if (argv.includes('--test')) {",
         "    const failing = testFilesOf(argv).map((f) => ({ f, r: spawnSync(argv[0], ['--test', f], { encoding: 'utf8' }) })).filter((x) => x.r.status !== 0);",
         "    lines.push(`${failing.length} test ${failing.length === 1 ? 'file' : 'files'} failed:`);",
-        '    for (const { f, r } of failing) lines.push(`  ${f}`, tail(`${r.stdout}${r.stderr}`, 12), `  rerun it locally: node --test ${f}`);',
+        '    for (const { f, r } of failing) lines.push(`  ${f}`, failingTests(`${r.stdout}${r.stderr}`), `  rerun it locally: node --test ${f}`);',
         '  } else {',
         '    lines.push(tail(`${result.stdout}${result.stderr}`, 12), `Rerun it locally: ${step.run}`);',
         '  }',

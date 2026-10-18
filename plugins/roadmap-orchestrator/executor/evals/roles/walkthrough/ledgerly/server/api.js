@@ -9,6 +9,7 @@ const PROBLEMS = 'https://ledgerly.dev/problems';
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
 const ENTRY_FIELDS = ['team', 'month', 'vendor', 'amount', 'note'];
+const LIST_PARAMS = ['team', 'month', 'limit', 'page_token'];
 
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json', ...headers });
@@ -53,7 +54,9 @@ function listEntries(res, url, { config, dir }) {
   const month = q.get('month');
   const limit = q.has('limit') ? Number(q.get('limit')) : DEFAULT_LIMIT;
   const offset = q.has('page_token') ? cursor.decode(q.get('page_token')) : 0;
-  const invalid = [];
+  // A parameter the list does not know is refused with the others, never ignored (design/api.md, "Errors").
+  const invalid = [...new Set(q.keys())].filter((k) => !LIST_PARAMS.includes(k))
+    .map((k) => ({ name: k, reason: `${k} is not a list parameter; send only team, month, limit and page_token.` }));
   if (team !== null && !config.teams.some((t) => t.id === team)) invalid.push({ name: 'team', reason: `team must be one of ${config.teams.map((t) => t.id).join(', ')}` });
   if (month !== null && !isMonth(month)) invalid.push({ name: 'month', reason: 'month must look like 2026-09' });
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) invalid.push({ name: 'limit', reason: `limit must be a whole number from 1 to ${MAX_LIMIT}` });

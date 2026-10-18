@@ -26,7 +26,9 @@ Every error, and only an error, answers with a 4xx or 5xx status and `content-ty
 switch on `type`, never on `detail`. Machine-readable specifics go in extension members: a validation problem lists each
 bad field or parameter in `invalid_params`, `[{ "name", "reason" }]`, all of them in one response. Nothing sent is
 ignored: an entry body carrying a field the API does not know (anything but `team`, `month`, `vendor`, `amount` and
-`note`) is refused as `invalid-entry`, each unknown field named in `invalid_params` beside any wrong ones.
+`note`) is refused as `invalid-entry`, each unknown field named in `invalid_params` beside any wrong ones, and a list
+query carrying a parameter the list does not know (anything but `team`, `month`, `limit` and `page_token`) is refused
+as `invalid-query` the same way.
 
 | `type` (under `https://ledgerly.dev/problems/`) | Status | When |
 |---|---|---|
@@ -34,7 +36,7 @@ ignored: an entry body carrying a field the API does not know (anything but `tea
 | `api-disabled` | 503 | the server was started without `LEDGERLY_API_TOKEN` |
 | `malformed-body` | 400 | the body is not a JSON object |
 | `invalid-entry` | 422 | an entry's fields are wrong or unknown; `invalid_params` names each |
-| `invalid-query` | 400 | a list's parameters are wrong; `invalid_params` names each |
+| `invalid-query` | 400 | a list's parameters are wrong or unknown; `invalid_params` names each |
 | `idempotency-conflict` | 409 | an `Idempotency-Key` reused with a different body |
 | `not-found` | 404 | no such entry or endpoint |
 

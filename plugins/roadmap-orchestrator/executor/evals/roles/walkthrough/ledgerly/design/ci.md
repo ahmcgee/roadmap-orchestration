@@ -25,7 +25,8 @@ first failing step and exits with that step's exit code.
 A failure must let the person fix it without opening CI's logs:
 
 - the step that failed, with its command and the command's line in `ci/pipeline.yml` (the `run:` line);
-- for a test step, each failing test file, the tail of its output, and the command that reruns just that file;
+- for a test step, each failing test file, each failing test in it (its file and line, its name and its error), and the
+  command that reruns just that file;
 - for any other step, the tail of its output and the command that reruns it.
 
 ```
@@ -36,7 +37,9 @@ ledgerly: 2 steps
 Step "unit" failed (ci/pipeline.yml:9): node --test test/*.test.js
 1 test file failed:
   test/report.test.js
-    ...the test's own failure output...
+    test at test/report.test.js:16:1
+    ✖ a team month totals its own entries only (1.2ms)
+      AssertionError [ERR_ASSERTION]: ...the test's own error...
   rerun it locally: node --test test/report.test.js
 ```
 

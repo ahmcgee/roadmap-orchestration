@@ -49,6 +49,28 @@ function testFilesOf(argv) {
 const seconds = (ms) => `${(ms / 1000).toFixed(2)}s`;
 const tail = (text, n) => text.trimEnd().split('\n').slice(-n).map((l) => `    ${l}`).join('\n');
 
+/**
+ * A failing test file's report: the test runner's "failing tests" section, each failing test's file and line, its name,
+ * its error and the stack frame it failed at (the rest of the stack and the error's properties are dropped). A file that
+ * failed without a failing test (it did not load) reports the tail of its output.
+ */
+function failingTests(text) {
+  const at = text.indexOf('failing tests:');
+  if (at < 0) return tail(text, 12);
+  const out = [];
+  let frames = 0;
+  for (const line of text.slice(at + 'failing tests:'.length).trim().split('\n')) {
+    if (line.startsWith('test at ')) frames = 0;
+    else if (/^\s+at /.test(line)) {
+      frames += 1;
+      if (frames === 1) out.push(line.replace(/ \{$/, ''));
+      continue;
+    } else if (frames > 0) continue;
+    out.push(line.trimEnd());
+  }
+  return out.map((l) => (l === '' ? '' : `    ${l}`)).join('\n');
+}
+
 function reportFailure(step, argv, result, ms) {
 {{failure-report}}
 }
