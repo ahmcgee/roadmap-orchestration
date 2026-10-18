@@ -847,8 +847,9 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
   test('audit.oversized-publication-bounded: one publication over the budget is attached bounded (stat, small files inlined, the large one and a derived output listed with their readable diff files), as is an owner\'s branch, and the lens reports', T, async () => {
     const { d } = auditArc({
       steps: [
-        ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/huge.js': bigSource('hugeone', 300_000), 'dist/bundle.js': 'export const bundled = true;\n' }),
-        ...unitSteps('u2', { 'src/ownerbig.js': bigSource('ownerbig', 300_000), 'src/owner.js': 'export const owner = 1;\n' }),
+        // Each unit's diff overflows the gate's budget too: its gate answers with a cluster map covering every changed path.
+        ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/huge.js': bigSource('hugeone', 300_000), 'dist/bundle.js': 'export const bundled = true;\n' }, { clusters: [{ id: 'all', paths: ['**'], review: 'close' }] }),
+        ...unitSteps('u2', { 'src/ownerbig.js': bigSource('ownerbig', 300_000), 'src/owner.js': 'export const owner = 1;\n' }, { clusters: [{ id: 'all', paths: ['**'], review: 'close' }] }),
         lensStep('audit-1', 'vision'),
       ],
       units: [{ id: 'u1' }, { id: 'u2' }], ...I1, mapping: [], audit: { lenses: ['vision'] },
