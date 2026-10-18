@@ -200,7 +200,7 @@ describe('dev.13 answers: walkthrough and polish judge', () => {
   const refusedReport = (o: object, field: RegExp): void =>
     assert.throws(() => validateWalkthroughOutput(report(o)), (err: unknown) => err instanceof SchemaError && field.test(err.field));
 
-  it('reads a report; breaks cites the journey, a contract or a floor, deviates the design, the vision or a floor', () => {
+  it('reads a report; breaks cites the journey, a contract or a floor, deviates the design or the vision', () => {
     const r = validateWalkthroughOutput(report());
     assert.equal(r.findings[0]?.against.type, 'design');
     const floor = { type: 'floor', text: 'Body text keeps 4.5:1 contrast.', source: 'V-3' };
@@ -211,6 +211,8 @@ describe('dev.13 answers: walkthrough and polish judge', () => {
     refusedReport({ findings: [{ ...report().findings[0], class: 'breaks', against: { ...contract, dependents: undefined } }] }, /dependents/);
     refusedReport({ findings: [{ ...report().findings[0], class: 'breaks' }] }, /\.findings\[0\]\.against$/);
     refusedReport({ findings: [{ ...report().findings[0], against: { type: 'journey' } }] }, /\.findings\[0\]\.against$/);
+    // A declared floor missed is always breaks (owner 2026-10-18): deviates cannot cite one.
+    refusedReport({ findings: [{ ...report().findings[0], against: floor }] }, /\.findings\[0\]\.against$/);
     refusedReport({ findings: [{ ...report().findings[0], journey: 'J-2' }] }, /\.findings\[0\]\.journey$/);
   });
 

@@ -1053,7 +1053,7 @@ export type WalkAgainst =
 /** `breaks` cites the journey, a contract or a floor; `deviates` the design, the vision or a floor. */
 export const WALK_AGAINST: { readonly [C in WalkFindingClass]: readonly WalkAgainst['type'][] } = {
   breaks: ['journey', 'contract', 'floor'],
-  deviates: ['design', 'vision', 'floor'],
+  deviates: ['design', 'vision'],
 };
 export type WalkJourneyReport = Readonly<{ journey: JourneyId; outcome: WalkJourneyOutcome; evidence: readonly string[]; note: string }>;
 export type WalkFinding = Readonly<{

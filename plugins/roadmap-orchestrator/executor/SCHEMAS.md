@@ -4073,7 +4073,7 @@ evidence (non-empty), claim, cause, against: journey | contract{path: RepoPath, 
 source: RepoPath | V-n} | design{path, anchor} | vision{clause}, paths: RepoPath[]}[], polish: {journey, evidence (non-empty), text, unit: {id, scope (non-empty), spec}}[]
 (unit ids unique), premises, reasons}`. The reader's rules: `final` true only; a finding or polish names a reported
 journey; `breaks` cites `journey`, `contract` (owner ruling 2026-10-18: where the contract is stated, and who builds
-on it) or `floor`, `deviates` `design`, `vision` or `floor` (`WALK_AGAINST`); a `blocked`
+on it) or `floor`, `deviates` `design` or `vision` (`WALK_AGAINST`: a declared floor missed is always `breaks`); a `blocked`
 journey has a `breaks` finding on it. A polish `spec` is an admit's spec object (`S_ADMIT_SPEC`, read into spec.json's
 canonical text), not the plan's `string` (step 0 decided: one admit path with two authors). The walk job's validation
 (agent C) adds what needs its inputs: every journey reported, cited evidence files under the evidence dir, a design or
