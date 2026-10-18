@@ -3,24 +3,28 @@
 // roles.walk-gen-deterministic, roles.walk-cells, roles.walk-slots, roles.walk-plants (each slot's predicted effect,
 // checked mechanically on the running product: the 404 route, the contrast ratio, the stylesheet, the exit codes and
 // streams, the problem document, the warning, the CI report, the README as written), roles.walk-grading,
-// roles.walk-summary, roles.walk-fakes (oracle, clean-report, cite-plants, flag-everything, breaks-everything through
-// run.ts), roles.walk-caps, roles.walk-seat, roles.walk-triggers.
+// roles.walk-summary, roles.walk-fakes (oracle, clean-report, cite-plants, flag-everything, breaks-everything and refused
+// through run.ts, each trial an arc whose u1 merges and whose walk-1 runs through the production walk job),
+// roles.walk-caps, roles.walk-seat, roles.walk-triggers. The products are brought up by the production bring-up
+// (src/walk/bringup.ts).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { journeyId, visionClauseId } from '../src/core/ids.ts';
-import { repoPath } from '../src/core/values.ts';
+import { type JobId, arcId, journeyId, visionClauseId } from '../src/core/ids.ts';
+import { openJournal } from '../src/core/log.ts';
+import { sessionContainment } from '../src/contain/session.ts';
+import { absPath, isoTimeOf, repoPath } from '../src/core/values.ts';
+import { allocatePorts, bringUp, substitutePorts, tearDown } from '../src/walk/bringup.ts';
 import type { WalkthroughOutput } from '../src/prompts/schemas.ts';
 import { rebindConfig } from '../evals/roles/run.ts';
 import { readTranscript } from '../evals/roles/transcript.ts';
 import { triggeredRoles } from '../evals/roles/triggers.ts';
 import { type WalkRow, walkSeat } from '../evals/roles/walkthrough/arc.ts';
-import { bringUp, substitutePorts } from '../evals/roles/walkthrough/bringup.ts';
 import { DEV_WALK_CELLS } from '../evals/roles/walkthrough/cells.ts';
 import { FAMILY_IDS, PAGE_INFO, PAGES, type FamilyId, pageFile, pagePath } from '../evals/roles/walkthrough/families.ts';
-import { type SlotKey, type WalkCell, type WalkFixture, buildWalkFixture, materialise } from '../evals/roles/walkthrough/fixture.ts';
+import { type SlotKey, VISION_JSON, type WalkCell, type WalkFixture, buildWalkFixture } from '../evals/roles/walkthrough/fixture.ts';
 import { assignFindings, gradeWalk } from '../evals/roles/walkthrough/grade.ts';
 import { baseFiles } from '../evals/roles/walkthrough/product.ts';
 import { runWalk } from '../evals/roles/walkthrough/run.ts';
@@ -41,14 +45,14 @@ function writeProduct(f: WalkFixture): string {
   return dir;
 }
 
-test('roles.walk-gen-deterministic: a seed gives the same product and commit every time; seeds differ; every hook resolved; no file names the eval', () => {
+test('roles.walk-gen-deterministic: a seed gives the same product and slots every time; seeds differ; every hook resolved; no file names the eval', () => {
   const words = /\b(plant(ed|s)?|twins?|slots?|defects?|evals?|needles?|answer key)\b/i;
   const families = /\bW\d{1,2}\b/;
   for (const cell of DEV_WALK_CELLS) {
     const a = buildWalkFixture(cell);
     const b = buildWalkFixture(cell);
     assert.deepEqual([...a.files], [...b.files], cell.id);
-    assert.equal(materialise(a, tmpDir('walk-det')), materialise(b, tmpDir('walk-det')), `${cell.id}: the same commit`);
+    assert.deepEqual(a.slots, b.slots, cell.id);
     for (const [path, text] of a.files) {
       assert.doesNotMatch(text, /\{\{[a-z-]+\}\}/, `${cell.id} ${path}: an unresolved hook`);
       assert.doesNotMatch(text, words, `${cell.id} ${path}: a word that names the eval`);
@@ -66,13 +70,13 @@ test('roles.walk-cells: each family is planted in exactly two of the four dev se
   for (const f of FAMILY_IDS) assert.equal(DEV_WALK_CELLS.filter((c) => c.planted.includes(f)).length, 2, f);
   assert.equal(DEV_WALK_CELLS.reduce((a, c) => a + c.planted.length, 0), 26);
   assert.equal(new Set(DEV_WALK_CELLS.map((c) => [...c.planted].sort().join(','))).size, 4);
+  assert.ok(VISION_JSON.clauses.some((x) => x.kind === 'experience'));
   for (const c of DEV_WALK_CELLS) {
     const f = buildWalkFixture(c);
     assert.equal(f.slots.length, 13);
     assert.deepEqual(f.slots.filter((s) => s.state === 'plant').map((s) => s.family).sort(), [...c.planted].sort());
     assert.equal(f.milestone.journeys.length, 9);
     assert.deepEqual(f.milestone.journeys.map((j) => j.via), ['browser', 'browser', 'browser', 'shell', 'shell', 'shell', 'shell', 'shell', 'shell']);
-    assert.ok(f.vision.clauses.some((x) => x.kind === 'experience'));
   }
 });
 
@@ -101,21 +105,37 @@ test('roles.walk-slots: one slot per page, W1 on a journey\'s last step, W7 on a
 // ---------------------------------------------------------------------------------------------------
 // The plants' predicted effects, checked on the running product
 
-type Up = Readonly<{ dir: string; f: WalkFixture; base: string; env: Readonly<Record<string, string>>; stop: () => void }>;
+type Up = Readonly<{ dir: string; f: WalkFixture; base: string; env: Readonly<Record<string, string>>; stop: () => Promise<void> }>;
 
+/** The cell's product, brought up by the production bring-up (its spawns journalled under a walk job of a scratch log). */
 async function up(cell: WalkCell): Promise<Up> {
   const f = buildWalkFixture(cell);
   const dir = writeProduct(f);
-  const inst = await bringUp(dir, f.milestone.bringUp, tmpDir('walk-logs'));
-  return { dir, f, base: `http://127.0.0.1:${inst.ports['web']}`, env: inst.env, stop: inst.stop };
+  const runDir = absPath(tmpDir('walk-up'));
+  const journal = openJournal(runDir, arcId('t-walkup'));
+  const ctx = { journal, containment: sessionContainment, runDir, hostEnv: process.env };
+  const ports = await allocatePorts(f.milestone.bringUp.serve.map((x) => x.name));
+  const end = await bringUp(ctx, {
+    milestone: f.milestone, checkout: absPath(dir), ports, parent: { type: 'job', job: 'walk-1' as JobId }, key: 'bring-up:walk-1',
+    logDir: absPath(join(runDir, 'server')), serveDeadlineAt: isoTimeOf(new Date(Date.now() + 15 * 60_000)),
+  });
+  if (end.kind !== 'up') throw new Error(`${cell.id}: the bring-up ended ${JSON.stringify(end)}`);
+  const stop = async (): Promise<void> => {
+    await tearDown(ctx, end.instance);
+    journal.close();
+  };
+  return { dir, f, base: `http://127.0.0.1:${ports['web' as never]}`, env: end.instance.product.env, stop };
 }
 
 const cli = (u: Up, args: readonly string[], cwd = u.dir) =>
   spawnSync('node', ['bin/ledgerly.js', ...args], { cwd, env: { ...process.env, ...u.env }, encoding: 'utf8' });
 
-const get = async (u: Up, path: string): Promise<Response> => fetch(`${u.base}${path}`, { redirect: 'manual' });
+// Every request on a fresh connection: a kept-alive one idle past the server's keep-alive timeout (a slow CLI or CI check
+// in between) can be closed by the server just as it is reused.
+const CLOSE = { connection: 'close' };
+const get = async (u: Up, path: string): Promise<Response> => fetch(`${u.base}${path}`, { redirect: 'manual', headers: CLOSE });
 const post = async (u: Up, path: string, form: Record<string, string>): Promise<Response> =>
-  fetch(`${u.base}${path}`, { method: 'POST', redirect: 'manual', body: new URLSearchParams(form) });
+  fetch(`${u.base}${path}`, { method: 'POST', redirect: 'manual', body: new URLSearchParams(form), headers: CLOSE });
 
 function hexOf(css: string, token: string): string {
   const m = new RegExp(`${token}:\\s*(#[0-9A-Fa-f]{6})`).exec(css);
@@ -261,7 +281,7 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
     }
     case 'W9': {
       const r = await fetch(`${u.base}/api/v1/entries`, {
-        method: 'POST', headers: { authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}`, 'content-type': 'application/json' },
+        method: 'POST', headers: { ...CLOSE, authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}`, 'content-type': 'application/json' },
         body: JSON.stringify({ team: 'platform', month: 'Sept', vendor: 'Hetzner', amount: '12,50' }),
       });
       const body = (await r.json()) as Record<string, unknown>;
@@ -362,7 +382,7 @@ test('roles.walk-plants: on every dev seed\'s running product, each slot does wh
       }
       assert.equal(spawnSync('node', ['--test', 'test/*.test.js'], { cwd: u.dir, encoding: 'utf8', env: PLAIN_ENV }).status, 0, `${cell.id}: the product's own tests`);
     } finally {
-      u.stop();
+      await u.stop();
     }
   }
 });
@@ -445,7 +465,7 @@ test('roles.walk-grading: caught, misclassed, lucky, false-blocking, twin false 
 function row(cell: string, trial: number, verdicts: Partial<Record<FamilyId, string>>, extra: Partial<WalkRow> = {}): WalkRow {
   return {
     set: 'dev', cell, trial, walker: 'oracle', void: null, usage: null, estimatedUsd: 1, wallMs: 1000, turns: 1, load: 1, models: [],
-    method: { available: [], tools: {}, browserCalls: 0, shellCalls: 0, subagents: [], denials: 0, unavailable: [] }, evidence: { files: 0, screenshots: 0, missing: 0 }, dir: '',
+    method: { available: [], tools: {}, browserCalls: 0, shellCalls: 0, subagents: [], denials: 0, unavailable: [] }, evidence: { files: 0, screenshots: 0 }, dir: '', calls: 1,
     graded: {
       findings: 0, stray: { findings: 0, breaks: 0 }, polish: 0, blocked: 0,
       slots: FAMILY_IDS.map((family) => {
@@ -509,18 +529,20 @@ async function fakeRun(walker: string, cells: readonly string[], caps: Readonly<
   return { summary, rows, out, lines };
 }
 
-test('roles.walk-fakes: an oracle walker passes every criterion; clean-report misses all, cite-plants is lucky, flag-everything cries wolf on twins, breaks-everything blocks', T, async () => {
+test('roles.walk-fakes: an oracle walker passes every criterion; clean-report misses all, cite-plants is lucky, flag-everything cries wolf on twins, breaks-everything blocks, a report refused after its repair turn voids the trial', T, async () => {
   const oracle = await fakeRun('oracle', DEV_WALK_CELLS.map((c) => c.id));
   assert.ok(oracle.lines.includes('ARM walkthrough.arc frontier claude-opus-5-5:medium'), oracle.lines.join('\n'));
   for (const c of oracle.summary.criteria) assert.notEqual(c.pass, false, `${c.name}: ${c.detail}`);
   assert.equal(oracle.summary.recall.k, 26);
   for (const r of oracle.rows) {
     assert.equal(r.void, null, JSON.stringify(r.void));
-    for (const file of ['key.json', 'prompt.txt', 'argv.json', 'transcript.jsonl', 'answer.json', 'row.json', 'evidence/web.log', 'evidence/notes.md']) assert.ok(existsSync(join(r.dir, file)), `${r.cell}: ${file}`);
+    assert.equal(r.calls, 1);
+    for (const file of ['key.json', 'prompt.txt', 'argv.json', 'walk-1.jsonl', 'transcript.jsonl', 'answer.json', 'row.json', 'evidence/notes.md', 'evidence/server/serve.web.stdout']) assert.ok(existsSync(join(r.dir, file)), `${r.cell}: ${file}`);
     const prompt = readFileSync(join(r.dir, 'prompt.txt'), 'utf8');
     assert.ok(!prompt.includes(oracle.out) && !prompt.includes('key.json'), 'the prompt never names the run dir or the key');
     const argv = JSON.parse(readFileSync(join(r.dir, 'argv.json'), 'utf8')) as string[];
-    const mcp = JSON.parse(argv[argv.indexOf('--mcp-config') + 1]!) as { mcpServers: { playwright: { args: string[] } } };
+    assert.ok(argv.includes('--mcp-config'));
+    const mcp = JSON.parse(readFileSync(join(r.dir, 'mcp.json'), 'utf8')) as { mcpServers: { playwright: { args: string[] } } };
     assert.deepEqual(mcp.mcpServers.playwright.args.slice(0, 4), ['--headless', '--isolated', '--browser', 'chromium']);
     assert.ok(mcp.mcpServers.playwright.args.includes('1280x800') && !mcp.mcpServers.playwright.args.some((a) => a.includes('{')), 'substituted');
     assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Grep,Glob,Bash,Write,Edit,Agent');
@@ -542,6 +564,11 @@ test('roles.walk-fakes: an oracle walker passes every criterion; clean-report mi
   assert.equal(crit(wolf.summary, 'false-blocking'), true);
   const blocker = await fakeRun('breaks-everything', ['S2']);
   assert.equal(crit(blocker.summary, 'false-blocking'), false);
+  // A report the walk job refuses takes its one repair turn; refused again, the walk is abandoned and the trial void.
+  const refused = await fakeRun('refused', ['S3']);
+  assert.equal(refused.rows[0]!.calls, 2, 'the repair turn was taken');
+  assert.equal(refused.rows[0]!.void?.reason, 'invalid', JSON.stringify(refused.rows[0]!.void));
+  assert.match(refused.rows[0]!.void!.detail, /nowhere\.png, which is no file in the evidence dir/);
 });
 
 test('roles.walk-caps: --trial-cap kills an overspending session (void cap, its estimate kept); --cap starts no trial past the spend', T, async () => {
@@ -559,13 +586,13 @@ test('roles.walk-seat: the arm is the walkthrough seat (frontier, Opus 5.5 mediu
   assert.equal(walkSeat(rebindConfig(['frontier=claude-opus-5-5:xhigh'])).arm, 'walkthrough.arc frontier (rebound) claude-opus-5-5:xhigh');
   assert.throws(() => walkSeat(rebindConfig(['frontier=claude-sonnet-5-5:high'])), /walkthrough/);
   assert.throws(() => walkSeat(rebindConfig(['frontier=gpt-5.6-sol:high'])), /Claude only|walkthrough|frontier/);
-  assert.equal(substitutePorts('http://127.0.0.1:{port:web}/x', { web: 4100 }), 'http://127.0.0.1:4100/x');
-  assert.throws(() => substitutePorts('{port:api}', { web: 1 }), /names no serve entry/);
+  assert.equal(substitutePorts('http://127.0.0.1:{port:web}/x', { web: 4100 } as never), 'http://127.0.0.1:4100/x');
+  assert.throws(() => substitutePorts('{port:api}', { web: 1 } as never), /names no allocated port/);
 });
 
 test('roles.walk-triggers: walkthrough paths trigger the walkthrough eval; the shared harness both; the gate\'s own paths only the gate', () => {
   assert.deepEqual(triggeredRoles(['src/prompts/walkthrough/claude-opus-5-5.ts']), ['walkthrough']);
-  assert.deepEqual(triggeredRoles(['src/walk/job.ts']), ['walkthrough']);
+  for (const p of ['src/walk/walk.ts', 'src/walk/bringup.ts', 'src/walk/report.ts', 'src/backends/mcp.ts']) assert.deepEqual(triggeredRoles([p]), ['walkthrough'], p);
   assert.deepEqual(triggeredRoles(['evals/roles/walkthrough/ledgerly/web/pages/entries.js']), ['walkthrough']);
   assert.deepEqual(triggeredRoles(['src/backends/argv.ts']), ['gate', 'walkthrough']);
   assert.deepEqual(triggeredRoles(['evals/roles/run.ts']), ['gate', 'walkthrough']);

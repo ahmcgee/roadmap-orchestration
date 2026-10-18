@@ -6,9 +6,10 @@
 // The arm is the walkthrough seat (`walkthrough.arc`, built-in frontier: Opus 5.5 medium); `--rebind` rebinds a class
 // through the repo config, as for the gate. `--fake` swaps the real session for a degenerate walker (arc.ts
 // `FAKE_WALKERS`, free). Writes <out>/trials.jsonl, <out>/summary.json and <out>/<cell>-<trial>/ (key.json, prompt.txt,
-// argv.json, walk-1.jsonl, stderr.txt, transcript.jsonl, answer.json, evidence/, row.json); prints the TRACE and BRAKE
-// lines, a TRIAL line per trial, then the report (summary.ts). Exits 1 on any FAIL. Each trial is bounded by the worker's
-// 60-minute timeout on top of the session's 45-minute deadline. `--cap` and `--trial-cap` work as for the gate.
+// argv.json, walk-<n>.jsonl (each call's stdout: the report, then its repair turn), transcript.jsonl, answer.json,
+// evidence/, row.json); prints the TRACE and BRAKE lines, a TRIAL line per trial, then the report (summary.ts). Exits 1 on
+// any FAIL. Each trial is bounded by the worker's 60-minute timeout and the harness's 45-minute session brake. `--cap` and
+// `--trial-cap` work as for the gate.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -63,8 +64,8 @@ export function parseWalkRun(argv: readonly string[]): WalkRunOptions {
 /** A row for a trial whose worker died before writing one. */
 function errorRow(a: WalkWorkerArgs, detail: string): WalkRow {
   return {
-    set: a.set, cell: a.cell, trial: a.trial, walker: a.walker, void: { reason: 'error', detail }, graded: null, usage: null, estimatedUsd: 0, wallMs: 0, turns: 0, load: 0,
-    models: [], method: { available: [], tools: {}, browserCalls: 0, shellCalls: 0, subagents: [], denials: 0, unavailable: [] }, evidence: { files: 0, screenshots: 0, missing: 0 }, dir: a.out,
+    set: a.set, cell: a.cell, trial: a.trial, walker: a.walker, void: { reason: 'error', detail }, graded: null, usage: null, estimatedUsd: 0, wallMs: 0, turns: 0, load: 0, calls: 0,
+    models: [], method: { available: [], tools: {}, browserCalls: 0, shellCalls: 0, subagents: [], denials: 0, unavailable: [] }, evidence: { files: 0, screenshots: 0 }, dir: a.out,
   };
 }
 
@@ -73,7 +74,7 @@ function trialLine(r: WalkRow): string {
   const verdicts = g === null ? '' : ` caught=${g.slots.filter((s) => s.verdict === 'caught').length}/${g.slots.filter((s) => s.state === 'plant').length}`
     + ` fp=${g.slots.filter((s) => s.verdict === 'false-positive').length} misclassed=${g.slots.filter((s) => s.verdict === 'misclassed').length}`
     + ` lucky=${g.slots.filter((s) => s.verdict === 'lucky').length} stray=${g.stray.findings} polish=${g.polish}`;
-  return `TRIAL ${r.cell}#${r.trial}${r.void !== null ? ` void:${r.void.reason} ${r.void.detail.split('\n')[0]}` : verdicts} cost=$${spentOf(r).toFixed(3)} `
+  return `TRIAL ${r.cell}#${r.trial}${r.void !== null ? ` void:${r.void.reason} ${r.void.detail.split('\n')[0]}` : verdicts} calls=${r.calls} cost=$${spentOf(r).toFixed(3)} `
     + `wall=${Math.round(r.wallMs / 1000)}s models=${r.models.join(',')}`;
 }
 

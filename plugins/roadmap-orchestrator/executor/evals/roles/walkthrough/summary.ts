@@ -12,7 +12,7 @@
 //   holdout-gap      (with a dev summary to compare) holdout recall within 15 points of dev
 //
 // Reported, never failed: misclassed (a `breaks` plant reported as `deviates`), stray findings (off every slot), the
-// polish rate, cited evidence missing from the evidence dir, screenshots, method (browser and shell calls, subagents) and
+// polish rate, screenshots, method (browser and shell calls, subagents) and
 // cost (median and p90 per seed and per model, per catch, wall time, turns). A trial's cost is `spentOf`, as the gate's.
 import { type Interval, fmtRate, median, quantile, wilson } from '../stats.ts';
 import type { ModelTotals } from '../gate/summary.ts';
@@ -42,7 +42,6 @@ export type WalkCellSummary = Readonly<{
   browserMedian: number | null;
   shellMedian: number | null;
   screenshotsMedian: number | null;
-  evidenceMissing: number;
 }>;
 
 export type FamilySummary = Readonly<{
@@ -105,7 +104,7 @@ function cellSummary(rows: readonly WalkRow[]): WalkCellSummary {
     costByModel,
     wallMedianS: median(rows.map((r) => r.wallMs / 1000)), turnsMedian: median(rows.map((r) => r.turns)),
     browserMedian: median(rows.map((r) => r.method.browserCalls)), shellMedian: median(rows.map((r) => r.method.shellCalls)),
-    screenshotsMedian: median(rows.map((r) => r.evidence.screenshots)), evidenceMissing: rows.reduce((a, r) => a + r.evidence.missing, 0),
+    screenshotsMedian: median(rows.map((r) => r.evidence.screenshots)),
   };
 }
 
@@ -191,7 +190,7 @@ export function walkReportLines(s: WalkSummary): readonly string[] {
     out.push(`CELL ${c.cell} trials=${c.trials} graded=${c.graded} caught=${fmtRate(c.recall)} twin-fp=${fmtRate(c.twinFp)} misclassed=${c.misclassed} lucky=${c.lucky} `
       + `false-blocking=${c.falseBlocking} stray=${c.stray} polish=${c.polish} cost=${usd(c.cost.median)}/p90 ${usd(c.cost.p90)} perCatch=${usd(c.cost.perCatch)} `
       + `wall=${c.wallMedianS?.toFixed(0) ?? '-'}s turns=${c.turnsMedian ?? '-'} browser=${c.browserMedian ?? '-'} shell=${c.shellMedian ?? '-'} screenshots=${c.screenshotsMedian ?? '-'} `
-      + `evidence-missing=${c.evidenceMissing} voids=${JSON.stringify(c.voids)}`);
+      + `voids=${JSON.stringify(c.voids)}`);
     for (const [m, x] of Object.entries(c.costByModel)) out.push(`COST ${c.cell} ${m} median=${usd(x.median)} p90=${usd(x.p90)}`);
   }
   for (const f of s.families) {

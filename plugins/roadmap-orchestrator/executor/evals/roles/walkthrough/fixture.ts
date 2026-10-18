@@ -1,14 +1,11 @@
-// One walkthrough trial's fixture: the cell's product (product.ts) committed to a scratch repository, the milestone the
-// walk is of (its bring-up, its nine journeys, its design reference `design/`), the vision with experience clauses, the
-// milestone's merged unit specs, and the answer key, which only the eval run dir holds.
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { journeyId, milestoneId, serveName, specRev, unitId, visionClauseId } from '../../../src/core/ids.ts';
+// One walkthrough trial's fixture: the cell's product (product.ts), the milestone the walk is of (its bring-up, its nine
+// journeys, its design reference `design/`, owner-supplied), the vision with experience clauses, the one unit whose merge
+// reaches the milestone (u1, its spec stating what the milestone's surfaces deliver), this repository's walkthrough MCP
+// config, and the answer key, which only the eval run dir holds.
+import { journeyId, milestoneId, serveName, unitId } from '../../../src/core/ids.ts';
 import { repoPath } from '../../../src/core/values.ts';
-import type { VisionClause } from '../../../src/holistic/types.ts';
 import type { Journey, Milestone } from '../../../src/input/plan.ts';
-import type { RenderedSpec, VisionInput } from '../../../src/prompts/inputs.ts';
-import { spawnSync } from 'node:child_process';
+import { type RepoConfig, parseRepoConfig } from '../../../src/routing/layers.ts';
 import { FAMILIES, type Expected, type FamilyId, type Position, type SlotState } from './families.ts';
 import { type FileMap, type SeedData, productFiles, seedData } from './product.ts';
 import { assignSlots } from './slots.ts';
@@ -40,15 +37,15 @@ export type WalkFixture = Readonly<{
   data: SeedData;
   files: FileMap;
   milestone: Milestone;
-  vision: VisionInput;
-  units: readonly RenderedSpec[];
   slots: readonly SlotKey[];
 }>;
 
-/** The design reference directory: every milestone reference the walk reads. */
+/** The design reference directory: the milestone's one reference. */
 export const REFERENCE = 'design';
 /** The serve entry's name and the data directory the bring-up uses (beside the README's own `.ledgerly`). */
 export const SERVE = 'web';
+/** The unit whose merge reaches the milestone. */
+export const MILESTONE_UNIT = 'u1';
 const DATA = 'var/ledger';
 const ADDRESS = `http://127.0.0.1:{port:${SERVE}}`;
 
@@ -61,8 +58,8 @@ export function milestoneOf(data: SeedData): Milestone {
     text: 'A platform team can record its spend, watch its monthly limits and print its statements from the dashboard, import and script it '
       + 'from the CLI, record it from other tools through the HTTP API, configure its teams in one file, and run the project\'s CI locally '
       + 'before pushing; a newcomer gets there from the README.',
-    units: ['u-web', 'u-cli', 'u-api', 'u-config', 'u-ci'].map((u) => unitId(u)),
-    design: { unit: unitId('u-design') },
+    units: [unitId(MILESTONE_UNIT)],
+    design: { supplied: true },
     references: [repoPath(REFERENCE)],
     bringUp: {
       setup: [['node', 'bin/ledgerly.js', 'init', '--data', DATA]],
@@ -85,36 +82,51 @@ export function milestoneOf(data: SeedData): Milestone {
   };
 }
 
-const clause = (n: number, kind: VisionClause['kind'], text: string): VisionClause => ({ id: visionClauseId(`V-${n}`), kind, text, rank: null, state: 'active' });
-
-export const VISION: VisionInput = {
-  rev: 1,
+/** The vision (roadmap/vision-m3), with experience clauses; the plan advances V-4 to V-7. */
+export const VISION_JSON = {
+  schema: 'roadmap/vision-m3', rev: 1, confirmation: null,
   clauses: [
-    clause(1, 'world', 'Platform teams record what they pay their vendors in ledgerly and see it against a monthly limit per team.'),
-    clause(2, 'purpose', 'A team lead knows where the team stands against its limit without asking finance.'),
-    clause(3, 'serves', 'Engineering leads and platform engineers, who are not accountants and visit a few times a month.'),
-    clause(4, 'experience', 'Recording a payment takes under a minute and never loses what was typed.'),
-    clause(5, 'experience', 'Every error says what went wrong and how to fix it, in the product\'s own voice.'),
-    clause(6, 'experience', 'Everything works by keyboard alone and meets WCAG 2.2 AA.'),
-    clause(7, 'experience', 'Scripts and other tools can rely on ledgerly: stable JSON, honest exit codes, results on stdout, one error format.'),
-    clause(8, 'non-negotiable', 'Nothing fails silently: nothing typed, imported or configured is dropped or ignored without saying so.'),
-  ],
+    { id: 'V-1', kind: 'world', text: 'Platform teams record what they pay their vendors in ledgerly and see it against a monthly limit per team.' },
+    { id: 'V-2', kind: 'purpose', text: 'A team lead knows where the team stands against its limit without asking finance.' },
+    { id: 'V-3', kind: 'serves', text: 'Engineering leads and platform engineers, who are not accountants and visit a few times a month.' },
+    { id: 'V-4', kind: 'experience', text: 'Recording a payment takes under a minute and never loses what was typed.' },
+    { id: 'V-5', kind: 'experience', text: 'Every error says what went wrong and how to fix it, in the product\'s own voice.' },
+    { id: 'V-6', kind: 'experience', text: 'Everything works by keyboard alone and meets WCAG 2.2 AA.' },
+    { id: 'V-7', kind: 'experience', text: 'Scripts and other tools can rely on ledgerly: stable JSON, honest exit codes, results on stdout, one error format.' },
+    { id: 'V-8', kind: 'non-negotiable', text: 'Nothing fails silently: nothing typed, imported or configured is dropped or ignored without saying so.' },
+  ].map((c) => ({ ...c, rank: null, state: 'active' })),
   questions: [],
-  advances: [visionClauseId('V-4'), visionClauseId('V-5'), visionClauseId('V-6'), visionClauseId('V-7')],
-};
+} as const;
+export const ADVANCES = ['V-4', 'V-5', 'V-6', 'V-7'] as const;
 
-const spec = (unit: string, markdown: string): RenderedSpec => ({ unit: unitId(unit), rev: specRev(1), markdown });
-
-/** The milestone's merged units, as their specs render. */
-export const UNITS: readonly RenderedSpec[] = [
-  spec('u-web', '# u-web: the dashboard\n\nScope: `web/**`, `server/main.js`.\n\nThe server-rendered dashboard to `design/DESIGN.md` and `design/tokens.css`: overview, entries, recording an entry, budgets and changing a limit, statements and their print views.\n\nAcceptance: the three flows of DESIGN.md "Flows and their budgets" complete within their budgets, by mouse and by keyboard, at 1280 and 390 px.'),
-  spec('u-cli', '# u-cli: the CLI\n\nScope: `bin/**`, `src/**`.\n\n`init`, `import`, `report` and `config check` to `design/cli.md`.\n\nAcceptance: the golden transcripts in design/cli.md; streams and exit codes as its table says.'),
-  spec('u-api', '# u-api: the HTTP API\n\nScope: `server/api.js`.\n\n`/api/v1` to `design/api.md`.\n\nAcceptance: the example sessions in design/api.md run as shown; every error is a problem document of a listed type.'),
-  spec('u-config', '# u-config: ledgerly.conf\n\nScope: `src/config.js`, `ledgerly.conf`.\n\nThe configuration file to `design/config.md`.\n\nAcceptance: every mistake in design/config.md "Mistakes" is reported as described.'),
-  spec('u-ci', '# u-ci: CI and the README\n\nScope: `ci/**`, `README.md`.\n\nThe pipeline and its local runner to `design/ci.md`; the README quickstart.\n\nAcceptance: `node ci/run.js` matches CI; a failure reports as design/ci.md "Output" says; the quickstart runs as written from a fresh checkout.'),
+/** u1's acceptance: what the milestone's surfaces deliver, each to its design reference (rendered into the walk's inputs). */
+export const UNIT_ACCEPTANCE: readonly string[] = [
+  'The dashboard (web/, server/main.js) follows design/DESIGN.md and design/tokens.css; the three flows of DESIGN.md "Flows and their budgets" complete within their budgets, by mouse and by keyboard, at 1280 and 390 px.',
+  'The CLI (bin/, src/) follows design/cli.md: its golden transcripts, streams and exit codes.',
+  'The HTTP API (server/api.js) follows design/api.md: its example sessions run as shown; every error is a problem document of a listed type.',
+  'ledgerly.conf (src/config.js) reports every mistake as design/config.md "Mistakes" describes.',
+  'node ci/run.js runs the steps CI runs and reports a failure as design/ci.md "Output" says; the README quickstart runs as written from a fresh checkout.',
 ];
 
-/** The fixture of `cell`: the same for every trial of the cell (the trial only numbers the key). */
+/** The release note u1's build commits: the change whose merge reaches the milestone. */
+export const RELEASE_NOTE = { 'CHANGELOG.md': '# Changelog\n\n## 0.4.0\n\nThe dashboard, CLI, HTTP API, configuration file and local CI runner, to the design reference in design/.\n' } as const;
+
+/**
+ * This repository's walkthrough MCP config (SCHEMAS.md "dev.13", "Repo config"; the devcontainer installs the server and
+ * Playwright's Chromium, edd2f51): Playwright MCP, headless, isolated, on Chromium (only Playwright's Chromium is
+ * installed; the server defaults to the Chrome channel), screenshots into the evidence dir. Pages are served over HTTP:
+ * the server refuses file: URLs.
+ */
+export const WALK_MCP = {
+  playwright: { command: 'playwright-mcp', args: ['--headless', '--isolated', '--browser', 'chromium', '--output-dir', '{evidence}', '--viewport-size', '{viewport}'] },
+} as const;
+
+/** The trial arc's repo config: the walkthrough MCP servers, with `--rebind`'s class bindings. */
+export function walkRepoConfig(rebind: RepoConfig | null): RepoConfig {
+  return parseRepoConfig({ walkthrough: { mcp: WALK_MCP }, ...(rebind?.routing?.classes === undefined ? {} : { routing: { classes: rebind.routing.classes } }) } as never);
+}
+
+/** The fixture of `cell`: the same for every trial of the cell. */
 export function buildWalkFixture(cell: WalkCell): WalkFixture {
   const data = seedData(cell.seed);
   const slots = assignSlots(cell.seed, cell.planted);
@@ -123,31 +135,5 @@ export function buildWalkFixture(cell: WalkCell): WalkFixture {
     const f = FAMILIES[s.family];
     return { family: s.family, state: s.state, expected: f.expected, at: s.at, what: s.state === 'plant' ? f.plant : f.twin, ...f.locus(s.state, s.at) };
   });
-  return { cell, data, files, milestone: milestoneOf(data), vision: VISION, units: UNITS, slots: keys };
-}
-
-/** A fixed identity and date, and no user or system git config: the same cell commits the same sha on every host. */
-const GIT_ENV = {
-  ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
-  GIT_AUTHOR_NAME: 'Ledgerly Team', GIT_AUTHOR_EMAIL: 'team@ledgerly.dev', GIT_AUTHOR_DATE: '2026-10-01T09:00:00Z',
-  GIT_COMMITTER_NAME: 'Ledgerly Team', GIT_COMMITTER_EMAIL: 'team@ledgerly.dev', GIT_COMMITTER_DATE: '2026-10-01T09:00:00Z',
-};
-
-export function git(repo: string, ...args: string[]): string {
-  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: GIT_ENV });
-  if (r.error !== undefined) throw r.error;
-  if (r.status !== 0) throw new Error(`git ${args.join(' ')} in ${repo} exited ${r.status}: ${r.stderr.trim()}`);
-  return r.stdout.trim();
-}
-
-/** Writes the product into a fresh repository at `repo` and commits it; returns the commit (the same for the same cell). */
-export function materialise(f: WalkFixture, repo: string): string {
-  git(repo, 'init', '--quiet', '--initial-branch', 'main');
-  for (const [path, text] of f.files) {
-    mkdirSync(dirname(join(repo, path)), { recursive: true });
-    writeFileSync(join(repo, path), text);
-  }
-  git(repo, 'add', '--all');
-  git(repo, 'commit', '--quiet', '--no-gpg-sign', '-m', 'ledgerly 0.4.0');
-  return git(repo, 'rev-parse', 'HEAD');
+  return { cell, data, files, milestone: milestoneOf(data), slots: keys };
 }

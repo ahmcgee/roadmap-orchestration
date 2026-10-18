@@ -599,8 +599,8 @@ node evals/roles/run.ts walkthrough --set holdout --n 3 --compare <dev run>/summ
 node evals/roles/run.ts walkthrough --set dev --n 1 --fake oracle                              # free: the harness's own check
 ```
 
-**When.** Paid, path-triggered like the gate's: `src/prompts/walkthrough/**`, the walk job (`src/walk/**`), the prompt
-inputs and schemas, `src/routing/**`, the `claude-acting-judge` argv and the Claude reader (`src/backends/argv.ts`,
+**When.** Paid, path-triggered like the gate's: `src/prompts/walkthrough/**`, the walk job (`src/walk/**`), its MCP
+config (`src/backends/mcp.ts`), the prompt inputs and schemas, `src/routing/**`, the `claude-acting-judge` argv and the Claude reader (`src/backends/argv.ts`,
 `claude.ts`), `evals/roles/walkthrough/**` and the shared harness.
 
 **The product** (`walkthrough/ledgerly/`, `product.ts`): `ledgerly`, a spend ledger for platform teams, zero-dependency
@@ -614,9 +614,9 @@ thing, layouts as wireframes, flows with states and step budgets, components, co
 codes, error voice, golden transcripts), `config.md` (keys, defaults, mistakes, minimal and full examples) and `ci.md`.
 A seed draws the data (the team `platform` and two more, budgets, alert shares, a currency, a month and the one before,
 each month's entries, this month one team within, one near and one over its limit). The milestone (`fixture.ts`) has a
-bring-up (`init`, the server on `{port:web}` with a `/healthz` probe, two imports), nine journeys (three browser: record an
-entry, change a limit, print a statement; six shell: CLI import, CLI report as JSON, API, config, CI, README), a
-vision with experience clauses and the merged units' specs.
+bring-up (`init`, the server on `{port:web}` with a `/healthz` probe, two imports) and nine journeys (three browser:
+record an entry, change a limit, print a statement; six shell: CLI import, CLI report as JSON, API, config, CI, README);
+the vision has experience clauses.
 
 **Slots and families** (`families.ts`, `slots.ts`, `cells.ts`): 13 slots per product, each its family's plant or its
 clean twin (the near-miss the reference sanctions), W1 to W13 as in the plan's table. W1 takes a browser journey's last
@@ -628,17 +628,18 @@ draws the assignment. The four dev seeds (S1 to S4) plant each family in exactly
 n = 3, 156 slot observations, 78 of each, six planted trials per family. The holdout set is untracked
 (`evals/roles/holdout/walkthrough.ts`, exporting `HOLDOUT_WALK_CELLS`).
 
-**The harness** (`walkthrough/arc.ts`): the product committed to a scratch repository (fixed identity and date: the same
-seed gives the same commit), checked out detached, brought up from the milestone's bring-up, and the walkthrough session
-launched in the checkout with the production pieces: the seat's routing (`walkthrough.arc`, frontier, Opus 5.5 medium;
-`--rebind` through the repo config), `promptFor('walkthrough')`, the `claude-acting-judge` call (`backendArgv`,
-`promptBytes`) with this repository's walkthrough MCP config (Playwright MCP, `--headless --isolated --browser chromium`,
-`--output-dir` the evidence dir, `--viewport-size 1280x800`; pages over HTTP, never `file:`), `readClaude` and
-`validateWalkthroughOutput`. The call goes through the fake backend's PATH shim (`real` act), as the gate eval's does.
-Two stand-ins (`bringup.ts`) are marked SWAP AT MERGE: the bring-up (agent C's walk job) and the MCP substitution (agent
-A's); once the walk job lands the trial runs it, which brings the repair turn and the job's evidence and reference checks.
-Until then an answer the reader refuses voids the trial (`invalid`), and cited evidence missing from the evidence dir is
-counted (`evidence-missing`), not refused. The server's logs go into the evidence dir, as the job's will.
+**The harness** (`walkthrough/arc.ts`) runs each trial through the production walk job, as the gate eval runs the
+production gate: a holistic arc whose repository is the product and whose plan has the one milestone, owner-supplied
+design, over one unit u1 (its spec's acceptance states what each surface delivers to its reference). u1 merges through
+the arc harness (fake plan-check, build and gate; its lanes, the product's own tests, run for real), which makes the walk
+due; then `runWalk` (src/walk/walk.ts) runs walk-1 exactly as an arc does: the capture, the detached checkout, the
+bring-up (src/walk/bringup.ts, logs under the evidence dir), the inputs, the acting-judge call on the walkthrough seat
+(frontier, Opus 5.5 medium; `--rebind` through the repo config) with this repository's walkthrough MCP config
+(`fixture.ts` `WALK_MCP`: Playwright MCP, `--headless --isolated --browser chromium`, `--output-dir` the evidence dir,
+`--viewport-size 1280x800`, substituted by src/backends/mcp.ts; pages over HTTP, never `file:`), the reading
+(`validateWalkthroughOutput` and `walkRefusals`) with its one repair turn, minting and teardown. The call goes through the
+fake backend's PATH shim (`real` acts, a second for the repair turn). A walk abandoned after its repair turn voids the
+trial (`invalid`, with the job's reasons); a failed bring-up voids it (`bring-up`).
 
 **Grading** (`walkthrough/grade.ts`). A finding belongs to the slot, among those on its journey, it localises to best:
 3 for a path among the slot's files, 1 per marker (the page's route, the family's words) its claim or cause matches; ties
@@ -660,8 +661,8 @@ USAGE, TOTAL, cost per catch).
 
 **Brakes and caps.** A TRACE line every 30 s (tools, browser calls, shell calls, subagents, load, spend). The harness
 kills the session (its process group: the MCP server and browser with it) and voids the trial on a token load over 3x the
-seed's median (`runaway`), past 45 minutes (`runaway`), or past `--trial-cap` (`cap`); `--cap` starts no trial past the
-run's spend. After every session the product is stopped.
+seed's median (`runaway`), past 45 minutes (`runaway`), or when the trial's calls together pass `--trial-cap` (`cap`);
+`--cap` starts no trial past the run's spend. The walk job tears the product down.
 
 **Cost.** An estimate, not a measurement (no paid trial has run): a walk of nine journeys, three in the browser at two
 widths, is roughly 150 to 250 turns with a context growing to 100k to 150k tokens; on Opus 5.5 list prices that is about
@@ -669,9 +670,9 @@ $3 to $5 of cache reads, $3 to $5 of cache writes and $2 to $3 of output, so $8 
 the dev set at n = 3, in line with the plan's budget. A paid run sets `--trial-cap 20 --cap 180` and starts with one trial
 whose transcript is read before scaling.
 
-**Output.** `<out>/trials.jsonl`, `<out>/summary.json`, and per trial `key.json`, `prompt.txt`, `argv.json`,
-`walk-1.jsonl` (the raw stdout), `stderr.txt`, `transcript.jsonl`, `answer.json`, `evidence/` (the session's
-screenshots and notes and the server logs) and `row.json`.
+**Output.** `<out>/trials.jsonl`, `<out>/summary.json`, and per trial `key.json`, `prompt.txt`, `argv.json`, `mcp.json`,
+`walk-<n>.jsonl` (each call's raw stdout: the report, then its repair turn), `transcript.jsonl`, `answer.json`,
+`evidence/` (the session's screenshots and notes, the product's logs under `server/`) and `row.json`.
 
 **Free tier.** `test/roles-walkthrough.test.ts`: the generator's determinism and hygiene (no unresolved hook, no word
 that names the eval in any product file); the dev cells' balance; the slot rules over 40 random draws; every slot's
@@ -680,8 +681,9 @@ off-token colour and off-grid gutter, the script that throws, the contrast ratio
 missing focus indicator, the vague form error, the CLI's streams and exit codes, the 200 error body against the problem
 document, the silent and the warned unknown key, the stack trace and the silent typo against the usage, the CI report,
 the README run as written); grading and the summary over scripted answers; run.ts end to end on the fake walkers
-(`oracle` passes every criterion; `clean-report`, `cite-plants`, `flag-everything`, `breaks-everything` each fail theirs);
-the caps; the seat; the triggers.
+(`oracle` passes every criterion; `clean-report`, `cite-plants`, `flag-everything`, `breaks-everything` each fail theirs;
+`refused` takes the repair turn and voids `invalid`); the caps; the seat; the triggers. The products of the plants check
+are brought up by the production bring-up.
 
 ## The run observer
 

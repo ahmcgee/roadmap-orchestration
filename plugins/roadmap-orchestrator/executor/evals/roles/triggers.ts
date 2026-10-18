@@ -2,8 +2,9 @@
 // roles whose behaviour they can move.
 // - Gate: its prompt modules, the bounded diff, the gate stage's capture, the prompt inputs it renders, routing (seats,
 //   classes, models), the judgment argv and tool set, the backend adapter that reads the session, and its eval.
-// - Walkthrough (dev.13): its prompt modules, the walk job (src/walk/: bring-up, inputs, validation, minting), the
-//   prompt inputs and schemas, routing, the `claude-acting-judge` argv and the reader of its session, and its eval.
+// - Walkthrough (dev.13): its prompt modules, the walk job (src/walk/: the job, bring-up, report validation and minting,
+//   the milestone node), its MCP config (src/backends/mcp.ts), the prompt inputs and schemas, routing, the
+//   `claude-acting-judge` argv and the reader of its session, and its eval.
 // The shared harness (evals/roles/*.ts) triggers both.
 //
 //   node evals/roles/triggers.ts [<base ref>]   prints the triggered roles, one per line (base: origin/main), from
@@ -17,7 +18,7 @@ const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/
 
 export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
   gate: ['src/prompts/gate/**', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
-  walkthrough: ['src/prompts/walkthrough/**', 'src/walk/**', ...SHARED, 'evals/roles/walkthrough/**'],
+  walkthrough: ['src/prompts/walkthrough/**', 'src/walk/**', 'src/backends/mcp.ts', ...SHARED, 'evals/roles/walkthrough/**'],
 };
 
 /** The roles `paths` (relative to executor/) trigger, in TRIGGERS order. */
