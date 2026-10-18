@@ -27,8 +27,12 @@
 // Claude Sonnet 5.5" alone): delegation (BUILD_DELEGATION, re-derived from those guides);
 // <safety> no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". Further trims wait for the
 // builder eval (BACKLOG).
+// dev.13 (contract input, no method): a milestone unit's design references as documents and its milestones block
+// (`milestonesText`); a build with the browser drive gets the `<browser>` block (`buildBrowserText`).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, assessText, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText } from '../inputs.ts';
+import {
+  UNIT_POLICY, assessText, bullets, buildBrowserText, documentsXml, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText,
+} from '../inputs.ts';
 import { BUILD_DELEGATION } from '../delegation.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
@@ -110,10 +114,14 @@ function ask(i: BuildInputs): string {
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  fields: [
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
+    'milestones', 'browser',
+  ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
+    ...milestoneDocuments(i.milestones),
   ])}
 
 <rulings>
@@ -122,7 +130,7 @@ ${rulingsText(i.rulings)}
 
 <reference_index>
 ${referenceIndexText(i.index)}
-</reference_index>
+</reference_index>${milestonesText(i.milestones)}
 
 <plan_check_notes>
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
@@ -138,7 +146,7 @@ ${bullets(i.scope, '(empty)')}
 
 <fast_lanes>
 ${fastLanesText(i.worktree, i.fastLanes)}
-</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${fixRound(i)}
+</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}${fixRound(i)}
 
 ${ask(i)}`,
 };

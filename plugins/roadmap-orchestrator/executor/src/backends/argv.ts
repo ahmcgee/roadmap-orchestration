@@ -50,8 +50,15 @@
 //   and StructuredOutput only, no MCP server and no skill; a canary CLAUDE.md is not seen (evals/probe.ts pins
 //   both). Auto-memory is turned off by environment for every Claude call (`backendEnv`,
 //   preflight/smoke.ts). The implementer keeps `--setting-sources project` so the repo's CLAUDE.md
-//   conventions reach it (the unit policy in its prompt overrides their permissions), but gets no MCP, no
-//   skills and no memory the same way. What stays: the logged-in account's email in a user-context block,
+//   conventions reach it (the unit policy in its prompt overrides their permissions), and no memory the same
+//   way. dev.13 (owner 2026-10-18: Claude designs better with a design skill loaded): slash commands are no longer
+//   disabled for it, so the project's skills load, as for an acting judge; it gets no MCP server but, in a milestone
+//   with a `browser` journey, the walkthrough servers of its `--mcp-config`. Measured on Claude Code 2.1.301
+//   (2026-10-18, a Haiku call per variant killed after its init event, under this argv): what loads under `--setting-sources
+//   project` is a skill committed under the checkout's `.claude/skills/`, in a git worktree too. A plugin does not: one a
+//   repo's `.claude/settings.json` enables loads only where it is installed for that path (installed_plugins.json
+//   `projectPath`), so a project-scope install at the repo root reaches neither a unit worktree nor a fresh clone; a
+//   user-scope plugin and the user's own skills never load (user settings are not a source). What stays: the logged-in account's email in a user-context block,
 //   and the built-in plugins, neither of which a flag removes. Calls keep the operator's CLAUDE_CONFIG_DIR on
 //   purpose: the CLI rewrites `.credentials.json` by temp file and rename, so an arc-private dir linking the
 //   operator's file would fork it at the first OAuth refresh and leave the operator's login dead. An isolated
@@ -115,6 +122,12 @@ export type BackendCall =
     schemaText: string;
     /** The prompt module's standing instructions: `--append-system-prompt`. */
     system: string;
+    /**
+     * dev.13: the `--mcp-config` file of a build in a milestone with a `browser` journey (the `walkthrough.mcp` servers,
+     * src/backends/mcp.ts `walkMcpConfig` with `{evidence}` the build's evidence dir, kept under the run dir's inputs), or
+     * null for no server.
+     */
+    mcpConfig: AbsPath | null;
     /** Directories outside the worktree the implementer reads or writes: one `--add-dir` each. */
     evidenceDirs: readonly AbsPath[];
   }>
@@ -154,15 +167,17 @@ export type BackendCall =
 
 export type Argv = readonly [string, ...string[]];
 
-/** Every Claude call: JSONL on stdout, no MCP server, no skill. */
-const CLAUDE_COMMON = ['--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--disable-slash-commands'] as const;
+/** Every Claude call: JSONL on stdout, and no MCP server but those of its own `--mcp-config`. */
+const CLAUDE_COMMON = ['--output-format', 'stream-json', '--verbose', '--strict-mcp-config'] as const;
+
+const mcpConfigArgs = (file: AbsPath | null): readonly string[] => (file === null ? [] : ['--mcp-config', file]);
 
 export function backendArgv(call: BackendCall): Argv {
   switch (call.kind) {
     case 'claude-judgment': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
-        'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', '', '--json-schema', call.schemaText, '--model', call.triple.model,
+        'claude', '-p', ...CLAUDE_COMMON, '--disable-slash-commands', '--setting-sources', '', '--json-schema', call.schemaText, '--model', call.triple.model,
         '--effort', call.triple.effort, '--tools', JUDGMENT_TOOLS, ...session,
         '--system-prompt', call.system, ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
@@ -170,7 +185,7 @@ export function backendArgv(call: BackendCall): Argv {
     case 'claude-build': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
-        'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
+        'claude', '-p', ...CLAUDE_COMMON, ...mcpConfigArgs(call.mcpConfig), '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
         '--effort', call.triple.effort, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
@@ -178,7 +193,7 @@ export function backendArgv(call: BackendCall): Argv {
     case 'claude-acting-judge': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
-        'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', ...(call.mcpConfig === null ? [] : ['--mcp-config', call.mcpConfig]),
+        'claude', '-p', ...CLAUDE_COMMON, ...mcpConfigArgs(call.mcpConfig),
         '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model, '--effort', call.triple.effort,
         '--tools', ACTING_JUDGE_TOOLS, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
