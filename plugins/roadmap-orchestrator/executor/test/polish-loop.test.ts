@@ -7,7 +7,7 @@
 // a checkpoint trigger whose session reads the walk's evidence; one with nothing new is none), and the polish and compare
 // crash cells (polish.crash.<label>, compare.crash.<label>).
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
@@ -226,6 +226,33 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
         (p.units.find((u) => u['id'] === 'u3') as Json)['cut'] = { reason: 'polish-dropped' };
       });
       assert.match(reasons(cutU3, { type: 'compare', unit: 'u3' as never }), /a compare cuts only a tweak it judged drop/);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('the compare brake (lead ruling 2026-10-18)', () => {
+  test('compare.abandoned-twice: a compare whose before does not come up is abandoned and retried once; the second abandonment drops the tweak (abandoned) and cuts it, with no model call', T, async () => {
+    const d = await proposedArc(polishSteps('tw-keep', KEEP_FILES));
+    const r = contextFor(d);
+    try {
+      await ticking(r, applyPolish);
+      assert.deepEqual(await run(r, 'tw-keep', polishGate(r, 'tw-keep')), { kind: 'held', needsUser: null });
+      // The integration tip's setup now fails, so the before instance never comes up.
+      writeFileSync(join(d.repo, 'product', 'setup.js'), "process.stderr.write('setup: missing toolchain\\n'); process.exit(1);\n");
+      git(d.repo, 'commit', '--quiet', '-am', 'break the setup');
+      const first = await ticking(r, runCompare);
+      assert.equal(first.kind, 'abandoned', JSON.stringify(first));
+      assert.equal(tweakOf(r.journal.view, 'tw-keep' as UnitId), null, 'one retry left');
+      assert.deepEqual(await ticking(r, runCompare), { kind: 'judged', unit: 'tw-keep', decision: 'drop', reason: 'abandoned' });
+      assert.deepEqual(factsOf(r, 'compare-started').map((f) => f.job), ['compare-1', 'compare-2']);
+      assert.deepEqual(factsOf(r, 'compare-abandoned').map((f) => [f.job, f.interrupted ?? false]), [['compare-1', false], ['compare-2', false]]);
+      assert.deepEqual(unitInForce(r, 'tw-keep').cut, { reason: 'polish-dropped' });
+      assert.equal(r.journal.view.unit('tw-keep' as UnitId).status, 'cut');
+      assert.deepEqual(await ticking(r, runCompare), { kind: 'none' });
+      assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.unit?.startsWith('compare-')), [], 'no judge was asked');
+      assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {
       r.journal.close();
     }

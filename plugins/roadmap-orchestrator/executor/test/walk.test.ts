@@ -16,12 +16,12 @@ import type { Vision } from '../src/holistic/types.ts';
 import type { Milestone, PlanM1, PlanUnit } from '../src/input/plan.ts';
 import { validateWalkthroughOutput } from '../src/prompts/schemas.ts';
 import { substitutePorts } from '../src/walk/bringup.ts';
-import { milestoneProgress, milestoneState, walkItemsDue } from '../src/walk/milestones.ts';
+import { milestoneProgress, milestoneState, walkItemsDue, walksPending } from '../src/walk/milestones.ts';
 import { milestoneEdges, milestoneWaits } from '../src/walk/node.ts';
 import { coversReference, evidencePath, walkDraft, walkRefusals } from '../src/walk/report.ts';
 import { walkSessionMcp } from '../src/walk/walk.ts';
 import { polishDue } from '../src/walk/polish.ts';
-import { touchesReference } from '../src/walk/compare.ts';
+import { COMPARE_ATTEMPTS, failedCompares, touchesReference } from '../src/walk/compare.ts';
 import { admitter } from '../src/schedule/ready.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -375,5 +375,49 @@ describe('polish and compare (src/walk/polish.ts, src/walk/compare.ts)', () => {
     assert.equal(at(viewOf({ walks: [tweak('keep')] }), p1, 'candidate'), 'admit');
     assert.equal(at(viewOf({}), p1, 'lanes'), 'admit');
     assert.equal(at(viewOf({}), a, 'candidate'), 'admit');
+  });
+});
+
+describe('the abandonment brakes (lead ruling 2026-10-18)', () => {
+  const m = MILESTONE('MS-1', ['a']);
+  const plan = (units: readonly U[] = [{ id: 'a' }]) => planOf(units, [m]);
+  const interrupted = (n: number): WalkFact => ({ ...(ended(n, 'abandoned') as Extract<WalkFact, { kind: 'walk-ended' }>), interrupted: true });
+
+  test('brake.walk-abandoned: a round gets one retry; a second failed walk ends it abandoned (not settled, no walk due), an interrupted walk is no try', () => {
+    const p = (walks: readonly WalkFact[], units?: readonly U[]) => milestoneProgress(viewOf({ status: { a: 'retired', r1: 'retired' }, walks, findings: [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId, state: 'owned' }] }), plan(units), m, [repairing('r1', 'F-1')]);
+    assert.deepEqual(p([started(1, 1), ended(1, 'abandoned')]), { kind: 'walk-due', round: 1 }, 'one retry');
+    assert.deepEqual(p([started(1, 1), interrupted(1), started(2, 1), interrupted(2), started(3, 1), ended(3, 'abandoned')]), { kind: 'walk-due', round: 1 }, 'interrupted walks are no tries');
+    const twice = p([started(1, 1), ended(1, 'abandoned'), started(2, 1), ended(2, 'abandoned')]);
+    assert.ok(twice.kind === 'abandoned' && twice.round === 1 && twice.last.job === 'walk-2', JSON.stringify(twice));
+    // A later round counts only its own walks: round 1 reported, its repair landed, round 2 abandoned twice.
+    const units = [{ id: 'a' }, { id: 'r1', origin: 'repair' }];
+    const later = [started(1, 1), ended(1, 'reported', ['F-1']), started(2, 2), ended(2, 'abandoned'), started(3, 2), ended(3, 'abandoned')];
+    const r2 = p(later, units);
+    assert.ok(r2.kind === 'abandoned' && r2.round === 2 && r2.last.job === 'walk-3', JSON.stringify(r2));
+    assert.deepEqual(p(later.slice(0, 4), units), { kind: 'walk-due', round: 2 });
+  });
+
+  test('brake.walk-abandoned-escalation: an abandoned round raises one finding-p1-escalated, blocking while the node is unpassed; the state is blocked or settled; nothing is pending', () => {
+    const walks = [started(1, 1), ended(1, 'abandoned'), started(2, 1), ended(2, 'abandoned')];
+    const v = viewOf({ status: { a: 'retired' }, walks });
+    const items = walkItemsDue(v, plan(), [], new Date(Date.UTC(2026, 9, 1, 0, 5)));
+    assert.deepEqual(items.map((i) => [i.job, i.content.reason, i.content.blocking]), [['walk-2', 'finding-p1-escalated', true]]);
+    assert.match(items[0]!.content.summary, /round 1 walk failed 2 times.*never passed/);
+    assert.equal(milestoneState(v, m.id, milestoneProgress(v, plan(), m, [])), 'blocked');
+    assert.equal(walksPending(v, plan(), []), false, 'no walk due: the arc is not held open by it');
+    const after1 = viewOf({ status: { a: 'retired', p1: 'retired' }, walks: [started(1, 1), ended(1, 'reported', [], ['X-1']), passed(1), started(2, 2), ended(2, 'abandoned'), started(3, 2), ended(3, 'abandoned')] });
+    const units = [{ id: 'a' }, { id: 'p1', origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } }];
+    const after = walkItemsDue(after1, planOf(units, [m]), [], new Date());
+    assert.deepEqual(after.map((i) => [i.job, i.content.blocking]), [['walk-3', false]], 'passed: told, not blocked');
+    assert.equal(milestoneState(after1, m.id, milestoneProgress(after1, planOf(units, [m]), m, [])), 'settled');
+  });
+
+  test('brake.compare-abandoned: failed compares of a unit are counted, an interrupted one is not', () => {
+    const cs = (n: number, unit: string): WalkFact => ({ kind: 'compare-started', job: `compare-${n}` as JobId, unit: unit as UnitId, before: 'a'.repeat(40) as never, after: 'b'.repeat(40) as never, ports: { before: {}, after: {} } });
+    const ca = (n: number, interrupted = false): WalkFact => ({ kind: 'compare-abandoned', job: `compare-${n}` as JobId, detail: 'x', ...(interrupted ? { interrupted: true as const } : {}) });
+    const v = viewOf({ walks: [cs(1, 'p1'), ca(1, true), cs(2, 'p1'), ca(2), cs(3, 'p2'), ca(3)] });
+    assert.equal(failedCompares(v, 'p1' as UnitId), 1);
+    assert.equal(failedCompares(v, 'p2' as UnitId), 1);
+    assert.equal(COMPARE_ATTEMPTS, 2);
   });
 });

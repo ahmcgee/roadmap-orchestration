@@ -1174,6 +1174,7 @@ export class Fold implements JournalView {
         return;
       case 'demo-promoted':
       case 'demo-failed':
+      case 'demo-acted':
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       default:

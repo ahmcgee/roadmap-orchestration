@@ -360,11 +360,15 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | `.roadmap/config.json` | `+ walkthrough?: {mcp}` | absent: no browser drive (lasting) |
 | `StartupRejection`, Phase-0 advisories | `+ milestones-need-holistic`, `+ walk-tools-missing`; advisory `+ milestone-unit-before-design` | none |
 | `ORIGIN_RANK` (not persisted) | `polish` 2, `planned` 3 | none |
+| Facts | `+ demo-acted{command, act}` (`WalkFact`, agent G) | none |
+| `CommandBody` | `+ demo{act: up \| down \| hold \| release}` | none |
+| `<runDir>/demo.desired.json`, `<hostDir>/demo.json` | new (derived; the keeper's record) | absent: nothing promoted, no demo on the host |
+| `status`, `BriefArc` | `+ demo` | derived: null before a promotion |
 | `proc.spawn` subject | `+ bring-up{milestone, step}` (agent C) | none: dev.12 records name earlier purposes |
 | launch.json / result.json command | `purpose + bring-up`; a cancelled command's `reason + teardown` (`COMMAND_CANCEL_REASONS`) | none |
 | `proc.kill`, cancel.json | `reason + teardown` (a bring-up serve, by its owner) | none |
 | `status` (derived) | `+ milestones`; `edges[] + {type: milestone}`; `units[].waitingFor + milestones`; `completion` blocker `+ walk-pending` | derived (an arc without milestones shows none) |
-| Facts (agent D) | `+ polish-refused, compare-started, compare-abandoned`; `tweak-judged.reason + bring-up-failed` | none |
+| Facts (agent D) | `+ polish-refused, compare-started, compare-abandoned` (`+ interrupted?: true`); `tweak-judged.reason + bring-up-failed, abandoned`; `walk-ended + interrupted?: true` (only on an abandoned walk) | none; absent `interrupted`: a failed attempt (lasting) |
 | `JobId` (agent D) | `+ compare-<n>` | none |
 | `CheckpointTrigger` (`checkpoint-inputs.trigger`) | `+ walk{job}` | none: dev.12 checkpoints name audits and parks |
 | `RevisionSource` (`plan-applied.source`, `revision.commit`) | `+ walk{job}`, `+ compare{unit}` | none |
@@ -1064,6 +1068,7 @@ inherits{from, reviewed} | unsupported{reason}}}`; step 5 fills `PROMPTS` and th
 | `residues.jsonl` | `ResidueLine` = `ChainEnvelope & ResidueRecord` | envelope `{v, seq, prev, at}` (no `arc`), same chain and tail rules as the event log (`parseChainLine`); since M3 a compacted index starts with a `compacted` head (A5a) |
 | `residues.archive.<prevSeq>.<sha8>.jsonl` (M3) | the index file a compaction replaced, byte for byte | named by its last line's seq and the first 8 hex of that line's hash (`residueArchiveName`) |
 | `residues.jsonl.compact` (M3) | `COMPACT_TMP` | a compaction's new index before its rename; a stray one is removed by the next compaction |
+| `demo.json` (dev.13) | `DemoRecord` (`src/demo/records.ts`) | the host's one demo instance: stable ports, the serving instance, a trial in progress, the failures; written by the supervisor's keeper alone (see "dev.13" "The demo") |
 
 `ResidueRecord = residue{key, teardown: {argv, cwd, env}, label} | disposition{key, cleaned, by{arc, inv}} |
 disposition{key, isolated|transferred, by{arc, needsUser}}`; `ResidueKey = {arc, inv, resource} & (unit | job)` (per
@@ -1075,7 +1080,7 @@ passes, read by `status` for the repo and plan file); `status.rejection.json` (`
 
 | File (run dir) | Type | Content |
 |---|---|---|
-| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{base: RevisionManifest\|null, manifest: ApplyManifest, rulings?: HashedFile[], visionEdit: boolean} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") |
+| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{base: RevisionManifest\|null, manifest: ApplyManifest, rulings?: HashedFile[], visionEdit: boolean} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") \| dev.13: `demo{act: up\|down\|hold\|release}` (see "dev.13" "The demo") |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
@@ -3934,6 +3939,7 @@ standards` section; an outcome or a refusal, never a mechanism; unranked (`rank:
 | `milestone-passed` | `milestone, job` | once per milestone; `job` an ended walk |
 | `demo-promoted` | `milestone, sha` | the plan's `at` is dropped (step 0 decided: the envelope's `at` is the time) |
 | `demo-failed` | `milestone, sha, log: AbsPath` | step 0 decided: names its milestone (the P1 it opens is on it) |
+| `demo-acted` | `command: CommandId, act: up \| down \| hold \| release` | agent G: the owner's act (`roadmap demo <act>`); the fold reads `held` and `up` from these ("The demo") |
 
 `dropped` (step 0 decided): the walk of round k applies its polish proposals only when k < `walkRounds`; the last round's
 proposals are recorded in its `walk-ended.dropped`, never applied or banked.
@@ -4115,7 +4121,7 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   the config is a bug here, Phase 0 refuses it). The references input is src/pipeline/stages.ts `referenceFiles` at the
   walked SHA (a binary file left out). The open findings are shown with their recorded cause (below), deadline 90 min (`WALK_SESSION_MIN`),
   a lost call retried once. Call 1 is the walk; call 2 its one repair turn (`repairTurnOf`); refused again, interrupted,
-  failed or parked, the walk ends `abandoned` and the same round is due again.
+  failed or parked, the walk ends `abandoned` and the same round is due again, once ("The abandonment brakes" below).
 - **Validation** (`walkRefusals`): a cited evidence path is read relative to the evidence dir, or absolute inside it, and
   must be a file there; a polish scope covers a reference when a pattern's literal part lies inside a reference dir or holds
   one; a polish unit's spec must be its own unit's at rev 1 and its id no unit of the plan.
@@ -4135,7 +4141,7 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   `open` and no checkpoint captured after k's end decided; `polish`, an applied proposal in no unit of the plan: agent D's
   revision applies them, and D extends this rule for a proposal its admit refuses) or one of its units is neither merged
   nor cut. Then k+1 is due when one landed and k < `walkRounds`; else the milestone settles (derived, no fact). A
-  `bring-up-failed` walk is a round; an `abandoned` one is not.
+  `bring-up-failed` walk is a round; an `abandoned` one is not (a round abandoned twice ends: "The abandonment brakes").
 - **Milestone node.** Exemption is by the lineage root's origin: a re-entry of a gated planned unit stays gated, whatever
   its own origin.
 - **Escalation** (`walkItemsDue`, raised by the scheduler's tick with the findings' items): `finding-p1-escalated`
@@ -4199,11 +4205,88 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   (merge-base..after, `GATE_DIFF_BUDGET`, attachment under `<evidence>/diff/`), which holds the reference diff.
 - **Crash labels.** `polish.after-refused`, `polish.after-revision`, `compare.after-started`, `compare.after-judged`,
   `compare.after-cut`.
+- **The abandonment brakes** (lead ruling 2026-10-18: brakes in code, never a retry for ever). An abandonment a pause, a
+  stop or a backend park cut short carries `interrupted: true` (`walk-ended`, `compare-abandoned`) and is no try.
+  - A compare: a unit gets COMPARE_ATTEMPTS = 2 compares; its second failed one (`failedCompares`) writes, right after its
+    `compare-abandoned`, `tweak-judged{drop, abandoned}` (`TWEAK_REASONS + abandoned`), and the cut follows as for a drop.
+  - A walk: a round gets WALK_ATTEMPTS = 2 walks (its first and one retry); once its walk failed twice since the previous
+    round's walk, `milestoneProgress` is `{kind: 'abandoned', round, last}`: no further walk is due, the milestone is not
+    settled (`settledMilestones` omits it, so the demo never promotes on it), `walksPending` is false, its status state is
+    `blocked` (unpassed) or `settled` (passed), and `walkItemsDue` raises one `finding-p1-escalated` parented by its last
+    walk, blocking while the node is unpassed, non-blocking once it passed. The brake is final for that round: the owner
+    plans another milestone for the experience if it still needs walking.
 - **Prompt.** `prompts/polishJudge/claude-opus-5-5.ts` (Opus 5.5 guide only); Fable a dated `inherits`.
 
-### The demo (agent G)
+### The demo (agent G: src/demo/promote.ts, executor side; src/demo/keeper.ts, the supervisor's keeper)
 
-`refs/roadmap/demo`; `demo-promoted` / `demo-failed` above; one instance per host in `<worktreeRoot>/demo`, its ports
-allocated once and kept. Records G freezes (shapes fixed here): `CommandBody + {type: 'demo'; act: 'up' | 'down' | 'hold' |
-'release'}` (CLI `roadmap demo <act>`), a fact `demo-acted{command, act}` the fold reads for `held`; `status.demo: {where:
-url | path, milestone, sha, held, since: {milestones, tweaks, fixes}, roughEdges: F-n[]} | null` and the brief's twin.
+A stable build for the owner to pick up (plan §4a). Walks and lanes never touch it. No model call.
+
+- **The reserved name** (agent G decided): `refs/roadmap/demo` sits beside the arcs' snapshot refs and `<worktreeRoot>/demo`
+  beside `<worktreeRoot>/<arc>`, so `parsePlan` refuses the arc id `demo` (`DEMO_NAME`, a parse refusal at `plan.arc`) and
+  the chain's ref listing (`arcsWithRefs`, src/chain.ts) skips `refs/roadmap/demo`.
+
+- **Settled** (`settledMilestones`; agent G decided, the rounds brake's twin of agent C's `settled` state, one rule): a
+  milestone with `milestone-passed`, no active walkthrough P1, its latest walk ended, and that walk's round closed: every
+  unit admitted from it (the polish units of its applied proposals, `proposals` less `dropped`, and every `repair` or
+  `checkpoint` unit whose spec `repairs` one of its `findings`) retired, cut or superseded; every applied proposal's unit in
+  the plan or the proposal refused (`polish-refused`, agent D; an admission still to come keeps it open); every finding of the walk weighed (not `open`, or captured by a
+  decided checkpoint); and the round is `walkRounds` or none of those units landed. The settled SHA is that walk's
+  `walk-started.sha`, what it confirmed.
+- **Promotion** (each scheduler iteration of an arc with milestones, `demoTicker`): unless held, the settled milestone whose
+  closing walk started last is promoted when it is newer: its walk started after the latest promotion's position, on
+  another SHA (the integration branch only moves forward; the final tip's check is `merge-base --is-ancestor`):
+  `demo-promoted{milestone, sha}`, then `refs/roadmap/demo` moved to it. The fact is first; the ref follows the facts
+  (`syncDemoRef`: after each promotion and on the first tick of every start). Crash point `demo-promoted` (between the
+  two). Completion (`promoteFinal`, right before `arc-completed`, in the same step as the flow loop's `beforeCompletion`):
+  an arc with a settled milestone and no active walkthrough P1 on any milestone promotes its integration head, named by
+  its last settled milestone, unless held. A promotion's **position** (what it holds): its closing walk's
+  `walk-started` seq (the milestone's latest walk on that SHA before the fact), else (the final tip) the fact's own seq.
+- **`demo-acted{command: CommandId, act: up | down | hold | release}`** (a `WalkFact`; the fold keeps it in `walkFacts`).
+  `held`: the latest `hold` not followed by a `release`; `up`: the latest `up` or `down` (up before any), `upSeq` its seq
+  (0 before one). Command `{type: 'demo'; act}` (CLI `roadmap demo <act>`), a mutation with scope none (`actOnDemo`):
+  rejected `demo hold: promotion is already held (by <cmd>)`, `demo release: promotion is not held`, `demo down: the demo
+  is already down`; `up` is always applied (it retries a failed version). `release` promotes at once when newer and its
+  receipt names the promotion (`promoted <MS> at <sha>`), or `the demo is current (…)`, or `nothing settled to promote
+  yet`. The effect checks for its own fact first.
+- **`<runDir>/demo.desired.json`** (`DemoDesired`, derived, rewritten when its canonical text changes: on every tick and
+  act): `{v, arc, repo, worktreeRoot, up, upSeq, target: {milestone, sha, bringUp} | null}`, `bringUp` the promoted
+  milestone's in the plan in force. The keeper's only input from the arc.
+- **`<hostDir>/demo.json`** (`DemoRecord`, the keeper's alone, atomic writes): `{v, ports: {<ServeName>: port}, serving:
+  DemoInstance & {state: up | down} | null, trial: DemoInstance | null, failures: DemoFailure[]}`; `DemoInstance = {arc,
+  repo, worktreeRoot, slot, milestone, sha, bringUp, boot, processes: [{name, pid, start, sid}]}`; `DemoFailure = {arc,
+  milestone, sha, log, upSeq, boot, at}`. `ports` are the stable ports, one per serve name, allocated the first time a
+  bring-up names it and kept.
+- **The keeper** (`startDemoKeeper`, run by the supervisor from its claim to its release; one reconcile at a time, one a
+  second): a recorded `trial` is stopped first (a crash's); `up` false stops the serving processes (`state: down`, slot
+  kept); a target that differs from what serves (SHA or arc) is **swapped**: a detached worktree of the SHA in the spare
+  slot, trial ports (free, none of the stable ones), `setup`, `serve` and ready, `seed` (reseeded on each promotion), then
+  the trial stopped, the old instance stopped, the new one's serve entries started on the stable ports and probed ready,
+  `seed` run again on them (R5: each promotion reseeds; seeded data that names a port names the stable one), and
+  `current` linked to its slot; a trial, or a stable start or reseed, that fails is a `DemoFailure` (log `…/bringup.log`) and the
+  old instance keeps serving, or is restarted from its slot. Otherwise a serving instance that is not running (other
+  boot, a process gone, `down` then `up`) is **restored**: its serve entries restarted on the stable ports from its slot
+  (no setup, no seed: its data is kept), or brought up afresh when the slot is gone. A SHA is not tried again with the
+  same `upSeq` on the same boot. With no desired file the host's demo is kept, and restored after a host restart: one
+  demo per host, the latest any arc promoted. Every process runs in a session of its own (it outlives the executor and
+  the supervisor; the demo serves after the arc completes) and is stopped whole (TERM, 5 s, KILL). Deadlines: a setup or
+  seed command 30 min, readiness 120 s (the walk's `BRING_UP_STEP_MS`, `READY_TIMEOUT_MS`). On a supervisor's intentional end the keeper finishes
+  before the release: after `complete` its last reconcile runs (≤ 30 min, `KEEPER_FINAL_MS`), so the final promotion
+  serves; after any other end (and at the crash limit) a trial in progress is abandoned. The demo reserves none of the
+  milestone's `resources` (step G decided: a reservation held for the arc's life would starve the walks).
+- **Layout**: `<worktreeRoot>/demo/{a,b}` (the slots), `current` (link to the serving slot), `logs/<ms>-<sha8>/{bringup.log,
+  <serve>.log}`. The bring-up is the walk's (src/walk/bringup.ts, its detached half: the same steps, environment (the
+  host's PATH and HOME, then the bring-up's `env`), ports, deadlines and probes, each command in a session of its own
+  outside any runner and journal), `{port:<name>}` substituted with the trial's or the stable ports.
+- **Failures**: each `DemoFailure` of this arc the log lacks (by `log`) is journaled `demo-failed{milestone, sha, log}`,
+  then a walkthrough P1 on that milestone (source `demo{sha}`, cause `demo bring-up failed`, evidence `[{path: log, blob:
+  null}]`, no obligation, no vision clauses); a crash between the two opens the P1 on the next tick.
+- **`status.demo`** (`DemoStatus`): `{milestone, sha, held, up, since: {milestones, tweaks, fixes}, roughEdges: F-n[],
+  where: {type: url, url, ports} | {type: path, path} | null, serving: Sha | null, failed: {sha, log} | null} | null`. Null
+  before the arc's first promotion. `since`, against the promotion before (positions `(previous, current]`): the
+  milestones settled (closing walk), the tweaks kept (`tweak-judged keep`, retired) and the fixes (`repair`/`checkpoint`
+  units repairing a walkthrough finding, retired) in that range. `roughEdges`: every active walkthrough P2 of a passed
+  milestone. `where`, once the host's instance is this arc's: `http://127.0.0.1:<port>/` of the first serve entry with
+  every stable port, or (`serve: []`) `<worktreeRoot>/demo/current/bin`. `serving`: the SHA the instance runs now, alive.
+  `failed`: the latest `demo-failed` after the promotion.
+- **The brief's twin** (`BriefArc.demo`, `BriefDemo`): `{milestone, sha, held, up, since, roughEdges} | null` at the ref,
+  not a delta; `where` is status's alone (the brief reads refs only). The Markdown's Demo section.

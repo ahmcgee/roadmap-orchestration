@@ -24,7 +24,7 @@ import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIde
 import { type PressureAvailability, PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
-  COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
+  COMMAND_VERDICTS, DEMO_ACTS, LENS_KIND_NAMES, type ApprovalFingerprint, type DemoAct, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
   type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
   type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
@@ -963,9 +963,10 @@ export type TweakDecision = (typeof TWEAK_DECISIONS)[number];
 /** `judged`: the polish judge decided; `reference-untouched`: the diff touched no milestone reference (a drop, no call). */
 /**
  * `judged`: the polish judge's decision; `reference-untouched`: code's drop of a diff that touches no milestone reference;
- * `bring-up-failed` (dev.13 agent D): code's drop of a tweak whose after instance did not come up while the before did.
+ * `bring-up-failed` (dev.13 agent D): code's drop of a tweak whose after instance did not come up while the before did;
+ * `abandoned` (lead ruling): code's drop of a tweak whose compare failed COMPARE_ATTEMPTS times (src/walk/compare.ts).
  */
-export const TWEAK_REASONS = ['judged', 'reference-untouched', 'bring-up-failed'] as const;
+export const TWEAK_REASONS = ['judged', 'reference-untouched', 'bring-up-failed', 'abandoned'] as const;
 export type TweakReason = (typeof TWEAK_REASONS)[number];
 /** A polish proposal's unit as the walkthrough authored it: `spec` is spec.json's canonical text (an admit's). */
 export type PolishUnitDraft = Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
@@ -981,7 +982,11 @@ export type WalkFact =
    * A walk's end: the findings it opened (a failed bring-up's code-opened P1 included) and the polish it proposed, both in
    * id order; `dropped` the proposals not applied (every proposal of the milestone's last round: the milestone settles).
    */
-  | Readonly<{ kind: 'walk-ended'; job: JobId; outcome: WalkOutcome; findings: readonly FindingId[]; proposals: readonly PolishId[]; dropped: readonly PolishId[] }>
+  | Readonly<{
+    kind: 'walk-ended'; job: JobId; outcome: WalkOutcome; findings: readonly FindingId[]; proposals: readonly PolishId[]; dropped: readonly PolishId[];
+    /** Lead ruling (agent D): present (true) only on an abandoned walk a pause, a stop or a backend park cut short; it is no try of the round's brake. */
+    interrupted?: true;
+  }>
   /** A walk's polish proposal, written before its `walk-ended`; never a finding, never debt. */
   | Readonly<{
     kind: 'polish-proposed'; id: PolishId; job: JobId; milestone: MilestoneId; journey: JourneyId; evidence: readonly string[]; text: string; unit: PolishUnitDraft;
@@ -1001,14 +1006,20 @@ export type WalkFact =
     kind: 'compare-started'; job: JobId; unit: UnitId; before: Sha; after: Sha;
     ports: Readonly<{ before: Readonly<Record<ServeName, number>>; after: Readonly<Record<ServeName, number>> }>;
   }>
-  /** Agent D: a compare that could not judge (the before instance did not come up, the judge failed twice, a stop): a later compare runs. */
-  | Readonly<{ kind: 'compare-abandoned'; job: JobId; detail: string }>
+  /**
+   * Agent D: a compare that could not judge (the before instance did not come up, the judge failed twice; `interrupted`: a
+   * pause, a stop or a backend park cut it short). A later compare runs, once: a unit's COMPARE_ATTEMPTS-th abandonment
+   * that was not interrupted is followed by `tweak-judged{drop, abandoned}` and the cut.
+   */
+  | Readonly<{ kind: 'compare-abandoned'; job: JobId; detail: string; interrupted?: true }>
   /** The milestone node passed: walk `job` completed and the milestone has no active walkthrough P1 (once per milestone). */
   | Readonly<{ kind: 'milestone-passed'; milestone: MilestoneId; job: JobId }>
   /** The demo (`refs/roadmap/demo`) moved to `sha`, the settled tip of `milestone` (or the completed arc's, its last settled milestone). */
   | Readonly<{ kind: 'demo-promoted'; milestone: MilestoneId; sha: Sha }>
   /** The demo's bring-up of `sha` failed (the old instance keeps serving); `log` its captured output. Opens a walkthrough P1 on `milestone`. */
-  | Readonly<{ kind: 'demo-failed'; milestone: MilestoneId; sha: Sha; log: AbsPath }>;
+  | Readonly<{ kind: 'demo-failed'; milestone: MilestoneId; sha: Sha; log: AbsPath }>
+  /** The owner's act on the demo (`roadmap demo <act>`, its command `command`): the fold reads `held` and `up` from these. */
+  | Readonly<{ kind: 'demo-acted'; command: CommandId; act: DemoAct }>;
 export type WalkFactKind = WalkFact['kind'];
 
 export type HolisticFactKind = HolisticFact['kind'];
@@ -1925,7 +1936,9 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
     const out = {
       kind: f.get('kind', literal('walk-ended')), job: f.get('job', walkJobR), outcome: f.get('outcome', oneOf(WALK_OUTCOMES)), findings: f.get('findings', findingSet),
       proposals: f.get('proposals', polishSet), dropped: f.get('dropped', polishSet),
+      ...(f.optional('interrupted', literal(true)) === undefined ? {} : { interrupted: true as const }),
     };
+    if (out.interrupted === true && out.outcome !== 'abandoned') throw new SchemaError(`${f.path}.interrupted`, 'only on an abandoned walk', out.interrupted);
     if (out.outcome !== 'reported' && out.proposals.length > 0) throw new SchemaError(`${f.path}.proposals`, `none for a walk ${out.outcome}`, out.proposals);
     if (out.outcome === 'abandoned' && out.findings.length > 0) throw new SchemaError(`${f.path}.findings`, 'none for an abandoned walk', out.findings);
     if (out.outcome === 'bring-up-failed' && out.findings.length === 0) throw new SchemaError(`${f.path}.findings`, 'the P1 a failed bring-up opens', out.findings);
@@ -1956,10 +1969,14 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
     kind: f.get('kind', literal('compare-started')), job: f.get('job', compareJobR), unit: f.get('unit', unitR), before: f.get('before', shaR), after: f.get('after', shaR),
     ports: f.get('ports', object((g) => ({ before: g.get('before', ports), after: g.get('after', ports) }))),
   })),
-  'compare-abandoned': object((f): Fact => ({ kind: f.get('kind', literal('compare-abandoned')), job: f.get('job', compareJobR), detail: f.get('detail', str) })),
+  'compare-abandoned': object((f): Fact => ({
+    kind: f.get('kind', literal('compare-abandoned')), job: f.get('job', compareJobR), detail: f.get('detail', str),
+    ...(f.optional('interrupted', literal(true)) === undefined ? {} : { interrupted: true as const }),
+  })),
   'milestone-passed': object((f): Fact => ({ kind: f.get('kind', literal('milestone-passed')), milestone: f.get('milestone', milestoneR), job: f.get('job', walkJobR) })),
   'demo-promoted': object((f): Fact => ({ kind: f.get('kind', literal('demo-promoted')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR) })),
   'demo-failed': object((f): Fact => ({ kind: f.get('kind', literal('demo-failed')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR), log: f.get('log', absR) })),
+  'demo-acted': object((f): Fact => ({ kind: f.get('kind', literal('demo-acted')), command: f.get('command', cmdR), act: f.get('act', oneOf(DEMO_ACTS)) })),
 };
 
 /** The readers of the M3 facts, spread into `fact`. */

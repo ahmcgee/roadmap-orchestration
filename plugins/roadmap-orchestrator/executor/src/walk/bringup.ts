@@ -14,16 +14,23 @@
 // into the log dir); a cancelled step (a stop) ends it `interrupted`. Either way the serve processes started are stopped
 // first. A live bring-up runner found by recovery is cancelled (src/runner/reattach.ts): its owner brings the product up
 // again.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+//
+// **Detached** (the demo's, src/demo/keeper.ts; agent G): the same steps, environment, ports, deadlines and readiness
+// probes, but each command runs as a process in a session of its own, outside any runner and journal, so a serve process
+// outlives the executor and the supervisor that started it; it is recorded by identity and session (`DetachedProcess`)
+// and stopped whole (`stopSession`: TERM, BRING_UP_GRACE_MS, KILL). Output goes to the log files the caller names.
+import { spawn } from 'node:child_process';
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { identityOf, isAlive, scan, signal as signalProc } from '../contain/proc.ts';
 import type { Parent } from '../core/events.ts';
 import { type InvocationId, type ServeName, invocationId, opKey } from '../core/ids.ts';
 import type { Containment, Journal } from '../core/interfaces.ts';
 import { STDERR_FILE, STDOUT_FILE } from '../core/records.ts';
 import { type AbsPath, type IsoTime, absPath, isoTimeOf } from '../core/values.ts';
-import { type Argv, type Milestone, PORT_PLACEHOLDER } from '../input/plan.ts';
+import { type Argv, type BringUp, type Milestone, PORT_PLACEHOLDER, type ServeEntry } from '../input/plan.ts';
 import { type InvocationOutcome, invocationDir, invoke, killWorkload } from '../pipeline/invoke.ts';
 import type { ProductInstance } from '../prompts/inputs.ts';
 
@@ -88,10 +95,16 @@ export function substitutePorts(text: string, ports: Readonly<Record<ServeName, 
 
 /** The bring-up's `env` with its ports substituted: what the product's commands add, and what a session is told. */
 export function productEnv(m: Milestone, ports: Readonly<Record<ServeName, number>>): Readonly<Record<string, string>> {
-  return Object.fromEntries(Object.entries(m.bringUp.env).map(([k, v]) => [k, substitutePorts(v, ports)]));
+  return bringUpEnv(m.bringUp, ports);
 }
 
-function commandEnv(ctx: BringUpContext, env: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+/** A bring-up's `env` with its ports substituted. */
+export function bringUpEnv(b: BringUp, ports: Readonly<Record<ServeName, number>>): Readonly<Record<string, string>> {
+  return Object.fromEntries(Object.entries(b.env).map(([k, v]) => [k, substitutePorts(v, ports)]));
+}
+
+/** What a bring-up's commands run with: the host's PATH and HOME, then the bring-up's `env` (substituted). */
+export function commandEnv(ctx: Pick<BringUpContext, 'hostEnv'>, env: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
   const base: Record<string, string> = {};
   for (const name of ['PATH', 'HOME']) {
     const value = ctx.hostEnv[name];
@@ -147,18 +160,21 @@ function failure(outcome: InvocationOutcome): Readonly<{ kind: 'failed' | 'inter
   return { kind: 'failed', detail: r.verdict === 'fail' ? `exit ${r.exitCode}` : r.verdict };
 }
 
+/** Whether a GET of `url` answers below 500 within 2 s (an `http` readiness probe). */
+async function answersBelow500(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+    await res.body?.cancel();
+    return res.status < 500;
+  } catch (error) {
+    if (error instanceof Error) return false;
+    throw error;
+  }
+}
+
 /** Whether serve `s` is ready (see the header). */
 async function ready(ctx: BringUpContext, s: Serve, probe: Milestone['bringUp']['serve'][number]['ready'], ports: Readonly<Record<ServeName, number>>): Promise<boolean> {
-  if ('http' in probe) {
-    try {
-      const res = await fetch(substitutePorts(probe.http, ports), { signal: AbortSignal.timeout(2_000) });
-      await res.body?.cancel();
-      return res.status < 500;
-    } catch (error) {
-      if (error instanceof Error) return false;
-      throw error;
-    }
-  }
+  if ('http' in probe) return answersBelow500(substitutePorts(probe.http, ports));
   const dir = invocationDir(ctx.runDir, s.inv);
   return [STDOUT_FILE, STDERR_FILE].some((f) => existsSync(join(dir, f)) && readFileSync(join(dir, f), 'utf8').includes(probe.log));
 }
@@ -227,5 +243,111 @@ export async function tearDown(ctx: BringUpContext, instance: Instance): Promise
     if (!s.ended) await killWorkload(ctx, { inv: s.inv, scope: 'invocation', reason: 'teardown' });
     await s.done;
     keepOutput(ctx, instance.logDir, `serve.${s.name}`, s.inv);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Detached (see the header): the demo's processes, outside any runner.
+
+/** A detached serve process: its identity and its session (the session leader's pid). */
+export type DetachedProcess = Readonly<{ name: ServeName; pid: number; start: number; sid: number }>;
+
+/** Thrown when a detached bring-up is told to stop part way (its owner is ending): not a failure of the version. */
+export class BringUpAborted extends Error {}
+
+/** Appends a line to a detached bring-up's log. */
+export function logLine(log: AbsPath, line: string): void {
+  const fd = openSync(log, 'a');
+  try {
+    writeSync(fd, `${line}\n`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Starts `argv` (substituted) in a session of its own, output appended to `log`; why not, when it cannot start. */
+function startDetached(argv: Argv, ports: Readonly<Record<ServeName, number>>, cwd: AbsPath, env: Readonly<Record<string, string>>, log: AbsPath):
+  Readonly<{ sid: number; pid: number; start: number; exited: Promise<number | null> }> | string {
+  const [cmd, ...args] = argv.map((a) => substitutePorts(a, ports));
+  if (cmd === undefined) throw new Error('an empty argv');
+  const fd = openSync(log, 'a');
+  try {
+    const child = spawn(cmd, args, { cwd, env, detached: true, stdio: ['ignore', fd, fd] });
+    const exited = new Promise<number | null>((resolve) => {
+      child.once('error', () => resolve(null));
+      child.once('exit', (code) => resolve(code));
+    });
+    if (child.pid === undefined) return `${cmd} could not be started (not found or not executable)`;
+    const id = identityOf(child.pid);
+    child.unref();
+    return { sid: id.sid, pid: id.pid, start: id.start, exited };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+const sessionMembers = (sid: number) => scan().filter((p) => p.sid === sid);
+
+/** Stops session `sid` whole: TERM, then KILL after BRING_UP_GRACE_MS, until none of it is left. */
+export async function stopSession(sid: number): Promise<void> {
+  for (const p of sessionMembers(sid)) signalProc(p, 'SIGTERM');
+  const deadline = Date.now() + BRING_UP_GRACE_MS;
+  while (sessionMembers(sid).length > 0 && Date.now() < deadline) await sleep(READY_POLL_MS);
+  for (let left = sessionMembers(sid); left.length > 0; left = sessionMembers(sid)) {
+    for (const p of left) signalProc(p, 'SIGKILL');
+    await sleep(READY_POLL_MS);
+  }
+}
+
+/** Whether a detached process still runs (same pid and start). */
+export const detachedAlive = (p: DetachedProcess): boolean => isAlive({ pid: p.pid, start: p.start });
+
+/**
+ * How a detached step ends: its exit code, BRING_UP_STEP_MS, or `signal`. The timer and the listener are disposed once it
+ * is decided (a pending timer would hold the owner's process open for the whole deadline).
+ */
+function stepEnd(exited: Promise<number | null>, signal: AbortSignal): Promise<number | null | 'timeout' | 'aborted'> {
+  return new Promise((resolve) => {
+    const onAbort = (): void => done('aborted');
+    const timer = setTimeout(() => done('timeout'), BRING_UP_STEP_MS);
+    function done(end: number | null | 'timeout' | 'aborted'): void {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      resolve(end);
+    }
+    if (signal.aborted) done('aborted');
+    signal.addEventListener('abort', onAbort, { once: true });
+    void exited.then(done);
+  });
+}
+
+/** Runs a setup or seed command detached to its exit: null on 0, else why not; an abort stops it and throws `BringUpAborted`. */
+export async function runDetachedStep(step: string, argv: Argv, ports: Readonly<Record<ServeName, number>>, cwd: AbsPath, env: Readonly<Record<string, string>>, log: AbsPath, signal: AbortSignal): Promise<string | null> {
+  logLine(log, `# ${step}: ${JSON.stringify(argv)}`);
+  const s = startDetached(argv, ports, cwd, env, log);
+  if (typeof s === 'string') return `${step}: ${s}`;
+  const code = await stepEnd(s.exited, signal);
+  await stopSession(s.sid);
+  if (code === 'aborted') throw new BringUpAborted(`${step} stopped: its owner is ending`);
+  if (code === 'timeout') return `${step}: still running after ${BRING_UP_STEP_MS / 1000} s; stopped`;
+  return code === 0 ? null : `${step}: exit ${code}`;
+}
+
+/** Starts a serve entry detached, its output to `log`. */
+export function startDetachedServe(entry: ServeEntry, ports: Readonly<Record<ServeName, number>>, cwd: AbsPath, env: Readonly<Record<string, string>>, log: AbsPath): DetachedProcess | string {
+  const s = startDetached(entry.argv, ports, cwd, env, log);
+  return typeof s === 'string' ? `serve.${entry.name}: ${s}` : { name: entry.name, pid: s.pid, start: s.start, sid: s.sid };
+}
+
+/** Waits for a detached serve entry to be ready (the probes above, its output in `log`): null when it is, else why not. */
+export async function awaitDetachedReady(entry: ServeEntry, p: DetachedProcess, ports: Readonly<Record<ServeName, number>>, log: AbsPath, signal: AbortSignal): Promise<string | null> {
+  const until = Date.now() + READY_TIMEOUT_MS;
+  const probe = entry.ready;
+  for (;;) {
+    if (signal.aborted) throw new BringUpAborted(`serve.${entry.name} stopped waiting: its owner is ending`);
+    if ('http' in probe ? await answersBelow500(substitutePorts(probe.http, ports)) : existsSync(log) && readFileSync(log, 'utf8').includes(probe.log)) return null;
+    if (!detachedAlive(p)) return `serve.${entry.name}: it ended before it was ready; see ${log}`;
+    if (Date.now() > until) return `serve.${entry.name}: not ready within ${READY_TIMEOUT_MS / 1000} s; see ${log}`;
+    await sleep(READY_POLL_MS);
   }
 }

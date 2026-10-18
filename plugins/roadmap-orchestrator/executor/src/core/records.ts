@@ -1406,7 +1406,17 @@ export type CommandBody =
    * `roadmap scope accept|reject <u> --reason <text>` (scope growth, 2026-10-15): the root agent's decision on the unit's held
    * scope-growth proposals; an accept lands them as one ruled-growth revision (src/commands/scope.ts). Scope {u}.
    */
-  | Readonly<{ type: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string }>;
+  | Readonly<{ type: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string }>
+  /**
+   * `roadmap demo up|down|hold|release` (dev.13): the owner's act on the demo (src/demo/promote.ts). `hold` freezes promotion,
+   * `release` resumes it (and promotes the latest settled milestone when it is newer); `up` and `down` start and stop the
+   * host's demo instance. Scope ∅.
+   */
+  | Readonly<{ type: 'demo'; act: DemoAct }>;
+
+/** dev.13: the owner's acts on the demo (`roadmap demo <act>`). */
+export const DEMO_ACTS = ['up', 'down', 'hold', 'release'] as const;
+export type DemoAct = (typeof DEMO_ACTS)[number];
 
 /** The lens names a command may carry; `LensKind` in src/holistic/types.ts is the same closed list. */
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
@@ -1480,6 +1490,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   'scope-decide': object((f): CommandBody => ({
     type: f.get('type', literal('scope-decide')), unit: f.get('unit', unit), decision: f.get('decision', oneOf(['accept', 'reject'] as const)), reason: f.get('reason', str),
   })),
+  demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({

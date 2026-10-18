@@ -22,7 +22,9 @@
 //      walkthrough's MCP servers for a `browser` journey, its evidence dir `<runDir>/evidence/jobs/<job>/`, the original
 //      walk's evidence dir readable. It walks the cited journey on both instances and answers keep or drop
 //      (POLISH_JUDGE_SCHEMA); every cited file must exist under its evidence dir or the walk's. A refused answer takes the
-//      one judgment repair turn; refused again, failed, interrupted or parked: `compare-abandoned`.
+//      one judgment repair turn; refused again, failed, interrupted or parked: `compare-abandoned` (`interrupted` for a
+//      pause, a stop or a backend park). A later compare runs, once: the unit's COMPARE_ATTEMPTS-th failed compare (not
+//      interrupted) is followed by `tweak-judged{drop, abandoned}` and the cut (lead ruling: a brake, not a retry for ever).
 //   7. Teardown of both instances and checkouts; then `tweak-judged{decision, judged}`, and a drop's cut (step 0).
 // Crash labels: `compare.after-started`, `compare.after-judged` (`tweak-judged` written, a drop's cut not yet),
 // `compare.after-cut`.
@@ -123,6 +125,16 @@ export function comparePending(ctx: Pick<CompareContext, 'journal' | 'runDir'>):
   return runningCompare(view) !== null || cutDue(view, plan) !== null || compareDue(view, plan) !== null;
 }
 
+/** Compares a unit gets: the first and one retry; the second failed (not interrupted) one drops the tweak, reason `abandoned`. */
+export const COMPARE_ATTEMPTS = 2;
+
+/** The compares of `unit` abandoned on a failure (`compare-abandoned` without `interrupted`). */
+export function failedCompares(view: JournalView, unit: UnitId): number {
+  const facts = view.walkFacts().map((x) => x.fact);
+  const jobs = new Set(facts.flatMap((f) => (f.kind === 'compare-started' && f.unit === unit ? [f.job] : [])));
+  return facts.filter((f) => f.kind === 'compare-abandoned' && jobs.has(f.job) && f.interrupted !== true).length;
+}
+
 /** Whether `paths` touch one of `m`'s references (a path at or under a reference dir). */
 export const touchesReference = (m: Milestone, paths: readonly string[]): boolean =>
   paths.some((p) => m.references.some((r) => p === r || p.startsWith(`${r}/`)));
@@ -214,7 +226,7 @@ export async function runCompare(ctx: CompareContext): Promise<CompareOutcome> {
   return out;
 }
 
-type Read = Readonly<{ kind: 'judged'; output: PolishJudgeOutput }> | Readonly<{ kind: 'failed'; reasons: readonly string[]; refused: boolean }>;
+type Read = Readonly<{ kind: 'judged'; output: PolishJudgeOutput }> | Readonly<{ kind: 'failed'; reasons: readonly string[]; refused: boolean; interrupted: boolean }>;
 
 /** Every cited file outside both the judge's evidence dir and the walk's, or missing there, as a refusal reason. */
 export function judgeRefusals(dirs: readonly AbsPath[], out: PolishJudgeOutput): readonly string[] {
@@ -233,23 +245,23 @@ function readJudge(ctx: CompareContext, job: JobId, called: BackendCallOutcome, 
       try {
         output = validatePolishJudgeOutput(v.value);
       } catch (error) {
-        if (error instanceof SchemaError) return { kind: 'failed', reasons: [`the answer is off its schema: ${error.message}`], refused: true };
+        if (error instanceof SchemaError) return { kind: 'failed', reasons: [`the answer is off its schema: ${error.message}`], refused: true, interrupted: false };
         throw error;
       }
       const reasons = judgeRefusals(dirs, output);
-      return reasons.length === 0 ? { kind: 'judged', output } : { kind: 'failed', reasons, refused: true };
+      return reasons.length === 0 ? { kind: 'judged', output } : { kind: 'failed', reasons, refused: true, interrupted: false };
     }
     case 'malformed':
-      return { kind: 'failed', reasons: [`malformed answer: ${v.detail}`], refused: true };
+      return { kind: 'failed', reasons: [`malformed answer: ${v.detail}`], refused: true, interrupted: false };
     case 'interrupted': {
       if (v.needsUser !== null) {
         const parent: Parent = { type: 'op', op: parseInvocationId(called.inv).op };
         if (raisedFor(ctx.journal.view, parent) === null) raiseNeedsUser(ctx.journal, ctx.runDir, v.needsUser, parent);
       }
-      return { kind: 'failed', reasons: [`interrupted: ${v.reason}`], refused: false };
+      return { kind: 'failed', reasons: [`interrupted: ${v.reason}`], refused: false, interrupted: true };
     }
     default:
-      return { kind: 'failed', reasons: [`${v.kind}: ${v.detail}`], refused: false };
+      return { kind: 'failed', reasons: [`${v.kind}: ${v.detail}`], refused: false, interrupted: false };
   }
 }
 
@@ -283,10 +295,12 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
       made.delete(side);
     }
   };
-  const abandon = async (detail: string): Promise<CompareOutcome> => {
+  /** Ends the compare unjudged; the unit's COMPARE_ATTEMPTS-th failed (not interrupted) one drops the tweak (the brake). */
+  const abandon = async (detail: string, interrupted = false): Promise<CompareOutcome> => {
     await finish();
-    ctx.journal.fact({ kind: 'compare-abandoned', job, detail });
+    ctx.journal.fact({ kind: 'compare-abandoned', job, detail, ...(interrupted ? { interrupted: true } : {}) });
     process.stderr.write(`roadmap: ${job}: the compare of ${unit.id} was abandoned: ${detail}\n`);
+    if (!interrupted && failedCompares(ctx.journal.view, unit.id) >= COMPARE_ATTEMPTS) return judge(ctx, unit.id, 'drop', 'abandoned');
     return { kind: 'abandoned', job, detail };
   };
   /** Both instances up (step 5), once; an end of the compare when one does not come up. */
@@ -307,7 +321,7 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
         instances[side] = up.instance;
         continue;
       }
-      if (up.kind === 'interrupted') return abandon(`the ${side} instance's ${up.step} was interrupted (${up.reason})`);
+      if (up.kind === 'interrupted') return abandon(`the ${side} instance's ${up.step} was interrupted (${up.reason})`, true);
       if (side === 'before') return abandon(`the before instance (the integration tip ${c.before}) did not come up: ${up.step} failed (${up.detail})`);
       await finish();
       return judge(ctx, unit.id, 'drop', 'bring-up-failed');
@@ -364,7 +378,7 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
         read = again.read;
       }
     }
-    if (read.kind !== 'judged') return abandon(read.reasons.join('; '));
+    if (read.kind !== 'judged') return abandon(read.reasons.join('; '), read.interrupted);
     await finish();
     return judge(ctx, unit.id, read.output.decision, 'judged');
   } finally {

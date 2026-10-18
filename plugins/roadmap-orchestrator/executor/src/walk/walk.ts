@@ -20,7 +20,8 @@
 //      only to a milestone with a `browser` journey. A resumed walk consumes a call it already made (`recordedArcCall`).
 //      An answer off its schema, or refused by `walkRefusals` (src/walk/report.ts), takes the one judgment repair turn
 //      (its session resumed with every reason, `repairTurnOf`); refused again, or interrupted, failed or parked, the walk
-//      ends `abandoned` (the same round is due again).
+//      ends `abandoned` (`interrupted` when a pause, a stop or a backend park cut it short). The same round is due again,
+//      once: a round whose walk failed (not interrupted) WALK_ATTEMPTS times ends `abandoned` (src/walk/milestones.ts).
 //   6. Teardown: the runner reaps the session's own processes (its browser) once its report is final; code stops the
 //      product, then removes the checkout citing an evidence snapshot of it.
 //   7. Minting (src/walk/report.ts `mintWalk`): `breaks` → P1, `deviates` → P2, polish → `polish-proposed` (agent D's
@@ -163,7 +164,7 @@ function inputsOf(ctx: StageContext, w: WalkRecord, m: Milestone, product: Insta
 type Read =
   | Readonly<{ kind: 'reported'; output: WalkthroughOutput }>
   /** `refused`: off its schema or refused by `walkRefusals`, so it may take its repair turn. */
-  | Readonly<{ kind: 'failed'; reasons: readonly string[]; refused: boolean }>;
+  | Readonly<{ kind: 'failed'; reasons: readonly string[]; refused: boolean; interrupted: boolean }>;
 
 /** Reads a walkthrough call against its inputs. A usage-limit park's item is raised once. */
 function readWalk(ctx: StageContext, job: JobId, called: BackendCallOutcome, check: Parameters<typeof walkRefusals>[0]): Read {
@@ -174,23 +175,23 @@ function readWalk(ctx: StageContext, job: JobId, called: BackendCallOutcome, che
       try {
         output = validateWalkthroughOutput(v.value);
       } catch (error) {
-        if (error instanceof SchemaError) return { kind: 'failed', reasons: [`the report is off its schema: ${error.message}`], refused: true };
+        if (error instanceof SchemaError) return { kind: 'failed', reasons: [`the report is off its schema: ${error.message}`], refused: true, interrupted: false };
         throw error;
       }
       const reasons = walkRefusals(check, output);
-      return reasons.length === 0 ? { kind: 'reported', output } : { kind: 'failed', reasons, refused: true };
+      return reasons.length === 0 ? { kind: 'reported', output } : { kind: 'failed', reasons, refused: true, interrupted: false };
     }
     case 'malformed':
-      return { kind: 'failed', reasons: [`malformed report: ${v.detail}`], refused: true };
+      return { kind: 'failed', reasons: [`malformed report: ${v.detail}`], refused: true, interrupted: false };
     case 'interrupted': {
       if (v.needsUser !== null) {
         const parent: Parent = { type: 'op', op: parseInvocationId(called.inv).op };
         if (raisedFor(ctx.journal.view, parent) === null) raiseNeedsUser(ctx.journal, ctx.runDir, v.needsUser, parent);
       }
-      return { kind: 'failed', reasons: [`interrupted: ${v.reason}`], refused: false };
+      return { kind: 'failed', reasons: [`interrupted: ${v.reason}`], refused: false, interrupted: true };
     }
     default:
-      return { kind: 'failed', reasons: [`${v.kind}: ${v.detail}`], refused: false };
+      return { kind: 'failed', reasons: [`${v.kind}: ${v.detail}`], refused: false, interrupted: false };
   }
 }
 
@@ -247,10 +248,11 @@ export function settleWalks(ctx: Pick<StageContext, 'journal' | 'plan' | 'runDir
 /** Ends walk `w`: `walk-ended`, then the node's pass when it holds (steps 7–8). */
 function end(
   ctx: WalkContext, w: WalkRecord, m: Milestone, plan: PlanM1, outcome: 'reported' | 'bring-up-failed' | 'abandoned', findings: readonly FindingId[], proposals: readonly PolishId[],
+  interrupted = false,
 ): WalkRunOutcome {
   const last = w.round >= walkRoundsOf(plan);
   crashPoint('walk.before-ended');
-  ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: canonicalIds(findings), proposals, dropped: last ? proposals : [] });
+  ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: canonicalIds(findings), proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
   crashPoint('walk.after-ended');
   const passes = outcome === 'reported' && !milestonePassed(ctx.journal.view, m.id) && activeWalkP1s(ctx.journal.view, m.id).length === 0;
   if (passes) {
@@ -320,7 +322,7 @@ async function walkOnce(ctx: WalkContext, w: WalkRecord): Promise<WalkRunOutcome
       return null;
     }
     await finish();
-    if (up.kind === 'interrupted') return end(ctx, w, m, plan, 'abandoned', [], []);
+    if (up.kind === 'interrupted') return end(ctx, w, m, plan, 'abandoned', [], [], true);
     const opened = mintBringUp(ctx, job, m, up.step, up.detail, up.logs);
     crashPoint('walk.after-mint');
     return end(ctx, w, m, plan, 'bring-up-failed', opened, []);
@@ -366,7 +368,7 @@ async function walkOnce(ctx: WalkContext, w: WalkRecord): Promise<WalkRunOutcome
     await finish();
     if (read.kind !== 'reported') {
       process.stderr.write(`roadmap: ${job}: the walkthrough of ${m.id} was abandoned: ${read.reasons.join('; ')}\n`);
-      return end(ctx, w, m, plan, 'abandoned', [], []);
+      return end(ctx, w, m, plan, 'abandoned', [], [], read.interrupted);
     }
     const minted = mintWalk(ctx.journal, { repo: ctx.repo, job, sha: w.sha, milestone: m, evidenceDir }, read.output);
     crashPoint('walk.after-mint');

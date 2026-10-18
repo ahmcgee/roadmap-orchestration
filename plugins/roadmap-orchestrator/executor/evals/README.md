@@ -12,15 +12,16 @@ A change is not done until the ladder passes, in order, from `executor/`:
    `pressure`, whose burners saturate the host on purpose. Either tier keeps the host's runnable load within its cpus;
    a file that runs eight or more cells of real processes at once belongs in the serial tier. Pure-module and
    integrated tests, fake backends only. The main tier
-   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts` and `test/evals-m3.test.ts`, and the serial tier
+   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts` and `test/evals-m3.test.ts` (and `test/evals-m5.test.ts`, the M5
+   fixture's validity and criteria, below), and the serial tier
    `test/serial/evals-m4a.test.ts`, which run the M1, M2, M3 and M4a fixtures below end to end against the fakes, and `test/serial/upgrade.test.ts`, which starts the M1 fixture on
    the previous release's executor (`PREVIOUS_RELEASE`, extracted with `git archive`), stops, parks or crashes it
    mid-arc and finishes it on HEAD.
 3. `node evals/probe.ts`: the targeted probe against the real, authenticated CLIs.
 3.5. Role evals, `node evals/roles/run.ts gate --set dev --n 3` (below): paid and path-triggered (`node evals/roles/triggers.ts
    <base>`), once per merged batch, never per worktree agent; the holdout set only at acceptance.
-4. The paid fixtures, `evals/m1/`, `evals/m2/`, `evals/m3/` and (M4a's acceptance) `evals/m4a/`: once per merged batch,
-   never per worktree agent. M4a's delegated adjudication (`evals/m4a/adjudicate.ts`) is acceptance, not a rung: once,
+4. The paid fixtures, `evals/m1/`, `evals/m2/`, `evals/m3/`, (M4a's acceptance) `evals/m4a/` and (dev.13's UI end to end)
+   `evals/m5/`: once per merged batch, never per worktree agent. M4a's delegated adjudication (`evals/m4a/adjudicate.ts`) is acceptance, not a rung: once,
    after the M4a paid run.
 
 ## The targeted probe
@@ -468,12 +469,77 @@ by the frozen FLOW_SCHEMA reader.
 `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n, the
 vision-silent stop.
 
+## The M5 fixture
+
+dev.13's UI end to end (plan `dev13-implementation.md` §7 "Rung 4", D3): a headless root-agent session runs the
+orchestrate skill from bootstrap through one corpus arc with two milestones on a small web product, `swapshelf` (the page
+for a street's book swap shelf: a zero-dependency Node 24 HTTP server rendering its pages on the server). One paid run, in
+a fresh directory outside this repository; it uses the machine's host lock:
+
+```sh
+node evals/m5/setup.ts /var/tmp/m5
+node evals/m5/driver.ts /var/tmp/m5 [--profile default|claude-only]   # default claude-only
+node evals/m5/check.ts /var/tmp/m5
+```
+
+- `setup.ts <dir>` lays out M4a's directory layout (`evals/m4a/layout.ts`) with the product from `files/product/`: the
+  shelf's page as it is today (`/` lists the books; `public/style.css` the flyers' paper-and-ink look), `node --test`
+  tests, and a curated, confirmed corpus under `docs/corpus/`: the shelf's page (T-1..T-7: search, reserving with a first
+  name, the collection window, never twice), the keeper's tools (T-8..T-14: a `swapshelf` CLI and a `swapshelf.json`
+  settings file on top of the page), how it is built (T-15..T-17), and `vision.md`, whose `## Experience standards`
+  (V-9..V-13) set the walks' bar: three steps to a reservation, WCAG AA on a phone outdoors, the shelf's own feel, errors
+  that say what to do, help text as the manual. `.roadmap/config.json` names the Playwright MCP server as
+  `walkthrough.mcp` (`playwright-mcp --headless --isolated --browser chromium --output-dir {evidence} --viewport-size
+  {viewport}`); Anthropic's frontend-design skill is vendored at `.claude/skills/frontend-design/` with its licences
+  (Apache-2.0; a plugin never reaches a unit worktree, a committed project skill does). The fake forge is trusted and
+  empty. **The plant** (`layout.ts` `PLANT`, answer-key.json): each book's condition-and-arrival line on the shelf's page,
+  the entry of the reservation journey, is `--ink-faint` on `--paper`, 2.12:1, in the stylesheet the browser milestone's
+  units build on.
+- `driver.ts <dir>` is M4a's session (it reuses `evals/m4a/driver.ts`'s staging, launch env, turns, wakes, cleanup and
+  forensics) with M5's owner: code answers K (1), the slice (both world scenes, V-1 and V-2, so the one arc's plan holds
+  both milestones and the corpus is one arc's worth), a brief ack (never) and the frontend-design recommendation (already
+  satisfied); everything else goes to a frontier-medium owner simulator given only answer-key.json's owner answers (design
+  it yourself, keep the look, the browser drive is installed, keep a demo running, add the issue templates, ...). The owner
+  declines nothing the arc needs. It records `status.demo` whenever it changes and, at the end before stopping the held
+  arc, GETs the demo's URL (`report.json` `demo`). Fail-fast: the first plan in force must have the M5 shape
+  (`shape.ts`), else the run ends `fail-fast`. Hard timeout 360 min.
+- `check.ts <dir>` prints one JSON line and exits non-zero on any failed criterion (its header lists them): isolation,
+  session-stopped (`vision-silent` or `k-limit`, one arc), arc-complete, milestones-planned (a browser milestone with its
+  design unit ahead of its units; a shell milestone whose every unit descends from one of them), design-first (the
+  design unit published, with its reference dirs, before any browser-milestone unit dispatched), node-held (no
+  shell-milestone unit dispatched before `milestone-passed` of the browser one), walk-screenshots (every reported browser
+  walk's evidence dir holds a PNG), plant-caught (the plant still failed at the first walk's SHA, and a walkthrough
+  contrast finding on the browser milestone was resolved by a published unit), plant-repaired (`.book-meta` computes at
+  4.5:1 or more at the completed head, `css.ts`), polish-bounded (rounds within `walkRounds`; a round's failed walks
+  and a unit's compares within their brakes, two each; each polish unit not cut outside its compare judged once, `keep`
+  before it published), demo-serving (the latest `demo-promoted` is what `status.demo` showed at the end, at
+  an http URL that answered and never moved), skill-vendored, no-model-ids, host-released, profile.
+
+Two criteria read pieces built in parallel with the fixture: `polish-bounded`'s `tweak-judged` (agent D, the compare
+stage) and `demo-serving`'s `demo-promoted` and `status.demo` (agent G, the demo; the frozen shapes of SCHEMAS.md
+"dev.13"). Until both are merged a run fails them by construction.
+
+M5 has no scripted root agent, so it has no fake end-to-end run: `test/evals-m5.test.ts` (main tier) covers setup's
+validity (the product's tests pass, the vision, guide and config parse, the skill is vendored, the plant computes below
+the floor at the seed), the contrast oracle, the plan shape, the log reader, and every criterion over inputs built in
+place, one passing and at least one failing case each; the walk, polish and demo machinery have their own integrated
+tests. A fake story through a scripted root (as M4a's) is deferred until the polish and demo pieces are merged.
+
+Cost and time (list prices, subscription-covered; plan §8 estimates $150–220). The root session (Opus high) with its
+Phase-0 subagents over a small curated corpus, then supervision: about $30–50. Six to seven units at plan-check, build and
+gate (two design units, which are risk `high` and so Opus-built, four or five builds, one contrast repair a checkpoint
+admits): about $40–70. Three to four walks (Opus medium, a browser session each, up to 90 minutes: MS-1 round 1 finds
+the plant, round 2 passes it, MS-2 once or twice) at about $8–20 each, and one or two polish proposals judged with two
+instances each at $3–8: about $35–90. The audits' lenses, checkpoints (summit) and the pack review: about $25–40. Expect
+4 to 6 hours.
+
 ## Role evals (rung 3.5)
 
 A role eval measures one judgment role on its own, many trials per scenario cell, against planted defects whose answer key
 no session can read. It complements the fixtures: they show an arc converges, a role eval shows how often a role catches
 what it must and how often it cries wolf, at what cost. The gate is the first role (dev.12: the bounded gate diff and the
-Agent tool).
+Agent tool); the walkthrough is the second (dev.13, "The walkthrough eval" below). `run.ts` takes the role first; the
+pool, the workers, `--rebind`, `--cap` and `--trial-cap` are shared (`pool.ts`, `trial.ts`).
 
 ```sh
 node evals/roles/run.ts gate --set dev --n 3 [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] [--rebind <class>=<model>:<effort>] [--out <dir>] [--cap <usd>] [--trial-cap <usd>]
@@ -483,7 +549,8 @@ node evals/roles/triggers.ts <base>                                             
 
 **When.** Paid, path-triggered: `triggers.ts` maps the paths a batch changed (relative to `executor/`) to roles; the gate's
 are its prompt modules, `src/prompts/inputs.ts` and `schemas.ts`, `src/git/boundeddiff.ts`, `src/pipeline/gate.ts`,
-`src/routing/**`, `src/backends/argv.ts` and `claude.ts`, and `evals/roles/**`. Once per merged batch, never per worktree
+`src/routing/**`, `src/backends/argv.ts` and `claude.ts`, `evals/roles/gate/**` and `gen/**`, and the shared harness
+(`evals/roles/*.ts`, which triggers every role). Once per merged batch, never per worktree
 agent; the dev set at N=3; the holdout set only at acceptance. No role triggered, the rung is skipped.
 
 **The harness** (`gate/arc.ts`) drives the production `gate(ctx, unit)` through the unit driver over the arc harness of
@@ -588,6 +655,100 @@ without reading it is lucky; the transcript and cost parser on a captured subage
 acts; the triggers; `--cap` stopping new trials, `--trial-cap` killing the `overspend` fake gate (a session that streams
 one $20 message and hangs), the live price estimate, and the cluster grading). `--fake <kind>` runs the same harness on a
 degenerate gate for free; over the large-diff threshold a fake answers one cluster over everything.
+
+### The walkthrough eval (dev.13)
+
+```sh
+node evals/roles/run.ts walkthrough --set dev --n 3 [--cells S1,S2] [--parallel 2] [--rebind <class>=<model>:<effort>] [--out <dir>] [--cap <usd>] [--trial-cap <usd>]
+node evals/roles/run.ts walkthrough --set holdout --n 3 --compare <dev run>/summary.json     # acceptance only
+node evals/roles/run.ts walkthrough --set dev --n 1 --fake oracle                              # free: the harness's own check
+```
+
+**When.** Paid, path-triggered like the gate's: `src/prompts/walkthrough/**`, the walk job (`src/walk/**`), its MCP
+config (`src/backends/mcp.ts`), the prompt inputs and schemas, `src/routing/**`, the `claude-acting-judge` argv and the Claude reader (`src/backends/argv.ts`,
+`claude.ts`), `evals/roles/walkthrough/**` and the shared harness.
+
+**The product** (`walkthrough/ledgerly/`, `product.ts`): `ledgerly`, a spend ledger for platform teams, zero-dependency
+Node, real files with `{{hook}}` places that the generator fills per trial. Surfaces: a server-rendered dashboard (one
+token file, `design/tokens.css`, served as `/static/tokens.css`), a CLI (`init`, `import`, `report`, `config check`), an
+HTTP API (`/api/v1`, RFC 9457 problems, cursor pagination, idempotency keys), a hand-edited `ledgerly.conf`, a CI
+pipeline (`ci/pipeline.yml` and its local runner `ci/run.js`) and a README quickstart. Its committed design reference,
+`design/` (research §D): `DESIGN.md` (subject, audience, primary job, principles, named anti-patterns, the one memorable
+thing, layouts as wireframes, flows with states and step budgets, components, copy, the walkthrough script seed),
+`tokens.css`, `api.md` (style guide, problem catalogue, auth, example sessions), `cli.md` (command tree, streams and exit
+codes, error voice, golden transcripts), `config.md` (keys, defaults, mistakes, minimal and full examples) and `ci.md`.
+A seed draws the data (the team `platform` and two more, budgets, alert shares, a currency, a month and the one before,
+each month's entries, this month one team within, one near and one over its limit). The milestone (`fixture.ts`) has a
+bring-up (`init`, the server on `{port:web}` with a `/healthz` probe, two imports) and nine journeys (three browser:
+record an entry, change a limit, print a statement; six shell: CLI import, CLI report as JSON, API, config, CI, README);
+the vision has experience clauses.
+
+**Slots and families** (`families.ts`, `slots.ts`, `cells.ts`): 13 slots per product, each its family's plant or its
+clean twin (the near-miss the reference sanctions), W1 to W13 as in the plan's table. W1 takes a browser journey's last
+step (the record form, the limit form, the print link): its plant posts or links to a path nothing serves, its twin to
+an old path that redirects. W2 to W7 take one page each (W2's twin is always the print view, which DESIGN.md "Print
+views" makes plain), W7 a form, W6 a page with a primary action; W8 a CLI command, W13 a quickstart command; W9 to W12
+are fixed. One slot per page, and no slot behind W1's dead end, so no plant masks another. A seeded backtracking search
+draws the assignment. The four dev seeds (S1 to S4) plant each family in exactly two of them (26 plants, 26 twins): at
+n = 3, 156 slot observations, 78 of each, six planted trials per family. The holdout set is untracked
+(`evals/roles/holdout/walkthrough.ts`, exporting `HOLDOUT_WALK_CELLS`).
+
+**The harness** (`walkthrough/arc.ts`) runs each trial through the production walk job, as the gate eval runs the
+production gate: a holistic arc whose repository is the product and whose plan has the one milestone, owner-supplied
+design, over one unit u1 (its spec's acceptance states what each surface delivers to its reference). u1 merges through
+the arc harness (fake plan-check, build and gate; its lanes, the product's own tests, run for real), which makes the walk
+due; then `runWalk` (src/walk/walk.ts) runs walk-1 exactly as an arc does: the capture, the detached checkout, the
+bring-up (src/walk/bringup.ts, logs under the evidence dir), the inputs, the acting-judge call on the walkthrough seat
+(frontier, Opus 5.5 medium; `--rebind` through the repo config) with this repository's walkthrough MCP config
+(`fixture.ts` `WALK_MCP`: Playwright MCP, `--headless --isolated --browser chromium`, `--output-dir` the evidence dir,
+`--viewport-size 1280x800`, substituted by src/backends/mcp.ts; pages over HTTP, never `file:`), the reading
+(`validateWalkthroughOutput` and `walkRefusals`) with its one repair turn, minting and teardown. The call goes through the
+fake backend's PATH shim (`real` acts, a second for the repair turn). A walk abandoned after its repair turn voids the
+trial (`invalid`, with the job's reasons); a failed bring-up voids it (`bring-up`).
+
+**Grading** (`walkthrough/grade.ts`). A finding belongs to the slot, among those on its journey, it localises to best:
+3 for a path among the slot's files, 1 per marker (the page's route, the family's words) its claim or cause matches; ties
+go to a planted slot, then family order; a finding matching nothing is stray. A planted slot is `caught` with a finding of
+at least its expected class (`breaks` for W1, W5, W6, W13; `deviates` or either for the rest), `misclassed` when a `breaks`
+plant got only `deviates`, `missed` with nothing, and `lucky` when caught though the transcript shows no exercise of its
+journey (a page visited, a command run, a request sent: any tool traffic but Read, Grep and Glob). A `breaks` where
+`deviates` was expected is false-blocking. A twin with a finding is a false positive (false-blocking when `breaks`). A
+stray `breaks` is false-blocking too: the clean product has nothing that breaks. Polish proposals are counted, never
+false positives. The answer key (`<trial>/key.json`) stays in the run dir; the transcript's tool traffic is scanned for the
+run dir, `evals/roles` and this repository's paths, and a hit voids the trial (`needle`).
+
+**Criteria** (`walkthrough/summary.ts`): recall (caught of planted slot observations) at least 80%, Wilson bound reported;
+every family caught at least twice; zero lucky; twin false positives at most 3/78; false-blocking 0; stability (one
+verdict in every graded trial) for at least 80% of (seed, slot) pairs graded twice or more; voids at most a quarter;
+cost-check; with `--compare`, holdout recall within 15 points of dev. Reported: per seed (CELL), per family (FAMILY),
+misclassed, stray findings, polish, browser and shell calls, screenshots, evidence missing, and cost as the gate's (COST,
+USAGE, TOTAL, cost per catch).
+
+**Brakes and caps.** A TRACE line every 30 s (tools, browser calls, shell calls, subagents, load, spend). The harness
+kills the session (its process group: the MCP server and browser with it) and voids the trial on a token load over 3x the
+seed's median (`runaway`), past 45 minutes (`runaway`), or when the trial's calls together pass `--trial-cap` (`cap`);
+`--cap` starts no trial past the run's spend. The walk job tears the product down.
+
+**Cost.** An estimate, not a measurement (no paid trial has run): a walk of nine journeys, three in the browser at two
+widths, is roughly 150 to 250 turns with a context growing to 100k to 150k tokens; on Opus 5.5 list prices that is about
+$3 to $5 of cache reads, $3 to $5 of cache writes and $2 to $3 of output, so $8 to $15 a trial, about $100 to $180 for
+the dev set at n = 3, in line with the plan's budget. A paid run sets `--trial-cap 20 --cap 180` and starts with one trial
+whose transcript is read before scaling.
+
+**Output.** `<out>/trials.jsonl`, `<out>/summary.json`, and per trial `key.json`, `prompt.txt`, `argv.json`, `mcp.json`,
+`walk-<n>.jsonl` (each call's raw stdout: the report, then its repair turn), `transcript.jsonl`, `answer.json`,
+`evidence/` (the session's screenshots and notes, the product's logs under `server/`) and `row.json`.
+
+**Free tier.** `test/roles-walkthrough.test.ts`: the generator's determinism and hygiene (no unresolved hook, no word
+that names the eval in any product file); the dev cells' balance; the slot rules over 40 random draws; every slot's
+predicted effect checked on each dev seed's running product (the dead end and the redirect, the 404 stylesheet, the
+off-token colour and off-grid gutter, the script that throws, the contrast ratios computed from the token file, the
+missing focus indicator, the vague form error, the CLI's streams and exit codes, the 200 error body against the problem
+document, the silent and the warned unknown key, the stack trace and the silent typo against the usage, the CI report,
+the README run as written); grading and the summary over scripted answers; run.ts end to end on the fake walkers
+(`oracle` passes every criterion; `clean-report`, `cite-plants`, `flag-everything`, `breaks-everything` each fail theirs;
+`refused` takes the repair turn and voids `invalid`); the caps; the seat; the triggers. The products of the plants check
+are brought up by the production bring-up.
 
 ## The run observer
 
