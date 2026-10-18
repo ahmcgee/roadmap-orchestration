@@ -505,9 +505,11 @@ node evals/m5/check.ts /var/tmp/m5
   (`shape.ts`), else the run ends `fail-fast`. Hard timeout 360 min.
 - `check.ts <dir>` prints one JSON line and exits non-zero on any failed criterion (its header lists them): isolation,
   session-stopped (`vision-silent` or `k-limit`, one arc), arc-complete, milestones-planned (a browser milestone with its
-  design unit ahead of its units; a shell milestone whose every unit descends from one of them), design-first (the
-  design unit published, with its reference dirs, before any browser-milestone unit dispatched), node-held (no
-  shell-milestone unit dispatched before `milestone-passed` of the browser one), walk-screenshots (every reported browser
+  design unit ahead of its units; a dependent milestone, at least one of whose units descends through `after` from one
+  of them: its held units; the slice and the decomposition are the root agent's, so no shell journey is required, the
+  walkthrough role eval covers the shell drive), design-first (the design unit published, with its reference dirs,
+  before any browser-milestone unit dispatched), node-held (no held unit dispatched before `milestone-passed` of the
+  browser one; the dependent milestone's other units are not held), walk-screenshots (every reported browser
   walk's evidence dir holds a PNG), plant-caught (the plant still failed at the first walk's SHA, and a walkthrough
   contrast finding on the browser milestone was resolved by a published unit), plant-repaired (`.book-meta` computes at
   4.5:1 or more at the completed head, `css.ts`), polish-bounded (rounds within `walkRounds`; a round's failed walks

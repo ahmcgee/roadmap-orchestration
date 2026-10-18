@@ -1,14 +1,15 @@
-// The plan shape M5 needs from Phase 0 (plan §7 "Rung 4"): two milestones, a browser flow with its own design unit and a
-// shell milestone (the keeper's CLI and settings file) built on top of it. Shared by the driver's fail-fast and check.ts's
-// `milestones-planned`. Milestone ids are the root agent's to choose, so the two are found by shape, never by id:
-// `browser` is the first milestone with a browser journey, `shell` the first other milestone whose journeys are all
-// shell journeys and whose every unit descends from a unit of `browser` (so the milestone node holds it until `browser`
-// passes).
+// The plan shape M5 needs from Phase 0 (plan §7 "Rung 4"): at least two milestones, a browser flow with its own design
+// unit and a dependent milestone built on top of it. Shared by the driver's fail-fast and check.ts's `milestones-planned`.
+// The slice and the milestone decomposition are the root agent's, so the two are found by shape, never by id or by what
+// the dependent milestone drives: `browser` is the first milestone with a browser journey (its units all run after its
+// design unit), `dependent` the first other milestone at least one of whose units descends (through `after`) from a unit
+// of `browser`. `held` lists those descending units: the milestone node holds each until `browser` passes. The dependent
+// milestone's other units are not held, by design.
 import type { UnitId } from '../../src/core/ids.ts';
 import { type Milestone, type PlanM1, designUnitOf, milestonesOf } from '../../src/input/plan.ts';
 
 export type PlanShape =
-  | Readonly<{ kind: 'ok'; browser: Milestone; shell: Milestone }>
+  | Readonly<{ kind: 'ok'; browser: Milestone; dependent: Milestone; held: readonly UnitId[] }>
   | Readonly<{ kind: 'off'; problems: readonly string[] }>;
 
 /** Every unit `unit` runs after, directly or transitively. */
@@ -29,7 +30,7 @@ const journeysOf = (m: Milestone): string => m.journeys.map((j) => `${j.id} ${j.
 
 export function planShape(plan: PlanM1): PlanShape {
   const ms = milestonesOf(plan);
-  if (ms.length < 2) return { kind: 'off', problems: [`the plan has ${ms.length} milestones (${ms.map((m) => m.id).join(', ') || 'none'}), not two`] };
+  if (ms.length < 2) return { kind: 'off', problems: [`the plan has ${ms.length} milestones (${ms.map((m) => m.id).join(', ') || 'none'}), not two or more`] };
   const browser = ms.find((m) => m.journeys.some((j) => j.via === 'browser'));
   if (browser === undefined) return { kind: 'off', problems: [`no milestone has a browser journey (${ms.map((m) => `${m.id}: ${journeysOf(m)}`).join('; ')})`] };
   const problems: string[] = [];
@@ -39,10 +40,10 @@ export function planShape(plan: PlanM1): PlanShape {
     const before = browser.units.filter((u) => !ancestorsOf(plan, u).has(design));
     if (before.length > 0) problems.push(`${browser.id}'s units ${before.join(', ')} do not run after its design unit ${design}`);
   }
-  const built = (m: Milestone): boolean => m.units.every((u) => browser.units.some((b) => ancestorsOf(plan, u).has(b)));
-  const shell = ms.find((m) => m !== browser && m.journeys.every((j) => j.via === 'shell') && built(m));
-  if (shell === undefined) {
-    problems.push(`no shell milestone descends from ${browser.id} (${ms.filter((m) => m !== browser).map((m) => `${m.id}: ${journeysOf(m)}; units ${m.units.join(', ')}`).join(' | ')})`);
+  const heldOf = (m: Milestone): readonly UnitId[] => m.units.filter((u) => browser.units.some((b) => ancestorsOf(plan, u).has(b)));
+  const dependent = ms.find((m) => m !== browser && heldOf(m).length > 0);
+  if (dependent === undefined) {
+    problems.push(`no milestone descends from ${browser.id} (units ${browser.units.join(', ')}; ${ms.filter((m) => m !== browser).map((m) => `${m.id}: units ${m.units.join(', ')}`).join(' | ')})`);
   }
-  return problems.length > 0 || shell === undefined ? { kind: 'off', problems } : { kind: 'ok', browser, shell };
+  return problems.length > 0 || dependent === undefined ? { kind: 'off', problems } : { kind: 'ok', browser, dependent, held: heldOf(dependent) };
 }

@@ -111,19 +111,24 @@ const milestone = (id: string, units: readonly string[], design: string | null, 
 const planOf = (units: readonly U[], milestones: readonly Milestone[]): PlanM1 =>
   ({ units: units.map((u) => ({ id: u.id, after: u.after ?? [], ...(u.origin === undefined ? {} : { origin: u.origin }) })), milestones }) as unknown as PlanM1;
 
-/** The fixture's intended plan: design → reserve, search (MS-1, browser); design-keeper → cli, settings (MS-2, shell). */
+/** The fixture's intended plan: design → reserve, search (MS-1, browser); design-keeper → cli, settings (MS-2, dependent). */
 const UNITS: readonly U[] = [
   { id: 'design' }, { id: 'reserve', after: ['design'] }, { id: 'search', after: ['design'] },
   { id: 'design-keeper', after: ['reserve'] }, { id: 'cli', after: ['design-keeper', 'reserve'] }, { id: 'settings', after: ['design-keeper', 'search'] },
 ];
 const GOOD = planOf(UNITS, [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['cli', 'settings'], 'design-keeper', 'shell')]);
 const SHAPE = planShape(GOOD);
+/** MS-2 holds one unit built on MS-1 (cli) and one that only shares MS-1's design unit (lone): only cli is held. */
+const PARTIAL = planShape(planOf([...UNITS, { id: 'lone', after: ['design'] }], [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['cli', 'lone'], 'design-keeper', 'browser')]));
 
 describe('the plan shape (evals/m5/shape.ts)', () => {
-  test('evals-m5.plan-shape: the intended plan holds; one milestone, a supplied design, a unit before its design, or a shell milestone off the browser one is off', () => {
+  test('evals-m5.plan-shape: the intended plan holds, and so does a dependent milestone with one held unit; one milestone, a supplied design, a unit before its design, no milestone built on the browser one, or no browser journey is off', () => {
     assert.equal(SHAPE.kind, 'ok');
-    assert.ok(SHAPE.kind === 'ok' && SHAPE.browser.id === 'MS-1' && SHAPE.shell.id === 'MS-2');
+    assert.ok(SHAPE.kind === 'ok' && SHAPE.browser.id === 'MS-1' && SHAPE.dependent.id === 'MS-2');
+    assert.deepEqual(SHAPE.kind === 'ok' && SHAPE.held, ['cli', 'settings']);
     assert.ok(milestonesPlannedVerdict(SHAPE).pass);
+    assert.ok(PARTIAL.kind === 'ok' && PARTIAL.dependent.id === 'MS-2');
+    assert.deepEqual(PARTIAL.kind === 'ok' && PARTIAL.held, ['cli']);
     const off = (plan: PlanM1, problem: RegExp) => {
       const s = planShape(plan);
       assert.equal(s.kind, 'off');
@@ -133,7 +138,8 @@ describe('the plan shape (evals/m5/shape.ts)', () => {
     off(planOf(UNITS, [milestone('MS-1', ['reserve', 'search'], 'design', 'browser')]), /1 milestones/);
     off(planOf(UNITS, [milestone('MS-1', ['reserve', 'search'], null, 'browser'), milestone('MS-2', ['cli', 'settings'], 'design-keeper', 'shell')]), /design is supplied/);
     off(planOf([...UNITS.filter((u) => u.id !== 'search'), { id: 'search' }], [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['cli'], 'design-keeper', 'shell')]), /search do not run after its design unit/);
-    off(planOf([...UNITS, { id: 'lone', after: ['design'] }], [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['cli', 'lone'], 'design-keeper', 'shell')]), /no shell milestone descends from MS-1/);
+    // MS-2's units share MS-1's design unit but descend from none of MS-1's units.
+    off(planOf([...UNITS, { id: 'lone', after: ['design'] }, { id: 'other', after: ['lone'] }], [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['lone', 'other'], 'design', 'browser')]), /no milestone descends from MS-1/);
     off(planOf(UNITS, [milestone('MS-1', ['reserve', 'search'], 'design', 'shell'), milestone('MS-2', ['cli', 'settings'], 'design-keeper', 'shell')]), /no milestone has a browser journey/);
   });
 });
@@ -177,12 +183,15 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     assert.equal(designFirstVerdict(SHAPE, goodLog({ publications: [] }), none).pass, false);
   });
 
-  test('evals-m5.criterion.node-held: no MS-2 unit dispatched before milestone-passed{MS-1}; one before it, or no pass, fails', () => {
+  test('evals-m5.criterion.node-held: no held MS-2 unit dispatched before milestone-passed{MS-1} (an unheld one may be); a held one before it, or no pass, fails', () => {
     assert.ok(nodeHeldVerdict(SHAPE, goodLog()).pass);
     const early = nodeHeldVerdict(SHAPE, goodLog({ firstDispatch: new Map([['cli', 99]]) }));
     assert.equal(early.pass, false);
     assert.match(early.detail, /cli dispatched at seq 99, before milestone-passed\{MS-1\} at seq 100/);
     assert.match(nodeHeldVerdict(SHAPE, goodLog({ passed: [] })).detail, /no milestone-passed\{MS-1\}/);
+    // A dependent-milestone unit built on no MS-1 unit is not held: dispatched early, it passes; a held one early fails.
+    assert.ok(nodeHeldVerdict(PARTIAL, goodLog({ firstDispatch: new Map([['lone', 5]]) })).pass);
+    assert.match(nodeHeldVerdict(PARTIAL, goodLog({ firstDispatch: new Map([['cli', 99]]) })).detail, /cli dispatched at seq 99/);
   });
 
   test('evals-m5.criterion.walk-screenshots: every reported MS-1 walk holds a PNG; one without, or no reported walk, fails', () => {

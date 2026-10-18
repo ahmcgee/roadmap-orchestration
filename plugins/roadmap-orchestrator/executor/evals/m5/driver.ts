@@ -24,9 +24,9 @@
 // changes (`demo.seen`); at the end it also GETs the demo's `where` when it is a URL (`demo.final.probe`). check.ts's
 // `demo-serving` grades both.
 //
-// Fail-fast: once the arc's first plan in force is in its run dir, `planShape` (shape.ts) must hold: two milestones, a
-// browser flow with its design unit, and a shell milestone built on it. Otherwise the turn is killed and the run ends
-// `fail-fast` (it would cost hours and grade nothing of M5).
+// Fail-fast: once the arc's first plan in force is in its run dir, `planShape` (shape.ts) must hold: two or more
+// milestones, a browser flow with its design unit, and a dependent milestone with a unit descending from it. Otherwise
+// the turn is killed and the run ends `fail-fast` (it would cost hours and grade nothing of M5).
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
