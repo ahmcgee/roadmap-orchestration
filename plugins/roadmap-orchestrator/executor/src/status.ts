@@ -140,6 +140,7 @@ import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
 import { EARLIER_BUILTIN_SEATS, bundleClassesOf, gateLargeDiffOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
 import { type ClassTotal, type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byClass, byModel, meterOf, ownShare } from './meter.ts';
+import { type DemoStatus, demoStatus, liveRepairs } from './demo/promote.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
 import { judgmentSeat, largeDiffSeat } from './pipeline/transitions.ts';
@@ -550,6 +551,12 @@ export type Status = Readonly<{
    * the givens, the ruler changes and the next trigger and cooldown. Null before a start.
    */
   flow: FlowStatus | null;
+  /**
+   * dev.13 (src/demo/promote.ts `demoStatus`): the demo the owner picks up, or null before the arc's first promotion (and on
+   * an arc without milestones): where it is, its milestone and SHA, held and up, what changed since the promotion before
+   * it, the open walkthrough P2s as known rough edges, what the host runs now and the latest failed bring-up.
+   */
+  demo: DemoStatus | null;
 }>;
 
 export type KnownDefectView = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId; fixMerged: boolean; holds: readonly UnitId[] }>;
@@ -1741,6 +1748,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     checkpointWaits: checkpointWaitsOf(view),
     ...admitted,
+    demo: plan === null ? null : demoStatus({ view, plan, repairsOf: liveRepairs({ journal: { view }, runDir }) }, hostDir),
     flow: start === null || plan === null ? null
       : flowStatus({ runDir, repo: start.record.repo, journal: { view } }, revParse(start.record.repo, branchRef(plan.integrationBranch)), isoTimeOf(new Date(now))),
   };

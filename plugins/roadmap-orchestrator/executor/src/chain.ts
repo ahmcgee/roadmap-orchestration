@@ -29,6 +29,7 @@ import { crashPoint } from './core/crash.ts';
 import { durableRename } from './core/fsx.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import { runDir } from './input/cli.ts';
+import { DEMO_REF } from './demo/records.ts';
 
 /** A snapshot ref that exists but does not verify, or holds another arc: loud, never a row. */
 export class ArcRefError extends Error {
@@ -80,9 +81,9 @@ export function readArcRef(repo: AbsPath, arc: ArcId): ArcRef | null {
   return { arc, commit, highWater: check.manifest.highWater, events, view: fold, plan, manifest, input };
 }
 
-/** Every arc with a snapshot ref, ascending by id. */
+/** Every arc with a snapshot ref, ascending by id (`refs/roadmap/demo` is the demo's, dev.13: no arc's). */
 export function arcsWithRefs(repo: AbsPath): readonly ArcId[] {
-  return git(repo, ['for-each-ref', '--format=%(refname)', 'refs/roadmap/']).split('\n').filter((l) => l !== '')
+  return git(repo, ['for-each-ref', '--format=%(refname)', 'refs/roadmap/']).split('\n').filter((l) => l !== '' && l !== DEMO_REF)
     .map((r) => arcId(r.slice('refs/roadmap/'.length), r)).sort();
 }
 

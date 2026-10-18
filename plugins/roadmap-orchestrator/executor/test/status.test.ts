@@ -122,13 +122,14 @@ describe('status.subset', () => {
       opportunities: [],
       drift: [],
       flow: null,
+      demo: null,
     });
   });
 
   test('after a completed run: state, owner, units, spend by role and by model, containment and its narrowed guarantee', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
-      'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred',
+      'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
       'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'issues', 'knownDefects', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);

@@ -29,6 +29,7 @@
 // M4b: `flow accept|reject|request` queue the root agent's flow commands and `flow given` writes a host given
 // (src/commands/flow.ts); each prints the queued command or the given, or `{refused}` (78). Step 0a placed the module.
 // Scope growth (2026-10-15): `scope accept|reject <unit> --reason` queues the root agent's `scope-decide` (src/commands/scope.ts).
+// dev.13: `demo up|down|hold|release` queues the owner's act on the demo (src/demo/promote.ts).
 //
 // `runCli` takes the host directory, as every host function does: `main` passes HOST_DIR, tests a temp dir.
 import { existsSync, readFileSync } from 'node:fs';
@@ -152,6 +153,8 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return submit(command.run, hostDir, { type: 'merge-in', unit: command.unit });
     case 'scope-decide':
       return submit(command.run, hostDir, { type: 'scope-decide', unit: command.unit, decision: command.decision, reason: command.reason });
+    case 'demo':
+      return submit(command.run, hostDir, { type: 'demo', act: command.act });
     case 'audit':
       return submit(command.run, hostDir, { type: 'audit', lenses: command.lenses });
     case 'close-admissions':

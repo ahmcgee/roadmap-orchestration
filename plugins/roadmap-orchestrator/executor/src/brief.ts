@@ -30,6 +30,9 @@
 // - **Flow** (M4b, `briefFlow`; arcs with the loop on): code's constraint and the T/I/OE accounting (diagnostic only) at
 //   the ref; the verdicts, the ruler changes (command revisions after the first admission) and the host advice in the
 //   delta; and each lever the previous arc of the chain applied (no verdict worse) that this arc's plan dropped.
+// - **Demo** (dev.13, src/demo/promote.ts `demoView`; arcs with a promotion): the demo at the ref (the promoted milestone
+//   and SHA, held, up, what changed since the promotion before it, the open walkthrough P2s as rough edges). Where it runs
+//   is status's alone: the brief reads refs only.
 // The payload holds no clock; forge state, census figures and timings are in it, so a change of any changes the id.
 import { existsSync } from 'node:fs';
 import { answerLine, unappliedAnswers } from './answers.ts';
@@ -40,7 +43,8 @@ import { PRESSURE_SATURATED } from './host/pressure.ts';
 import { canonicalJson, sha256Hex } from './core/json.ts';
 import { type CommandBody, needsUserRecord } from './core/records.ts';
 import { parseRevisionPayload } from './core/events.ts';
-import type { AbsPath } from './core/values.ts';
+import { type AbsPath, absPath } from './core/values.ts';
+import { join } from 'node:path';
 import { gitCommonDir, gitRun, revParse } from './git/git.ts';
 import { observationOf, observationStore } from './holistic/observe.ts';
 import { parseObligations } from './holistic/types.ts';
@@ -58,7 +62,11 @@ import { seriesInputs } from './flow/series.ts';
 import { rulerChangesOf } from './flow/track.ts';
 import type { FlowAction } from './flow/types.ts';
 import { arcRolesOf } from './input/inforce.ts';
-import type { PlanM1 } from './input/plan.ts';
+import type { PlanM1, PlanUnit } from './input/plan.ts';
+import { demoView } from './demo/promote.ts';
+import { type RepairRef, specRepairs } from './core/records.ts';
+import { SPEC_INPUT, specShaInForce } from './input/inforce.ts';
+import { parseSpec } from './spec/spec.ts';
 
 /** The brief's reasons an ack acknowledges (R10): non-blocking, rendered for a live arc. */
 export const ACKED_REASONS = ['divergence-digest', 'convergence-bound'] as const;
@@ -75,6 +83,15 @@ function refBlob(repo: AbsPath, ref: ArcRef, path: string): string | null {
 }
 
 const factsAfter = (ref: ArcRef, from: number) => ref.events.flatMap((e) => (e.type === 'fact' && e.seq > from ? [e.fact] : []));
+
+/**
+ * What a unit's spec in force at the ref repairs (the demo's `repairsOf` over a ref); the path, for messages, names the blob
+ * `inputs/<sha>.spec.json` of `refs/roadmap/<arc>` under the repo.
+ */
+const refRepairs = (repo: AbsPath, ref: ArcRef) => (u: PlanUnit): readonly RepairRef[] => {
+  const sha = specShaInForce(ref.view, u.id);
+  return specRepairs(parseSpec(ref.input(sha, SPEC_INPUT), absPath(join(repo, 'refs', 'roadmap', ref.arc, 'inputs', `${sha}.${SPEC_INPUT}`))));
+};
 
 /** A decision as one line of the brief. */
 function decisionLine(d: Decision): string {
@@ -196,6 +213,7 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
     opportunities: admitted.opportunities,
     drift: admitted.drift.filter((x) => x.findings.length > 0).map((x) => ({ unit: x.unit, job: x.job, findings: x.findings.map((f) => ({ id: f.id, clauses: f.clauses })) })),
     flow: briefFlow(ref, from, previous),
+    demo: demoView({ view: ref.view, plan: ref.plan, repairsOf: refRepairs(repo, ref) }),
   };
 }
 
@@ -288,6 +306,13 @@ function arcMarkdown(a: BriefArc): string {
       ...a.flow.rulerChanges.map((r) => `RULER CHANGED by a command revision: ${r}`),
       ...a.flow.hostAdvice.map((h) => `host advice ${h}`),
       ...a.flow.dropped.map((d) => `dropped: the previous arc applied ${d}; this plan no longer carries it`),
+    ])]),
+    ...(a.demo === null ? [] : [section('Demo', [
+      `${a.demo.milestone} at ${a.demo.sha}${a.demo.held ? ' (promotion held)' : ''}${a.demo.up ? '' : ' (down)'}; where it runs: \`roadmap status\` (demo.where)`,
+      ...(a.demo.since.milestones.length === 0 ? [] : [`settled since the last promotion: ${a.demo.since.milestones.join(', ')}`]),
+      ...(a.demo.since.tweaks.length === 0 ? [] : [`kept tweaks: ${a.demo.since.tweaks.join(', ')}`]),
+      ...(a.demo.since.fixes.length === 0 ? [] : [`fixes: ${a.demo.since.fixes.join(', ')}`]),
+      ...(a.demo.roughEdges.length === 0 ? [] : [`known rough edges: ${a.demo.roughEdges.join(', ')}`]),
     ])]),
     section('Timings', a.timings.map((t) => `${t.stage}: ${t.count} completed, p50 ${Math.round(t.p50Ms / 1000)} s, max ${Math.round(t.maxMs / 1000)} s`)),
   ].join('')}`;
