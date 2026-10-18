@@ -51,7 +51,7 @@ Walk the journey the proposal cites on both instances, starting at each instance
 </driving>
 
 <seeing>
-Capture at full resolution. Where the tweak changes a component, capture that component on both sides on its own (an element screenshot or a clipped region) and compare the crops side by side; zoom where detail is small. Use any image tools the environment has to crop, enlarge or measure. Measure what a tool can measure on both sides and save the numbers: contrast computed from the DOM, computed colours and spacing against the reference's tokens, step counts, timings, exit codes, console errors. Read each capture back before you cite it.
+Capture at full resolution. Where the tweak changes a component, capture that component on both sides on its own (an element screenshot or a clipped region) and compare the crops side by side; zoom where detail is small. Use any image tools the environment has to crop, enlarge or measure. Measure what a tool can measure on both sides and save the numbers: contrast computed from the DOM, computed colours and spacing against the reference's tokens, step counts, timings, exit codes, console errors. Read each capture back before you cite it. Save every capture at an absolute path inside the evidence directory (a bare filename lands in your working directory instead).
 </seeing>
 
 <judging>

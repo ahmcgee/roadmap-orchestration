@@ -93,7 +93,7 @@ Look at each journey through these lenses. They are what matters here, not a che
 </lenses>
 
 <evidence>
-Everything you cite is a file in the evidence directory: screenshots (the browser tools save them there; give each a name that says its journey and step), shell transcripts, saved measurements, and notes. Cite each by its path relative to the evidence directory (for example J-1/03-submit.png). Code checks that every cited file exists there and refuses the report otherwise, so cite only what you saved.
+Everything you cite is a file in the evidence directory: screenshots (give the screenshot tool, or a script's screenshot call, an absolute path inside the evidence directory, named for its journey and step; a bare filename lands in your working directory instead), shell transcripts, saved measurements, and notes. Cite each by its path relative to the evidence directory (for example J-1/03-submit.png). Code checks that every cited file exists there and refuses the report otherwise, so cite only what you saved.
 </evidence>
 
 <classes>
