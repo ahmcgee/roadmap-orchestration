@@ -3948,21 +3948,32 @@ proposals are recorded in its `walk-ended.dropped`, never applied or banked.
 
 ### `BackendCall` kind `claude-acting-judge` (`src/backends/argv.ts`; owner 2026-10-18: generic, the gate will use it too)
 
-`{kind, role: ActingJudgeRole, triple: ClaudeTriple, session: JudgmentSession, schemaText, system, mcpConfig: string | null,
-evidenceDirs}`. argv: `claude -p --output-format stream-json --verbose --strict-mcp-config [--mcp-config <json>]
+`{kind, role: ActingJudgeRole, triple: ClaudeTriple, session: JudgmentSession, schemaText, system, mcpConfig: AbsPath | null,
+evidenceDirs}`. argv: `claude -p --output-format stream-json --verbose --strict-mcp-config [--mcp-config <file>]
 --setting-sources project --json-schema <schema> --model --effort --tools Read,Grep,Glob,Bash,Write,Edit,Agent
 (ACTING_JUDGE_TOOLS) --permission-mode bypassPermissions --session-id|--resume <id> --append-system-prompt <system>
 [--add-dir <dir>]...`. Slash commands are not disabled (project skills load). The cwd (the launch's) is the detached
 checkout it works in. `mcpConfig` null: no MCP server (the gate's). Fresh, or resumed once for the repair turn. Its launch
-terminal and result records name the role with a `JudgmentSession` like a judgment. Agent A owns the walk smoke; the gate's
-move onto this kind belongs to another agent.
+terminal and result records name the role with a `JudgmentSession` like a judgment. The gate's move onto this kind belongs
+to another agent.
+
+- **MCP tools** need no `--tools` or `--allowed-tools` entry (agent A, verified on Claude Code 2.1.301, 2026-10-18): `--tools`
+  names built-in tools only and does not restrict MCP tools, and bypassPermissions allows them; with this argv and the
+  Playwright server the init event lists every `mcp__playwright__browser_*` tool and the server `connected`.
+- **The MCP config is a file** (agent A): `walkMcpConfig(servers, evidenceDir)` (src/backends/mcp.ts) is its text, kept
+  content-addressed as `<runDir>/inputs/<sha256>.mcp.json` (`MCP_CONFIG_INPUT`) like the schema and prompt, and
+  `mcpConfig` is its path, so launch.json names it and its bytes stay on record.
+- **A walk role's call** is `callActingJudge(ctx, ActingJudgeCallSpec)` (src/pipeline/dispatch.ts): the role's arc seat,
+  spawned, metered (`arc-backend`), retried and read back (`recordedArcCall`) exactly as `callArcRole`; `--add-dir` is a
+  judgment's surface (`judgmentReadDirs`: the repository, the run dir, then the spec's `evidenceDirs`), and the spec's
+  `mcpConfig` is the config text or null.
 
 ### Repo config (`.roadmap/config.json`, `src/routing/layers.ts`)
 
 `walkthrough?: { mcp: { <name>: { command: string; args?: string[]; env?: Record<EnvName, string> } } }` (non-empty; a
 name is `[A-Za-z0-9_-]{1,64}`; `args` and `env` absent: none). Absent: no browser drive, so a `browser` journey is refused
-at bootstrap. Code passes the servers as `--mcp-config '{"mcpServers": {<name>: {"type": "stdio", "command", "args",
-"env"}}}'` with `--strict-mcp-config`, substituting in `args` and `env` values only (`WALK_SUBSTITUTIONS`): `{evidence}` the
+at bootstrap. Code passes the servers as an `--mcp-config` file holding `{"mcpServers": {<name>: {"type": "stdio", "command",
+"args", "env"}}}` with `--strict-mcp-config`, substituting in `args` and `env` values only (`WALK_SUBSTITUTIONS`): `{evidence}` the
 session's evidence dir (absolute) and `{viewport}` `WALK_VIEWPORT` = `1280x800` (step 0 decided: the pinned desktop
 viewport; a narrow pass resizes in session, method). This repo's server: `playwright-mcp --headless --isolated --browser
 chromium --output-dir {evidence} --viewport-size {viewport}`. Builds in a milestone with a `browser` journey get the same
@@ -3973,7 +3984,7 @@ servers (agent F).
 | Row | Shape | Owner |
 |---|---|---|
 | `milestones-need-holistic` | `StartupRejection{kind}`: shared row 15, every mode | B |
-| `walk-tools-missing` | `StartupRejection{kind, milestone, problem: program{step, argv0} \| mcp-unconfigured \| mcp-unconnected{server, detail}}`; `step` names the command: `setup[i]`, `serve.<name>`, `seed[i]` | A (the MCP smoke: a one-turn call on the cheapest seat reading the init event's `mcp_servers[].status`), B (the row's argv0 half) |
+| `walk-tools-missing` | `StartupRejection{kind, milestone, problem: program{step, argv0} \| mcp-unconfigured \| mcp-unconnected{server, detail}}`; `step` names the command: `setup[i]`, `serve.<name>`, `seed[i]` | A, both halves (src/preflight/walktools.ts `walkToolsCheck`; start group 2 and `phase0 check --plan`, against the working tree's repo config). Changed from the plan (agent A): the MCP check makes no model call. Code starts each configured server, substituted with a scratch evidence dir, sends the MCP `initialize` request over stdio and needs a JSON-RPC result within 30 s (`MCP_HANDSHAKE_MS`), then stops it (`mcpHandshake`, src/backends/mcp.ts). That is what Claude Code's init event reports as `connected`. `detail` names the spawn error, the error answer, the exit or the timeout, with stderr's tail. Each server is checked once, and every milestone with a `browser` journey gets a row per server that failed. The argv0 half resolves each bring-up command's argv[0] as a lane's is, on the bring-up `env`'s PATH or else the executor's; a relative path with a slash is a checkout file and is not checked |
 | `milestone-unit-before-design` | advisory `Phase0Advisory{kind, milestone, unit, design}`: shared row 14, every mode: a live (not cut, not re-entered) milestone unit not a descendant (through `after`, transitively) of its design unit; a supplied design has none | B |
 
 ### Outputs (`src/prompts/schemas.ts`)

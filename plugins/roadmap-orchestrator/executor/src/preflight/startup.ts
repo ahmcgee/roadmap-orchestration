@@ -107,7 +107,7 @@ export type StartupRejection =
 /**
  * dev.13, why a milestone cannot be walked here: a program its bring-up names does not resolve (`step` names the command:
  * `setup[i]`, `serve.<name>`, `seed[i]`), a `browser` journey with no `walkthrough.mcp` in the repo config, or a configured
- * MCP server that did not connect in the one-turn smoke (`detail`: the init event's status, or why the smoke failed).
+ * MCP server that did not start and answer the MCP `initialize` handshake (src/preflight/walktools.ts; `detail`: why not).
  */
 export type WalkToolsProblem =
   | Readonly<{ type: 'program'; step: string; argv0: string }>

@@ -86,8 +86,11 @@ export const JUDGMENT_TOOLS = 'Read,Grep,Glob,Agent';
 /**
  * dev.13, the acting judge's tools: a judgment session that uses the product (a walkthrough, the polish judge, and the
  * gate's ad hoc experiments) gets a shell and may write (its evidence, scratch scripts) besides reading and delegating.
- * MCP tools are not restricted by `--tools`: an acting judge gets exactly the servers of its `--mcp-config` (none when it
- * passes none, under `--strict-mcp-config`).
+ * MCP tools are not restricted by `--tools`, and bypassPermissions allows them, so they need no entry here or in
+ * `--allowed-tools`: an acting judge gets exactly the servers of its `--mcp-config` (none when it passes none, under
+ * `--strict-mcp-config`). Verified against the real CLI (Claude Code 2.1.301, 2026-10-18, this argv with the Playwright
+ * MCP server): the init event lists every `mcp__playwright__browser_*` tool and `mcp_servers: [{name: playwright, status:
+ * connected}]` with this `--tools` value, and the same with `,mcp__playwright` appended.
  */
 export const ACTING_JUDGE_TOOLS = 'Read,Grep,Glob,Bash,Write,Edit,Agent';
 
@@ -128,8 +131,11 @@ export type BackendCall =
     schemaText: string;
     /** The prompt module's standing instructions: `--append-system-prompt` (it does agentic work, as the implementer). */
     system: string;
-    /** The `--mcp-config` JSON text (`{"mcpServers": {...}}`, substitutions done), or null for none (the gate's). */
-    mcpConfig: string | null;
+    /**
+     * The `--mcp-config` file (src/backends/mcp.ts `walkMcpConfig`, kept under the run dir's inputs), or null for no server
+     * (the gate's).
+     */
+    mcpConfig: AbsPath | null;
     /** Directories outside the cwd it reads or writes (its evidence dir, the walk evidence it compares): one `--add-dir` each. */
     evidenceDirs: readonly AbsPath[];
   }>

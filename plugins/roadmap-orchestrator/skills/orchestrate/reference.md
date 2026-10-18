@@ -178,6 +178,22 @@ high, gates high, and runs the pack review; `summit` holds both escalation seats
 model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
 `economy` is judgment-only and no built-in seat names it (reach it through `routing.seats`, a plan or `route`): no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`.
 
+**`walkthrough.mcp`** names the stdio MCP servers a walk session gets, exactly these (`--strict-mcp-config`); the
+environment provides them, the executor ships no browser. Code substitutes `{evidence}` (the session's evidence dir) and
+`{viewport}` (`1280x800`) in `args` and `env` values. Without it a milestone with a `browser` journey is refused
+`walk-tools-missing{mcp-unconfigured}`; `phase0 check` and `start` start each server and do the MCP handshake
+(`mcp-unconnected{server, detail}` when it fails). The expected server is Playwright MCP:
+
+```json
+{"walkthrough": {"mcp": {"playwright": {"command": "playwright-mcp", "args": ["--headless", "--isolated",
+  "--browser", "chromium", "--output-dir", "{evidence}", "--viewport-size", "{viewport}"]}}}}
+```
+
+It defaults to the Chrome channel, so pass `--browser chromium` where only Playwright's Chromium is installed (`npx
+playwright install chromium`). It refuses `file:` URLs, so the bring-up serves pages over HTTP. A screenshot without a
+`filename` lands in `--output-dir`; a relative `filename` resolves against the session's cwd (the checkout), so a named
+one is absolute (checked on 0.0.83). Install it in the project's devcontainer, pinned (`@playwright/mcp`).
+
 **Run dir** `$(git rev-parse --path-format=absolute --git-common-dir)/roadmap-runtime/<arc>/`. Read, never write:
 
 - `needs-user/<id>.json`: `summary, reason, subject, recommendation, options[{id, label}], evidence[]`;

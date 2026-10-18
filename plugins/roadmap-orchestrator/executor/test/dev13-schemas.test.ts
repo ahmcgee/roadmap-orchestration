@@ -274,12 +274,12 @@ describe('dev.13 roles and routing', () => {
   it('an acting judge acts: a shell, bypassPermissions, project settings, exactly its MCP servers, the system prompt appended', () => {
     const call = {
       kind: 'claude-acting-judge', role: 'walkthrough', triple: { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, session: freshJudgmentSession(),
-      schemaText: '{}', system: 'SYS', mcpConfig: '{"mcpServers":{}}', evidenceDirs: [absPath('/run/evidence/jobs/walk-1')],
+      schemaText: '{}', system: 'SYS', mcpConfig: absPath('/run/inputs/abc.mcp.json'), evidenceDirs: [absPath('/run/evidence/jobs/walk-1')],
     } as const;
     const argv = backendArgv(call);
     const after = (flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
     assert.deepEqual([after('--tools'), after('--permission-mode'), after('--setting-sources'), after('--mcp-config'), after('--append-system-prompt')],
-      ['Read,Grep,Glob,Bash,Write,Edit,Agent', 'bypassPermissions', 'project', '{"mcpServers":{}}', 'SYS']);
+      ['Read,Grep,Glob,Bash,Write,Edit,Agent', 'bypassPermissions', 'project', '/run/inputs/abc.mcp.json', 'SYS']);
     assert.ok(argv.includes('--strict-mcp-config') && !argv.includes('--disable-slash-commands') && !argv.includes('--system-prompt'));
     assert.deepEqual(argv.slice(-2), ['--add-dir', '/run/evidence/jobs/walk-1']);
     const gate = backendArgv({ ...call, role: 'gate', mcpConfig: null });
