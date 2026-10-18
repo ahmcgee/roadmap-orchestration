@@ -352,7 +352,7 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | `JobId` | `+ walk-<n>` | none |
 | Ids | `MilestoneId MS-n`, `JourneyId J-n`, `PolishId X-n`, `ServeName`; `NumberedId` two-letter prefixes | none |
 | vision | clause kind `+ experience` | none |
-| `finding-opened` | `+ milestone?` (exactly on a walkthrough finding); `lens + walkthrough`; `FindingSource + demo{sha}` | absent: none (lasting) |
+| `finding-opened` | `+ milestone?` (exactly on a walkthrough finding); `+ cause?` (only on a walkthrough finding, agent C); `lens + walkthrough`; `FindingSource + demo{sha}` | absent: none (lasting) |
 | Facts | `+ walk-started, walk-ended, polish-proposed, tweak-judged, milestone-passed, demo-promoted, demo-failed` (`WalkFact`) | none |
 | `Role` | `+ walkthrough, polishJudge` (seat `arc`, frontier), in force only under milestones | not in force: no rev, check or smoke moves |
 | `launch.json` terminal, result.json | backend `role` may be a walk role with a `JudgmentSession` (`JudgmentSessionRole`) | none: dev.12 records name earlier roles |
@@ -4103,15 +4103,20 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
 - **Logs.** Each serve entry's stdout and stderr are linked into `<evidence>/server/serve.<name>.stdout|stderr` while it
   runs and copied there when it stops; a failed step's output is copied to `<evidence>/server/<step>.stdout|stderr`,
   which the bring-up P1 cites (claim names the step and why, `cause: "bring-up: <step> failed"`, no obligation).
-- **The session.** `callActingJudge` (src/pipeline/dispatch.ts): `claude-acting-judge` as `arc-backend{walkthrough.arc}`
-  under `job{walk-n}`, cwd the checkout, `--add-dir` the evidence dir, `--mcp-config` only for a milestone with a
-  `browser` journey (`walkMcpConfig`: the repo config's servers, `{evidence}`/`{viewport}` substituted in `args` and `env`
-  values; a browser journey without the config is a bug here, Phase 0 refuses it), deadline 90 min (`WALK_SESSION_MIN`),
+- **The session.** Agent A's `callActingJudge` (src/pipeline/dispatch.ts): `claude-acting-judge` as
+  `arc-backend{walkthrough.arc}` under `job{walk-n}`, cwd the checkout, `--add-dir` a judgment's surface plus the evidence
+  dir, `--mcp-config` only for a milestone with a `browser` journey (`walkSessionMcp` over src/backends/mcp.ts
+  `walkMcpConfig`, the servers of the repo config the arc started under, `routingBase.config`; a browser journey without
+  the config is a bug here, Phase 0 refuses it). The references input is src/pipeline/stages.ts `referenceFiles` at the
+  walked SHA (a binary file left out). The open findings are shown with their recorded cause (below), deadline 90 min (`WALK_SESSION_MIN`),
   a lost call retried once. Call 1 is the walk; call 2 its one repair turn (`repairTurnOf`); refused again, interrupted,
   failed or parked, the walk ends `abandoned` and the same round is due again.
 - **Validation** (`walkRefusals`): a cited evidence path is read relative to the evidence dir, or absolute inside it, and
   must be a file there; a polish scope covers a reference when a pattern's literal part lies inside a reference dir or holds
   one; a polish unit's spec must be its own unit's at rev 1 and its id no unit of the plan.
+- **A walkthrough finding keeps its cause** (`finding-opened + cause?`, present only on a walkthrough finding; absent:
+  none, lasting): the next walk is shown it (`WalkFindingView`) and re-reports a defect still present under exactly that
+  cause, so the key dedupes it.
 - **Minting.** A finding's evidence is its `paths` (blobs at the walked SHA), then its evidence files (absolute, blob null);
   its claim is prefixed with its journey; a vision clause it cites (`vision`, or a floor's `V-n` source) is kept;
   `gateHadPassed: true`. A finding merged into an active one of the same key is the walk's finding too (`walk-ended.findings`).

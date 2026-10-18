@@ -124,8 +124,9 @@ export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen 
   const admission = admissionOf(journal.view.holistic().findings, key, draft.evidence);
   if (admission.kind !== 'open') return admission;
   const id = journal.view.nextFindingId();
-  const { cause: _cause, ...fields } = draft;
-  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: canonicalIds(draft.visionClauses) });
+  const { cause, ...fields } = draft;
+  // dev.13: a walkthrough finding keeps its cause, which the next walk is shown (so it re-reports the defect alike).
+  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: canonicalIds(draft.visionClauses), ...(draft.lens === 'walkthrough' ? { cause } : {}) });
   return { kind: 'opened', id };
 }
 

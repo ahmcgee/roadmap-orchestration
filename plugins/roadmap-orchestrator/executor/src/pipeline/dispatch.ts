@@ -692,54 +692,6 @@ async function callJobRole(
 }
 
 /**
- * dev.13: one acting arc-role call of a job (a milestone walk's `walkthrough`; agent D's compare stage calls `polishJudge`
- * from a unit's stage): `claude-acting-judge` (src/backends/argv.ts) in `cwd`, the job's detached checkout, with exactly
- * the MCP servers of `mcpConfig` (null: none), `evidenceDirs` as `--add-dir`. Otherwise as `callArcRole`: spawned as
- * `arc-backend{role, tier: arc, routingRev, job, attempt}` under `job{job}` (metered to the job by role and routingRev),
- * its workload env `backendEnv` alone, fresh but for the repair turn, a call lost with its runner retried once, uncharged.
- * `recordedArcCall` reads it back.
- */
-export type ActingCallSpec = Readonly<{
-  job: JobId;
-  role: WalkRole;
-  attempt: number;
-  system: string;
-  rendered: string;
-  schema: JsonValue;
-  cwd: AbsPath;
-  evidenceDirs: readonly AbsPath[];
-  mcpConfig: string | null;
-  deadlineAt: IsoTime;
-  session: JudgmentSession;
-}>;
-
-export async function callActingJudge(ctx: StageContext, spec: ActingCallSpec): Promise<BackendCallOutcome> {
-  const { seat, triple, routingRev } = arcSeat(ctx, spec.role);
-  const { session } = spec;
-  const schemaText = canonicalJson(spec.schema);
-  const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
-  const c: BackendCall = { kind: 'claude-acting-judge', role: spec.role, triple, session, schemaText, system: spec.system, mcpConfig: spec.mcpConfig, evidenceDirs: spec.evidenceDirs };
-  const stdin = inputFile(ctx.runDir, promptBytes(c, spec.rendered), 'prompt.txt');
-  const env = backendEnv(ctx.hostEnv);
-  const launch = (origin: SpawnOrigin): LaunchSpec => ({
-    runDir: ctx.runDir,
-    origin,
-    subject: { purpose: 'arc-backend', ...seat, routingRev, job: spec.job, attempt: spec.attempt },
-    launch: (invDir) => ({
-      argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, stallMs: null, graceMs: BACKEND_GRACE_MS,
-      terminal: { type: 'backend', purpose: 'backend', routingRev, schemaPath, outputPath: absPath(join(invDir, STDOUT_FILE)), role: spec.role, session },
-    }),
-  });
-  const parent: JobParent = { type: 'job', job: spec.job };
-  const first = await invoke(ctx.journal, ctx.containment, launch({ type: 'new', key: opKey(`backend:${spec.job}`), parent, deadlineAt: spec.deadlineAt }));
-  const outcome = first.kind === 'lost' ? await invoke(ctx.journal, ctx.containment, launch({ type: 'retry', op: first.op })) : first;
-  const invDir = invocationDir(ctx.runDir, outcome.inv);
-  if (outcome.kind === 'lost') return { kind: 'lost', inv: outcome.inv, invDir, treeEffects: outcome.treeEffects };
-  if (outcome.result.type !== 'backend') throw new Error(`${outcome.inv}: an arc-backend spawn produced a ${outcome.result.type} result`);
-  return { kind: 'result', inv: outcome.inv, invDir, result: outcome.result };
-}
-
-/**
  * The call a job made as `attempt` of `role`, read back from the log (a resumed job consumes it rather than asking
  * again): its result, or lost; null when the job made none. An open one is a bug here: recovery settles every open
  * spawn before a job resumes.

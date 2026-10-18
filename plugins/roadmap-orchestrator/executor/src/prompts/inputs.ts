@@ -358,6 +358,9 @@ export type FindingView = Readonly<{
   owner: UnitId | null;
 }>;
 
+/** dev.13: an open walkthrough finding as a walk sees it: its view and its cause (null for one recorded without it). */
+export type WalkFindingView = FindingView & Readonly<{ cause: string | null }>;
+
 export type LensInputs = Readonly<{
   vision: VisionInput;
   lens: LensKind;
@@ -550,7 +553,7 @@ export type WalkthroughInputs = Readonly<{
   journeys: readonly Journey[];
   references: readonly DocText[];
   tweaks: readonly KeptTweak[];
-  findings: readonly FindingView[];
+  findings: readonly WalkFindingView[];
   product: ProductInstance;
   units: readonly RenderedSpec[];
   evidenceDir: AbsPath;

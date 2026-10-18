@@ -93,7 +93,7 @@ const walkSample = (k: 'A' | 'B'): RoleInputs['walkthrough'] => ({
   vision: vision(k === 'A' ? 1 : 2, `VISION-${k}`), milestone: { id: milestoneId(k === 'A' ? 'MS-1' : 'MS-2'), text: `MILESTONE-${k}` }, round: k === 'A' ? 1 : 2,
   journeys: [journeySample(k)], references: [doc(`design/${k}.md`, `REFERENCE-${k}`)],
   tweaks: [{ unit: unitId(`tweak-${k.toLowerCase()}`), proposal: polishId(k === 'A' ? 'X-1' : 'X-2'), text: `TWEAK-${k}` }],
-  findings: [findingView(k === 'A' ? 'F-1' : 'F-2', `FINDING-${k}`)], product: instanceSample(k, k === 'A' ? 4100 : 4200),
+  findings: [{ ...findingView(k === 'A' ? 'F-1' : 'F-2', `FINDING-${k}`), cause: `CAUSE-${k}` }], product: instanceSample(k, k === 'A' ? 4100 : 4200),
   units: [spec(k === 'A' ? 1 : 2, `SPEC-${k}`)], evidenceDir: absPath(`/run/evidence/jobs/walk-${k === 'A' ? 1 : 2}`),
 });
 const polishSample = (k: 'A' | 'B'): RoleInputs['polishJudge'] => ({

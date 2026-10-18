@@ -19,7 +19,7 @@ import { substitutePorts } from '../src/walk/bringup.ts';
 import { milestoneProgress, milestoneState, walkItemsDue } from '../src/walk/milestones.ts';
 import { milestoneEdges, milestoneWaits } from '../src/walk/node.ts';
 import { coversReference, evidencePath, walkDraft, walkRefusals } from '../src/walk/report.ts';
-import { walkMcpConfig } from '../src/walk/walk.ts';
+import { walkSessionMcp } from '../src/walk/walk.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { J1_EVIDENCE, walkAnswer } from './fixtures/walk-common.ts';
 
@@ -301,10 +301,10 @@ describe('placeholders', () => {
     const servers = { pw: { command: 'playwright-mcp', args: ['--output-dir', '{evidence}', '--viewport-size', '{viewport}'], env: { OUT: '{evidence}/x' } } };
     const browser = MILESTONE('MS-1', ['a'], { journeys: [{ id: 'J-1' as never, text: 'j', via: 'browser', entry: '/', budget: null }] });
     const ev = absPath('/run/evidence/jobs/walk-1');
-    assert.deepEqual(JSON.parse(walkMcpConfig(servers, browser, ev)!), {
+    assert.deepEqual(JSON.parse(walkSessionMcp(servers, browser, ev)!), {
       mcpServers: { pw: { type: 'stdio', command: 'playwright-mcp', args: ['--output-dir', ev, '--viewport-size', '1280x800'], env: { OUT: `${ev}/x` } } },
     });
-    assert.equal(walkMcpConfig(servers, MILESTONE('MS-1', ['a']), ev), null);
-    assert.throws(() => walkMcpConfig(null, browser, ev), /walk-tools-missing/);
+    assert.equal(walkSessionMcp(servers, MILESTONE('MS-1', ['a']), ev), null);
+    assert.throws(() => walkSessionMcp(undefined, browser, ev), /walk-tools-missing/);
   });
 });

@@ -36,10 +36,8 @@ import type { Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { type FindingId, type JobId, type PolishId, type ServeName, type Sha, canonicalIds, parseInvocationId } from '../core/ids.ts';
 import { readJournal } from '../core/log.ts';
-import { canonicalJson } from '../core/json.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
-import { git } from '../git/git.ts';
+import { type AbsPath, absPath } from '../core/values.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { removeCheckout } from '../holistic/audit.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
@@ -51,18 +49,17 @@ import {
   type BackendCallOutcome, type RepairTurn, type StageContext, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
-import { docAt, holisticInForce, inMs, loadUnitSpec } from '../pipeline/stages.ts';
+import { holisticInForce, inMs, loadUnitSpec, referenceFiles } from '../pipeline/stages.ts';
 import { repairUnits } from '../pipeline/reproduce.ts';
-import { readRepoConfig } from '../preflight/checks.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
-import { type FindingView, type KeptTweak, type WalkthroughInputs, visionInputOf } from '../prompts/inputs.ts';
+import { type KeptTweak, type WalkFindingView, type WalkthroughInputs, visionInputOf } from '../prompts/inputs.ts';
 import { type WalkthroughOutput, validateWalkthroughOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 import { probe } from '../resources/probe.ts';
 import { requestOf } from '../resources/pool.ts';
 import { type JobHolder, type Reservation, cleanup, heldReservation, run } from '../resources/reserve.ts';
-import { WALK_SUBSTITUTIONS, WALK_VIEWPORT, type WalkMcpServer } from '../routing/layers.ts';
+import { type WalkMcpServers, walkMcpConfig } from '../backends/mcp.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { CPU_COST } from '../schedule/types.ts';
 import { renderSpec } from '../spec/render.ts';
@@ -104,25 +101,19 @@ function skipReason(ctx: StageContext): 'backend-parked' | 'paused' | null {
 }
 
 /**
- * The repo config's walk MCP servers as `--mcp-config` text, `{evidence}` and `{viewport}` substituted in `args` and `env`
- * values (`WALK_SUBSTITUTIONS`); null for a milestone without a `browser` journey. A browser journey without the config is
- * refused at bootstrap (`walk-tools-missing`), so meeting one here is a bug.
+ * The session's `--mcp-config` text (src/backends/mcp.ts `walkMcpConfig`): the repo config's `walkthrough.mcp` servers (the
+ * config the arc started under), only for a milestone with a `browser` journey; null otherwise. A browser journey without
+ * the config is refused at bootstrap (`walk-tools-missing`), so meeting one here is a bug.
  */
-export function walkMcpConfig(servers: Readonly<Record<string, WalkMcpServer>> | null, m: Milestone, evidenceDir: AbsPath): string | null {
+export function walkSessionMcp(servers: WalkMcpServers | undefined, m: Milestone, evidenceDir: AbsPath): string | null {
   if (!m.journeys.some((j) => j.via === 'browser')) return null;
-  if (servers === null) throw new Error(`milestone ${m.id} has a browser journey and the repo config names no walkthrough.mcp servers (Phase 0 refuses this: walk-tools-missing)`);
-  const values: Readonly<Record<(typeof WALK_SUBSTITUTIONS)[number], string>> = { '{evidence}': evidenceDir, '{viewport}': WALK_VIEWPORT };
-  const sub = (s: string): string => WALK_SUBSTITUTIONS.reduce((acc, k) => acc.split(k).join(values[k]), s);
-  const mcpServers = Object.fromEntries(Object.entries(servers).map(([name, s]) => [name, {
-    type: 'stdio', command: s.command, args: s.args.map(sub), env: Object.fromEntries(Object.entries(s.env).map(([k, v]) => [k, sub(v)])),
-  }]));
-  return canonicalJson({ mcpServers });
+  if (servers === undefined) throw new Error(`milestone ${m.id} has a browser journey and the repo config names no walkthrough.mcp servers (Phase 0 refuses this: walk-tools-missing)`);
+  return walkMcpConfig(servers, evidenceDir);
 }
 
-/** Every file under the milestone's reference dirs at `sha`, as documents. */
+/** Every text file under the milestone's reference dirs at `sha`, as documents (src/pipeline/stages.ts `referenceFiles`; a binary file is left out). */
 function referencesAt(ctx: StageContext, sha: Sha, m: Milestone): WalkthroughInputs['references'] {
-  const paths = m.references.flatMap((r) => git(ctx.repo, ['ls-tree', '-r', '--name-only', sha, '--', r]).split('\n').filter((l) => l !== ''));
-  return [...new Set(paths)].sort().map((p) => docAt(ctx, sha, repoPath(p) as RepoPath));
+  return referenceFiles(ctx.repo, sha, m.references).flatMap((f) => (f.text === null ? [] : [{ path: f.path, text: f.text }]));
 }
 
 /** The milestone's kept tweaks so far: its polish units judged `keep` and merged, with their proposal's text. */
@@ -138,9 +129,9 @@ function keptTweaks(ctx: StageContext, m: Milestone): readonly KeptTweak[] {
 }
 
 /** The milestone's open walkthrough findings, as finding views. */
-function openFindings(ctx: StageContext, m: Milestone): readonly FindingView[] {
+function openFindings(ctx: StageContext, m: Milestone): readonly WalkFindingView[] {
   return ctx.journal.view.holistic().findings.filter((f) => f.lens === 'walkthrough' && f.milestone === m.id && isActive(f))
-    .map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, obligation: f.obligation, claim: f.claim, owner: f.owner }));
+    .map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, obligation: f.obligation, claim: f.claim, owner: f.owner, cause: f.cause ?? null }));
 }
 
 /** The vision in force, and the slice the plan advances. */
@@ -305,7 +296,7 @@ async function walkOnce(ctx: WalkContext, w: WalkRecord): Promise<WalkRunOutcome
   const check = { milestone: m, plan, vision, evidenceDir };
   const deadlineAt = inMs(WALK_SESSION_MIN * 60_000);
   const prompt = promptFor('walkthrough', arcSeat(ctx, 'walkthrough').triple.model);
-  const mcpConfig = walkMcpConfig(readRepoConfig(ctx.repo)?.walkthrough?.mcp ?? null, m, evidenceDir);
+  const mcpConfig = walkSessionMcp(ctx.routingBase.config?.walkthrough?.mcp, m, evidenceDir);
 
   let made = false;
   let instance: Instance | null = null;

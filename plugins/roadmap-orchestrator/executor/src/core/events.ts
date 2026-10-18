@@ -812,6 +812,8 @@ export type HolisticFact =
     kind: 'finding-opened'; id: FindingId; key: Sha256Hex; lens: FindingLens; severity: FindingSeverity; obligation: ObligationId | null;
     visionClauses: readonly VisionClauseId[]; claim: string; evidence: readonly FindingEvidence[]; mutant: MutantRef | null; source: FindingSource;
     gateHadPassed: boolean; milestone?: MilestoneId;
+    /** dev.13: the finding's cause (its key's input), kept only on a walkthrough finding, so a later walk re-reports it alike; absent: none. */
+    cause?: string;
   }>
   | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
   | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
@@ -1951,10 +1953,12 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       gateHadPassed: f.get('gateHadPassed', bool),
     };
     const milestone = f.optional('milestone', (v, p): MilestoneId => milestoneId(v, p));
+    const cause = f.optional('cause', str);
     // dev.13: a walkthrough finding names its milestone, is a P1 (breaks) or a P2 (deviates), and comes from a walk job or
     // the demo; no other finding names a milestone or comes from the demo.
     const walk = out.lens === 'walkthrough';
     if (walk !== (milestone !== undefined)) throw new SchemaError(`${f.path}.milestone`, walk ? 'the milestone of a walkthrough finding' : 'absent (only a walkthrough finding names one)', milestone);
+    if (cause !== undefined && !walk) throw new SchemaError(`${f.path}.cause`, 'absent (only a walkthrough finding keeps its cause)', cause);
     if (walk && out.severity === 'P3') throw new SchemaError(`${f.path}.severity`, 'P1 or P2 for a walkthrough finding', out.severity);
     if (out.source.type === 'demo' && !(walk && out.severity === 'P1')) throw new SchemaError(`${f.path}.source`, 'a walk job (only a walkthrough P1 comes from the demo)', out.source);
     if (walk && out.source.type === 'job' && parseJobId(out.source.job).kind !== 'walk') throw new SchemaError(`${f.path}.source.job`, 'a walk-<n> job', out.source.job);
@@ -1967,7 +1971,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
     // M4a: a checkpoint's issue intake opens P2 or P3 only.
     if (out.lens === 'issue' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for an issue finding', out.severity);
-    return milestone === undefined ? out : { ...out, milestone };
+    return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }) };
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
   'audit-started': object((f): Fact => {

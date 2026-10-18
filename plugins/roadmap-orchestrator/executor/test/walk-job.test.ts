@@ -113,6 +113,7 @@ describe('the milestone walk (dev.13)', () => {
       assert.deepEqual(Object.keys(started!.ports), ['web']);
       const [opened] = factsOf(r, 'finding-opened');
       assert.deepEqual([opened!.id, opened!.lens, opened!.severity, opened!.milestone, opened!.obligation, opened!.source], ['F-1', 'walkthrough', 'P1', 'MS-1', null, { type: 'job', job: 'walk-1' }]);
+      assert.equal(opened!.cause, 'GET /: server error when no greeting is configured', 'a walkthrough finding keeps its cause for the next walk');
       assert.deepEqual(factsOf(r, 'walk-ended').map((f) => [f.job, f.outcome, f.findings, f.proposals, f.dropped]), [['walk-1', 'reported', ['F-1'], [], []]]);
       // The fake used the product it was given: the server answered 500, which the evidence keeps; the logs are in the evidence dir.
       const evidence = walkEvidenceDir(r.ctx, 'walk-1' as never);

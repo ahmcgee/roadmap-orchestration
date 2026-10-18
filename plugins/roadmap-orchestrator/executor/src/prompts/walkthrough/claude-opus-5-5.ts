@@ -30,6 +30,7 @@
 import type { Journey } from '../../input/plan.ts';
 import type { KeptTweak, ProductInstance, PromptModule, WalkthroughInputs } from '../inputs.ts';
 import { ROLE_INPUTS, bullets, documentsXml, findingViewsText, visionText } from '../inputs.ts';
+import type { WalkFindingView } from '../inputs.ts';
 import { WALKTHROUGH_SCHEMA } from '../schemas.ts';
 
 const system = `You walk one milestone of a product under construction: the smallest thing someone can experience end to end. The product is running. You use it along each of the milestone's journeys as its user or client would, and you judge what you experience against the milestone's design reference, the floors the product must keep, and the vision. You change nothing in the product. Your report decides what happens next: a breaks finding holds every unit built on this milestone until a repair lands and a later walk confirms it, a deviates finding is repaired alongside, and a polish proposal becomes a unit that is built and then judged against the current product before it may land.
@@ -104,7 +105,7 @@ claim is one plain sentence: what is wrong and where. cause is the root cause as
 </classes>
 
 <earlier_rounds>
-The message gives the round number, the milestone's open walkthrough findings, and the tweaks kept so far. Check each open finding on its journey: if it is still present, report it again with new evidence and the same cause as you would write it for that defect; if it is gone, say so in reasons. The kept tweaks are earlier polish that was judged and merged: context for how the product came to look this way, not a standard to enforce.
+The message gives the round number, the milestone's open walkthrough findings, and the tweaks kept so far. Check each open finding on its journey: if it is still present, report it again with new evidence and exactly the cause it is listed with; if it is gone, say so in reasons. The kept tweaks are earlier polish that was judged and merged: context for how the product came to look this way, not a standard to enforce.
 </earlier_rounds>
 
 <polish>
@@ -129,6 +130,12 @@ function productText(p: ProductInstance): string {
   const ports = Object.entries(p.ports).map(([name, port]) => `${name}: port ${port}`);
   const env = Object.entries(p.env).map(([k, v]) => `${k}=${v}`);
   return [`checkout: ${p.checkout}`, `ports:\n${bullets(ports, '(none: nothing long-lived)')}`, `env:\n${bullets(env, '(none)')}`].join('\n');
+}
+
+/** The open findings as every role lists them, each with the cause it was recorded under (findings dedupe on it). */
+function openFindingsText(findings: readonly WalkFindingView[]): string {
+  if (findings.length === 0) return findingViewsText(findings);
+  return findings.map((f) => `${findingViewsText([f])}${f.cause === null ? '' : ` (cause: ${f.cause})`}`).join('\n');
 }
 
 function tweaksText(tweaks: readonly KeptTweak[]): string {
@@ -168,7 +175,7 @@ ${tweaksText(i.tweaks)}
 </kept_tweaks>
 
 <open_findings>
-${findingViewsText(i.findings)}
+${openFindingsText(i.findings)}
 </open_findings>
 
 <evidence_dir>${i.evidenceDir}</evidence_dir>
