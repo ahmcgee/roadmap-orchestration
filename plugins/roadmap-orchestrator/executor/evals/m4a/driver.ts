@@ -73,6 +73,9 @@
 // reads MIN_VERDICT_SAMPLES suite runs before the flow change and as many after it, one per integration). The driver
 // checks it from the live run dirs every owner poll and after every turn; once arc 1 has a plan in force failing either,
 // it kills the turn and ends the run `fail-fast` (the run would cost hours and grade nothing of M4b). The owner simulator declines dropping the soak test (plant G) from the key.
+//
+// The M5 fixture's driver (evals/m5/driver.ts) reuses the session, owner-channel, wake, cleanup and forensics helpers
+// exported here; it adds its own owner and loop.
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
@@ -120,10 +123,10 @@ const WAKE_DEBOUNCE_MS = 3_000;
 /** How often the owner reads the brief while a turn runs (and answers through `roadmap answer`). */
 const ANSWER_POLL_MS: Readonly<Record<Mode['kind'], number>> = { real: 60_000, fake: 1_000 };
 /** How long the end-of-run stop waits for the host claim to clear. */
-const RELEASE_WAIT_MS = 5 * 60_000;
+export const RELEASE_WAIT_MS = 5 * 60_000;
 /** How long the fixture's processes get to exit on their own once the host is released, before they are killed. */
-const LEFTOVER_GRACE_MS = 30_000;
-const MAX_NUDGES = 3;
+export const LEFTOVER_GRACE_MS = 30_000;
+export const MAX_NUDGES = 3;
 
 // ---------------------------------------------------------------------------------------------------
 // Staging and the launch env
@@ -232,9 +235,9 @@ export function numberedQuestions(text: string): readonly string[] {
  */
 export type OwnerExchange = Readonly<{ question: string; answer: string; by: 'code' | 'simulator'; via: 'numbered' | 'answer' | 'spend-hold'; inTurn: number | null }>;
 
-type Ran = Readonly<{ status: number | null; stdout: string; stderr: string }>;
+export type Ran = Readonly<{ status: number | null; stdout: string; stderr: string }>;
 /** A child to its exit, without blocking the event loop (the turn's stream keeps flowing while the owner works). */
-function run(cmd: string, args: readonly string[], opts: SpawnOptions & Readonly<{ timeoutMs: number }>): Promise<Ran> {
+export function run(cmd: string, args: readonly string[], opts: SpawnOptions & Readonly<{ timeoutMs: number }>): Promise<Ran> {
   return new Promise((done, fail) => {
     const child = spawn(cmd, [...args], { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -283,12 +286,12 @@ export function codeAnswer(c: OwnerCtx, q: string): string | null {
   return null;
 }
 
-const NO_VIEW = 'No view: keep your working assumption.';
+export const NO_VIEW = 'No view: keep your working assumption.';
 /** The simulator's NO_VIEW, give or take its punctuation. */
-const noView = (answer: string): boolean => /^no view\b/i.test(answer.trim());
+export const noView = (answer: string): boolean => /^no view\b/i.test(answer.trim());
 
 /** Every real `claude -p` the driver launches: no MCP server (not the owner's claude.ai connectors), no auto-memory. */
-const CLAUDE_ISOLATION = ['--strict-mcp-config', '--settings', JSON.stringify({ autoMemoryEnabled: false })] as const;
+export const CLAUDE_ISOLATION = ['--strict-mcp-config', '--settings', JSON.stringify({ autoMemoryEnabled: false })] as const;
 
 const releasedAnswers = (c: OwnerCtx): readonly OwnerAnswer[] => ownerAnswers().filter((a) => a.from === 'bootstrap' || firstArcComplete(absPath(c.l.product)));
 
@@ -538,7 +541,7 @@ function killGroup(pgid: number | undefined, signal: NodeJS.Signals): void {
  * too (the fail-fast). The turn leads a process group of its own; when it ends, the rest of the group and the
  * fixture's watch tails are killed (see the header).
  */
-async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number, abort: AbortSignal): Promise<{ session: string | null; result: string | null; exit: number | null; isolation: string | null; timedOut: boolean }> {
+export async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, n: number, session: string | null, prompt: string, deadline: number, abort: AbortSignal): Promise<{ session: string | null; result: string | null; exit: number | null; isolation: string | null; timedOut: boolean }> {
   const argv = mode.kind === 'real'
     ? ['claude', ['-p', '--model', 'claude-opus-5-5', '--effort', 'high', '--plugin-dir', l.plugin, '--permission-mode', 'bypassPermissions', ...CLAUDE_ISOLATION, '--output-format', 'stream-json', '--verbose', ...(session === null ? [] : ['--resume', session]), prompt]] as const
     : [process.execPath, [FAKE_ROOT, '--fixture', l.dir, '--script', mode.script, ...(session === null ? [] : ['--resume', session]), '--', prompt]] as const;
@@ -595,20 +598,20 @@ async function runTurn(l: Layout, mode: Mode, env: Readonly<Record<string, strin
 }
 
 /** The roadmap CLI as the session runs it (real: the staged bin with HOST_DIR; fake: stage-cli with the fixture's host). */
-function roadmapArgv(l: Layout, mode: Mode, args: readonly string[]): readonly [string, readonly string[]] {
+export function roadmapArgv(l: Layout, mode: Mode, args: readonly string[]): readonly [string, readonly string[]] {
   return mode.kind === 'real'
     ? [process.execPath, [join(l.plugin, 'executor', 'bin', 'roadmap'), ...args]]
     : [process.execPath, [STAGE_CLI, l.plugin, fakeHostDir(l.dir), ...args]];
 }
 
-type Watched = { arc: string | null; arcsSeen: string[]; filter: ActionableFilter };
+export type Watched = { arc: string | null; arcsSeen: string[]; filter: ActionableFilter };
 
 /**
  * Waits for the next wake-up of the arc last seen holding the host (src/watch.ts `ActionableFilter`, kept across the run's watch processes). Returns the lines; '' at the
  * deadline; null when there is nothing to wait on (no arc seen, or the last one no longer holds the host and its end was
  * already reported).
  */
-async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, w: Watched, deadline: number, onArc: (arc: string) => void): Promise<string | null> {
+export async function wake(l: Layout, mode: Mode, env: Readonly<Record<string, string>>, w: Watched, deadline: number, onArc: (arc: string) => void): Promise<string | null> {
   const hostDir = mode.kind === 'real' ? HOST_DIR : absPath(fakeHostDir(l.dir));
   const claim = readClaim(hostDir);
   if (claim !== null && claim.repo === absPath(l.product)) {
@@ -787,7 +790,7 @@ export function arcForensics(arc: string, events: readonly SeqEvent[], sessionEn
 export const postRunOf = (a: ArcForensics): PostRun | null => (a.lastSeq > a.terminalSeq ? { arc: a.arc, fromSeq: a.terminalSeq + 1, events: a.lastSeq - a.terminalSeq } : null);
 
 /** The product's arcs that have a run dir (the executor's runtime dir under the git common dir). */
-function runDirs(product: AbsPath): readonly Readonly<{ arc: string; dir: AbsPath }>[] {
+export function runDirs(product: AbsPath): readonly Readonly<{ arc: string; dir: AbsPath }>[] {
   const common = gitCommonDir(product);
   const root = join(common, 'roadmap-runtime');
   if (!existsSync(root)) return [];
@@ -795,7 +798,7 @@ function runDirs(product: AbsPath): readonly Readonly<{ arc: string; dir: AbsPat
 }
 
 /** The last complete line's seq of an arc's `events.jsonl` (the log may be mid-append; a torn tail is not a line). */
-function lastSeq(dir: AbsPath): number {
+export function lastSeq(dir: AbsPath): number {
   const file = join(dir, 'events.jsonl');
   if (!existsSync(file)) return 0;
   const text = readFileSync(file, 'utf8');
@@ -804,7 +807,7 @@ function lastSeq(dir: AbsPath): number {
 }
 
 /** Copies what the report cites into `<dir>/diagnostics/`: each arc's needs-user files and the turn stderr tails. */
-function snapshotDiagnostics(l: Layout, arcs: readonly Readonly<{ arc: string; dir: AbsPath }>[]): void {
+export function snapshotDiagnostics(l: Layout, arcs: readonly Readonly<{ arc: string; dir: AbsPath }>[]): void {
   mkdirSync(l.diagnostics, { recursive: true });
   for (const a of arcs) {
     const nu = join(a.dir, 'needs-user');
