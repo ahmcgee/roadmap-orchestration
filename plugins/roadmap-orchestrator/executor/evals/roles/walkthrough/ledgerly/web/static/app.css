@@ -93,9 +93,9 @@ code { font-size: 0.95em; }
 .facts dd { margin: 0; }
 .figure { font-variant-numeric: tabular-nums; font-weight: 600; }
 
-/* The burn bar: the one memorable thing */
+/* The burn bar: the one memorable thing. The track leaves room for an over-limit stroke (at most 112%) inside the column. */
 .burn { margin: var(--space-2) 0 var(--space-4); }
-.burn-track { position: relative; height: var(--ll-stroke); max-width: 40rem; border-left: 2px solid var(--ll-ink); border-right: 2px solid var(--ll-ink); }
+.burn-track { position: relative; height: var(--ll-stroke); max-width: min(40rem, calc(100% / 1.12)); border-left: 2px solid var(--ll-ink); border-right: 2px solid var(--ll-ink); }
 .burn-track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--ll-rule); }
 .burn-spent { position: absolute; left: 0; top: 0; bottom: 0; width: var(--pct); background: var(--ll-ledger); }
 .burn--near .burn-spent { background: var(--ll-amber); }

@@ -23,8 +23,8 @@ export function get(ctx) {
     <p class="lead{{lead}}">${escape(entry.vendor)}, recorded against ${escape(team.name)} for ${monthName(entry.month)}.</p>
 {{after-lead}}
     <section class="card{{card}}" aria-label="Entry">
+      <p class="card-figure">${formatMoney(entry.amount, config.currency)}</p>
       <dl class="facts">
-        <div><dt>Amount</dt><dd class="figure">${formatMoney(entry.amount, config.currency)}</dd></div>
         <div><dt>Team</dt><dd><a href="/budgets/${team.id}">${escape(team.name)}</a></dd></div>
         <div><dt>Month</dt><dd>${monthName(entry.month)}</dd></div>
         <div><dt>Vendor</dt><dd>${escape(entry.vendor)}</dd></div>

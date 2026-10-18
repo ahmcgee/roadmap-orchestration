@@ -8,6 +8,7 @@ import { checkEntry } from '../src/validate.js';
 const PROBLEMS = 'https://ledgerly.dev/problems';
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
+const ENTRY_FIELDS = ['team', 'month', 'vendor', 'amount', 'note'];
 
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json', ...headers });
@@ -81,7 +82,11 @@ async function createEntry(req, res, url, { config, dir }) {
     }
     return json(res, 201, view(ledger.entries.find((e) => e.id === seen.id)), { location: `/api/v1/entries/${seen.id}` });
   }
-  const checked = checkEntry(body.value, config);
+  // A field the API does not know is refused with the others, never dropped (design/api.md, "Errors").
+  const unknown = Object.keys(body.value).filter((k) => !ENTRY_FIELDS.includes(k))
+    .map((k) => ({ field: k, message: `${k} is not an entry field; send only team, month, vendor, amount and note.` }));
+  const valid = checkEntry(body.value, config);
+  const checked = unknown.length === 0 ? valid : { ok: false, errors: [...(valid.ok ? [] : valid.errors), ...unknown] };
   if (!checked.ok) {
 {{validation-response}}
   }

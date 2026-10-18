@@ -3941,7 +3941,9 @@ standards` section; an outcome or a refusal, never a mechanism; unranked (`rank:
 - `FindingSource + {type: 'demo'; sha: Sha}` (step 0 decided: a demo bring-up failure has no job): only a walkthrough P1.
 - Class to severity (minting, agent C): `breaks` → P1 (class 1), `deviates` → P2 (class 2). What a class means (owner
   ruling 2026-10-18): `breaks` is a defect whose later fix would force rework of what is built on it: the journey cannot
-  be completed as its user or client would (a dead end, a crash or stack trace, an action that errors); the interface
+  be completed as its user or client would because the product's own action fails (a dead end, a crash or stack trace, an
+  action that errors or is wrongly refused, a wrong outcome), not because a message or diagnostic leaves the user to dig,
+  which is `deviates` unless the text is itself a contract others build on (an exit code, the stream it goes to); the interface
   contract is wrong (what a client, script, consumer or later unit relies on: HTTP status codes and error shapes, CLI exit
   codes, stdout/stderr, command grammar and typo behaviour, config keys and their validation, event and message schemas,
   public names, design tokens); or a declared floor is violated (a `non-negotiable` vision clause, or a design

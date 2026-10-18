@@ -268,7 +268,7 @@ const W11: Family = {
         '  const command = COMMANDS[argv[0]];',
         '  if (command === undefined) {',
         '    const near = closest(argv[0], Object.keys(COMMANDS));',
-        '    throw new UsageError(`unknown command "${argv[0]}"${near === null ? \'\' : `; did you mean "${near}"?`} Run "ledgerly --help" for every command.`);',
+        '    throw new UsageError(`unknown command "${argv[0]}"; ${near === null ? \'run\' : `did you mean "${near}"? Run`} "ledgerly --help" for every command.`);',
         '  }',
         '  return command.run(argv.slice(1), io);',
       ].join('\n'),

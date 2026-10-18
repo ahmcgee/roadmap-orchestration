@@ -36,7 +36,8 @@ changes them first.
 
 Each team's month is drawn as a ruled bar: a thick stroke (`--ll-stroke`) for what was spent, a tick at the team's alert
 share, ruled ends for the limit, and the amount left printed after it in tabular figures. The stroke is ledger green,
-amber from the alert share, red past the limit, and over the limit it runs past the right end. The state is written next
+amber from the alert share, red past the limit, and over the limit it runs past the right end, by at most 12% of the
+bar; the bar is drawn narrow enough that the overrun stays inside the column at every width. The state is written next
 to it. The burn bar appears on the overview, the budgets list, a team's budget page and an entry's page, and nowhere else.
 
 ## Tokens
@@ -146,6 +147,9 @@ A step is a page load or a form submission. Each flow also works by keyboard alo
 
 - No console errors or warnings, and no failed requests. A page may log one `console.info` line naming the view, which
   support uses; nothing else is logged.
+- A refused form answers 422 and re-renders with its errors (Components, "Error summary"). The browser's own log line for
+  that response (Chrome's "Failed to load resource: the server responded with a status of 422") is expected: it is not a
+  console error the product emits, and the request has not failed.
 - No motion besides the browser's own; `prefers-reduced-motion` is respected.
 
 ## Walkthrough script seed

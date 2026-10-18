@@ -23,14 +23,16 @@ Every request sends `Authorization: Bearer <token>`, the token the server was st
 Every error, and only an error, answers with a 4xx or 5xx status and `content-type: application/problem+json`:
 `type`, `title`, `status`, `detail` (what to do about it, for a person) and `instance` (the request path). Clients
 switch on `type`, never on `detail`. Machine-readable specifics go in extension members: a validation problem lists each
-bad field or parameter in `invalid_params`, `[{ "name", "reason" }]`, all of them in one response.
+bad field or parameter in `invalid_params`, `[{ "name", "reason" }]`, all of them in one response. Nothing sent is
+ignored: an entry body carrying a field the API does not know (anything but `team`, `month`, `vendor`, `amount` and
+`note`) is refused as `invalid-entry`, each unknown field named in `invalid_params` beside any wrong ones.
 
 | `type` (under `https://ledgerly.dev/problems/`) | Status | When |
 |---|---|---|
 | `unauthorized` | 401 | the token is missing or wrong |
 | `api-disabled` | 503 | the server was started without `LEDGERLY_API_TOKEN` |
 | `malformed-body` | 400 | the body is not a JSON object |
-| `invalid-entry` | 422 | an entry's fields are wrong; `invalid_params` names each |
+| `invalid-entry` | 422 | an entry's fields are wrong or unknown; `invalid_params` names each |
 | `invalid-query` | 400 | a list's parameters are wrong; `invalid_params` names each |
 | `idempotency-conflict` | 409 | an `Idempotency-Key` reused with a different body |
 | `not-found` | 404 | no such entry or endpoint |

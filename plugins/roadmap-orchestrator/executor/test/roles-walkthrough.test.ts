@@ -280,19 +280,28 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
       return;
     }
     case 'W9': {
-      const r = await fetch(`${u.base}/api/v1/entries`, {
-        method: 'POST', headers: { ...CLOSE, authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ team: 'platform', month: 'Sept', vendor: 'Hetzner', amount: '12,50' }),
-      });
-      const body = (await r.json()) as Record<string, unknown>;
+      const create = async (entry: Record<string, string>): Promise<[Response, Record<string, unknown>]> => {
+        const r = await fetch(`${u.base}/api/v1/entries`, {
+          method: 'POST', headers: { ...CLOSE, authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}`, 'content-type': 'application/json' },
+          body: JSON.stringify(entry),
+        });
+        return [r, (await r.json()) as Record<string, unknown>];
+      };
+      const [r, body] = await create({ team: 'platform', month: 'Sept', vendor: 'Hetzner', amount: '12,50' });
+      // A body with fields the API does not know is refused through the same response, never stored with them dropped.
+      const [ru, unknown] = await create({ team: 'platform', month, vendor: 'Hetzner', amount: '12.50', notes: 'runners', currency: 'EUR' });
       if (plant) {
         assert.equal(r.status, 200, label);
         assert.equal(typeof body['error'], 'string');
+        assert.equal(ru.status, 200, label);
+        assert.match(String(unknown['error']), /notes is not an entry field/);
       } else {
         assert.equal(r.status, 422, label);
         assert.equal(r.headers.get('content-type'), 'application/problem+json');
         assert.equal(body['type'], 'https://ledgerly.dev/problems/invalid-entry');
         assert.deepEqual((body['invalid_params'] as { name: string }[]).map((x) => x.name), ['month', 'amount']);
+        assert.equal(ru.status, 422, label);
+        assert.deepEqual((unknown['invalid_params'] as { name: string }[]).map((x) => x.name), ['notes', 'currency']);
       }
       return;
     }
@@ -320,6 +329,9 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
         assert.equal(typo.status, 2);
         assert.equal(typo.stdout, '');
         assert.match(typo.stderr, /unknown command "reprot"; did you mean "report"\?/);
+        const far = cli(u, ['xyz']);
+        assert.equal(far.status, 2);
+        assert.equal(far.stderr, 'ledgerly: unknown command "xyz"; run "ledgerly --help" for every command.\n', label);
       }
       return;
     }
