@@ -538,7 +538,8 @@ instances each at $3–8: about $35–90. The audits' lenses, checkpoints (summi
 A role eval measures one judgment role on its own, many trials per scenario cell, against planted defects whose answer key
 no session can read. It complements the fixtures: they show an arc converges, a role eval shows how often a role catches
 what it must and how often it cries wolf, at what cost. The gate is the first role (dev.12: the bounded gate diff and the
-Agent tool); the walkthrough is the second (dev.13, "The walkthrough eval" below). `run.ts` takes the role first; the
+Agent tool); the walkthrough is the second and the polish judge the third (dev.13, "The walkthrough eval" and "The
+polish-judge eval" below). `run.ts` takes the role first (`triggers.ts` `EvalRole`: `gate`, `walkthrough`, `polishJudge`); the
 pool, the workers, `--rebind`, `--cap` and `--trial-cap` are shared (`pool.ts`, `trial.ts`).
 
 ```sh
@@ -689,7 +690,8 @@ node evals/roles/run.ts walkthrough --set holdout --n 3 --compare <dev run>/summ
 node evals/roles/run.ts walkthrough --set dev --n 1 --fake oracle                              # free: the harness's own check
 ```
 
-**When.** Paid, path-triggered like the gate's: `src/prompts/walkthrough/**`, the walk job (`src/walk/**`), its MCP
+**When.** Paid, path-triggered like the gate's: `src/prompts/walkthrough/**`, the walk job (`src/walk/**` but the polish
+judge's `compare.ts` and `polish.ts`), its MCP
 config (`src/backends/mcp.ts`), the prompt inputs and schemas, `src/routing/**`, the `claude-acting-judge` argv and the Claude reader (`src/backends/argv.ts`,
 `claude.ts`), `evals/roles/walkthrough/**` and the shared harness.
 
@@ -774,6 +776,84 @@ the README run as written); grading and the summary over scripted answers; run.t
 (`oracle` passes every criterion; `clean-report`, `cite-plants`, `flag-everything`, `breaks-everything` each fail theirs;
 `refused` takes the repair turn and voids `invalid`); the caps; the seat; the triggers. The products of the plants check
 are brought up by the production bring-up.
+
+### The polish-judge eval (dev.13)
+
+```sh
+node evals/roles/run.ts polishJudge --set dev --n 3 [--cells SP-B,HI-W] [--parallel 2] [--rebind <class>=<model>:<effort>] [--out <dir>] [--cap <usd>] [--trial-cap <usd>]
+node evals/roles/run.ts polishJudge --set holdout --n 3 --compare <dev run>/summary.json     # acceptance only
+node evals/roles/run.ts polishJudge --set dev --n 1 --fake oracle                              # free: the harness's own check
+```
+
+**When.** Paid, path-triggered: `src/prompts/polishJudge/**`, the compare job (`src/walk/compare.ts`) and the bring-up it
+shares (`src/walk/bringup.ts`), the polish revision (`src/walk/polish.ts`), the MCP config (`src/backends/mcp.ts`), the
+prompt inputs and schemas, `src/routing/**`, the acting-judge argv and the Claude reader, `evals/roles/polish/**`, the
+walkthrough eval's product and harness (`evals/roles/walkthrough/**`, which this eval runs on) and the shared harness.
+`compare.ts` and `polish.ts` trigger the polish judge alone; the rest of `src/walk/` the walkthrough.
+
+**Cells** (`polish/families.ts`, `cells.ts`). Four families on the walkthrough eval's `ledgerly` (one seed, every slot its
+clean twin), each a starting state a walk proposes polish for and three after-states of the same step, 12 cells:
+
+| Family | Journey | Before | Better (keep) | Worse (drop) | Neutral (drop) |
+|---|---|---|---|---|---|
+| spacing (SP) | J-1 record an entry | the form's fields 4 px apart | `--space-5` (24 px), as the form's other gaps | 2 px, off the 4 px grid, "to fit the fold" | the same 4 px as `calc(var(--space-2) / 2)` |
+| hierarchy (HI) | J-2 change a limit | Change limit a quiet button: no primary action | Change limit the page's primary button | the entries table before the card: the figure no longer first | the table's heading reworded ("September 2026 entries") |
+| CLI help (CH) | J-5 report as JSON | `--help` lists commands alphabetically | in the order a ledger uses them, as cli.md's command tree | options first, examples last | descriptions reworded to the third person |
+| error copy (EC) | J-4 import a bad file | "bad.csv:2: amount is not valid" | the field's own message: what is wrong and how to fix it | "import failed (line 2)": no field, no file | "bad.csv, line 2: …", the same facts reworded |
+
+Each cell is a proposal text (what a walk would write, citing the walk's note of what it saw) and its after-state: edits
+to the product and to the reference `design/` (the reference diff the judge sees in its bounded tweak diff), as a polish
+unit's build commits them. Every after-state touches the reference, so code never drops one `reference-untouched`
+before the judge is asked. A worse or neutral after-state's reference edit only redescribes the product to the tweak
+(the prompt's "a reference change that only redescribes the product … does not make the after more faithful"). The
+holdout set is untracked (`evals/roles/holdout/polish.ts`, exporting `HOLDOUT_POLISH_CELLS`: six cells on the dev
+families, their own proposals and after edits, other seeds).
+
+**The harness** (`polish/arc.ts`) runs each trial through the production compare job, as the walkthrough eval runs the
+production walk: the walkthrough eval's milestone arc over the cell's before product (`setupMilestoneArc`); u1 merges
+through the arc harness; walk-1 runs through the production walk job with a scripted walker whose one proposal is the
+cell's (unit u2, its scope the reference and the product); the production polish revision admits u2; u2 runs its pipeline
+(a fake build commits the after-state, the product's own tests run for real as its lanes, a fake gate approves) and waits
+at its candidate admission; then `runCompare` runs compare-1 as an arc does: the capture under the fence, two detached
+checkouts brought up side by side on their own ports, the polishJudge call through `callActingJudge` (the polishJudge
+seat, frontier: Opus 5.5 medium; Playwright MCP for the two browser families, this repository's walkthrough servers),
+validation with its one repair turn, teardown, `tweak-judged`. A compare abandoned after its repair turn voids the trial
+(`invalid`); an after-state that does not come up voids it (`bring-up`). The monitor, brakes and needle scan are the
+walkthrough eval's.
+
+**Grading and criteria** (`polish/summary.ts`). Correct: `keep` on a better after-state, `drop` on a worse or neutral one;
+a void is not correct. Every run (trial index; the queue runs run by run, so a capped run leaves whole runs behind)
+holds at least 10 of its 12 cells correct (`accuracy`; a run over a subset of cells needs the same share); no worse
+after-state is ever kept (`worse-kept`: the costly error, a kept regression lands); one decision in every graded trial
+for at least 80% of the cells graded twice (`stability`); voids at most a quarter; cost-check; with `--compare`, holdout
+accuracy within 15 points of dev. Reported: RUN per run, KEEP rates per variant (a neutral keep rate is how much churn
+lands), FAMILY accuracy, and per cell the decisions, repair turns, browser and shell calls, screenshots and cost (COST,
+USAGE, TOTAL).
+
+**Cost.** An estimate, not a measurement (no paid trial has run). A compare walks one journey twice: a browser cell at
+two widths on each side is roughly 40 to 80 turns with screenshots and crops, its context growing to 60k to 100k tokens;
+on Opus 5.5 list prices about $1.50 to $3 a trial (cache reads and writes dominate, as in a walk). A shell cell is half
+that or less ($0.50 to $1.50). The dev set at n = 3 is 18 browser and 18 shell trials: roughly $40 to $80. Each trial
+also runs u1's and u2's pipelines and three bring-ups, all free (fake build and gate, real lanes): about a minute of
+wall time before the judge starts. A paid run sets `--trial-cap 6 --cap 90` and starts with one browser and one shell
+trial (`--n 1 --cells SP-B,EC-W`) whose transcripts are read before scaling; the holdout's 6 cells at n = 3 are about
+half the dev set's cost.
+
+**Output.** `<out>/trials.jsonl`, `<out>/summary.json`, and per trial `key.json` (cell, variant, the expected decision),
+`prompt.txt`, `argv.json`, `mcp.json` (browser families), `compare-<n>.jsonl` (each call's raw stdout: the answer, then
+its repair turn), `transcript.jsonl`, `answer.json`, `evidence/` (the judge's captures and notes, both instances' logs
+under `server-before/` and `server-after/`, the bounded diff under `diff/`) and `row.json`.
+
+**Free tier.** `test/roles-polish.test.ts`: the cells' shape and hygiene (12 cells, every after-state editing the product
+and the reference, no word that names the eval in a proposal or a changed file, an edit that drifts from the product
+failing loud); every family's before and after-states checked on the running product (the fields' gap resolved from the
+served stylesheet and tokens: 4, 24, 2 px off the grid, 4 px rewritten; the budget page's primary action, card order and
+heading; the usage's sections and command order; the import error's text, field, fix and file); the summary's bar over
+scripted rows (oracle passes; always-keep 4/12 and always-drop 8/12 each fail; 10/12 passes, 9/12 fails, one worse kept
+fails, one bad run of three fails; voids; stability; holdout gap); run.ts end to end on the fake judges through the
+production compare (`oracle` passes every criterion over all 12 cells, MCP only for the browser families; `keep-all`
+and `drop-all` fail; `refused` takes the repair turn and voids `invalid`); the caps; the seat. The triggers are in
+`test/roles-walkthrough.test.ts` (`roles.walk-triggers`).
 
 ## The run observer
 

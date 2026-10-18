@@ -82,7 +82,7 @@ export function milestoneOf(data: SeedData): Milestone {
   };
 }
 
-/** The vision (roadmap/vision-m3), with experience clauses; the plan advances V-4 to V-7. */
+/** The vision (roadmap/vision-m3), with experience clauses; the plan advances V-1 and V-4 to V-7. */
 export const VISION_JSON = {
   schema: 'roadmap/vision-m3', rev: 1, confirmation: null,
   clauses: [
@@ -97,7 +97,8 @@ export const VISION_JSON = {
   ].map((c) => ({ ...c, rank: null, state: 'active' })),
   questions: [],
 } as const;
-export const ADVANCES = ['V-4', 'V-5', 'V-6', 'V-7'] as const;
+// V-1 too: a revision requires the advances to name an active world clause (src/holistic/vision.ts `advancesReasons`; the polish revision is one).
+export const ADVANCES = ['V-1', 'V-4', 'V-5', 'V-6', 'V-7'] as const;
 
 /** u1's acceptance: what the milestone's surfaces deliver, each to its design reference (rendered into the walk's inputs). */
 export const UNIT_ACCEPTANCE: readonly string[] = [

@@ -6,6 +6,7 @@ import type { RepoConfig } from '../../src/routing/layers.ts';
 import type { RiskTier } from '../../src/routing/types.ts';
 import type { GateKind } from './gate/arc.ts';
 import type { CellSet } from './gate/cells.ts';
+import type { PolishWorkerArgs } from './polish/arc.ts';
 import type { WalkWorkerArgs } from './walkthrough/arc.ts';
 
 export type GateWorkerArgs = Readonly<{
@@ -28,7 +29,7 @@ export type GateWorkerArgs = Readonly<{
 }>;
 
 /** The roles with evals: a worker runs one trial of one. */
-export type WorkerArgs = GateWorkerArgs | WalkWorkerArgs;
+export type WorkerArgs = GateWorkerArgs | WalkWorkerArgs | PolishWorkerArgs;
 
 async function main(): Promise<void> {
   enableCompileCache();
@@ -44,6 +45,12 @@ async function main(): Promise<void> {
     const cell = (await cellsFor(a.set)).find((c) => c.id === a.cell);
     if (cell === undefined) throw new Error(`no cell ${a.cell} in the ${a.set} set`);
     await runGateTrial({ ...a, cell, log });
+  } else if (a.role === 'polishJudge') {
+    const { polishCellsFor } = await import('./polish/cells.ts');
+    const { runPolishTrial } = await import('./polish/arc.ts');
+    const cell = (await polishCellsFor(a.set)).find((c) => c.id === a.cell);
+    if (cell === undefined) throw new Error(`no cell ${a.cell} in the polishJudge ${a.set} set`);
+    await runPolishTrial({ ...a, cell, log });
   } else {
     const { walkCellsFor } = await import('./walkthrough/cells.ts');
     const { runWalkTrial } = await import('./walkthrough/arc.ts');
