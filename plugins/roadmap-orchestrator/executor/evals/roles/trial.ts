@@ -23,6 +23,8 @@ export type GateWorkerArgs = Readonly<{
   medianLoad: number | null;
   /** `--trial-cap`: the live spend in USD over which the trial's session is killed (void `cap`), or null. */
   trialCap: number | null;
+  /** `--read-only`: the read-only comparison arm (dev.13). */
+  readOnly: boolean;
 }>;
 
 /** The roles with evals: a worker runs one trial of one. */

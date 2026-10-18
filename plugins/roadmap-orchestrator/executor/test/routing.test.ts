@@ -36,8 +36,8 @@ const LUNA: Triple = { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium'
 const SOL_HIGH: Triple = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' };
 const base: RoutingStack = arcStack('default', null, null);
 
-/** A judging role (dev.13: the walk roles act, and have Opus modules only). */
-const isFresh = (r: Role): boolean => (FRESH_ROLES as readonly Role[]).includes(r);
+/** A judging role with Sonnet and Haiku prompts: the read-only ones and the gate (dev.13: the walk roles have Opus modules only). */
+const isFresh = (r: Role): boolean => (FRESH_ROLES as readonly Role[]).includes(r) || r === 'gate';
 
 describe('routing', () => {
   it('catalogue: six pinned models, Claude effort low|medium|high|xhigh|max, Codex low|medium|high', () => {

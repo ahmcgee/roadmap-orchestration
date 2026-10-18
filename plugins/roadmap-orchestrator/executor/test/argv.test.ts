@@ -53,7 +53,7 @@ describe('argv', () => {
     // Captured on 2.1.301 before dev.12 made every judgment's session persist (its repair turn resumes it).
     const c = capturedArgv('claude-judgment-subagents').filter((t) => t !== '--no-session-persistence');
     const call = {
-      kind: 'claude-judgment', role: 'gate', triple: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'low' }, schemaText: value(c, '--json-schema'),
+      kind: 'claude-judgment', role: 'planCheck', triple: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'low' }, schemaText: value(c, '--json-schema'),
       session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(value(c, '--session-id')) }, system: CAPTURED_SYSTEM, evidenceDirs: [],
     } as const;
     assert.deepEqual(backendArgv(call), c);
@@ -64,7 +64,7 @@ describe('argv', () => {
     // Captured before dev.12: the Agent tool joined the judgment tools and every judgment's session persists.
     const c = capturedArgv('claude-judgment').map((t) => (t === 'Read,Grep,Glob' ? 'Read,Grep,Glob,Agent' : t)).filter((t) => t !== '--no-session-persistence');
     const call = {
-      kind: 'claude-judgment', role: 'gate', triple: CLAUDE, schemaText: value(c, '--json-schema'),
+      kind: 'claude-judgment', role: 'planCheck', triple: CLAUDE, schemaText: value(c, '--json-schema'),
       session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(value(c, '--session-id')) },
       system: CAPTURED_SYSTEM, evidenceDirs: [],
     } as const;
@@ -107,16 +107,20 @@ describe('argv', () => {
     const dirs = [absPath('/repo'), absPath('/run'), absPath('/run2/evidence/jobs/walk-1')];
     const call = {
       kind: 'claude-acting-judge', role: 'walkthrough', triple: CLAUDE, schemaText: '{"type":"object"}', system: SYSTEM,
-      session: { backend: 'claude', mode: 'fresh', id }, mcpConfig: mcp, evidenceDirs: dirs,
+      session: { backend: 'claude', mode: 'fresh', id }, mcpConfig: mcp, evidenceDirs: dirs, denyWrites: [absPath('/repo'), absPath('/run/events.jsonl')],
     } as const;
     assert.deepEqual(backendArgv(call), [
       'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--mcp-config', mcp,
       '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',
-      '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id', id,
+      '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent',
+      '--disallowedTools', 'Write(//repo)', 'Write(//repo/**)', 'Edit(//repo)', 'Edit(//repo/**)', 'NotebookEdit(//repo)', 'NotebookEdit(//repo/**)',
+      'Write(//run/events.jsonl)', 'Write(//run/events.jsonl/**)', 'Edit(//run/events.jsonl)', 'Edit(//run/events.jsonl/**)',
+      'NotebookEdit(//run/events.jsonl)', 'NotebookEdit(//run/events.jsonl/**)',
+      '--permission-mode', 'bypassPermissions', '--session-id', id,
       '--append-system-prompt', SYSTEM, '--add-dir', '/repo', '--add-dir', '/run', '--add-dir', '/run2/evidence/jobs/walk-1',
     ]);
     // The gate's: no server loads, and the resumed repair turn keeps every other flag.
-    const gate = backendArgv({ ...call, role: 'gate', mcpConfig: null, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [] });
+    const gate = backendArgv({ ...call, role: 'gate', mcpConfig: null, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [], denyWrites: [] });
     assert.deepEqual(gate, [
       'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config',
       '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',

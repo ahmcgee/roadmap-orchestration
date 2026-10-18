@@ -40,7 +40,7 @@ import { runnerFiles } from '../../../src/runner/files.ts';
 import { runWalk } from '../../../src/walk/walk.ts';
 import { walkRefusals } from '../../../src/walk/report.ts';
 import type { ArcRun } from '../../../test/fixtures/unit-common.ts';
-import { type ArcDescriptor, contextFor, laneJson } from '../../../test/fixtures/unit-common.ts';
+import { type ArcDescriptor, contextFor, isGateCall, laneJson } from '../../../test/fixtures/unit-common.ts';
 import { arcFor } from '../../../test/fixtures/invoke-specs.ts';
 import { unitSteps } from '../../../test/fixtures/audit-common.ts';
 import { obligationsJson } from '../../../test/fixtures/brake-common.ts';
@@ -375,7 +375,8 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
     return { stdout, events, usage: result === undefined ? null : usageOf(result) };
   });
   perCall.forEach((c, i) => writeFileSync(join(o.out, `walk-${i + 1}.jsonl`), c.stdout));
-  const calls = readCalls(d.scenarioPath).filter((c) => c.argv.includes('--strict-mcp-config') && c.argv.includes('bypassPermissions'));
+  // The walk's acting-judge calls (dev.13: the units' gates act too, under bypassPermissions, so they are left out).
+  const calls = readCalls(d.scenarioPath).filter((c) => c.argv.includes('--strict-mcp-config') && c.argv.includes('bypassPermissions') && !isGateCall(c));
   writeFileSync(join(o.out, 'prompt.txt'), calls[0]?.stdin ?? '');
   writeFileSync(join(o.out, 'argv.json'), `${JSON.stringify(calls[0]?.argv ?? [], null, 2)}\n`);
   // The `--mcp-config` file is kept in the arc's run dir, which the worker removes: the trial keeps a copy.

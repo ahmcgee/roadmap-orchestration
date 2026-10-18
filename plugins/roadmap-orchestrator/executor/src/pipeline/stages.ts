@@ -557,21 +557,22 @@ function planCheckCheckoutsOf(ctx: StageContext, parent: StageParent): PlanCheck
 }
 
 /**
- * Removes every plan-check checkout of the unit still present (this attempt's once its call is read, or a
- * leftover of an attempt a crash cut short), each citing a snapshot of whatever it holds beyond its commit
- * (a judge is read-only, so normally a manifest of zero files; lead ruling 14c). Verification checkouts
- * are the lanes stage's and retire's to remove, never this one's.
+ * Removes every checkout of the unit a judgment stage's attempts made that is still present (`parent`'s stage: a plan-check's
+ * or, dev.13, a gate's; this attempt's once its call is read, or a leftover of an attempt a crash cut short), each citing a
+ * snapshot of whatever it holds beyond its commit (a plan-check is read-only, so normally a manifest of zero files, lead
+ * ruling 14c; a gate's holds the experiments it wrote, kept as its evidence). Verification checkouts are the lanes stage's
+ * and retire's to remove, never this one's.
  */
-async function removePlanCheckCheckouts(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<void> {
-  const present = presentCheckouts(ctx.journal.view, unit).filter((c) => c.parent.type === 'stage' && c.parent.stage === 'plan-check');
+export async function removeJudgmentCheckouts(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<void> {
+  const present = presentCheckouts(ctx.journal.view, unit).filter((c) => c.parent.type === 'stage' && c.parent.stage === parent.stage);
   for (const created of present) {
-    if (created.parent.type !== 'stage') throw new Error(`${created.expect.path}: a plan-check checkout without a stage parent`);
+    if (created.parent.type !== 'stage') throw new Error(`${created.expect.path}: a ${parent.stage} checkout without a stage parent`);
     const { path } = created.expect;
     const dest = absPath(join(evidenceRoot(ctx.runDir, created.parent), basename(path)));
     const view = ctx.journal.view;
     const snapped = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest && view.doneOf(i.op) !== null)
       ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parent, { source: path, globs: dirtyPaths(path).map(pathPattern), dest });
-    await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${unit}:plan-check`, parent, { path, evidence: capturedEvidence(ctx.journal.view, snapped.op) });
+    await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${unit}:${parent.stage}`, parent, { path, evidence: capturedEvidence(ctx.journal.view, snapped.op) });
   }
 }
 
@@ -817,7 +818,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const entered = await enterJudgment(ctx, parent);
   if (isCancelled(entered)) return entered;
   // Checkouts an earlier attempt left (a crash cut its stage short) go first: this attempt makes its own.
-  await removePlanCheckCheckouts(ctx, unit.id, parent);
+  await removeJudgmentCheckouts(ctx, unit.id, parent);
   await createPlanCheckCheckouts(ctx, unit.id, parent, checkouts);
   const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx), ...targetDirs(target)];
   // 2026-10-15 (arc feedback #3): the acceptance shape's witness lanes are an enum of the arc lanes in force.
@@ -974,7 +975,7 @@ export async function planCheckRead(
     }
   }
   // The session has ended (or never ran): its checkouts and its @cpu go before anything is recorded.
-  await removePlanCheckCheckouts(ctx, unit.id, parent);
+  await removeJudgmentCheckouts(ctx, unit.id, parent);
   await releaseJudgment(ctx, parent);
   const { path, spec, sha256 } = loadUnitSpec(ctx, unit);
   const applied = attemptOps(ctx, parent, 'spec.patch').find((i) => ctx.journal.view.doneOf(i.op) !== null) ?? null;

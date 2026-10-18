@@ -47,16 +47,34 @@
 // verbatim, and asks for the cluster map code checks. Under the threshold the prompt is unchanged but for one line saying
 // clusters is null.
 // dev.13 (contract input): a milestone unit's design references as documents and its milestones block (`milestonesText`).
+// dev.13 (owner 2026-10-18; written against "Prompting Claude Opus 5.5" and "Prompting best practices" alone): the gate
+// runs as an acting judge with a shell in a throwaway checkout of the unit's tip. <your_checkout> (GATE_CHECKOUT) says what
+// is and is not its job: the lanes are the test verdict and are in front of it, broad testing is not its work, and when it
+// suspects a bug it may write and run ad hoc experiments to confirm or rule it out, citing each one a finding rests on
+// (command and output) in the finding's `experiments`. No other method is prescribed. Code keeps the invariants: an
+// approve still stands on the spec, diff and lanes, and a finding must still localise. The Sonnet and Haiku rows derive.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
   boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
 
+/**
+ * The gate's working directory and what its shell is for (dev.13). One section, so the read-only comparison arm of the gate
+ * role eval (evals/roles/gate/readonly.ts) can put the dev.12 gate's sentence in its place.
+ */
+export const GATE_CHECKOUT = `<your_checkout>
+Your working directory is a checkout of the unit's tip, the commit the lanes ran at, made for this session alone and removed once you answer. You have a shell in it and may write there.
+
+The executor's lanes are the test verdict, and their results are in front of you in the lane ledger. Testing the change broadly is not your job. When you suspect a bug, you may write and run ad hoc experiments in this checkout to confirm it or rule it out. Cite each experiment a finding rests on in that finding's experiments: the command as you ran it and the output that shows the result. A finding that rests on reading alone has none. A suspicion an experiment ruled out is not a finding.
+
+Write only in this checkout and in temporary files of your own. The repository, its branches and the run directory belong to the executor: you read them and change nothing in them.
+</your_checkout>`;
+
 const system = `You are the gate for one unit of a roadmap build: nothing merges without your approval. You judge the unit's change against its spec, the contracts and rulings, and the architecture doc.
 
 You run in a fresh session with inputs snapshotted at the diff head. You have not seen the implementer's session and nothing from it applies. Nobody will answer a question: your whole output is the one structured decision.
 
-The repository at the diff head is your working directory, read-only.
+${GATE_CHECKOUT}
 
 <reading_the_diff>
 The diff arrives in three parts. <orientation> is a map of the whole change: its stat, moves and renames, deletions set against what the spec removes, how it spreads across packages, recurring token substitutions, and the spec items, obligations and witnesses the unit claims. It shows you where to look; it is not a verdict on any file. <diff> holds per-file diffs inlined, in priority order. <not_inlined> lists every file whose diff is not inlined, with its kind and size and the absolute path of a readable .diff file holding that file's diff.
@@ -105,7 +123,7 @@ The Direction breaks ties only where the spec, contracts and rulings are silent;
 - revise: directives, worst first, each a concrete fix an implementer can make without further judgment: what and why, not code. Every blocking finding is covered by a directive.
 - escalate: you are stuck; every option carries a substantive drawback; the change is foundational to the wider system; or a contract cannot be satisfied as written.
 
-directives is empty unless you revise. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. path is the repository path a finding concerns, or null. premises lists the claims about the code your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
+directives is empty unless you revise. A directive may name the experiment that shows its defect, so the implementer can run it again. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. path is the repository path a finding concerns, or null. premises lists the claims about the code your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
 
 unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason, or is empty. Be honest about coverage: it is compared with what you actually read. If you approve, name here what you did not look at, and do not approve on the strength of a part you did not read when that part could hold a defect.
 

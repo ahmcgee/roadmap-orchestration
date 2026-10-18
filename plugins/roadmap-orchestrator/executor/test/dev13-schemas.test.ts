@@ -12,7 +12,11 @@ import { absPath, isoTime } from '../src/core/values.ts';
 import { ARC as LOG_ARC, chain } from './fixtures/log-records.ts';
 import { DEFAULT_WALK_ROUNDS, type PlanM1, designUnitOf, hasMilestones, milestonesOf, parsePlan, walkRoundsOf } from '../src/input/plan.ts';
 import { parseVision } from '../src/holistic/types.ts';
-import { backendArgv, freshJudgmentSession } from '../src/backends/argv.ts';
+import { backendArgv, freshJudgmentSession, writeDenyRules } from '../src/backends/argv.ts';
+import { actingWriteDenials } from '../src/pipeline/dispatch.ts';
+import { tmpDir } from './helpers/repo.ts';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { validatePolishJudgeOutput, validateWalkthroughOutput } from '../src/prompts/schemas.ts';
 import { arcRolesInForce, arcStack, parseRepoConfig, planStack, resolveRouting, seatsInForce, unsupportedSeats } from '../src/routing/layers.ts';
 import { ACTING_ROLES, FRESH_ROLES, ROLES } from '../src/routing/types.ts';
@@ -274,7 +278,7 @@ describe('dev.13 roles and routing', () => {
   it('an acting judge acts: a shell, bypassPermissions, project settings, exactly its MCP servers, the system prompt appended', () => {
     const call = {
       kind: 'claude-acting-judge', role: 'walkthrough', triple: { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, session: freshJudgmentSession(),
-      schemaText: '{}', system: 'SYS', mcpConfig: absPath('/run/inputs/abc.mcp.json'), evidenceDirs: [absPath('/run/evidence/jobs/walk-1')],
+      schemaText: '{}', system: 'SYS', mcpConfig: absPath('/run/inputs/abc.mcp.json'), evidenceDirs: [absPath('/run/evidence/jobs/walk-1')], denyWrites: [],
     } as const;
     const argv = backendArgv(call);
     const after = (flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
@@ -284,5 +288,22 @@ describe('dev.13 roles and routing', () => {
     assert.deepEqual(argv.slice(-2), ['--add-dir', '/run/evidence/jobs/walk-1']);
     const gate = backendArgv({ ...call, role: 'gate', mcpConfig: null });
     assert.ok(!gate.includes('--mcp-config') && gate.includes('--strict-mcp-config'), 'no servers: none load');
+  });
+
+  it('an acting judge\'s file-writing tools are denied the repository and the run dir, less the dirs it writes in, as they stand at the call', () => {
+    const root = tmpDir('deny');
+    const repo = absPath(join(root, 'repo'));
+    const runDir = absPath(join(root, 'run'));
+    for (const d of ['repo/src', 'run/inv/1', 'run/evidence/u1', 'run/evidence/jobs/walk-1', 'run/evidence/jobs/walk-2', 'wt/arc/u1.gate-1']) mkdirSync(join(root, d), { recursive: true });
+    writeFileSync(join(runDir, 'events.jsonl'), '');
+    const ctx = { repo, runDir };
+    // The gate writes in its checkout only: both roots denied whole.
+    assert.deepEqual(actingWriteDenials(ctx, [absPath(join(root, 'wt/arc/u1.gate-1'))]), [repo, runDir]);
+    // A walk writes in its evidence dir: every entry on the way to it denied, it and nothing under it.
+    const walk = absPath(join(runDir, 'evidence/jobs/walk-1'));
+    assert.deepEqual(actingWriteDenials(ctx, [absPath(join(root, 'wt/arc/walk-1.walk')), walk]), [
+      repo, absPath(join(runDir, 'events.jsonl')), absPath(join(runDir, 'evidence/jobs/walk-2')), absPath(join(runDir, 'evidence/u1')), absPath(join(runDir, 'inv')),
+    ]);
+    assert.deepEqual(writeDenyRules([repo]), ['Write', 'Edit', 'NotebookEdit'].flatMap((t) => [`${t}(/${repo})`, `${t}(/${repo}/**)`]));
   });
 });

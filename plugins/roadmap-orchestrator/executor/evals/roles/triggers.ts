@@ -1,6 +1,7 @@
 // Which role evals a change triggers (rung 3.5 is path-triggered): the changed paths, relative to executor/, mapped to the
 // roles whose behaviour they can move.
-// - Gate: its prompt modules, the bounded diff, the gate stage's capture, the prompt inputs it renders, routing (seats,
+// - Gate: its prompt modules, the bounded diff, the gate stage's capture, its call (src/pipeline/dispatch.ts: dev.13, the
+//   gate's acting-judge argv is chosen there), the prompt inputs it renders, routing (seats,
 //   classes, models), the judgment argv and tool set, the backend adapter that reads the session, and its eval.
 // - Walkthrough (dev.13): its prompt modules, the walk job (src/walk/: the job, bring-up, report validation and minting,
 //   the milestone node), its MCP config (src/backends/mcp.ts), the prompt inputs and schemas, routing, the
@@ -17,7 +18,7 @@ export type EvalRole = 'gate' | 'walkthrough';
 const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/**', 'src/backends/argv.ts', 'src/backends/claude.ts', 'evals/roles/*.ts'] as const;
 
 export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
-  gate: ['src/prompts/gate/**', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
+  gate: ['src/prompts/gate/**', 'src/git/boundeddiff.ts', 'src/pipeline/gate.ts', 'src/pipeline/dispatch.ts', ...SHARED, 'evals/roles/gate/**', 'evals/roles/gen/**'],
   walkthrough: ['src/prompts/walkthrough/**', 'src/walk/**', 'src/backends/mcp.ts', ...SHARED, 'evals/roles/walkthrough/**'],
 };
 

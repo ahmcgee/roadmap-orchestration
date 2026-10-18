@@ -101,10 +101,24 @@ export const JUDGMENT_TOOLS = 'Read,Grep,Glob,Agent';
  */
 export const ACTING_JUDGE_TOOLS = 'Read,Grep,Glob,Bash,Write,Edit,Agent';
 
+/** The file-writing tools an acting judge's `--disallowedTools` rules name for each denied path (`writeDenyRules`). */
+export const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'] as const;
+
+/**
+ * dev.13: the `--disallowedTools` rules that keep an acting judge's file-writing tools off `paths` (each a directory or a
+ * file): `<Tool>(//<abs path>)` and `<Tool>(//<abs path>/**)`, Claude Code's permission-rule syntax for an absolute path
+ * (`//` is the filesystem root). Deny rules hold under bypassPermissions (verified on Claude Code 2.1.301, 2026-10-18: a
+ * Haiku session's Write into a denied directory was refused, "File is in a directory that is denied by your permission
+ * settings", and listed in `permission_denials`, while a Write and an Edit beside it succeeded). Bash is not restricted:
+ * it stays trusted to the prompt.
+ */
+export const writeDenyRules = (paths: readonly AbsPath[]): readonly string[] =>
+  paths.flatMap((p) => WRITE_TOOLS.flatMap((t) => [`${t}(/${p})`, `${t}(/${p}/**)`]));
+
 export type BackendCall =
   | Readonly<{
     kind: 'claude-judgment';
-    /** A unit judgment (plan-check, gate) or an arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. */
+    /** Plan-check or a judging arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. The gate acts (dev.13). */
     role: FreshRole;
     triple: ClaudeTriple;
     session: JudgmentSession;
@@ -151,6 +165,11 @@ export type BackendCall =
     mcpConfig: AbsPath | null;
     /** Directories outside the cwd it reads or writes (its evidence dir, the walk evidence it compares): one `--add-dir` each. */
     evidenceDirs: readonly AbsPath[];
+    /**
+     * The paths its Write, Edit and NotebookEdit may not touch (`--disallowedTools`, `writeDenyRules`): the repository and
+     * the run dir, less what it writes in (dispatch.ts `actingWriteDenials`).
+     */
+    denyWrites: readonly AbsPath[];
   }>
   | Readonly<{
     kind: 'codex-build';
@@ -195,7 +214,8 @@ export function backendArgv(call: BackendCall): Argv {
       return [
         'claude', '-p', ...CLAUDE_COMMON, ...mcpConfigArgs(call.mcpConfig),
         '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model, '--effort', call.triple.effort,
-        '--tools', ACTING_JUDGE_TOOLS, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
+        '--tools', ACTING_JUDGE_TOOLS, ...(call.denyWrites.length === 0 ? [] : ['--disallowedTools', ...writeDenyRules(call.denyWrites)]),
+        '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }

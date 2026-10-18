@@ -542,6 +542,8 @@ pool, the workers, `--rebind`, `--cap` and `--trial-cap` are shared (`pool.ts`, 
 
 ```sh
 node evals/roles/run.ts gate --set dev --n 3 [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] [--rebind <class>=<model>:<effort>] [--out <dir>] [--cap <usd>] [--trial-cap <usd>]
+node evals/roles/run.ts gate --set dev --n 3 --cells X1,X1c,X2,X2c,X3,X3c --read-only --out <arm>   # dev.13: the dev.12 gate's arm
+node evals/roles/run.ts gate --set dev --n 3 --cells X1,X1c,X2,X2c,X3,X3c --baseline <arm>/summary.json
 node evals/roles/run.ts gate --set holdout --n 3 --compare <dev run>/summary.json      # acceptance only
 node evals/roles/triggers.ts <base>                                                    # from executor/: the roles a branch triggers
 ```
@@ -570,6 +572,15 @@ through the production mechanism, the repo config's `routing.classes`, which the
 (e.g. `--risk high --rebind frontier=claude-opus-5-5:high` runs the high seat's Opus at `high`; a model with no gate prompt is
 refused before any trial). The report's `ARM` line and `summary.json`'s `arm` name the seat, its class and the
 model:effort serving it (`gate.low efficient claude-sonnet-5-5:high`); the `holdout-gap` criterion names both runs' arms.
+
+**The read-only arm** (dev.13, the gate's shell). The production gate is an acting judge: a shell in a throwaway checkout of
+the unit's tip. `--read-only` runs the same cells as the gate dev.12 shipped, for comparison: the `real` act rewrites each
+gate call's argv into the judgment profile (`gate/readonly.ts`: the read-only tools, no permission mode or settings,
+slash commands off, the system text by `--system-prompt` with the read surface listed, and the module's `<your_checkout>`
+section swapped for the dev.12 gate's sentence about its read-only working directory); model, effort, schema, session,
+cwd, stdin and add-dirs stay the call's, and production code knows nothing of it. The ARM line ends `read-only`.
+`--baseline <that run's summary.json>` on an acting run over the same cells adds `exec-gain` (the execution-only cells'
+detection above the arm's) and an `INFO cost-vs-baseline` line per cell (median cost per trial here and there).
 
 **The fixture** (`gen/`): a seeded synthetic TypeScript monorepo (`gen/tsrepo.ts`, word-list names,
 `packages/<pkg>/src/<mod>.ts`, a tenth under `legacy/`, a shared `measure.ts` with a helper and its same-signature sibling,
@@ -603,6 +614,16 @@ when such changes outgrow the budget. The holdout set is untracked
 (`evals/roles/holdout/cells.ts`, gitignored, exporting `HOLDOUT_CELLS`): one defect class the dev cells lack and a mixed
 sweep, so no prompt is tuned against it.
 
+**Execution-only cells** (dev.13, `gen/exec.ts`): a unit that adds one function and its test to a package of the base repo
+(goldens regenerated), the defect plausible code that only running it reveals, each with its clean twin, the same code with
+the planted line correct. X1 wrong-but-passing logic (a default `sort()`, lexicographic, where the spec asks for numeric
+order; the tests use single-digit values); X2 special-casing on the visible tests' inputs (a table of exactly the tested
+values in front of a general formula that is off); X3 an edge case no test covers (the Gregorian century rule, a short last
+chunk). Three variants per family; a trial's variant and package come from `<seed>/<family>/<trial>`, so a plant's trial k
+and its twin's add the same function to the same package. The visible tests pass on both, so the lanes are green; each
+variant's probe (hidden inputs, never in the fixture repo) fails on the plant and passes on the twin. The two-file diff is
+inlined. A row's `experiments` counts the experiments its answer's findings cite, and CELL lines the trials that cited one.
+
 **Grading** (`gate/grade.ts`). Caught: revise or escalate with a blocking finding localised to the plant's path. Looked
 at: the plant inlined, or a Read of its file or `.diff` in the main session or any subagent (stream-json events carry
 `parent_tool_use_id`), or a Grep whose output carried the planted text; a deletion is looked at when the prompt names it.
@@ -619,7 +640,7 @@ transcript's tool traffic is scanned for the run dir, the trial dir, `evals/role
 **Criteria** (`gate/summary.ts`, PASS|FAIL lines; exit 1 on any FAIL): planted detection at least 80% (Wilson interval
 reported); zero lucky; clean false positives at most 1/12; precision (blocking findings localised to the plant, on planted
 trials) at least 50%; voids at most a quarter of the trials; every call's per-model costs summing to its `total_cost_usd`;
-with `--compare`, holdout detection within 15 points of dev. Coverage (median, target 90%), cluster coverage and the
+with `--compare`, holdout detection within 15 points of dev; with `--baseline`, `exec-gain`. Coverage (median, target 90%), cluster coverage and the
 review-depth mix, and method (tools by name, subagents with model and tokens, time to the first Read and Agent) are
 reported, never failed.
 
@@ -654,6 +675,10 @@ without reading it is lucky; the transcript and cost parser on a captured subage
 acts; the triggers; `--cap` stopping new trials, `--trial-cap` killing the `overspend` fake gate (a session that streams
 one $20 message and hangs), the live price estimate, and the cluster grading). `--fake <kind>` runs the same harness on a
 degenerate gate for free; over the large-diff threshold a fake answers one cluster over everything.
+`test/roles-gate-exec.test.ts` (dev.13): every execution-only variant's plant passes its visible tests and fails its
+probe while its twin passes both, the two differing in the planted line alone; the X cells' fixtures (lane green, goldens
+the generator's, the module inlined, plant and twin sharing spec and package, the probe telling them apart in the unit's
+tree); fake-gate trials over them; the read-only arm's argv rewrite and `real` act; `exec-gain`.
 
 ### The walkthrough eval (dev.13)
 

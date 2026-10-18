@@ -1,6 +1,6 @@
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
 //
-// A fresh judgment session (resumed only for its repair turn) on the gate role's seat, which a pending risk promotion or a
+// A fresh acting-judge session (resumed only for its repair turn; dev.13, `claude-acting-judge`) on the gate role's seat, which a pending risk promotion or a
 // route-up moves to the escalation seat (judgmentDispatch), and a diff over the large-diff threshold to at least `high`
 // (1.0.0-dev.12, "The large-diff gate" below). Its inputs, snapshotted at the integration tip
 // T the gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full
@@ -11,8 +11,12 @@
 // the build's evidence (decisions.json), the pinned scope envelope and the diff's paths outside it (and, scope growth
 // 2026-10-15, the out-of-scope paths the unit's salvages reverted, which no diff shows), and on
 // a later round the prior round's handoff: its directives, findings and premises, the paths the fix changed
-// and the premise files whose blobs changed since (items 25, 29). The session runs in the green verification
-// checkout and reads the repository and the run dir besides (dispatch.ts `judgmentReadDirs`), read-only.
+// and the premise files whose blobs changed since (items 25, 29). The session runs in its own throwaway detached checkout
+// of the unit's tip (the salvage SHA the green verification checkout holds; dev.13, owner 2026-10-18: `gateWorktree`), with a
+// shell for ad hoc experiments and no MCP server, and reads the repository and the run dir besides (dispatch.ts
+// `judgmentReadDirs`). Code makes the checkout after the attempt's `@cpu` entry and removes it (citing a snapshot of what
+// the gate wrote there, its experiments) once the call is read, before the outcome is recorded; a leftover of an attempt a
+// crash cut short goes before the next attempt makes its own (stages.ts `removeJudgmentCheckouts`).
 //
 // Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
 // (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
@@ -82,16 +86,17 @@ import type { JsonValue } from '../core/json.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 import {
   type BackendCallOutcome, type Cancelled, type JudgmentDispatch, type StageContext, type StageParent, callBackend, cancelledNow, dispatchOf, evidenceRoot, isCancelled, judgmentDeadlineMs,
-  judgmentDispatch, unitBranch, verdictOf, verificationWorktree,
+  judgmentDispatch, runOp, unitBranch, verdictOf, verificationWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
+import { worktreeCreateOp } from '../recover/ops.ts';
 import { laneRecordIn, latestSpecSeries, observedViews, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
 import { gateSmokeChecks } from './smoke.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 import {
   type PlanCheckDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, gateTarget, holisticInForce, inMs, integrationTip, type JudgmentReader, judgmentOutput,
   judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, planCheckNotes, planCheckRead, record, releaseJudgment, rulingSidecars, start, targetDirs, verdictKind,
-  escalationOf, fastSuiteRoot, judgedAnswer, salvageRejections, stillOutside, unitMilestones, writeJudgmentInputs,
+  escalationOf, fastSuiteRoot, judgedAnswer, removeJudgmentCheckouts, salvageRejections, stillOutside, unitMilestones, writeJudgmentInputs,
 } from './stages.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -233,13 +238,13 @@ export function gateDirectives(ctx: StageContext, parent: StageParent): readonly
   return out.directives;
 }
 
-/** The diff head a gate spawn judged: the commit of the verification checkout it ran in. */
+/** The diff head a gate spawn judged: the commit of the checkout it ran in (its own since dev.13, a verification checkout before). */
 function judgedHead(ctx: StageContext, spawn: IntentOf<'proc.spawn'>): Sha {
   const inv = invocationId(spawn.op, spawn.ordinal);
   const launch = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('launch.json');
   if (launch === null) throw new Error(`${inv}: a gate spawn without launch.json`);
   const created = ctx.journal.view.opsOf('worktree.create').find((i) => i.expect.path === launch.cwd);
-  if (created === undefined || created.expect.checkout.type !== 'detached') throw new Error(`${inv}: the gate ran in ${launch.cwd}, which is no verification checkout`);
+  if (created === undefined || created.expect.checkout.type !== 'detached') throw new Error(`${inv}: the gate ran in ${launch.cwd}, which is no detached checkout`);
   return created.expect.checkout.at;
 }
 
@@ -336,6 +341,13 @@ function gateAnswerAt(ctx: StageContext, unit: UnitId, attempt: number): (value:
   return gateAnswerFor(largeDiff, largeDiff === null ? [] : diffPaths(ctx.repo, diffBase(ctx.repo, inputs.tip, inputs.head), inputs.head));
 }
 
+/**
+ * dev.13: a gate attempt's own detached checkout of the unit's tip, the session's cwd: a throwaway tree its experiments may
+ * write in, never the verification checkout the lanes certified.
+ */
+export const gateWorktree = (ctx: StageContext, parent: StageParent): AbsPath =>
+  absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${parent.unit}.gate-${parent.attempt}`));
+
 /** Where a gate attempt's attached diff writes what it does not inline: beside the attempt's evidence, readable to the gate. */
 const gateDiffDir = (ctx: StageContext, parent: StageParent): AbsPath => absPath(join(evidenceRoot(ctx.runDir, parent), 'diff'));
 
@@ -354,7 +366,9 @@ type GateCapture =
   | Readonly<{ kind: 'unverified' }>
   | Readonly<{ kind: 'routing-changed'; needsUser: NeedsUserContent }>
   | Readonly<{
-    kind: 'captured'; fingerprint: ApprovalFingerprint; seat: JudgmentDispatch; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[]; cwd: AbsPath;
+    kind: 'captured'; fingerprint: ApprovalFingerprint; seat: JudgmentDispatch; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[];
+    /** The unit's tip the gate judges (the verification checkout's commit): its own checkout is made there. */
+    head: Sha;
     /** The answer's validator for this diff (`gateAnswerFor`). */
     validate: (value: unknown) => GateOutput;
     /** Beside the evidence: the target's readable dirs (a corpus arc's materialised pin). */
@@ -458,7 +472,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff,
     });
     return {
-      kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, cwd: tree.path, dirs: targetDirs(target),
+      kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, head, dirs: targetDirs(target),
       validate: gateAnswerFor(largeDiff, covered),
     };
   });
@@ -469,10 +483,14 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
   const entered = await enterJudgment(ctx, parent);
   if (isCancelled(entered)) return entered;
   const { fingerprint, seat } = captured;
+  // A checkout an earlier attempt left (a crash cut its stage short) goes first: this attempt makes its own at the captured head.
+  await removeJudgmentCheckouts(ctx, unit.id, parent);
+  const cwd = gateWorktree(ctx, parent);
+  await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit.id}:gate`, parent, { path: cwd, checkout: { type: 'detached', at: captured.head } });
   const session = freshJudgmentSession();
   const call = (s: JudgmentSession, text: string): Promise<BackendCallOutcome> => callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session: s, evidenceDirs: [...captured.evidence, ledgerDir(ctx), ...captured.dirs] },
-    system: captured.system, rendered: text, schema: captured.schema, cwd: captured.cwd,
+    system: captured.system, rendered: text, schema: captured.schema, cwd,
     deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(ctx.journal.view, unit.id))),
   });
   const called = await call(session, captured.rendered);
@@ -498,7 +516,8 @@ export async function gateRead(
     const first = judgedAnswer(called, validate);
     if (first.kind === 'refused') return gateRead(ctx, unit, parent, await repair(first.reasons), session, fingerprint, validate);
   }
-  // The session has ended: its @cpu goes before anything is recorded.
+  // The session has ended: its checkout and its @cpu go before anything is recorded.
+  await removeJudgmentCheckouts(ctx, unit.id, parent);
   await releaseJudgment(ctx, parent);
   const done = (d: StageDone<'gate'>, fingerprint: ApprovalFingerprint | null = null): GateDone => ({ ...d, session, fingerprint });
   const v = verdictOf(ctx, parent, called);

@@ -21,6 +21,7 @@ import { type Exit, fixture, runUntilExit } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type CallRecord, type ScenarioFile, readCalls } from './helpers/scenario.ts';
 import { type RunScope, assertNoSurvivors, teardown, track } from './helpers/reap.ts';
+import { isGateCall } from './fixtures/unit-common.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);
@@ -185,7 +186,8 @@ describe('evals-m1: fake-backed fixture runs', () => {
     assertPassed(claudeOnly);
     const calls = playedThrough(claudeOnly);
     assert.deepEqual(calls.filter((c) => c.as === 'codex'), [], 'the codex shim was never called');
-    assert.ok(calls.some((c) => c.as === 'claude' && c.argv.includes('--permission-mode')), 'the Claude implementer built');
+    // dev.13: the gate also runs under bypassPermissions; the implementer's call is the one without the gate's schema.
+    assert.ok(calls.some((c) => c.as === 'claude' && c.argv.includes('--permission-mode') && !isGateCall(c)), 'the Claude implementer built');
     assert.deepEqual(claudeOnly.checked.result.notExercised, [...BRANCHES]);
   });
 

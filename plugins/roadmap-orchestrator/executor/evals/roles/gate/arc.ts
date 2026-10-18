@@ -4,7 +4,8 @@
 // the goldens' regenerate check, dev.12: the trial ends there, `caught: 'regenerate'`, with no gate call), and the
 // gate step is the `real` act: the fake entry execs the real `claude` with the production argv, stdin, cwd and
 // environment, so the eval tests the production prompt, capture, bounded diff, tools and add-dirs byte for byte. A
-// degenerate fake gate (`FakeGate`) answers instead, to test the harness and the graders for free.
+// degenerate fake gate (`FakeGate`) answers instead, to test the harness and the graders for free. The read-only arm (dev.13,
+// run.ts `--read-only`, readonly.ts) runs the real gate's call rewritten into the dev.12 gate's judgment profile.
 //
 // While the gate runs, a monitor reads its stream every 5 s: a trace line every 30 s (tools by name, subagents with model
 // and tokens, time to the first Read and Agent, coverage so far, token load, denials, calls of unavailable tools) and the
@@ -44,6 +45,7 @@ import { boundedDiff, diffPaths } from '../../../src/git/boundeddiff.ts';
 import { GATE_DIFF_BUDGET, largeDiffOf } from '../../../src/pipeline/gate.ts';
 import { absPath } from '../../../src/core/values.ts';
 import { type ClusterGrade, type Graded, grade, gradeClusters, touched } from './grade.ts';
+import type { ReadOnlyArm } from './readonly.ts';
 
 /**
  * Degenerate gates: approve everything; revise everything (one blocking finding off the plant); cite every changed path; cite
@@ -61,7 +63,7 @@ const LANE = { id: 'unit', argv: TEST_ARGV } as const;
 // ---------------------------------------------------------------------------------------------------
 // The arc
 
-const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null });
+const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null, experiments: [] });
 
 /**
  * A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). `large`: the diff is over
@@ -89,9 +91,12 @@ const OVERSPEND: JsonValue = {
   message: { id: 'msg-overspend', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'thinking at length' }], usage: { input_tokens: 10, output_tokens: 1_000_000 } },
 };
 
-/** The gate's steps: the real CLI (the first call and up to two follow-ups: a repair turn or a retry) or one fake answer. */
-function gateSteps(kind: GateKind, key: AnswerKey, large: boolean): readonly Step[] {
-  if (kind === 'real') return [0, 1, 2].map((): Step => ({ as: 'claude', expect: {}, acts: [{ type: 'real' }] }));
+/**
+ * The gate's steps: the real CLI (the first call and up to two follow-ups: a repair turn or a retry; `readOnly`, the arm that
+ * rewrites each into the judgment profile) or one fake answer.
+ */
+function gateSteps(kind: GateKind, key: AnswerKey, large: boolean, readOnly: ReadOnlyArm | null): readonly Step[] {
+  if (kind === 'real') return [0, 1, 2].map((): Step => ({ as: 'claude', expect: {}, acts: [readOnly === null ? { type: 'real' } : { type: 'real', readOnly }] }));
   if (kind === 'overspend') return [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'stream', events: [OVERSPEND] }, { type: 'hang', ms: 10 * 60_000 }] }];
   return [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: fakeAnswer(kind, key, large) }] }];
 }
@@ -107,11 +112,11 @@ function overThreshold(repo: string, base: string, head: string, removes: readon
  * repo config (the production routing stack: built-in seats, the `default` profile's catalogue, `routing.classes`
  * rebinds), e.g. `gate.low efficient claude-sonnet-5-5:high`.
  */
-export function gateArm(risk: RiskTier, config: RepoConfig | null): string {
+export function gateArm(risk: RiskTier, config: RepoConfig | null, readOnly = false): string {
   const r = resolveRouting(arcStack('default', config, null));
   const t = r.table.gate[risk];
   promptFor('gate', t.model); // a rebind onto a model with no gate prompt fails here, before any trial
-  return `gate.${risk} ${r.classes.gate[risk]}${r.bindings[r.classes.gate[risk]] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}`;
+  return `gate.${risk} ${r.classes.gate[risk]}${r.bindings[r.classes.gate[risk]] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}${readOnly ? ' read-only' : ''}`;
 }
 
 /** The scripted build call's backend and argv: the build seat the unit's risk picks under the run's routing. */
@@ -120,8 +125,11 @@ function buildCall(risk: RiskTier, config: RepoConfig | null): Pick<Step, 'as' |
   return backend === 'codex' ? { as: 'codex', expect: { argv: ['exec', '-C'] } } : { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions'] } };
 }
 
-/** Lays out the fixture's repo, plan, spec and scenario (plan-check approves; the build commits the unit's tree). */
-export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config: RepoConfig | null = null): ArcDescriptor {
+/**
+ * Lays out the fixture's repo, plan, spec and scenario (plan-check approves; the build commits the unit's tree). `readOnly`:
+ * a real gate runs as the read-only comparison arm.
+ */
+export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config: RepoConfig | null = null, readOnly = false): ArcDescriptor {
   const repo = tmpDir('roles-repo');
   const { base, head } = materialise(f, repo);
   const planDir = tmpDir('roles-plan');
@@ -129,7 +137,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...laneJson(LANE), state: 'active' }],
     acceptance: f.acceptance.map((c) => ({ id: c.id, clause: c.clause, failLoudIfUndelivered: true, state: 'active' })),
     scope: SCOPE, resources: [], decisions: [], facts: [], cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
-    ...(f.swept.removes.length === 0 ? {} : { removes: f.swept.removes }),
+    ...(f.removes.length === 0 ? {} : { removes: f.removes }),
   }));
   cpSync(RULINGS, join(planDir, 'rulings.md'));
   const arc = arcFor();
@@ -141,15 +149,16 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
     derived: DERIVED, units: [{ id: 'u1', spec: 'u1.json', risk, scope: SCOPE, resources: [] }],
   }));
   const scenarioDir = tmpDir('roles-scenario');
+  const runDir = tmpDir('roles-run');
   const steps: Step[] = [
     // The plan-check's risk is the dispatch's: it picks the gate's seat.
     { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: planCheckAnswer({ decision: 'approve', risk }) }] },
     // The build's backend is the one its risk routes to (built-in: codex low/med under the default profile, Claude Opus high).
     { ...buildCall(risk, config), acts: [{ type: 'checkoutTree', sha: head, message: f.message }, { type: 'emit', value: BUILD_REPORT }] },
-    ...gateSteps(kind, f.key, kind !== 'real' && overThreshold(repo, base, head, f.swept.removes)),
+    ...gateSteps(kind, f.key, kind !== 'real' && overThreshold(repo, base, head, f.removes), readOnly ? { repo, runDir } : null),
   ];
   const scenario = writeScenario(scenarioDir, steps);
-  return { arc, repo, planPath, runDir: tmpDir('roles-run'), hostDir: join(tmpDir('roles-host'), 'roadmap'), binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir, ...(config === null ? {} : { config }) };
+  return { arc, repo, planPath, runDir, hostDir: join(tmpDir('roles-host'), 'roadmap'), binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir, ...(config === null ? {} : { config }) };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -286,6 +295,9 @@ export type TrialRow = Readonly<{
   decision: GateOutput['decision'] | null;
   void: Readonly<{ reason: VoidReason; detail: string }> | null;
   graded: Graded | null;
+  /** dev.13: whether the gate ran as the read-only comparison arm (the dev.12 gate's profile), and the experiments its answer's findings cite. */
+  readOnly: boolean;
+  experiments: number;
   /** The large-diff gate: whether the gate's diff was over the threshold (its inputs' `largeDiff`), and its answer's cluster map graded (null: no map). */
   largeDiff: boolean;
   clusters: ClusterGrade | null;
@@ -331,6 +343,8 @@ export type TrialOptions = Readonly<{
   medianLoad: number | null;
   /** The spend brake (run.ts `--trial-cap`): live spend in USD over which the session is killed, or null for none. */
   trialCap: number | null;
+  /** run.ts `--read-only`: a real gate runs as the read-only comparison arm. */
+  readOnly: boolean;
   log: (line: string) => void;
 }>;
 
@@ -344,7 +358,7 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const label = `${o.cell.id}#${o.trial}`;
   const fx = buildFixture(o.cell, { seed: o.seed, trial: o.trial, size: o.size, scratch: tmpDir('roles-scratch') });
   writeFileSync(join(o.out, 'key.json'), `${JSON.stringify(fx.key, null, 2)}\n`);
-  const d = setupGateArc(fx, o.gate, o.risk, o.config);
+  const d = setupGateArc(fx, o.gate, o.risk, o.config, o.readOnly);
   const r = contextFor(d);
   const monitor = startMonitor(r, label, o.medianLoad, o.trialCap, o.log);
   const started = Date.now();
@@ -410,7 +424,8 @@ export async function runGateTrial(o: TrialOptions): Promise<TrialRow> {
   const firsts = monitor.firsts();
   const row: TrialRow = {
     set: o.set, cell: o.cell.id, family: o.cell.family, trial: o.trial, planted: fx.key.plant !== null, gate: o.gate,
-    outcome: decided !== null && decided.stage === 'gate' ? decided.outcome : null, caught, decision: answer?.decision ?? null, void: voided, graded, largeDiff, clusters,
+    outcome: decided !== null && decided.stage === 'gate' ? decided.outcome : null, caught, decision: answer?.decision ?? null, void: voided, graded,
+    readOnly: o.readOnly, experiments: answer === null ? 0 : answer.findings.reduce((a, f) => a + f.experiments.length, 0), largeDiff, clusters,
     usage: sumUsage(perCall.flatMap((c) => (c.usage === null ? [] : [c.usage]))), estimatedUsd: perCall.reduce((a, c) => a + readTranscript(c.events).liveUsd, 0),
     wallMs, turns: t.turns, load: t.load, calls: spawns.length,
     models: [...new Set(perCall.flatMap((c) => (c.model === null ? [] : [c.model])))],

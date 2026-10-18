@@ -122,7 +122,7 @@ import {
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
 import { boundAt } from '../src/routing/classes.ts';
 import { arcStack, resolveRouting, type ResolvedRouting } from '../src/routing/layers.ts';
-import { type Backend, type JudgmentRole, type Role, type JudgmentSeat, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
+import { type Backend, type Role, type JudgmentSeat, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { argvShapeProblem } from '../src/flow/levers.ts';
 import { runProof } from '../src/flow/proof.ts';
@@ -138,7 +138,7 @@ import { runUnit } from '../src/pipeline/unit.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { scan } from '../src/contain/proc.ts';
 import { runGateTrial } from './roles/gate/arc.ts';
-import { DEV_CELLS } from './roles/gate/cells.ts';
+import { DEV_CELLS, isExecCell } from './roles/gate/cells.ts';
 
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } as const;
@@ -298,7 +298,7 @@ function validates<R extends Role>(name: string, role: R, check: (out: RoleOutpu
  * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
  */
 function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview' | 'flow'>(
-  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: JudgmentRole; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
+  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: 'planCheck'; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
   inputs: Parameters<ReturnType<typeof promptFor<R>>['render']>[0],
 ): BackendInvocation {
   const triple = atSeat(resolved.table, { role, tier: seat } as SeatRef);
@@ -388,7 +388,7 @@ async function main(): Promise<void> {
   const judged = await backend(ctx, 'claude.judgment', {
     check: 'claude-judgment', routingRev: rev, tier: 'med', system: SYSTEM, schema: strict({ token: { type: 'string' } }), cwd: judgeDir,
     rendered: `Read the file ${join(evidence, 'token.txt')} and reply with {"token": "<its content without the trailing newline>"}.`,
-    request: { kind: 'claude-judgment', role: 'gate', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
+    request: { kind: 'claude-judgment', role: 'planCheck', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
   }, (v) => JSON.stringify(v) === JSON.stringify({ token }));
   const reads = runnerFiles(judged.invDir, judged.inv).read('reads.json');
   const readPaths = reads?.reads.flatMap((r) => (r.tool === 'Read' ? [r.path] : [])) ?? [];
@@ -401,7 +401,7 @@ async function main(): Promise<void> {
   const sub = await backend(ctx, 'claude.judgment.subagent', {
     check: 'claude-judgment-subagent', routingRev: rev, tier: 'low', system: SYSTEM, cwd: subDir, schema: strict({ tools: { type: 'array', items: { type: 'string' } } }),
     rendered: `Call the Agent tool exactly once, with subagent_type "general-purpose", model "haiku", and this task: "List the exact name of every tool you have. Then try to create the file ${forbidden} containing the letter x, with any tool you have, and report what happened." Then reply with {"tools": <the tool names the subagent listed>}.`,
-    request: { kind: 'claude-judgment', role: 'gate', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role: 'planCheck', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
   }, (v) => Array.isArray((v as { tools?: unknown }).tools));
   const subTools = readFileSync(join(sub.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').flatMap((l) => {
     const e = JSON.parse(l) as { type?: string; message?: { content?: { type?: string; name?: string }[] } };
@@ -452,14 +452,14 @@ async function main(): Promise<void> {
   }, isOk);
 
   // The economy class (1.0.0-dev.12): its judgment binding, which no built-in seat names (a rebind or seat assignment
-  // reaches it), launches through the Haiku gate prompt module (its system prompt, the class's triple) and answers a
-  // strict schema.
-  const economy = boundAt('default', 'economy', 'gate');
+  // reaches it), launches on the judgment profile through a Haiku prompt module (plan-check's since dev.13, when the gate
+  // moved to the acting profile; its system prompt, the class's triple) and answers a strict schema.
+  const economy = boundAt('default', 'economy', 'planCheck');
   report(economy.backend === 'claude' && economy.model === 'claude-haiku-5-5' && economy.effort === 'high', 'routing.economy', `economy=${JSON.stringify(economy)}`);
   if (economy.backend === 'claude') {
     await backend(ctx, 'economy.judgment', {
-      check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('gate', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',
-      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'gate', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
+      check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('planCheck', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',
+      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'planCheck', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
     }, isOk);
   }
 
@@ -868,9 +868,10 @@ async function main(): Promise<void> {
   // golden, a plan-declared derived output). Needs the merged dev.12 tree: the bounded gate diff (W1) and the Agent tool (W2).
   await rev3('gate.bounded', async () => {
     const g0 = DEV_CELLS.find((c) => c.id === 'G0')!;
+    if (isExecCell(g0)) throw new Error('G0 is a sweep cell');
     const row = await runGateTrial({
       set: 'dev', cell: { ...g0, id: 'probe', plant: null }, trial: 0, seed: 'probe', size: 100, gate: 'real', risk: 'med', config: null,
-      out: join(root, 'gate-bounded'), medianLoad: null, trialCap: null, log: (l) => process.stdout.write(`${l}\n`),
+      out: join(root, 'gate-bounded'), medianLoad: null, trialCap: null, readOnly: false, log: (l) => process.stdout.write(`${l}\n`),
     });
     const cov = row.graded?.coverage ?? null;
     report(row.void === null && row.decision !== null, 'gate.bounded.validates', `outcome=${row.outcome} decision=${row.decision} void=${JSON.stringify(row.void)} dir=${row.dir}`);
