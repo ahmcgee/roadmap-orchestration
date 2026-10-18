@@ -201,8 +201,9 @@ function backendCall(b: BackendInvocation, invDir: AbsPath): BackendCall {
   const r = b.request;
   switch (r.kind) {
     case 'claude-judgment':
-    case 'claude-build':
       return { ...r, system: b.system, schemaText };
+    case 'claude-build':
+      return { ...r, system: b.system, schemaText, mcpConfig: null };
     case 'codex-build':
       return {
         ...r, system: b.system, cwd: b.cwd,

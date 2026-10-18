@@ -371,7 +371,11 @@ function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch 
 
 export type BackendRequest =
   | Readonly<{ kind: 'judgment'; dispatch: JudgmentDispatch; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
-  | Readonly<{ kind: 'implementer'; dispatch: ImplementerDispatch; session: ImplementerSession; evidenceDirs: readonly AbsPath[] }>;
+  /**
+   * `mcpConfig` (dev.13): the `--mcp-config` text of a Claude build in a milestone with a `browser` journey
+   * (src/backends/mcp.ts `walkMcpConfig`), kept under the run dir's inputs like an acting judge's; null for none.
+   */
+  | Readonly<{ kind: 'implementer'; dispatch: ImplementerDispatch; session: ImplementerSession; evidenceDirs: readonly AbsPath[]; mcpConfig: string | null }>;
 
 export type BackendCallSpec = Readonly<{
   unit: UnitId;
@@ -395,7 +399,7 @@ export function inputFile(runDir: AbsPath, text: string, ext: string): AbsPath {
   return inputPath(runDir, keepInput(runDir, Buffer.from(text, 'utf8'), ext), ext);
 }
 
-function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, invDir: AbsPath): BackendCall {
+function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, invDir: AbsPath, mcpConfig: AbsPath | null): BackendCall {
   const r = spec.request;
   if (r.kind === 'judgment') {
     return { kind: 'claude-judgment', role: r.dispatch.role, triple: r.dispatch.triple, session: r.session, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs };
@@ -404,9 +408,10 @@ function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, in
   const s = r.session;
   if (triple.backend === 'claude') {
     if (s.backend !== 'claude') throw new Error(`a ${s.backend} session on the Claude implementer seat`);
-    return { kind: 'claude-build', triple, session: s, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs };
+    return { kind: 'claude-build', triple, session: s, schemaText, system: spec.system, mcpConfig, evidenceDirs: r.evidenceDirs };
   }
   if (s.backend !== 'codex') throw new Error(`a ${s.backend} session on the Codex implementer seat`);
+  if (mcpConfig !== null) throw new Error(`${spec.unit}: an MCP config on the Codex implementer seat`);
   return { kind: 'codex-build', triple, session: s, cwd: spec.cwd, outputPath: absPath(join(invDir, CODEX_OUTPUT_FILE)), schemaPath, system: spec.system };
 }
 
@@ -504,8 +509,9 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
   const role: Role = seat.role;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
+  const mcpConfig = r.kind === 'implementer' && r.mcpConfig !== null ? inputFile(ctx.runDir, r.mcpConfig, MCP_CONFIG_INPUT) : null;
   // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
-  const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir), spec.rendered), 'prompt.txt');
+  const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir, mcpConfig), spec.rendered), 'prompt.txt');
   // Only the implementer may create resources (its builds run the unit's tooling); a judgment holds none. It
   // is bound to the pool instances its build holds (F7), as its lanes, probes and teardowns are.
   const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan().arc, spec.unit), ...buildInstanceEnv(ctx, spec.parent) } : backendEnv(ctx.hostEnv);
@@ -514,7 +520,7 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
     origin,
     subject: { purpose: 'backend', ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
-      const c = call(spec, schemaText, schemaPath, invDir);
+      const c = call(spec, schemaText, schemaPath, invDir, mcpConfig);
       return { argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, stallMs: null, graceMs: BACKEND_GRACE_MS, terminal: terminal(spec, c, schemaPath, invDir) };
     },
   });
@@ -605,11 +611,66 @@ export function repairTurnOf(runDir: AbsPath, inv: InvocationId): RepairTurn | n
  * A call lost with its runner is retried once, uncharged, as the op's next invocation, as a unit judgment's is.
  */
 export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise<BackendCallOutcome> {
-  const { seat, triple, routingRev } = arcSeat(ctx, spec.role);
-  const { session } = spec;
+  const seat = arcSeat(ctx, spec.role);
   const schemaText = canonicalJson(spec.schema);
-  const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
-  const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, ...judgmentSurface(ctx, spec.system, spec.evidenceDirs) };
+  return callJobRole(ctx, spec, seat, {
+    kind: 'claude-judgment', role: spec.role, triple: seat.triple, session: spec.session, schemaText, ...judgmentSurface(ctx, spec.system, spec.evidenceDirs),
+  });
+}
+
+/**
+ * One acting-judge call of a job (dev.13): a walk role (`WalkRole`) acting in `cwd`, the detached checkout of the product
+ * it uses. `mcpConfig`: the `--mcp-config` text (src/backends/mcp.ts `walkMcpConfig`, its `{evidence}` the session's
+ * evidence dir), or null for no MCP server. `evidenceDirs`: the dirs it reads or writes outside `cwd` (its evidence dir,
+ * the walk evidence a polish judge compares).
+ */
+export type ActingJudgeCallSpec = Readonly<{
+  job: JobId;
+  role: WalkRole;
+  attempt: number;
+  system: string;
+  rendered: string;
+  schema: JsonValue;
+  cwd: AbsPath;
+  evidenceDirs: readonly AbsPath[];
+  mcpConfig: string | null;
+  deadlineAt: IsoTime;
+  /** A fresh session, or (the repair turn, `repairTurnOf`) the refused answer's own, resumed. */
+  session: JudgmentSession;
+}>;
+
+/**
+ * An acting-judge call through `invoke` (argv.ts `claude-acting-judge`): the arc role's seat, spawned and retried as an
+ * arc-role call (`callArcRole`). Its `--add-dir` surface is a judgment's (`judgmentReadDirs`: the repository, the run dir,
+ * then `evidenceDirs`); its system text goes in by `--append-system-prompt`, so Claude Code's default prompt, which names
+ * those dirs, stays. The MCP config is kept content-addressed under the run dir's inputs (`<sha256>.mcp.json`), as the
+ * schema and prompt are, and named by path.
+ */
+export async function callActingJudge(ctx: StageContext, spec: ActingJudgeCallSpec): Promise<BackendCallOutcome> {
+  const seat = arcSeat(ctx, spec.role);
+  return callJobRole(ctx, spec, seat, actingJudgeCall(ctx, spec, seat.triple));
+}
+
+/** The acting-judge `BackendCall` of `spec` on `triple`, its MCP config kept (`callActingJudge`). */
+export function actingJudgeCall(
+  ctx: Readonly<{ repo: AbsPath; runDir: AbsPath }>, spec: ActingJudgeCallSpec, triple: ClaudeTriple,
+): Extract<BackendCall, { kind: 'claude-acting-judge' }> {
+  return {
+    kind: 'claude-acting-judge', role: spec.role, triple, session: spec.session, schemaText: canonicalJson(spec.schema), system: spec.system,
+    mcpConfig: spec.mcpConfig === null ? null : inputFile(ctx.runDir, spec.mcpConfig, MCP_CONFIG_INPUT), evidenceDirs: judgmentReadDirs(ctx, spec.evidenceDirs),
+  };
+}
+
+/** The extension an acting judge's `--mcp-config` file is kept under in the run dir's inputs. */
+export const MCP_CONFIG_INPUT = 'mcp.json';
+
+/** The spawn of a job's arc-role call `c` (a judgment or an acting judge), shared by `callArcRole` and `callActingJudge`. */
+async function callJobRole(
+  ctx: StageContext, spec: Readonly<{ job: JobId; role: ArcRole; attempt: number; rendered: string; cwd: AbsPath; deadlineAt: IsoTime; session: JudgmentSession }>,
+  { seat, routingRev }: ReturnType<typeof arcSeat>, c: Extract<BackendCall, { kind: 'claude-judgment' | 'claude-acting-judge' }>,
+): Promise<BackendCallOutcome> {
+  const { session } = spec;
+  const schemaPath = inputFile(ctx.runDir, `${c.schemaText}\n`, 'schema.json');
   const stdin = inputFile(ctx.runDir, promptBytes(c, spec.rendered), 'prompt.txt');
   const env = backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({

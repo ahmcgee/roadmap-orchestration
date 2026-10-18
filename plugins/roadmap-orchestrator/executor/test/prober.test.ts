@@ -283,7 +283,7 @@ describe('dispatch: backend park epochs, hold causes, instance env, sessions (G5
     assert.equal(got.state, 'reserved');
     const cwd = tmpDir('impl-cwd');
     const called = await callBackend(ctx, {
-      unit: U1, parent, request: { kind: 'implementer', dispatch: seated(implementerDispatch(ctx, U1)), session: freshClaudeImplementerSession(), evidenceDirs: [] },
+      unit: U1, parent, request: { kind: 'implementer', dispatch: seated(implementerDispatch(ctx, U1)), session: freshClaudeImplementerSession(), evidenceDirs: [], mcpConfig: null },
       system: 'build', rendered: 'build', schema: SMOKE_SCHEMA, cwd: absPath(cwd), deadlineAt: isoTimeOf(new Date(Date.now() + 60_000)),
     });
     const launch = runnerFiles(called.invDir, called.inv).read('launch.json');

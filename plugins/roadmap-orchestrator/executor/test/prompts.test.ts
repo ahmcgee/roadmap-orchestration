@@ -106,6 +106,25 @@ const polishSample = (k: 'A' | 'B'): RoleInputs['polishJudge'] => ({
   evidenceDir: absPath(`/run/evidence/jobs/cmp-${k}`),
 });
 
+// dev.13: a unit in two milestones (a member of MS-2, the design unit of MS-3), and a build's browser drive.
+const milestonesSample = (): RoleInputs['build']['milestones'] => ({
+  of: [
+    { as: 'member', id: milestoneId('MS-2'), text: 'MEMBER-MILESTONE-B', dirs: [repoPath('design/b')] },
+    { as: 'design', id: milestoneId('MS-3'), text: 'DESIGN-MILESTONE-B', dirs: [repoPath('design/b'), repoPath('design/b2')], journeys: [journeySample('A'), journeySample('B')] },
+  ],
+  references: [doc('design/b/DESIGN.md', 'REFERENCE-B'), doc('design/b2/tokens.json', 'TOKENS-B')], binary: [repoPath('design/b/WIRE-B.png')],
+});
+const browserSample = (): RoleInputs['build']['browser'] => ({
+  servers: ['playwright'],
+  bringUps: [{
+    milestone: milestoneId('MS-2'),
+    bringUp: {
+      setup: [['npm', 'ci']], serve: [{ name: serveName('web'), argv: ['node', 'SERVER-B.js', '--port', '{port:web}'], ready: { http: 'http://127.0.0.1:{port:web}/health' } }],
+      env: { MODE: 'BRINGUP-B' }, seed: [['node', 'SEED-B.js']],
+    },
+  }],
+});
+
 const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
   const n = k === 'A' ? 1 : 2;
   const lane = laneId(k === 'A' ? 'unit' : 'all');
@@ -176,7 +195,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null,
+      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -198,21 +217,21 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
         rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
       },
-      escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } },
+      escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } }, milestones: milestonesSample(),
     },
   ],
   build: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null,
+      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null, milestones: null, browser: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
-      assess: { risk: 'high', vision: vision(2, 'VISION-B') },
+      assess: { risk: 'high', vision: vision(2, 'VISION-B') }, milestones: milestonesSample(), browser: browserSample(),
     },
   ],
   gate: [
@@ -222,7 +241,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
-      escalation: null, largeDiff: null,
+      escalation: null, largeDiff: null, milestones: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -246,7 +265,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         regenerated: [],
       },
       escalation: { kind: 'risk-trigger' },
-      largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') },
+      largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') }, milestones: milestonesSample(),
     },
   ],
   lens: [
@@ -518,6 +537,35 @@ describe('prompts', () => {
       const text = mod.render(SAMPLES.build[1]);
       assert.match(text, /\/run\/inv\/9-1/, 'fix round names the failing evidence dir');
       assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/, 'lane rendered as its exact command');
+    }
+  });
+
+  it('dev.13: a milestone unit\'s plan-check, build and gate embed its design references as documents and name its milestones; others carry none', () => {
+    for (const role of ['planCheck', 'build', 'gate'] as const) for (const model of MODEL_IDS) {
+      const s = support(role, model);
+      if (s.type !== 'prompt') continue;
+      const mod = s.prompt as { render: (i: unknown) => string };
+      const text = mod.render(SAMPLES[role][1]);
+      for (const needle of ['REFERENCE-B', 'TOKENS-B', 'design/b/DESIGN.md', 'design/b2/tokens.json', 'design/b/WIRE-B.png', 'MS-2', 'MEMBER-MILESTONE-B', 'MS-3', 'DESIGN-MILESTONE-B']) {
+        assert.ok(text.includes(needle), `${role}/${model}: ${needle}`);
+      }
+      // A design unit sees the journeys its references serve; a member sees none.
+      for (const needle of ['J-1', 'JOURNEY-A', '/entry-A', 'J-2', 'JOURNEY-B']) assert.ok(text.includes(needle), `${role}/${model}: ${needle}`);
+      if (model.startsWith('claude-')) assert.match(text, /<source>design reference design\/b\/DESIGN\.md<\/source>\n<document_content>\nREFERENCE-B/, `${role}/${model}: a document`);
+      const none = mod.render(SAMPLES[role][0]);
+      for (const needle of ['<milestones>', 'design reference', 'MILESTONE']) assert.ok(!none.includes(needle), `${role}/${model}: none outside a milestone (${needle})`);
+    }
+  });
+
+  it('dev.13: only a build with a browser drive is told of its MCP servers and given the bring-up', () => {
+    for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) {
+      const mod = promptFor('build', model);
+      const text = mod.render(SAMPLES.build[1]);
+      for (const needle of ['<browser>', 'playwright', 'npm ci', 'SERVER-B.js', '{port:web}', 'http://127.0.0.1:{port:web}/health', 'MODE=BRINGUP-B', 'SEED-B.js']) {
+        assert.ok(text.includes(needle), `build/${model}: ${needle}`);
+      }
+      assert.ok(!mod.render({ ...SAMPLES.build[1], browser: null }).includes('<browser>'), `build/${model}: no browser block without the drive`);
+      assert.ok(!mod.render(SAMPLES.build[0]).includes('<browser>'), `build/${model}`);
     }
   });
 

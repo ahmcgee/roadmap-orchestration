@@ -3,7 +3,8 @@
 // after the captured tokens. The Claude captures predate `--effort <level>` (Claude triples carry an effort
 // since 2026-09-26): the builder's argv less that pair must equal the capture, and the pair follows
 // `--model`. The 2.1.283 judgment capture predates the Agent tool (2026-10-16): its `--tools` value lacks `,Agent`; the
-// 2.1.301 capture claude-judgment-subagents is the whole argv, token for token. `npm run probe` runs the full argv against
+// 2.1.301 capture claude-judgment-subagents is the whole argv, token for token. The implementer captures predate dev.13,
+// which dropped `--disable-slash-commands` from the build argv: the builder's argv equals the capture less that flag. `npm run probe` runs the full argv against
 // the real CLIs.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -74,19 +75,54 @@ describe('argv', () => {
     assert.equal(promptBytes(call, 'Judge the diff.'), 'Judge the diff.');
   });
   it('claude implementer, fresh and resumed', () => {
-    const fresh = capturedArgv('claude-implementer');
-    const resumed = capturedArgv('claude-implementer-resume');
+    // Captured before dev.13 stopped disabling slash commands for builds (project skills load).
+    const withoutSlash = (argv: readonly string[]): readonly string[] => argv.filter((t) => t !== '--disable-slash-commands');
+    const fresh = withoutSlash(capturedArgv('claude-implementer'));
+    const resumed = withoutSlash(capturedArgv('claude-implementer-resume'));
     const id = implementerSessionId(value(fresh, '--session-id'));
     const schemaText = value(fresh, '--json-schema');
     const system = CAPTURED_SYSTEM;
-    assert.deepEqual(capturedShape(backendArgv({ kind: 'claude-build', triple: CLAUDE, schemaText, system, session: { backend: 'claude', mode: 'fresh', id }, evidenceDirs: [] })), fresh);
-    assert.deepEqual(capturedShape(backendArgv({ kind: 'claude-build', triple: CLAUDE, schemaText, system, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [] })), resumed);
+    const build = { kind: 'claude-build', triple: CLAUDE, schemaText, system, mcpConfig: null, evidenceDirs: [] } as const;
+    assert.deepEqual(capturedShape(backendArgv({ ...build, session: { backend: 'claude', mode: 'fresh', id } })), fresh);
+    assert.deepEqual(capturedShape(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id } })), resumed);
     assert.equal(value(fresh, '--append-system-prompt'), system);
     const dirs = [absPath('/run/work/u1'), absPath('/run/evidence/u1/lane')];
     assert.deepEqual(
-      capturedShape(backendArgv({ kind: 'claude-build', triple: CLAUDE, schemaText, system, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: dirs })),
+      capturedShape(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: dirs })),
       [...resumed, '--add-dir', dirs[0], '--add-dir', dirs[1]],
     );
     assert.equal(exitCode('claude-implementer-resume'), '0');
+    // dev.13: a build in a milestone with a browser journey names its MCP config after --strict-mcp-config, as an acting judge does.
+    const mcp = absPath('/run/inputs/0f.mcp.json');
+    const strict = fresh.indexOf('--strict-mcp-config');
+    assert.deepEqual(
+      capturedShape(backendArgv({ ...build, mcpConfig: mcp, session: { backend: 'claude', mode: 'fresh', id } })),
+      [...fresh.slice(0, strict + 1), '--mcp-config', mcp, ...fresh.slice(strict + 1)],
+    );
+  });
+  it('claude acting judge, fresh with MCP servers and resumed without (dev.13)', () => {
+    // No capture: verified by hand against Claude Code 2.1.301 (argv.ts ACTING_JUDGE_TOOLS); the probe runs it for real.
+    const id = judgmentSessionId('7b0c2f4e-1d3a-4c5b-9e8f-0a1b2c3d4e5f');
+    const mcp = absPath('/run/inputs/0f.mcp.json');
+    const dirs = [absPath('/repo'), absPath('/run'), absPath('/run2/evidence/jobs/walk-1')];
+    const call = {
+      kind: 'claude-acting-judge', role: 'walkthrough', triple: CLAUDE, schemaText: '{"type":"object"}', system: SYSTEM,
+      session: { backend: 'claude', mode: 'fresh', id }, mcpConfig: mcp, evidenceDirs: dirs,
+    } as const;
+    assert.deepEqual(backendArgv(call), [
+      'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--mcp-config', mcp,
+      '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',
+      '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id', id,
+      '--append-system-prompt', SYSTEM, '--add-dir', '/repo', '--add-dir', '/run', '--add-dir', '/run2/evidence/jobs/walk-1',
+    ]);
+    // The gate's: no server loads, and the resumed repair turn keeps every other flag.
+    const gate = backendArgv({ ...call, role: 'gate', mcpConfig: null, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [] });
+    assert.deepEqual(gate, [
+      'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config',
+      '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',
+      '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--resume', id, '--append-system-prompt', SYSTEM,
+    ]);
+    assert.ok(!gate.includes('--disable-slash-commands'), 'project skills load');
+    assert.equal(promptBytes(call, 'Walk it.'), 'Walk it.');
   });
 });
