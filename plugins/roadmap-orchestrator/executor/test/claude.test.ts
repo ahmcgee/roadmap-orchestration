@@ -210,21 +210,24 @@ describe('claude', () => {
       assert.deepEqual(init['skills'], []);
       assert.equal(Object.hasOwn(init, 'memory_paths'), false);
     });
-    it('an implementer loads no MCP server, no skill, no auto-memory', () => {
+    it('an implementer loads no MCP server, no auto-memory', () => {
+      // The capture predates dev.13 (it ran with --disable-slash-commands, so its skill list is empty); builds now load
+      // the project's skills (argv.ts, measured on 2.1.301).
       const init = initOf('claude-implementer');
       assert.deepEqual(init['mcp_servers'], []);
-      assert.deepEqual(init['skills'], []);
       assert.equal(Object.hasOwn(init, 'memory_paths'), false);
       assert.ok((init['tools'] as string[]).every((t) => !t.startsWith('mcp__')));
     });
-    it('the argv carries the flags that make it so: no settings for a judgment, project settings for an implementer', () => {
+    it('the argv carries the flags that make it so: no settings and no skill for a judgment, project settings and skills for an implementer', () => {
       const judgment = backendArgv({ kind: 'claude-judgment', role: 'planCheck', triple: TRIPLE, session: freshJudgmentSession(), schemaText: '{}', system: 'S', evidenceDirs: [] });
-      const build = backendArgv({ kind: 'claude-build', triple: TRIPLE, session: freshClaudeImplementerSession(), schemaText: '{}', system: 'S', evidenceDirs: [] });
+      const build = backendArgv({ kind: 'claude-build', triple: TRIPLE, session: freshClaudeImplementerSession(), schemaText: '{}', system: 'S', mcpConfig: null, evidenceDirs: [] });
       for (const argv of [judgment, build]) {
-        for (const flag of ['--strict-mcp-config', '--disable-slash-commands', '--verbose']) assert.ok(argv.includes(flag), flag);
+        for (const flag of ['--strict-mcp-config', '--verbose']) assert.ok(argv.includes(flag), flag);
         assert.equal(argv[argv.indexOf('--output-format') + 1], 'stream-json');
         assert.equal(argv.includes('--mcp-config'), false);
       }
+      assert.ok(judgment.includes('--disable-slash-commands'), 'a judgment loads no skill');
+      assert.ok(!build.includes('--disable-slash-commands'), 'a build loads the project skills (dev.13)');
       assert.equal(judgment[judgment.indexOf('--setting-sources') + 1], '');
       assert.equal(build[build.indexOf('--setting-sources') + 1], 'project');
     });

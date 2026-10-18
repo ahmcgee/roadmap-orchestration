@@ -75,6 +75,11 @@ export type WorldAct =
    */
   | Readonly<{ type: 'writeToPrompt'; pattern: string; file: string; text: string }>
   /**
+   * dev.13 (a fake walkthrough): GET the URL `pattern` finds in stdin (one capture group) and write `<status> <body>` (or
+   * `error <message>`) to `<dir>/<file>`, where `dirPattern` finds `dir`: how a fake walk uses the product it was given.
+   */
+  | Readonly<{ type: 'fetchFromPrompt'; pattern: string; dirPattern: string; file: string }>
+  /**
    * Commit the tree of commit `sha` (already in the repository's object store) onto the cwd's branch, with `message`:
    * the index and working tree become exactly that tree, deletions included. How a fake implementer lays down a
    * generated unit commit (the role evals, evals/roles/).

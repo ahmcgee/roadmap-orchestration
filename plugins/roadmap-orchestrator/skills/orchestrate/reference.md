@@ -81,6 +81,11 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   for a single lens call is reviewed in chunks by publication within that audit, so no range needs a smaller audit.
 - `roadmap close-admissions`: latch `draining`; checkpoint admissions become requests to you; an `apply` adding a
   unit reopens.
+- `roadmap demo up|down|hold|release`: the owner's act on the demo (milestone arcs; queued, no scope). `hold` freezes
+  promotion, so the demo keeps its version and data; `release` resumes it and promotes the latest settled milestone at
+  once when it is newer; `down` stops the instance (its checkout and ports are kept); `up` starts it again, and retries a
+  version whose bring-up failed. Rejected: `hold` while held, `release` while not held, `down` while down. Acts apply
+  through the arc's executor: with no live executor they wait in the queue for its next start.
 - `roadmap gc --repo <path> [--keep <K>] [--dry-run]`: not queued. Under the host lock, prunes sealed arcs (raw
   evidence; run dirs beyond K, which the ref restores). Prints its report, or `{refused}` with exit 75 or 78.
 - `roadmap --version`
@@ -330,6 +335,12 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
     for a cpu half its time or more) and whether the host reports it (Linux schedstat).
   - `next{running, due, cooldownUntil, bypass}`: the flow run in progress, the triggers due now (`host-pressure`: a unit
     held for host pressure since the last run), the cooldown's end and whether a request may still bypass it.
+- Milestone arcs: `demo` (null before the first promotion): `{milestone, sha, held, up, since{milestones, tweaks, fixes},
+  roughEdges, where, serving, failed}`. `where` is `{type: url, url, ports}` (the first serve entry's address and every
+  stable port) or `{type: path, path}` (`<worktreeRoot>/demo/current/bin` for a product with nothing long-lived), null until
+  the host's instance runs this arc's version. `serving` is the SHA running now (null while down or starting); `failed`
+  `{sha, log}` the latest version that did not come up since the promotion (the old one kept serving; its walkthrough P1
+  is in `findings`). `since` is against the promotion before; `roughEdges` the open walkthrough P2s.
 - Every arc: `knownDefects[{id, match, fixUnit, fixMerged, holds}]` (the units each holds at prepare now);
   `checkpointWaits[{job, waitingFor, line}]`, a checkpoint rejected `busy` waiting for "<unit> <stage> boundary".
 - Corpus arcs (empty otherwise): `admits[{seq, job, index, unit, class: repair|oversight|opportunity, clauses,
@@ -360,6 +371,9 @@ the first 16 hex of its sha256, so any change (forge state included) is a new id
   (T/I/OE, diagnostic), and in the delta `verdicts`, `rulerChanges` (command revisions after the first admission that
   touched a ruler path), `hostAdvice` (`flow-host` proposals), and `dropped` (a lever the previous arc applied, with no
   worse verdict, that this arc's plan no longer carries). The Markdown's Flow section.
+
+- `arcs[].demo` (null before the arc's first promotion): `{milestone, sha, held, up, since, roughEdges}` at the ref, the
+  Markdown's Demo section. Where it runs is in `status.demo.where` only.
 
 The brief reads only the verified snapshot refs: an arc joins it with its first snapshot (its first fast-forward
 or docs publication), and anything not yet published to the ref is not in it.

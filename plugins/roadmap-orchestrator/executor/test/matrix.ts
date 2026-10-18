@@ -83,6 +83,7 @@ export const BATCH_PUBLICATION = 'repair batch publication (M3 B2, G5, H4: slot 
 export const MUTANT_APPLY = 'mutant.apply: a vacuity repair\'s reproduce (M3 B3: detached worktree, patch applied, mutant lane, worktree removed)';
 export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fence, job lanes, lens calls, audit-ended)';
 export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under the fence, the checkpoint call)';
+export const WALK_JOB = 'milestone walk job (dev.13: walk-started under the fence, the bring-up, the walkthrough call, minting, walk-ended, milestone-passed)';
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
 export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
 export const SUPERVISOR_HOST = 'supervisor/host';
@@ -1467,6 +1468,35 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['complete.after-fact'],
         recovery: 'arc-completed written, its terminal snapshot not: the next start publishes the terminal snapshot (the completion still active, the fact is not written again) and the run ends complete',
+      },
+    },
+  },
+  {
+    // A reached milestone's walk runs in a child (test/fixtures/walk-child.ts); recovery runs, then (the scheduler's start)
+    // settleWalks and the walk again: a running walk resumes as the same job from its recorded start. Each label occurs once.
+    row: WALK_JOB,
+    test: 'test/walk-job.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['walk.after-started'],
+        recovery: 'walk-started durable, nothing brought up: the job resumes as walk-1 from its recorded start (no second capture), brings the product up on its recorded ports, asks once; one walk-ended, one milestone-passed',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['walk.after-mint'],
+        recovery: 'the report minted (its findings opened, its proposals recorded), the end not written: the job resumes, consumes its recorded call (nothing brought up, nothing asked), mints nothing twice, writes one walk-ended',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['walk.before-ended'],
+        recovery: 'the product torn down and the checkout removed, the end not written: the job resumes, consumes its call, writes one walk-ended and the pass',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['walk.after-ended', 'walk.after-passed'],
+        recovery: 'the walk ended: nothing to resume; a pass the crash cut short is written by settleWalks (the log read through the end held no active walkthrough P1); no walk is due; the model was asked once',
       },
     },
   },

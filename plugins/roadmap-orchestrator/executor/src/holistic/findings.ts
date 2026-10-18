@@ -21,7 +21,8 @@
 //   that obligation (`p1Blocking`): at admission (src/schedule/ready.ts), before green and before the ff
 //   (src/pipeline/integrate.ts `findingBlocking`).
 // - **Needs-user items (durable, derived).** A parked owner's P1 escalates at the park deadline (`finding-p1-escalated`,
-//   blocking); a P1 or P2 opened while draining raises `new-finding-draining` (blocking) once its audit ended. Both are
+//   blocking; dev.13: a milestone's escalations raise the same reason, src/walk/milestones.ts `walkItemsDue`); a P1 or P2
+//   opened while draining raises `new-finding-draining` (blocking) once its audit ended. Both are
 //   derived from the log (`findingItemsDue`) and raised once each (`raiseFindingItems`), so a crash between the finding
 //   and its item loses nothing.
 // - **Instrumentation.** `findingMetrics`: per finding `{lens, severity, gateHadPassed, disposition, merged,
@@ -123,8 +124,9 @@ export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen 
   const admission = admissionOf(journal.view.holistic().findings, key, draft.evidence);
   if (admission.kind !== 'open') return admission;
   const id = journal.view.nextFindingId();
-  const { cause: _cause, ...fields } = draft;
-  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: canonicalIds(draft.visionClauses) });
+  const { cause, ...fields } = draft;
+  // dev.13: a walkthrough finding keeps its cause, which the next walk is shown (so it re-reports the defect alike).
+  journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: canonicalIds(draft.visionClauses), ...(draft.lens === 'walkthrough' ? { cause } : {}) });
   return { kind: 'opened', id };
 }
 
@@ -371,8 +373,8 @@ export function findingItemsDue(view: JournalView, now: Date): readonly FindingI
   return out;
 }
 
-/** Whether a done raise parented by `parent` recorded an item with `reason`. */
-function raisedWith(view: JournalView, runDir: AbsPath, parent: Parent, reason: NeedsUserReason): boolean {
+/** Whether a done raise parented by `parent` recorded an item with `reason` (dev.13: the milestone escalations read it too). */
+export function raisedWith(view: JournalView, runDir: AbsPath, parent: Parent, reason: NeedsUserReason): boolean {
   const key = canonicalJson(parent);
   return view.opsOf('needsuser.raise').some((i) => canonicalJson(i.parent) === key && view.doneOf(i.op) !== null && readNeedsUser(runDir, i.expect.id)?.reason === reason);
 }

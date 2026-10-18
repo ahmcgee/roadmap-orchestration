@@ -5,7 +5,8 @@
 //
 // A unit is ready when it is active (not retired, cut, superseded, parked, held or stop-pending), every `after`
 // dependency is merged (D1; the edge follows the lineage once the successor prepared, F15), every contingent edge
-// is resolved, and its next stage is an admission stage that `admit` lets in.
+// is resolved, every milestone node it descends from passed (dev.13, src/walk/node.ts), and its next stage is an
+// admission stage that `admit` lets in.
 //
 // M3 (B3): two facts about a unit come from its spec in force, which only the pipeline reads (`SpecFacts`,
 // src/pipeline/reproduce.ts `specFacts`): whether it is a vacuity repair that reproduces its mutant first (its first
@@ -33,6 +34,7 @@ import { lineageMembers } from '../input/envelope.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, knownDefectsOf, priorityOf } from '../input/plan.ts';
 import { judgmentSeat, decidedBy } from '../pipeline/transitions.ts';
 import type { Backend, JudgmentRole, RoutingTable } from '../routing/types.ts';
+import { milestoneEdges, milestonePassedSeq, milestoneWaits } from '../walk/node.ts';
 import { effectiveDependency } from './graph.ts';
 import {
   ADMISSION_STAGES, type Admission, type AdmissionConstraint, type AdmissionStage, type Admit, type AdmitInput, type ChainStage, type CommandScope,
@@ -198,9 +200,10 @@ function knownDefectHold(view: JournalView, plan: PlanM1, unit: UnitId): Extract
 
 /**
  * The seq of the fact that put the unit into its current wait: its decided stage-outcome; before one, the
- * latest of its addition to the plan, its dependencies' publications and its resolved contingent edges.
+ * latest of its addition to the plan, its dependencies' publications, its resolved contingent edges and (dev.13) the
+ * passes of the milestone nodes it descends from.
  */
-function waitStartSeq(view: JournalView, unit: PlanUnit): number {
+function waitStartSeq(view: JournalView, plan: PlanM1, unit: PlanUnit): number {
   const decided = view.decidedSeq(unit.id);
   if (decided !== null) return decided;
   let start = view.addedSeq(unit.id);
@@ -208,6 +211,7 @@ function waitStartSeq(view: JournalView, unit: PlanUnit): number {
   const deps = new Set(unit.after.map((d) => effectiveDependency(view, d)));
   for (const p of view.publications()) if (deps.has(p.unit)) start = Math.max(start, p.seq);
   for (const e of unit.contingent) start = Math.max(start, view.edgeResolved(e.id)?.seq ?? 0);
+  for (const m of milestoneEdges(plan).get(unit.id) ?? []) start = Math.max(start, milestonePassedSeq(view, m) ?? 0);
   return start;
 }
 
@@ -219,7 +223,7 @@ export function rankOf(view: JournalView, plan: PlanM1, id: UnitId): Rank {
   const planIndex = plan.units.findIndex((u) => u.id === id);
   if (planIndex < 0) throw new Error(`rank of unit ${id}, which the plan in force does not list`);
   const unit = plan.units[planIndex] as PlanUnit;
-  const start = waitStartSeq(view, unit);
+  const start = waitStartSeq(view, plan, unit);
   const bypassMerges = view.publications().filter((p) => p.unit !== id && p.seq > start).length;
   return { unit: id, priority: priorityOf(unit), origin: unit.origin ?? 'planned', waitStartSeq: start, bypassMerges, promoted: bypassMerges >= PROMOTION_BYPASS, planIndex };
 }
@@ -232,10 +236,14 @@ export type ReadyInput = Omit<AdmitInput, 'unit' | 'stage'> & Readonly<{ routing
 
 export type ReadyUnit = Readonly<{ unit: PlanUnit; stage: AdmissionStage; rank: Rank }>;
 
-/** D1: every `after` dependency, followed to its lineage head once that prepared (F15), is merged; every contingent edge resolved. */
-function dependenciesMet(view: JournalView, unit: PlanUnit): boolean {
+/**
+ * D1: every `after` dependency, followed to its lineage head once that prepared (F15), is merged; every contingent edge
+ * resolved; (dev.13) no milestone node it descends from is unpassed (`waits`, src/walk/node.ts `milestoneWaits`).
+ */
+function dependenciesMet(view: JournalView, unit: PlanUnit, waits: ReadonlyMap<UnitId, readonly unknown[]>): boolean {
   return unit.after.every((d) => view.unit(effectiveDependency(view, d)).status === 'retired')
-    && unit.contingent.every((e) => view.edgeResolved(e.id) !== null);
+    && unit.contingent.every((e) => view.edgeResolved(e.id) !== null)
+    && !waits.has(unit.id);
 }
 
 /**
@@ -246,7 +254,8 @@ export function ready(input: ReadyInput): readonly ReadyUnit[] {
   const { view, plan } = input;
   const admit = admitter(input.routing, input.spec);
   const out: ReadyUnit[] = [];
-  for (const unit of plan.units.filter((u) => dependenciesMet(view, u))) {
+  const waits = milestoneWaits(view, plan);
+  for (const unit of plan.units.filter((u) => dependenciesMet(view, u, waits))) {
     const u = view.unit(unit.id);
     if (u.status !== 'active') continue;
     const next = nextStage(u, input.spec(unit).reproduces);

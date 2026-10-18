@@ -1,0 +1,10 @@
+{
+  "walkthrough": {
+    "mcp": {
+      "playwright": {
+        "command": "playwright-mcp",
+        "args": ["--headless", "--isolated", "--browser", "chromium", "--output-dir", "{evidence}", "--viewport-size", "{viewport}"]
+      }
+    }
+  }
+}

@@ -344,17 +344,22 @@ function inScope(rel: string): boolean {
 }
 
 function noModelIds(run: Run): Verdict {
+  return modelIdHits(run.product, run.arcs);
+}
+
+/** `no-model-ids` over the product's arcs: each run dir (in scope) and each ref's tree (M5 too). */
+export function modelIdHits(product: AbsPath, arcs: readonly ArcRef[]): Verdict {
   const hits: string[] = [];
   let checked = 0;
   const scan = (where: string, text: string): void => {
     checked += 1;
     for (const model of MODEL_IDS) if (text.includes(model)) hits.push(`${model} in ${where}`);
   };
-  const common = gitCommonDir(run.product);
-  for (const ref of run.arcs) {
+  const common = gitCommonDir(product);
+  for (const ref of arcs) {
     const dir = runDir(common, ref.arc);
     for (const f of filesUnder(dir)) if (inScope(relative(dir, f)) && statSync(f).size < 64 * 1024 * 1024) scan(f, readFileSync(f, 'utf8'));
-    for (const p of git(run.product, ['ls-tree', '-r', '--name-only', ref.commit]).split('\n').filter((x) => x !== '')) scan(`${ref.arc}:${p}`, git(run.product, ['show', `${ref.commit}:${p}`]));
+    for (const p of git(product, ['ls-tree', '-r', '--name-only', ref.commit]).split('\n').filter((x) => x !== '')) scan(`${ref.arc}:${p}`, git(product, ['show', `${ref.commit}:${p}`]));
   }
   return { pass: hits.length === 0, detail: hits.length > 0 ? hits.join('; ') : `${checked} files scanned` };
 }

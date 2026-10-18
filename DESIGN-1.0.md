@@ -1000,7 +1000,9 @@ browser for `browser` journeys) uses it along the milestone's journeys. A break 
 **node** unpassed, so its DAG descendants wait; a deviation is a P2 the checkpoint repairs alongside; polish the
 walkthrough authors as units, which code admits and a **polish judge** keeps or drops by walking before and after. Rounds
 are bounded (`limits.walkRounds`). A settled milestone promotes the **demo**, a stable instance the owner picks up when
-they choose. Records and contracts: executor/SCHEMAS.md "dev.13"; plan: `/claude-state/plans/dev13-implementation.md`.
+they choose: `refs/roadmap/demo` names it, the supervisor keeps one per host on ports that never change, swaps a new
+version in only once it is up and seeded beside the old one (a version that does not come up is a walkthrough P1 and the
+old one keeps serving), and the owner acts with `roadmap demo up | down | hold | release`. Records and contracts: executor/SCHEMAS.md "dev.13"; plan: `/claude-state/plans/dev13-implementation.md`.
 
 **Phase 0 plans them.** The architect marks a milestone wherever units combine into an end-to-end experience, and plans
 its **design unit** (risk `high`) ahead of its units: every milestone unit runs `after` it, and the shared Phase-0 rows
@@ -1010,8 +1012,11 @@ restarting, so the language stays one across milestones. The owner steers by sup
 true}`) or asking for a mediated one at Phase 0. Milestones on a plan without the holistic layer are the shared row
 `milestones-need-holistic` (start, `apply`, `phase0 check`); `walk-tools-missing` refuses a bring-up program or a
 `browser` journey's walkthrough MCP server the environment lacks, fixed in the project's devcontainer. When a
-milestone has a `browser` journey and Anthropic's `frontend-design` skill is absent from the architect's skill list, the
-architect recommends the owner install it among Phase 0's questions, never a refusal. Milestones change only by
+milestone has a `browser` journey and the repo has no committed `frontend-design` project skill, the architect recommends
+among Phase 0's questions that the owner vendor Anthropic's into `.claude/skills/` (a plugin, at any scope, does not reach a
+unit worktree's project-only session), never a refusal. Builds load the project's skills; a milestone unit's plan-check,
+build and gate read its milestones' design references as documents, and a build in a milestone with a `browser` journey
+gets the walkthrough MCP servers. Milestones change only by
 `apply`, an edit class that drains nothing; a walked milestone keeps its units and design, and one being walked waits
 for its walk to end. The vision gains `## Experience standards` (clause kind `experience`: outcomes and refusals, never
 mechanisms), distilled only when the world has a human-facing surface.

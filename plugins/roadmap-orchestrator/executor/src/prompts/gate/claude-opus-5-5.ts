@@ -46,6 +46,7 @@
 // section names a model on every subagent call, gives mechanical describers the executor's substitutions, keeps deviations
 // verbatim, and asks for the cluster map code checks. Under the threshold the prompt is unchanged but for one line saying
 // clusters is null.
+// dev.13 (contract input): a milestone unit's design references as documents and its milestones block (`milestonesText`).
 // dev.13 (owner 2026-10-18; written against "Prompting Claude Opus 5.5" and "Prompting best practices" alone): the gate
 // runs as an acting judge with a shell in a throwaway checkout of the unit's tip. <your_checkout> (GATE_CHECKOUT) says what
 // is and is not its job: the lanes are the test verdict and are in front of it, broad testing is not its work, and when it
@@ -54,7 +55,7 @@
 // approve still stands on the spec, diff and lanes, and a finding must still localise. The Sonnet and Haiku rows derive.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
-  boundedDiffText, bullets, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
+  boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
 
 /**
@@ -178,11 +179,12 @@ export const PROMPT: PromptModule<'gate'> = {
   schema: GATE_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff',
+    'checks', 'escalation', 'largeDiff', 'milestones',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
+    ...milestoneDocuments(i.milestones),
     targetDocument(i.target),
   ])}
 
@@ -192,7 +194,7 @@ ${rulingsText(i.rulings)}
 
 <reference_index>
 ${referenceIndexText(i.index)}
-</reference_index>
+</reference_index>${milestonesText(i.milestones)}
 
 <direction_text>
 ${i.direction}

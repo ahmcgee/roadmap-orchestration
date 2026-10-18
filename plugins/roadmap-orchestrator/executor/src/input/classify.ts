@@ -1517,6 +1517,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'close-admissions':
       case 'flow-decide':
       case 'flow-request':
+      case 'demo':
         return NONE;
       // M3 (plan "Commands"): `reverse` restores revisions of any artifact; `steer` and `merge-in` touch their unit.
       case 'reverse':
