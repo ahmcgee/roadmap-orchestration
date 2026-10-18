@@ -21,15 +21,17 @@ A change is not done until the ladder passes, in order (from `executor/`):
 2. `npm test` (`node --test --test-concurrency=8 test/*.test.ts`: eight files at a time, each about one runnable
    process wide on average; then `test/serial/*.test.ts` alone, one file at a time: the files that fan out across the host (the
    crash matrices, sized by `FANOUT` in `test/helpers/fanout.ts`, and the pool, probe and resource crash files), the
-   tests needing a calm host (the upgrade test, the m4a fake sessions) and `pressure`, which saturates the host on
-   purpose). Both tiers keep runnable load within the host's cpus: a saturated host fails timing-bound tests, so a
+   tests needing a calm host (the upgrade test, the m4a fake sessions), the real-browser walk test (`walk-browser`, which
+   needs the devcontainer's Playwright MCP and Chromium) and `pressure`, which saturates the host on purpose). Both tiers keep runnable load within the host's cpus: a saturated host fails timing-bound tests, so a
    file that runs eight or more cells of real processes at once goes in the serial tier, never the parallel one.
 3. `node evals/probe.ts`: real CLIs, pennies
-3.5. Role evals (`evals/roles/`, `node evals/roles/run.ts gate --set dev --n 3`): paid, path-triggered (`node
+3.5. Role evals (`evals/roles/`, `node evals/roles/run.ts <gate|walkthrough|polishJudge> --set dev --n 3`, with `--cap`):
+   paid, path-triggered (`node
    evals/roles/triggers.ts <base>` names the roles a batch's changes trigger; none triggered, the rung is skipped), once per
    merged batch, never per worktree agent. The holdout set (untracked `evals/roles/holdout/`, `--set holdout --compare
    <dev summary.json>`) runs only at acceptance.
-4. The paid fixture (`evals/m1/`): once per merged batch, never per worktree agent
+4. The paid fixture (`evals/m1/`; `evals/m5/`, the UI end to end, when milestones, walks, design units or the demo
+   changed): once per merged batch, never per worktree agent
 
 Tests are a hard line: never skip, weaken or drop one. The integrated tier uses real processes and real git.
 If a test cannot pass, stop and say so. `contain.cgroup-real` is reported NOT RUN on this host (cgroup v2 is
