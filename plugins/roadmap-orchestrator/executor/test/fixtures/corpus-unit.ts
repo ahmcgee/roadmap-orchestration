@@ -22,7 +22,7 @@ import { type FileSet, commitAll, writeFiles } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { witnessLaneArgv, writeWitnessControl } from '../helpers/witness.ts';
 import { editPlan, planDirOf } from './route-common.ts';
-import { type ArcDescriptor, setupArc } from './unit-common.ts';
+import { type ArcDescriptor, type UnitSpecJson, setupArc } from './unit-common.ts';
 
 export type CorpusUnitArc = Readonly<{ d: ArcDescriptor; planDir: string; pin: CorpusPin; pinSha256: string; baseline: string }>;
 
@@ -35,11 +35,13 @@ export type CorpusUnitOptions = Readonly<{
   phase0?: Readonly<Record<string, unknown>>;
   /** Overrides of the sample corpus (more docs and rules). */
   corpus?: Partial<CorpusSpec>;
+  /** The arc's units (unit-common's; absent: u1 alone). */
+  units?: readonly UnitSpecJson[];
 }>;
 
 /** The corpus arc over u1 with `steps` scripted; nothing recorded yet (`contextFor` records revision 1). */
 export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOptions = {}): Promise<CorpusUnitArc> {
-  const d = setupArc({ steps });
+  const d = setupArc({ steps, ...(opts.units === undefined ? {} : { units: opts.units }) });
   const planDir = planDirOf(d);
   const corpus = sampleCorpus(opts.corpus);
   writeFiles(d.repo, { ...corpus.files, '.roadmap/vision.json': `${JSON.stringify(visionRecord(corpus.files[VISION_PATH]!), null, 2)}\n`, ...opts.baseline });

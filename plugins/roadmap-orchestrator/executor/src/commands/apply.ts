@@ -708,7 +708,7 @@ export type ApplyVerdict =
   /** `smoke`: backends the new routings seat that the routing in force did not; they must pass a smoke first. */
   /** `corpusFiles`: a corpus arc's corpus files as its pin re-derived them (kept before the commit, M4a). */
   /** `rulings`: the ids its `--ruling` records land (I2), for the commit's proposer; `numbered`: each `C-?` record's assigned id. */
-  /** `advisories` (scope growth, 2026-10-15): Phase-0 rows 10's and 13's, which never refuse (the receipt and the dry run list them). */
+  /** `advisories` (scope growth, 2026-10-15): Phase-0 rows 10's, 13's and 14's, which never refuse (the receipt and the dry run list them). */
   /** `rebuild`: the proposal built again under the fence. */
   | Readonly<{
     kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[]; corpusFiles: readonly SourceFile[];

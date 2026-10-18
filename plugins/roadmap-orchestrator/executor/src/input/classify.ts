@@ -69,6 +69,15 @@
 //   plan-check shape (E)        `plan-check-shape` (no drain)
 //   derived files (2026-10-16)  `derived` (no drain; the dispatch check re-pins each unit's widening, src/input/derived.ts)
 //
+// dev.13 (SCHEMAS.md "dev.13"):
+//   milestones                  `milestones` (no drain), an architect `apply` only (`milestoneRows`): a walked milestone
+//                               (a `walk-started` names it) is never removed and keeps its units and design; one being
+//                               walked does not change until its walk ends; a milestone added or whose units change lists a
+//                               unit still to merge; on every revision no milestone lists a cut unit. Milestones without
+//                               the holistic layer are refused `milestones-need-holistic` before routing resolves; a first
+//                               milestone added (or the last removed) moves the walk seats into (out of) force, so the
+//                               revision's routing is checked and smoked (`routingRows`)
+//
 // M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
 // it may touch:
 //   rulings ledger + sidecars   executor-owned after start (A3): only `rule`, `apply --ruling` (M4a rev 3, I2: the
@@ -148,7 +157,8 @@ import {
 import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
-  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, knownDefectsOf, parsePlan, planCheckShapeOf, planFieldValue, priorityOf, reservedUnitIdReason,
+  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, hasMilestones, knownDefectsOf, milestonesNeedHolistic, milestonesOf, parsePlan, planCheckShapeOf,
+  planFieldValue, priorityOf, reservedUnitIdReason,
 } from './plan.ts';
 
 /**
@@ -759,26 +769,17 @@ export function classify(input: ClassifyInput): Classified {
   if (planCheckShapeOf(cur) !== planCheckShapeOf(plan)) changes.push({ type: 'plan-check-shape' });
   if (!same(derivedOf(cur), derivedOf(plan))) changes.push({ type: 'derived' });
 
-  // Routing: the plan's layer, then each unit's (`route`, M3).
+  // dev.13: the milestones (an architect `apply` only), and the holistic layer they need before any routing resolves
+  // (the walk roles are in force only in a holistic arc).
+  const needsHolistic = milestonesNeedHolistic(plan);
+  if (needsHolistic) reasons.push(canonicalJson({ kind: 'milestones-need-holistic' }));
+  milestoneRows(view, cur, plan, proposer, changes, reasons);
+
+  // Routing: the plan's layer, then each unit's (`route`, M3); dev.13: milestones added to a plan without any, or all
+  // removed, move the walk seats in or out of force (no `routing` change, as for `holistic`: the arc's rev moves with
+  // its plan), so the new routing is checked and its newly seated backends smoked.
   const routings: ResolvedRouting[] = [];
-  if (!same(cur.routing, plan.routing)) {
-    const resolved = planRouting(input.routing, plan);
-    if (resolved.rev !== planRouting(input.routing, cur).rev) {
-      routings.push(resolved);
-      changes.push({ type: 'routing', routingRev: resolved.rev });
-    }
-  }
-  for (const unit of plan.units) {
-    const was = cur.units.find((u) => u.id === unit.id);
-    if (same(was?.routing, unit.routing)) continue;
-    const resolved = unitRouting(input.routing, plan, unit);
-    const unsupported = unsupportedSeats(resolved, unit.id).filter((r) => r.kind === 'unsupported-routing' && (UNIT_ROLES as readonly string[]).includes(r.role));
-    reasons.push(...unsupported.map((r) => canonicalJson(r)));
-    if (was === undefined || unsupported.length > 0 || resolved.rev === unitRouting(input.routing, cur, was).rev) continue;
-    routings.push(resolved);
-    changes.push({ type: 'routing', routingRev: resolved.rev, unit: unit.id });
-    scoped.add(unit.id);
-  }
+  if (!needsHolistic) routingRows(input, cur, plan, changes, routings, scoped, reasons);
 
   // Limits (M3): never below what a unit has spent.
   const limitsChecked = new Set<UnitId>();
@@ -965,6 +966,84 @@ function knownDefectRows(
     return;
   }
   if (!same(was, now)) changes.push({ type: 'known-defects' });
+}
+
+/**
+ * The routing rows (M3 `route`): the plan's layer, then each unit's, re-resolved; the unit seats an apply cannot support
+ * refused. dev.13: a revision that gives a plan its first milestones, or removes its last, moves the walk seats in or out
+ * of force without a layer edit; its routing is pushed for the routing check and the smoke of newly seated backends.
+ */
+function routingRows(
+  input: ClassifyInput, cur: PlanM1, plan: PlanM1, changes: PlanChange[], routings: ResolvedRouting[], scoped: Set<UnitId>, reasons: string[],
+): void {
+  if (!same(cur.routing, plan.routing)) {
+    const resolved = planRouting(input.routing, plan);
+    if (resolved.rev !== planRouting(input.routing, cur).rev) {
+      routings.push(resolved);
+      changes.push({ type: 'routing', routingRev: resolved.rev });
+    }
+  }
+  for (const unit of plan.units) {
+    const was = cur.units.find((u) => u.id === unit.id);
+    if (same(was?.routing, unit.routing)) continue;
+    const resolved = unitRouting(input.routing, plan, unit);
+    const unsupported = unsupportedSeats(resolved, unit.id).filter((r) => r.kind === 'unsupported-routing' && (UNIT_ROLES as readonly string[]).includes(r.role));
+    reasons.push(...unsupported.map((r) => canonicalJson(r)));
+    if (was === undefined || unsupported.length > 0 || resolved.rev === unitRouting(input.routing, cur, was).rev) continue;
+    routings.push(resolved);
+    changes.push({ type: 'routing', routingRev: resolved.rev, unit: unit.id });
+    scoped.add(unit.id);
+  }
+  if (same(cur.routing, plan.routing) && hasMilestones(cur) !== hasMilestones(plan)) {
+    const resolved = planRouting(input.routing, plan);
+    if (resolved.rev !== planRouting(input.routing, cur).rev) routings.push(resolved);
+  }
+}
+
+/**
+ * dev.13: the milestones edit class (`milestones`, no drain: the milestone node gates readiness and a walk reads the plan
+ * in force when it starts, so nothing running reads them). Only an architect `apply` changes them (the checkpoint cannot:
+ * backlog). A milestone a walk started on stays in the plan (its walk facts name it) with the units and design it was
+ * walked on; one being walked (started, not ended) does not change until its walk ends; a milestone added, or whose units
+ * change, lists a unit still to merge (it is reached on the publication that retires its last unit). On every revision, by
+ * any proposer: no milestone lists a cut unit, which never merges, so the milestone would never be reached and its
+ * descendants would wait on it for ever.
+ */
+function milestoneRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: PlanChange[], reasons: string[]): void {
+  const cut = new Set(plan.units.filter((u) => u.cut !== undefined).map((u) => u.id));
+  for (const m of milestonesOf(plan)) {
+    const on = m.units.filter((u) => cut.has(u));
+    if (on.length > 0) reasons.push(`milestone ${m.id} lists ${on.join(', ')}, cut: a cut unit never merges, so the milestone would never be reached; drop it from the milestone's units in the same apply`);
+  }
+  const was = milestonesOf(cur);
+  const now = milestonesOf(plan);
+  if (same(was, now)) return;
+  if (proposer.type !== 'apply') {
+    reasons.push(`the milestones change only through an architect \`apply\`, not a ${proposer.type}`);
+    return;
+  }
+  const walks = view.walkFacts().flatMap((x) => (x.fact.kind === 'walk-started' ? [x.fact] : []));
+  const ended = new Set(view.walkFacts().flatMap((x) => (x.fact.kind === 'walk-ended' ? [x.fact.job] : [])));
+  const before = reasons.length;
+  for (const m of was) {
+    const started = walks.filter((w) => w.milestone === m.id);
+    const next = now.find((x) => x.id === m.id);
+    if (started.length === 0 || same(m, next)) continue;
+    const jobs = started.map((w) => w.job).join(', ');
+    const open = started.find((w) => !ended.has(w.job));
+    if (next === undefined) reasons.push(`milestone ${m.id} has been walked (${jobs}); it cannot be removed`);
+    else if (open !== undefined) reasons.push(`milestone ${m.id} is being walked (${open.job}); edit it once the walk ends`);
+    else if (!same(m.units, next.units) || !same(m.design, next.design)) {
+      reasons.push(`milestone ${m.id} has been walked (${jobs}): its units and design are fixed; plan another milestone for more`);
+    }
+  }
+  const merged = (u: UnitId): boolean => view.unit(u).status === 'retired';
+  for (const m of now) {
+    const prior = was.find((x) => x.id === m.id);
+    if ((prior !== undefined && same(prior.units, m.units)) || walks.some((w) => w.milestone === m.id)) continue;
+    if (m.units.every(merged)) reasons.push(`milestone ${m.id}: every unit it lists has merged, so no publication would reach it; list a unit still to merge`);
+  }
+  if (reasons.length === before) changes.push({ type: 'milestones' });
 }
 
 type ObligationRows = Readonly<{
@@ -1224,7 +1303,7 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'known-defects':
       case 'plan-check-shape':
       case 'derived':
-      // dev.13 step 0: a milestones edit drains nothing yet; the edit class (agent B) decides what it drains.
+      // dev.13: a milestones edit drains nothing (the node gates readiness; a walk reads the plan in force when it starts).
       case 'milestones':
         break;
       case 'unit-added':
