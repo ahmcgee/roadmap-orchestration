@@ -605,11 +605,66 @@ export function repairTurnOf(runDir: AbsPath, inv: InvocationId): RepairTurn | n
  * A call lost with its runner is retried once, uncharged, as the op's next invocation, as a unit judgment's is.
  */
 export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise<BackendCallOutcome> {
-  const { seat, triple, routingRev } = arcSeat(ctx, spec.role);
-  const { session } = spec;
+  const seat = arcSeat(ctx, spec.role);
   const schemaText = canonicalJson(spec.schema);
-  const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
-  const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, ...judgmentSurface(ctx, spec.system, spec.evidenceDirs) };
+  return callJobRole(ctx, spec, seat, {
+    kind: 'claude-judgment', role: spec.role, triple: seat.triple, session: spec.session, schemaText, ...judgmentSurface(ctx, spec.system, spec.evidenceDirs),
+  });
+}
+
+/**
+ * One acting-judge call of a job (dev.13): a walk role (`WalkRole`) acting in `cwd`, the detached checkout of the product
+ * it uses. `mcpConfig`: the `--mcp-config` text (src/backends/mcp.ts `walkMcpConfig`, its `{evidence}` the session's
+ * evidence dir), or null for no MCP server. `evidenceDirs`: the dirs it reads or writes outside `cwd` (its evidence dir,
+ * the walk evidence a polish judge compares).
+ */
+export type ActingJudgeCallSpec = Readonly<{
+  job: JobId;
+  role: WalkRole;
+  attempt: number;
+  system: string;
+  rendered: string;
+  schema: JsonValue;
+  cwd: AbsPath;
+  evidenceDirs: readonly AbsPath[];
+  mcpConfig: string | null;
+  deadlineAt: IsoTime;
+  /** A fresh session, or (the repair turn, `repairTurnOf`) the refused answer's own, resumed. */
+  session: JudgmentSession;
+}>;
+
+/**
+ * An acting-judge call through `invoke` (argv.ts `claude-acting-judge`): the arc role's seat, spawned and retried as an
+ * arc-role call (`callArcRole`). Its `--add-dir` surface is a judgment's (`judgmentReadDirs`: the repository, the run dir,
+ * then `evidenceDirs`); its system text goes in by `--append-system-prompt`, so Claude Code's default prompt, which names
+ * those dirs, stays. The MCP config is kept content-addressed under the run dir's inputs (`<sha256>.mcp.json`), as the
+ * schema and prompt are, and named by path.
+ */
+export async function callActingJudge(ctx: StageContext, spec: ActingJudgeCallSpec): Promise<BackendCallOutcome> {
+  const seat = arcSeat(ctx, spec.role);
+  return callJobRole(ctx, spec, seat, actingJudgeCall(ctx, spec, seat.triple));
+}
+
+/** The acting-judge `BackendCall` of `spec` on `triple`, its MCP config kept (`callActingJudge`). */
+export function actingJudgeCall(
+  ctx: Readonly<{ repo: AbsPath; runDir: AbsPath }>, spec: ActingJudgeCallSpec, triple: ClaudeTriple,
+): Extract<BackendCall, { kind: 'claude-acting-judge' }> {
+  return {
+    kind: 'claude-acting-judge', role: spec.role, triple, session: spec.session, schemaText: canonicalJson(spec.schema), system: spec.system,
+    mcpConfig: spec.mcpConfig === null ? null : inputFile(ctx.runDir, spec.mcpConfig, MCP_CONFIG_INPUT), evidenceDirs: judgmentReadDirs(ctx, spec.evidenceDirs),
+  };
+}
+
+/** The extension an acting judge's `--mcp-config` file is kept under in the run dir's inputs. */
+export const MCP_CONFIG_INPUT = 'mcp.json';
+
+/** The spawn of a job's arc-role call `c` (a judgment or an acting judge), shared by `callArcRole` and `callActingJudge`. */
+async function callJobRole(
+  ctx: StageContext, spec: Readonly<{ job: JobId; role: ArcRole; attempt: number; rendered: string; cwd: AbsPath; deadlineAt: IsoTime; session: JudgmentSession }>,
+  { seat, routingRev }: ReturnType<typeof arcSeat>, c: Extract<BackendCall, { kind: 'claude-judgment' | 'claude-acting-judge' }>,
+): Promise<BackendCallOutcome> {
+  const { session } = spec;
+  const schemaPath = inputFile(ctx.runDir, `${c.schemaText}\n`, 'schema.json');
   const stdin = inputFile(ctx.runDir, promptBytes(c, spec.rendered), 'prompt.txt');
   const env = backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({

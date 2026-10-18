@@ -5,8 +5,9 @@
 //
 //   1. input        plan schema (nothing else can run without a plan), legacy `.roadmap/`, the rest of
 //                   `plan-invalid` (spec files, baseline ancestry, resource names, over capacity)
-//   2. environment  worktree root, lanes, routing, host residues other than the arc's own (A9)
-//                                                                            (pure: no effect yet)
+//   2. environment  worktree root, lanes, walk tools (dev.13, src/preflight/walktools.ts: it starts each walkthrough
+//                   MCP server for a handshake and stops it), routing, host residues other than the arc's own (A9)
+//                                                                            (no effect on the arc yet)
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
 //                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
@@ -82,6 +83,7 @@ import type { ArcRoleSet, ProfileName } from '../routing/types.ts';
 import { type Ruling, loadRulings, parseRulings } from '../spec/rulings.ts';
 import { SpecFileError, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
 import { laneRows } from './lanerows.ts';
+import { walkToolsCheck } from './walktools.ts';
 import { type SmokePark, type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeOutages, smokeRejections } from './smoke.ts';
 import type { StartupCheck, StartupContext, StartupRejection } from './startup.ts';
 
@@ -624,6 +626,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   const environment = [
     ...(await worktreeRootCheck.check(context)),
     ...(await specLaneCheck(input.env).check(context)),
+    ...(await walkToolsCheck(input.env, readRepoConfig(input.repo)).check(context)),
     ...routingRows,
     ...(await residueCheck(context)),
   ];

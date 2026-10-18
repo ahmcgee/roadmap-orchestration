@@ -4,8 +4,9 @@
 //
 //   --plan      the files as a fresh start reads them: `runChecks`' pure rows (the `.roadmap/` layout, plan-invalid, the
 //               revisioned inputs, routing, lanes), `holistic-needs-corpus` (H4: a holistic plan targets a corpus), then
-//               the shared Phase-0 rows (src/phase0/rows.ts) in full: the closure rows 1-6, the forge, the chain as a
-//               fresh start's and the tree.
+//               dev.13's `walk-tools-missing` (src/preflight/walktools.ts: the milestones' bring-up programs and
+//               walkthrough MCP servers, handshaken), then the shared Phase-0 rows (src/phase0/rows.ts) in full: the
+//               closure rows 1-6, the forge, the chain as a fresh start's and the tree.
 //   --from-ref  every input by the digests the arc's verified `refs/roadmap/<arc>` recorded (the plan in force at its
 //               high-water and its revision's manifest: pin, guide, Phase-0 record, issue capture, obligations, vision,
 //               ledger), never the live files; the closure rows 1-6 only (re-derivation reads the source at the pin's
@@ -24,6 +25,7 @@ import {
 } from '../phase0/rows.ts';
 import { gitCommonDir, legacyRoadmapDir, loadPlan, planInvalidCheck, readRepoConfig, revisionInputRows, routingCheck, specLaneCheck } from '../preflight/checks.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
+import { walkToolsCheck } from '../preflight/walktools.ts';
 import { selectProfile } from '../routing/layers.ts';
 import { parseRulings } from '../spec/rulings.ts';
 import { sliceCandidates } from '../holistic/vision.ts';
@@ -65,7 +67,8 @@ async function fromPlan(repo: AbsPath, planFile: AbsPath): Promise<Checked> {
   const p0 = phase0InputOf(files, config);
   const outcome = phase0Rows(p0, FRESH_START);
   return {
-    rows: [...holisticNeedsCorpus(plan), ...(await routingCheck.check(context)), ...(await specLaneCheck(process.env).check(context)), ...outcome.rows],
+    rows: [...holisticNeedsCorpus(plan), ...(await routingCheck.check(context)), ...(await specLaneCheck(process.env).check(context)),
+      ...(await walkToolsCheck(process.env, config).check(context)), ...outcome.rows],
     input: p0,
     advisories: outcome.advisories,
   };

@@ -89,4 +89,29 @@ describe('argv', () => {
     );
     assert.equal(exitCode('claude-implementer-resume'), '0');
   });
+  it('claude acting judge, fresh with MCP servers and resumed without (dev.13)', () => {
+    // No capture: verified by hand against Claude Code 2.1.301 (argv.ts ACTING_JUDGE_TOOLS); the probe runs it for real.
+    const id = judgmentSessionId('7b0c2f4e-1d3a-4c5b-9e8f-0a1b2c3d4e5f');
+    const mcp = absPath('/run/inputs/0f.mcp.json');
+    const dirs = [absPath('/repo'), absPath('/run'), absPath('/run2/evidence/jobs/walk-1')];
+    const call = {
+      kind: 'claude-acting-judge', role: 'walkthrough', triple: CLAUDE, schemaText: '{"type":"object"}', system: SYSTEM,
+      session: { backend: 'claude', mode: 'fresh', id }, mcpConfig: mcp, evidenceDirs: dirs,
+    } as const;
+    assert.deepEqual(backendArgv(call), [
+      'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--mcp-config', mcp,
+      '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',
+      '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id', id,
+      '--append-system-prompt', SYSTEM, '--add-dir', '/repo', '--add-dir', '/run', '--add-dir', '/run2/evidence/jobs/walk-1',
+    ]);
+    // The gate's: no server loads, and the resumed repair turn keeps every other flag.
+    const gate = backendArgv({ ...call, role: 'gate', mcpConfig: null, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: [] });
+    assert.deepEqual(gate, [
+      'claude', '-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config',
+      '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',
+      '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--resume', id, '--append-system-prompt', SYSTEM,
+    ]);
+    assert.ok(!gate.includes('--disable-slash-commands'), 'project skills load');
+    assert.equal(promptBytes(call, 'Walk it.'), 'Walk it.');
+  });
 });
