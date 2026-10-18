@@ -8,7 +8,7 @@
 // - A planted slot: `caught` with a finding of at least the expected class (`breaks` for W1, W5, W6, W8 to W11;
 //   `deviates` for the rest, families.ts); `misclassed` when its findings are all `deviates` and `breaks` was expected; `missed` with none;
 //   `lucky` when caught but its journey shows no exercise in the transcript (no page visited, command run or request
-//   sent, outside Read, Grep and Glob). A `breaks` finding on a slot expecting `deviates` is caught and false-blocking.
+//   sent, outside Read, Grep and Glob, and no acting call that produced an evidence file the finding cites). A `breaks` finding on a slot expecting `deviates` is caught and false-blocking.
 // - A twin slot: `false-positive` with any finding on it (false-blocking too when one is `breaks`), else `clean`.
 // - Stray findings are counted, and a stray `breaks` is false-blocking: the clean product has nothing that breaks.
 // - Polish proposals are counted (the polish rate), never false positives.
@@ -45,6 +45,14 @@ export function exercised(t: Transcript, patterns: readonly string[]): boolean {
   return t.calls.some((c) => !INSPECT.has(c.name) && res.some((re) => re.test(`${JSON.stringify(c.input)}\n${c.result ?? ''}`)));
 }
 
+/** Whether an acting tool call (outside Read, Grep and Glob) produced one of the evidence files a finding cites: a
+ * session that clicks through to a page inside a browser script never names its route, but it names the screenshot it
+ * takes there. Reading a file is not producing it, so source inspection never counts. */
+export function producedEvidence(t: Transcript, evidence: readonly string[]): boolean {
+  const names = evidence.map((e) => e.split('/').slice(-2).join('/')).filter((n) => n.length > 0);
+  return t.calls.some((c) => !INSPECT.has(c.name) && names.some((n) => JSON.stringify(c.input).includes(n)));
+}
+
 /** How well `finding` localises to `slot`: 0 when it does not. */
 export function localise(finding: WalkthroughOutput['findings'][number], slot: SlotKey): number {
   if (!slot.journeys.includes(finding.journey)) return 0;
@@ -79,7 +87,7 @@ export function gradeWalk(slots: readonly SlotKey[], t: Transcript, answer: Walk
     const mine = answer.findings.flatMap((f, k) => (owner[k] === i ? [k] : []));
     const classes = mine.map((k) => answer.findings[k]!.class);
     const breaks = classes.includes('breaks');
-    const ex = exercised(t, s.exercise);
+    const ex = exercised(t, s.exercise) || mine.some((k) => producedEvidence(t, answer.findings[k]!.evidence));
     if (s.state === 'twin') return { family: s.family, state: s.state, verdict: mine.length > 0 ? 'false-positive' : 'clean', falseBlocking: breaks, findings: mine, exercised: ex };
     if (mine.length === 0) return { family: s.family, state: s.state, verdict: 'missed', falseBlocking: false, findings: mine, exercised: ex };
     const reached = s.expected === 'breaks' ? breaks : true;

@@ -759,7 +759,8 @@ trial (`invalid`, with the job's reasons); a failed bring-up voids it (`bring-up
 go to a planted slot, then family order; a finding matching nothing is stray. A planted slot is `caught` with a finding of
 at least its expected class (the table above), `misclassed` when a `breaks`
 plant got only `deviates`, `missed` with nothing, and `lucky` when caught though the transcript shows no exercise of its
-journey (a page visited, a command run, a request sent: any tool traffic but Read, Grep and Glob). A `breaks` where
+journey (a page visited, a command run, a request sent: any tool traffic but Read, Grep and Glob; or an acting call that
+produced an evidence file the finding cites, as a click-through inside a browser script does). A `breaks` where
 `deviates` was expected is false-blocking. A twin with a finding is a false positive (false-blocking when `breaks`). A
 stray `breaks` is false-blocking too: the clean product has nothing that breaks. Polish proposals are counted, never
 false positives. The answer key (`<trial>/key.json`) stays in the run dir; the transcript's tool traffic is scanned for the

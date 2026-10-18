@@ -443,6 +443,12 @@ test('roles.walk-grading: caught, misclassed, lucky, false-blocking, twin false 
   assert.equal(verdict(gradeWalk(f.slots, visited, answer([byPath])), 'W5').verdict, 'caught');
   assert.equal(verdict(gradeWalk(f.slots, visited, answer([{ ...byPath, class: 'deviates', against: { type: 'vision', clause: visionClauseId('V-6') } }])), 'W5').verdict, 'misclassed');
   assert.equal(verdict(gradeWalk(f.slots, transcriptOf([], [], [`/x/${pageFile(w5.at.page)}`]), answer([byPath])), 'W5').verdict, 'lucky', 'a Read of the source is no visit');
+  // A visit inside a browser script names no route, but it names the screenshot the finding cites: that is a visit; a Read
+  // of the same file is not.
+  const shot = { ...byPath, evidence: [`${w5Journey}/04-lead.png`] };
+  const scripted = readTranscript([{ type: 'assistant', parent_tool_use_id: null, message: { id: 'ms', model: 'claude-opus-5-5', content: [{ type: 'tool_use', id: 'ts', name: 'mcp__playwright__browser_run_code_unsafe', input: { code: `async (page) => { await page.click('a'); await page.screenshot({ path: D + '${w5Journey}/04-lead.png' }); }` } }], usage: { input_tokens: 1, output_tokens: 1 } } }]);
+  assert.equal(verdict(gradeWalk(f.slots, scripted, answer([shot])), 'W5').verdict, 'caught', 'the cited screenshot was taken by acting');
+  assert.equal(verdict(gradeWalk(f.slots, transcriptOf([], [], [`/ev/${w5Journey}/04-lead.png`]), answer([shot])), 'W5').verdict, 'lucky', 'reading the screenshot is no visit');
   // A finding on another journey does not localise to the slot.
   assert.equal(verdict(gradeWalk(f.slots, visited, answer([{ ...byPath, journey: journeyId('J-8') }])), 'W5').verdict, 'missed');
 
