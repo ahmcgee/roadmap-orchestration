@@ -12,6 +12,7 @@ import { type AbsPath, type BootId, type IsoTime, type RefName, absPath, bootId,
 import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
 import { hostPath } from '../host/hostdir.ts';
 import { type BringUp, DEMO_NAME, bringUpR } from '../input/plan.ts';
+import type { DetachedProcess } from '../walk/bringup.ts';
 
 /** `<runDir>/demo.desired.json`: the executor's view of what the demo should run (`writeDesired`, src/demo/promote.ts). */
 /** The demo's ref: the promoted SHA (beside the arcs' snapshot refs; `DEMO_NAME` is no arc's). */
@@ -36,7 +37,7 @@ export type DemoDesired = Readonly<{
 }>;
 
 /** A process of a demo instance: a serve entry's, by its identity and session (the keeper stops the whole session). */
-export type DemoProcess = Readonly<{ name: ServeName; pid: number; start: number; sid: number }>;
+export type DemoProcess = DetachedProcess;
 
 /**
  * A version of the product the keeper brought up: from `slot` (a detached checkout of `sha` under `<worktreeRoot>/demo/`),

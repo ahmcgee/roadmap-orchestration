@@ -154,7 +154,7 @@ import { mergeIn } from './mergein.ts';
 import { reverse } from './reverse.ts';
 import { rule, rulingReasons } from './rule.ts';
 import { decideScope } from './scope.ts';
-import { actOnDemo, liveRepairs } from '../demo/promote.ts';
+import { actOnDemo } from '../demo/promote.ts';
 import { steer } from './steer.ts';
 
 /**
@@ -286,7 +286,7 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'scope-decide':
       return decideScope(ctx, command.id, body);
     case 'demo':
-      return actOnDemo(ctx, liveRepairs(ctx), command.id, body.act);
+      return actOnDemo(ctx, command.id, body.act);
   }
 }
 

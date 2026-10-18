@@ -1,0 +1,20 @@
+{
+  "schema": "roadmap/m5-answer-key",
+  "note": "Never staged into any tree a session is given (evals/m5/driver.ts). The plant is what check.ts grades (layout.ts PLANT); the owner simulator sees only ownerAnswers' topics and texts, and answers nothing else.",
+  "plant": {
+    "what": "Low-contrast text on the shelf's page, the entry of the reservation journey: `.book-meta` (each book's condition and arrival day) is --ink-faint #b5ab9c on --paper #fbf7ef in public/style.css, about 2.1:1 against WCAG AA's 4.5:1 for body text (vision V-10).",
+    "caught": "a walkthrough finding on the browser milestone about the contrast, resolved by a unit's publication",
+    "repaired": "the final stylesheet's `.book-meta` text computes at 4.5:1 or more against its background"
+  },
+  "ownerAnswers": [
+    { "topic": "supplying the design, or sitting in on it at Phase 0", "answer": "No. Design it yourself, against the vision and the shelf's existing look; I will look at the demo." },
+    { "topic": "the shelf's look (colours, lettering)", "answer": "Keep the paper-and-ink look of the flyers; within that, do what the vision asks." },
+    { "topic": "the frontend-design skill", "answer": "It is already committed in the repo at .claude/skills/frontend-design/, with its licence. Nothing more to do." },
+    { "topic": "the browser drive for walkthroughs (Playwright MCP, Chromium)", "answer": "Both are installed on this machine, and .roadmap/config.json names the Playwright server. Use them as they are." },
+    { "topic": "the demo", "answer": "Yes, keep a demo running as milestones settle. Do not hold it; reseed it on each promotion." },
+    { "topic": "the issue templates", "answer": "Yes, add them." },
+    { "topic": "the boot hook for restarts", "answer": "Not needed: this machine is not restarted during the arc." },
+    { "topic": "time zone for the collection window", "answer": "The machine's local time zone." },
+    { "topic": "how many walk rounds or polish rounds a milestone gets", "answer": "The default is fine." }
+  ]
+}

@@ -28,7 +28,7 @@ import { crashPoint } from '../core/crash.ts';
 import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
 import { type InvocationId, type Sha256Hex, type UnitId, sha256 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { type CommandVerdict, RED_FILE, type RedClassRecord, type RedFile, redFile } from '../core/records.ts';
+import { type CommandCancelReason, type CommandVerdict, RED_FILE, type RedClassRecord, type RedFile, redFile } from '../core/records.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { type HostSample, isBusy, isClear } from '../host/sample.ts';
 import { HOST_SIGNATURES_REV, type HostSignatureId } from '../host/signatures.ts';
@@ -152,6 +152,12 @@ export function abortReason(signal: AbortSignal): 'pause' | 'stop' {
  * (M3, A7: a docs publication took the slot before green; src/pipeline/integrate.ts).
  */
 export type LaneCancel = 'pause' | 'stop' | 'preempt';
+
+/** A cancelled lane run's reason: a lane is never torn down (dev.13: only a bring-up's `serve` is), so `teardown` is a bug. */
+export function laneCancelOf(inv: InvocationId, reason: CommandCancelReason): LaneCancel {
+  if (reason === 'teardown') throw new Error(`${inv}: a lane run cancelled for teardown (only a bring-up's serve process is torn down)`);
+  return reason;
+}
 
 export function laneAbortReason(signal: AbortSignal): LaneCancel {
   const reason: unknown = signal.reason;

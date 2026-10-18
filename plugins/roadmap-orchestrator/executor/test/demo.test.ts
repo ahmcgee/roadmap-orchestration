@@ -15,9 +15,10 @@ import { SchemaError } from '../src/core/validate.ts';
 import { arcsWithRefs } from '../src/chain.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { absPath, repoPattern } from '../src/core/values.ts';
-import { stopSession } from '../src/demo/bringup.ts';
+import { stopSession } from '../src/walk/bringup.ts';
 import { reconcileOnce, startDemoKeeper } from '../src/demo/keeper.ts';
-import { actOnDemo, demoFacts, demoStatus, demoTicker, demoView, liveRepairs, promoteFinal } from '../src/demo/promote.ts';
+import { actOnDemo, demoFacts, demoStatus, demoTicker, demoView, promoteFinal } from '../src/demo/promote.ts';
+import { repairUnits } from '../src/pipeline/reproduce.ts';
 import { DEMO_REF, type DemoRecord, readDemoRecord, readDesired } from '../src/demo/records.ts';
 import { refTarget } from '../src/git/git.ts';
 import { openFinding } from '../src/holistic/findings.ts';
@@ -99,7 +100,8 @@ function settle(r: ArcRun, ms: string, at: ReturnType<typeof sha>, extra: Readon
   r.journal.fact({ kind: 'milestone-passed', milestone: milestoneId(ms), job });
 }
 
-const tick = (r: ArcRun): void => demoTicker(r.ctx, liveRepairs(r.ctx)).tick();
+const tick = (r: ArcRun): void => demoTicker(r.ctx).tick();
+const reader = (r: ArcRun) => ({ view: r.journal.view, plan: r.ctx.plan(), repairs: repairUnits(r.ctx) });
 const reconcile = (r: ArcRun): Promise<DemoRecord> => reconcileOnce(r.ctx.hostDir, r.ctx.runDir);
 
 async function get(port: number): Promise<string> {
@@ -132,23 +134,21 @@ describe('demo: promotion and the keeper', () => {
       const first = await reconcile(r);
       const port = webPort(first);
       assert.equal(first.serving?.sha, v1);
-      assert.match(await get(port), /^v1\|built\|seeded on \d+$/);
-      const trialPort = Number((await get(port)).split('seeded on ')[1]);
-      assert.notEqual(trialPort, port, 'seeded during the trial, on a spare port');
+      assert.equal(await get(port), `v1|built|seeded on ${port}`, 'seeded in the trial, then reseeded on the stable port');
       assert.equal(readlinkSync(join(r.ctx.plan().worktreeRoot, 'demo', 'current')), first.serving?.slot);
 
       const v2 = release(r, 'v2');
       settle(r, 'MS-2', v2);
       tick(r);
-      const view = demoView({ view: r.journal.view, plan: r.ctx.plan(), repairsOf: liveRepairs(r.ctx) });
+      const view = demoView(reader(r));
       assert.deepEqual(view?.since.milestones, ['MS-2'], 'what changed since the promotion before');
       const second = await reconcile(r);
       assert.equal(second.serving?.sha, v2);
       assert.equal(webPort(second), port, 'the stable port is kept');
       assert.notEqual(second.serving?.slot, first.serving?.slot, 'brought up in the spare slot');
-      assert.match(await get(port), /^v2\|built\|seeded on \d+$/, 'the new version, reseeded');
+      assert.equal(await get(port), `v2|built|seeded on ${port}`, 'the new version, reseeded');
       assert.ok(first.serving?.processes.every((p) => !existsSync(`/proc/${p.pid}`) || readFileSync(`/proc/${p.pid}/stat`, 'utf8').split(' ')[2] === 'Z'), 'the old version is stopped');
-      const s = demoStatus({ view: r.journal.view, plan: r.ctx.plan(), repairsOf: liveRepairs(r.ctx) }, r.ctx.hostDir);
+      const s = demoStatus(reader(r), r.ctx.hostDir);
       assert.deepEqual([s?.milestone, s?.sha, s?.serving, s?.where], ['MS-2', v2, v2, { type: 'url', url: `http://127.0.0.1:${port}/`, ports: { web: port } }]);
       await stopDemo(second);
     } finally {
@@ -172,7 +172,7 @@ describe('demo: promotion and the keeper', () => {
       assert.match(await get(port), /^v1\|/);
       assert.deepEqual(after.failures.map((f) => [f.milestone, f.sha]), [['MS-2', v2]]);
       const log = after.failures[0]!.log;
-      assert.match(readFileSync(log, 'utf8'), /# failed: serve\.web: exited before it was ready/);
+      assert.match(readFileSync(log, 'utf8'), /# failed: serve\.web: it ended before it was ready/);
 
       tick(r);
       const failed = r.journal.view.walkFacts().filter((x) => x.fact.kind === 'demo-failed').map((x) => x.fact);
@@ -184,7 +184,7 @@ describe('demo: promotion and the keeper', () => {
 
       const again = await reconcile(r);
       assert.equal(again.failures.length, 1, 'not retried on the same act and boot');
-      const s = demoStatus({ view: r.journal.view, plan: r.ctx.plan(), repairsOf: liveRepairs(r.ctx) }, r.ctx.hostDir);
+      const s = demoStatus(reader(r), r.ctx.hostDir);
       assert.deepEqual([s?.sha, s?.serving, s?.failed], [v2, v1, { sha: v2, log }]);
       await stopDemo(again);
     } finally {
@@ -198,20 +198,19 @@ describe('demo: promotion and the keeper', () => {
       const v1 = release(r, 'v1');
       settle(r, 'MS-1', v1);
       tick(r);
-      const repairs = liveRepairs(r.ctx);
-      assert.equal(actOnDemo(r.ctx, repairs, commandId('cmd-000000000001aaaa'), 'hold').kind, 'applied');
-      assert.deepEqual(actOnDemo(r.ctx, repairs, commandId('cmd-000000000002aaaa'), 'hold'), { kind: 'rejected', reason: 'demo hold: promotion is already held (by cmd-000000000001aaaa)' });
+      assert.equal(actOnDemo(r.ctx, commandId('cmd-000000000001aaaa'), 'hold').kind, 'applied');
+      assert.deepEqual(actOnDemo(r.ctx, commandId('cmd-000000000002aaaa'), 'hold'), { kind: 'rejected', reason: 'demo hold: promotion is already held (by cmd-000000000001aaaa)' });
       const v2 = release(r, 'v2');
       settle(r, 'MS-2', v2);
       tick(r);
       assert.deepEqual(demoFacts(r.journal.view).promotions.map((p) => p.milestone), ['MS-1'], 'held: nothing promoted');
       assert.equal(readDesired(r.ctx.runDir)?.target?.sha, v1);
-      const released = actOnDemo(r.ctx, repairs, commandId('cmd-000000000003aaaa'), 'release');
+      const released = actOnDemo(r.ctx, commandId('cmd-000000000003aaaa'), 'release');
       assert.deepEqual(released, { kind: 'applied', verified: ['demo promotion released', `promoted MS-2 at ${v2}`] });
       assert.equal(refTarget(r.ctx.repo, DEMO_REF), v2);
       assert.equal(readDesired(r.ctx.runDir)?.target?.sha, v2);
-      assert.deepEqual(actOnDemo(r.ctx, repairs, commandId('cmd-000000000004aaaa'), 'release'), { kind: 'rejected', reason: 'demo release: promotion is not held' });
-      assert.equal(actOnDemo(r.ctx, repairs, commandId('cmd-000000000003aaaa'), 'release').kind, 'applied', 'a re-run of an applied act finds its own fact');
+      assert.deepEqual(actOnDemo(r.ctx, commandId('cmd-000000000004aaaa'), 'release'), { kind: 'rejected', reason: 'demo release: promotion is not held' });
+      assert.equal(actOnDemo(r.ctx, commandId('cmd-000000000003aaaa'), 'release').kind, 'applied', 'a re-run of an applied act finds its own fact');
     } finally {
       r.journal.close();
     }
@@ -225,14 +224,13 @@ describe('demo: promotion and the keeper', () => {
       tick(r);
       const up = await reconcile(r);
       const port = webPort(up);
-      const repairs = liveRepairs(r.ctx);
-      assert.equal(actOnDemo(r.ctx, repairs, commandId('cmd-000000000001bbbb'), 'down').kind, 'applied');
-      assert.equal(actOnDemo(r.ctx, repairs, commandId('cmd-000000000002bbbb'), 'down').kind, 'rejected');
+      assert.equal(actOnDemo(r.ctx, commandId('cmd-000000000001bbbb'), 'down').kind, 'applied');
+      assert.equal(actOnDemo(r.ctx, commandId('cmd-000000000002bbbb'), 'down').kind, 'rejected');
       const down = await reconcile(r);
       assert.deepEqual([down.serving?.state, down.serving?.processes], ['down', []]);
       assert.ok(await refused(port), 'nothing listens');
       assert.ok(existsSync(down.serving!.slot), 'the checkout is kept');
-      assert.equal(actOnDemo(r.ctx, repairs, commandId('cmd-000000000003bbbb'), 'up').kind, 'applied');
+      assert.equal(actOnDemo(r.ctx, commandId('cmd-000000000003bbbb'), 'up').kind, 'applied');
       const again = await reconcile(r);
       assert.equal(again.serving?.state, 'up');
       assert.match(await get(port), /^v1\|built\|seeded on/, 'restored from its checkout: its seeded data kept');
@@ -281,7 +279,7 @@ describe('demo: promotion and the keeper', () => {
       });
       tick(r);
       assert.deepEqual(demoFacts(r.journal.view).promotions.map((p) => p.sha), [v1]);
-      assert.equal(promoteFinal(r.ctx, liveRepairs(r.ctx), v2), null, 'nor does the completion over an open walkthrough P1');
+      assert.equal(promoteFinal(r.ctx, v2), null, 'nor does the completion over an open walkthrough P1');
     } finally {
       r.journal.close();
     }
@@ -306,10 +304,10 @@ describe('demo: promotion and the keeper', () => {
       settle(r, 'MS-1', v1);
       tick(r);
       const tip = release(r, 'v-final');
-      const p = promoteFinal(r.ctx, liveRepairs(r.ctx), tip);
+      const p = promoteFinal(r.ctx, tip);
       assert.deepEqual([p?.milestone, p?.sha], ['MS-1', tip]);
       assert.equal(refTarget(r.ctx.repo, DEMO_REF), tip);
-      assert.equal(promoteFinal(r.ctx, liveRepairs(r.ctx), tip), null, 'once');
+      assert.equal(promoteFinal(r.ctx, tip), null, 'once');
       tick(r);
       assert.equal(demoFacts(r.journal.view).promotions.length, 2, 'a settled milestone older than the tip does not promote back');
     } finally {
@@ -329,7 +327,7 @@ describe('demo: promotion and the keeper', () => {
       await keeper.finish(false);
       const rec = readDemoRecord(r.ctx.hostDir);
       assert.equal(rec?.serving?.sha, v1);
-      const s = demoStatus({ view: r.journal.view, plan: r.ctx.plan(), repairsOf: liveRepairs(r.ctx) }, r.ctx.hostDir);
+      const s = demoStatus(reader(r), r.ctx.hostDir);
       const bin = join(r.ctx.plan().worktreeRoot, 'demo', 'current', 'bin');
       assert.deepEqual([s?.where, s?.serving], [{ type: 'path', path: bin }, v1]);
       assert.equal(readFileSync(join(bin, 'tool'), 'utf8'), 'built');

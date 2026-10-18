@@ -204,6 +204,7 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
     case 'journey':
     case 'mutant':
     case 'proof':
+    case 'bring-up':
       return null;
   }
 }
@@ -242,6 +243,7 @@ function assertPairing(subject: SpawnSubject, terminal: LaunchTerminal): void {
     case 'lane':
     case 'teardown':
     case 'probe':
+    case 'bring-up':
       if (terminal.type !== 'command' || terminal.purpose !== subject.purpose) fail();
   }
 }
@@ -288,7 +290,8 @@ export function quiescent(ctx: Pick<ProcContext, 'containment' | 'runDir'>, targ
 }
 
 const CANCEL_REASONS: Readonly<Record<KillTarget['reason'], CancelReason | null>> = {
-  pause: 'pause', stop: 'stop', recovery: 'recovery', preempt: 'preempt', supersede: 'supersede', deadline: null, stall: null, reported: null, 'external-unknown': null,
+  pause: 'pause', stop: 'stop', recovery: 'recovery', preempt: 'preempt', supersede: 'supersede', teardown: 'teardown', deadline: null, stall: null, reported: null,
+  'external-unknown': null,
 };
 
 /**
@@ -305,7 +308,7 @@ export async function quiesce(ctx: Pick<ProcContext, 'containment' | 'runDir'>, 
     if (runner !== null) {
       const reason = CANCEL_REASONS[target.reason];
       // The runner enforces its own deadline; nothing else kills around a live runner.
-      if (reason === null) throw new Error(`proc.kill{${target.reason}} of ${inv}: its runner is alive; only pause, stop or recovery cancel a live runner`);
+      if (reason === null) throw new Error(`proc.kill{${target.reason}} of ${inv}: its runner is alive; only pause, stop, recovery, preempt, supersede or teardown cancel a live runner`);
       const handle = { files, launch, runner };
       if (files.read('cancel.json') === null) cancel(handle, reason);
       crashPoint('kill.after-cancel');

@@ -123,6 +123,7 @@ describe('status.subset', () => {
       drift: [],
       flow: null,
       demo: null,
+      milestones: [],
     });
   });
 
@@ -130,7 +131,7 @@ describe('status.subset', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
       'admits', 'amendments', 'answers', 'arc', 'audit', 'census', 'chain', 'checkpointWaits', 'commands', 'completion', 'convergence', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
-      'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'issues', 'knownDefects', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
+      'divergences', 'drift', 'edges', 'findings', 'flow', 'holds', 'holistic', 'host', 'issues', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue', 'opportunities', 'owed',
       'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
@@ -320,7 +321,7 @@ test('status.parallel: two independent units build at once and status shows both
       assert.equal(l.buildTier, 'med');
     }
     assert.equal(line(s, 'u3').state, 'waiting', 'a dependency not merged: waiting, before its pause matters');
-    assert.deepEqual(line(s, 'u3').waitingFor, { deps: ['u1'], edges: [], resources: null, envBlocked: false, admission: [], drainFor: [] });
+    assert.deepEqual(line(s, 'u3').waitingFor, { deps: ['u1'], milestones: [], edges: [], resources: null, envBlocked: false, admission: [], drainFor: [] });
     assert.deepEqual(s.edges, [{ type: 'after', unit: 'u3', on: 'u1', effective: 'u1', met: false }]);
     assert.equal(s.host.pools['@cpu']?.used, 8);
     assert.deepEqual(s.host.queue, []);
@@ -367,7 +368,7 @@ test('status.resources: two units want the one instance of a pool; the builder h
   const waiter = s.units.find((l) => l.state === 'waiting')!;
   const want = { named: [], pools: ['est'], cpu: 4, publication: false };
   assert.equal(s.run.state, 'running');
-  assert.deepEqual(waiter.waitingFor, { deps: [], edges: [], resources: want, envBlocked: false, admission: [], drainFor: [] });
+  assert.deepEqual(waiter.waitingFor, { deps: [], milestones: [], edges: [], resources: want, envBlocked: false, admission: [], drainFor: [] });
   assert.deepEqual(s.host.queue, [{ unit: waiter.unit, stage: 'build', attempt: waiter.attempts + 1, publication: false, request: want, envBlocked: false }]);
   assert.deepEqual(s.host.pools['est'], { size: 1, used: 1, dirty: 0 });
   assert.ok(builder.holds.some((h) => h === 'est#1'), JSON.stringify(builder.holds));
@@ -438,7 +439,7 @@ test('status.parks: a retryable park shows its targets, what is outstanding, its
     assert.equal(line(s, 'u4').park?.nextProbeAt, null, 'no failed probe covers u4\'s park yet: due at once');
     assert.deepEqual(line(s, 'u2').park, { class: 'operator', kind: 'design', targets: [], outstanding: [], nextProbeAt: null, escalateAt: null });
     assert.equal(line(s, 'u3').state, 'blocked', 'D1: a parked dependency is released only by the architect');
-    assert.deepEqual(line(s, 'u3').waitingFor, { deps: ['u2'], edges: [], resources: null, envBlocked: false, admission: [], drainFor: [] });
+    assert.deepEqual(line(s, 'u3').waitingFor, { deps: ['u2'], milestones: [], edges: [], resources: null, envBlocked: false, admission: [], drainFor: [] });
     assert.deepEqual(s.host.probes, [
       { target: { type: 'backend', backend: 'codex' }, parks: [b], nextProbeAt: null, lastResult: null, tripped: false },
       { target: HOST, parks: [p1, p4], nextProbeAt: null, lastResult: 'fail', tripped: true },

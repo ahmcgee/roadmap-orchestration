@@ -62,9 +62,10 @@ import { seriesInputs } from './flow/series.ts';
 import { rulerChangesOf } from './flow/track.ts';
 import type { FlowAction } from './flow/types.ts';
 import { arcRolesOf } from './input/inforce.ts';
-import type { PlanM1, PlanUnit } from './input/plan.ts';
+import type { PlanM1 } from './input/plan.ts';
 import { demoView } from './demo/promote.ts';
-import { type RepairRef, specRepairs } from './core/records.ts';
+import type { Repairs } from './walk/milestones.ts';
+import { specRepairs } from './core/records.ts';
 import { SPEC_INPUT, specShaInForce } from './input/inforce.ts';
 import { parseSpec } from './spec/spec.ts';
 
@@ -85,13 +86,14 @@ function refBlob(repo: AbsPath, ref: ArcRef, path: string): string | null {
 const factsAfter = (ref: ArcRef, from: number) => ref.events.flatMap((e) => (e.type === 'fact' && e.seq > from ? [e.fact] : []));
 
 /**
- * What a unit's spec in force at the ref repairs (the demo's `repairsOf` over a ref); the path, for messages, names the blob
- * `inputs/<sha>.spec.json` of `refs/roadmap/<arc>` under the repo.
+ * The units of the plan at the ref whose specs repair something (the demo's `repairs` over a ref, as `repairUnits` over a
+ * run dir); the path, for messages, names the blob `inputs/<sha>.spec.json` of `refs/roadmap/<arc>` under the repo.
  */
-const refRepairs = (repo: AbsPath, ref: ArcRef) => (u: PlanUnit): readonly RepairRef[] => {
+const refRepairs = (repo: AbsPath, ref: ArcRef): Repairs => ref.plan.units.flatMap((u) => {
   const sha = specShaInForce(ref.view, u.id);
-  return specRepairs(parseSpec(ref.input(sha, SPEC_INPUT), absPath(join(repo, 'refs', 'roadmap', ref.arc, 'inputs', `${sha}.${SPEC_INPUT}`))));
-};
+  const repairs = specRepairs(parseSpec(ref.input(sha, SPEC_INPUT), absPath(join(repo, 'refs', 'roadmap', ref.arc, 'inputs', `${sha}.${SPEC_INPUT}`))));
+  return repairs.length === 0 ? [] : [{ unit: u.id, repairs }];
+});
 
 /** A decision as one line of the brief. */
 function decisionLine(d: Decision): string {
@@ -213,7 +215,7 @@ function briefArc(repo: AbsPath, ref: ArcRef, from: number, pr: BriefPr, previou
     opportunities: admitted.opportunities,
     drift: admitted.drift.filter((x) => x.findings.length > 0).map((x) => ({ unit: x.unit, job: x.job, findings: x.findings.map((f) => ({ id: f.id, clauses: f.clauses })) })),
     flow: briefFlow(ref, from, previous),
-    demo: demoView({ view: ref.view, plan: ref.plan, repairsOf: refRepairs(repo, ref) }),
+    demo: demoView({ view: ref.view, plan: ref.plan, repairs: refRepairs(repo, ref) }),
   };
 }
 

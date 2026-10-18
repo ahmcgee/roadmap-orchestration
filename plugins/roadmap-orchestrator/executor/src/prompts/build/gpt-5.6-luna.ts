@@ -19,8 +19,10 @@
 // through the real entry point (F20); `experiments` in the output; the read-only in-session assessment (E, R55).
 // W3 (2026-10-16): Host no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". No delegation
 // text: the Claude role prompts' guidance names the Agent tool, which `codex exec` does not have.
+// dev.13: a milestone unit's design references and milestones, as the Claude module's; `browser` is always null on this
+// seat (Codex gets no MCP config), rendered by the shared helper all the same.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, assessText, bullets, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, assessText, bullets, buildBrowserText, fastLanesText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
@@ -85,6 +87,16 @@ The executor runs these after your fast lanes, in a clean checkout of your commi
 ${fastLanesText(i.worktree, i.suiteLanes)}`;
 }
 
+/** dev.13: the milestones' design references, in full, beside the contracts. */
+function designReferences(i: BuildInputs): string {
+  const docs = i.milestones?.references ?? [];
+  if (docs.length === 0) return '';
+  return `
+
+# Design references
+${docs.map((d) => `<reference path="${d.path}">\n${d.text}\n</reference>`).join('\n')}`;
+}
+
 function witnessChecks(i: BuildInputs): string {
   if (i.witnessChecks.length === 0) return '';
   return `
@@ -105,7 +117,10 @@ function task(i: BuildInputs): string {
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  fields: [
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
+    'milestones', 'browser',
+  ],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
 ${i.spec.markdown}
 
@@ -116,7 +131,7 @@ ${i.contracts.length === 0 ? '(none cited)' : i.contracts.map((c) => `<contract 
 ${rulingsText(i.rulings)}
 
 # Reference index
-${referenceIndexText(i.index)}
+${referenceIndexText(i.index)}${designReferences(i)}${milestonesText(i.milestones)}
 
 # Plan-check notes
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
@@ -128,7 +143,7 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 ${bullets(i.scope, '(empty)')}
 
 # Fast lanes
-${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${fixRound(i)}
+${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${buildBrowserText(i.browser)}${fixRound(i)}
 
 # Task
 ${task(i)}`,

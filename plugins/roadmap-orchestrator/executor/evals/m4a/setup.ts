@@ -129,11 +129,11 @@ export function forgeStore(l: Layout): GhStore {
   };
 }
 
-/** The fake gh's shim, over the staged sources and the store (named by absolute paths inside the stage). */
-function writeForge(l: Layout): void {
+/** The fake gh's shim over `store`, the staged sources and the store named by absolute paths inside the stage (M5 too). */
+export function writeForge(l: Layout, store: GhStore): void {
   mkdirSync(l.forgeLib, { recursive: true });
   for (const f of FAKE_GH_SOURCES) copyFileSync(join(FAKES, f), join(l.forgeLib, f));
-  writeStore(l.store, forgeStore(l));
+  writeStore(l.store, store);
   const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
   write(join(l.forgeBin, 'gh'), `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(join(l.forgeLib, 'gh-entry.ts'))} --store ${quote(l.store)} "$@"\n`);
   spawnSync('chmod', ['755', join(l.forgeBin, 'gh')]);
@@ -162,7 +162,7 @@ export async function setup(dir: string, opts: Readonly<{ visionSilent: boolean;
   git(dirname(l.origin), 'init', '--quiet', '--bare', l.origin);
   git(l.product, 'remote', 'add', 'origin', l.origin);
   git(l.product, 'push', '--quiet', 'origin', `${MAIN}:refs/heads/${MAIN}`);
-  writeForge(l);
+  writeForge(l, forgeStore(l));
   writeFileSync(join(dir, SEED_FILE), json({ main: git(l.product, 'rev-parse', MAIN) }), { flag: 'wx' });
   return l;
 }

@@ -38,9 +38,10 @@
 // wrong). The gate's wording, which the paid gate role eval (2026-10-17) measured at 17/18 caught, 0/12 false alarms;
 // unmeasured on this seat until its own role eval (BACKLOG).
 // Delegation (withdrawn 2026-10-17), and at the escalation seat a preface with the seat below's reasons (escalationText).
+// dev.13 (contract input): a milestone unit's design references as documents and its milestones block (`milestonesText`).
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  acceptanceShapeText, bullets, documentsXml, escalationText, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, scopeGrowthText,
+  acceptanceShapeText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, scopeGrowthText,
   targetDocument, visionText,
 } from '../inputs.ts';
 import { PLAN_CHECK_SCHEMA } from '../schemas.ts';
@@ -139,11 +140,12 @@ export const PROMPT: PromptModule<'planCheck'> = {
   schema: PLAN_CHECK_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
-    'scopeGrowth', 'escalation',
+    'scopeGrowth', 'escalation', 'milestones',
   ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
+    ...milestoneDocuments(i.milestones),
     targetDocument(i.target),
   ])}
 
@@ -153,7 +155,7 @@ ${rulingsText(i.rulings)}
 
 <reference_index>
 ${referenceIndexText(i.index)}
-</reference_index>
+</reference_index>${milestonesText(i.milestones)}
 
 <direction>
 ${i.direction}

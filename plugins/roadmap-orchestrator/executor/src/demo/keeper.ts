@@ -7,9 +7,9 @@
 //   a newer version promoted       swap: the new version is brought up beside the old, in the spare slot on spare ports
 //                                  (setup, serve, ready, seed: the demo is reseeded on each promotion); only when it is
 //                                  ready is the trial stopped, the old instance stopped and the new one restarted on the
-//                                  stable ports (serve and ready again; its seeded data stays in its checkout), and
-//                                  `current` linked to its slot. If the trial fails, or the restart on the stable ports
-//                                  does, the old instance keeps (or goes back to) serving and the failure is recorded.
+//                                  stable ports (serve, ready and seed again: a seed that names a port names the
+//                                  stable one), and `current` linked to its slot. If the trial fails, or the restart
+//                                  on the stable ports does, the old instance keeps (or goes back to) serving and the failure is recorded.
 //   up wanted, nothing running     restore (a host restart, a `demo up` after `down`, a product that died): the serving
 //                                  version, which is the promoted one (`refs/roadmap/demo`), is restarted on its stable
 //                                  ports from its slot; a slot that is gone is brought up afresh, as a swap.
@@ -21,7 +21,7 @@
 // failure as `demo-failed` and its P1 (src/demo/promote.ts). With no desired file (an arc that promoted nothing) the
 // host's last demo is kept, and restored after a host restart: one demo per host, the latest any arc promoted.
 //
-// Layout: `<worktreeRoot>/demo/{a,b}` the two slots (detached git worktrees of the arc's repo), `current` a link to the
+// The bring-up is the walk's (src/walk/bringup.ts), run detached. Layout: `<worktreeRoot>/demo/{a,b}` the two slots (detached git worktrees of the arc's repo), `current` a link to the
 // serving slot (a product with nothing long-lived is run from `current/bin`), `logs/<ms>-<sha8>/` each bring-up's output
 // (`bringup.log`, the one a failure cites, and `<serve>.log` per serve entry).
 import { existsSync, mkdirSync, renameSync, rmSync, symlinkSync } from 'node:fs';
@@ -33,8 +33,8 @@ import { type AbsPath, type BootId, absPath, isoTimeOf } from '../core/values.ts
 import { GitError, worktreeAdd, worktreeList, worktreePrune, worktreeRemove } from '../git/git.ts';
 import type { BringUp } from '../input/plan.ts';
 import {
-  BringUpAborted, type Ports, awaitReady, bringUpEnv, freePort, logLine, processAlive, runStep, startServe, stopSession,
-} from './bringup.ts';
+  BringUpAborted, allocatePorts, awaitDetachedReady, bringUpEnv, commandEnv, detachedAlive, logLine, runDetachedStep, startDetachedServe, stopSession,
+} from '../walk/bringup.ts';
 import {
   type DemoDesired, type DemoInstance, type DemoProcess, type DemoRecord, type DemoServing, EMPTY_RECORD, currentLink, demoRoot, readDemoRecord,
   readDesired, writeDemoRecord,
@@ -43,19 +43,15 @@ import {
 export const KEEPER_TICK_MS = 1_000;
 /** How long a supervisor whose arc completed waits for the keeper's last reconcile (the final promotion). */
 export const KEEPER_FINAL_MS = 30 * 60_000;
-/** The supervisor's role variable (src/supervisor.ts `ROLE_ENV`): never passed to the product. */
-const ROLE_ENV = 'ROADMAP_ROLE';
+type Ports = Readonly<Record<ServeName, number>>;
 
 type Target = NonNullable<DemoDesired['target']>;
 type Where = Pick<DemoDesired, 'arc' | 'repo' | 'worktreeRoot'>;
 
 const slotsOf = (worktreeRoot: AbsPath): readonly AbsPath[] => [absPath(join(demoRoot(worktreeRoot), 'a')), absPath(join(demoRoot(worktreeRoot), 'b'))];
 
-function baseEnv(): Readonly<Record<string, string | undefined>> {
-  const env = { ...process.env };
-  delete env[ROLE_ENV];
-  return env;
-}
+/** What the product's commands run with: the walk's rule (the host's PATH and HOME, then the bring-up's `env`). */
+const runEnv = (b: BringUp, ports: Ports): Readonly<Record<string, string>> => commandEnv({ hostEnv: process.env }, bringUpEnv(b, ports));
 
 /** Stops an instance's processes, session by session. A session id names a session only on the boot that recorded it. */
 async function stopAll(i: Readonly<{ boot: BootId; processes: readonly DemoProcess[] }>): Promise<void> {
@@ -87,24 +83,22 @@ function logDir(worktreeRoot: AbsPath, sha: string): AbsPath {
   return dir;
 }
 
+/** One free port per name (`allocatePorts`), none of them in `avoid`. */
+async function freshPorts(names: readonly ServeName[], avoid: ReadonlySet<number>): Promise<Ports> {
+  for (;;) {
+    const ports = await allocatePorts(names);
+    if (!Object.values(ports).some((p) => avoid.has(p))) return ports;
+  }
+}
+
 /** The stable ports for `b`: the record's, plus one allocated now for each serve name it does not have yet. */
 async function stablePorts(record: DemoRecord, b: BringUp): Promise<Ports> {
-  const ports: Record<ServeName, number> = { ...record.ports };
-  for (const s of b.serve) if (ports[s.name] === undefined) ports[s.name] = await freePort(new Set(Object.values(ports)));
-  return ports;
+  const missing = b.serve.map((e) => e.name).filter((n) => record.ports[n] === undefined);
+  return { ...record.ports, ...(await freshPorts(missing, new Set(Object.values(record.ports)))) };
 }
 
 /** Trial ports for `b`: free now and none of the stable ones. */
-async function trialPorts(stable: Ports, b: BringUp): Promise<Ports> {
-  const taken = new Set(Object.values(stable));
-  const ports: Record<ServeName, number> = {};
-  for (const s of b.serve) {
-    const p = await freePort(taken);
-    taken.add(p);
-    ports[s.name] = p;
-  }
-  return ports;
-}
+const trialPorts = (stable: Ports, b: BringUp): Promise<Ports> => freshPorts(b.serve.map((e) => e.name), new Set(Object.values(stable)));
 
 /** What starting an instance's serve entries left: the processes started (all, or up to the one that failed) and why not, or null. */
 type Served = Readonly<{ processes: readonly DemoProcess[]; failed: string | null }>;
@@ -114,35 +108,39 @@ const NEVER = new AbortController().signal;
 
 /** Starts every serve entry of `instance`'s bring-up on `ports` and waits for each to be ready, recording the processes (`save`) before each wait. */
 async function serve(instance: DemoInstance, ports: Ports, log: AbsPath, logs: AbsPath, signal: AbortSignal, save: (processes: readonly DemoProcess[]) => void): Promise<Served> {
-  const env = bringUpEnv(baseEnv(), instance.bringUp, ports);
+  const env = runEnv(instance.bringUp, ports);
   const started: DemoProcess[] = [];
   for (const entry of instance.bringUp.serve) {
     const out = absPath(join(logs, `${entry.name}.log`));
     logLine(log, `# serve.${entry.name}: ${JSON.stringify(entry.argv)} (output ${out})`);
-    const p = startServe(entry, instance.slot, env, ports, out);
+    const p = startDetachedServe(entry, ports, instance.slot, env, out);
     if (typeof p === 'string') return { processes: started, failed: p };
     started.push(p);
     save(started);
-    const notReady = await awaitReady(entry, p, ports, out, signal);
+    const notReady = await awaitDetachedReady(entry, p, ports, out, signal);
     if (notReady !== null) return { processes: started, failed: notReady };
   }
   return { processes: started, failed: null };
 }
 
+/** Runs the bring-up's `seed` commands on `ports`, in order: null when each exits 0, else why not. */
+async function seed(instance: DemoInstance, ports: Ports, log: AbsPath, signal: AbortSignal): Promise<string | null> {
+  for (const [i, argv] of instance.bringUp.seed.entries()) {
+    const failed = await runDetachedStep(`seed[${i}]`, argv, ports, instance.slot, runEnv(instance.bringUp, ports), log, signal);
+    if (failed !== null) return failed;
+  }
+  return null;
+}
+
 /** The trial: setup, serve and ready, then seed, of a fresh slot on `ports`. */
 async function bringUp(instance: DemoInstance, ports: Ports, log: AbsPath, logs: AbsPath, signal: AbortSignal, save: (processes: readonly DemoProcess[]) => void): Promise<Served> {
-  const env = bringUpEnv(baseEnv(), instance.bringUp, ports);
   for (const [i, argv] of instance.bringUp.setup.entries()) {
-    const r = await runStep(`setup[${i}]`, argv, instance.slot, env, ports, log, signal);
-    if (!r.ok) return { processes: [], failed: r.detail };
+    const failed = await runDetachedStep(`setup[${i}]`, argv, ports, instance.slot, runEnv(instance.bringUp, ports), log, signal);
+    if (failed !== null) return { processes: [], failed };
   }
   const served = await serve(instance, ports, log, logs, signal, save);
   if (served.failed !== null) return served;
-  for (const [i, argv] of instance.bringUp.seed.entries()) {
-    const r = await runStep(`seed[${i}]`, argv, instance.slot, env, ports, log, signal);
-    if (!r.ok) return { processes: served.processes, failed: r.detail };
-  }
-  return served;
+  return { processes: served.processes, failed: await seed(instance, ports, log, signal) };
 }
 
 /** The keeper's state between ticks: the record, read once and written through (the supervisor is its one writer). */
@@ -203,7 +201,7 @@ class Keeper {
   }
 
   #running(s: DemoServing): boolean {
-    return s.state === 'up' && s.boot === readBootId() && s.processes.length === s.bringUp.serve.length && s.processes.every(processAlive);
+    return s.state === 'up' && s.boot === readBootId() && s.processes.length === s.bringUp.serve.length && s.processes.every(detachedAlive);
   }
 
   async #swap(where: Where, target: Target, upSeq: number): Promise<void> {
@@ -243,7 +241,9 @@ class Keeper {
     }
     // Ready and seeded beside the old one: switch to the stable ports.
     if (old !== null) await stopAll(old);
-    const switched = await serve(instance, stable, log, logs, NEVER, (processes) => this.#save({ ...this.#record, serving: { ...instance, processes, state: 'up' } }));
+    const started = await serve(instance, stable, log, logs, NEVER, (processes) => this.#save({ ...this.#record, serving: { ...instance, processes, state: 'up' } }));
+    // Reseeded on the stable ports too (R5: each promotion reseeds), so seeded data that names a port names the stable one.
+    const switched: Served = started.failed !== null ? started : { processes: started.processes, failed: await seed(instance, stable, log, NEVER) };
     if (switched.failed === null) {
       this.#save({ ...this.#record, serving: { ...instance, processes: switched.processes, state: 'up' } });
       link(where.worktreeRoot, spare);
