@@ -179,9 +179,10 @@ at triage stay in git history.
   3. **Background subagents:** the gate states as a fact that its answer ends the session and a subagent still running
      is lost, or code holds the answer until they finish.
   Trigger: real arcs show large-diff gate spend that matters (`status` spend by seat), or the next gate batch. Measure on
-  G2b/G3b/G3a with clean twins; pass bar: catches hold at 9/9-level, cost per planted trial roughly halves. dev.13 gave the
-  gate a shell (an acting judge in a throwaway checkout), so the replay Opus asked for it can now run itself: re-measure
-  G2b/G3b with the dev.13 gate before building the verifier, which may then be unnecessary.
+  G2b/G3b/G3a with clean twins; pass bar: catches hold at 9/9-level, cost per planted trial roughly halves. **Measured
+  2026-10-18 (dev.13 gate eval, /var/tmp/roles-gate-dev13):** with the shell, the large-diff gate (Opus) caught G2a/G2b/
+  G3a/G3b 3/3 each at about $0.90 a trial (dev.12: about $8.80), reading the change with `git diff` and grep instead of
+  reader subagents. The cost lever is met without the verifier; keep this entry only for the background-subagent point.
 - **The role eval's per-trial cap undercounts.** `--trial-cap` estimates live spend from the stream, which carries only
   part of the subagents' tokens: one trial read $15 live against $33 reported, so a $25 cap never fired. `--cap` (between
   trials) works. Fix: price the per-agent token totals the monitor already traces, or call the per-trial cap approximate.
@@ -201,6 +202,41 @@ at triage stay in git history.
   gate call on a real arc that fails to launch.
 - **The Fable gate row** inherits the Opus module with a review dated 2026-10-16; the dev.13 `<your_checkout>` section was
   not reviewed against the Fable guide. Trigger: a repo rebinds a class to Fable at a gate seat.
+- **Execution-only gate cells that measure the shell (X1–X3 redesign).** Measured 2026-10-18: the read-only gate (Sonnet,
+  med) caught all 9 X plants by reading (a lexicographic sort, a lookup table, a dropped remainder are visible in the diff),
+  so `exec-gain` cannot pass on them; and every X twin shares its plant's weak tests, so a gate revising for the untested
+  spec behaviour is graded a false positive (read-only 5/9, shell 4/9 on X2c/X3c). Wanted: plants a strong reader cannot
+  see (behaviour that depends on data or environment the diff does not show) and twins whose tests do cover the behaviour
+  the plant breaks. Trigger: the next gate batch, or before a shell is given to plan-check or the lenses.
+- **Coverage on a shell gate.** `coverage` counts files a session Read, grepped or named in a Bash command; a bulk
+  `git diff` names none, so the large-diff cells read 0% while catching every plant. Trigger: coverage is used for a
+  decision (it is INFO only today).
+- **Fixture builder: an impossible 'omitted' placement takes about 9 minutes to fail.** Each placement check runs the
+  bounded diff on the full repo (about 25 s) and the builder tries 20 candidates. Trigger: another cell hits it; then
+  stop early when the sweep cannot overflow the budget.
+
+### Deferred from dev.13, milestones, walkthroughs and the demo
+
+- **Isolate role-eval trials from each other's evidence.** A walker that lost a screenshot ran `find / -name …` and saw
+  other trials' evidence under the eval's out dir; the needle guard voided it (2 of 36 dev trials). The prompt fix
+  (absolute capture paths, e9b825b) removed the cause; trial dirs could also be made unreadable to the session's peers.
+  Trigger: a needle void recurs.
+- **Walkthrough fixtures keep finding real defects in their own clean product.** Every dev and holdout round found genuine
+  defects in ledgerly's clean product (seven fixed in 1c60f0b, 2c9864c, 71d5d34, c070bd4, 388d8ef), so twin false
+  positives measured the fixture as much as the walker. A fixture change needs a fake-free walk of its clean product
+  before it counts. Trigger: the next fixture or family change.
+- **W12 (CI log text) is the one class boundary the walker still crosses** (1 of 78 dev trials classed the plant's
+  'exit N' as breaks/journey after the rework rule). Trigger: it recurs in a real arc's walk; then a sharper example in the
+  prompt's reason.
+- **A direct `demo down` with no live arc.** Demo acts are queued commands; with no executor running they wait for the
+  next start. Trigger: the owner wants the demo stopped between arcs.
+- **Write-deny rules cover paths existing at call start.** A directory created later beside the path to a writable
+  directory is outside the deny list, and Bash is trusted to the prompt (as for builders). Trigger: a real arc shows an
+  acting judge writing outside its checkout or evidence dir.
+- From the plan (/claude-state/plans/dev13-implementation.md §11): a reference render; visual-regression baselines;
+  checkpoint authority over milestones; a cross-model walkthrough judge; Sonnet and Haiku walkthrough variants; desktop
+  apps (Electron via Playwright, native via a virtual display); Claude Design in design units (trigger: usable from a
+  headless `claude -p`; it was not on CLI 2.1.301); an advisory for human-facing units outside every milestone.
 
 ## Convergence and integrity (unscheduled, wanted)
 
