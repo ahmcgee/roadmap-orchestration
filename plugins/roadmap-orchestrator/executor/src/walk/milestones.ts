@@ -6,7 +6,9 @@
 // - **A walk** (`walk-<n>`): `walk-started` opens it, `walk-ended` closes it. An `abandoned` walk (its session failed, was
 //   interrupted or its backend parked) is not a round: the same round is due again, but a round whose walk failed (not
 //   interrupted) WALK_ATTEMPTS times ends `abandoned`: no further walk, not settled (the demo never promotes on it), and
-//   its escalation is raised (lead ruling 2026-10-18: a brake, not a retry for ever).
+//   its escalation is raised (lead ruling 2026-10-18: a brake, not a retry for ever). An `apply` that edits the
+//   milestone's bring-up or journeys afterwards (`plan-applied` milestones change `rewalk`) resets it: the round's walk is
+//   due again with a fresh attempt count, and the escalation is superseded (src/needsuser.ts `supersededItems`).
 // - **The rounds brake** (plan §4, in code): after round k's walk ended (`reported` or `bring-up-failed`), the units
 //   admitted from it are the polish units carrying its applied proposals and the units whose specs repair one of its
 //   findings. While an author has yet to act (a finding of the walk is still open, no unit owning it, and no checkpoint
@@ -144,10 +146,11 @@ export function milestoneProgress(view: JournalView, plan: PlanM1, m: Milestone,
   if (open !== undefined) return { kind: 'walking', walk: open };
   const rounds = walks.filter((w) => w.ended !== null && w.ended.outcome !== 'abandoned');
   const last = rounds.at(-1);
-  if (last === undefined) return milestoneReached(view, m) ? braked(walks, 1, null) : { kind: 'building' };
+  const since = view.rewalkSeq(m.id);
+  if (last === undefined) return milestoneReached(view, m) ? braked(walks, 1, since) : { kind: 'building' };
   const r = roundOf(view, plan, last, repairs);
   if (r.pending !== null || r.inFlight.length > 0) return { kind: 'round-open', round: r };
-  return r.landed.length > 0 && last.round < walkRoundsOf(plan) ? braked(walks, last.round + 1, last) : { kind: 'settled', last };
+  return r.landed.length > 0 && last.round < walkRoundsOf(plan) ? braked(walks, last.round + 1, Math.max(last.seq, since)) : { kind: 'settled', last };
 }
 
 /**
@@ -157,11 +160,12 @@ export function milestoneProgress(view: JournalView, plan: PlanM1, m: Milestone,
 export const WALK_ATTEMPTS = 2;
 
 /**
- * Round `round` due, unless its walks since `after` (the previous round's walk; null for round 1) were abandoned
- * WALK_ATTEMPTS times: then no further walk, `abandoned` (lead ruling 2026-10-18: a brake, not a retry for ever).
+ * Round `round` due, unless its walks after seq `after` (the previous round's walk, or the latest apply that edited the
+ * milestone's bring-up or journeys, `rewalkSeq`, whichever is later) were abandoned WALK_ATTEMPTS times: then no further
+ * walk, `abandoned` (lead ruling 2026-10-18: a brake, not a retry for ever; such an apply is a fresh start).
  */
-function braked(walks: readonly WalkRecord[], round: number, after: WalkRecord | null): MilestoneProgress {
-  const tries = walks.filter((w) => w.round === round && w.ended?.outcome === 'abandoned' && !w.ended.interrupted && (after === null || w.seq > after.seq));
+function braked(walks: readonly WalkRecord[], round: number, after: number): MilestoneProgress {
+  const tries = walks.filter((w) => w.round === round && w.ended?.outcome === 'abandoned' && !w.ended.interrupted && w.seq > after);
   return tries.length >= WALK_ATTEMPTS ? { kind: 'abandoned', round, last: tries.at(-1)! } : { kind: 'walk-due', round };
 }
 
@@ -252,7 +256,7 @@ export function walkItemsDue(view: JournalView, plan: PlanM1, repairs: readonly 
           blocking: !passed, subject: { type: 'arc' }, reason: 'finding-p1-escalated',
           summary: `Milestone ${m.id}'s round ${p.round} walk failed ${WALK_ATTEMPTS} times (its last ${p.last.job}), so no further walk runs`
             + (passed ? '; its node had passed, so nothing waits on it.' : ` and its node never passed: every unit that descends from ${m.id} waits.`),
-          recommendation: `Read why under evidence/jobs/${p.last.job}/ and the walk's backend calls (the bring-up, the walkthrough's session); fix the cause (a bring-up or walkthrough MCP problem is the environment's); the round's walks are over, so plan another milestone for the experience with \`roadmap apply\` if it still needs walking, and acknowledge this item.`,
+          recommendation: `Read why under evidence/jobs/${p.last.job}/ and the walk's backend calls (the bring-up, the walkthrough's session); fix the cause (a bring-up or walkthrough MCP problem is the environment's). A \`roadmap apply\` that fixes ${m.id}'s bringUp or journeys starts its walks afresh and clears this item; otherwise the round's walks are over: plan another milestone for the experience if it still needs walking, and acknowledge this item.`,
           options: [], evidence: [],
         },
       });

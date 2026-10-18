@@ -19,7 +19,7 @@ import { readJournal } from '../src/core/log.ts';
 import { PACK_REVIEW_INPUT } from '../src/input/inforce.ts';
 import { PACK_REVIEW_INPUTS_SCHEMA, parsePackReviewInputs } from '../src/holistic/types.ts';
 import { packReviewKey, packReviewPending, packReviewStatus, requiredInputs, runPackReview } from '../src/holistic/packreview.ts';
-import { blockingItems, openBlocking, openNeedsUser, readNeedsUser, supersededPackItems } from '../src/needsuser.ts';
+import { blockingItems, openBlocking, openNeedsUser, readNeedsUser, supersededItems } from '../src/needsuser.ts';
 import { status } from '../src/status.ts';
 import { ActionableFilter, HEARTBEAT_MIN, watch } from '../src/watch.ts';
 import { recover } from '../src/recover/recover.ts';
@@ -158,7 +158,7 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'due' });
       const second = await runPackReview(x.ctx);
       assert.deepEqual(second, { kind: 'ended', job: 'review-2', outcome: 'completed', needsUser: null });
-      assert.deepEqual([...supersededPackItems(x.r.journal.view)], [first.needsUser], 'review-1\'s item is superseded');
+      assert.deepEqual([...supersededItems(x.r.journal.view)], [first.needsUser], 'review-1\'s item is superseded');
       assert.deepEqual(openBlocking(x.r.journal.view), [], 'and no longer open');
       assert.equal(x.r.journal.view.ackOf(first.needsUser), null, 'without an ack');
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-2' });

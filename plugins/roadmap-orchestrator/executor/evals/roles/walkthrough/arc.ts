@@ -186,12 +186,12 @@ function fakeAnswer(kind: Exclude<FakeWalker, 'overspend'>, f: WalkFixture): Jso
   };
 }
 
-const OVERSPEND: JsonValue = {
+export const OVERSPEND: JsonValue = {
   type: 'assistant', parent_tool_use_id: null,
   message: { id: 'msg-overspend', model: MODEL_FOR_FAKES, content: [{ type: 'text', text: 'walking at length' }], usage: { input_tokens: 10, output_tokens: 1_000_000 } },
 };
 
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** The walkthrough's calls: the real CLI (the call and its repair turn), or one fake answer (`refused`: refused twice). */
 function walkerSteps(kind: WalkerKind, f: WalkFixture, evidence: string): readonly Step[] {
@@ -218,6 +218,15 @@ function walkerSteps(kind: WalkerKind, f: WalkFixture, evidence: string): readon
 
 /** Lays out the trial's arc (the product as its repository, the milestone's plan) and records revision 1, as a start does. */
 export function setupWalkArc(f: WalkFixture, kind: WalkerKind, config: RepoConfig): ArcDescriptor {
+  return setupMilestoneArc(f, config, (runDir) => walkerSteps(kind, f, jobEvidenceRoot(absPath(runDir), JOB)));
+}
+
+/**
+ * The milestone arc of `f` (shared with the polish-judge eval, evals/roles/polish/arc.ts): the product as its repository,
+ * u1's spec and the plan in `planDir`, revision 1 recorded. The scenario is u1's fake pipeline, then `steps(runDir,
+ * planDir)` (u1's spec is `<planDir>/u1.json`).
+ */
+export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, config: RepoConfig, steps: (runDir: string, planDir: string) => readonly Step[]): ArcDescriptor {
   const repo = tmpDir('walk-repo');
   for (const [path, text] of f.files) {
     mkdirSync(dirname(join(repo, path)), { recursive: true });
@@ -249,7 +258,7 @@ export function setupWalkArc(f: WalkFixture, kind: WalkerKind, config: RepoConfi
   }));
   const runDir = tmpDir('walk-run');
   const scenarioDir = tmpDir('walk-scenario');
-  const scenario = writeScenario(scenarioDir, [...unitSteps(MILESTONE_UNIT, RELEASE_NOTE), ...walkerSteps(kind, f, jobEvidenceRoot(absPath(runDir), JOB))]);
+  const scenario = writeScenario(scenarioDir, [...unitSteps(MILESTONE_UNIT, RELEASE_NOTE), ...steps(runDir, planDir)]);
   const d: ArcDescriptor = { arc, repo, planPath, runDir, hostDir: join(tmpDir('walk-host'), 'roadmap'), binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir, config };
   // Revision 1 recorded as a first start records it (test/fixtures/publish-common.ts publishArc).
   const j = openJournal(absPath(runDir), arcId(arc));
@@ -263,17 +272,25 @@ export function setupWalkArc(f: WalkFixture, kind: WalkerKind, config: RepoConfi
 // ---------------------------------------------------------------------------------------------------
 // The monitor: trace and brakes
 
-type Brake = Readonly<{ rule: 'load' | 'cap' | 'deadline'; detail: string }>;
+export type Brake = Readonly<{ rule: 'load' | 'cap' | 'deadline'; detail: string }>;
 
-/** The walkthrough calls' spawn intents, in order. */
-const walkSpawns = (r: ArcRun) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'walkthrough');
+/** The acting-judge arc roles whose sessions a monitor watches: the walk's, and the compare's (the polish-judge eval). */
+export type WatchedRole = 'walkthrough' | 'polishJudge';
 
-function readStdout(r: ArcRun, inv: InvocationId): string {
+/** The `role` calls' spawn intents, in order. */
+export const roleSpawns = (r: ArcRun, role: WatchedRole) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === role);
+const walkSpawns = (r: ArcRun) => roleSpawns(r, 'walkthrough');
+
+export function readStdout(r: ArcRun, inv: InvocationId): string {
   const file = join(invocationDir(r.ctx.runDir, inv), STDOUT_FILE);
   return existsSync(file) ? readFileSync(file, 'utf8') : '';
 }
 
-function startMonitor(r: ArcRun, label: string, medianLoad: number | null, trialCap: number | null, log: (line: string) => void): { stop: () => void; brake: () => Brake | null } {
+/** Watches the trial's `role` sessions (see the header): TRACE lines and the brakes, which kill the open session. */
+export function startMonitor(
+  r: ArcRun, label: string, medianLoad: number | null, trialCap: number | null, log: (line: string) => void, role: WatchedRole = 'walkthrough',
+): { stop: () => void; brake: () => Brake | null } {
+  const spawnsOf = (): ReturnType<typeof roleSpawns> => roleSpawns(r, role);
   let braked: Brake | null = null;
   let lastTrace = Date.now();
   let firstAt: number | null = null;
@@ -288,12 +305,12 @@ function startMonitor(r: ArcRun, label: string, medianLoad: number | null, trial
   };
   const tick = (): void => {
     const view = r.journal.view;
-    const open = walkSpawns(r).filter((i) => view.doneOf(i.op) === null).at(-1);
+    const open = spawnsOf().filter((i) => view.doneOf(i.op) === null).at(-1);
     if (open === undefined) return;
     const inv = invocationId(open.op, open.ordinal);
     if (braked !== null) return kill(inv);
     firstAt ??= Date.now();
-    const spawns = walkSpawns(r);
+    const spawns = spawnsOf();
     const t = readTranscript(parseEvents(spawns.map((s) => readStdout(r, invocationId(s.op, s.ordinal))).join('\n'), true));
     const now = Date.now();
     if (trialCap !== null && t.liveUsd > trialCap) braked = { rule: 'cap', detail: `live spend $${t.liveUsd.toFixed(2)} over the trial cap $${trialCap.toFixed(2)}` };
@@ -319,7 +336,7 @@ function startMonitor(r: ArcRun, label: string, medianLoad: number | null, trial
 // A trial
 
 /** Every file under `dir`, recursively. */
-const filesUnder = (dir: string): readonly string[] =>
+export const filesUnder = (dir: string): readonly string[] =>
   existsSync(dir) ? readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name)) : [];
 
 /** Why the walk job refused the last report (schema, or its own checks), for an `invalid` void. */

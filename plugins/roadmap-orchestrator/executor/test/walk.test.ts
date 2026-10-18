@@ -55,6 +55,8 @@ function viewOf(o: Readonly<{
   walks?: readonly WalkFactSpec[]; status?: Readonly<Record<string, string>>; superseded?: Readonly<Record<string, string>>; findings?: readonly Partial<FindingState>[];
   /** Decided checkpoints: their capture's seq, the findings it captured, and its vision (absent: the vision in force). */
   checkpoints?: readonly Readonly<{ seq: number; findings: readonly string[]; vision?: string }>[];
+  /** Per milestone, the seq of the latest apply that edited its bring-up or journeys (`rewalkSeq`; absent: 0). */
+  rewalks?: Readonly<Record<string, number>>;
 }>): JournalView {
   const walkFacts = (o.walks ?? []).map((fact, i) => ({ seq: 10 * (i + 1), at: new Date(Date.UTC(2026, 9, 1, 0, i)).toISOString(), fact }));
   return {
@@ -65,6 +67,7 @@ function viewOf(o: Readonly<{
       checkpoints: (o.checkpoints ?? []).map((c) => ({ inputs: { seq: c.seq, findings: c.findings, visionSha256: c.vision ?? VISION_IN_FORCE }, decided: { kind: 'no-op' } })),
     }),
     planApplied: () => ({ visionSha256: VISION_IN_FORCE }),
+    rewalkSeq: (m: string) => o.rewalks?.[m] ?? 0,
   } as unknown as JournalView;
 }
 
@@ -410,6 +413,26 @@ describe('the abandonment brakes (lead ruling 2026-10-18)', () => {
     const after = walkItemsDue(after1, planOf(units, [m]), [], new Date());
     assert.deepEqual(after.map((i) => [i.job, i.content.blocking]), [['walk-3', false]], 'passed: told, not blocked');
     assert.equal(milestoneState(after1, m.id, milestoneProgress(after1, planOf(units, [m]), m, [])), 'settled');
+  });
+
+  test('brake.walk-rewalk: an apply editing the milestone\'s bring-up or journeys after its abandoned walks is a fresh start: the round is due, its tries counted after the edit, no escalation', () => {
+    const twice = [started(1, 1), ended(1, 'abandoned'), started(2, 1), ended(2, 'abandoned')]; // seqs 10..40
+    const p = (walks: readonly WalkFact[], rewalk: number) => milestoneProgress(viewOf({ status: { a: 'retired' }, walks, rewalks: { 'MS-1': rewalk } }), plan(), m, []);
+    assert.deepEqual(p(twice, 45), { kind: 'walk-due', round: 1 }, 'reset after both tries');
+    assert.deepEqual(p(twice, 25), { kind: 'walk-due', round: 1 }, 'reset between them: one try counted');
+    assert.equal(p(twice, 5).kind, 'abandoned', 'an edit before the tries resets nothing');
+    const thrice = [...twice, started(3, 1), ended(3, 'abandoned')]; // walk-3 at 50, 60
+    assert.deepEqual(p(thrice, 45), { kind: 'walk-due', round: 1 }, 'one try since the edit: one retry left');
+    const four = [...thrice, started(4, 1), ended(4, 'abandoned')];
+    const again = p(four, 45);
+    assert.ok(again.kind === 'abandoned' && again.last.job === 'walk-4', JSON.stringify(again));
+    assert.deepEqual(walkItemsDue(viewOf({ status: { a: 'retired' }, walks: twice, rewalks: { 'MS-1': 45 } }), plan(), [], new Date()), [], 'the escalation is no longer due');
+    // A later round's brake resets the same way.
+    const units = [{ id: 'a' }, { id: 'r1', origin: 'repair' }];
+    const later = [started(1, 1), ended(1, 'reported', ['F-1']), started(2, 2), ended(2, 'abandoned'), started(3, 2), ended(3, 'abandoned')]; // ..60
+    const v = (rewalk: number) => viewOf({ status: { a: 'retired', r1: 'retired' }, walks: later, findings: [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId, state: 'owned' }], rewalks: { 'MS-1': rewalk } });
+    assert.equal(milestoneProgress(v(0), plan(units), m, [repairing('r1', 'F-1')]).kind, 'abandoned');
+    assert.deepEqual(milestoneProgress(v(65), plan(units), m, [repairing('r1', 'F-1')]), { kind: 'walk-due', round: 2 });
   });
 
   test('brake.compare-abandoned: failed compares of a unit are counted, an interrupted one is not', () => {

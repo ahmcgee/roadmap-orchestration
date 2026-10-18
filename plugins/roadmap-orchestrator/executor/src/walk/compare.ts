@@ -378,7 +378,8 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
         read = again.read;
       }
     }
-    if (read.kind !== 'judged') return abandon(read.reasons.join('; '), read.interrupted);
+    // Awaited inside the try: the finally's teardown must not run beside abandon's own.
+    if (read.kind !== 'judged') return await abandon(read.reasons.join('; '), read.interrupted);
     await finish();
     return judge(ctx, unit.id, read.output.decision, 'judged');
   } finally {

@@ -19,7 +19,8 @@
 // `divergence-digest`, and M4b's `flow-proposal`, `flow-host`, `flow-worse`, `flow-invalid` and `ruler-changed`. Blocking means the arc is not `complete` while the item is open (§2.10); what an open item holds
 // back from admission is admission's (src/schedule/ready.ts) and, for `obligation-baseline`, `pack-review` and
 // `issue-policy-untrusted` (every admission until it is answered), the scheduler's. A `pack-review` item a later pack
-// review's end superseded (K14, `supersededPackItems`) is open no more: it holds and blocks nothing.
+// review's end superseded (K14), or the escalation of an abandoned walk whose milestone's bring-up or journeys an apply
+// then edited (dev.13), is open no more (`supersededItems`): it holds and blocks nothing.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
@@ -135,13 +136,23 @@ export function raisedWithReason(view: JournalView, runDir: AbsPath, parent: Par
 }
 
 /**
- * K14: the `pack-review` items a later pack review's end superseded: the item each review raised (parent `job`), for
- * every review ended before the latest ended one.
+ * The items a later fact superseded. K14: the `pack-review` item each pack review raised (parent `job`), for every review
+ * ended before the latest ended one. dev.13: the escalation of a walk abandoned on a failure (parent its walk job), once
+ * an apply edited its milestone's bring-up or journeys after it ended (`rewalkSeq`; src/walk/milestones.ts, the walk
+ * abandonment brake starts afresh).
  */
-export function supersededPackItems(view: JournalView): ReadonlySet<NeedsUserId> {
+export function supersededItems(view: JournalView): ReadonlySet<NeedsUserId> {
   const ended = view.holistic().packReviews.filter((r) => r.ended !== null).slice(0, -1);
-  return new Set(ended.flatMap((r) => {
-    const id = raisedFor(view, { type: 'job', job: r.started.job });
+  const facts = view.walkFacts();
+  const rewalked = facts.flatMap((x) => {
+    if (x.fact.kind !== 'walk-ended' || x.fact.outcome !== 'abandoned' || x.fact.interrupted === true) return [];
+    const job = x.fact.job;
+    const started = facts.find((y) => y.fact.kind === 'walk-started' && y.fact.job === job)?.fact;
+    if (started?.kind !== 'walk-started') throw new Error(`walk-ended of ${job}, which never started`);
+    return view.rewalkSeq(started.milestone) > x.seq ? [job] : [];
+  });
+  return new Set([...ended.map((r) => r.started.job), ...rewalked].flatMap((job) => {
+    const id = raisedFor(view, { type: 'job', job });
     return id === null ? [] : [id];
   }));
 }
@@ -149,10 +160,10 @@ export function supersededPackItems(view: JournalView): ReadonlySet<NeedsUserId>
 /**
  * The one predicate of an open journal item (paid M4a run 10, R-17): raised, not acknowledged and not superseded (K14).
  * Everything that lists open items reads it: `status.needsUser`, the brief's items, the scheduler's holds and the terminal
- * predicate. `watch` streams files, so it reads the superseded set alone (`supersededPackItems`, a `superseded` line).
+ * predicate. `watch` streams files, so it reads the superseded set alone (`supersededItems`, a `superseded` line).
  */
 export function openNeedsUser(view: JournalView): readonly NeedsUserState[] {
-  const superseded = supersededPackItems(view);
+  const superseded = supersededItems(view);
   return view.needsUser().filter((n) => n.ack === null && !superseded.has(n.id));
 }
 

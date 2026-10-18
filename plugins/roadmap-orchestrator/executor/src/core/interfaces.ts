@@ -7,7 +7,7 @@ import type {
   PlanAppliedFact, RecoveredBy, WalkFact,
 } from './events.ts';
 import type {
-  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
+  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
 } from './ids.ts';
 import type { SessionCharge } from './usage.ts';
 import type {
@@ -130,6 +130,11 @@ export interface JournalView {
   walkFacts(): readonly WalkFactAt[];
   /** dev.13: the id the next `polish-proposed` must carry (`X-<proposals + 1>`, arc-scoped). */
   nextPolishId(): PolishId;
+  /**
+   * dev.13: the seq of the latest `plan-applied` whose milestones change lists `milestone` in `rewalk` (an apply edited its
+   * bring-up or journeys after it was walked), 0 before one: the walk abandonment brake counts tries after it.
+   */
+  rewalkSeq(milestone: MilestoneId): number;
 }
 
 export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;

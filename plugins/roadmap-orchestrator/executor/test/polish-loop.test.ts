@@ -233,6 +233,27 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
 });
 
 describe('the compare brake (lead ruling 2026-10-18)', () => {
+  test('compare.refused-twice: an answer refused, then refused again on its repair turn, abandons the compare: both instances torn down once, no intent left open', T, async () => {
+    const refused: Step = {
+      as: 'claude', unit: 'compare-1', expect: { argv: ['-p'] },
+      acts: [{ type: 'emit', value: { final: true, decision: 'keep', evidence: ['nowhere.png'], reasons: ['scripted'], premises: [] } }],
+    };
+    const d = await proposedArc([...polishSteps('tw-keep', KEEP_FILES), refused, refused]);
+    const r = contextFor(d);
+    try {
+      await ticking(r, applyPolish);
+      assert.deepEqual(await run(r, 'tw-keep', polishGate(r, 'tw-keep')), { kind: 'held', needsUser: null });
+      const out = await ticking(r, runCompare);
+      assert.ok(out.kind === 'abandoned' && /nowhere\.png/.test(out.detail), JSON.stringify(out));
+      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'compare-1').length, 2, 'the repair turn was taken');
+      assert.equal(r.journal.view.opsOf('proc.kill').filter((k) => k.expect.reason === 'teardown').length, 3, 'walk-1\'s serve and each compare instance, once');
+      assert.equal(tweakOf(r.journal.view, 'tw-keep' as UnitId), null, 'one retry left');
+      assert.deepEqual(r.journal.view.openIntents(), []);
+    } finally {
+      r.journal.close();
+    }
+  });
+
   test('compare.abandoned-twice: a compare whose before does not come up is abandoned and retried once; the second abandonment drops the tweak (abandoned) and cuts it, with no model call', T, async () => {
     const d = await proposedArc(polishSteps('tw-keep', KEEP_FILES));
     const r = contextFor(d);
