@@ -4,7 +4,9 @@
 // removes it). Every hook a file holds must be resolved and every contribution must land on a hook its file holds: both
 // fail loud, so the product never carries a hook mark or a stray change. A contribution may instead be an edit of the
 // resolved file (`Edit`, applied in slot order once every hook is resolved), its `find` occurring exactly once, so a
-// family in another form than its dev one can change any place, not only a hook. `gitignore` becomes `.gitignore`.
+// family in another form than its dev one can change any place, not only a hook, or a file the base product does not
+// hold (`NewFile`, added before the edits apply; a path the product already holds fails loud). `gitignore` becomes
+// `.gitignore`.
 //
 // Seed data: the team `platform` and two more from a pool, budgets, alert shares, a currency, a month and the one before
 // it, and each month's entries (samples/<month>.csv), drawn so that this month one team is within its limit, one near it
@@ -22,6 +24,9 @@ export type FileMap = ReadonlyMap<string, string>;
 
 /** A literal replacement in one file: `find` must occur exactly once when it is applied. */
 export type Edit = Readonly<{ file: string; find: string; replace: string }>;
+
+/** A file the base product does not hold, with its text. */
+export type NewFile = Readonly<{ file: string; create: string }>;
 
 /** Applies `edits` in order; each `find` occurs exactly once in its file at that point, so a drift fails loud. */
 export function applyEdits(files: FileMap, edits: readonly Edit[]): FileMap {
@@ -160,6 +165,7 @@ export function productFiles(data: SeedData, slots: readonly Slot[], families: F
   const all: readonly Contribution[] = slots.flatMap((s) => families[s.family].apply(s.state, s.at));
   const contributions = all.filter((c) => 'hook' in c);
   const edits = all.filter((c) => 'find' in c);
+  const created = all.filter((c) => 'create' in c);
   const slotValues = new Map<string, Record<string, string>>(Object.entries(DEFAULTS).map(([f, h]) => [f, { ...h }]));
   const set = new Map<string, Set<string>>();
   for (const c of contributions) {
@@ -188,5 +194,9 @@ export function productFiles(data: SeedData, slots: readonly Slot[], families: F
   }
   out.set(`samples/${data.prev}.csv`, csvOf(data.entries.filter((e) => e.month === data.prev)));
   out.set(`samples/${data.month}.csv`, csvOf(data.entries.filter((e) => e.month === data.month)));
+  for (const c of created) {
+    if (out.has(c.file)) throw new Error(`a new file ${c.file}, which the product already holds`);
+    out.set(c.file, c.create);
+  }
   return applyEdits(out, edits);
 }

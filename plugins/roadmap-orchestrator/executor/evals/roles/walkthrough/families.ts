@@ -10,7 +10,7 @@
 // The families below are each family's dev form. A cell may carry a family in another form (fixture.ts `WalkCell.forms`:
 // its own plant, twin, positions, contributions and locus, of the same id and expected class); the holdout set's are.
 
-import type { Edit } from './product.ts';
+import type { Edit, NewFile } from './product.ts';
 
 export const FAMILY_IDS = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13'] as const;
 export type FamilyId = (typeof FAMILY_IDS)[number];
@@ -72,9 +72,10 @@ export type Position =
 
 /**
  * What a slot writes into the base product (product.ts): a text for one of its hooks (`css` contributions are appended,
- * the rest set), or an edit of a file as the hooks resolved it, its `find` occurring exactly once (product.ts `Edit`).
+ * the rest set), an edit of a file as the hooks resolved it, its `find` occurring exactly once (product.ts `Edit`), or a
+ * file the base product does not hold (product.ts `NewFile`).
  */
-export type Contribution = Readonly<{ file: string; hook: string; text: string }> | Edit;
+export type Contribution = Readonly<{ file: string; hook: string; text: string }> | Edit | NewFile;
 
 /**
  * What grading knows of a slot. `journeys`: where a finding on it is reported; `files`: paths that localise a finding to
