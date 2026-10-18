@@ -78,6 +78,13 @@
 //                       argv: the report validates (schema and the walk's own checks), the init event lists Bash and Write
 //                       and no MCP server, the session ended exited or reported, and nothing is left behind (no open intent,
 //                       no walk checkout, no live process of the arc); its findings are printed, not graded
+//   polish.compare      (dev.13, agent D) one real polish judge through the production compare job on two tiny instances
+//                       (before: the greeter answering 500 for want of a greeting; after: a polish unit that configures it
+//                       and says so in the reference), u1, walk-1 and the polish unit through the fakes, the real claude behind
+//                       the fake's `real` act on the polishJudge seat (frontier) with the acting-judge argv: the answer
+//                       validates (schema, every cited file in the evidence dirs) and is recorded as tweak-judged{judged},
+//                       the init event lists Bash and no MCP server, the session ended exited or reported, both instances
+//                       came up on distinct ports, and nothing is left behind; its decision is printed, not graded
 //   effort.*            (OI-2) a session started at one effort, resumed at another: claude (high then medium), codex
 //                       (low then medium); reports whether each CLI accepts the change
 //
@@ -133,7 +140,11 @@ import { wire } from '../test/fixtures/publish-common.ts';
 import { followingContext } from '../test/fixtures/steer-common.ts';
 import { appendSteps, contextFor, setupArc } from '../test/fixtures/unit-common.ts';
 import { moduleFiles, unitSteps } from '../test/fixtures/audit-common.ts';
-import { ACTING_ARGV, milestoneJson, unitInForce, walkArc, walkContext } from '../test/fixtures/walk-common.ts';
+import { ACTING_ARGV, KEEP_FILES, milestoneJson, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from '../test/fixtures/walk-common.ts';
+import { holisticContexts } from '../src/schedule/scheduler.ts';
+import { runCompare } from '../src/walk/compare.ts';
+import { applyPolish } from '../src/walk/polish.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { scan } from '../src/contain/proc.ts';
@@ -926,6 +937,58 @@ async function main(): Promise<void> {
         const live = scan().filter((p) => p.env?.get('ROADMAP_ARC') === d.arc).map((p) => p.pid).join(',');
         const checkout = execFileSync('git', ['-C', d.repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' }).includes('walk-1.');
         report(view.openIntents().length === 0 && !checkout && live === '', 'walk.cli.teardown', `open=${view.openIntents().length} checkout=${checkout} live=${JSON.stringify(live)}`);
+      } finally {
+        clearInterval(tick);
+      }
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // dev.13 agent D: one real polish judge through the production compare job (src/walk/compare.ts) on two tiny instances of
+  // the greeter: before, the integration tip (GET / answers 500: no greeting); after, the polish unit tw-keep, which
+  // configures the greeting and says so in the design reference. Everything before the judge runs on the fakes. Graded on
+  // the contract only (the answer validates and is recorded, a shell and no MCP server, its final answer ended it, both
+  // instances on their own ports, nothing left behind); its decision is printed, not graded (the role evals judge).
+  await rev3('polish.compare', async () => {
+    const d = walkArc({ steps: unitSteps('u1', moduleFiles('mul', '*')), walkRounds: 2 });
+    appendSteps(d, [
+      walkStep('walk-1', walkAnswer({ polish: [proposal(d, 'tw-keep', 'Configure the greeting so the page greets, and say so in the design reference.')] })),
+      ...polishSteps('tw-keep', KEEP_FILES),
+      { as: 'claude', unit: 'compare-1', expect: { argv: ACTING_ARGV, argvLacks: ['--mcp-config'] }, acts: [{ type: 'real' }] },
+    ]);
+    const r = contextFor(d);
+    try {
+      const { ctx, w } = walkContext(r);
+      const h = holisticContexts(w).checkpoint;
+      const tick = setInterval(() => w.arbiter.wake(), 50);
+      try {
+        const merged = await runUnit(w.stage, unitInForce(r, 'u1'), () => Promise.resolve(true));
+        if (merged.kind !== 'merged') throw new Error(`u1 did not merge: ${JSON.stringify(merged)}`);
+        const walked = await runWalk(ctx);
+        if (walked.kind !== 'ended' || walked.outcome !== 'reported') throw new Error(`walk-1 did not report: ${JSON.stringify(walked)}`);
+        const applied = await applyPolish(h);
+        if (applied.kind !== 'applied' || applied.admitted.join() !== 'tw-keep') throw new Error(`the polish revision did not admit tw-keep: ${JSON.stringify(applied)}`);
+        const gate: Gate = (next) => Promise.resolve(!(next.kind === 'admission' && next.stage === 'candidate'));
+        const held = await runUnit(w.stage, unitInForce(r, 'tw-keep'), gate);
+        if (held.kind !== 'held') throw new Error(`tw-keep was not held at its candidate: ${JSON.stringify(held)}`);
+        const out = await runCompare(h);
+        const view = r.journal.view;
+        const started = view.walkFacts().map((x) => x.fact).find((f) => f.kind === 'compare-started');
+        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'polishJudge');
+        const inv = spawn === undefined ? null : invocationId(spawn.op, spawn.ordinal);
+        const invDir = inv === null ? null : invocationDir(r.ctx.runDir, inv);
+        const exit = inv === null || invDir === null ? null : runnerFiles(invDir, inv).read('exit.json');
+        const init = invDir === null ? null : readFileSync(join(invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as Record<string, unknown>)
+          .find((e) => e['type'] === 'system' && e['subtype'] === 'init') ?? null;
+        const tools = (init?.['tools'] ?? []) as readonly string[];
+        report(out.kind === 'judged' && out.reason === 'judged', 'polish.compare.judged', `${JSON.stringify(out)} dir=${invDir}`);
+        report(tools.includes('Bash') && JSON.stringify(init?.['mcp_servers'] ?? []) === '[]', 'polish.compare.tools', `tools=${JSON.stringify(tools)} mcp=${JSON.stringify(init?.['mcp_servers'] ?? null)}`);
+        report(exit !== null && (exit.cause === 'exited' || exit.cause === 'reported'), 'polish.compare.final', `exit=${JSON.stringify(exit?.cause ?? null)}`);
+        report(started?.kind === 'compare-started' && started.ports.before['web' as never] !== started.ports.after['web' as never], 'polish.compare.instances', JSON.stringify(started ?? null));
+        const live = scan().filter((p) => p.env?.get('ROADMAP_ARC') === d.arc).map((p) => p.pid).join(',');
+        const checkout = /compare-1\./.test(execFileSync('git', ['-C', d.repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' }));
+        report(view.openIntents().length === 0 && !checkout && live === '', 'polish.compare.teardown', `open=${view.openIntents().length} checkout=${checkout} live=${JSON.stringify(live)}`);
       } finally {
         clearInterval(tick);
       }

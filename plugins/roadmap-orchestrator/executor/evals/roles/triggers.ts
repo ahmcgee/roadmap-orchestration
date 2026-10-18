@@ -7,6 +7,10 @@
 //   the milestone node), its MCP config (src/backends/mcp.ts), the prompt inputs and schemas, routing, the
 //   `claude-acting-judge` argv and the reader of its session, and its eval.
 // The shared harness (evals/roles/*.ts) triggers both.
+// TODO(agent J, the polish-judge eval): add `polishJudge` to EvalRole once run.ts can run it, triggered by
+// `src/prompts/polishJudge/**`, the compare job `src/walk/compare.ts` (with src/walk/bringup.ts, which it shares), the
+// polish revision `src/walk/polish.ts`, SHARED and `evals/roles/polish/**`; then narrow walkthrough's `src/walk/**` so
+// compare.ts and polish.ts trigger only the polish judge (agent D, dev.13). Not added now: EvalRole is what run.ts runs.
 //
 //   node evals/roles/triggers.ts [<base ref>]   prints the triggered roles, one per line (base: origin/main), from
 //                                               `git diff --name-only <base>...HEAD` over executor/

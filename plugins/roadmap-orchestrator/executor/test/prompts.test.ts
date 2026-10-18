@@ -1377,3 +1377,29 @@ describe('dev.13 prompts: the walkthrough', () => {
     }
   });
 });
+
+describe('dev.13 prompts: the polish judge', () => {
+  it('prompts.polishJudge-contract: Fable inherits the Opus module with a dated review; the vision opens the message and the ask closes it; both instances, the proposal, the diff and the evidence dirs render; the system text names every field the schema requires', () => {
+    const fable = PROMPTS.polishJudge['claude-fable-5-1'];
+    assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/i.test(fable.reviewed));
+    assert.ok(!/PLACEHOLDER/.test(promptFor('polishJudge', 'claude-opus-5-5').system), 'the step-0 placeholder is gone');
+    for (const [i, sample] of SAMPLES.polishJudge.entries()) {
+      for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+        const mod = promptFor('polishJudge', model);
+        assert.equal(mod, promptFor('polishJudge', 'claude-opus-5-5'), `${model}: the Opus module`);
+        assert.equal(mod.schema, ROLE_SCHEMAS.polishJudge, model);
+        assert.deepEqual(mod.fields, ROLE_INPUTS.polishJudge, model);
+        const text = mod.render(sample);
+        assert.ok(text.startsWith('<vision>'), `${model}: the vision first`);
+        assert.ok(text.endsWith(`return your decision on proposal ${sample.proposal.id}.`), `${model}: the ask last`);
+        const k = i === 0 ? 'A' : 'B';
+        for (const needle of [
+          `VISION-${k}`, `MILESTONE-${k}`, `JOURNEY-${k}`, `PROPOSAL-${k}`, `REFERENCE-${k}`, `DIFF-${k}`, `shot-${k}.png`, sample.walkEvidenceDir, sample.evidenceDir,
+          sample.before.checkout, sample.before.entry, sample.after.checkout, sample.after.entry, `MODE=${k}`, `via="${sample.journey.via}"`,
+        ]) assert.ok(text.includes(needle), `${model}: renders ${needle}`);
+        assert.ok(text.indexOf('<before>') < text.indexOf('<after>'), `${model}: before, then after`);
+        namesEvery(mod.system, requiredKeys(mod.schema, []), `polishJudge/${model}`);
+      }
+    }
+  });
+});

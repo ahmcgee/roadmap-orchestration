@@ -77,19 +77,20 @@ import { holdFence } from '../core/fence.ts';
 import { type JsonValue, canonicalJson } from '../core/json.ts';
 import {
   type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha,
-  type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
+  type ResourceName, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
 } from '../core/ids.ts';
 import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
 import { type CheckpointState, openAttempt } from '../core/state.ts';
 import { FIXES_UNRECORDED, bundleClassesOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
+import { type AbsPath, type RepoPath, type RepoPattern, absPath, branchRef } from '../core/values.ts';
 import { git, revParse } from '../git/git.ts';
 import {
   type InForce, type InputFile, type InputFiles, type RevisionInForce, type RoutingBase, inForceFiles, keptPayload, ledgerPath, requirePlanInForce, revisionInForce,
   sidecarPath,
 } from '../input/inforce.ts';
-import { type PlanM1, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
+import { type PlanM1, type PolishOrigin, advancesOf, contractOpDocuments, parsePlan } from '../input/plan.ts';
+import type { RiskTier } from '../routing/types.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { mayOverlap } from '../input/classify.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
@@ -309,7 +310,7 @@ type Proposal = Readonly<{
 }>;
 
 type RawUnit = Record<string, unknown> & { id: string };
-type RawPlan = Record<string, unknown> & { units: RawUnit[]; limits?: Record<string, number> };
+export type RawPlan = Record<string, unknown> & { units: RawUnit[]; limits?: Record<string, number> };
 type RawObligation = Record<string, unknown> & { id: string; state: unknown; witness: unknown; proofJudgment: unknown };
 type RawObligations = Record<string, unknown> & { obligations: RawObligation[] };
 
@@ -439,6 +440,59 @@ function mappedObligations(obligations: Obligations, scope: readonly string[], d
   return canonicalIds([...declared, ...mapped]);
 }
 
+/**
+ * An admitted unit's plan entry (dev.13: one admit path, two authors). A checkpoint `admit` names its own origin
+ * (`checkpoint` or `repair`) and no resources; a walkthrough's polish proposal (src/walk/polish.ts) is admitted with origin
+ * `polish`, its `polish` origin, risk high and its milestone's resources.
+ */
+export type AdmitEntry = Readonly<{
+  id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; resources: readonly ResourceName[];
+  origin: 'checkpoint' | 'repair' | 'polish'; polish?: PolishOrigin;
+}>;
+
+/**
+ * THE admit validation (a checkpoint `admit` and a polish proposal alike): `entry` is no unit of `plan` yet, its spec
+ * text is a unit spec of that unit at rev 1; then its entry is appended to the raw `plan` and its spec to `specs`. The
+ * spec, or every reason (each prefixed by `at`) it cannot be admitted; nothing is added on a reason. The classifier then
+ * judges the revision whole (`evaluateRevision`), and the authored specs get their mapped obligations
+ * (`fillMappedObligations`).
+ */
+export function admitUnit(plan: RawPlan, specs: Map<UnitId, InputFile>, entry: AdmitEntry, specText: string, specPath: AbsPath, at: string): Readonly<{ spec: SpecM1 }> | Readonly<{ reasons: readonly string[] }> {
+  if (plan.units.some((u) => u.id === entry.id)) return { reasons: [`${at}: unit ${entry.id} is already planned`] };
+  let spec: SpecM1;
+  try {
+    spec = parseSpec(Buffer.from(specText, 'utf8'), specPath);
+  } catch (error) {
+    if (!(error instanceof SpecFileError || error instanceof SchemaError)) throw error;
+    return { reasons: [`${at}: its spec is not a unit spec: ${error.message}`] };
+  }
+  if (spec.unit !== entry.id || spec.rev !== 1) return { reasons: [`${at}: its spec names unit ${spec.unit} rev ${spec.rev}, not ${entry.id} rev 1`] };
+  plan.units.push({
+    id: entry.id, spec: `${entry.id}.json`, risk: entry.risk, scope: entry.scope, resources: entry.resources, after: entry.after, origin: entry.origin,
+    ...(entry.polish === undefined ? {} : { polish: entry.polish }),
+  });
+  specs.set(entry.id, { path: specPath, bytes: specBytes(spec) });
+  return { spec };
+}
+
+/**
+ * Lead ruling (paid M3 run 5): a spec code admits on a model's behalf (a bundle's admit, patch or re-entry; a polish unit)
+ * declares every obligation the impact mapping selects for its scope, filled in by code (declared ∪ mapping-selected,
+ * non-exempt); the model never reproduces the mapping. The classifier's refusal of narrower declarations stays for the
+ * architect's specs (DESIGN §2.3). Rewrites `specs` in place for each of `authored`.
+ */
+export function fillMappedObligations(obligations: Obligations | null, plan: PlanM1, specs: Map<UnitId, InputFile>, authored: ReadonlySet<UnitId>): void {
+  if (obligations === null) return;
+  for (const id of [...authored].sort()) {
+    const u = plan.units.find((x) => x.id === id);
+    const f = specs.get(id);
+    if (u === undefined || f?.bytes == null) continue;
+    const spec = parseSpec(f.bytes, f.path);
+    const widened = mappedObligations(obligations, [...u.scope, ...spec.scope], specObligations(spec));
+    if (widened.length > 0 && canonicalJson(widened) !== canonicalJson(specObligations(spec))) specs.set(id, { path: f.path, bytes: specBytes({ ...spec, obligations: widened }) });
+  }
+}
+
 /** The revision in force with every op of `opts` applied, or the reasons it cannot be built; nothing is written. */
 function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, revision: RevisionInForce, current: InputFiles, opts: ProposalOpts): Proposal {
   const reasons: string[] = [];
@@ -483,23 +537,13 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
     const at = `op ${i + 1} (${op.op})`;
     switch (op.op) {
       case 'admit': {
-        if (unit(op.unit.id) !== undefined) {
-          reasons.push(`${at}: unit ${op.unit.id} is already planned`);
+        const admitted = admitUnit(plan, specs, { ...op.unit, resources: [] }, op.spec, specPath(op.unit.id), at);
+        if ('reasons' in admitted) {
+          reasons.push(...admitted.reasons);
           return;
         }
-        let spec: SpecM1;
-        try {
-          spec = parseSpec(Buffer.from(op.spec, 'utf8'), specPath(op.unit.id));
-        } catch (error) {
-          if (!(error instanceof SpecFileError || error instanceof SchemaError)) throw error;
-          reasons.push(`${at}: its spec is not a unit spec: ${error.message}`);
-          return;
-        }
-        if (spec.unit !== op.unit.id || spec.rev !== 1) reasons.push(`${at}: its spec names unit ${spec.unit} rev ${spec.rev}, not ${op.unit.id} rev 1`);
-        plan.units.push({ id: op.unit.id, spec: `${op.unit.id}.json`, risk: op.unit.risk, scope: op.unit.scope, resources: [], after: op.unit.after, origin: op.unit.origin });
-        specs.set(op.unit.id, { path: specPath(op.unit.id), bytes: specBytes(spec) });
         authored.add(op.unit.id);
-        lanes.push(...spec.lanes);
+        lanes.push(...admitted.spec.lanes);
         touched.plan = true;
         return;
       }
@@ -708,19 +752,7 @@ function proposalOf(ctx: CheckpointContext, a: Activation, inForce: InForce, rev
   }
   if (parsed === null || reasons.length > 0) return { files: current, obligations: obligationsNow, landing, touched, lanes, outsidePaths, reasons };
 
-  // Lead ruling (paid M3 run 5): a spec the bundle authors declares every obligation the impact mapping selects for its
-  // scope, filled in by code (declared ∪ mapping-selected, non-exempt); the model never reproduces the mapping. The
-  // classifier's refusal of narrower declarations stays for the architect's specs (DESIGN §2.3).
-  if (obligationsAfter !== null) {
-    for (const id of [...authored].sort()) {
-      const u = parsed.units.find((x) => x.id === id);
-      const f = specs.get(id);
-      if (u === undefined || f?.bytes == null) continue;
-      const spec = parseSpec(f.bytes, f.path);
-      const widened = mappedObligations(obligationsAfter, [...u.scope, ...spec.scope], specObligations(spec));
-      if (widened.length > 0 && canonicalJson(widened) !== canonicalJson(specObligations(spec))) specs.set(id, { path: f.path, bytes: specBytes({ ...spec, obligations: widened }) });
-    }
-  }
+  fillMappedObligations(obligationsAfter, parsed, specs, authored);
 
   const ledgerFile = ledgerPath(ctx.planFile, parsed);
   const sidecarFiles = new Map(sidecars.map((s) => {

@@ -857,11 +857,18 @@ export const auditTrigger: Read<AuditTrigger> = tagged('type', {
   final: object((f): AuditTrigger => ({ type: f.get('type', literal('final')) })),
 });
 
-/** What a checkpoint runs for: a completed audit, or an operator-design park (OR-Q1). */
-export type CheckpointTrigger = Readonly<{ type: 'audit'; job: JobId }> | Readonly<{ type: 'park'; unit: UnitId; seq: number }>;
+/**
+ * What a checkpoint runs for: a completed audit, an operator-design park (OR-Q1), or (dev.13) a milestone walk that ended
+ * as a round with findings no checkpoint has weighed (src/holistic/checkpoint.ts `walkNeedsCheckpoint`).
+ */
+export type CheckpointTrigger =
+  | Readonly<{ type: 'audit'; job: JobId }>
+  | Readonly<{ type: 'park'; unit: UnitId; seq: number }>
+  | Readonly<{ type: 'walk'; job: JobId }>;
 export const checkpointTrigger: Read<CheckpointTrigger> = tagged('type', {
   audit: object((f): CheckpointTrigger => ({ type: f.get('type', literal('audit')), job: f.get('job', jobR) })),
   park: object((f): CheckpointTrigger => ({ type: f.get('type', literal('park')), unit: f.get('unit', (v, p) => unitId(v, p)), seq: f.get('seq', positive) })),
+  walk: object((f): CheckpointTrigger => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
 });
 
 /**

@@ -260,7 +260,7 @@ export const divergenceSeq = D.n;
  * baseline witness, (M4a) a pack review, (M4b) a flow run and a suite-lane proof, or (dev.13) a milestone walkthrough.
  * `<kind>-<n>`, numbered per kind.
  */
-export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'flow', 'proof', 'walk'] as const;
+export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'flow', 'proof', 'walk', 'compare'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobId = Brand<string, 'JobId'>;
 const JOB = new RegExp(`^(${JOB_KINDS.join('|')})-(${POS})$`);

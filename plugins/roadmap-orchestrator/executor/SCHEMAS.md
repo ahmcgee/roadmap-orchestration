@@ -371,6 +371,11 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | launch.json / result.json command | `purpose + bring-up`; a cancelled command's `reason + teardown` (`COMMAND_CANCEL_REASONS`) | none |
 | `proc.kill`, cancel.json | `reason + teardown` (a bring-up serve, by its owner) | none |
 | `status` (derived) | `+ milestones`; `edges[] + {type: milestone}`; `units[].waitingFor + milestones`; `completion` blocker `+ walk-pending` | derived (an arc without milestones shows none) |
+| Facts (agent D) | `+ polish-refused, compare-started, compare-abandoned` (`+ interrupted?: true`); `tweak-judged.reason + bring-up-failed, abandoned`; `walk-ended + interrupted?: true` (only on an abandoned walk) | none; absent `interrupted`: a failed attempt (lasting) |
+| `JobId` (agent D) | `+ compare-<n>` | none |
+| `CheckpointTrigger` (`checkpoint-inputs.trigger`) | `+ walk{job}` | none: dev.12 checkpoints name audits and parks |
+| `RevisionSource` (`plan-applied.source`, `revision.commit`) | `+ walk{job}`, `+ compare{unit}` | none |
+| `AdmissionConstraint` (derived, sched.json) | `+ compare{decision: drop \| null}` | derived |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -4103,10 +4108,10 @@ it has the servers and the bring-ups, and stops there (using them is the builder
   existing job convention), the servers' stdout and stderr captured there by code; teardown after the report (the runner
   reaps the session, code stops the product).
 - Compare: instances `<worktreeRoot>/<unit>.compare-<attempt>-before|after`; evidence under the unit's attempt evidence dir.
-- Records D freezes in its own step (shapes fixed here): `CheckpointTrigger + {type: 'walk'; job}` (the checkpoint's
-  readable dirs gain the walk's evidence dir); `RevisionSource + {type: 'walk'; job}` (the code-applied polish revision,
-  through the admit classifier, under the fence); the compare stage between gate approval and candidate admission, a cut
-  with reason `polish-dropped` on `drop`; `tweak-judged` is its postcondition.
+- Compare (agent D, changed from the line above): a durable job `compare-<n>`, its checkouts
+  `<worktreeRoot>/<arc>/<compare-n>.before|after` and its evidence under `<runDir>/evidence/jobs/<compare-n>/` (the job
+  convention), since the polish judge is an arc seat whose calls are metered to a job (`callActingJudge`). See "Fix units
+  and the polish loop" below.
 
 ### The milestone node (agent C, src/schedule/ready.ts)
 
@@ -4151,7 +4156,7 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   the config is a bug here, Phase 0 refuses it). The references input is src/pipeline/stages.ts `referenceFiles` at the
   walked SHA (a binary file left out). The open findings are shown with their recorded cause (below), deadline 90 min (`WALK_SESSION_MIN`),
   a lost call retried once. Call 1 is the walk; call 2 its one repair turn (`repairTurnOf`); refused again, interrupted,
-  failed or parked, the walk ends `abandoned` and the same round is due again.
+  failed or parked, the walk ends `abandoned` and the same round is due again, once ("The abandonment brakes" below).
 - **Validation** (`walkRefusals`): a cited evidence path is read relative to the evidence dir, or absolute inside it, and
   must be a file there; a polish scope covers a reference when a pattern's literal part lies inside a reference dir or holds
   one; a polish unit's spec must be its own unit's at rev 1 and its id no unit of the plan.
@@ -4171,7 +4176,7 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   `open` and no checkpoint captured after k's end decided; `polish`, an applied proposal in no unit of the plan: agent D's
   revision applies them, and D extends this rule for a proposal its admit refuses) or one of its units is neither merged
   nor cut. Then k+1 is due when one landed and k < `walkRounds`; else the milestone settles (derived, no fact). A
-  `bring-up-failed` walk is a round; an `abandoned` one is not.
+  `bring-up-failed` walk is a round; an `abandoned` one is not (a round abandoned twice ends: "The abandonment brakes").
 - **Milestone node.** Exemption is by the lineage root's origin: a re-entry of a gated planned unit stays gated, whatever
   its own origin.
 - **Escalation** (`walkItemsDue`, raised by the scheduler's tick with the findings' items): `finding-p1-escalated`
@@ -4187,6 +4192,66 @@ No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also
   `polishing` a round open after it, `settled` settled passed); `EdgeView + {type: 'milestone', unit, milestone,
   passed}`; `WaitingFor + milestones` (the unpassed nodes a unit waits on; its compact state `milestones=MS-1`).
 
+### Fix units and the polish loop (agent D: src/walk/polish.ts, src/walk/compare.ts; plan §4)
+
+- **The checkpoint's walk trigger.** `CheckpointTrigger + {type: 'walk'; job: walk-n}`: due for a walk that ended as a
+  round (`reported`, `bring-up-failed`) while one of its findings is unweighed (`unweighedWalkFindings`, src/walk/milestones.ts:
+  active, `open`, and captured by no checkpoint that settled a decision, applied, no-op or requested, under the vision in
+  force); a walk that opened nothing, or only weighed findings, has nothing new and no checkpoint (as an audit's
+  `nothingNew`; no `checkpoint-skipped` is written: that fact is an audit's). Order: parks, then walks, then audits; the
+  generation is the latest recorded (as a park's). `TriggerView + {type: 'walk'; job, milestone, round, findings,
+  evidenceDir}`; the session's readable dirs gain the walk's evidence dir (Read renders its screenshots). The checkpoint
+  plans repairs from claim, cause and evidence; nothing asks it to judge looks. The rounds brake's `pending: checkpoint`
+  is the same predicate.
+- **The polish revision** (code, no model call, `applyPolish`, a holistic job after the walk). Due: the first walk in log
+  order that ended `reported` with an applied proposal (proposals less `dropped`) carried by no plan unit and not refused.
+  A proposal is refused, `polish-refused{proposal: X-n, reasons (non-empty)}` (once per proposal; settled: never applied, and
+  the rounds brake's `pending: polish` treats it as settled), when the arc is draining, when it is not from its milestone's
+  latest round, when its scope covers no milestone reference (`coversReference`), or when the admit path or the classifier
+  refuses its unit admitted alone; the rest are admitted together (refused together, each is refused with the combined
+  reasons). THE admit path (src/holistic/bundle.ts `admitUnit`, `fillMappedObligations`; a checkpoint `admit` takes it
+  too): the unit not planned, its spec a unit spec of that unit at rev 1, then its entry `{id, spec: <id>.json, risk: high,
+  scope, resources: the milestone's, after: [], origin: polish, polish: {milestone, proposal}}`; then `evaluateRevision`
+  with proposer `walk{job}` and `commitUnderFence` with source `walk{job}` (parent the walk job). A commit the arc moved
+  under is retried at the next run.
+- **Classifier rows** (`polishRows`, src/input/classify.ts; `Proposer + walk{job} | compare{unit}`): a polish unit added
+  (not a re-entry) only by proposer `walk{job}` whose proposal it carries (`polish-proposed` of that job, of the unit's
+  milestone, whose unit id and scope are the unit's); proposer `walk` changes nothing but adding such units; proposer
+  `compare{unit}` changes nothing but cutting `unit`, judged `drop`, with reason `polish-dropped` (`POLISH_DROPPED`), no
+  open attempt: the in-a-task refusal does not apply to it (the unit waits at its candidate admission, in no stage).
+- **Candidate admission** (src/schedule/ready.ts): a polish unit's candidate waits under `AdmissionConstraint{type:
+  'compare'; decision: null | 'drop'}` until its `tweak-judged` is a `keep`; a `drop` never admits (its cut follows).
+- **The compare job** (`runCompare`, a holistic job after the polish revision). First a dropped tweak not cut is cut
+  (`cutDropped`: the unit's plan entry gains `cut: {reason: polish-dropped}`, proposer and source `compare{unit}`, parent
+  `arc`; a classifier refusal is a bug). Else a running compare resumes; else the first polish unit in plan order, active,
+  approved, its decided next stage `candidate`, no `tweak-judged`: its unit diff (`unitDiffPaths` of the integration tip and
+  the approval's `unitCommit`) touching no milestone reference is `tweak-judged{drop, reference-untouched}` with no job;
+  otherwise (skipped while the polishJudge backend is parked or the arc paused or stopped)
+  `compare-started{job: compare-n, unit, before: Sha (the integration tip), after: Sha (the approval's unit commit), ports:
+  {before, after}}` under the fence (fold: opens the job; one compare open at a time; never for a judged unit). Then the
+  milestone job reservation (`reserveJob`, src/walk/walk.ts), two detached checkouts, each brought up (bring-up keys
+  `bring-up:<job>:before|after`, logs `<evidence>/server-before|server-after/`): a failed before, or a stop, is
+  `compare-abandoned{job, detail}` (fold: closes the open compare; a later compare runs); a failed after with the before
+  up is `tweak-judged{drop, bring-up-failed}` (`TWEAK_REASONS + bring-up-failed`). The judge: `polishJudge` via
+  `callActingJudge` in the after checkout, `--mcp-config` for a `browser` journey, `--add-dir` its evidence dir and the
+  original walk's; one repair turn (a cited file must exist under either dir, `judgeRefusals`); refused again, failed,
+  interrupted or parked: `compare-abandoned`. Teardown, then `tweak-judged{decision, judged}` (which closes the compare), and
+  a drop's cut. `PolishJudgeInputs.references` are the after commit's; `referenceDiff` is the unit's bounded diff
+  (merge-base..after, `GATE_DIFF_BUDGET`, attachment under `<evidence>/diff/`), which holds the reference diff.
+- **Crash labels.** `polish.after-refused`, `polish.after-revision`, `compare.after-started`, `compare.after-judged`,
+  `compare.after-cut`.
+- **The abandonment brakes** (lead ruling 2026-10-18: brakes in code, never a retry for ever). An abandonment a pause, a
+  stop or a backend park cut short carries `interrupted: true` (`walk-ended`, `compare-abandoned`) and is no try.
+  - A compare: a unit gets COMPARE_ATTEMPTS = 2 compares; its second failed one (`failedCompares`) writes, right after its
+    `compare-abandoned`, `tweak-judged{drop, abandoned}` (`TWEAK_REASONS + abandoned`), and the cut follows as for a drop.
+  - A walk: a round gets WALK_ATTEMPTS = 2 walks (its first and one retry); once its walk failed twice since the previous
+    round's walk, `milestoneProgress` is `{kind: 'abandoned', round, last}`: no further walk is due, the milestone is not
+    settled (`settledMilestones` omits it, so the demo never promotes on it), `walksPending` is false, its status state is
+    `blocked` (unpassed) or `settled` (passed), and `walkItemsDue` raises one `finding-p1-escalated` parented by its last
+    walk, blocking while the node is unpassed, non-blocking once it passed. The brake is final for that round: the owner
+    plans another milestone for the experience if it still needs walking.
+- **Prompt.** `prompts/polishJudge/claude-opus-5-5.ts` (Opus 5.5 guide only); Fable a dated `inherits`.
+
 ### The demo (agent G: src/demo/promote.ts, executor side; src/demo/keeper.ts, the supervisor's keeper)
 
 A stable build for the owner to pick up (plan §4a). Walks and lanes never touch it. No model call.
@@ -4199,7 +4264,7 @@ A stable build for the owner to pick up (plan §4a). Walks and lanes never touch
   milestone with `milestone-passed`, no active walkthrough P1, its latest walk ended, and that walk's round closed: every
   unit admitted from it (the polish units of its applied proposals, `proposals` less `dropped`, and every `repair` or
   `checkpoint` unit whose spec `repairs` one of its `findings`) retired, cut or superseded; every applied proposal's unit in
-  the plan (an admission still to come keeps it open); every finding of the walk weighed (not `open`, or captured by a
+  the plan or the proposal refused (`polish-refused`, agent D; an admission still to come keeps it open); every finding of the walk weighed (not `open`, or captured by a
   decided checkpoint); and the round is `walkRounds` or none of those units landed. The settled SHA is that walk's
   `walk-started.sha`, what it confirmed.
 - **Promotion** (each scheduler iteration of an arc with milestones, `demoTicker`): unless held, the settled milestone whose

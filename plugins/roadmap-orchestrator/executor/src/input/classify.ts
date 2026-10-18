@@ -78,6 +78,13 @@
 //                               milestone added (or the last removed) moves the walk seats into (out of) force, so the
 //                               revision's routing is checked and smoked (`routingRows`)
 //
+// dev.13, agent D (`polishRows`):
+//   polish units                a polish unit added (not a re-entry) only by the polish revision of the walk whose
+//                               proposal it carries (proposer `walk{job}`), the proposal of its milestone and the unit
+//                               the proposal names; that proposer changes nothing else
+//   a dropped tweak's cut       proposer `compare{unit}` cuts only `unit`, reason `polish-dropped`, judged `drop`; the
+//                               in-a-task refusal does not apply (the unit waits at its candidate admission, in no stage)
+//
 // M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
 // it may touch:
 //   rulings ledger + sidecars   executor-owned after start (A3): only `rule`, `apply --ruling` (M4a rev 3, I2: the
@@ -186,7 +193,11 @@ export type Proposer =
    */
   | Readonly<{
     type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; fixesUnrecorded: readonly UnitId[];
-  }>;
+  }>
+  /** dev.13 (agent D): the code-applied polish revision of walk `job` (src/walk/polish.ts): it only admits that walk's proposals. */
+  | Readonly<{ type: 'walk'; job: JobId }>
+  /** dev.13 (agent D): the cut of polish unit `unit` its compare judged `drop` (src/walk/compare.ts): it only cuts that unit. */
+  | Readonly<{ type: 'compare'; unit: UnitId }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -676,7 +687,7 @@ export function classify(input: ClassifyInput): Classified {
     if (was.cut !== undefined && unit.cut === undefined) reasons.push(`unit ${unit.id} is cut; a cut is final`);
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
-      const refusal = cutRefusal(view, unit.id);
+      const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit) : cutRefusal(view, unit.id);
       const ruling = unit.cut.ruling === undefined ? null : rulingReason(ledger, unit.cut.ruling, `unit ${unit.id}'s cut`);
       if (refusal !== null) reasons.push(refusal);
       if (ruling !== null) reasons.push(ruling);
@@ -891,6 +902,8 @@ export function classify(input: ClassifyInput): Classified {
   specRows(input, inputs, specs, changes, reasons);
   censusRows(input, inputs, specs, reasons);
   corpusRows(input, inputs, changes, reasons);
+  // dev.13 (agent D): polish units and the code proposers, over every change listed.
+  polishRows(view, cur, plan, proposer, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons };
   // No change but other bytes (whitespace, key order): the new bytes come into force with no change listed.
@@ -1044,6 +1057,59 @@ function milestoneRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: P
     if (m.units.every(merged)) reasons.push(`milestone ${m.id}: every unit it lists has merged, so no publication would reach it; list a unit still to merge`);
   }
   if (reasons.length === before) changes.push({ type: 'milestones' });
+}
+
+/** The cut reason of a polish unit its compare judged `drop` (src/walk/compare.ts). */
+export const POLISH_DROPPED = 'polish-dropped';
+
+/**
+ * Why the compare's cut of polish unit `unit` may not land, or null (dev.13, agent D). The unit waits at its candidate
+ * admission, which a dropped tweak never passes (src/schedule/ready.ts `compare` constraint), so it is in no stage although
+ * its task may be waiting there: the in-a-task refusal (`cutRefusal`) does not apply. Its `tweak-judged` is a `drop`, the
+ * reason `polish-dropped`, and it has no open attempt.
+ */
+function droppedCutRefusal(view: JournalView, unit: PlanUnit): string | null {
+  const judged = view.walkFacts().find((x) => x.fact.kind === 'tweak-judged' && x.fact.unit === unit.id)?.fact;
+  if (judged?.kind !== 'tweak-judged' || judged.decision !== 'drop') return `unit ${unit.id}: a compare cuts only a tweak it judged drop`;
+  if (unit.cut?.reason !== POLISH_DROPPED) return `unit ${unit.id}: a dropped tweak is cut with the reason ${POLISH_DROPPED}`;
+  const u = view.unit(unit.id);
+  if (u.status === 'retired' || u.status === 'superseded') return `unit ${unit.id} is ${u.status}; it cannot be cut`;
+  const open = openAttempt(view, unit.id);
+  return open === null ? null : `unit ${unit.id} has an open ${open.stage} attempt; a dropped tweak waits at its candidate admission`;
+}
+
+/**
+ * dev.13 (agent D): polish units and the two code proposers (one admit path, two authors: the checkpoint's `admit` and a
+ * walk's proposals go through the same admit validation and this classifier).
+ * - A polish unit added (not a re-entry) is a walk's: its proposer is the polish revision of the walk whose proposal it
+ *   carries, the proposal is of the unit's milestone, and the unit is the proposal's own (its id and scope).
+ * - The polish revision (`walk{job}`) only adds such units: any other change is refused.
+ * - The compare's cut (`compare{unit}`) only cuts that unit (`droppedCutRefusal` holds the rest).
+ */
+function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
+  const curIds = new Set(cur.units.map((u) => u.id));
+  const proposals = new Map(view.walkFacts().flatMap((x) => (x.fact.kind === 'polish-proposed' ? [[x.fact.id, x.fact] as const] : [])));
+  for (const u of plan.units) {
+    if (curIds.has(u.id) || u.origin !== 'polish' || u.reenters !== undefined) continue;
+    const origin = u.polish!;
+    if (proposer.type !== 'walk') {
+      reasons.push(`unit ${u.id} is a polish unit: only the executor admits one, from a walkthrough's proposal, not a ${proposer.type}`);
+      continue;
+    }
+    const p = proposals.get(origin.proposal);
+    if (p === undefined || p.job !== proposer.job) reasons.push(`unit ${u.id} carries proposal ${origin.proposal}, which is no proposal of ${proposer.job}`);
+    else if (p.milestone !== origin.milestone) reasons.push(`unit ${u.id} names milestone ${origin.milestone}; its proposal ${p.id} is of ${p.milestone}`);
+    else if (p.unit.id !== u.id || !same([...u.scope].sort(), p.unit.scope)) reasons.push(`unit ${u.id} is not the unit proposal ${p.id} names (${p.unit.id}, scope ${p.unit.scope.join(', ')})`);
+  }
+  if (proposer.type === 'walk') {
+    const added = new Set(plan.units.filter((u) => !curIds.has(u.id) && u.origin === 'polish').map((u) => u.id as string));
+    const other = changes.filter((c) => !(c.type === 'unit-added' && added.has(c.unit)));
+    if (other.length > 0) reasons.push(`the polish revision of ${proposer.job} only admits its polish units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
+  }
+  if (proposer.type === 'compare') {
+    const other = changes.filter((c) => !(c.type === 'unit-cut' && c.unit === proposer.unit));
+    if (other.length > 0) reasons.push(`the compare's cut of ${proposer.unit} only cuts it; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
+  }
 }
 
 type ObligationRows = Readonly<{

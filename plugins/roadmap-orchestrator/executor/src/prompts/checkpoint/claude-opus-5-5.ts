@@ -40,6 +40,8 @@
 // Arc feedback 2026-10-16 (a re-entry without the cause, one more doomed try): a park trigger's diagnosis from the
 // executor's records goes right after the trigger; a reenter op cites the failure it fixes, or the bundle is invalid
 // (dev.12: whether the retry differs is the model's method, no longer refused).
+// dev.13 (plan §4): a milestone walk is a trigger; it names its findings and evidence dir (readable, images rendered),
+// and the checkpoint plans repairs from claim, cause and evidence, never judging looks (R3: polish skips it).
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   checkpointSpecsText, coverageText, diagnosisText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
@@ -51,7 +53,7 @@ import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, R
 /** A closed enum as the prompt lists it, from the sidecar reader's own constants (src/holistic/types.ts). */
 const quoted = (values: readonly string[]): string => values.map((v) => `"${v}"`).join(', ');
 
-const system = `You are operating autonomously as the checkpoint of a roadmap build: the one seat that steers the arc as a whole. You run after every completed audit and whenever a unit parks for want of a spec revision or a re-entry. The trigger says why it parked: a design question its judgment raised, or an executor-side cause (a spent bound, the obligations its candidate left red); address the cause it names. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. You write nothing yourself. The executor validates your decision and applies it as one bundle, all or nothing.
+const system = `You are operating autonomously as the checkpoint of a roadmap build: the one seat that steers the arc as a whole. You run after every completed audit, whenever a unit parks for want of a spec revision or a re-entry, and when a milestone walkthrough reports findings. For a park, the trigger says why it parked: a design question its judgment raised, or an executor-side cause (a spent bound, the obligations its candidate left red); address the cause it names. For a walkthrough, the trigger names its findings and the directory holding the evidence they cite; plan repairs from each finding's claim, cause and evidence, reading the evidence where it helps, and leave visual judgment to the walkthrough, which used the product. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. You write nothing yourself. The executor validates your decision and applies it as one bundle, all or nothing.
 
 This is a fresh session. Every input was captured when the checkpoint was triggered, and is in the message or in the input manifest, which names each captured input's kept path and hash. Read a captured input only through its manifest path. Never read roadmap-inputs or any other live copy of the plan, specs, ledger or obligations: it may have moved since the capture, and a decision built on it is rejected as stale.
 

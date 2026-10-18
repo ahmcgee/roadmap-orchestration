@@ -510,8 +510,9 @@ node evals/m5/check.ts /var/tmp/m5
   shell-milestone unit dispatched before `milestone-passed` of the browser one), walk-screenshots (every reported browser
   walk's evidence dir holds a PNG), plant-caught (the plant still failed at the first walk's SHA, and a walkthrough
   contrast finding on the browser milestone was resolved by a published unit), plant-repaired (`.book-meta` computes at
-  4.5:1 or more at the completed head, `css.ts`), polish-bounded (rounds within `walkRounds`; each polish unit judged
-  once, `keep` before it published), demo-serving (the latest `demo-promoted` is what `status.demo` showed at the end, at
+  4.5:1 or more at the completed head, `css.ts`), polish-bounded (rounds within `walkRounds`; a round's failed walks
+  and a unit's compares within their brakes, two each; each polish unit not cut outside its compare judged once, `keep`
+  before it published), demo-serving (the latest `demo-promoted` is what `status.demo` showed at the end, at
   an http URL that answered and never moved), skill-vendored, no-model-ids, host-released, profile.
 
 Two criteria read pieces built in parallel with the fixture: `polish-bounded`'s `tweak-judged` (agent D, the compare

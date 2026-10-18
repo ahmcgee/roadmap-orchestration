@@ -158,6 +158,7 @@ function goodLog(over: Partial<M5Log> = {}): M5Log {
       transitions: [{ seq: 65, to: { state: 'owned', unit: 'repair-contrast' } }, { seq: 75, to: { state: 'fixed-on-branch', unit: 'repair-contrast' } }, { seq: 82, to: { state: 'resolved' } }],
     }] as M5Log['findings'],
     tweaks: [{ seq: 95, unit: 'polish-x1', decision: 'keep', reason: 'judged' }, { seq: 96, unit: 'polish-x2', decision: 'drop', reason: 'judged' }],
+    compares: [{ job: 'compare-1', unit: 'polish-x1', seq: 93, abandoned: false, interrupted: false }, { job: 'compare-2', unit: 'polish-x2', seq: 94, abandoned: false, interrupted: false }],
     demos: [{ seq: 101, milestone: 'MS-1', sha: SHA('4') }, { seq: 151, milestone: 'MS-2', sha: SHA('6') }],
     ...over,
   };
@@ -223,6 +224,13 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     assert.match(polishBoundedVerdict(goodLog(), ['polish-x3'], 3).detail, /polish unit polish-x3 has 0 tweak-judged facts/);
     const dropped = goodLog({ publications: [...goodLog().publications, { seq: 97, unit: 'polish-x2', commit: SHA('7') }] });
     assert.match(polishBoundedVerdict(dropped, ['polish-x2'], 3).detail, /polish unit polish-x2 published at seq 97 after a drop/);
+    // Agent D's brakes: a round's failed walks at most twice, a unit's compares at most twice (interrupted ones are no tries).
+    const abandonedWalk = (job: string, interrupted = false) => ({ job, milestone: 'MS-2', round: 1, sha: SHA('6'), seq: 135, outcome: 'abandoned' as const, interrupted });
+    assert.ok(polishBoundedVerdict(goodLog({ walks: [...goodLog().walks, abandonedWalk('walk-4'), abandonedWalk('walk-5', true), abandonedWalk('walk-6')] }), ['polish-x1', 'polish-x2'], 3).pass);
+    assert.match(polishBoundedVerdict(goodLog({ walks: [...goodLog().walks, abandonedWalk('walk-4'), abandonedWalk('walk-5'), abandonedWalk('walk-6')] }), ['polish-x1'], 3).detail, /MS-2 round 1 was abandoned 3 times, past the brake of 2/);
+    const compare = (n: number, interrupted = false) => ({ job: `compare-${n}`, unit: 'polish-x1', seq: 90 + n, abandoned: true, interrupted });
+    assert.match(polishBoundedVerdict(goodLog({ compares: [compare(1), compare(2), compare(3)] }), ['polish-x1'], 3).detail, /polish-x1 was compared 3 times, past the brake of 2/);
+    assert.ok(polishBoundedVerdict(goodLog({ compares: [compare(1, true), compare(2), compare(3)] }), ['polish-x1', 'polish-x2'], 3).pass);
   });
 
   test('evals-m5.criterion.demo-serving: the latest promotion serves at one URL; no promotion, no status.demo, a stale demo, a dead URL or a moved URL fails', () => {

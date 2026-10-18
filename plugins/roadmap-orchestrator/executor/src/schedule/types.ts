@@ -139,7 +139,12 @@ export type AdmissionConstraint =
    * M4b rev 3 (RC-11): the unit's run `inv` was starved, or red under pressure with its rerun pending (`UnitState.pressureHold`):
    * its re-run waits until a minute of scheduler ticks since the hold shows the host's cpu wait below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass.
    */
-  | Readonly<{ type: 'host-pressure'; inv: InvocationId }>;
+  | Readonly<{ type: 'host-pressure'; inv: InvocationId }>
+  /**
+   * dev.13 (agent D): a polish unit's candidate waits for its compare (src/walk/compare.ts): `decision` null before its
+   * `tweak-judged`, `drop` after a drop (it never lands; its cut follows).
+   */
+  | Readonly<{ type: 'compare'; decision: 'drop' | null }>;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
 

@@ -84,6 +84,8 @@ export const MUTANT_APPLY = 'mutant.apply: a vacuity repair\'s reproduce (M3 B3:
 export const AUDIT_JOB = 'cadence audit job (M3 B5: audit-started under the fence, job lanes, lens calls, audit-ended)';
 export const CHECKPOINT_JOB = 'checkpoint job (M3 B6: checkpoint-inputs under the fence, the checkpoint call)';
 export const WALK_JOB = 'milestone walk job (dev.13: walk-started under the fence, the bring-up, the walkthrough call, minting, walk-ended, milestone-passed)';
+export const POLISH_REVISION = 'polish revision (dev.13 agent D: polish-refused, then plan-applied{source: walk{job}} under the fence)';
+export const COMPARE_JOB = 'polish compare job (dev.13 agent D: compare-started under the fence, two bring-ups, the polish judge, tweak-judged, the polish-dropped cut)';
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
 export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
 export const SUPERVISOR_HOST = 'supervisor/host';
@@ -1497,6 +1499,52 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['walk.after-ended', 'walk.after-passed'],
         recovery: 'the walk ended: nothing to resume; a pass the crash cut short is written by settleWalks (the log read through the end held no active walkthrough P1); no walk is due; the model was asked once',
+      },
+    },
+  },
+  {
+    // Walk-1 proposed X-1 (admitted) and X-2 (refused by the classifier); the polish revision runs in a child
+    // (test/fixtures/polish-child.ts) crashed at each label, then recovery and the revision again.
+    row: POLISH_REVISION,
+    test: 'test/polish-loop.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the revision writes no intent of its own before its refusals; its commit is the revision.commit row\'s' },
+      B3: {
+        status: 'crash',
+        labels: ['polish.after-refused'],
+        recovery: 'X-2\'s polish-refused durable, the revision not committed: the rerun skips X-2 (settled) and admits X-1 in one revision; one polish-refused, one plan-applied{source: walk}',
+      },
+      B4: { status: 'excluded', why: 'the commit is one revision.commit (its own row crashes inside it); nothing of the polish revision follows it but the crash label after it' },
+      B5: {
+        status: 'crash',
+        labels: ['polish.after-revision'],
+        recovery: 'the revision committed: nothing is due (X-1 carried by tw-keep, X-2 refused); no second revision',
+      },
+    },
+  },
+  {
+    // tw-keep approved and held at its candidate; the compare runs in a child (test/fixtures/polish-child.ts) crashed at
+    // each label, then recovery and the compare again. The judge drops it, so every label occurs once.
+    row: COMPARE_JOB,
+    test: 'test/polish-loop.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['compare.after-started'],
+        recovery: 'compare-started durable, nothing brought up: the job resumes as compare-1 from its recorded start (no second capture), brings both instances up on their recorded ports, asks once; one tweak-judged, one cut',
+      },
+      B3: { status: 'excluded', why: 'inside the job its bring-ups and the judge call are spawns (the proc.spawn rows); a resumed compare consumes a recorded call (recordedArcCall), as the walk job\'s B3 shows' },
+      B4: {
+        status: 'crash',
+        labels: ['compare.after-judged'],
+        recovery: 'tweak-judged{drop} durable, both instances torn down, the cut not committed: the rerun cuts the unit (polish-dropped) and asks nothing; one cut revision',
+      },
+      B5: {
+        status: 'crash',
+        labels: ['compare.after-cut'],
+        recovery: 'the cut committed: nothing is due; the judge was asked once',
       },
     },
   },

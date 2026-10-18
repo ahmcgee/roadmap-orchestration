@@ -15,10 +15,12 @@ import type { WalkContext } from '../../src/walk/walk.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import type { ClaudeAct, Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
+import { admitSpecWire } from '../helpers/holistic.ts';
+import { BUILD_REPORT, planCheckStep } from './stage-common.ts';
 import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
 import { publishArc } from './publish-common.ts';
 import { wired } from './sched-m3-common.ts';
-import { type ArcDescriptor, type ArcRun } from './unit-common.ts';
+import { type ArcDescriptor, type ArcRun, gateStep } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -160,3 +162,25 @@ export function walkStep(job: string, answer: JsonValue, extra: readonly ClaudeA
     ],
   };
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Agent D: polish proposals and polish units (test/polish-loop.test.ts, the probe's polish.compare row)
+
+export const SCOPE = ['design/**', 'product/**'];
+/** A polish proposal on J-1 whose unit is u1's spec renamed (its lanes), scope the reference and the product. */
+export function proposal(d: Readonly<{ planPath: string }>, id: string, text: string, extra: Json = {}) {
+  const u1 = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
+  return { journey: 'J-1', text, unit: { id, scope: SCOPE, spec: admitSpecWire({ ...u1, unit: id, rev: 1, scope: SCOPE, ...extra }) } };
+}
+
+/** A Claude build of polish unit `unit` (frontier builds high risk): it commits `files`. */
+export const polishBuild = (unit: string, files: Readonly<Record<string, string>>): Step => ({
+  as: 'claude', unit, expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] },
+  acts: [{ type: 'commit', message: `polish ${unit}`, files }, { type: 'emit', value: BUILD_REPORT }],
+});
+export const polishSteps = (unit: string, files: Readonly<Record<string, string>>): readonly Step[] => [
+  { ...planCheckStep({ decision: 'approve', risk: 'high' }), unit }, polishBuild(unit, files), { ...gateStep({ decision: 'approve' }), unit },
+];
+
+/** tw-keep's build: the greeting configured, and the reference says so. */
+export const KEEP_FILES = { 'design/README.md': '# Greeter design\n\n## Errors\n\nAn error names what failed and how to fix it.\n\n## Greeting\n\nThe greeting ends with a newline.\n', 'product/greeting.txt': 'hello\n' };

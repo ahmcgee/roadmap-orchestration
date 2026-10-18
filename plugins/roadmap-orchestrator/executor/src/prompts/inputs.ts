@@ -401,10 +401,15 @@ export type ParkCause = Readonly<{
   stage: OutcomeStage; attempt: number; outcome: string; reason: NeedsUserReason; design: boolean; detail: readonly string[];
 }>;
 
-/** A checkpoint's trigger: a completed audit, or a park with its cause (null: the unit has moved on since the capture). */
+/**
+ * A checkpoint's trigger: a completed audit, a park with its cause (null: the unit has moved on since the capture), or
+ * (dev.13) a milestone walk: its milestone and round, the findings it opened or re-reported, and its evidence dir (the
+ * screenshots, transcripts and server logs the findings cite, readable by the session).
+ */
 export type TriggerView =
   | Readonly<{ type: 'audit'; job: JobId }>
-  | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>;
+  | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>
+  | Readonly<{ type: 'walk'; job: JobId; milestone: MilestoneId; round: number; findings: readonly FindingId[]; evidenceDir: AbsPath }>;
 
 /**
  * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding why it failed): what the executor's records say
@@ -1208,6 +1213,11 @@ export function refusedText(refused: CheckpointInputs['refused']): string {
 /** Why the checkpoint runs, in sentences. */
 export function triggerText(t: TriggerView): string {
   if (t.type === 'audit') return `the audit ${t.job} completed.`;
+  if (t.type === 'walk') {
+    return `the walkthrough ${t.job} of milestone ${t.milestone} (round ${t.round}) used the running product along its journeys and reported ${t.findings.join(', ')}, which no checkpoint has weighed. `
+      + `Each is a walkthrough finding on ${t.milestone}: a P1 breaks a journey or a floor and holds every unit built on the milestone until a repair lands and a later walk confirms it; a P2 departs from the design reference or the vision and is repaired alongside. `
+      + `Plan repairs from each finding's claim, cause and evidence. The evidence it cites (screenshots, shell transcripts, measurements, server logs) is under ${t.evidenceDir}, readable with Read, which renders images.`;
+  }
   const c = t.cause;
   if (c === null) return `unit ${t.unit} parked (log seq ${t.seq}); it has moved on since.`;
   const ended = `its ${c.stage} attempt ${c.attempt} ended ${c.outcome}`;

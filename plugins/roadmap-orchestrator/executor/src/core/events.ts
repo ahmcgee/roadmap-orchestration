@@ -303,7 +303,11 @@ export type RevisionSource =
   | Readonly<{ type: 'command'; command: CommandId }>
   | Readonly<{ type: 'bundle'; job: JobId; admits?: readonly ClassifiedAdmit[]; conversions?: readonly Conversion[] }>
   | Readonly<{ type: 'executor'; inv: InvocationId }>
-  | Readonly<{ type: 'flow'; proposal: ProposalId }>;
+  | Readonly<{ type: 'flow'; proposal: ProposalId }>
+  /** dev.13: the code-applied polish revision of walk `job`: its applied proposals admitted as polish units (src/walk/polish.ts). */
+  | Readonly<{ type: 'walk'; job: JobId }>
+  /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
+  | Readonly<{ type: 'compare'; unit: UnitId }>;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
 export type OpPost = {
@@ -957,7 +961,12 @@ export type WalkOutcome = (typeof WALK_OUTCOMES)[number];
 export const TWEAK_DECISIONS = ['keep', 'drop'] as const;
 export type TweakDecision = (typeof TWEAK_DECISIONS)[number];
 /** `judged`: the polish judge decided; `reference-untouched`: the diff touched no milestone reference (a drop, no call). */
-export const TWEAK_REASONS = ['judged', 'reference-untouched'] as const;
+/**
+ * `judged`: the polish judge's decision; `reference-untouched`: code's drop of a diff that touches no milestone reference;
+ * `bring-up-failed` (dev.13 agent D): code's drop of a tweak whose after instance did not come up while the before did;
+ * `abandoned` (lead ruling): code's drop of a tweak whose compare failed COMPARE_ATTEMPTS times (src/walk/compare.ts).
+ */
+export const TWEAK_REASONS = ['judged', 'reference-untouched', 'bring-up-failed', 'abandoned'] as const;
 export type TweakReason = (typeof TWEAK_REASONS)[number];
 /** A polish proposal's unit as the walkthrough authored it: `spec` is spec.json's canonical text (an admit's). */
 export type PolishUnitDraft = Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
@@ -973,13 +982,36 @@ export type WalkFact =
    * A walk's end: the findings it opened (a failed bring-up's code-opened P1 included) and the polish it proposed, both in
    * id order; `dropped` the proposals not applied (every proposal of the milestone's last round: the milestone settles).
    */
-  | Readonly<{ kind: 'walk-ended'; job: JobId; outcome: WalkOutcome; findings: readonly FindingId[]; proposals: readonly PolishId[]; dropped: readonly PolishId[] }>
+  | Readonly<{
+    kind: 'walk-ended'; job: JobId; outcome: WalkOutcome; findings: readonly FindingId[]; proposals: readonly PolishId[]; dropped: readonly PolishId[];
+    /** Lead ruling (agent D): present (true) only on an abandoned walk a pause, a stop or a backend park cut short; it is no try of the round's brake. */
+    interrupted?: true;
+  }>
   /** A walk's polish proposal, written before its `walk-ended`; never a finding, never debt. */
   | Readonly<{
     kind: 'polish-proposed'; id: PolishId; job: JobId; milestone: MilestoneId; journey: JourneyId; evidence: readonly string[]; text: string; unit: PolishUnitDraft;
   }>
   /** A polish unit's compare stage decided (once per unit): `keep` goes on to candidate admission, `drop` cuts it (`polish-dropped`). */
   | Readonly<{ kind: 'tweak-judged'; unit: UnitId; decision: TweakDecision; reason: TweakReason }>
+  /**
+   * Agent D: a polish proposal the code-applied polish revision refused (once per proposal): its scope covers no milestone
+   * reference, it is not from its milestone's latest round, or the admit path refused its unit. Settled: never applied.
+   */
+  | Readonly<{ kind: 'polish-refused'; proposal: PolishId; reasons: readonly string[] }>
+  /**
+   * Agent D: a polish unit's compare job (`compare-<n>`) began: `before` the integration tip and `after` the unit's approved
+   * commit (its salvage tree), each brought up on its own `ports`. Its `tweak-judged` (or `compare-abandoned`) ends it.
+   */
+  | Readonly<{
+    kind: 'compare-started'; job: JobId; unit: UnitId; before: Sha; after: Sha;
+    ports: Readonly<{ before: Readonly<Record<ServeName, number>>; after: Readonly<Record<ServeName, number>> }>;
+  }>
+  /**
+   * Agent D: a compare that could not judge (the before instance did not come up, the judge failed twice; `interrupted`: a
+   * pause, a stop or a backend park cut it short). A later compare runs, once: a unit's COMPARE_ATTEMPTS-th abandonment
+   * that was not interrupted is followed by `tweak-judged{drop, abandoned}` and the cut.
+   */
+  | Readonly<{ kind: 'compare-abandoned'; job: JobId; detail: string; interrupted?: true }>
   /** The milestone node passed: walk `job` completed and the milestone has no active walkthrough P1 (once per milestone). */
   | Readonly<{ kind: 'milestone-passed'; milestone: MilestoneId; job: JobId }>
   /** The demo (`refs/roadmap/demo`) moved to `sha`, the settled tip of `milestone` (or the completed arc's, its last settled milestone). */
@@ -1228,6 +1260,8 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   }),
   executor: object((f): RevisionSource => ({ type: f.get('type', literal('executor')), inv: f.get('inv', invR) })),
   flow: object((f): RevisionSource => ({ type: f.get('type', literal('flow')), proposal: f.get('proposal', proposalR) })),
+  walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
+  compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -1881,6 +1915,7 @@ const FLOW_FACT_READERS: { readonly [K in FlowFactKind]: Read<Fact> } = {
 };
 
 const walkJobR: Read<JobId> = (v, p) => jobIdOfKind('walk')(v, p);
+const compareJobR: Read<JobId> = (v, p) => jobIdOfKind('compare')(v, p);
 const milestoneR: Read<MilestoneId> = (v, p) => milestoneId(v, p);
 const polishSet: Read<readonly PolishId[]> = idList((v, p): PolishId => polishId(v, p));
 const ports: Read<Readonly<Record<ServeName, number>>> = (value, path) => {
@@ -1901,7 +1936,9 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
     const out = {
       kind: f.get('kind', literal('walk-ended')), job: f.get('job', walkJobR), outcome: f.get('outcome', oneOf(WALK_OUTCOMES)), findings: f.get('findings', findingSet),
       proposals: f.get('proposals', polishSet), dropped: f.get('dropped', polishSet),
+      ...(f.optional('interrupted', literal(true)) === undefined ? {} : { interrupted: true as const }),
     };
+    if (out.interrupted === true && out.outcome !== 'abandoned') throw new SchemaError(`${f.path}.interrupted`, 'only on an abandoned walk', out.interrupted);
     if (out.outcome !== 'reported' && out.proposals.length > 0) throw new SchemaError(`${f.path}.proposals`, `none for a walk ${out.outcome}`, out.proposals);
     if (out.outcome === 'abandoned' && out.findings.length > 0) throw new SchemaError(`${f.path}.findings`, 'none for an abandoned walk', out.findings);
     if (out.outcome === 'bring-up-failed' && out.findings.length === 0) throw new SchemaError(`${f.path}.findings`, 'the P1 a failed bring-up opens', out.findings);
@@ -1925,6 +1962,17 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
     if (out.reason === 'reference-untouched' && out.decision !== 'drop') throw new SchemaError(`${f.path}.decision`, 'drop for a tweak that touched no reference', out.decision);
     return out;
   }),
+  'polish-refused': object((f): Fact => ({
+    kind: f.get('kind', literal('polish-refused')), proposal: f.get('proposal', (v, p): PolishId => polishId(v, p)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
+  })),
+  'compare-started': object((f): Fact => ({
+    kind: f.get('kind', literal('compare-started')), job: f.get('job', compareJobR), unit: f.get('unit', unitR), before: f.get('before', shaR), after: f.get('after', shaR),
+    ports: f.get('ports', object((g) => ({ before: g.get('before', ports), after: g.get('after', ports) }))),
+  })),
+  'compare-abandoned': object((f): Fact => ({
+    kind: f.get('kind', literal('compare-abandoned')), job: f.get('job', compareJobR), detail: f.get('detail', str),
+    ...(f.optional('interrupted', literal(true)) === undefined ? {} : { interrupted: true as const }),
+  })),
   'milestone-passed': object((f): Fact => ({ kind: f.get('kind', literal('milestone-passed')), milestone: f.get('milestone', milestoneR), job: f.get('job', walkJobR) })),
   'demo-promoted': object((f): Fact => ({ kind: f.get('kind', literal('demo-promoted')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR) })),
   'demo-failed': object((f): Fact => ({ kind: f.get('kind', literal('demo-failed')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR), log: f.get('log', absR) })),

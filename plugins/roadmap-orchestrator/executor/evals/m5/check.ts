@@ -26,8 +26,10 @@
 //   plant-repaired     at the arc's completed head, `.book-meta`'s text over its background computes at 4.5:1 or more
 //                      across the stylesheets under `public/` (css.ts); a selector gone from them fails, for the lead to
 //                      adjudicate by hand
-//   polish-bounded     no milestone was walked more rounds than the final plan's `walkRounds`; every polish unit of the
-//                      final plan has exactly one `tweak-judged`, and a published one was judged `keep` before it published
+//   polish-bounded     no milestone was walked more rounds than the final plan's `walkRounds`; no round's walk failed more
+//                      than WALK_ATTEMPTS times nor a unit compared more than COMPARE_ATTEMPTS (the brakes); every polish unit
+//                      of the final plan not cut outside its compare has exactly one `tweak-judged`, and a published one was
+//                      judged `keep` before it published
 //   demo-serving       (needs agent G's demo) a `demo-promoted` was recorded; the driver's end-of-run `status.demo` names
 //                      the latest promotion's milestone and SHA, its `where` is an http(s) URL that answered below 500, and
 //                      every `status.demo` the driver saw named that same URL
@@ -48,6 +50,9 @@ import type { FindingTo } from '../../src/holistic/types.ts';
 import { readClaim } from '../../src/host/lock.ts';
 import { runDir } from '../../src/input/cli.ts';
 import { type PlanM1, walkRoundsOf } from '../../src/input/plan.ts';
+import { POLISH_DROPPED } from '../../src/input/classify.ts';
+import { COMPARE_ATTEMPTS } from '../../src/walk/compare.ts';
+import { WALK_ATTEMPTS } from '../../src/walk/milestones.ts';
 import { DENIED, UNSTAGED } from '../m4a/driver.ts';
 import { hostReleasedVerdict, modelIdHits, profileVerdict } from '../m4a/check.ts';
 import { scanTranscript } from '../m4a/transcript.ts';
@@ -65,7 +70,10 @@ const verdict = (problems: readonly string[], ok: string): Verdict => ({ pass: p
 // ---------------------------------------------------------------------------------------------------
 // The log as the criteria read it
 
-export type Walk = Readonly<{ job: string; milestone: string; round: number; sha: string; seq: number; outcome: WalkOutcome | null }>;
+/** `interrupted`: an abandoned walk a pause, a stop or a backend park cut short (no try of its round's brake; absent: false). */
+export type Walk = Readonly<{ job: string; milestone: string; round: number; sha: string; seq: number; outcome: WalkOutcome | null; interrupted?: boolean }>;
+/** A polish unit's compare job (agent D): `abandoned` without a judgment, `interrupted` when a pause, stop or park cut it short. */
+export type CompareLog = Readonly<{ job: string; unit: string; seq: number; abandoned: boolean; interrupted: boolean }>;
 export type FindingLog = Readonly<{ id: string; seq: number; lens: string; milestone: string | null; claim: string; cause: string | null; transitions: readonly Readonly<{ seq: number; to: FindingTo }>[] }>;
 export type M5Log = Readonly<{
   /** Each unit's first `dispatch` fact. */
@@ -76,6 +84,8 @@ export type M5Log = Readonly<{
   passed: readonly Readonly<{ seq: number; milestone: string; job: string }>[];
   findings: readonly FindingLog[];
   tweaks: readonly Readonly<{ seq: number; unit: string; decision: TweakDecision; reason: TweakReason }>[];
+  /** Agent D: the compare jobs (`compare-started`, closed by `compare-abandoned` or the unit's `tweak-judged`). */
+  compares: readonly CompareLog[];
   demos: readonly Readonly<{ seq: number; milestone: string; sha: string }>[];
 }>;
 
@@ -83,7 +93,8 @@ export function logOf(events: readonly Event[]): M5Log {
   const firstDispatch = new Map<string, number>();
   const ffs = new Map<string, IntentOf<'integration.ff'>>();
   const publications: { seq: number; unit: string; commit: string }[] = [];
-  const walks = new Map<string, { job: string; milestone: string; round: number; sha: string; seq: number; outcome: WalkOutcome | null }>();
+  const walks = new Map<string, { job: string; milestone: string; round: number; sha: string; seq: number; outcome: WalkOutcome | null; interrupted?: boolean }>();
+  const compares = new Map<string, { job: string; unit: string; seq: number; abandoned: boolean; interrupted: boolean }>();
   const passed: M5Log['passed'][number][] = [];
   const findings = new Map<string, { id: string; seq: number; lens: string; milestone: string | null; claim: string; cause: string | null; transitions: { seq: number; to: FindingTo }[] }>();
   const tweaks: M5Log['tweaks'][number][] = [];
@@ -108,6 +119,17 @@ export function logOf(events: readonly Event[]): M5Log {
         const w = walks.get(f.job);
         if (w === undefined) throw new Error(`walk-ended ${f.job} without its walk-started`);
         w.outcome = f.outcome;
+        if (f.interrupted === true) w.interrupted = true;
+        break;
+      }
+      case 'compare-started':
+        compares.set(f.job, { job: f.job, unit: f.unit, seq: e.seq, abandoned: false, interrupted: false });
+        break;
+      case 'compare-abandoned': {
+        const c = compares.get(f.job);
+        if (c === undefined) throw new Error(`compare-abandoned ${f.job} without its compare-started`);
+        c.abandoned = true;
+        c.interrupted = f.interrupted === true;
         break;
       }
       case 'milestone-passed':
@@ -132,7 +154,7 @@ export function logOf(events: readonly Event[]): M5Log {
         break;
     }
   }
-  return { firstDispatch, publications, walks: [...walks.values()], passed, findings: [...findings.values()], tweaks, demos };
+  return { firstDispatch, publications, walks: [...walks.values()], passed, findings: [...findings.values()], tweaks, compares: [...compares.values()], demos };
 }
 
 type Shaped = Extract<PlanShape, { kind: 'ok' }>;
@@ -227,6 +249,14 @@ export function polishBoundedVerdict(log: M5Log, polishUnits: readonly string[],
   const rounds = new Map<string, number>();
   for (const w of log.walks) rounds.set(w.milestone, Math.max(rounds.get(w.milestone) ?? 0, w.round));
   for (const [m, r] of rounds) if (r > walkRounds) problems.push(`${m} was walked in round ${r}, past walkRounds ${walkRounds}`);
+  // The abandonment brakes (agent D): a round's failed walks, and a unit's compares, at most WALK_ATTEMPTS / COMPARE_ATTEMPTS.
+  const tries = new Map<string, number>();
+  for (const w of log.walks) if (w.outcome === 'abandoned' && w.interrupted !== true) tries.set(`${w.milestone} round ${w.round}`, (tries.get(`${w.milestone} round ${w.round}`) ?? 0) + 1);
+  for (const [k, n] of tries) if (n > WALK_ATTEMPTS) problems.push(`${k} was abandoned ${n} times, past the brake of ${WALK_ATTEMPTS}`);
+  for (const u of new Set(log.compares.map((c) => c.unit))) {
+    const n = log.compares.filter((c) => c.unit === u && !c.interrupted).length;
+    if (n > COMPARE_ATTEMPTS) problems.push(`polish unit ${u} was compared ${n} times, past the brake of ${COMPARE_ATTEMPTS}`);
+  }
   for (const u of polishUnits) {
     const judged = log.tweaks.filter((t) => t.unit === u);
     if (judged.length !== 1) {
@@ -333,7 +363,8 @@ const missingRefs = (product: AbsPath) => (commit: string, dirs: readonly string
 
 function polishBounded(run: Run): Verdict {
   const plan: PlanM1 = needRef(run).plan;
-  return polishBoundedVerdict(needLog(run), plan.units.filter((u) => u.origin === 'polish').map((u) => u.id), walkRoundsOf(plan));
+  // A polish unit the checkpoint (or an owner) cut before its compare is never judged; a dropped tweak's cut is the compare's.
+  return polishBoundedVerdict(needLog(run), plan.units.filter((u) => u.origin === 'polish' && (u.cut === undefined || u.cut.reason === POLISH_DROPPED)).map((u) => u.id), walkRoundsOf(plan));
 }
 
 function skillVendored(run: Run): Verdict {
