@@ -181,7 +181,12 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     out of reach. A milestone is the smallest such experience: its `text` says what someone can now do, in their
     words, and its `units` are the units that build it. When its last unit merges, code brings the product up and a
     walkthrough uses it along its journeys; a break keeps the units that build on the milestone waiting until it is
-    fixed, so several small milestones beat one at the end. Only a holistic arc has milestones
+    fixed, so several small milestones beat one at the end. A break is a defect whose later fix would force rework of
+    what is built on it: a journey that cannot be completed, a wrong interface contract (status codes, error shapes,
+    exit codes, streams, command grammar, config keys, message schemas, public names, tokens) or a declared floor
+    violated (a non-negotiable vision clause, the reference's quality-floor section); everything else the walkthrough
+    finds (wording, visuals within the tokens, layout, docs that disagree with a correct contract) is a deviation,
+    repaired alongside without holding anything. Only a holistic arc has milestones
     (`milestones-need-holistic`).
     - **Its design unit comes first.** Each milestone names a planned design unit (`design.unit`, outside its
       `units`), and every milestone unit runs `after` it, directly or transitively (`phase0 check` advises
@@ -191,7 +196,9 @@ Keep the arc's inputs in their own directory outside the product working tree, f
       another, so names, voice, tokens and the error model stay one language across milestones.
     - **What the reference holds**, the design unit's acceptance, for whatever the milestone exposes. UI: a
       `DESIGN.md` with subject, audience and primary job, principles, named anti-patterns (the vision's refusals among
-      them) and the one memorable thing; machine-readable tokens (named colours with roles and checked contrast pairs,
+      them) and the one memorable thing; a `Quality floor` section stating what every screen keeps (contrast, visible
+      keyboard focus, a full keyboard path, reflow at the narrow viewport), since a walkthrough breaks only on a floor so
+      stated or a non-negotiable vision clause; machine-readable tokens (named colours with roles and checked contrast pairs,
       type roles and scale, spacing, radius, elevation, motion); a layout concept and wireframe per key screen; each
       flow with every state (empty, loading, error, success) and a step budget; copy conventions; a component
       inventory with variants and states; the journeys and viewports the walkthrough will use. HTTP API: a style guide

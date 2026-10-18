@@ -4,8 +4,9 @@
 // every judgment takes (read as lenses are):
 //   - every journey of the milestone is reported, and no other;
 //   - every cited evidence file exists, inside the evidence dir (a relative path is read from it);
-//   - a `design` finding's path lies inside one of the milestone's references;
-//   - a cited vision clause (`vision`, or a floor's source) exists and is active;
+//   - a `design` or `contract` finding's path lies inside one of the milestone's references;
+//   - a cited vision clause (`vision`, or a floor's source) exists and is active, and a floor's is non-negotiable (a
+//     floor whose source is a repository file is read as given: the reference's quality-floor section);
 //   - a polish unit's scope covers one of the milestone's references, its spec is the unit's own (`unit` its id, rev 1),
 //     and its id is no unit of the plan.
 // Minting (`mintWalk`): `breaks` opens a P1, `deviates` a P2 (lens `walkthrough`, the milestone named, no obligation),
@@ -70,20 +71,27 @@ export function walkRefusals(c: WalkCheck, out: WalkthroughOutput): readonly str
     }
   };
   for (const j of out.journeys) cite(`journey ${j.journey}`, j.evidence);
-  const clauses = new Map(c.vision.clauses.map((x) => [x.id as string, x.state]));
-  const activeClause = (where: string, id: VisionClauseId): void => {
-    const state = clauses.get(id);
-    if (state === undefined) reasons.push(`${where} cites vision clause ${id}, which the vision in force does not have`);
-    else if (state !== 'active') reasons.push(`${where} cites vision clause ${id}, which is ${state}`);
+  const clauses = new Map(c.vision.clauses.map((x) => [x.id as string, x]));
+  const activeClause = (where: string, id: VisionClauseId): boolean => {
+    const clause = clauses.get(id);
+    if (clause === undefined) reasons.push(`${where} cites vision clause ${id}, which the vision in force does not have`);
+    else if (clause.state !== 'active') reasons.push(`${where} cites vision clause ${id}, which is ${clause.state}`);
+    return clause?.state === 'active';
   };
   out.findings.forEach((f, i) => {
     const where = `finding ${i + 1} ("${f.claim}")`;
     cite(where, f.evidence);
-    if (f.against.type === 'design' && !inside(m.references, f.against.path)) {
+    if ((f.against.type === 'design' || f.against.type === 'contract') && !inside(m.references, f.against.path)) {
       reasons.push(`${where} measures against ${f.against.path}, which is inside none of ${m.id}'s references (${m.references.join(', ')})`);
     }
     if (f.against.type === 'vision') activeClause(where, f.against.clause);
-    if (f.against.type === 'floor' && /^V-[0-9]+$/.test(f.against.source)) activeClause(where, f.against.source as VisionClauseId);
+    if (f.against.type === 'floor' && /^V-[0-9]+$/.test(f.against.source)) {
+      const id = f.against.source as VisionClauseId;
+      const kind = clauses.get(id)?.kind;
+      if (activeClause(where, id) && kind !== 'non-negotiable') {
+        reasons.push(`${where} takes vision clause ${id} as a floor, but its kind is ${kind}: a floor is a non-negotiable clause or a reference's quality-floor section; a finding measured against any other clause is deviates, against vision`);
+      }
+    }
   });
   const planned = new Set<string>(c.plan.units.map((u) => u.id));
   out.polish.forEach((x, i) => {

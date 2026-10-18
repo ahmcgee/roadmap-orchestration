@@ -1026,8 +1026,9 @@ export function validateFlowOutput(value: unknown): FlowOutput {
 // ---------------------------------------------------------------------------------------------------
 // walkthrough and polishJudge (dev.13): acting judges with a final report (`final`, as the build's: the runner ends the
 // session 30 s after `final: true`, reaping the browser). The readers hold each answer to its shape and the rules inside
-// it; what needs the walk's inputs (every journey reported, cited evidence present under the evidence dir, a design path
-// inside a milestone reference, vision clauses active, a polish unit's scope covering a reference) is the walk job's
+// it; what needs the walk's inputs (every journey reported, cited evidence present under the evidence dir, a design or
+// contract path inside a milestone reference, vision clauses active, a floor's clause non-negotiable, a polish unit's
+// scope covering a reference) is the walk job's
 // validation (agent C), with the one repair turn every judgment takes.
 
 export const WALK_JOURNEY_OUTCOMES = ['completed', 'blocked'] as const;
@@ -1036,18 +1037,22 @@ export type WalkJourneyOutcome = (typeof WALK_JOURNEY_OUTCOMES)[number];
 export const WALK_FINDING_CLASSES = ['breaks', 'deviates'] as const;
 export type WalkFindingClass = (typeof WALK_FINDING_CLASSES)[number];
 /**
- * What a walk finding is measured against: the journey itself (it cannot be completed), a floor (a standard every product
- * keeps: contrast, focus, an exit code, ...; `source` the repository file or vision clause stating it), the milestone's
- * design reference (`path` inside one of its references, `anchor` the place in it), or an active vision clause.
+ * What a walk finding is measured against (owner ruling 2026-10-18: a `breaks` is a defect whose later fix would force
+ * rework of what is built on it). The journey itself (it cannot be completed as its user or client would); a contract
+ * (`path` inside one of the milestone's references, where the interface is stated; `anchor` the place in it;
+ * `dependents` who builds on it: clients, scripts, consumers, later units); a floor (`source` a non-negotiable vision
+ * clause or a reference's quality-floor section, which the walk job checks); the milestone's design reference (`path`
+ * inside one of its references, `anchor` the place in it); or an active vision clause.
  */
 export type WalkAgainst =
   | Readonly<{ type: 'journey' }>
+  | Readonly<{ type: 'contract'; path: RepoPath; anchor: string; dependents: string }>
   | Readonly<{ type: 'floor'; text: string; source: RepoPath | VisionClauseId }>
   | Readonly<{ type: 'design'; path: RepoPath; anchor: string }>
   | Readonly<{ type: 'vision'; clause: VisionClauseId }>;
-/** `breaks` cites the journey or a floor; `deviates` the design, the vision or a floor it does not break. */
+/** `breaks` cites the journey, a contract or a floor; `deviates` the design, the vision or a floor. */
 export const WALK_AGAINST: { readonly [C in WalkFindingClass]: readonly WalkAgainst['type'][] } = {
-  breaks: ['journey', 'floor'],
+  breaks: ['journey', 'contract', 'floor'],
   deviates: ['design', 'vision', 'floor'],
 };
 export type WalkJourneyReport = Readonly<{ journey: JourneyId; outcome: WalkJourneyOutcome; evidence: readonly string[]; note: string }>;
@@ -1079,6 +1084,7 @@ export const WALKTHROUGH_SCHEMA: Schema = sObj({
     against: {
       anyOf: [
         sObj({ type: sEnum(['journey']) }),
+        sObj({ type: sEnum(['contract']), path: S_STR, anchor: S_STR, dependents: S_STR }),
         sObj({ type: sEnum(['floor']), text: S_STR, source: S_STR }),
         sObj({ type: sEnum(['design']), path: S_STR, anchor: S_STR }),
         sObj({ type: sEnum(['vision']), clause: S_STR }),
@@ -1095,6 +1101,9 @@ const journeyR: Read<JourneyId> = (v, p) => journeyId(v, p);
 const evidenceList: Read<readonly string[]> = arrayOf(str);
 const walkAgainst: Read<WalkAgainst> = tagged('type', {
   journey: object((g): WalkAgainst => ({ type: g.get('type', literal('journey')) })),
+  contract: object((g): WalkAgainst => ({
+    type: g.get('type', literal('contract')), path: g.get('path', (v, p) => repoPath(v, p)), anchor: g.get('anchor', str), dependents: g.get('dependents', str),
+  })),
   floor: object((g): WalkAgainst => ({
     type: g.get('type', literal('floor')), text: g.get('text', str),
     source: g.get('source', (v, p): RepoPath | VisionClauseId => (typeof v === 'string' && /^V-[0-9]+$/.test(v) ? visionClauseId(v, p) : repoPath(v, p))),

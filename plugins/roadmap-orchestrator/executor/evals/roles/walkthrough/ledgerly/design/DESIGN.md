@@ -54,14 +54,24 @@ to it. The burn bar appears on the overview, the budgets list, a team's budget p
 | `--ll-highlight` #E3EFE9 | the highlight card's ground (ink on it 13.8:1) | n/a |
 | `--ll-focus` #1D5FD1 | the focus ring | 5.3:1 |
 
-The floor: body text at least 4.5:1, large text and interface parts at least 3:1 (WCAG 2.2 AA).
-
 Type: headings and the card figure in the display face (`--ll-face-display`, a book serif), everything else in the text
 face. Scale 14 / 16 / 20 / 25 / 31 px (`--ll-size-*`). Body 16 px, lead paragraphs 20 px, line length at most 66
 characters. Figures use tabular numerals and sit right-aligned in tables.
 
 Space: a 4 px grid, `--space-1` to `--space-7` (4, 8, 12, 16, 24, 32, 48). Every margin, padding and gap is one of them.
 Radius: 6 px on cards, 4 px on controls. No shadows.
+
+## Quality floor
+
+What every dashboard page keeps, whatever else changes (WCAG 2.2 AA). Falling short of any of it is never a style choice:
+
+- **Contrast.** Body text at least 4.5:1 against its ground; large text (24 px, or 19 px bold) and interface parts
+  (control borders, the focus ring, the burn stroke) at least 3:1. The table above gives each token's measured ratio.
+- **Visible keyboard focus.** Every interactive element shows the focus ring when it is focused from the keyboard
+  (Components, "Focus": an outline, or a box-shadow ring).
+- **A full keyboard path.** Every flow in "Flows and their budgets" can be completed with the keyboard alone.
+- **Reflow at 390 px.** At 390 px wide, text and controls fit the column and are read without scrolling sideways;
+  only a data table may need horizontal scrolling.
 
 ## Layout
 

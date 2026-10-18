@@ -712,12 +712,32 @@ record an entry, change a limit, print a statement; six shell: CLI import, CLI r
 the vision has experience clauses.
 
 **Slots and families** (`families.ts`, `slots.ts`, `cells.ts`): 13 slots per product, each its family's plant or its
-clean twin (the near-miss the reference sanctions), W1 to W13 as in the plan's table. W1 takes a browser journey's last
+clean twin (the near-miss the reference sanctions), W1 to W13 (the table below). W1 takes a browser journey's last
 step (the record form, the limit form, the print link): its plant posts or links to a path nothing serves, its twin to
 an old path that redirects. W2 to W7 take one page each (W2's twin is always the print view, which DESIGN.md "Print
 views" makes plain), W7 a form, W6 a page with a primary action; W8 a CLI command, W13 a quickstart command; W9 to W12
 are fixed. One slot per page, and no slot behind W1's dead end, so no plant masks another. A seeded backtracking search
-draws the assignment. The four dev seeds (S1 to S4) plant each family in exactly two of them (26 plants, 26 twins): at
+draws the assignment.
+
+Each family's expected class follows the owner's rule (2026-10-18): `breaks` when fixing it later would force rework of
+what is built on it (the journey cannot be completed, the interface contract is wrong, a declared floor is violated:
+a non-negotiable vision clause or `DESIGN.md` "Quality floor"), `deviates` for the rest.
+
+| Family | Plant | Twin (sanctioned) | Expected |
+|---|---|---|---|
+| W1 dead end | a journey's last step goes to a path nothing serves (404) | an old path that redirects to the real page | breaks (journey) |
+| W2 unstyled page | a page's stylesheet link 404s | the print view, plain per "Print views" | deviates |
+| W3 off-token card | an off-token colour and a 13 px gutter | the documented highlight variant | deviates |
+| W4 console error | an uncaught TypeError on load; the page works | one `console.info` line naming the view | deviates |
+| W5 contrast | a lead paragraph at 3.1:1 | a muted caption at 4.6:1 | breaks (floor) |
+| W6 focus | `outline: none` and no other indicator | a box-shadow ring | breaks (floor) |
+| W7 vague error | a refused form says only "Invalid input" | each field named with its fix | deviates |
+| W8 CLI streams | input errors on stdout, exit 0 | progress on stderr, exit 0 on success | breaks (contract) |
+| W9 API errors | a refused POST answers 200 with `{error}` | 422, an RFC 9457 problem with `invalid_params` | breaks (contract) |
+| W10 config | an unknown key silently ignored | ignored with a warning naming file, line, key and the nearest key | breaks (contract; V-8) |
+| W11 CLI usage | no arguments: a stack trace; a typo runs the nearest command | the usage, examples first; a typo suggests without running | breaks (journey, contract) |
+| W12 CI output | a failing step reports only "exit 1" | the step, the failing file, its output, the rerun command | deviates |
+| W13 quickstart | the README, stale against a correct `cli.md`, uses a renamed flag | the command as written, an optional flag beside it | deviates (fix the docs) | The four dev seeds (S1 to S4) plant each family in exactly two of them (26 plants, 26 twins): at
 n = 3, 156 slot observations, 78 of each, six planted trials per family. The holdout set is untracked
 (`evals/roles/holdout/walkthrough.ts`, exporting `HOLDOUT_WALK_CELLS`).
 
@@ -737,7 +757,7 @@ trial (`invalid`, with the job's reasons); a failed bring-up voids it (`bring-up
 **Grading** (`walkthrough/grade.ts`). A finding belongs to the slot, among those on its journey, it localises to best:
 3 for a path among the slot's files, 1 per marker (the page's route, the family's words) its claim or cause matches; ties
 go to a planted slot, then family order; a finding matching nothing is stray. A planted slot is `caught` with a finding of
-at least its expected class (`breaks` for W1, W5, W6, W13; `deviates` or either for the rest), `misclassed` when a `breaks`
+at least its expected class (the table above), `misclassed` when a `breaks`
 plant got only `deviates`, `missed` with nothing, and `lucky` when caught though the transcript shows no exercise of its
 journey (a page visited, a command run, a request sent: any tool traffic but Read, Grep and Glob). A `breaks` where
 `deviates` was expected is false-blocking. A twin with a finding is a false positive (false-blocking when `breaks`). A

@@ -996,8 +996,15 @@ A plan may mark **milestones**: the smallest thing someone can experience end to
 integrates against, a CLI, a config format), built by its units to the design references its design unit writes (or the
 owner supplied). Only a holistic arc may have them. When a milestone's last unit retires, code brings the product up from
 the integration SHA and a **walkthrough** (an acting judge on frontier: a shell and the repo's walkthrough MCP servers, a
-browser for `browser` journeys) uses it along the milestone's journeys. A break is a P1 that keeps the milestone's
-**node** unpassed, so its DAG descendants wait; a deviation is a P2 the checkpoint repairs alongside; polish the
+browser for `browser` journeys) uses it along the milestone's journeys. A **break** is a defect whose later fix would
+force rework of what is built on it (owner ruling 2026-10-18): the journey cannot be completed as its user or client
+would; the interface contract is wrong (status codes and error shapes, exit codes and streams, command grammar, config
+keys and their validation, message schemas, public names, design tokens: what dependents are built against); or a
+declared floor is violated (a `non-negotiable` vision clause, a reference's quality-floor section). It is a P1 that keeps
+the milestone's **node** unpassed, so its DAG descendants wait. A **deviation** is the rest, measured against a
+reference or an experience clause, a fix that changes nothing anything builds on (copy, help text, visuals within the
+tokens, layout, docs that disagree with a correct contract, log and CI output text): a P2 the checkpoint repairs
+alongside. Polish the
 walkthrough authors as units, which code admits and a **polish judge** keeps or drops by walking before and after. Rounds
 are bounded (`limits.walkRounds`). A settled milestone promotes the **demo**, a stable instance the owner picks up when
 they choose: `refs/roadmap/demo` names it, the supervisor keeps one per host on ports that never change, swaps a new

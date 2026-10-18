@@ -359,6 +359,7 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | `BackendCall` (not persisted) | `+ claude-acting-judge`; the gate's call is one (agent I) | none |
 | Roles (not persisted) | `FRESH_ROLES - gate`; `ACTING_ROLES + gate`; `JudgmentSessionRole = FreshRole \| ActingJudgeRole` | none: a dev.12 gate's launch and result records still name `gate` with a `JudgmentSession` |
 | `launch.json` of a gate call | argv the acting judge's (no `--system-prompt`); cwd `<worktreeRoot>/<arc>/<unit>.gate-<attempt>`, a `worktree.create` of the gate attempt (removed, citing its snapshot, when the call is read) | none: a dev.12 gate's cwd was its verification checkout, which `judgedHead` still reads (any detached checkout) |
+| Walkthrough answer (`WALKTHROUGH_SCHEMA`, `walkthroughOutput`; owner ruling 2026-10-18) | `against + contract{path, anchor, dependents}` (a `breaks` only); a floor citing a vision clause needs a non-negotiable one (the walk job) | none: the answer is per call, never persisted; findings mint as before |
 | Gate answer (`GATE_SCHEMA`, `gateOutput`) | `findings[] + experiments: [{command, output}]` (required of a live answer) | absent: none (lasting, no warning) |
 | `.roadmap/config.json` | `+ walkthrough?: {mcp}` | absent: no browser drive (lasting) |
 | `StartupRejection`, Phase-0 advisories | `+ milestones-need-holistic`, `+ walk-tools-missing`; advisory `+ milestone-unit-before-design` | none |
@@ -3938,7 +3939,15 @@ standards` section; an outcome or a refusal, never a mechanism; unranked (`rank:
 - Reader rules (`fact`, `finding-opened`): `milestone` is present exactly on a walkthrough finding; a walkthrough finding
   is P1 or P2 (a P3 is refused); its source is a `walk-<n>` job or the demo; its obligation may be null.
 - `FindingSource + {type: 'demo'; sha: Sha}` (step 0 decided: a demo bring-up failure has no job): only a walkthrough P1.
-- Class to severity (minting, agent C): `breaks` → P1 (class 1), `deviates` → P2 (class 2). A failed bring-up of a walk is
+- Class to severity (minting, agent C): `breaks` → P1 (class 1), `deviates` → P2 (class 2). What a class means (owner
+  ruling 2026-10-18): `breaks` is a defect whose later fix would force rework of what is built on it: the journey cannot
+  be completed as its user or client would (a dead end, a crash or stack trace, an action that errors); the interface
+  contract is wrong (what a client, script, consumer or later unit relies on: HTTP status codes and error shapes, CLI exit
+  codes, stdout/stderr, command grammar and typo behaviour, config keys and their validation, event and message schemas,
+  public names, design tokens); or a declared floor is violated (a `non-negotiable` vision clause, or a design
+  reference's explicit quality-floor section). `deviates` is everything else measured against a reference or an
+  experience clause, whose fix changes nothing anything builds on: UI copy and error wording, help text, visuals within
+  the tokens, layout, docs text that disagrees with a correct contract (the docs are fixed), CI and log output text. A failed bring-up of a walk is
   a code-opened P1 citing the setup or serve log; so is a failed demo bring-up (`demo-failed`, agent G). Dedupe is
   `findingKey('walkthrough', null, cause)`.
 
@@ -4060,14 +4069,17 @@ servers ("Build sessions" below).
 
 `WALKTHROUGH_SCHEMA` / `validateWalkthroughOutput` → `WalkthroughOutput = {final: true, journeys: {journey, outcome:
 completed | blocked, evidence: string[], note}[] (non-empty, journeys unique), findings: {class: breaks | deviates, journey,
-evidence (non-empty), claim, cause, against: journey | floor{text, source: RepoPath | V-n} | design{path, anchor} |
-vision{clause}, paths: RepoPath[]}[], polish: {journey, evidence (non-empty), text, unit: {id, scope (non-empty), spec}}[]
+evidence (non-empty), claim, cause, against: journey | contract{path: RepoPath, anchor, dependents} | floor{text,
+source: RepoPath | V-n} | design{path, anchor} | vision{clause}, paths: RepoPath[]}[], polish: {journey, evidence (non-empty), text, unit: {id, scope (non-empty), spec}}[]
 (unit ids unique), premises, reasons}`. The reader's rules: `final` true only; a finding or polish names a reported
-journey; `breaks` cites `journey` or `floor`, `deviates` `design`, `vision` or `floor` (`WALK_AGAINST`); a `blocked`
+journey; `breaks` cites `journey`, `contract` (owner ruling 2026-10-18: where the contract is stated, and who builds
+on it) or `floor`, `deviates` `design`, `vision` or `floor` (`WALK_AGAINST`); a `blocked`
 journey has a `breaks` finding on it. A polish `spec` is an admit's spec object (`S_ADMIT_SPEC`, read into spec.json's
 canonical text), not the plan's `string` (step 0 decided: one admit path with two authors). The walk job's validation
-(agent C) adds what needs its inputs: every journey reported, cited evidence files under the evidence dir, a design path
-inside a milestone reference, vision clauses active, a polish scope covering a reference; one repair turn.
+(agent C) adds what needs its inputs: every journey reported, cited evidence files under the evidence dir, a design or
+contract path inside a milestone reference, vision clauses active, a floor's vision clause `non-negotiable` (a floor whose
+source is a repository path is taken as given: a reference's quality-floor section), a polish scope covering a reference;
+one repair turn.
 
 **Gate answer, `findings[].experiments`** (agent I): `GATE_SCHEMA`'s finding gains `experiments: {command: string, output:
 string}[]` (required of a live answer): the ad hoc experiments the gate ran in its checkout that the finding rests on, the

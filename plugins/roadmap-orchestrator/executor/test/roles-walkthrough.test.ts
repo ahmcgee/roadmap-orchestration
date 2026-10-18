@@ -434,12 +434,19 @@ test('roles.walk-grading: caught, misclassed, lucky, false-blocking, twin false 
   // A finding on another journey does not localise to the slot.
   assert.equal(verdict(gradeWalk(f.slots, visited, answer([{ ...byPath, journey: journeyId('J-8') }])), 'W5').verdict, 'missed');
 
-  // The API error model localised by its words alone; as breaks it is caught but false-blocking.
-  const api = finding('J-6', 'deviates', 'POST /api/v1/entries answers 200 with an error body instead of a problem document');
-  const g1 = gradeWalk(f.slots, visited, answer([api]));
+  // The API error model (a contract: breaks) localised by its words alone; as deviates it is misclassed.
+  const contract = { type: 'contract', path: repoPath('design/api.md'), anchor: 'Errors', dependents: 'every tool that records entries' } as const;
+  const api = finding('J-6', 'breaks', 'POST /api/v1/entries answers 200 with an error body instead of a problem document');
+  const g1 = gradeWalk(f.slots, visited, answer([{ ...api, against: contract }]));
   assert.deepEqual([verdict(g1, 'W9').verdict, verdict(g1, 'W9').falseBlocking], ['caught', false]);
-  const g2 = gradeWalk(f.slots, visited, answer([{ ...api, class: 'breaks', against: { type: 'journey' } }]));
-  assert.deepEqual([verdict(g2, 'W9').verdict, verdict(g2, 'W9').falseBlocking], ['caught', true]);
+  const g2 = gradeWalk(f.slots, visited, answer([{ ...api, class: 'deviates', against: { type: 'design', path: repoPath('design/api.md'), anchor: 'Errors' } }]));
+  assert.equal(verdict(g2, 'W9').verdict, 'misclassed');
+  // A README stale against a correct cli.md is deviates; as breaks it is caught but false-blocking.
+  const docs = finding('J-9', 'deviates', 'the README quickstart command fails as written');
+  const g4 = gradeWalk(f.slots, visited, answer([docs]));
+  assert.deepEqual([verdict(g4, 'W13').verdict, verdict(g4, 'W13').falseBlocking], ['caught', false]);
+  const g5 = gradeWalk(f.slots, visited, answer([{ ...docs, class: 'breaks', against: { type: 'journey' } }]));
+  assert.deepEqual([verdict(g5, 'W13').verdict, verdict(g5, 'W13').falseBlocking], ['caught', true]);
 
   // A finding on a twin is a false positive (false-blocking when breaks); a finding off every slot is stray.
   const twin = f.slots.find((s) => s.state === 'twin' && s.family === 'W2')!;

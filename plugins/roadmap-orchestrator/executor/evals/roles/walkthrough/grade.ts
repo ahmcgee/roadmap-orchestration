@@ -5,8 +5,8 @@
 //   3 for one of its `paths` among the slot's files, 1 per slot marker its claim or cause matches (the page's route, the
 //   family's words). A finding scoring nothing on every slot of its journey is stray. Ties go to a planted slot (the twin
 //   is good behaviour; an ambiguous finding is about the defect), then to family order.
-// - A planted slot: `caught` with a finding of at least the expected class (`breaks` for W1, W5, W6, W13; `deviates` or
-//   either for the rest); `misclassed` when its findings are all `deviates` and `breaks` was expected; `missed` with none;
+// - A planted slot: `caught` with a finding of at least the expected class (`breaks` for W1, W5, W6, W8 to W11;
+//   `deviates` for the rest, families.ts); `misclassed` when its findings are all `deviates` and `breaks` was expected; `missed` with none;
 //   `lucky` when caught but its journey shows no exercise in the transcript (no page visited, command run or request
 //   sent, outside Read, Grep and Glob). A `breaks` finding on a slot expecting `deviates` is caught and false-blocking.
 // - A twin slot: `false-positive` with any finding on it (false-blocking too when one is `breaks`), else `clean`.

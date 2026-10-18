@@ -208,7 +208,9 @@ describe('the rounds brake (src/walk/milestones.ts)', () => {
 });
 
 describe('a walk report held to its inputs (src/walk/report.ts)', () => {
-  const VISION = { clauses: [{ id: 'V-1', state: 'active' }, { id: 'V-2', state: 'withdrawn' }] } as unknown as Vision;
+  const VISION = {
+    clauses: [{ id: 'V-1', kind: 'world', state: 'active' }, { id: 'V-2', kind: 'experience', state: 'withdrawn' }, { id: 'V-3', kind: 'experience', state: 'active' }, { id: 'V-4', kind: 'non-negotiable', state: 'active' }],
+  } as unknown as Vision;
   const dir = (): AbsPath => {
     const d = absPath(tmpDir('walk-evidence'));
     mkdirSync(join(d, 'J-1'), { recursive: true });
@@ -220,16 +222,21 @@ describe('a walk report held to its inputs (src/walk/report.ts)', () => {
   const check = (evidenceDir: AbsPath) => ({ milestone: m, plan: planOf([{ id: 'a' }], [m]), vision: VISION, evidenceDir });
   const answer = (spec: Parameters<typeof walkAnswer>[0]) => validateWalkthroughOutput(walkAnswer(spec));
 
-  test('report.valid: every journey reported, evidence inside the dir (relative or absolute), a design path inside a reference', () => {
+  test('report.valid: every journey reported, evidence inside the dir (relative or absolute), a design or contract path inside a reference, a floor a non-negotiable clause or a file', () => {
     const d = dir();
     const out = answer({
       journeys: [{ journey: 'J-1', outcome: 'completed', evidence: ['J-1/shot.png'] }, { journey: 'J-2', outcome: 'completed', evidence: [join(d, 'J-1', 'shot.png')] }],
-      findings: [{ class: 'deviates', journey: 'J-1', claim: 'off-token colour', cause: 'card: off-token colour', against: { type: 'design', path: 'design/tokens.css', anchor: '--accent' }, evidence: ['J-1/shot.png'] }],
+      findings: [
+        { class: 'deviates', journey: 'J-1', claim: 'off-token colour', cause: 'card: off-token colour', against: { type: 'design', path: 'design/tokens.css', anchor: '--accent' }, evidence: ['J-1/shot.png'] },
+        { class: 'breaks', journey: 'J-2', claim: 'errors exit 0', cause: 'import: errors exit 0', against: { type: 'contract', path: 'docs/api/cli.md', anchor: 'Exit codes', dependents: 'scripts' }, evidence: ['J-1/shot.png'] },
+        { class: 'breaks', journey: 'J-2', claim: 'key ignored', cause: 'config: unknown key ignored', against: { type: 'floor', text: 'nothing ignored silently', source: 'V-4' }, evidence: ['J-1/shot.png'] },
+        { class: 'breaks', journey: 'J-1', claim: 'low contrast', cause: 'lead: low contrast', against: { type: 'floor', text: '4.5:1', source: 'design/DESIGN.md' }, evidence: ['J-1/shot.png'] },
+      ],
     });
     assert.deepEqual(walkRefusals(check(d), out), []);
   });
 
-  test('report.refusals: a journey unreported or unknown, evidence missing or outside, a design path outside the references, a withdrawn or unknown clause', () => {
+  test('report.refusals: a journey unreported or unknown, evidence missing or outside, a design or contract path outside the references, a withdrawn or unknown clause, a floor on a clause not non-negotiable', () => {
     const d = dir();
     const out = answer({
       journeys: [{ journey: 'J-1', outcome: 'completed', evidence: ['J-1/missing.png'] }, { journey: 'J-9', outcome: 'completed', evidence: ['../outside.txt'] }],
@@ -237,10 +244,14 @@ describe('a walk report held to its inputs (src/walk/report.ts)', () => {
         { class: 'deviates', journey: 'J-1', claim: 'c1', cause: 'x', against: { type: 'design', path: 'src/app.css', anchor: 'a' }, evidence: ['J-1/shot.png'] },
         { class: 'deviates', journey: 'J-1', claim: 'c2', cause: 'y', against: { type: 'vision', clause: 'V-2' }, evidence: ['J-1/shot.png'] },
         { class: 'breaks', journey: 'J-1', claim: 'c3', cause: 'z', against: { type: 'floor', text: 'contrast', source: 'V-7' }, evidence: ['J-1/shot.png'] },
+        { class: 'breaks', journey: 'J-1', claim: 'c4', cause: 'w', against: { type: 'contract', path: 'src/cli.ts', anchor: 'exit', dependents: 'scripts' }, evidence: ['J-1/shot.png'] },
+        { class: 'breaks', journey: 'J-1', claim: 'c5', cause: 'v', against: { type: 'floor', text: 'every error says how to fix it', source: 'V-3' }, evidence: ['J-1/shot.png'] },
       ],
     });
     const reasons = walkRefusals(check(d), out);
-    assert.equal(reasons.length, 7, reasons.join('\n'));
+    assert.equal(reasons.length, 9, reasons.join('\n'));
+    assert.ok(reasons.some((r) => /c4.*src\/cli\.ts, which is inside none of MS-1's references/.test(r)));
+    assert.ok(reasons.some((r) => /c5.*V-3 as a floor, but its kind is experience/.test(r)));
     assert.ok(reasons.some((r) => /J-2 of MS-1 is not reported/.test(r)));
     assert.ok(reasons.some((r) => /J-9 is no journey of MS-1/.test(r)));
     assert.ok(reasons.some((r) => /missing\.png, which is no file/.test(r)));

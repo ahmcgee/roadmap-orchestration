@@ -10,8 +10,13 @@
 export const FAMILY_IDS = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13'] as const;
 export type FamilyId = (typeof FAMILY_IDS)[number];
 
-/** The class a caught plant must reach: `breaks`, `deviates`, or `deviates-or-breaks` (≥ deviates: either is right). */
-export type Expected = 'breaks' | 'deviates' | 'deviates-or-breaks';
+/**
+ * The class a caught plant must reach, by the owner's rule (2026-10-18): `breaks` when fixing it later would force rework
+ * of what is built on it (a journey that cannot be completed, a wrong interface contract, a declared floor violated),
+ * `deviates` for the rest (wording, visuals within the tokens, layout, docs that disagree with a correct contract, log
+ * and CI output text).
+ */
+export type Expected = 'breaks' | 'deviates';
 export type SlotState = 'plant' | 'twin';
 
 /** The dashboard's pages with slots (overview and not-found carry none), each its module and its journey. */
@@ -132,7 +137,7 @@ const W1: Family = {
 };
 
 const W2: Family = {
-  id: 'W2', expected: 'deviates-or-breaks',
+  id: 'W2', expected: 'deviates',
   plant: "one page's component stylesheet link 404s, so the page renders unstyled",
   twin: 'the print view, intentionally plain per the reference ("Print views")',
   positions: STYLED_PAGES.map((p) => ({ kind: 'page', page: p })), twinAt: { kind: 'page', page: 'statement-print' },
@@ -152,7 +157,7 @@ const W3: Family = {
 };
 
 const W4: Family = {
-  id: 'W4', expected: 'deviates-or-breaks',
+  id: 'W4', expected: 'deviates',
   plant: 'an uncaught TypeError on load (a listener on an element the page lacks); the page still works',
   twin: 'one console.info line naming the view, which the reference allows',
   positions: STYLED_PAGES.map((p) => ({ kind: 'page', page: p })), twinAt: null,
@@ -197,7 +202,7 @@ const W7: Family = {
 };
 
 const W8: Family = {
-  id: 'W8', expected: 'deviates',
+  id: 'W8', expected: 'breaks',
   plant: "a command's input errors go to stdout and it exits 0",
   twin: "a command prints progress lines on stderr and exits 0 on success",
   positions: [{ kind: 'command', command: 'import' }, { kind: 'command', command: 'report' }], twinAt: null,
@@ -219,7 +224,7 @@ const W8: Family = {
 };
 
 const W9: Family = {
-  id: 'W9', expected: 'deviates',
+  id: 'W9', expected: 'breaks',
   plant: 'a refused POST /api/v1/entries answers 200 with an {error} body',
   twin: 'a refused POST answers 422 with an RFC 9457 problem carrying the invalid_params extension member',
   positions: [{ kind: 'fixed' }], twinAt: null,
@@ -233,7 +238,7 @@ const W9: Family = {
 };
 
 const W10: Family = {
-  id: 'W10', expected: 'deviates',
+  id: 'W10', expected: 'breaks',
   plant: 'an unknown key in ledgerly.conf is silently ignored',
   twin: 'an unknown key is ignored with a warning naming the file, line, key and the nearest known key',
   positions: [{ kind: 'fixed' }], twinAt: null,
@@ -247,7 +252,7 @@ const W10: Family = {
 };
 
 const W11: Family = {
-  id: 'W11', expected: 'deviates',
+  id: 'W11', expected: 'breaks',
   plant: 'no arguments prints a stack trace; a mistyped command silently runs the nearest one',
   twin: 'no arguments prints the usage, examples first; a mistyped command suggests the nearest one without running it',
   positions: [{ kind: 'fixed' }], twinAt: null,
@@ -297,8 +302,8 @@ const W12: Family = {
 };
 
 const W13: Family = {
-  id: 'W13', expected: 'breaks',
-  plant: 'a README quickstart command fails as written (it uses a renamed flag)',
+  id: 'W13', expected: 'deviates',
+  plant: 'the README is stale against a correct cli.md: a quickstart command uses a renamed flag and fails as written',
   twin: 'the command runs as written, with an optional flag documented beside it',
   positions: [{ kind: 'quickstart', command: 'init' }, { kind: 'quickstart', command: 'report' }], twinAt: null,
   apply: (state, at) => {

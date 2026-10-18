@@ -23,8 +23,10 @@
 // Owner and plan requirements: the rubric as lenses, not a procedure (models own method; research §F.1); what a tool can
 // measure is measured (contrast from the DOM, exit codes, timings, console errors; research §F.3); both viewports
 // (1280x800 pinned, a 390 px narrow pass), reduced motion; the surface table of plan §2 for shell journeys; every cited
-// file kept in the evidence dir, cited relative to it (code refuses an answer citing a missing file); the classes and their
-// `against` (WALK_AGAINST) with the calibration that a false `breaks` is the costly error; polish as full units, never
+// file kept in the evidence dir, cited relative to it (code refuses an answer citing a missing file); the classes as the
+// owner's 2026-10-18 rule, stated as its reason (a `breaks` is a defect whose later fix forces rework of what is built on
+// it: a journey that cannot be completed, a wrong interface contract, a declared floor violated), and their `against`
+// (WALK_AGAINST) with the calibration that a false `breaks` is the costly error; polish as full units, never
 // findings; the product's checkout is never modified. No delegation text (judgment sessions carry none; a subagent
 // inherits the session's model).
 import type { Journey } from '../../input/plan.ts';
@@ -94,12 +96,12 @@ Everything you cite is a file in the evidence directory: screenshots (the browse
 </evidence>
 
 <classes>
-A finding is one defect, stated once, on one journey.
-- breaks: the journey cannot be completed, or a floor is violated. against is journey (it cannot be completed) or floor. A blocked journey has at least one breaks finding on it.
-- deviates: the journey completes, but the product departs from the design reference (against design: path, a file inside one of the milestone's references, and anchor, the heading or a short quoted phrase there), from an active vision clause (against vision), or from a floor its source states as a recommendation (against floor).
-A floor is a standard the product must keep that a repository file (a reference, the docs, a contract) or an active vision clause states: contrast, keyboard access, an exit-code convention. Its text says the standard and its source names that file by repository path or that clause by V-n. A floor stated as a requirement (must, never, at least) that the product misses is breaks; one stated as a recommendation is deviates. A shortfall against a standard that nothing in the repository or the vision states is not a finding: propose it as polish if it is worth doing.
+A finding is one defect, stated once, on one journey. Its class is set by what fixing it later would cost, because a breaks finding holds every unit built on this milestone until its repair lands and a later walk confirms it.
+- breaks: fixing it later would force rework of what is built on it. That is so in three cases. The journey cannot be completed as its user or client would (a dead end, a crash or stack trace, an action that errors), so nothing built on it can be exercised: against is journey. The interface contract is wrong, so that fixing it changes what dependents were built against: what a client, script, consumer or later unit relies on, such as HTTP status codes and error shapes, CLI exit codes, what goes to stdout and stderr, command grammar and typo behaviour, config keys and their validation, event and message schemas, public names and design tokens (clients come to rely on config keys that do nothing, on status codes that lie, on a grammar that guesses): against is contract, with path, the file inside one of the milestone's references that states the contract, anchor, the heading or a short quoted phrase there, and dependents, who builds on it. A declared floor is violated: against is floor, with text, the standard, and source, an active non-negotiable vision clause by V-n or the repository path of a reference's quality-floor section.
+- deviates: everything else measured against a reference or an experience clause, where the fix changes nothing anything builds on: copy and error wording in a UI, help text, visuals within the tokens, layout, docs text that disagrees with a correct contract (the docs are what is fixed), CI and log output text. against is design (path, a file inside one of the milestone's references, and anchor, the heading or a short quoted phrase there) or vision (an active clause).
+A shortfall against a standard that nothing in the references or the vision states is not a finding: propose it as polish if it is worth doing.
 
-Calibrate. A false breaks is the costly error: it holds every unit built on the milestone. Report breaks only when you saw the journey fail or measured the floor missed, and the evidence shows it. A near-miss the reference sanctions, or a choice it leaves open, is not a finding. Report every finding that clears this bar, worst first; an empty findings list is a legitimate report.
+Calibrate. A false breaks is the costly error: it holds every unit built on the milestone. Report breaks only when you saw the journey fail or the contract broken, or measured the floor missed, and the evidence shows it. A near-miss the reference sanctions, or a choice it leaves open, is not a finding. Report every finding that clears this bar, worst first; an empty findings list is a legitimate report.
 
 claim is one plain sentence: what is wrong and where. cause is the root cause as "<affected operation>: <failure condition>" in lowercase words, describing the defect itself, so that a later walk finding the same defect writes the same text (findings are deduplicated on it). paths lists the repository files the defect lives in, as far as reading the checkout shows; empty when you cannot tell.
 </classes>
@@ -114,7 +116,7 @@ Polish is a subjective improvement, within the reference's direction, that break
 
 <report>
 journeys reports every journey of the milestone: journey, its id; outcome, completed or blocked; evidence, the files that show it; note, what happened, with the step and time counts.
-Each finding has: class, breaks or deviates; journey, the reported journey it is on; evidence, the files that show it (at least one); claim and cause as above; against, its type (journey, floor, design or vision) with that type's fields: a floor's text and source, a design's path and anchor, a vision clause; paths.
+Each finding has: class, breaks or deviates; journey, the reported journey it is on; evidence, the files that show it (at least one); claim and cause as above; against, its type (journey, contract, floor, design or vision) with that type's fields: a contract's path, anchor and dependents, a floor's text and source, a design's path and anchor, a vision clause; paths.
 Each polish proposal has: journey, the reported journey it improves; evidence (at least one file); text; unit, with its id, scope and spec as above.
 premises lists the claims about the repository the report relies on, each with the file and line you read it at, or is empty. reasons gives the report's justification, one point per entry: what you walked and tried, what you could not, and why the report is what it is; not a transcript of your reasoning. final: true.
 </report>`;
