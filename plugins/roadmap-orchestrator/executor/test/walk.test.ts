@@ -1,0 +1,310 @@
+// dev.13 unit tests (plan §7 "Unit tests"): the milestone node over DAG shapes (src/walk/node.ts), the rounds brake and
+// the milestone states (src/walk/milestones.ts), a walk report's validation and minting (src/walk/report.ts), the port
+// placeholder (src/walk/bringup.ts) and the MCP config's substitutions (src/walk/walk.ts). Pure: plans and views are
+// built in place (only the fields each function reads).
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, test } from 'node:test';
+import type { WalkFact } from '../src/core/events.ts';
+import type { FindingId, JobId, MilestoneId, UnitId } from '../src/core/ids.ts';
+import type { JournalView } from '../src/core/interfaces.ts';
+import type { FindingState } from '../src/core/state.ts';
+import { type AbsPath, absPath } from '../src/core/values.ts';
+import type { RepairUnit } from '../src/holistic/findings.ts';
+import type { Vision } from '../src/holistic/types.ts';
+import type { Milestone, PlanM1 } from '../src/input/plan.ts';
+import { validateWalkthroughOutput } from '../src/prompts/schemas.ts';
+import { substitutePorts } from '../src/walk/bringup.ts';
+import { milestoneProgress, milestoneState, walkItemsDue } from '../src/walk/milestones.ts';
+import { milestoneEdges, milestoneWaits } from '../src/walk/node.ts';
+import { coversReference, evidencePath, walkDraft, walkRefusals } from '../src/walk/report.ts';
+import { walkSessionMcp } from '../src/walk/walk.ts';
+import { tmpDir } from './helpers/repo.ts';
+import { J1_EVIDENCE, walkAnswer } from './fixtures/walk-common.ts';
+
+type U = Readonly<{ id: string; after?: readonly string[]; origin?: string; reenters?: string; polish?: Readonly<{ milestone: string; proposal: string }> }>;
+
+const MILESTONE = (id: string, units: readonly string[], extra: Partial<Milestone> = {}): Milestone => ({
+  id: id as MilestoneId, text: `${id} text`, units: units as UnitId[], design: { supplied: true }, references: ['design' as never],
+  bringUp: { setup: [], serve: [], env: {}, seed: [] },
+  journeys: [{ id: 'J-1' as never, text: 'j1', via: 'shell', entry: 'cli', budget: null }, { id: 'J-2' as never, text: 'j2', via: 'shell', entry: 'cli', budget: null }],
+  resources: [], ...extra,
+});
+
+/** The fields of a plan the walk code reads: units (after, origin, re-entry, polish), milestones, limits. */
+function planOf(units: readonly U[], milestones: readonly Milestone[], walkRounds?: number): PlanM1 {
+  return {
+    units: units.map((u) => ({
+      id: u.id, after: u.after ?? [], ...(u.origin === undefined ? {} : { origin: u.origin }), ...(u.reenters === undefined ? {} : { reenters: { unit: u.reenters } }),
+      ...(u.polish === undefined ? {} : { polish: u.polish }),
+    })),
+    milestones,
+    ...(walkRounds === undefined ? {} : { limits: { walkRounds } }),
+  } as unknown as PlanM1;
+}
+
+type WalkFactSpec = WalkFact;
+/** A view over walk facts, unit statuses, findings and decided checkpoints (seq order as given). */
+function viewOf(o: Readonly<{
+  walks?: readonly WalkFactSpec[]; status?: Readonly<Record<string, string>>; superseded?: Readonly<Record<string, string>>; findings?: readonly Partial<FindingState>[];
+  checkpointsAfter?: readonly number[];
+}>): JournalView {
+  const walkFacts = (o.walks ?? []).map((fact, i) => ({ seq: 10 * (i + 1), at: new Date(Date.UTC(2026, 9, 1, 0, i)).toISOString(), fact }));
+  return {
+    walkFacts: () => walkFacts,
+    unit: (id: string) => ({ status: o.status?.[id] ?? 'active', supersededBy: o.superseded?.[id] ?? null }),
+    holistic: () => ({
+      findings: (o.findings ?? []).map((f) => ({ lens: 'walkthrough', severity: 'P1', state: 'open', ...f })),
+      checkpoints: (o.checkpointsAfter ?? []).map((seq) => ({ inputs: { seq }, decided: { kind: 'no-op' } })),
+    }),
+  } as unknown as JournalView;
+}
+
+const W = (n: number): JobId => `walk-${n}` as JobId;
+const started = (n: number, round: number, milestone = 'MS-1'): WalkFact => ({ kind: 'walk-started', job: W(n), milestone: milestone as MilestoneId, round, sha: 'a'.repeat(40) as never, ports: {} });
+const ended = (n: number, outcome: 'reported' | 'bring-up-failed' | 'abandoned', findings: readonly string[] = [], proposals: readonly string[] = [], dropped: readonly string[] = []): WalkFact => ({
+  kind: 'walk-ended', job: W(n), outcome, findings: findings as FindingId[], proposals: proposals as never[], dropped: dropped as never[],
+});
+const passed = (n: number): WalkFact => ({ kind: 'milestone-passed', milestone: 'MS-1' as MilestoneId, job: W(n) });
+const repairing = (unit: string, finding: string): RepairUnit => ({ unit: unit as UnitId, repairs: [finding as FindingId], progress: { kind: 'working' } });
+
+describe('the milestone node (src/walk/node.ts)', () => {
+  const edges = (plan: PlanM1) => Object.fromEntries([...milestoneEdges(plan)].map(([u, ms]) => [u, ms]));
+
+  test('node.chain-and-through: a direct descendant and one through a non-milestone unit wait; the milestone\'s own units and an unrelated unit do not', () => {
+    const plan = planOf([{ id: 'a' }, { id: 'b', after: ['a'] }, { id: 'c', after: ['b'] }, { id: 'd', after: ['c'] }, { id: 'z' }], [MILESTONE('MS-1', ['a', 'b'])]);
+    assert.deepEqual(edges(plan), { c: ['MS-1'], d: ['MS-1'] });
+  });
+
+  test('node.diamond: both arms and the join wait on the one node above them', () => {
+    const plan = planOf([{ id: 'top' }, { id: 'l', after: ['top'] }, { id: 'r', after: ['top'] }, { id: 'join', after: ['l', 'r'] }], [MILESTONE('MS-1', ['top'])]);
+    assert.deepEqual(edges(plan), { l: ['MS-1'], r: ['MS-1'], join: ['MS-1'] });
+  });
+
+  test('node.two-milestones: a unit below two milestones waits on both, in plan order; a unit inside one waits on the other above it', () => {
+    const plan = planOf([{ id: 'a' }, { id: 'b', after: ['a'] }, { id: 'c', after: ['b'] }], [MILESTONE('MS-1', ['a']), MILESTONE('MS-2', ['b'])]);
+    assert.deepEqual(edges(plan), { b: ['MS-1'], c: ['MS-1', 'MS-2'] });
+  });
+
+  test('node.lineage: a re-entry of a milestone unit is one of its units; a re-entry of a gated unit is gated; an edge on a superseded unit stands for its lineage', () => {
+    const plan = planOf(
+      [{ id: 'a' }, { id: 'a2', reenters: 'a', origin: 'checkpoint' }, { id: 'b', after: ['a'] }, { id: 'b2', reenters: 'b', origin: 'checkpoint' }, { id: 'c', after: ['a2'] }],
+      [MILESTONE('MS-1', ['a'])],
+    );
+    assert.deepEqual(edges(plan), { b: ['MS-1'], b2: ['MS-1'], c: ['MS-1'] });
+  });
+
+  test('node.exempt: repair, checkpoint-admitted and polish units below a milestone never wait on its node', () => {
+    const plan = planOf([
+      { id: 'a' }, { id: 'fix', after: ['a'], origin: 'repair' }, { id: 'ck', after: ['a'], origin: 'checkpoint' },
+      { id: 'pol', after: ['a'], origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } }, { id: 'planned', after: ['fix'] },
+    ], [MILESTONE('MS-1', ['a'])]);
+    assert.deepEqual(edges(plan), { planned: ['MS-1'] });
+  });
+
+  test('node.passes: the waits drop once milestone-passed is in the log; a plan without milestones has no edges', () => {
+    const plan = planOf([{ id: 'a' }, { id: 'b', after: ['a'] }], [MILESTONE('MS-1', ['a'])]);
+    assert.deepEqual([...milestoneWaits(viewOf({}), plan)], [['b', ['MS-1']]]);
+    assert.deepEqual([...milestoneWaits(viewOf({ walks: [started(1, 1), ended(1, 'reported'), passed(1)] }), plan)], []);
+    assert.deepEqual([...milestoneEdges(planOf([{ id: 'a' }, { id: 'b', after: ['a'] }], []))], []);
+  });
+});
+
+describe('the rounds brake (src/walk/milestones.ts)', () => {
+  const m = MILESTONE('MS-1', ['a']);
+  const plan = (units: readonly U[] = [{ id: 'a' }], rounds?: number) => planOf(units, [m], rounds);
+  const progress = (p: PlanM1, v: JournalView, repairs: readonly RepairUnit[] = []) => milestoneProgress(v, p, m, repairs);
+
+  test('brake.reach: building until every unit merged (by lineage head), then round 1 is due; a running walk is walking', () => {
+    assert.equal(progress(plan(), viewOf({})).kind, 'building');
+    assert.deepEqual(progress(plan(), viewOf({ status: { a: 'retired' } })), { kind: 'walk-due', round: 1 });
+    assert.equal(progress(plan(), viewOf({ status: { a: 'superseded', a2: 'active' }, superseded: { a: 'a2' } })).kind, 'building');
+    assert.deepEqual(progress(plan(), viewOf({ status: { a: 'superseded', a2: 'retired' }, superseded: { a: 'a2' } })), { kind: 'walk-due', round: 1 });
+    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks: [started(1, 1)] })).kind, 'walking');
+  });
+
+  test('brake.abandoned: an abandoned walk is no round: the same round is due again', () => {
+    assert.deepEqual(progress(plan(), viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'abandoned')] })), { kind: 'walk-due', round: 1 });
+  });
+
+  test('brake.clean: a round with no findings and no proposals settles at once', () => {
+    const p = progress(plan(), viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'reported'), passed(1)] }));
+    assert.equal(p.kind, 'settled');
+  });
+
+  test('brake.checkpoint-pending: an open finding of the round waits for a checkpoint decided after the walk; one that admits nothing settles it', () => {
+    const walks = [started(1, 1), ended(1, 'reported', ['F-1'])];
+    const findings = [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId }];
+    const open = progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings }));
+    assert.ok(open.kind === 'round-open' && open.round.pending === 'checkpoint', JSON.stringify(open));
+    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpointsAfter: [5] })).kind, 'round-open', 'a checkpoint before the walk ended weighed nothing of it');
+    assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks, findings, checkpointsAfter: [25] })).kind, 'settled');
+  });
+
+  test('brake.landed: the next round once every admitted unit is merged or cut and one landed; none landed settles', () => {
+    const walks = [started(1, 1), ended(1, 'reported', ['F-1'])];
+    const findings = [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId, state: 'owned' as const }];
+    const units = [{ id: 'a' }, { id: 'r1', origin: 'repair' }, { id: 'r2', origin: 'repair' }];
+    const repairs = [repairing('r1', 'F-1'), repairing('r2', 'F-1')];
+    const inFlight = progress(plan(units), viewOf({ status: { a: 'retired', r1: 'retired' }, walks, findings }), repairs);
+    assert.ok(inFlight.kind === 'round-open' && inFlight.round.pending === null && inFlight.round.inFlight.join() === 'r2', JSON.stringify(inFlight));
+    assert.deepEqual(progress(plan(units), viewOf({ status: { a: 'retired', r1: 'retired', r2: 'cut' }, walks, findings }), repairs), { kind: 'walk-due', round: 2 });
+    assert.equal(progress(plan(units), viewOf({ status: { a: 'retired', r1: 'cut', r2: 'cut' }, walks, findings }), repairs).kind, 'settled', 'no landing: settle');
+  });
+
+  test('brake.polish: applied proposals wait for their units (agent D\'s revision), then count as admitted; the bound stops the rounds', () => {
+    const walks = [started(1, 1), ended(1, 'reported', [], ['X-1'])];
+    const pending = progress(plan(), viewOf({ status: { a: 'retired' }, walks }));
+    assert.ok(pending.kind === 'round-open' && pending.round.pending === 'polish', JSON.stringify(pending));
+    const units = [{ id: 'a' }, { id: 'p1', origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } }];
+    assert.deepEqual(progress(plan(units), viewOf({ status: { a: 'retired', p1: 'retired' }, walks })), { kind: 'walk-due', round: 2 });
+    // Round 2 of 2: its proposals are all dropped (walk-ended.dropped), nothing waits, and the bound settles the milestone.
+    const last = [...walks, started(2, 2), ended(2, 'reported', [], ['X-2'], ['X-2'])];
+    assert.equal(progress(plan(units, 2), viewOf({ status: { a: 'retired', p1: 'retired' }, walks: last })).kind, 'settled');
+    // At the bound with units landed: settled all the same.
+    assert.equal(progress(plan(units, 1), viewOf({ status: { a: 'retired', p1: 'retired' }, walks })).kind, 'settled');
+  });
+
+  test('brake.states: building, walking, blocked, passed, polishing, settled', () => {
+    const st = (v: JournalView, p: PlanM1 = plan()) => milestoneState(v, m.id, milestoneProgress(v, p, m, []));
+    assert.equal(st(viewOf({})), 'building');
+    assert.equal(st(viewOf({ status: { a: 'retired' } })), 'walking');
+    assert.equal(st(viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'reported', ['F-1'])], findings: [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId }] })), 'blocked');
+    const units = [{ id: 'a' }, { id: 'p1', origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } }];
+    const polished = [started(1, 1), ended(1, 'reported', [], ['X-1']), passed(1)];
+    assert.equal(st(viewOf({ status: { a: 'retired' }, walks: polished }), plan(units)), 'polishing');
+    assert.equal(st(viewOf({ status: { a: 'retired', p1: 'retired' }, walks: polished }), plan(units)), 'passed');
+    assert.equal(st(viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'reported'), passed(1)] })), 'settled');
+    assert.equal(st(viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'bring-up-failed', ['F-1'])], findings: [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId }], checkpointsAfter: [30] })), 'blocked', 'settled unpassed');
+  });
+
+  test('brake.escalation: an unowned walk P1 past 6 h, and a milestone settled unpassed, each raise one finding-p1-escalated per walk job', () => {
+    const findings = [{ id: 'F-1' as FindingId, milestone: 'MS-1' as MilestoneId }];
+    const v = viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'reported', ['F-1'])], findings });
+    const at = (h: number) => new Date(Date.UTC(2026, 9, 1, h, 1));
+    assert.deepEqual(walkItemsDue(v, plan(), [], at(5)), [], 'before 6 h, and the round still waits for its checkpoint');
+    const due = walkItemsDue(v, plan(), [], at(7));
+    assert.deepEqual(due.map((i) => [i.job, i.content.reason, i.content.blocking]), [['walk-1', 'finding-p1-escalated', true]]);
+    assert.match(due[0]!.content.summary, /F-1/);
+    const owned = viewOf({ status: { a: 'retired', r1: 'active' }, walks: [started(1, 1), ended(1, 'reported', ['F-1'])], findings: [{ ...findings[0], state: 'owned' }] });
+    assert.deepEqual(walkItemsDue(owned, plan([{ id: 'a' }, { id: 'r1', origin: 'repair' }]), [repairing('r1', 'F-1')], at(7)), [], 'an owned P1 whose repair is in flight is not escalated');
+    const settled = viewOf({ status: { a: 'retired' }, walks: [started(1, 1), ended(1, 'reported', ['F-1'])], findings: [{ ...findings[0], state: 'ruled' }], checkpointsAfter: [30] });
+    const items = walkItemsDue(settled, plan(), [], at(1));
+    assert.deepEqual(items.map((i) => i.job), ['walk-1']);
+    assert.match(items[0]!.content.summary, /never passed/);
+  });
+});
+
+describe('a walk report held to its inputs (src/walk/report.ts)', () => {
+  const VISION = { clauses: [{ id: 'V-1', state: 'active' }, { id: 'V-2', state: 'withdrawn' }] } as unknown as Vision;
+  const dir = (): AbsPath => {
+    const d = absPath(tmpDir('walk-evidence'));
+    mkdirSync(join(d, 'J-1'), { recursive: true });
+    writeFileSync(join(d, 'J-1', 'shot.png'), 'png');
+    writeFileSync(join(d, J1_EVIDENCE), '200 hello');
+    return d;
+  };
+  const m = MILESTONE('MS-1', ['a'], { references: ['design' as never, 'docs/api' as never] });
+  const check = (evidenceDir: AbsPath) => ({ milestone: m, plan: planOf([{ id: 'a' }], [m]), vision: VISION, evidenceDir });
+  const answer = (spec: Parameters<typeof walkAnswer>[0]) => validateWalkthroughOutput(walkAnswer(spec));
+
+  test('report.valid: every journey reported, evidence inside the dir (relative or absolute), a design path inside a reference', () => {
+    const d = dir();
+    const out = answer({
+      journeys: [{ journey: 'J-1', outcome: 'completed', evidence: ['J-1/shot.png'] }, { journey: 'J-2', outcome: 'completed', evidence: [join(d, 'J-1', 'shot.png')] }],
+      findings: [{ class: 'deviates', journey: 'J-1', claim: 'off-token colour', cause: 'card: off-token colour', against: { type: 'design', path: 'design/tokens.css', anchor: '--accent' }, evidence: ['J-1/shot.png'] }],
+    });
+    assert.deepEqual(walkRefusals(check(d), out), []);
+  });
+
+  test('report.refusals: a journey unreported or unknown, evidence missing or outside, a design path outside the references, a withdrawn or unknown clause', () => {
+    const d = dir();
+    const out = answer({
+      journeys: [{ journey: 'J-1', outcome: 'completed', evidence: ['J-1/missing.png'] }, { journey: 'J-9', outcome: 'completed', evidence: ['../outside.txt'] }],
+      findings: [
+        { class: 'deviates', journey: 'J-1', claim: 'c1', cause: 'x', against: { type: 'design', path: 'src/app.css', anchor: 'a' }, evidence: ['J-1/shot.png'] },
+        { class: 'deviates', journey: 'J-1', claim: 'c2', cause: 'y', against: { type: 'vision', clause: 'V-2' }, evidence: ['J-1/shot.png'] },
+        { class: 'breaks', journey: 'J-1', claim: 'c3', cause: 'z', against: { type: 'floor', text: 'contrast', source: 'V-7' }, evidence: ['J-1/shot.png'] },
+      ],
+    });
+    const reasons = walkRefusals(check(d), out);
+    assert.equal(reasons.length, 7, reasons.join('\n'));
+    assert.ok(reasons.some((r) => /J-2 of MS-1 is not reported/.test(r)));
+    assert.ok(reasons.some((r) => /J-9 is no journey of MS-1/.test(r)));
+    assert.ok(reasons.some((r) => /missing\.png, which is no file/.test(r)));
+    assert.ok(reasons.some((r) => /outside\.txt, which is outside the evidence dir/.test(r)));
+    assert.ok(reasons.some((r) => /src\/app\.css, which is inside none of MS-1's references/.test(r)));
+    assert.ok(reasons.some((r) => /V-2, which is withdrawn/.test(r)));
+    assert.ok(reasons.some((r) => /V-7, which the vision in force does not have/.test(r)));
+  });
+
+  test('report.polish-refusals: a scope covering no reference, an id the plan holds, a spec for another unit', () => {
+    const d = dir();
+    const spec = (unit: string) => ({
+      schema: 'roadmap/spec-m1', unit, rev: 1, lanes: [{ id: 'l', argv: ['true'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], state: 'active' }],
+      acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: true, state: 'active' }], scope: ['design/**'], resources: [], decisions: [], facts: [],
+      cites: { contracts: [], rulings: [] }, obligations: [], repairs: [],
+    });
+    const out = answer({
+      polish: [
+        { journey: 'J-1', text: 'p1', unit: { id: 'x-ok', scope: ['design/tokens.css'], spec: spec('x-ok') } },
+        { journey: 'J-1', text: 'p2', unit: { id: 'x-src', scope: ['src/**'], spec: spec('x-src') } },
+        { journey: 'J-1', text: 'p3', unit: { id: 'a', scope: ['design/**'], spec: spec('a') } },
+        { journey: 'J-1', text: 'p4', unit: { id: 'x-other', scope: ['docs/**'], spec: spec('x-ok') } },
+      ],
+    });
+    const reasons = walkRefusals(check(d), out).filter((r) => r.startsWith('polish'));
+    assert.equal(reasons.length, 3, reasons.join('\n'));
+    assert.match(reasons[0]!, /x-src.*covers none of MS-1's references/);
+    assert.match(reasons[1]!, /a is already a unit of the plan/);
+    assert.match(reasons[2]!, /its spec is unit x-ok rev 1/);
+  });
+
+  test('report.covers-and-paths: scope coverage and evidence paths', () => {
+    const refs = ['design', 'docs/api'] as never[];
+    assert.equal(coversReference(refs, ['design/**' as never]), true);
+    assert.equal(coversReference(refs, ['docs/**' as never]), true, 'a pattern above a reference holds it');
+    assert.equal(coversReference(refs, ['docs/api/errors.md' as never]), true, 'a file inside a reference');
+    assert.equal(coversReference(refs, ['designer/**' as never, 'docs/apis/**' as never]), false);
+    const d = absPath('/run/evidence/jobs/walk-1');
+    assert.equal(evidencePath(d, 'J-1/a.png'), '/run/evidence/jobs/walk-1/J-1/a.png');
+    assert.equal(evidencePath(d, '/run/evidence/jobs/walk-1/x'), '/run/evidence/jobs/walk-1/x');
+    assert.equal(evidencePath(d, '../walk-2/x'), null);
+    assert.equal(evidencePath(d, '/etc/passwd'), null);
+  });
+
+  test('mint.class-to-severity: breaks is a P1, deviates a P2, the milestone named, no obligation, a vision clause kept', () => {
+    const d = dir();
+    const x = { repo: absPath(tmpDir('walk-repo')), job: W(1), sha: 'a'.repeat(40) as never, milestone: m, evidenceDir: d };
+    const out = answer({
+      findings: [
+        { class: 'breaks', journey: 'J-1', claim: 'dead end', cause: 'submit: 404', against: { type: 'journey' }, evidence: ['J-1/shot.png'] },
+        { class: 'deviates', journey: 'J-2', claim: 'vague error', cause: 'form: vague error', against: { type: 'vision', clause: 'V-1' }, evidence: ['J-1/shot.png'] },
+      ],
+    });
+    const [p1, p2] = out.findings.map((f) => walkDraft(x, f));
+    assert.deepEqual([p1!.lens, p1!.severity, p1!.milestone, p1!.obligation, p1!.visionClauses, p1!.cause], ['walkthrough', 'P1', 'MS-1', null, [], 'submit: 404']);
+    assert.deepEqual([p2!.severity, p2!.visionClauses], ['P2', ['V-1']]);
+    assert.deepEqual(p1!.evidence, [{ path: join(d, 'J-1', 'shot.png'), blob: null }]);
+    assert.match(p1!.claim, /^J-1: dead end/);
+  });
+});
+
+describe('placeholders', () => {
+  test('bringup.ports: {port:<name>} is substituted; a name without a port is a bug', () => {
+    assert.equal(substitutePorts('http://127.0.0.1:{port:web}/x?api={port:api}', { web: 4100, api: 4200 } as never), 'http://127.0.0.1:4100/x?api=4200');
+    assert.throws(() => substitutePorts('{port:db}', { web: 1 } as never), /\{port:db\} names no allocated port/);
+  });
+
+  test('walk.mcp-config: the servers with {evidence} and {viewport} substituted in args and env, none for a shell-only milestone', () => {
+    const servers = { pw: { command: 'playwright-mcp', args: ['--output-dir', '{evidence}', '--viewport-size', '{viewport}'], env: { OUT: '{evidence}/x' } } };
+    const browser = MILESTONE('MS-1', ['a'], { journeys: [{ id: 'J-1' as never, text: 'j', via: 'browser', entry: '/', budget: null }] });
+    const ev = absPath('/run/evidence/jobs/walk-1');
+    assert.deepEqual(JSON.parse(walkSessionMcp(servers, browser, ev)!), {
+      mcpServers: { pw: { type: 'stdio', command: 'playwright-mcp', args: ['--output-dir', ev, '--viewport-size', '1280x800'], env: { OUT: `${ev}/x` } } },
+    });
+    assert.equal(walkSessionMcp(servers, MILESTONE('MS-1', ['a']), ev), null);
+    assert.throws(() => walkSessionMcp(undefined, browser, ev), /walk-tools-missing/);
+  });
+});

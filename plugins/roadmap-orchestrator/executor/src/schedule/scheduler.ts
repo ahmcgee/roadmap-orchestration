@@ -50,8 +50,9 @@
 // The holistic layer (M3; only while the plan in force names a vision, A5). One holistic job runs at a time, in
 // this order of preference: in a corpus arc before its first admission, the pack review (`runPackReview`, M4a OR-Q16,
 // R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
-// (`runCheckpoint`, B6) while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running
-// (one audit at a time, its clock `processClock`). A job that waits on a condition a command changes (skipped for a
+// (`runCheckpoint`, B6) while one is due or running; (dev.13) the milestone walk (`runWalk`, src/walk/walk.ts) while one is
+// due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
+// `processClock`). A job that waits on a condition a command changes (skipped for a
 // parked backend or a paused arc, an interrupted call, nothing due) is not asked again for HOLISTIC_RETRY_MS. One whose
 // lane gave no verdict is retried on the retryable-park backoff (`noVerdictDelayMs`: 1, 2, 4, 8, 16, then every 30
 // minutes) and, once its episode is PARK_ESCALATE_MS old, raises one non-blocking `park-escalated` parented by the job
@@ -133,13 +134,15 @@ import { PressureTicks, hostPressure, readHostCpu } from '../host/pressure.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
+import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
+import { walksPending } from '../walk/milestones.ts';
 import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
 import { type Observation, type ObservationStore, keyOf, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import type { RoutingBase } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
-import { type PlanM1, type PlanUnit, lensSetOf } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, hasMilestones, lensSetOf } from '../input/plan.ts';
 import { type BlockingItem, blockingItems, holdsUnit, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue, trippedTargets } from '../park/schedule.ts';
@@ -261,7 +264,7 @@ type Task = {
 /** Invocation purposes a pause kills among a paused unit's spawns (and, under `pause --all`, a flow proof's runs: M4b). */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
 /** Invocation purposes a stop kills (lens, checkpoint and flow calls and flow proofs included; never a docs publication's lanes). */
-const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof'];
+const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof', 'bring-up'];
 
 /** A holistic job that made no progress is asked again only this long after. */
 export const HOLISTIC_RETRY_MS = 5 * POLL_MS;
@@ -412,7 +415,7 @@ const CLOSE_OUT_BLOCKERS = ['generation-not-quiescent', 'close-out', 'obligation
 /** Why a holistic arc is not `complete` now: each condition of §2.10 that fails, in this order. */
 export const COMPLETION_BLOCKERS = [
   'units-open', 'blocking-items', 'pending-commands', 'residues', 'baseline-owed', 'audit-pending', 'coverage-outstanding', 'audit-owed',
-  'checkpoint-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+  'checkpoint-pending', 'walk-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
 ] as const;
 export type CompletionBlocker = (typeof COMPLETION_BLOCKERS)[number];
 
@@ -527,6 +530,8 @@ export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocki
   if (coverageOf(fold, c.base, lensSetOf(holistic), c.head).some((x) => x.outstanding)) out.add('coverage-outstanding');
   if (c.owed.length > 0) out.add('audit-owed');
   if (checkpointPending(h.checkpoint)) out.add('checkpoint-pending');
+  // dev.13: a milestone walk due or running, or a round still open (src/walk/milestones.ts).
+  if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) out.add('walk-pending');
   const g = Math.max(0, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((x) => x.inputs.generation));
   const vision = view.planApplied()?.visionSha256;
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
@@ -716,6 +721,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   if (holistic()) {
     settleLatest(h.checkpoint);
     settlePackReviews(h.checkpoint);
+    settleWalks(x.stage);
   }
 
   const tasks = new Map<UnitId, Task>();
@@ -1060,6 +1066,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     if (!holistic() || Date.now() - lastTick < POLL_MS) return;
     lastTick = Date.now();
     raiseFindingItems(journal, runDir, new Date());
+    raiseWalkItems(x.stage, new Date());
     const c = cadence(x.stage, h.audit.clock);
     if (c !== null) raiseAuditOwed(h.audit, c);
   };
@@ -1088,6 +1095,11 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         });
       } else if (checkpointPending(h.checkpoint) || respecSecondDue()) {
         trackRetrying('holistic:checkpoint', 'holistic', async () => (['decided', 'not-needed'].includes((await runCheckpoint(h.checkpoint)).kind) ? PROGRESS : WAIT));
+      } else if (walkPending(h.audit)) {
+        trackRetrying('holistic:walk', 'holistic', async () => {
+          const out = await runWalk(h.audit);
+          return out.kind === 'ended' && out.outcome !== 'abandoned' ? PROGRESS : WAIT;
+        });
       } else if (auditPending(h.audit)) {
         trackRetrying('holistic:audit', 'holistic', async () => {
           const out = await runAudit(h.audit);

@@ -24,7 +24,8 @@
 //   running | preparing         its task is in a stage or chain (`preparing`: a re-entry's `prepare`); with no
 //                               sched.json, an attempt is open while the executor lives
 //   waiting                     its task waits for its stage's entry reservation (`waitingFor.resources`), or it
-//                               waits on `after` dependencies or contingent edges
+//                               waits on `after` dependencies, contingent edges or (dev.13) unpassed milestone nodes
+//                               (`waitingFor.milestones`)
 //   awaiting-admission          its next stage is not admitted now (`waitingFor.admission`, `drainFor`)
 //   ready                       it may start now (the scheduler starts it on its next tick)
 //
@@ -106,6 +107,8 @@
 //                 checkpoint unit not classed opportunity, the findings attributed to its merge (R46, the lens's covered
 //                 range and its paths) whose vision clauses lie wholly outside the owner slice and the opportunities'
 //                 clauses (`advances ∪ OC`)
+//   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
+//                 passed, its last round, its walks and its active walkthrough findings; `edges` adds each node edge
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -113,13 +116,13 @@ import { COMMANDS_DIR, incomingPath, pendingCommandIds, readCommand, terminalRec
 import { type Sealing, sealingOf } from './commands/gc.ts';
 import {
   type AmendmentSource, type Event, JUDGMENT_STAGES, type JudgmentStage, type Holder, OUTCOME_STAGES, type OperatorParkKind, type OutcomeStage, type PlanAppliedFact,
-  type ProbeTarget, type RevisionPayload, holderUnit, parentUnit, probeTargetKey,
+  type ProbeTarget, type RevisionPayload, type WalkOutcome, holderUnit, parentUnit, probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
 import {
   type AmendmentId, type ArcId, CPU_POOL, type CommandId, type DebtId, type DivergenceId, type IssueId, type RuleId, type EdgeId, type FindingId, type JobId, type NeedsUserId, type ObligationId, type PlanRev, type ProposalId,
   type ResourceUnit, type RoutingRev, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type InvocationId, type KnownDefectId, type LaneId,
-  type OpportunityId, canonicalIds, commandId, compareResourceUnits, cpuToken, invocationId, parseJobId, parseOpId, compareIds, sha,
+  type OpportunityId, type MilestoneId, canonicalIds, commandId, compareResourceUnits, cpuToken, invocationId, parseJobId, parseOpId, compareIds, sha,
 } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, type LogSnapshot, readJournal } from './core/log.ts';
@@ -138,7 +141,9 @@ import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
 import { EARLIER_BUILTIN_SEATS, bundleClassesOf, gateLargeDiffOf } from './core/upgrade.ts';
-import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
+import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, milestonesOf, parsePlan } from './input/plan.ts';
+import { type MilestoneState, milestoneProgress, milestoneState, walksOf } from './walk/milestones.ts';
+import { milestoneEdges, milestonePassed, milestoneWaits } from './walk/node.ts';
 import { type ClassTotal, type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byClass, byModel, meterOf, ownShare } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
@@ -146,7 +151,7 @@ import { judgmentSeat, largeDiffSeat } from './pipeline/transitions.ts';
 import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
 import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
-import { specFacts } from './pipeline/reproduce.ts';
+import { repairUnits, specFacts } from './pipeline/reproduce.ts';
 import { observations } from './pipeline/lanes.ts';
 import {
   type ArcHold, type CompletionBlocker, type HolisticContexts, type QueueEntry, SCHED_FILE, type SchedFile, arcHolds, arcSettled, completionBlockers, dischargingObservation,
@@ -179,7 +184,7 @@ import { witnessDir } from './git/snapshot.ts';
 import { coverageBase, coverageOf } from './holistic/coverage.ts';
 import { type AppliedBundle, brakesOf } from './holistic/convergence.ts';
 import { uncoveredDivergences } from './holistic/divergence.ts';
-import { type FindingMetric, findingMetrics, isActive } from './holistic/findings.ts';
+import { type FindingMetric, type RepairUnit, findingMetrics, isActive } from './holistic/findings.ts';
 import { type Observation, type ObservationStore, type WitnessedEntry, verdictOf } from './holistic/observe.ts';
 import {
   type ClauseState, type Compensation, type DivergenceKind, type FindingLens, type FindingSeverity, type FindingStateName, type LensKind,
@@ -229,6 +234,8 @@ export const SESSION_GUARANTEE = 'Every process that keeps ROADMAP_INV in its ex
  */
 export type WaitingFor = Readonly<{
   deps: readonly UnitId[];
+  /** dev.13: the unpassed milestone nodes it descends from (src/walk/node.ts), in plan order. */
+  milestones: readonly MilestoneId[];
   edges: readonly EdgeId[];
   resources: ResourceRequest | null;
   envBlocked: boolean;
@@ -311,9 +318,13 @@ export type RoutingView = Readonly<{
   bindings: { readonly [C in ModelClass]: ClassSource };
 }>;
 
-/** One edge of the plan in force: an `after` (its dependency and where it points now) or a contingent edge. */
+/**
+ * One edge of the plan in force: an `after` (its dependency and where it points now), a contingent edge, or (dev.13) the
+ * milestone node edge code inserts (src/walk/node.ts), met once the node passed.
+ */
 export type EdgeView =
   | Readonly<{ type: 'after'; unit: UnitId; on: UnitId; effective: UnitId; met: boolean }>
+  | Readonly<{ type: 'milestone'; unit: UnitId; milestone: MilestoneId; passed: boolean }>
   | Readonly<{ type: 'contingent'; unit: UnitId; edge: EdgeId; condition: string; resolved: boolean }>;
 
 /**
@@ -550,6 +561,16 @@ export type Status = Readonly<{
    * the givens, the ruler changes and the next trigger and cooldown. Null before a start.
    */
   flow: FlowStatus | null;
+  /**
+   * dev.13: the plan's milestones (src/walk/milestones.ts): each one's state (`building | walking | blocked | passed |
+   * polishing | settled`), its node, its walks in log order (the last round's number), and its active walkthrough findings.
+   */
+  milestones: readonly MilestoneView[];
+}>;
+
+export type MilestoneView = Readonly<{
+  id: MilestoneId; state: MilestoneState; passed: boolean; round: number; walks: readonly Readonly<{ job: JobId; round: number; outcome: WalkOutcome | null }>[];
+  findings: readonly FindingId[];
 }>;
 
 export type KnownDefectView = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId; fixMerged: boolean; holds: readonly UnitId[] }>;
@@ -768,8 +789,8 @@ type Inputs = Readonly<{
   spec: SpecFactsOf;
 }>;
 
-const NO_WAIT: Omit<WaitingFor, 'deps' | 'edges' | 'admission'> = { resources: null, envBlocked: false, drainFor: [] };
-const waitFor = (w: Partial<WaitingFor>): WaitingFor => ({ deps: [], edges: [], admission: [], ...NO_WAIT, ...w });
+const NO_WAIT: Omit<WaitingFor, 'deps' | 'milestones' | 'edges' | 'admission'> = { resources: null, envBlocked: false, drainFor: [] };
+const waitFor = (w: Partial<WaitingFor>): WaitingFor => ({ deps: [], milestones: [], edges: [], admission: [], ...NO_WAIT, ...w });
 
 /** A dependency that only the architect can release: parked, stopped or cut (D1). */
 const dead = (view: JournalView, id: UnitId): boolean => ['park-pending', 'stop-pending', 'cut'].includes(view.unit(id).status);
@@ -781,8 +802,9 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   if (item !== undefined) return { state: 'blocked', waitingFor: waitFor({ admission: [{ type: 'blocking-item', id: item.id, reason: item.reason }] }) };
   const deps = unit.after.map((d) => effectiveDependency(view, d)).filter((d) => view.unit(d).status !== 'retired');
   const edges = unit.contingent.filter((e) => view.edgeResolved(e.id) === null).map((e) => e.id);
+  const milestones = deps.length > 0 ? [] : milestoneWaits(view, plan).get(unit.id) ?? [];
   if (deps.some((d) => dead(view, d))) return { state: 'blocked', waitingFor: waitFor({ deps, edges }) };
-  if (deps.length > 0 || edges.length > 0) return { state: 'waiting', waitingFor: waitFor({ deps, edges }) };
+  if (deps.length > 0 || edges.length > 0 || milestones.length > 0) return { state: 'waiting', waitingFor: waitFor({ deps, milestones, edges }) };
   const next = nextStage(u, x.spec(unit).reproduces);
   const routing = x.routing;
   if (next?.kind === 'admission' && routing !== null) {
@@ -868,6 +890,7 @@ function edgesOf(view: JournalView, plan: PlanM1): readonly EdgeView[] {
       return { type: 'after', unit: u.id, on, effective, met: view.unit(effective).status === 'retired' };
     }),
     ...u.contingent.map((e): EdgeView => ({ type: 'contingent', unit: u.id, edge: e.id, condition: e.condition, resolved: view.edgeResolved(e.id) !== null })),
+    ...(milestoneEdges(plan).get(u.id) ?? []).map((milestone): EdgeView => ({ type: 'milestone', unit: u.id, milestone, passed: milestonePassed(view, milestone) })),
   ]);
 }
 
@@ -995,6 +1018,7 @@ export function compactState(l: UnitCore): string {
   if (w === null) return l.state;
   const parts = [
     ...(w.deps.length > 0 ? [`deps=${w.deps.join(',')}`] : []),
+    ...(w.milestones.length > 0 ? [`milestones=${w.milestones.join(',')}`] : []),
     ...(w.edges.length > 0 ? [`edges=${w.edges.join(',')}`] : []),
     ...(w.resources !== null ? [w.envBlocked ? 'resources(env-blocked)' : 'resources'] : []),
     ...[...new Set(w.admission.map((c) => c.type))],
@@ -1743,7 +1767,25 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     ...admitted,
     flow: start === null || plan === null ? null
       : flowStatus({ runDir, repo: start.record.repo, journal: { view } }, revParse(start.record.repo, branchRef(plan.integrationBranch)), isoTimeOf(new Date(now))),
+    milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairUnits({
+      journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan,
+    })),
   };
+}
+
+/** dev.13: each milestone's line (`Status.milestones`). */
+function milestoneViews(view: JournalView, plan: PlanM1, repairs: readonly RepairUnit[]): readonly MilestoneView[] {
+  return milestonesOf(plan).map((m) => {
+    const walks = walksOf(view, m.id);
+    return {
+      id: m.id,
+      state: milestoneState(view, m.id, milestoneProgress(view, plan, m, repairs)),
+      passed: milestonePassed(view, m.id),
+      round: walks.filter((w) => w.ended !== null && w.ended.outcome !== 'abandoned').at(-1)?.round ?? 0,
+      walks: walks.map((w) => ({ job: w.job, round: w.round, outcome: w.ended?.outcome ?? null })),
+      findings: canonicalIds(view.holistic().findings.filter((f) => f.lens === 'walkthrough' && f.milestone === m.id && isActive(f)).map((f) => f.id)),
+    };
+  });
 }
 
 /** The holistic contexts `status` reads the scheduler's rules through: read-only, with the routing in force. */

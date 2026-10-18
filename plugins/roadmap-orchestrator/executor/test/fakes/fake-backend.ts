@@ -344,6 +344,19 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
       writeFileSync(join(dir, act.file), act.text);
       return;
     }
+    case 'fetchFromPrompt': {
+      // dev.13: a fake walkthrough uses the product: GET the URL the prompt names, the status and body into its evidence dir.
+      const url = new RegExp(act.pattern).exec(call.stdin)?.[1];
+      const dir = new RegExp(act.dirPattern).exec(call.stdin)?.[1];
+      if (url === undefined || dir === undefined) {
+        process.stderr.write(`fake ${call.as}: fetchFromPrompt ${act.pattern} / ${act.dirPattern}: no match in stdin\n`);
+        process.exit(99);
+      }
+      const script = 'fetch(process.argv[1]).then(async (r) => process.stdout.write(`${r.status} ${await r.text()}`), (e) => { process.stdout.write(`error ${e.message}`); })';
+      const r = spawnSync(process.execPath, ['-e', script, url], { encoding: 'utf8', timeout: 10_000 });
+      writeFileSync(join(dir, act.file), r.stdout);
+      return;
+    }
     case 'readFromPrompt': {
       const dir = new RegExp(act.pattern).exec(call.stdin)?.[1];
       const fail = (why: string): never => {

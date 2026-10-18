@@ -93,7 +93,7 @@ const walkSample = (k: 'A' | 'B'): RoleInputs['walkthrough'] => ({
   vision: vision(k === 'A' ? 1 : 2, `VISION-${k}`), milestone: { id: milestoneId(k === 'A' ? 'MS-1' : 'MS-2'), text: `MILESTONE-${k}` }, round: k === 'A' ? 1 : 2,
   journeys: [journeySample(k)], references: [doc(`design/${k}.md`, `REFERENCE-${k}`)],
   tweaks: [{ unit: unitId(`tweak-${k.toLowerCase()}`), proposal: polishId(k === 'A' ? 'X-1' : 'X-2'), text: `TWEAK-${k}` }],
-  findings: [findingView(k === 'A' ? 'F-1' : 'F-2', `FINDING-${k}`)], product: instanceSample(k, k === 'A' ? 4100 : 4200),
+  findings: [{ ...findingView(k === 'A' ? 'F-1' : 'F-2', `FINDING-${k}`), cause: `CAUSE-${k}` }], product: instanceSample(k, k === 'A' ? 4100 : 4200),
   units: [spec(k === 'A' ? 1 : 2, `SPEC-${k}`)], evidenceDir: absPath(`/run/evidence/jobs/walk-${k === 'A' ? 1 : 2}`),
 });
 const polishSample = (k: 'A' | 'B'): RoleInputs['polishJudge'] => ({
@@ -1335,6 +1335,27 @@ describe('W3 seat prompts (2026-10-16)', () => {
       assert.match(mod.render({ ...base, escalation: { kind: 'route-up', first: null } }), /gave no answer \(its session was refused\)/);
       assert.match(mod.render({ ...base, escalation: { kind: 'risk-trigger' } }), /A runtime risk trigger[^]*straight to the escalation seat/);
       assert.ok(routed.indexOf('<escalation>') < routed.lastIndexOf(role === 'gate' ? 'Gate unit' : 'Check the spec'), `${role}: before the ask`);
+    }
+  });
+});
+
+describe('dev.13 prompts: the walkthrough', () => {
+  it('prompts.walkthrough-contract: Fable inherits the Opus module with a dated review; the vision opens the message and the ask closes it; the system text names every field the schema requires', () => {
+    const fable = PROMPTS.walkthrough['claude-fable-5-1'];
+    assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/i.test(fable.reviewed));
+    const sample = SAMPLES.walkthrough[0];
+    for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+      const mod = promptFor('walkthrough', model);
+      assert.equal(mod, promptFor('walkthrough', 'claude-opus-5-5'), `${model}: the Opus module`);
+      assert.equal(mod.schema, ROLE_SCHEMAS.walkthrough, model);
+      assert.deepEqual(mod.fields, ROLE_INPUTS.walkthrough, model);
+      const text = mod.render(sample);
+      assert.ok(text.startsWith('<vision>'), `${model}: the vision first`);
+      assert.ok(text.endsWith('return your report.'), `${model}: the ask last`);
+      for (const needle of [sample.evidenceDir, sample.product.checkout, 'port 4100', 'MODE=A', 'entry /entry-A', 'via browser', '5 steps', '60 s', 'round="1"']) {
+        assert.ok(text.includes(needle), `${model}: renders ${needle}`);
+      }
+      namesEvery(mod.system, requiredKeys(mod.schema, [], ['journeys'], ['findings'], ['findings', 'against'], ['polish'], ['polish', 'unit']), `walkthrough/${model}`);
     }
   });
 });

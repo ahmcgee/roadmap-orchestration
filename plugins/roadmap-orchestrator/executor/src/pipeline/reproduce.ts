@@ -41,7 +41,7 @@ import { type RepairProgress, type RepairUnit, isActive, repairedObligations, ru
 import { verdictOf } from '../holistic/observe.ts';
 import { type ArcLaneDef, type MutantRef, type ObservationVerdict, type WitnessRecord, type WitnessRef, laneRevOf, witnessRecord } from '../holistic/types.ts';
 import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
-import type { PlanUnit } from '../input/plan.ts';
+import type { PlanM1, PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { type Reservation, type StageHolder, cleanup, heldReservation, run } from '../resources/reserve.ts';
 import { probe } from '../resources/probe.ts';
@@ -49,7 +49,7 @@ import type { SpecFacts, SpecFactsOf } from '../schedule/ready.ts';
 import { type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, pinDispatch, runOp } from './dispatch.ts';
 import { invocationDir, invoke } from './invoke.ts';
 import { LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, laneEnv, laneEnvId, laneRequest } from './lanes.ts';
-import { type LaneCancel, laneAbortReason } from './redlane.ts';
+import { type LaneCancel, laneAbortReason, laneCancelOf } from './redlane.ts';
 import { type StageDone, at, failedFacts, holdEntry, holisticInForce, integrationTip, loadUnitSpec, record, stageHolder, start } from './stages.ts';
 import { decidedBy } from './transitions.ts';
 import { evidenceSnapshotOp, mutantApplyOp, worktreeRemoveOp } from '../recover/ops.ts';
@@ -194,7 +194,7 @@ export async function runMutantLane(
   })).op;
   if (outcome.kind === 'lost') return { kind: 'blocked', detail: `${outcome.inv} was lost with its runner`, dir, evidence };
   if (outcome.result.type !== 'command') throw new Error(`${outcome.inv}: a mutant lane produced a ${outcome.result.type} result`);
-  if (outcome.result.verdict === 'cancelled') return { kind: 'interrupted', reason: outcome.result.reason, dir, evidence };
+  if (outcome.result.verdict === 'cancelled') return { kind: 'interrupted', reason: laneCancelOf(outcome.inv, outcome.result.reason), dir, evidence };
   if (outcome.result.verdict === 'process-fault') return { kind: 'blocked', detail: `${outcome.inv} ended by a process fault`, dir, evidence };
   const tests = collectWitness(lane.reporter, { witnessFile: absPath(join(dir, WITNESS_LINES)), stdoutFile: absPath(join(invDir, STDOUT_FILE)) });
   const record = witnessRecordOf({ lane, envId: laneEnvId(ctx, lane), treeSha: tree, inv: outcome.inv, purpose: 'mutant' }, tests);
@@ -420,8 +420,8 @@ function progressOf(u: UnitState, publishedSeq: number | undefined): RepairProgr
   return d.kind === 'stage' && approved.includes(d.target.stage) ? { kind: 'approved' } : { kind: 'working' };
 }
 
-/** The units of the plan whose specs repair something, in plan order, with their progress. */
-export function repairUnits(ctx: StageContext): readonly RepairUnit[] {
+/** The units of the plan whose specs repair something, in plan order, with their progress (read-only: `status` reads it too). */
+export function repairUnits(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath; plan: () => PlanM1 }>): readonly RepairUnit[] {
   const view = ctx.journal.view;
   const published = new Map(view.publications().map((p) => [p.unit, p.seq] as const));
   return ctx.plan().units.flatMap((unit) => {
