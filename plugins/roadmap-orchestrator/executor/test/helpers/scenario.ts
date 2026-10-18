@@ -30,7 +30,7 @@ export type Expect = Readonly<{
 /**
  * Output acts write the CLI's real output format (faithful to test/fixtures/backend-output):
  * `emit` a schema-conforming answer; `capacityText` the same with capacity and usage-limit text inside the
- * normal answer; `noUsage` an answer without a usage block; `malformed` a final message that is not JSON;
+ * normal answer; `noUsage` an answer without its usage (Claude: no `modelUsage`); `malformed` a final message that is not JSON;
  * `usageLimit` the CLI's usage-limit error (and exit 1); `exitZeroNoop` exit 0 having printed nothing.
  */
 export type OutputAct =
@@ -39,6 +39,11 @@ export type OutputAct =
   | Readonly<{ type: 'noUsage'; value: JsonValue }>
   | Readonly<{ type: 'malformed' }>
   | Readonly<{ type: 'usageLimit' }>
+  /**
+   * 2026-10-16: the prompt outgrew the model's window. Claude: the captured claude-prompt-too-long result (is_error, "Prompt
+   * is too long", exit 1); Codex: `error` and `turn.failed` with CODEX_CONTEXT_EXCEEDED, exit 1.
+   */
+  | Readonly<{ type: 'contextExceeded' }>
   | Readonly<{ type: 'exitZeroNoop' }>;
 
 /** Side effects on the world. File paths are relative to the call's cwd. */
@@ -68,15 +73,28 @@ export type WorldAct =
    * Write `<dir>/<file>` with `text`, where `pattern` (a regex source with one capture group) finds `dir`
    * in stdin: how a fake implementer writes into the evidence dir its prompt names (decisions.json).
    */
-  | Readonly<{ type: 'writeToPrompt'; pattern: string; file: string; text: string }>;
+  | Readonly<{ type: 'writeToPrompt'; pattern: string; file: string; text: string }>
+  /**
+   * Commit the tree of commit `sha` (already in the repository's object store) onto the cwd's branch, with `message`:
+   * the index and working tree become exactly that tree, deletions included. How a fake implementer lays down a
+   * generated unit commit (the role evals, evals/roles/).
+   */
+  | Readonly<{ type: 'checkoutTree'; sha: string; message: string }>;
 
 /**
  * Claude reports a stop reason; Codex has no refusal signal, so a Codex refusal is unrepresentable.
  * `globAboveAddDir` (paid M4b run 5): a Glob two levels above the call's first `--add-dir` (a gate's: the unit's
  * evidence root `evidence/<unit>` above `<attempt>-lanes/<lane>`), under the CLI's read rule: a path outside the cwd
  * and every `--add-dir` is refused, and the result lists it in `permission_denials`.
+ * `real` (the role evals, evals/roles/): run the real `claude` (the first one on PATH after the shims' own dir) with the
+ * call's exact argv, stdin, cwd and environment, its stdout and stderr passed through and its exit status the fake's.
+ * Nothing after it runs. The production prompt, capture, tools and add-dirs reach the real model byte for byte, with no
+ * test seam in production code.
+ * `stream` (the role evals' spend brake): print `events` to stdout as stream-json lines, as a running session prints its
+ * messages before any result.
  */
-export type ClaudeOnlyAct = Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }>;
+export type ClaudeOnlyAct =
+  | Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real' }> | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>;
 /**
  * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on
  * stderr, exit 1). `threadStarted`: print the `thread.started` event now, as the real CLI does first, so a
@@ -129,6 +147,11 @@ export const CLAIMS_DIR = 'claims';
 
 /** Error texts the fakes emit. Codex's is hand-written from the CLI's usage-limit message (never captured). */
 export const CODEX_USAGE_LIMIT = "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:05 PM.";
+/**
+ * Codex's context-window error, as codex-cli 0.163.0 carries it (its ContextWindowExceeded error text, read from the
+ * binary 2026-10-16; never captured live).
+ */
+export const CODEX_CONTEXT_EXCEEDED = "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying.";
 /** Hand-written: Claude Code's subscription limit text; the object around it is the captured api-error result. */
 export const CLAUDE_USAGE_LIMIT = "You've hit your limit · resets 3am (UTC)";
 /**

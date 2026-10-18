@@ -1,12 +1,15 @@
 // The meter (src/meter.ts): per-role and per-unit usage totals folded from the log, and the render-time
-// model view. The usage-validity test runs real backend invocations through fake CLIs.
+// model and class views. The usage-validity test runs real backend invocations through fake CLIs. 2026-10-16:
+// meter.subagents-by-class (a call's subagent spend per usage class), meter.session-charge (a Claude session's cumulative
+// readings charged once).
 import assert from 'node:assert/strict';
 import { describe, it, test } from 'node:test';
 import type { Event, Fact } from '../src/core/events.ts';
-import { type RoutingRev, arcId, invocationId, jobIdOf, opId, routingRev, unitId } from '../src/core/ids.ts';
-import type { TokenUsage } from '../src/core/records.ts';
-import { invoke } from '../src/pipeline/invoke.ts';
-import { byModel, meterOf } from '../src/meter.ts';
+import { type RoutingRev, arcId, claudeSessionId, invocationId, jobIdOf, opId, routingRev, unitId } from '../src/core/ids.ts';
+import type { ClassUsage, TokenUsage } from '../src/core/records.ts';
+import { type SessionCharge, addCharged } from '../src/core/usage.ts';
+import { invoke, usageFact } from '../src/pipeline/invoke.ts';
+import { byClass, byModel, meterOf, ownShare } from '../src/meter.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
 import { type Seat, unitSeatRef } from '../src/routing/types.ts';
 import { backend, context, dones, events, open, run, scenario, specFor } from './fixtures/invoke-specs.ts';
@@ -120,6 +123,65 @@ describe('meter', () => {
     const doc = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcScope: 'architecture-doc' });
     assert.notEqual(doc.rev, rev, 'packReview is in force only in a corpus arc (LR-0a-1), so the revs differ');
     assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
+  });
+
+  it('meter.subagents-by-class: a call\'s totals include its subagents\'; byClass puts each seat\'s own share on its class and the delegated share on its own', () => {
+    // A repo seats gate.low on economy (Haiku 5.5): no built-in seat names it since the 2026-10-17 gate eval.
+    const def = resolveRouting({ profile: 'default', classes: null, repoConfig: { gate: { low: 'economy' } }, plan: null, unit: null });
+    const rev = def.rev;
+    const S1 = claudeSessionId('11111111-1111-4111-8111-111111111111');
+    const S2 = claudeSessionId('22222222-2222-4222-8222-222222222222');
+    const economy: ClassUsage = { class: 'economy', inputTokens: 10, outputTokens: 5, cacheReadTokens: 100, cacheWriteTokens: 20, costUsd: 0.01 };
+    const frontier: ClassUsage = { class: 'frontier', inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 10, costUsd: 0.1 };
+    const log = [
+      // gate.low sits on economy (Haiku 5.5, by the repo's seat); its subagents spent on economy (Haiku) and frontier (Opus).
+      factEvent({ kind: 'meter', inv: inv(1), routingRev: rev, subject: seat('gate', 'low', U1, 1), usage: tokens(111, 56, 1100, 230, 4, 1.11), session: S1, delegated: [frontier, economy] }),
+      // gate.med sits on efficient (Sonnet 5.5); nothing delegated.
+      factEvent({ kind: 'meter', inv: inv(2), routingRev: rev, subject: seat('gate', 'med', U2, 1), usage: tokens(50, 5, 0, 0, 2, 0.5), session: S2, delegated: [] }),
+    ];
+    const m = meterOf(log);
+    assert.deepEqual(m.bySeat.map((t) => [t.role, t.tier, t.input, t.costUsd]), [['gate', 'low', 111, 1.11], ['gate', 'med', 50, 0.5]], 'seat totals include subagents');
+    assert.deepEqual(m.delegatedBySeat.map((d) => [d.role, d.tier, d.class, d.input, d.costUsd]), [['gate', 'low', 'frontier', 1, 0.1], ['gate', 'low', 'economy', 10, 0.01]]);
+    assert.deepEqual(ownShare(m).map((t) => [t.tier, t.input, t.output, t.cacheRead, t.cacheWrite, Number(t.costUsd.toFixed(6)), t.calls, t.turns]), [
+      ['low', 100, 50, 1000, 200, 1, 1, 4], ['med', 50, 5, 0, 0, 0.5, 1, 2],
+    ]);
+    const classes = byClass(m, new Map([[rev, def.classes]]));
+    assert.deepEqual(classes.map((c) => [c.class, c.input, c.output, c.cacheRead, c.cacheWrite, Number(c.costUsd.toFixed(6))]), [
+      // economy holds gate.low's own share and its Haiku subagent's alike: a seat's own class and a delegated class are one bucket.
+      ['efficient', 50, 5, 0, 0, 0.5], ['frontier', 1, 1, 0, 10, 0.1], ['economy', 110, 55, 1100, 220, 1.01],
+    ]);
+    // byModel counts a seat's own share on the seat's model: Haiku (gate.low, repo-seated on economy) 100 input, Sonnet (efficient gate.med) 50.
+    assert.deepEqual(byModel(ownShare(m), new Map([[rev, def.table]])).map((x) => [x.model, x.input]), [['claude-haiku-5-5', 100], ['claude-sonnet-5-5', 50]]);
+    assert.throws(() => byClass(m, new Map()), /no class table for revision/);
+    assert.doesNotMatch(JSON.stringify(m), /claude-|gpt-/);
+  });
+
+  it('meter.session-charge: a resumed Claude session\'s cumulative reading is charged less what its earlier facts charged; a lower one fails loud', () => {
+    const S = claudeSessionId('33333333-3333-4333-8333-333333333333');
+    const charge = { routingRev: REV_A, subject: seat('planCheck', 'med', U1, 1) };
+    let sum: SessionCharge | null = null;
+    const view = { sessionCharge: () => sum };
+    const economy = (input: number, cost: number): ClassUsage => ({ class: 'economy', inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: cost });
+    // The fresh call: its reading is charged whole.
+    const first = usageFact(view, charge, inv(1), { kind: 'known', tokens: tokens(10, 5, 100, 50, 3, 0.2), delegated: [economy(4, 0.01)] }, S);
+    assert.ok(first.kind === 'meter');
+    assert.deepEqual([first.usage, first.session, first.delegated], [tokens(10, 5, 100, 50, 3, 0.2), S, [economy(4, 0.01)]]);
+    sum = addCharged(sum, { tokens: first.usage, delegated: first.delegated ?? [] });
+    // The repair turn resumes it: the CLI reports the session's totals; the fact charges the difference, its own turns.
+    const second = usageFact(view, charge, inv(2), { kind: 'known', tokens: tokens(14, 9, 300, 60, 2, 0.35), delegated: [economy(4, 0.01)] }, S);
+    assert.ok(second.kind === 'meter');
+    assert.deepEqual(second.usage.inputTokens, 4);
+    assert.deepEqual([second.usage.outputTokens, second.usage.cacheReadTokens, second.usage.cacheWriteTokens, second.usage.turns], [4, 200, 10, 2]);
+    assert.ok(Math.abs((second.usage.costUsd ?? -1) - 0.15) < 1e-12);
+    assert.deepEqual(second.delegated, [economy(0, 0)]);
+    // The meter's sums over the two facts are the session's last reading (turns: both processes').
+    const m = meterOf([factEvent(first), factEvent(second)]);
+    assert.deepEqual(m.byRole.map((t) => [t.input, t.output, t.cacheRead, t.cacheWrite, t.turns, Number(t.costUsd.toFixed(6))]), [[14, 9, 300, 60, 5, 0.35]]);
+    sum = addCharged(sum, { tokens: second.usage, delegated: second.delegated ?? [] });
+    assert.throws(() => usageFact(view, charge, inv(3), { kind: 'known', tokens: tokens(13, 9, 300, 60, 1, 0.35), delegated: [] }, S), /below what the session's earlier invocations were charged/);
+    // A reading without `delegated` (Codex, or an earlier executor's) is charged as recorded and names no session.
+    const codex = usageFact(view, charge, inv(4), { kind: 'known', tokens: tokens(1, 1) }, null);
+    assert.ok(codex.kind === 'meter' && codex.session === undefined && codex.delegated === undefined);
   });
 
   it('byModel derives each seat\'s model at render from its revision\'s table, exactly (facts name the tier)', () => {

@@ -112,22 +112,19 @@ made false is a fact-currency fix in the next corpus window, never debt.
 
 ## Phase 0 (each arc)
 
-Fan out to subagents for the reading-heavy work: corpus intake, curation passes, obligation extraction, issue
-intake on a large capture. Give each subagent a closed task, a time budget, and an instruction to report its
-elapsed time with the result. A branch over budget gets re-planned (split, narrowed, or taken back), never just
-waited on.
+Each step below says what must be true when it is done; how you get there is yours. `phase0 check` runs the
+rows code checks.
 
 Keep the arc's inputs in their own directory outside the product working tree, for example
 `<repo>/../roadmap-inputs/<arc>/`. For the shapes, read `reference.md` ("Files", "The corpus guide") and the
 `executor/SCHEMAS.md` sections it names; nothing else of the plugin is an example to copy.
 
 1. **Corpus intake and curation** by tier (above). Rules blocks for every normative claim.
-2. **Orphan sweep.** After curation, an independent subagent (not the one that curated) reads every corpus file's
-   prose outside the rules blocks and lists each normative claim no rule states: a requirement, a principle, an
-   operational or production fact, a prohibition. You settle every entry: a rule (census `untestable` for a
-   principle, `prod-only` for a production or operational claim), or a `curation` note naming the rule it is pure
-   rationale for. It also lists every rule that states more than one claim; split each. Repeat until the sweep
-   lists nothing unsettled.
+2. **Orphan sweep.** Done when every normative claim in the corpus prose outside the rules blocks (a requirement,
+   a principle, an operational or production fact, a prohibition) is settled: a rule states it (census `untestable`
+   for a principle, `prod-only` for a production or operational claim), or a `curation` note names the rule it is
+   pure rationale for; and no rule states more than one claim (split each that does). Repeat until nothing is
+   unsettled.
 3. **Commit.** First arc: commit on your work branch. Chained arc: see "Chaining" for the single between-arc
    commit. The commit is the arc's `baseline`.
 4. **Pin.** `roadmap corpus pin --repo <repo> --commit <corpus commit> --baseline <baseline sha> --out
@@ -135,8 +132,8 @@ Keep the arc's inputs in their own directory outside the product working tree, f
    Re-pin after every corpus change; `start` re-derives the pin and refuses drift.
 5. **Obligations.** Extract a testable obligation from every rule the slice needs: witness, `deliveredBy`, proof
    judgment, impact mapping, cut line (SCHEMAS.md "M3: the holistic layer"). Each obligation anchors at
-   `rule: {id, textSha256}` from the pin. A second subagent cross-checks the extraction against the rules; you
-   settle every disagreement.
+   `rule: {id, textSha256}` from the pin. Done when every extraction agrees with its rule and every disagreement
+   between them is settled.
 6. **Census.** One entry per active pinned rule: `obligation{id}`, `out-of-slice`, `untestable` or `prod-only`.
    A claim about something not built yet is a `future` obligation, never `must-hold`. What an existing test already
    checks of a property the code must keep is a `must-hold` obligation witnessed by that test, never `untestable` or
@@ -243,7 +240,8 @@ touches only that lever's plan fields, and judges it on the chart (`status.flow`
 - **`flow-proposal`** (non-blocking, on `watch --actionable`). Read the item and its inputs file, then assess it
   skeptically:
   1. Does it touch a measurement: tests, lanes, witnesses, judgment? A change to what is measured is a reject.
-  2. Does its target match the code constraint (`status.flow.constraint` and its component)?
+  2. Does its target match the code constraint (`status.flow.constraint` and its component)? Code does not check
+     this; a target off the constraint needs a diagnosis that says why.
   3. Is the effect plausible at the target's share of lead time (the station table)? A station at 10 % of lead
      cannot halve it.
   4. Which guard could it breach: lead, rework, first-run reds, an obligation, cost per merge?
@@ -397,6 +395,18 @@ covers a source takes the outputs into its effective scope (its dispatch record'
 salvage keeps a regenerated output and the candidate allows it. Phase 0 refuses an output that may reach the corpus,
 and one inside the scope of a unit that covers none of its sources (`plan-defect`).
 
+Declare the generator too whenever the repo has one: `regenerate: {argv, cwd, env}` on the entry (the shape of a
+resource probe: no shell, `cwd` relative to the repo root, `env: {set, pass}`; pass `PATH` when argv[0] is a bare name).
+For every unit whose diff touches the entry's sources or outputs, the executor runs it in a clean checkout of the unit's
+commit and requires every output byte-identical to the commit, before any gate: a hand edit hidden in a generated file
+(a golden, a snapshot, generated types) is the unit's red lane, `regenerate.<hash>`, whose evidence names each
+differing output and the difference, and the builder's fix round gets it. The gate is told the outputs were verified,
+so it need not read them line by line. A generator must be deterministic and write only its declared outputs (any
+other file it writes is a difference too). An entry without `regenerate` is checked by nothing but a reader: Phase 0
+advises `derived-unregenerated{outputs, units}` for it (never a refusal); leave it off only when no runnable generator
+exists. Startup refuses a generator whose argv[0] or declared variables do not resolve (`spec-lane-unrunnable`, naming
+the lane `regenerate.<hash>`).
+
 ## PR fixes after completion
 
 An arc's life ends when its PR merges, not at `arc-completed`. A red CI run on an open arc PR, or the owner asking
@@ -447,6 +457,10 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
 - **Parked `plan-defect`** (a missing witness its lane never runs, or whose file no build of the unit can create;
   uncharged): the item names each defect. Fix the plan by `apply` (the lane's argv or `testPaths`, the witness's
   `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes.
+- **Parked `context-exceeded`** (a plan-check, build or gate call's prompt or context outgrew its model's window;
+  uncharged): the item names the role, the call and the prompt's size. Make the stage's inputs fit (split the unit or
+  narrow its spec by a spec revision and `apply`, or route that seat to a class whose model has a larger window), then
+  `roadmap resume <unit>` re-runs the stage. Resuming unchanged hits the same wall.
 - **Parked `routing-changed`** (the implementer seat's backend or model moved after its build started; an
   effort-only change re-pins by itself): restore the routing of the seat the item names, or re-enter the unit
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,
@@ -456,9 +470,8 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   ack the old item, `roadmap apply`. `fixes` names the failure the re-entry fixes, and `apply` refuses a re-entry
   without it: the park as `<unit>/<stage>#<attempt>` (the item's recommendation spells it), another failure outcome of
   the lineage, or a lane failure by its `ref` in `status.units[].failures` (`<unit>/lanes#<attempt>/<lane>`). Find
-  the cause first: a re-entry that changes nothing the failure ran under (the same spec content, effective scope, suite lanes
-  and routing, no `reset`) is refused, unless the failure is a flaky or host-suspected lane or a park that is not the
-  unit's design failure (a red base, an environment or retryable park); the refusal names what must differ. The new
+  the cause first: `apply` accepts a re-entry that changes nothing the failure ran under, but a design failure retried
+  unchanged usually fails again and spends the unit's chargeable bound. The new
   unit's prepare creates `roadmap/<arc>/<new>` at the parked tip; never create it by hand. Its scope may grow beyond
   the lineage's only on a ruling its spec cites that names exactly the added patterns.
 - **Parked `witness-lane-missing`** (an arc started on 1.0.0-dev.9: the unit's spec names a witness lane that is no

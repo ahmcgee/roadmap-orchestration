@@ -190,7 +190,7 @@ async function run(
   const charge = chargeOf(subject);
   if (result.type === 'backend') {
     if (charge === null) throw new Error(`${inv}: a command smoke produced a backend result`);
-    ctx.journal.fact(usageFact(charge, inv, result.usage));
+    ctx.journal.fact(usageFact(ctx.journal.view, charge, inv, result.usage, result.session));
   }
   ctx.journal.done(op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(resultBytes(result))), summary, pressure }, null);
   return { inv, invDir, argv: prepared.argv, exit: end.exit, result };

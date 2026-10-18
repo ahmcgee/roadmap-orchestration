@@ -21,7 +21,7 @@ import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
 import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
-import { resolveRouting } from '../../src/routing/layers.ts';
+import { type RepoConfig, arcStack, resolveRouting } from '../../src/routing/layers.ts';
 import type { RiskTier } from '../../src/routing/types.ts';
 import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
 import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
@@ -63,9 +63,12 @@ export type ArcDescriptor = Readonly<{
   binDir: string;
   scenarioPath: string;
   scenarioDir: string;
+  /** The repo config the arc resolves its routing under, as `.roadmap/config.json` holds it once parsed; absent: none. */
+  config?: RepoConfig;
 }>;
 
-function laneJson(l: LaneJson): Record<string, unknown> {
+/** A lane as plan and spec files carry it, defaults filled. */
+export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [], ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
@@ -118,9 +121,9 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
   if (journal.view.planApplied() === null) {
-    recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo));
+    recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo), 'default', d.config ?? null);
   }
-  const routing = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' });
+  const routing = resolveRouting({ ...arcStack('default', d.config ?? null, null), arcRoles: 'm4b' });
   const resources = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan: () => plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
@@ -131,7 +134,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
     hostEnv: { ...process.env, PATH: `${d.binDir}:${process.env['PATH'] ?? ''}` },
     planDir: absPath(join(d.planPath, '..')),
     planFile: absPath(d.planPath),
-    routingBase: { profile: 'default', config: null, arcRoles: 'm4b' },
+    routingBase: { profile: 'default', config: d.config ?? null, arcRoles: 'm4b' },
     ...serialRuntime(resources),
   };
   const unit = (id: string): PlanUnit => {
@@ -170,13 +173,15 @@ export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPa
 // ---------------------------------------------------------------------------------------------------
 // Scenario steps
 
-const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob', '--session-id', '--no-session-persistence'], argvLacks: ['--resume', '--permission-mode'] };
+const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] };
 
 export type GateAnswer = Readonly<{
   decision: 'approve' | 'revise' | 'escalate';
   directives?: readonly string[];
   findings?: readonly JsonValue[];
   premises?: readonly JsonValue[];
+  unreviewed?: readonly JsonValue[];
+  clusters?: readonly JsonValue[] | null;
 }>;
 
 /** A gate the fake Claude answers after `before`: a fresh judgment call. `expect` adds to the judgment argv check. */
@@ -184,9 +189,24 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
   return {
     as: 'claude',
     expect: { ...JUDGMENT, ...expect, argv: [...(JUDGMENT.argv ?? []), ...(expect.argv ?? [])] },
-    acts: [...before, { type: 'emit', value: {
-      decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-    } as JsonValue }],
+    acts: [...before, { type: 'emit', value: gateAnswer(a) }],
+  };
+}
+
+const gateAnswer = (a: GateAnswer): JsonValue => ({
+  decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null,
+}) as JsonValue;
+
+/**
+ * dev.12: a gate's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which the stdin
+ * carries (`stdinContains` adds to the directive's opening).
+ */
+export function gateRepairStep(a: GateAnswer, stdinContains: readonly string[] = []): Step {
+  return {
+    as: 'claude',
+    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
+    acts: [{ type: 'emit', value: gateAnswer(a) }],
   };
 }
 

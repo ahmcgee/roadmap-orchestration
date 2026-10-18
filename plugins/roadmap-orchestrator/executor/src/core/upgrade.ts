@@ -8,10 +8,10 @@
 // Each defaulted kind warns once per process on stderr (the executor's stderr is the supervisor's
 // `supervisor.<token>.err` in the host dir).
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
-import type { MutantOf, RevisionSource } from './events.ts';
+import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
 import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
-import type { LaunchCpu, ReadsFile, ToolRead } from './records.ts';
+import type { LaunchCpu } from './records.ts';
 import type { ClassTable } from '../routing/types.ts';
 
 const warned = new Set<string>();
@@ -180,15 +180,6 @@ export function lensPatchMutantDefault(patch: string): string {
   return patch;
 }
 
-// Paid M4b run 5 (a gate approved after the CLI refused its evidence read): reads.json records the refused reads.
-
-/** A reads.json's refused reads: absent from a file an earlier executor wrote, read as none (its call is judged as before). */
-export function readsDeniedOf(reads: ReadsFile): readonly ToolRead[] {
-  if (reads.denied !== undefined) return reads.denied;
-  warnDefaulted('reads.denied', 'a reads.json without denied (written before paid M4b run 5); read as none refused');
-  return [];
-}
-
 // The build answer's `final` (src/runner/report.ts): a build an earlier executor launched answered a schema without it.
 
 /** A build answer without `final` (launched before the report rule): its session ended by itself, so it was final. */
@@ -213,8 +204,7 @@ export const FIXES_UNRECORDED = 'unrecorded';
 /**
  * A checkpoint `reenter` op's `fixes` (arc feedback 2026-10-16): absent (not null: the schema requires the key, null for a
  * lineage with no failure) on an answer recorded before it, so the previous release recorded it. Read as `unrecorded`: the
- * re-entry is adopted as recorded, applied or not; the classifier's `fixes` rows (the requirement and the unchanged-retry
- * refusal) do not bind it (src/input/classify.ts `fixesReasons`, through the bundle proposer's `fixesUnrecorded`), and it
+ * re-entry is adopted as recorded, applied or not; the classifier's `fixes` requirement does not bind it (src/input/classify.ts `fixesReasons`, through the bundle proposer's `fixesUnrecorded`), and it
  * enters the plan without `fixes`. Delete once no arc started on 1.0.0-dev.10 is in flight (BACKLOG "Scaffolding to delete").
  */
 export function reenterFixesDefault(): typeof FIXES_UNRECORDED {
@@ -225,12 +215,12 @@ export function reenterFixesDefault(): typeof FIXES_UNRECORDED {
 // Efficient judgment (owner ruling 2026-10-15, 1.0.0-dev.10): the built-in seat table moved planCheck.low/med, gate.low,
 // lens.arc and flow.arc to the efficient class. Records carry a `routingRev`, never a table, and OR-L3 binds every revision
 // through HEAD's seats and catalogue, so a rev an earlier executor recorded is one HEAD no longer rebuilds. Delete (with
-// `resolveRoutingUnder` and status's `preDev10RevAlias`) once no arc started on 1.0.0-dev.9 is in flight.
+// `resolveRoutingUnder`, when no other earlier table is left, and its place in `EARLIER_BUILTIN_SEATS`) once no arc started on 1.0.0-dev.9 is in flight.
 
 /**
  * The built-in seats 1.0.0-dev.9 (and dev.7 and dev.8) hashed: frontier at every judgment tier but escalation, the
  * lenses, the pack review and the flow seat on frontier. Kept only so `status` can join such a meter row's recorded
- * `routingRev` to its revision's current table (src/status.ts `preDev10RevAlias`); nothing routes under it. No judgment
+ * `routingRev` to its revision's current table (src/status.ts `earlierRevAliases`); nothing routes under it. No judgment
  * seat could name the efficient class then (a Codex or Sonnet judgment was refused at startup), so HEAD's catalogue
  * resolves these seats to the triples dev.9 hashed.
  */
@@ -243,6 +233,31 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   packReview: { arc: 'frontier' },
   flow: { arc: 'frontier' },
 };
+
+// Gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): the built-in seats moved gate.med to efficient (Sonnet
+// 5.5); gate.low stays efficient (it moved to economy, then reverted after the paid gate role eval). As with efficient judgment above, OR-L3 binds every revision through HEAD's
+// seats: an arc started on 1.0.0-dev.10 or dev.11 re-pins its units under the new rev without a park and judges under
+// the ladder from then on, and status aliases the revs it recorded. Delete (with `PRE_DEV12_BUILTIN_SEATS`'s place in
+// `EARLIER_BUILTIN_SEATS`) once no arc started on 1.0.0-dev.11 is in flight.
+
+/**
+ * The built-in seats 1.0.0-dev.10 and dev.11 hashed: efficient gated low, frontier med. Kept only so `status` can join such
+ * a meter row's recorded `routingRev` to its revision's current table; nothing routes under it. The economy class did not
+ * exist then (no built-in seat names it now either), and these seats name only classes whose bindings HEAD's catalogue keeps, so HEAD resolves them to the
+ * triples dev.11 hashed.
+ */
+export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {
+  planCheck: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
+  build: { low: 'efficient', med: 'efficient', high: 'frontier' },
+  gate: { low: 'efficient', med: 'frontier', high: 'frontier', escalation: 'summit' },
+  lens: { arc: 'efficient' },
+  checkpoint: { arc: 'summit' },
+  packReview: { arc: 'frontier' },
+  flow: { arc: 'efficient' },
+};
+
+/** Every built-in seat table an earlier adopted release hashed, oldest first: what status aliases recorded revs under. */
+export const EARLIER_BUILTIN_SEATS: readonly ClassTable[] = [PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS];
 
 // Plan defects (2026-10-16, 1.0.0-dev.11): a fresh arc's arc lanes declare `testPaths` and its witnesses `files`, and
 // Phase 0 checks every witness file against its lane and its deliverers (src/phase0/rows.ts). Obligations an arc started
@@ -289,5 +304,52 @@ export function applyVisionEditDefault(): true {
 export function auditDiffBudgetOf(s: Readonly<{ job: string; diffBudget?: number }>): number | null {
   if (s.diffBudget !== undefined) return s.diffBudget;
   warnDefaulted('audit-started.diffBudget', `${s.job}: an audit started before the lens-range fix; its lenses read their whole range in one call`);
+  return null;
+}
+
+/**
+ * A gate's `judgment-inputs` `diffShown` (1.0.0-dev.12, the bounded gate diff): absent on one a dev.11 executor recorded,
+ * whose gate was shown its whole diff inline. Read as empty lists: nothing recorded either way. Scaffolding: deleted once
+ * no arc started on 1.0.0-dev.11 is in flight (BACKLOG "Scaffolding to delete"); `diffShown` then becomes required on a
+ * gate's.
+ */
+export function gateDiffShownOf(inputs: JudgmentInputs): DiffShown {
+  if (inputs.stage !== 'gate') throw new Error(`${inputs.unit} ${inputs.stage}#${inputs.attempt}: only a gate's judgment-inputs record a diff shown`);
+  if (inputs.diffShown !== undefined) return inputs.diffShown;
+  warnDefaulted('judgment-inputs.diffShown', `${inputs.unit} gate#${inputs.attempt}: a gate a dev.11 executor recorded, shown its whole diff inline; read as nothing recorded`);
+  return { inlined: [], notInlined: [] };
+}
+
+/**
+ * A gate's `judgment-inputs` `largeDiff` (1.0.0-dev.12, the large-diff gate): absent on one a dev.11 executor recorded, which
+ * had no large-diff threshold. Read as null: under the threshold, so its seat was the unit's own and its answer carries no
+ * cluster map. Scaffolding: deleted once no arc started on 1.0.0-dev.11 is in flight (BACKLOG "Scaffolding to delete");
+ * `largeDiff` then becomes required on a gate's.
+ */
+export function gateLargeDiffOf(inputs: JudgmentInputs): GateLargeDiff | null {
+  if (inputs.stage !== 'gate') throw new Error(`${inputs.unit} ${inputs.stage}#${inputs.attempt}: only a gate's judgment-inputs record a large diff`);
+  if (inputs.largeDiff !== undefined) return inputs.largeDiff;
+  warnDefaulted('judgment-inputs.largeDiff', `${inputs.unit} gate#${inputs.attempt}: a gate a dev.11 executor recorded, before the large-diff threshold; read as under it`);
+  return null;
+}
+
+/**
+ * A gate answer's `clusters` (1.0.0-dev.12, the large-diff gate): absent on an answer a dev.11 gate gave, never asked for a
+ * cluster map. Read as null: no map, which is what an answer under the large-diff threshold carries. Scaffolding: deleted
+ * once no arc started on 1.0.0-dev.11 is in flight (BACKLOG "Scaffolding to delete"); `clusters` then becomes required in
+ * `gateOutput`.
+ */
+export function gateClustersDefault(): null {
+  warnDefaulted('gate.clusters', 'a gate answer without clusters (a dev.11 gate); read as no cluster map');
+  return null;
+}
+
+/**
+ * A gate answer's `unreviewed` (1.0.0-dev.12 round 2): absent on an answer a dev.11 gate gave, which was never asked what it
+ * did not read. Read as null: unknown, never "everything reviewed". Scaffolding: deleted once no arc started on
+ * 1.0.0-dev.11 is in flight (BACKLOG "Scaffolding to delete"); `unreviewed` then becomes required in `gateOutput`.
+ */
+export function gateUnreviewedDefault(): null {
+  warnDefaulted('gate.unreviewed', 'a gate answer without unreviewed (a dev.11 gate); read as unknown');
   return null;
 }

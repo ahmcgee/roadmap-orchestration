@@ -10,8 +10,10 @@
 //   integration head, which the prompt lets it read to judge a lever's risk; `@cpu`×1 under the job), rendered from the
 //   kept inputs alone, so a resumed job and recovery read only those bytes. A recorded call is consumed, never asked
 //   again; an interrupted one (a pause, a stop, a backend park) leaves the job running. An answer the reader refuses (a
-//   schema failure, `invalid`) is asked once more, the retry told why; a second is `invalid`. A call lost with its
-//   runner is asked once more; a refusal, a fault or a second loss is `failed`.
+//   schema failure) takes the one judgment repair turn (dev.12, `repairTurnOf` in src/pipeline/dispatch.ts): its own
+//   session resumed with why, as the next attempt (a call recorded there is consumed as the repair turn's answer, an
+//   earlier release's fresh retry included); refused again, the run is `invalid`. A call lost with its runner is asked
+//   once more; a refusal, a fault or a second loss is `failed`.
 // - **The end**: the proposal (id `<job>.0`) through code's checks (src/flow/levers.ts `checkProposal`, its context the
 //   kept inputs, the plan in force, the host, whether a repair unit waits, and the units flow set `high` that have not
 //   merged), then `flow-ended{outcome, proposal | dropped, constraint}`; then, once per proposal id, one non-blocking
@@ -24,7 +26,7 @@ import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type JobId, type UnitId, compareIds, parseInvocationId, proposalIdOf } from '../core/ids.ts';
+import { type InvocationId, type JobId, type UnitId, compareIds, parseInvocationId, proposalIdOf } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { DEFAULT_BOUNDS, type NeedsUserContent } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -36,9 +38,10 @@ import { removeCheckout, withCpu } from '../holistic/audit.ts';
 import { FLOW_INPUTS_INPUT, inputPath, keepInput, keptInput, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
 import { advancesOf } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor, raisedWithReason } from '../needsuser.ts';
-import { type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, verdictOf } from '../pipeline/dispatch.ts';
+import { type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, repairTurnOf, runOp, verdictOf } from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
 import { inMs } from '../pipeline/stages.ts';
+import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
 import { validateFlowOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
@@ -51,7 +54,7 @@ import { stationTable } from './series.ts';
 import { chartOf } from './spc.ts';
 import {
   FLOW_INPUTS_SCHEMA, type FlowAction, type FlowInputs, type FlowOutcome, type FlowOutput, type FlowProposal, type FlowPromptInputs, type FlowTrigger,
-  type JudgedConstraint, parseFlowInputs,
+  parseFlowInputs,
 } from './types.ts';
 
 /** The flow job runs under the checkpoint's context: the stage's, the arbiter's first-served `@cpu`, the plan file. */
@@ -181,27 +184,27 @@ function read(ctx: FlowJobContext, job: JobId, called: BackendCallOutcome): Read
   }
 }
 
-/** The prompt of attempt `attempt`: the kept inputs rendered, and on a retry why the previous answer was refused. */
-function rendered(ctx: FlowJobContext, inputs: FlowInputs, refused: string | null): Readonly<{ system: string; text: string; schema: ReturnType<typeof promptFor<'flow'>>['schema'] }> {
+/**
+ * One new call of the job, attempt `attempt`, in a detached checkout of the integration head: a fresh one with the kept
+ * inputs rendered, or the repair turn of a refused answer (`repair`, `repairTurnOf`: its session resumed in the same
+ * checkout path, made again, with the reason).
+ */
+async function call(
+  ctx: FlowJobContext, inputs: FlowInputs, attempt: number, repair: Readonly<{ turn: NonNullable<ReturnType<typeof repairTurnOf>>; reason: string }> | null,
+): Promise<BackendCallOutcome> {
+  const { job } = inputs;
   const prompt = promptFor('flow', arcSeat(ctx, 'flow').triple.model);
   const { schema: _s, job: _j, ...promptInputs } = inputs;
-  const text = prompt.render(promptInputs satisfies FlowPromptInputs);
-  return {
-    system: prompt.system, schema: prompt.schema,
-    text: refused === null ? text : `${text}\n\n<previous_answer_refused>\nYour previous answer to this request was refused by the report's reader: ${refused}. Answer again, every key present, exactly one of proposal and noAction.\n</previous_answer_refused>`,
-  };
-}
-
-/** One new call of the job, attempt `attempt` (cwd: a detached checkout of the integration head). */
-async function call(ctx: FlowJobContext, inputs: FlowInputs, attempt: number, refused: string | null): Promise<BackendCallOutcome> {
-  const { job } = inputs;
-  const p = rendered(ctx, inputs, refused);
   const checkout: AbsPath = absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.flow`));
+  if (repair !== null && repair.turn.cwd !== checkout) throw new Error(`${job}: its refused call ran in ${repair.turn.cwd}, not its checkout ${checkout}`);
   await removeJobCheckouts(ctx, job);
   await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, jobParent(job), { path: checkout, checkout: { type: 'detached', at: integrationHeadNow(ctx) } });
   const called = await withCpu(ctx, job, () => callArcRole(ctx, {
-    job, role: 'flow', attempt, system: p.system, rendered: p.text, schema: p.schema, cwd: checkout, evidenceDirs: [],
-    deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
+    job, role: 'flow', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [],
+    deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
+    ...(repair === null
+      ? { rendered: prompt.render(promptInputs satisfies FlowPromptInputs), schema: prompt.schema, session: freshJudgmentSession() }
+      : { rendered: judgmentRepairDirective([repair.reason]), schema: repair.turn.schema, session: repair.turn.session }),
   }));
   await removeCheckout(ctx, job, checkout);
   return called;
@@ -210,8 +213,8 @@ async function call(ctx: FlowJobContext, inputs: FlowInputs, attempt: number, re
 /** The job's answer: its recorded calls consumed in order, then a new attempt while one is owed (see the header). */
 async function ask(ctx: FlowJobContext, inputs: FlowInputs): Promise<Asked> {
   const { job } = inputs;
-  let refused: string | null = null;
-  let invalids = 0;
+  /** The refused answer awaiting its repair turn, or null. */
+  let refused: Readonly<{ inv: InvocationId; detail: string }> | null = null;
   let losses = 0;
   for (let attempt = 1; ; attempt++) {
     const recorded = recordedArcCall(ctx, job, 'flow', attempt);
@@ -220,7 +223,13 @@ async function ask(ctx: FlowJobContext, inputs: FlowInputs): Promise<Asked> {
     if (called === null) {
       const why = skip(ctx);
       if (why !== null) return { kind: 'skipped', reason: why };
-      called = await call(ctx, inputs, attempt, refused);
+      let repair = null;
+      if (refused !== null) {
+        const turn = repairTurnOf(ctx.runDir, refused.inv);
+        if (turn === null) return { kind: 'invalid', detail: refused.detail };
+        repair = { turn, reason: refused.detail };
+      }
+      called = await call(ctx, inputs, attempt, repair);
     }
     const r = read(ctx, job, called);
     switch (r.kind) {
@@ -232,8 +241,8 @@ async function ask(ctx: FlowJobContext, inputs: FlowInputs): Promise<Asked> {
         if (++losses >= 2) return { kind: 'failed', detail: r.detail };
         continue;
       case 'invalid':
-        refused = r.detail;
-        if (++invalids >= 2) return r;
+        if (refused !== null) return r;
+        refused = { inv: called.inv, detail: r.detail };
         continue;
     }
   }
@@ -313,11 +322,11 @@ export function settleFlowItems(ctx: Pick<FlowJobContext, 'journal' | 'runDir'>,
 // ---------------------------------------------------------------------------------------------------
 // The job
 
-/** Code's checks' context (`checkProposal`): the kept inputs, the role's reading, and the arc now. */
-function proposalContext(ctx: FlowJobContext, inputs: FlowInputs, judged: JudgedConstraint, flow: FlowNow): ProposalContext {
+/** Code's checks' context (`checkProposal`): the kept inputs and the arc now. */
+function proposalContext(ctx: FlowJobContext, inputs: FlowInputs, flow: FlowNow): ProposalContext {
   return {
-    plan: ctx.plan(), host: flow.host, constraint: inputs.constraint, judged, levers: inputs.levers, givens: inputs.givens, window: inputs.window,
-    verdicts: inputs.verdicts, rejections: inputs.rejections, repairWaiting: repairWaiting(ctx), flowHigh: flowHighOf(ctx, flow.log),
+    plan: ctx.plan(), host: flow.host, levers: inputs.levers, givens: inputs.givens, window: inputs.window,
+    rejections: inputs.rejections, repairWaiting: repairWaiting(ctx), flowHigh: flowHighOf(ctx, flow.log),
   };
 }
 
@@ -355,7 +364,7 @@ export async function runFlowJob(ctx: FlowJobContext, triggers: readonly FlowTri
   if (asked.kind === 'output') {
     const { output } = asked;
     const proposal: FlowProposal | null = output.proposal === null ? null : { id: proposalIdOf(job, 0), ...output.proposal };
-    const dropped = proposal === null ? null : checkProposal(proposal, proposalContext(ctx, inputs, output.constraint, flowNow(ctx, now())));
+    const dropped = proposal === null ? null : checkProposal(proposal, proposalContext(ctx, inputs, flowNow(ctx, now())));
     ctx.journal.fact({ kind: 'flow-ended', job, outcome: 'done', proposal: dropped === null ? proposal : null, dropped, constraint: { code, judged: output.constraint } });
   } else {
     ctx.journal.fact({ kind: 'flow-ended', job, outcome: asked.kind, proposal: null, dropped: null, constraint: { code, judged: null } });

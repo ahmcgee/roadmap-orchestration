@@ -14,8 +14,10 @@
 //   that record's bytes (K8), never the live files. A recorded call is consumed, never asked again; an interrupted one
 //   (a pause, a stop, a backend park) leaves the job running. Then `pack-review-ended{completed, findings}` and, when a
 //   finding is blocking, one blocking `pack-review` item for the job (raised once: `settlePackReviews` finishes it
-//   after a crash). A call that gives no valid report (a refusal, a malformed answer, a fault, lost twice: a call recovery
-//   closed lost is asked again once) ends the job
+//   after a crash). An answer off its schema or its dispositions first takes the one judgment repair turn (dev.12,
+//   `repairTurnOf` in src/pipeline/dispatch.ts: its own session resumed with why, as the next attempt). A call that gives
+//   no valid report (a refusal, a malformed answer after its repair turn, a fault, lost twice: a call recovery closed lost
+//   is asked again once) ends the job
 //   `abandoned` with one blocking `pack-review` item saying so: the architect fixes the pack (a new key, so a new
 //   review) or acknowledges it.
 // - **Delta re-review** (M4a rev 3, H3, F07): the first review is full. A later one follows the latest completed review
@@ -35,7 +37,7 @@ import { freshJudgmentSession } from '../backends/argv.ts';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type JobId, type NeedsUserId, type Sha256Hex, parseInvocationId, parseJobId, sha256 } from '../core/ids.ts';
+import { type InvocationId, type JobId, type NeedsUserId, type Sha256Hex, parseInvocationId, parseJobId, sha256 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Parent } from '../core/events.ts';
@@ -50,10 +52,11 @@ import {
 } from '../input/inforce.ts';
 import { advancesOf, parsePlan } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor, supersededPackItems } from '../needsuser.ts';
-import { type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, runOp, verdictOf } from '../pipeline/dispatch.ts';
+import { type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, repairTurnOf, runOp, verdictOf } from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
 import { inMs } from '../pipeline/stages.ts';
 import { parsePhase0Record } from '../phase0/types.ts';
+import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
 import { type PackReviewDelta, type PackReviewPromptInputs, type PreviousPackFinding, visionInputOf } from '../prompts/inputs.ts';
 import { type PackReviewOutput, validatePackReviewOutput } from '../prompts/schemas.ts';
@@ -284,7 +287,8 @@ export function dispositionProblem(delta: PackReviewDelta | null, output: PackRe
 
 type Asked =
   | Readonly<{ kind: 'output'; output: PackReviewOutput }>
-  | Readonly<{ kind: 'failed'; detail: string }>
+  /** No valid report; `refused`: the answer was off its schema or its dispositions, so it may take its repair turn. */
+  | Readonly<{ kind: 'failed'; detail: string; refused?: true }>
   | Readonly<{ kind: 'interrupted'; detail: string }>
   | Readonly<{ kind: 'skipped'; reason: 'backend-parked' | 'paused' }>;
 
@@ -301,12 +305,14 @@ function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome, de
       try {
         output = validatePackReviewOutput(v.value);
       } catch (error) {
-        if (error instanceof SchemaError) return { kind: 'failed', detail: `malformed report: ${error.message}` };
+        if (error instanceof SchemaError) return { kind: 'failed', detail: `malformed report: ${error.message}`, refused: true };
         throw error;
       }
       const problem = dispositionProblem(delta, output);
-      return problem === null ? { kind: 'output', output } : { kind: 'failed', detail: `malformed report: ${problem}` };
+      return problem === null ? { kind: 'output', output } : { kind: 'failed', detail: `malformed report: ${problem}`, refused: true };
     }
+    case 'malformed':
+      return { kind: 'failed', detail: `malformed report: ${v.detail}`, refused: true };
     case 'interrupted': {
       if (v.needsUser !== null) {
         const parent: Parent = { type: 'op', op: parseInvocationId(called.inv).op };
@@ -319,28 +325,44 @@ function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome, de
   }
 }
 
-/** The job's call: one it made and consumes, or a new attempt from the kept inputs (cwd: a checkout of their head). */
+/**
+ * The job's call: one it made and consumes, or a new attempt from the kept inputs (cwd: a checkout of their head). An
+ * answer off its schema or its dispositions takes the one judgment repair turn (dev.12, `repairTurnOf`): its own session
+ * resumed with why, as the next attempt, whose answer is the job's (refused again, no valid report).
+ */
 async function ask(ctx: CheckpointContext, inputs: PackReviewInputs, delta: PackReviewDelta | null): Promise<Asked> {
   const { job } = inputs;
+  /** The refused answer awaiting its repair turn, or null. */
+  let refused: Readonly<{ inv: InvocationId; detail: string }> | null = null;
   for (let attempt = 1; ; attempt++) {
     const recorded = recordedArcCall(ctx, job, 'packReview', attempt);
     if (recorded !== null && interruptedCall(recorded)) continue;
+    let called: BackendCallOutcome;
     // A call recovery closed lost (its runner died with the executor) is asked again, as a checkpoint's is; a second loss fails.
-    if (recorded !== null && recorded.kind === 'result') return read(ctx, job, recorded, delta);
-    const why = skip(ctx);
-    if (why !== null) return { kind: 'skipped', reason: why };
-    const { triple } = arcSeat(ctx, 'packReview');
-    const prompt = promptFor('packReview', triple.model);
-    const checkout: AbsPath = absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.review`));
-    await removeJobCheckouts(ctx, job);
-    await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, jobParent(job), { path: checkout, checkout: { type: 'detached', at: inputs.head } });
-    const rendered = prompt.render(promptInputs(ctx, inputs, delta));
-    const called = await withCpu(ctx, job, () => callArcRole(ctx, {
-      job, role: 'packReview', attempt, system: prompt.system, rendered, schema: prompt.schema, cwd: checkout, evidenceDirs: [],
-      deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
-    }));
-    await removeCheckout(ctx, job, checkout);
-    return read(ctx, job, called, delta);
+    if (recorded !== null && recorded.kind === 'result') {
+      called = recorded;
+    } else {
+      const why = skip(ctx);
+      if (why !== null) return { kind: 'skipped', reason: why };
+      const turn: ReturnType<typeof repairTurnOf> = refused === null ? null : repairTurnOf(ctx.runDir, refused.inv);
+      if (refused !== null && turn === null) return { kind: 'failed', detail: refused.detail };
+      const { triple } = arcSeat(ctx, 'packReview');
+      const prompt = promptFor('packReview', triple.model);
+      const checkout: AbsPath = absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.review`));
+      await removeJobCheckouts(ctx, job);
+      await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, jobParent(job), { path: checkout, checkout: { type: 'detached', at: inputs.head } });
+      called = await withCpu(ctx, job, () => callArcRole(ctx, {
+        job, role: 'packReview', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [],
+        deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
+        ...(turn === null || refused === null
+          ? { rendered: prompt.render(promptInputs(ctx, inputs, delta)), schema: prompt.schema, session: freshJudgmentSession() }
+          : { rendered: judgmentRepairDirective([refused.detail]), schema: turn.schema, session: turn.session }),
+      }));
+      await removeCheckout(ctx, job, checkout);
+    }
+    const r = read(ctx, job, called, delta);
+    if (r.kind !== 'failed' || r.refused !== true || refused !== null) return r;
+    refused = { inv: called.inv, detail: r.detail };
   }
 }
 

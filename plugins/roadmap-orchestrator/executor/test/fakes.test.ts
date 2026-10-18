@@ -63,6 +63,8 @@ describe('fakes', () => {
       ['usageLimit', { type: 'usageLimit' }, { outcome: 'process-fault', usage: 'known', errors: ['usage-limit'] }, ['claude']],
       ['exitZeroNoop', { type: 'exitZeroNoop' }, { outcome: 'malformed', usage: 'no-result', errors: [] }, ['codex', 'claude']],
       ['refusal', { type: 'refusal' }, { outcome: 'refusal', usage: 'known', errors: [] }, ['claude']],
+      ['contextExceeded', { type: 'contextExceeded' }, { outcome: 'process-fault', usage: 'no-result', errors: ['context-exceeded'] }, ['codex']],
+      ['contextExceeded', { type: 'contextExceeded' }, { outcome: 'process-fault', usage: 'known', errors: ['context-exceeded'] }, ['claude']],
     ];
     for (const [name, act, want, backends] of variants) {
       for (const backend of backends) {

@@ -16,6 +16,7 @@ import { type HolisticArc, type HolisticOptions, ADVANCES, VISION, obligationsJs
 import { publishArc, wire } from './publish-common.ts';
 import { planCheckStep } from './stage-common.ts';
 import { type ArcRun, codexStep, gateStep } from './unit-common.ts';
+import type { JsonValue } from '../../src/core/json.ts';
 
 type Json = Record<string, unknown>;
 
@@ -74,11 +75,11 @@ export const moduleFiles = (name: string, op: string): Readonly<Record<string, s
 });
 
 /** The steps that take `unit` through plan-check, a build committing `files` and an approving gate. */
-export function unitSteps(unit: string, files: Readonly<Record<string, string>>): readonly Step[] {
+export function unitSteps(unit: string, files: Readonly<Record<string, string>>, gate: Readonly<{ clusters?: readonly JsonValue[] | null }> = {}): readonly Step[] {
   return [
     { ...planCheckStep({ decision: 'approve' }), unit },
     { ...codexStep([{ type: 'commit', message: `build ${unit}`, files }], { argv: ['exec', '-C'] }), unit },
-    { ...gateStep({ decision: 'approve' }), unit },
+    { ...gateStep({ decision: 'approve', ...gate }), unit },
   ];
 }
 

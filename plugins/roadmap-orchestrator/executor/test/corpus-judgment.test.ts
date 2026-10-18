@@ -24,6 +24,7 @@ import { arcDebtLedger, closeOutFiles, debtFile, publishCloseOut } from '../src/
 import { runUnit } from '../src/pipeline/unit.ts';
 import { APPLY, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
+import { status } from '../src/status.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { PIN_FILE } from './helpers/corpusarc.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -40,8 +41,12 @@ const U1 = unitId('u1');
 
 const note = (text: string) => ({ severity: 'note', path: null, text, contractRef: null });
 const NOTE = 'Rename mul to multiply once the API settles.';
-/** The approving gate's findings (an approve carries no blocking one): a note (banked), a blank note (nothing), the note again up to whitespace (deduped by key). */
-const FINDINGS = [note(NOTE), note('   '), note(`  Rename  mul to multiply\nonce the API settles.`)];
+const PRE = 'add() drops a trailing zero; the base has the same code, so it predates this unit.';
+/**
+ * The approving gate's findings (an approve carries no blocking one): a note (banked), a blank note (nothing), the note
+ * again up to whitespace (deduped by key), and (dev.12 round 2) a pre-existing defect, banked as a note is.
+ */
+const FINDINGS = [note(NOTE), note('   '), note(`  Rename  mul to multiply\nonce the API settles.`), { ...note(PRE), severity: 'pre-existing' }];
 
 /** The ledger the baseline publishes: B-1 open, kept by this arc's Phase 0. */
 const BASELINE_DEBT: DebtLedger = {
@@ -53,6 +58,8 @@ const BASELINE_DEBT: DebtLedger = {
 };
 
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((a, i) => (a === '--add-dir' ? [c.argv[i + 1]!] : []));
+/** Whether `path` is inside a call's read surface: one of its `--add-dir`s or below one (2026-10-16: the repository and the run dir hold most). */
+const readable = (dirs: readonly string[], path: string): boolean => dirs.some((d) => path === d || path.startsWith(`${d}/`));
 /** Every file under `dir`, as paths relative to it. */
 const filesUnder = (dir: string): readonly string[] =>
   readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => relative(dir, join(e.parentPath, e.name))).sort();
@@ -64,20 +71,24 @@ const viewDir = (a: CorpusUnitArc, pinSha: string, view: 'full' | 'without-visio
 
 /** The arc with a published debt ledger at its baseline and B-1 kept, its gate approving with `FINDINGS`. */
 function debtArc(extraGates: number = 0): Promise<CorpusUnitArc> {
-  const gates = Array.from({ length: 1 + extraGates }, () => gateStep({ decision: 'approve', findings: FINDINGS }));
+  const gates = Array.from({ length: 1 + extraGates }, () => gateStep({ decision: 'approve', findings: FINDINGS, unreviewed: UNREVIEWED }));
   return setupCorpusArc([planCheckStep({ decision: 'approve' }), mulBuild(), ...gates], {
     baseline: { [DEBT_DOC]: renderDebt(BASELINE_DEBT) },
     phase0: { debt: [{ id: 'B-1', disposition: { type: 'keep', reason: 'not this arc' } }] },
   });
 }
 
-/** The ledger the arc renders once its gate banked the note (B-2, after the baseline's B-1). */
+/** What the approving gate says it did not review (dev.12 round 2): recorded and shown, never enforced. */
+const UNREVIEWED = [{ path: 'golden/**', reason: 'regenerated outputs; the generator change was read instead' }];
+
+/** The ledger the arc renders once its gate banked the note and the pre-existing defect (B-2, B-3, after the baseline's B-1). */
 function expectedLedger(r: ArcRun): DebtLedger {
   return {
     schema: DEBT_SCHEMA,
     items: [
       { ...BASELINE_DEBT.items[0]!, history: [{ arc: arcId(r.d.arc), disposition: { type: 'keep', reason: 'not this arc' } }] },
       { id: 'B-2' as never, originArc: arcId(r.d.arc), bankReason: 'gate-note', what: NOTE, unit: U1, key: debtKey({ unit: U1, bankReason: 'gate-note', what: NOTE }), history: [], state: 'open' },
+      { id: 'B-3' as never, originArc: arcId(r.d.arc), bankReason: 'gate-note', what: PRE, unit: U1, key: debtKey({ unit: U1, bankReason: 'gate-note', what: PRE }), history: [], state: 'open' },
     ],
   };
 }
@@ -97,7 +108,9 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     const [check] = readCalls(a.d.scenarioPath);
     assert.ok(check !== undefined && check.as === 'claude' && !isGateCall(check));
     const dir = viewDir(a, a.pinSha256, 'full');
-    assert.ok(addDirs(check).includes(dir), `plan-check may read ${dir}: ${check.argv.join(' ')}`);
+    assert.ok(readable(addDirs(check), dir), `plan-check may read ${dir}: ${addDirs(check).join(' ')}`);
+    // The run dir, which holds both views, is readable (2026-10-16): plan-check is pointed at the full view.
+    assert.ok(check.stdin.includes(dir), `plan-check is told of the full view ${dir}`);
     assert.deepEqual(filesUnder(dir), a.pin.files.map((f) => f.path).sort(), 'every pinned file, the vision doc among them');
     for (const f of a.pin.files) {
       const path = join(dir, f.path);
@@ -113,8 +126,9 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     const [g] = readCalls(a.d.scenarioPath).filter(isGateCall);
     assert.ok(g !== undefined);
     const dir = viewDir(a, a.pinSha256, 'without-vision');
-    assert.ok(addDirs(g).includes(dir), `the gate may read ${dir}`);
-    assert.ok(!addDirs(g).includes(viewDir(a, a.pinSha256, 'full')), 'never the full view');
+    assert.ok(readable(addDirs(g), dir), `the gate may read ${dir}`);
+    // The run dir, which holds both views, is readable (2026-10-16): the gate is pointed only at the view without the vision.
+    assert.ok(g.stdin.includes(dir) && !new RegExp(`${viewDir(a, a.pinSha256, 'full')}[/\\s]`).test(g.stdin), 'never told of the full view');
     assert.deepEqual(filesUnder(dir), a.pin.files.filter((f) => f.path !== a.pin.vision.path).map((f) => f.path).sort());
     for (const rule of a.pin.rules) assert.ok(g.stdin.includes(rule.text), `the rules index carries ${rule.id}`);
     const vision = readFileSync(join(a.d.repo, VISION_PATH), 'utf8').split('\n').find((l) => l.startsWith('A calm'))!;
@@ -128,16 +142,24 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     assert.deepEqual(fp.contractRevs.map((c) => c.path), ['contracts/api.md'], 'the cited contract only: a corpus arc has no target document');
   });
 
-  it('gate.debt-banked: the approving answer\'s note is banked once after the approval, continuing the baseline\'s ids; a blank note never, a repeat deduped', () => {
+  it('gate.debt-banked: the approving answer\'s note and pre-existing finding are banked once after the approval, continuing the baseline\'s ids; a blank note never, a repeat deduped', () => {
     const attempt = r.journal.view.unit(U1).approval!.attempt;
     const debt = r.journal.view.holistic().debt;
     assert.deepEqual(debt.map(({ seq: _seq, ...d }) => d), [{
       kind: 'debt-banked', id: 'B-2', bankReason: 'gate-note', what: NOTE, key: debtKey({ unit: U1, bankReason: 'gate-note', what: NOTE }),
       source: { type: 'gate', unit: U1, attempt, index: 0 },
+    }, {
+      kind: 'debt-banked', id: 'B-3', bankReason: 'gate-note', what: PRE, key: debtKey({ unit: U1, bankReason: 'gate-note', what: PRE }),
+      source: { type: 'gate', unit: U1, attempt, index: 3 },
     }]);
     const log = readJournal(absPath(a.d.runDir), arcId(a.d.arc)).events;
     const seqOf = (kind: string): number => log.find((e) => e.type === 'fact' && e.fact.kind === kind)!.seq;
     assert.ok(seqOf('approval') < seqOf('debt-banked'), 'banked after the approval');
+  });
+
+  it('status.gate-answer: the unit\'s line carries its latest gate answer: every finding by class and what the gate did not review (dev.12 round 2)', () => {
+    const line = status(absPath(a.d.runDir), arcId(a.d.arc), absPath(a.d.hostDir)).units.find((u) => u.unit === U1);
+    assert.deepEqual(line?.gate, { attempt: r.journal.view.unit(U1).approval!.attempt, decision: 'approve', findings: FINDINGS, unreviewed: UNREVIEWED });
   });
 
   it('publish.debt-render: the close-out renders debt.md from the baseline ledger, the Phase-0 dispositions and the banked items, and invariants.md with the pin\'s registry', () => {
@@ -190,9 +212,9 @@ test('gate.fingerprint-corpus: a re-pin invalidates the approval at ff and the r
     assert.deepEqual(approvals, [a.pinSha256, nextSha], 'the re-gate binds the pin then in force');
     const gates = readCalls(a.d.scenarioPath).filter(isGateCall);
     assert.equal(gates.length, 2);
-    assert.ok(addDirs(gates[1]!).includes(viewDir(a, nextSha, 'without-vision')), 'the re-gate reads the new pin');
-    // Each approval banked under its own source, the re-gate's note deduped by key: one item.
-    assert.deepEqual(r.journal.view.holistic().debt.map((d) => d.id), ['B-2']);
+    assert.ok(readable(addDirs(gates[1]!), viewDir(a, nextSha, 'without-vision')) && gates[1]!.stdin.includes(viewDir(a, nextSha, 'without-vision')), 'the re-gate reads the new pin');
+    // Each approval banked under its own source, the re-gate's findings deduped by key: one item each.
+    assert.deepEqual(r.journal.view.holistic().debt.map((d) => d.id), ['B-2', 'B-3']);
 
     const closed = await publishCloseOut({ ...ctx, planFile: absPath(a.d.planPath), arbiter: createArbiter(ctx) });
     assert.equal(closed.kind, 'published', JSON.stringify(closed));
@@ -249,7 +271,9 @@ describe(`matrix row ${DEBT_BANK}`, () => {
       const now = log();
       assert.deepEqual(now.approvals, killed.approvals, 'the approval is kept, not recorded twice');
       assert.equal(now.gates, 1);
-      assert.deepEqual(now.debt.map((f) => (f.kind === 'debt-banked' ? [f.id, f.source] : null)), [['B-2', { type: 'gate', unit: 'u1', attempt: killed.approvals[0], index: 0 }]]);
+      assert.deepEqual(now.debt.map((f) => (f.kind === 'debt-banked' ? [f.id, f.source] : null)), [
+        ['B-2', { type: 'gate', unit: 'u1', attempt: killed.approvals[0], index: 0 }], ['B-3', { type: 'gate', unit: 'u1', attempt: killed.approvals[0], index: 3 }],
+      ]);
       assert.equal(readCalls(a.d.scenarioPath).filter(isGateCall).length, 1, 'the recorded gate call is consumed, never asked again');
     });
   }

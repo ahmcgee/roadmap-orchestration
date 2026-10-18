@@ -134,12 +134,13 @@ export function checkpointStep(job: string | undefined, answer: JsonValue, extra
 }
 
 /**
- * 2026-10-15: the repair turn of job `job`'s refused answer: its session resumed (`--resume`), the stdin naming why it was
- * refused (`stdinContains` adds to the directive's opening); it answers `answer`.
+ * The repair turn of job `job`'s refused answer (2026-10-15 the checkpoint; dev.12 every arc role: a lens, a flow run, a pack
+ * review): its session resumed (`--resume`), the stdin naming why it was refused (`stdinContains` adds to the directive's
+ * opening); it answers `answer`.
  */
-export function checkpointRepairStep(job: string, answer: JsonValue, stdinContains: readonly string[] = []): Step {
+export function jobRepairStep(job: string, answer: JsonValue, stdinContains: readonly string[] = []): Step {
   return {
-    ...checkpointStep(job, answer),
+    ...step({ unit: job }, [{ type: 'emit', value: answer }]),
     expect: { argv: ['--resume'], argvLacks: ['--session-id', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
   };
 }

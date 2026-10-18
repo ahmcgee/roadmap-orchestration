@@ -52,6 +52,9 @@
 //                  `.roadmap/vision.json` only in the between-arc window, so a draft committed there mid-arc never rides
 //                  along with an unrelated apply. Not one of `phase0Rows`: it reads the revision in force, which only a
 //                  running arc has.
+//  13. regenerate (advisory, never a rejection; every arc, every mode; dev.12) a derived entry declaring no `regenerate` whose
+//                  outputs a live unit's effective scope may reach: `derived-unregenerated{outputs, units}`. Its outputs are
+//                  checked by no regeneration, so a hand edit in them is caught only by a reader (src/input/derived.ts).
 // A record that names something absent (a debt disposition of no open item, a promote to a unit the plan does not
 // hold, a resolve by a ruling the ledger does not hold active, an intake act on an unknown unit or rule, an amendment
 // disposition of no amendment) is `plan-invalid{schema}` naming it.
@@ -86,6 +89,7 @@ import { laneTestPathsUndeclared, witnessFilesUndeclared } from '../core/upgrade
 import { coversSource, derivedWidening } from '../input/derived.ts';
 import { visionUnconfirmed } from '../holistic/vision.ts';
 import { mayOverlap } from '../input/classify.ts';
+import { isLive } from '../preflight/lanerows.ts';
 import { type PlanM1, type PlanUnit, derivedOf } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import type { RepoConfig } from '../routing/layers.ts';
@@ -137,10 +141,20 @@ export type Phase0Input = Readonly<{
 export type ScopeReference = Readonly<{ kind: 'scope-references-outside'; unit: UnitId; removed: string; referrers: readonly RepoPath[] }>;
 
 /**
- * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
- * `advisories`: row 10's, which never refuse.
+ * Row 13 (dev.12), advisory: a derived entry declaring no `regenerate` whose outputs are in the effective scope of `units`
+ * (ascending, live ones): nothing checks that those outputs are what their generator writes, so a hand edit in them is
+ * caught only by a reader.
  */
-export type Phase0Outcome = Readonly<{ rows: readonly StartupRejection[]; opened: OpenedSource | null; pin: CorpusPin | null; advisories: readonly ScopeReference[] }>;
+export type DerivedUnregenerated = Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }>;
+
+/** A Phase-0 advisory: never a refusal (rows 10 and 13). */
+export type Phase0Advisory = ScopeReference | DerivedUnregenerated;
+
+/**
+ * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
+ * `advisories`: rows 10's and 13's, which never refuse.
+ */
+export type Phase0Outcome = Readonly<{ rows: readonly StartupRejection[]; opened: OpenedSource | null; pin: CorpusPin | null; advisories: readonly Phase0Advisory[] }>;
 
 /** The rows' input over files as a start or an apply reads them (the ledger's rulings parsed; it loads, group 1 checked). */
 export function phase0InputOf(files: InputFiles, config: RepoConfig | null): Phase0Input {
@@ -176,7 +190,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const rows: StartupRejection[] = [];
   if (mode.tree) rows.push(...treeUncommitted(input.repo));
   const { plan } = input;
-  const advisories = referenceRows(input);
+  const advisories = [...referenceRows(input), ...derivedUnregenerated(plan)];
   const defects: PlanDefect[] = [...derivedOwned(plan)];
   if (plan.target !== 'corpus') {
     if (defects.length > 0) rows.push({ kind: 'plan-defect', defects });
@@ -341,6 +355,14 @@ function derivedOwned(plan: PlanM1): readonly PlanDefect[] {
   return derivedOf(plan).flatMap((d) => d.outputs.flatMap((output) => plan.units
     .filter((u) => !coversSource(u.scope, d) && u.scope.some((s) => mayOverlap(s, output)))
     .map((u): PlanDefect => ({ type: 'derived-output-owned', output, unit: u.id }))));
+}
+
+/** Row 13: each derived entry without `regenerate` whose outputs a live unit's effective scope may reach. */
+function derivedUnregenerated(plan: PlanM1): readonly DerivedUnregenerated[] {
+  return derivedOf(plan).filter((d) => d.regenerate === undefined).flatMap((d) => {
+    const units = plan.units.filter((u) => isLive(plan, u) && unitEffectiveScope(plan, u).some((s) => d.outputs.some((o) => mayOverlap(s, o)))).map((u) => u.id).sort();
+    return units.length === 0 ? [] : [{ kind: 'derived-unregenerated' as const, outputs: d.outputs, units }];
+  });
 }
 
 /** Each derived output that may reach a same-repo corpus file set. */

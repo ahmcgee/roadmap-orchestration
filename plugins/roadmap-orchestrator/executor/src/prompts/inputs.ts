@@ -7,7 +7,7 @@
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
-import type { DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
+import type { ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
@@ -23,6 +23,7 @@ import type { PinnedRule } from '../corpus/types.ts';
 import type { FlowPromptInputs } from '../flow/types.ts';
 import type { CapturedIssue } from '../forge/types.ts';
 import type { Phase0Record } from '../phase0/types.ts';
+import { type BoundedDiff, EXAMPLES } from '../git/boundeddiff.ts';
 import type { GateFinding, Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
@@ -119,6 +120,15 @@ export type GatePriorRound = Readonly<{
   changedPremiseFiles: readonly string[];
 }>;
 
+/**
+ * W3 (2026-10-16): why a unit judgment runs at its role's escalation seat (summit), rendered only there. `route-up`: the
+ * seat below routed the unit up, `first` that seat's latest answer (its decision and reasons; null when it gave none, a
+ * refusal); `risk-trigger`: a runtime risk trigger (a contract path touched, scope growth) promoted the judgment.
+ */
+export type EscalationInput =
+  | Readonly<{ kind: 'route-up'; first: Readonly<{ decision: string; reasons: readonly string[] }> | null }>
+  | Readonly<{ kind: 'risk-trigger' }>;
+
 export type PlanCheckInputs = Readonly<{
   spec: RenderedSpec;
   /** The cited contracts and active rulings, in full; the rest in `index`. */
@@ -153,6 +163,8 @@ export type PlanCheckInputs = Readonly<{
    * reads) and the unit's earlier proposals the root agent rejected (never proposed again).
    */
   scopeGrowth: PlanCheckScopeGrowth;
+  /** W3: why this check runs at the escalation seat; null below it. */
+  escalation: EscalationInput | null;
 }>;
 
 /** What a plan-check reads for its scope-growth proposals. */
@@ -221,7 +233,22 @@ export type SmokeNotRun = (typeof SMOKE_NOT_RUN)[number];
 export type GateChecks = Readonly<{
   witnesses: Readonly<{ required: readonly RequiredWitness[]; missing: readonly TestRef[]; failed: readonly TestRef[] }> | null;
   smoke: Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[]; notRun: SmokeNotRun | null }> | null;
+  /** dev.12: per plan `derived` entry whose outputs the diff touches, in entry order, whether regeneration verified them. */
+  regenerated: readonly RegeneratedCheck[];
 }>;
+
+/**
+ * dev.12: what the regenerate check (src/input/derived.ts) found for one derived entry whose outputs the diff touches.
+ * `verified`: its lane passed at the head, so every output is byte for byte what the generator writes. `differs`: its lane
+ * was red at the head and on the unit's base too (`base-red`), its evidence naming each difference. `not-run`: the entry
+ * declares a generator, but no run of it at the head is on record (an earlier suite lane's base red stopped the series).
+ * `no-generator`: the plan declares no `regenerate` for it, so nothing checked the outputs.
+ */
+export type RegeneratedCheck =
+  | Readonly<{ state: 'verified'; outputs: readonly RepoPattern[]; argv: readonly string[] }>
+  | Readonly<{ state: 'differs'; outputs: readonly RepoPattern[]; argv: readonly string[]; evidenceDir: AbsPath }>
+  | Readonly<{ state: 'not-run'; outputs: readonly RepoPattern[]; argv: readonly string[] }>
+  | Readonly<{ state: 'no-generator'; outputs: readonly RepoPattern[] }>;
 
 export type GateInputs = Readonly<{
   spec: RenderedSpec;
@@ -233,8 +260,11 @@ export type GateInputs = Readonly<{
   planCheckNotes: string;
   /** The obligations the candidate selects, with their observations (never their vision clauses: R17). */
   obligations: readonly ObligationView[];
-  /** `merge-base(T, branch)..head`, recomputed after any merge-in. */
-  diff: Readonly<{ base: Sha; head: Sha; text: string }>;
+  /**
+   * `merge-base(T, branch)..head`, recomputed after any merge-in, attached within the gate's budget (src/git/boundeddiff.ts;
+   * `from` the base, `to` the head), and what the unit claims, for its orientation.
+   */
+  diff: Readonly<{ bounded: BoundedDiff; claims: DiffClaims }>;
   laneLedger: readonly LaneLedgerEntry[];
   /** Evidence directories the gate may read (lane output, the build's decisions.json). */
   evidence: readonly AbsPath[];
@@ -247,7 +277,18 @@ export type GateInputs = Readonly<{
   priorRound: GatePriorRound | null;
   /** M4a rev 3: the executable checks' results (`GateChecks`). */
   checks: GateChecks;
+  /** W3: why this gate runs at the escalation seat; null below it. */
+  escalation: EscalationInput | null;
+  /** 1.0.0-dev.12: the diff over the large-diff threshold (`GateLargeDiffInput`); null under it, and the plain prompt. */
+  largeDiff: GateLargeDiffInput | null;
 }>;
+
+/**
+ * A gate's diff over the large-diff threshold (src/pipeline/gate.ts): `overflow` files with changed content its attachment
+ * left out for size, of `changed` changed paths, listed one per line in `list` (readable beside the attachment): the
+ * paths the answer's cluster map must cover, each in exactly one cluster.
+ */
+export type GateLargeDiffInput = Readonly<{ overflow: number; changed: number; list: AbsPath }>;
 
 // ---------------------------------------------------------------------------------------------------
 // M3: the arc roles' inputs (frozen in step 0a). The vision comes first and in full in both (A14); on a
@@ -287,7 +328,8 @@ export type LensInputs = Readonly<{
   obligations: readonly ObligationView[];
   /**
    * The range this call reviews: from the lens's watermark to `diff.to`, the audited SHA or, for an outstanding range
-   * over the budget, an earlier published head (one chunk; src/holistic/lensdiff.ts), with its bounded attachment.
+   * over the budget, an earlier published head (one chunk; src/holistic/lensdiff.ts), with its bounded attachment
+   * (src/git/boundeddiff.ts).
    */
   range: Readonly<{ audited: Sha; diff: BoundedDiff }>;
   /** Branch diffs of parked or in-flight owners of open findings (the w33 P1s were already fixed on one), bounded together. */
@@ -304,32 +346,13 @@ export type LensInputs = Readonly<{
    * judges these against the vision; the code range is not its subject); null: a full audit.
    */
   specsOnly: readonly RenderedSpec[] | null;
-  /** M4b (paid run 3): this lens asked again because drafts of its previous report on this tree were refused; null: a first call. */
-  retry: LensRetry | null;
 }>;
-
-/** A file of a range a lens was not shown: a plan-declared derived output, or over what the budget left (src/holistic/lensdiff.ts). */
-export type OmittedFile = Readonly<{ path: string; why: 'derived' | 'size' }>;
 
 /**
- * A diff attached within a byte budget (src/holistic/lensdiff.ts `boundedDiff`): the stat of the whole range (`full`
- * false: its shortstat, the full one over its share), the per-file diffs inlined, the files not inlined (each read with
- * `git diff <from> <to> -- <path>`), and how many more were not inlined past the listing's share.
+ * What the unit under a gate claims, as id pointers into the inputs that state them in full (the spec, <obligations>):
+ * its active acceptance clauses and witness items, and the obligations its diff selects.
  */
-export type BoundedDiff = Readonly<{
-  from: Sha;
-  to: Sha;
-  stat: Readonly<{ text: string; full: boolean }>;
-  inlined: string;
-  omitted: readonly OmittedFile[];
-  unlisted: number;
-}>;
-
-/** A lens asked again: the drafts refused with why, and the claims and causes of the previous report's admitted findings. */
-export type LensRetry = Readonly<{
-  refused: readonly Readonly<{ claim: string; cause: string; reason: string }>[];
-  recorded: readonly Readonly<{ claim: string; cause: string }>[];
-}>;
+export type DiffClaims = Readonly<{ acceptance: readonly ClauseId[]; witnesses: readonly WitnessItemId[]; obligations: readonly ObligationId[] }>;
 
 /**
  * Why a unit parked, as the checkpoint reads it. `design`: a judgment's escalation or a refusal, a design question;
@@ -378,9 +401,7 @@ export function diagnosisText(d: ParkDiagnosis | null): string {
   return `\n\n<diagnosis>
 The executor's records of the parked unit's lineage, the parked unit first. A repeated failure, a lane the build keeps failing,
 edits salvage keeps reverting, or a witness test that is never found points at the cause; address it. A reenter op cites one of
-these references in fixes and must change what that failure ran under (the spec, the scope, the lanes or the routing), or reset
-its chargeable failures under a ruling: an unchanged retry of a design failure is refused. Only a flaky or host-suspected lane
-failure, or a park that is not the unit's design failure, may be retried unchanged.
+these references in fixes.
 ${d.units.map(unit).join('\n')}${reentries.length === 0 ? '' : `\nEarlier re-entries of this lineage:\n${reentries.join('\n')}`}
 </diagnosis>`;
 }
@@ -485,14 +506,14 @@ export type RoleInputs = {
 export const ROLE_INPUTS = {
   planCheck: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
-    'scopeGrowth',
+    'scopeGrowth', 'escalation',
   ],
   build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks',
+    'checks', 'escalation', 'largeDiff',
   ],
-  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly', 'retry'],
+  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
     'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
     'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis',
@@ -636,8 +657,24 @@ function requiredRefText(ref: TestRef, required: readonly RequiredWitness[]): st
 }
 
 /** The gate's executable checks (D1, D2), or nothing when neither applied (an `architecture-doc` arc). */
+/** One derived entry's regenerate check as a line of the gate's executable checks. */
+function regeneratedText(r: RegeneratedCheck): string {
+  const outputs = r.outputs.join(', ');
+  switch (r.state) {
+    case 'verified':
+      return `- ${outputs}: verified by regeneration. The executor ran ${JSON.stringify(r.argv)} in a clean checkout of this head and every output came out byte-identical to the commit, so no hand edit hides in them; read them only where the spec's claims depend on their content.`;
+    case 'differs':
+      return `- ${outputs}: NOT verified. ${JSON.stringify(r.argv)} does not reproduce them at this head, nor on the unit's base; the differences are in ${r.evidenceDir}.`;
+    case 'not-run':
+      return `- ${outputs}: not verified. The plan declares ${JSON.stringify(r.argv)} as their generator, but it did not run at this head.`;
+    case 'no-generator':
+      return `- ${outputs}: not verified. The plan declares no generator for them, so a hand edit in them is caught only by reading them.`;
+  }
+}
+
 export function gateChecksText(c: GateChecks): string {
-  if (c.witnesses === null && c.smoke === null) return '';
+  const regenerated = c.regenerated.length === 0 ? [] : ['Regenerated outputs this diff touches (plan `derived` entries):', ...c.regenerated.map(regeneratedText)];
+  if (c.witnesses === null && c.smoke === null && regenerated.length === 0) return '';
   const w = c.witnesses;
   const witnesses = w === null ? [] : [
     `Witness presence: ${w.required.length} required witness ${w.required.length === 1 ? 'test' : 'tests'} on the arc lanes at this head.`,
@@ -651,7 +688,7 @@ export function gateChecksText(c: GateChecks): string {
     `- survived: ${refsText(s.survived)}`,
     `- inconclusive: ${refsText(s.inconclusive)}`,
   ];
-  return `\n\n<executable_checks>\n${[...witnesses, ...smoke].join('\n')}\n</executable_checks>`;
+  return `\n\n<executable_checks>\n${[...witnesses, ...smoke, ...regenerated].join('\n')}\n</executable_checks>`;
 }
 
 /** The implementer's witness checks: one exact command per fast required witness lane (R56), or nothing. */
@@ -690,6 +727,25 @@ export function planCheckPriorInvalidText(reason: string | null): string {
 <prior_attempt>
 Your previous answer on this unit was refused, so nothing of it was applied and the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
 </prior_attempt>`;
+}
+
+/**
+ * W3: the escalation seat's preface (empty below it): this judgment is an escalation, why, and what the seat below said.
+ * `role` names the judgment ("plan-check" or "gate") in the text.
+ */
+export function escalationText(e: EscalationInput | null, role: 'plan-check' | 'gate'): string {
+  if (e === null) return '';
+  const why = e.kind === 'risk-trigger'
+    ? `A runtime risk trigger (a contract path touched, or scope growth) moved this ${role} straight to the escalation seat.`
+    : e.first === null
+      ? `The ${role} below this seat gave no answer (its session was refused), so the unit was routed up.`
+      : `The ${role} below this seat decided ${e.first.decision}, and the unit was routed up. Its reasons:\n${bullets(e.first.reasons, '(none given)')}`;
+  return `
+
+<escalation>
+This ${role} is an escalation: a judgment at the seat below could not settle the unit, so it is yours, with more effort behind it. ${why}
+Weigh the earlier reasons as another reviewer's claims, not as facts, and decide on the evidence yourself. There is no seat above this one: escalating again parks the unit until its spec is revised, so do it only when the unit cannot go on without that.
+</escalation>`;
 }
 
 /**
@@ -757,29 +813,51 @@ export function specsOnlyText(specsOnly: readonly RenderedSpec[] | null): string
   return `\n\n<specs_only>\nThis audit runs because a plan revision changed only these units' specs; the product code is unchanged since the code lenses last read it, and only the vision lens runs. Judge what these specs now ask for against the vision. Do not audit the code again.\n${documentsXml(specsOnly.map((s) => ({ source: `spec of unit ${s.unit}, revision ${s.rev} (changed by the revision this audit follows)`, content: s.markdown })))}\n</specs_only>`;
 }
 
-/** M4b (paid run 3): a lens asked again, told which drafts of its previous report were refused and why. */
-export function lensRetryText(retry: LensRetry | null): string {
-  if (retry === null) return '';
-  const refused = retry.refused.map((x) => `- claim: ${x.claim}\n  cause: ${x.cause}\n  refused: ${x.reason}`).join('\n');
-  const recorded = retry.recorded.length === 0 ? '(none)' : retry.recorded.map((x) => `- claim: ${x.claim}\n  cause: ${x.cause}`).join('\n');
-  return `\n\n<previous_report>\nThis lens already reported on this tree. The executor could not admit these findings of that report, so they are not recorded:\n${refused}\nReport each of them again with the defect corrected, under the same cause: copy each edit's old text exactly from the file at the audited SHA, with enough lines that it occurs exactly once, and name a lane from the obligations. These findings of that report are recorded; do not report them again:\n${recorded}\nReport anything else your lens finds as usual.\n</previous_report>`;
-}
-
-/** A path as one shell word (single-quoted). */
-const shellWord = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+const KIND_TEXT: { readonly [K in BoundedDiff['inlined'][number]['kind']]: string } = {
+  'new-source': 'new source', 'modified-source': 'modified source', test: 'test', fixture: 'fixture', other: 'other', derived: 'derived output',
+};
 
 /**
- * A bounded diff (src/holistic/lensdiff.ts) as a lens reads it: the stat and the inlined per-file diffs as pasted
- * content under `label`, then `<not_inlined>`: each file not shown, why, and the exact command that prints its diff.
+ * A bounded diff (src/git/boundeddiff.ts) as a judgment reads it: `<orientation>` (the stat, moves, deletions, the spread
+ * per package, recurring substitutions and, for a gate, what the unit claims), `<diff>` (the inlined per-file diffs as
+ * pasted content under `label`) and `<not_inlined>` (each file with changed content not shown, with the readable file
+ * holding its whole diff). Lists cut short name the file in the attachment's directory that holds them whole.
  */
-export function boundedDiffText(label: string, d: BoundedDiff): string {
-  if (d.from === d.to) return '(empty: no change)';
-  const statNote = d.stat.full ? '' : `\nThe full stat is too long to attach; \`git diff --stat ${d.from} ${d.to}\` prints it.`;
-  const files = d.omitted.map((o) => `- ${o.path} (${o.why === 'derived' ? 'derived output' : 'not inlined: over the budget'}): git diff ${d.from} ${d.to} -- ${shellWord(o.path)}`);
-  if (d.unlisted > 0) files.push(`- ${d.unlisted} more files not inlined, not listed here: \`git diff --name-only ${d.from} ${d.to}\` names every file of the range; read each one not shown above with git diff ${d.from} ${d.to} -- <path>`);
-  const omitted = files.length === 0 ? '' : `\n<not_inlined>\n${files.join('\n')}\n</not_inlined>`;
-  return `${pasted(label, `${d.stat.text}\n${d.inlined}`)}${statNote}${omitted}`;
+export function boundedDiffText(label: string, d: BoundedDiff, claims: DiffClaims | null): string {
+  const o = d.orientation;
+  if (d.from === d.to || (d.text === '' && d.notInlined.length === 0 && o.moves.shown.length + o.moves.more === 0)) return '(empty: no change)';
+  const more = (n: number, file: string): string[] => (n === 0 ? [] : [`- and ${n} more, all listed in ${d.dir}/${file}`]);
+  const section = (heading: string, lines: readonly string[]): string[] => (lines.length === 0 ? [] : [heading, ...lines]);
+  const lines = (n: number | null): string => (n === null ? 'binary' : `${n} line${n === 1 ? '' : 's'}`);
+  const orientation = [
+    `Diff ${d.from}..${d.to}. Files named below are readable with Read.`,
+    o.stat.full ? `Stat:\n${o.stat.text.replace(/\n$/, '')}` : `Stat (summary; the full stat is in ${d.dir}/stat.txt):\n${o.stat.text.replace(/\n$/, '')}`,
+    ...section(`Moved or renamed without content change (no diff below): ${o.moves.shown.length + o.moves.more}`,
+      [...o.moves.shown.map((m) => `- ${m.from} → ${m.to}`), ...more(o.moves.more, 'moves.txt')]),
+    ...section(`Deleted (no diff below; each file holds the whole deleted content): ${o.deletions.shown.length + o.deletions.more}${o.deletions.labelled ? ', those not in the spec\'s removes first' : ''}`, [
+      ...o.deletions.shown.map((x) => `- ${x.path} (${lines(x.lines)}${!o.deletions.labelled ? '' : x.removes === null ? ', not in the spec\'s removes' : `, matches removes "${x.removes}"`}): ${x.diff}`),
+      ...more(o.deletions.more, 'deletions.txt'),
+    ]),
+    ...section('Spread per package (files; lines added, deleted):', [
+      ...o.packages.shown.map((p) => `- ${p.name}: ${p.files} file${p.files === 1 ? '' : 's'}; +${p.added} -${p.deleted}`),
+      ...(o.packages.more === 0 ? [] : [`- and ${o.packages.more} more packages`]),
+    ]),
+    ...section('Recurring identifier substitutions in the changed files (removed → added, times; where to look, not a verification):',
+      [...o.substitutions.map((s) => `- ${s.from} → ${s.to} ×${s.count}`),
+        ...(o.substitutions.length === 0 ? [] : [`- ${o.explained} changed file${o.explained === 1 ? '' : 's'} with every changed line explained by these substitutions (a pointer; each is still part of the diff to judge)`])]),
+    ...(claims === null ? [] : [`Claimed by the unit (stated in full above): acceptance ${idList(claims.acceptance)}; witness items ${idList(claims.witnesses)}; obligations ${idList(claims.obligations)}`]),
+  ];
+  const diff = d.text === ''
+    ? 'No per-file diff is inlined.'
+    : `Per-file diffs with one line of context. First the files whose changes the substitutions above do not fully explain, then up to ${EXAMPLES} files showing each substitution, then the rest; within each group new source first, then modified source, tests, fixtures and other files. A file headed "word diff" shows changed words: a line starting - or + is removed or added text, a line starting with a space is unchanged text (a long run cut to its ends, marked …[n chars]…), and ~ ends a line.\n${pasted(label, d.text)}`;
+  const notInlined = d.omitted.shown.length + d.omitted.more === 0 ? '' : `\n<not_inlined>\nFiles with changed content not shown above; each file named holds its whole diff.\n${[
+    ...d.omitted.shown.map((x) => `- ${x.path} (${KIND_TEXT[x.kind]}, ${x.why === 'derived' ? 'regenerated from sources this diff changes' : 'over the budget'}, ${x.bytes} bytes): ${x.diff}`),
+    ...more(d.omitted.more, 'not-inlined.txt'),
+  ].join('\n')}\n</not_inlined>`;
+  return `<orientation>\n${orientation.join('\n')}\n</orientation>\n<diff>\n${diff}\n</diff>${notInlined}`;
 }
+
+const idList = (ids: readonly string[]): string => (ids.length === 0 ? 'none' : ids.join(', '));
 
 /** The checkpoint's input manifest (H4): every captured input by kind, id, kept path and hash. */
 export function manifestText(manifest: CheckpointInputs['manifest']): string {

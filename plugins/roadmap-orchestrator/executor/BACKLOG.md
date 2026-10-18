@@ -133,6 +133,57 @@ at triage stay in git history.
 - Issue mode outbound projection: 1.1.
 - The Codex judgment profile and cgroup containment stay out (LR-a).
 
+### Deferred from the dev.12 role evals (evals/roles/)
+
+- Role evals for the lens, plan-check, checkpoint and builder seats, on the gate eval's harness and generator. Bring each in
+  with the change it would guard (the plan's deferred lens-chunking removal and builder prompt trim need theirs first).
+- The load brake compares token load, not dollars: the CLI reports cost only on its result. Switch to cost if the stream
+  starts carrying it per message.
+- A look at the plant counts a Read of its file or `.diff` and a Grep that showed it, in any session; a Glob listing or a
+  subagent's summary does not. Revisit if a real run grades a legitimate catch `lucky`.
+- Rotate the holdout classes after each acceptance that used them (a holdout seen in a failure analysis is half spent).
+- **Haiku at the low-risk gate: retry.** The paid gate role eval (2026-10-17, dev set, n 3, `--risk low`) failed Haiku 5.5
+  (economy) at gate.low: 4/12 false alarms on clean cells at effort `high` (1/9 at `medium`), all five the same mistake, a
+  blocking finding on a tension between the spec (A2 moves the arithmetic helpers to `core/`) and ruling C-1 (helpers live
+  in `src/`) when the build did what the spec said; that tension belongs in `premises`, not in a blocking finding. It caught
+  no plant Sonnet missed. Sonnet 5.5 high on gate.med: 0/12 false alarms. gate.low reverted to efficient; the economy
+  class, its Haiku binding, the Haiku prompt rows, family metering and `--rebind` stay. Trigger: a reason to want the
+  cheaper low seat back (a Haiku release, or gate spend becoming the constraint). What to change: the Haiku gate variant
+  sends spec-vs-ruling tensions to `premises` (a Haiku-row line, judged by the eval, not a prose test), then rerun the
+  low arm with Haiku on gate.low (~$6). The harness rebinds classes only: `--rebind efficient=claude-haiku-5-5:high` would
+  also put Haiku on build.low, which has no build prompt, so the retry needs a seat override first (a `--seat
+  gate.low=economy` flag writing the repo config's `routing.seats`), then `node evals/roles/run.ts gate --set dev --n 3
+  --risk low --seat gate.low=economy` with `--rebind economy=claude-haiku-5-5:<effort>` for the effort arm. Pass bar: the
+  clean-cell false-alarm rate matches Sonnet's and the catch rate holds. The plan-check ladder waits on the same answer:
+  efficient low and med, frontier high until a plan-check role eval measures a cheaper low seat.
+- **Large-diff gate: cheaper departures-only review (built and measured in dev.12; the cost lever deferred).** The
+  large-diff gate (DESIGN-1.0.md §4 Gate inputs: over the bounded diff's overflow the gate sits at least at `high`, reads
+  the owner's `<large_diff>` method and answers a cluster map code checks covers every changed path exactly once) was
+  measured 2026-10-17/18 at `--risk med` (escalated to Opus): G2b/G3b/G3a caught 9/9, 0/9 clean false alarms (G1 x3, and
+  G4c/G6c x3 each in the second run), $1.50-33 a trial, about $10 mean on the planted cells. Before it, Sonnet missed
+  G2b/G3b 6/6 and Haiku 5/6 (both honest in `unreviewed`); unguided Opus caught 5/6 via subagents inheriting its model
+  ($6-61 a trial). The cost driver: Opus labels whole mechanical clusters `routine` whenever Haiku reports any departure,
+  so Sonnet reads ~1,000 identical hunks (one trial: $27 of $33). A prompt line steering review onto the departing hunks
+  only (matching hunks stand on the description) was measured and reverted: G3b held 3/3 at ~$7.5 flat, clean trials
+  ran $1-2, but G2b fell to 1/3. Both misses escalated rather than approved: Opus would not trust the departure lists
+  because it could not have them checked (it asked Haiku for a byte-level substitution replay; judgment sessions have no
+  shell), and one trial answered while 35 background subagents were still running. Next, together:
+  1. **A code-owned rule verifier.** The bounded diff's identifier miner explains 1 of 3,196 files in the G2b fixture
+     (a prose doc-comment rewording rides every file), so it cannot certify a sweep. Instead the gate (or a Haiku
+     describer) states the sweep as literal before -> after rewrite rules with identifier placeholders (no regex or
+     wildcards); code applies them old -> new to every hunk and compares byte for byte; a rule counts only if it
+     recurs (N hunks across N files), so a one-off plant cannot be written as a rule; the rules are in the answer and
+     reviewed as a contract. Hunks the rules reproduce are explained; every other hunk is a departure and gets a
+     reviewer. Directed application also closes the placeholder-merge hole (connected identifiers reading as one).
+  2. **The departures-only prompt line** (reverted commit 80e1ac6), on top of the verifier.
+  3. **Background subagents:** the gate states as a fact that its answer ends the session and a subagent still running
+     is lost, or code holds the answer until they finish.
+  Trigger: real arcs show large-diff gate spend that matters (`status` spend by seat), or the next gate batch. Measure on
+  G2b/G3b/G3a with clean twins; pass bar: catches hold at 9/9-level, cost per planted trial roughly halves.
+- **The role eval's per-trial cap undercounts.** `--trial-cap` estimates live spend from the stream, which carries only
+  part of the subagents' tokens: one trial read $15 live against $33 reported, so a $25 cap never fired. `--cap` (between
+  trials) works. Fix: price the per-agent token totals the monitor already traces, or call the per-trial cap approximate.
+
 ## Convergence and integrity (unscheduled, wanted)
 
 - **A `respec` gate outcome** (arc-1 item 27b). A gate that finds the spec wrong can only escalate to the
@@ -161,6 +212,18 @@ at triage stay in git history.
   capacity. Wanted: a code-computed critical-path length (units and median stage time) beside the pack review's
   notes, as an advisory the architect may act on before admission, never a refusal.
 
+- **Builder prompt trim, after the builder eval** (W3, 2026-10-16, deferred). The build briefs restate rules code already
+  backs; trim each once a builder eval shows the outcome holds without it. Candidates: the scope paragraph's "the
+  executor keeps only changes to paths matching them" (salvage enforces it and the fix round names reverted paths); the
+  Opus brief's <lanes> "repeat after fixing until each exits with its expected code" and the Luna success criterion it
+  mirrors (the lanes stage reruns them and a red lane comes back as a fix round); "Estate lanes are not yours" (the
+  executor runs them, and the unit policy forbids the clusters); the <witnesses> paragraph's lookup by exact id (D1 checks
+  it before the gate and the fix directive restates it); "Committing is optional" (salvage commits). W3 dropped only the
+  one plain duplicate, <safety>'s "do not kill processes you did not start", which UNIT_POLICY states.
+- **Delegation for the Codex builder** (W3, deferred). The Luna/Sol build brief carries no subagent guidance: the role
+  prompts' text names Claude Code's Agent tool, which `codex exec` does not have. Revisit if Codex gains a subagent tool
+  worth using unattended.
+
 ## Do soon (small fixes)
 
 - **Flow seat decorates its station id** (probe, 2026-10-16, dev.11 ladder). The efficient flow seat answered
@@ -168,7 +231,66 @@ at triage stay in git history.
   rerun passed. In an arc the dev.10 repair turn catches it, at the cost of a call. Tighten the flow prompt: the station is
   a bare StationId, the reasoning goes in `reason`.
 
+- **Lens and flow failures drop their detail** (W2, 2026-10-16). A lens call that fails (a fault, a refusal,
+  `context-exceeded`) only marks its audit `abandoned`, and a flow job's `failed` raises nothing; the detail string
+  (`verdictOf`'s, which names the role, the call and, for `context-exceeded`, the prompt's size) reaches no record. The
+  checkpoint (rejected-invalid) and the pack review (its item) keep it. Record it where each job records its end.
+
 ## Watch (act only on the trigger)
+
+- **Regenerate checks: deferred parts** (1.0.0-dev.12, src/input/derived.ts). (a) The build prompt does not name a touched
+  entry's `regenerate` command; a builder learns it from the spec, or from its first red check's evidence (which says what
+  to run). Trigger: a paid run or arc where a regenerate red costs a fix round a named command would have saved: add it
+  to the build inputs beside the suite lanes. (b) The candidate merge does not re-run it: two units each consistent with
+  the generator can merge into outputs that are not (both edit sources; the merge combines the outputs textually).
+  Trigger: a candidate whose merged outputs do not regenerate (seen as a later unit's base check going `base-red` on a
+  regenerate lane): run the regenerate lanes of the entries the merge touches in the candidate's suite. (c) The lane takes
+  the fast tier's `@cpu`, no resources and no cross-SHA reuse. Trigger: a generator heavy enough to matter: let
+  `regenerate` declare `cpu`, or reuse with `inputs` = the entry's sources and outputs.
+
+- **Bounded diff heuristics** (1.0.0-dev.12, src/git/boundeddiff.ts). A file's kind is read from its path (test and
+  fixture directories and names, a fixed list of source extensions); a package is a top-level directory or two levels
+  under a monorepo container, not the nearest manifest; a deletion matches a `removes` entry only as the path, a
+  directory above it, or the file name without its extension (a route string or symbol never matches a path). Trigger:
+  a gate eval (evals/roles/) or a paid run showing a reviewer misled by a wrong kind, spread or label.
+- **Leftover first explains identifier substitutions only** (1.0.0-dev.12, src/git/boundeddiff.ts). A file is explained
+  only when each changed line equals its pair once the listed identifier substitutions apply, so a mechanical change of
+  another shape (an assertion migration `assert.ok(x === v)` to `assert.equal(x, v)`, a reformat or rewrap after a
+  rename, an import line added to every file) leaves its files unexplained; thousands of them fill the budget in kind
+  and path order again. Trigger: a gate eval or a paid run whose inlined budget is spent on mechanical changes of one
+  shape. Then mine recurring line rewrites (normalised removed and added line pairs) as a second kind of pattern.
+- **Bounded diff spawns one process per file** (1.0.0-dev.12). Each content-changed file costs a diff process (and a
+  second to write its readable file when not inlined): about 30 s for a 3000-file sweep on the dev host. Trigger: gate
+  latency that matters against the gate call itself. Then split one bulk diff per file (rename pairing in a bulk diff
+  can differ from a per-file pathspec's, so each readable file must stay what the per-path diff prints).
+- **Lens chunks fit by the dev.11 measure** (1.0.0-dev.12). `fitsWhole` (src/holistic/lensdiff.ts) still sizes a chunk by
+  the `--no-renames`, three-line-context diff so a resumed dev.11 audit finds its chunks again; the attachment is the
+  smaller bounded diff, so chunks are shorter than they need be. Trigger: once no audit a dev.11 executor started is
+  running, size chunks by the bounded diff itself (recording the measure on `audit-started` if it must stay stable).
+- **Resume overcount crossing the upgrade** (W2, 2026-10-16). A Claude session's reading is charged less what its earlier
+  facts charged; a session whose earlier invocation an executor before 1.0.0-dev.12 metered has no `session` on that
+  fact, so its first dev.12 reading (a repair turn or a resumed build) is charged whole, once. Nothing to do unless an
+  arc's spend matters at that precision.
+- **A judge's background subagent** (W2, 2026-10-16). The Agent tool's `run_in_background` lets a judge end a turn while a
+  subagent runs; the session then prints an interim result (with `structured_output`) and a later one, and the adapter
+  reads the last. Watch for a judge whose deadline kills it while it waits on a background subagent: then tell judges to
+  run subagents in the foreground, or treat the last interim answer as the call's.
+
+- **`proofJudgment` → execution evidence** (dev.12 gate method redesign, deferred). An obligation's `proofJudgment` is
+  graded by a judge reading the proof; the owner's philosophy (code owns invariants, models own method, evals own trust)
+  wants it backed by something executed (a witness run, a mutant) with a role eval measuring the judge. Trigger: the
+  role-eval harness (evals/roles/) covers a judgment role beyond the gate.
+- **Builder prompt trim** (dev.12, deferred). The builder prompt still carries method instructions accreted run by run;
+  trim it to responsibility, resources and the report contract. Trigger: a builder role eval exists to show the trim
+  does not cost quality.
+- **Lens chunking removal** (dev.12, deferred; the lens-range fix of 2026-10-16). With the bounded diff and readable
+  `<not_inlined>` files, one lens call may cover a whole range. Trigger: a lens role eval shows a reader covers a whole
+  range in one call; then delete `nextChunk`/`chunkEnd` and the chunk numbering in src/holistic/audit.ts.
+- **A checkpoint op's non-empty `cites` and `evidence`** (W4, 2026-10-16). W4 dropped the per-reason cite rule, the
+  unenforced reporting caps and any mandate on `premises`/`interpretations`, but kept the per-op requirement (every bundle op
+  cites at least one active `V-n` and non-empty evidence; DESIGN §2.8 checkpoint authority, the traceability the owner
+  audits). The evidence strings are not verified, so the requirement is partly method. Trigger: a repair turn or refused
+  bundle whose only fault is an op's empty `cites` or `evidence`; then make both may-be-empty and keep resolution only.
 
 - **Apply rebase merges arrays of plain values whole** (2026-10-16). `merge3` merges objects per key and arrays of
   keyed objects per element, but an array of strings (scope patterns, `holistic.advances`, cites, a lane's argv) both
@@ -236,10 +358,11 @@ at triage stay in git history.
   The fake story asserts it; a paid run only shows it as a nudge turn. Trigger: a paid run with a nudge after a check-in.
 
 - **A lens that answers invalid abandons its audit, retried only after `wallClockMin`** (run 10 round 2, R-16 review):
-  `runAudit` asks the remaining lenses, ends `abandoned`, and the cadence's `retry` waits the period (default 360 min),
-  a final audit included, then asks every owed lens again, those that reported on the same (head, vision, obligations)
-  included. Not seen in run 10 (every audit completed). Trigger: an `abandoned` audit in a paid run; then retry the
-  invalid lens once with its reasons inside the audit, and drop from a retry the lenses whose key is unchanged.
+  since dev.12 an invalid report first takes its repair turn inside the audit; refused again, `runAudit` asks the
+  remaining lenses, ends `abandoned`, and the cadence's `retry` waits the period (default 360 min), a final audit
+  included, then asks every owed lens again, those that reported on the same (head, vision, obligations) included. Not
+  seen in run 10 (every audit completed). Trigger: an `abandoned` audit in a paid run; then drop from a retry the lenses
+  whose key is unchanged.
 - **The checkpoint capture wait bound** (`CAPTURE_WAIT_MAX_MIN`, 15 min, R-15) is a guess from run 10's gate-to-ff of
   about 1 min. Trigger: a paid run where a checkpoint waited the full bound, or captured stale with the bound spent.
 
@@ -322,7 +445,39 @@ at triage stay in git history.
 - **Deterministic safety fixtures for the plan-check shape** (understated risk, infeasible specs) beyond unit tests
   (Q27 remainder). Trigger: `by-builder` reverted after run 10, or a missed-risk term fires.
 
+- **Builder role eval: the gate's marginal value** (2026-10-17; research notes outside the repo,
+  review-pass-research.md). About 30 to 40 trap units on the role-eval harness (an untested spec clause, an
+  impossible criterion, the temptation to edit a test, scope-creep bait, false-done bait) plus clean controls, built by
+  real builders, in three arms: tests only, + gate, + cross-family gate. For each stratum (risk tier, trap kind) count the
+  catches the gate adds over the lanes; drop or thin the gate where that count is zero. Trigger: the paid gate role eval
+  settles the gate ladder, or a real arc's gate spend passes its build spend.
+- **Deterministic check: removed or skipped tests** (2026-10-17). A unit whose diff removes a test or adds a skip fails
+  in code unless its spec allows it (a `removes` entry or a clause naming the test). Trigger: a gate catch, role-eval
+  trial or arc where a builder dropped or skipped a test to get green.
+- **Time signals for judges and multi-agent work** (Opus 5.5 guide, 2026-10-17): give a judgment session elapsed time
+  against its deadline, and the skill's fan-out elapsed time against a budget. Trigger: a judgment killed at its deadline
+  with no answer, or a role eval showing a judge spending past its budget on reading it never cites.
+- **Effort xhigh only where measured** (Opus 5.5 guide, 2026-10-17: xhigh where it shows a measured gain). The escalation
+  seats and the checkpoint run summit (xhigh) unmeasured. Trigger: a role eval for the escalation gate or the checkpoint;
+  then compare `--rebind summit=claude-opus-5-5:high` with xhigh and keep xhigh only where it catches more.
+- **Three-state verifier** (CONFIRMED / PLAUSIBLE / REFUTED): a separate, evaluated pass over a judge's findings that
+  tries to refute each. Only if a false-alarm problem is measured: a role eval or arc where blocking findings that are not
+  real cost fix rounds (the 2026-10-17 gate eval saw 0 false alarms in 12 clean trials).
+- **Vacuity lens: "the smallest regression this test would miss"** (BMAD-style): have the vacuity lens name, per test it
+  judges, the smallest change to the code that the test would still pass. Trigger: a lens role eval, or a real arc where a
+  vacuous witness test passed the vacuity lens.
+
 ## Scaffolding to delete
+
+- `gateDiffShownOf`'s absent arm (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a gate's
+  `judgment-inputs` recorded without `diffShown` reads as nothing recorded. With it, `diffShown` becomes required on a
+  gate's (src/core/events.ts).
+- The dev.11 adoption arms of the one judgment repair turn (dev.12), once no arc started on 1.0.0-dev.11 is in flight:
+  `repairTurnOf`'s `--no-session-persistence` arm (src/pipeline/dispatch.ts: a dev.11 gate, lens, pack-review or flow
+  call's unpersisted session takes no repair turn) and the lens loop's recorded-call rule (src/holistic/audit.ts: a
+  recorded dev.11 fresh re-ask of a refused draft is consumed as the repair turn's answer; after a malformed report a
+  call recorded at the next number that is not its repair, `isRepairTurnOf`, is another's). With them, a recorded call at
+  a repair turn's number is always its repair turn.
 
 - `auditDiffBudgetOf`'s absent arm (src/core/upgrade.ts) with `nextChunk`'s unchunked branch (src/holistic/audit.ts),
   once no audit a dev.10 executor started is running: such an audit reads each range in one call. With it,
@@ -337,6 +492,16 @@ at triage stay in git history.
   started on 1.0.0-dev.10 is in flight (every later checkpoint reads the arc's applied answers): a checkpoint `reenter`
   op recorded without `fixes` is adopted as recorded. With it, `fixes` becomes required in `bundleOp`. (`plan.json`'s
   `reenters.fixes` stays optional: re-entries in force before it are lasting records.)
+- `gateUnreviewedDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a dev.11 gate answer
+  has no `unreviewed` and reads as null (unknown). With it, `unreviewed` becomes required in `gateOutput` and
+  `GateUnreviewed[] | null` narrows to the list.
+- `gateLargeDiffOf`'s absent arm and `gateClustersDefault` (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in
+  flight: a dev.11 gate's `judgment-inputs` has no `largeDiff` (read as under the threshold) and its answer no `clusters`
+  (read as null). With them, `largeDiff` becomes required on a gate's `judgment-inputs` and `clusters` a required key in
+  `gateOutput`.
+- `RECORDED_DROP_REASONS`' `elevate-early` (src/flow/types.ts), once no arc started on 1.0.0-dev.11 is in flight: a
+  dev.11 `flow-ended` may record that drop reason, which dev.12 no longer writes. With it, `flowDropped` reads
+  `FLOW_DROP_REASONS` and `checkProposal` returns a plain `FlowDropped`.
 
 - The 1.0.0-dev.7 → M4b default in `src/core/upgrade.ts`, once no arc started on 1.0.0-dev.7 is in flight:
   `dev7ArcRolesDefault` and `arcRolesInForce`'s null arm (src/routing/layers.ts): a routing provenance without
@@ -344,8 +509,11 @@ at triage stay in git history.
   The M4b rev 3 defaults go with it: `spawnPressureOf` (a spawn result without `pressure` reads null) and
   `startPressureOf` (an `executor-started` without `pressure` reads `unavailable`) and `exitCpuOf` (an exit.json without
   `cpu` reads null); the three fields then become required.
-- `readsDeniedOf` (src/core/upgrade.ts), once no gate call an executor before paid M4b run 5's fix closed is unconsumed: a
-  reads.json without `denied` reads as none refused. With it, `denied` becomes required.
+- The `read-denied` outcome (gate and plan-check `STAGE_OUTCOME_KINDS`, its two `retry('read-denied', 'env')` rows in
+  src/pipeline/transitions.ts and their rows in test/transitions.test.ts) and `NeedsUserReason` `read-denied`, once no
+  arc started on 1.0.0-dev.11 is in flight: nothing records them since 1.0.0-dev.12 (the judge's read surface widened to
+  the repository and the run dir; a refused read voids nothing), kept so a dev.11 log whose latest judgment outcome is
+  one still folds and retries.
 - `buildFinalDefault` (src/core/upgrade.ts), once no build an executor before the report rule (2026-10-11) launched is
   unconsumed: a build answer without `final` reads as final. With it, `final` becomes required in `buildOutputFor`.
 - `planCheckScopeGrowthDefault` (src/core/upgrade.ts), once no plan-check call an executor before scope growth
@@ -354,9 +522,12 @@ at triage stay in git history.
 - `laneTestPathsUndeclared` and `witnessFilesUndeclared` (src/core/upgrade.ts) with Phase-0 row 11's undeclared arm
   (src/phase0/rows.ts `witnessDefects`), once no arc started on 1.0.0-dev.10 is in flight: obligations that declare no
   witness files read as undeclared. With them, `testPaths` and `files` become required in the readers.
-- `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) with status's `preDev10RevAlias` and `resolveRoutingUnder`
-  (src/routing/layers.ts), once no arc started on 1.0.0-dev.9 is in flight: the built-in seats before the efficient
-  class took the low-risk judgments (2026-10-15), kept only so `status` joins an earlier executor's recorded routing revs.
+- `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) and its place in `EARLIER_BUILTIN_SEATS`, once no arc started on
+  1.0.0-dev.9 is in flight: the built-in seats before the efficient class took the low-risk judgments (2026-10-15), kept
+  only so `status` joins an earlier executor's recorded routing revs (`earlierRevAliases`, src/status.ts).
+- `PRE_DEV12_BUILTIN_SEATS` (src/core/upgrade.ts) and its place in `EARLIER_BUILTIN_SEATS`, once no arc started on
+  1.0.0-dev.11 is in flight: the built-in seats before the gate risk ladder (dev.10 and dev.11's). With both gone,
+  `EARLIER_BUILTIN_SEATS`, status's `earlierRevAliases` and `resolveRoutingUnder` (src/routing/layers.ts) go too.
 - `lensPatchMutantDefault` (src/core/upgrade.ts) and `LensMutant`'s `kind: patch` arm with `admitMutant`'s `checkPatch`
   branch, once no audit an executor before paid M4b run 3's fix started is running: a recorded lens answer's mutant
   `{patch, lane}` (a hand-written diff) reads as written. With it, a lens mutant is edits only.

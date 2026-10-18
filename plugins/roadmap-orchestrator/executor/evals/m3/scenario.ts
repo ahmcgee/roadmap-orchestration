@@ -32,7 +32,7 @@ import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
 import {
-  INVALID_OP, admitSpecWire, checkpointAnswer, checkpointRepairStep, checkpointStep, flowStep, lensStep, packReviewStep, twoOpBundleSecondInvalid,
+  INVALID_OP, admitSpecWire, checkpointAnswer, jobRepairStep, checkpointStep, flowStep, lensStep, packReviewStep, twoOpBundleSecondInvalid,
 } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
 import { type M1Step, fakeSteps } from '../m1/scenario.ts';
@@ -47,7 +47,7 @@ const planCheck = (reason: string): M1Step => ({
   answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [] },
 });
 const build = (message: string, files: Readonly<Record<string, string>>): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files }] });
-const gate = (reason: string): M1Step => ({ role: 'gate', answer: { decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [] } });
+const gate = (reason: string): M1Step => ({ role: 'gate', answer: { decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], unreviewed: [], clusters: null } });
 
 /** The files of fake build `name` (evals/m3/files/units/<name>/), by repo path. */
 const unitFiles = (name: string): Readonly<Record<string, string>> => filesOf(join(FILES, 'units', name));
@@ -93,7 +93,7 @@ const JOB_STEPS_R: readonly Step[] = [
   lensStep('audit-1', 'invariants'),
   checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
   checkpointStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
-  checkpointRepairStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
+  jobRepairStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
   checkpointStep('ckpt-3', REPAIR_BUNDLE),
   lensStep('audit-2', 'vision'),
   lensStep('audit-3', 'invariants'),

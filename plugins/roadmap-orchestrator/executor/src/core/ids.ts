@@ -153,6 +153,10 @@ export const judgmentSessionId: IdReader<JudgmentSessionId> = textual('JudgmentS
 export type ImplementerSessionId = Brand<string, 'ImplementerSessionId'>;
 export const implementerSessionId: IdReader<ImplementerSessionId> = textual('ImplementerSessionId', UUID, 'lowercase uuid');
 
+/** A Claude session, judgment or implementer, as a usage fact names it (its usage is cumulative over the session). */
+export type ClaudeSessionId = Brand<string, 'ClaudeSessionId'>;
+export const claudeSessionId: IdReader<ClaudeSessionId> = textual('ClaudeSessionId', UUID, 'lowercase uuid');
+
 /** Groups the ops that must not overlap (≤1 open intent per key). Printable, no whitespace. */
 export type OpKey = Brand<string, 'OpKey'>;
 export const opKey: IdReader<OpKey> = textual('OpKey', /^[A-Za-z0-9._:/#@+=-]{1,256}$/, 'printable ASCII without whitespace, 1-256 chars');

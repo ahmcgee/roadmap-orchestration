@@ -9,7 +9,7 @@ import { FLOW_LEVERS, type FlowLever } from '../flow/types.ts';
 import { LENS_KIND_NAMES, type LensKindName, type PauseTarget, type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
-import { type ModelClass, type ProfileName, backend, modelClass, profileName } from '../routing/types.ts';
+import { type BuildClass, type ProfileName, backend, buildClass, profileName } from '../routing/types.ts';
 
 export class CliError extends Error {
   constructor(message: string) {
@@ -63,7 +63,7 @@ export type Command =
   /** M3 (H13): the compensating revision of one divergence. */
   | Readonly<{ command: 'reverse'; divergence: DivergenceId; run: RunLocator }>
   /** M3: an alternate implementer entry for a parked or preparing unit; `class` null keeps its routing. */
-  | Readonly<{ command: 'steer'; unit: UnitId; brief: string; budgetMin: number; class: ModelClass | null; resume: boolean; run: RunLocator }>
+  | Readonly<{ command: 'steer'; unit: UnitId; brief: string; budgetMin: number; class: BuildClass | null; resume: boolean; run: RunLocator }>
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
   /** M3: an audit of these lenses (`--lens a,b`, ascending), or of the arc's lens set (null). */
   | Readonly<{ command: 'audit'; lenses: readonly LensKindName[] | null; run: RunLocator }>
@@ -305,7 +305,7 @@ export function parseCommand(argv: readonly string[]): Command {
       const c = value(p, 'class');
       return {
         command, unit: arg(command, '<unit>', unitId, u), brief, budgetMin: positiveInt(command, '--budget', budget, 'minutes'),
-        class: c === undefined ? null : arg(command, '--class', (v, path) => modelClass(v, path ?? '--class'), c), resume: p.flags.has('resume'), run: locator(p, command),
+        class: c === undefined ? null : arg(command, '--class', (v, path) => buildClass(v, path ?? '--class'), c), resume: p.flags.has('resume'), run: locator(p, command),
       };
     }
     case 'merge-in': {

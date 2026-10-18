@@ -33,7 +33,7 @@ import { runUnit } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { lensStep } from './helpers/holistic.ts';
+import { jobRepairStep, lensAnswer, lensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
@@ -62,6 +62,8 @@ const ended = (r: ArcRun) => factsOf(r).flatMap((f) => (f.kind === 'audit-ended'
 /** The owed triggers, compactly: `drift:<rev>`, `unwitnessed:<I-n>`, or the type. */
 const owed = (c: Cadence | null): readonly string[] => (c?.owed ?? []).map((t) => (t.type === 'drift' ? `drift:${t.planRev}` : t.type === 'unwitnessed' ? `unwitnessed:${t.obligation}` : t.type));
 const lensCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => c.lens !== null);
+/** Every call of audit `job`: its lenses' first calls and their repair turns (whose prompt names no lens). */
+const auditCalls = (r: ArcRun, job = 'audit-1') => readCalls(r.d.scenarioPath).filter((c) => c.unit === job);
 /** Each lens's watermark at the head now, and whether a range is outstanding. */
 function watermarks(ctx: AuditContext, lenses: readonly Lens[]): readonly (readonly [Lens, Sha, boolean])[] {
   const now = head(ctx.repo);
@@ -708,7 +710,7 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
     }
   });
 
-  test('audit.cross-lens-different-cause-separate: drafts differing in cause or in repo evidence paths stay separate findings; a vacuity draft whose mutant cannot be made is refused at admission, recorded, asked once more, and refused again leaves its lens uncovered (findings.mutant-refused)', T, async () => {
+  test('audit.cross-lens-different-cause-separate: drafts differing in cause or in repo evidence paths stay separate findings; a vacuity draft whose mutant cannot be made is refused at admission, recorded, asked once more, and takes the repair turn in its own session; refused again it leaves its lens uncovered (findings.mutant-refused)', T, async () => {
     // The backend's schema admits edits only (a pre-M4b recorded patch is findings.mutant-refused's).
     const nofile = { ...SAME, claim: 'corrupt mutant', mutant: { lane: 'journey', edits: [{ path: 'src/none.js', old: 'a', new: 'b' }] } };
     const absent = { ...SAME, claim: 'corrupt mutant', mutant: { lane: 'journey', edits: [{ path: 'src/add.js', old: 'a * b', new: 'a / b' }] } };
@@ -717,7 +719,7 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
         lensStep('audit-1', 'vision', [{ ...SAME, claim: 'vision' }]),
         lensStep('audit-1', 'invariants', [{ ...SAME, cause: 'mul: overflows past 2^53', claim: 'other cause' }, { ...SAME, evidence: [{ path: 'src/add.js', line: 1 }], claim: 'other path' }]),
         lensStep('audit-1', 'vacuity', [nofile]),
-        lensStep('audit-1', 'vacuity', [absent], [], ['<previous_report>', 'claim: corrupt mutant', 'edit 1 (src/none.js): no regular file']),
+        jobRepairStep('audit-1', lensAnswer([absent]), ['finding "corrupt mutant"', 'edit 1 (src/none.js): no regular file', 'report only the refused ones again']),
       ],
       units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: ['invariants', 'vacuity', 'vision'] },
     });
@@ -731,7 +733,8 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
       const h = r.journal.view.holistic();
       assert.deepEqual(h.findings.map((f) => [f.id, f.lens, f.claim]), [['F-1', 'vision', 'vision'], ['F-2', 'invariants', 'other cause'], ['F-3', 'invariants', 'other path']]);
       assert.deepEqual(h.corroborations, [], 'nothing merged across lenses');
-      assert.deepEqual(lensCalls(r).map((c) => c.lens), ['vision', 'invariants', 'vacuity', 'vacuity'], 'the vacuity lens asked once more, no further');
+      assert.deepEqual(lensCalls(r).map((c) => c.lens), ['vision', 'invariants', 'vacuity']);
+      assert.equal(auditCalls(r).length, 4, 'the vacuity lens\'s repair turn, no further call');
       const [e] = ended(r);
       assert.equal(e!.outcome, 'abandoned', 'the audit is owed again');
       assert.deepEqual(e!.refused?.map((x) => [x.lens, x.attempt, x.claim, x.cause]), [['vacuity', 3, 'corrupt mutant', SAME.cause], ['vacuity', 4, 'corrupt mutant', SAME.cause]], 'each refusal recorded in the log');
@@ -744,14 +747,14 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
     }
   });
 
-  test('audit.refused-mutant-retried: a vacuity draft whose mutant\'s old text is not in the file is refused, and the lens asked again with why; its corrected report is admitted, the mutant kept as a patch git wrote, and the lens covered', T, async () => {
+  test('audit.refused-mutant-repaired: a vacuity draft whose mutant\'s old text is not in the file is refused, and the lens\'s session resumed with why (the repair turn); its corrected report is admitted, the mutant kept as a patch git wrote, and the lens covered', T, async () => {
     const mutant = (old: string) => ({ lane: 'journey', edits: [{ path: 'src/add.js', old, new: 'a - b' }] });
     const other = { ...SAME, cause: 'add: sign of zero', claim: 'admitted first time' };
     const { d } = auditArc({
       steps: [
         lensStep('audit-1', 'vacuity', [{ ...SAME, claim: 'add is vacuous', mutant: mutant('a +  b') }, other]),
-        lensStep('audit-1', 'vacuity', [{ ...SAME, claim: 'add is vacuous', mutant: mutant('a + b') }],
-          [], ['<previous_report>', 'claim: add is vacuous', 'old occurs 0 times', `cause: ${other.cause}`]),
+        jobRepairStep('audit-1', lensAnswer([{ ...SAME, claim: 'add is vacuous', mutant: mutant('a + b') }]),
+          ['finding "add is vacuous"', 'old occurs 0 times', 'the report\'s other findings are recorded']),
       ],
       units: [{ id: 'u1', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']), audit: { every: 5, lenses: ['vacuity'] },
     });
@@ -762,7 +765,9 @@ describe('cross-lens dedupe within one audit (M4a rev 3, H7)', () => {
       const out = await runAudit(ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       assert.deepEqual(out.covered, ['vacuity']);
-      assert.equal(lensCalls(r).length, 2);
+      const [first, repair] = auditCalls(r);
+      assert.equal(auditCalls(r).length, 2);
+      assert.equal(repair!.argv[repair!.argv.indexOf('--resume') + 1], first!.argv[first!.argv.indexOf('--session-id') + 1], 'the repair turn resumes the lens\'s session');
       const h = r.journal.view.holistic();
       assert.deepEqual(h.findings.map((f) => [f.id, f.claim]), [['F-1', 'admitted first time'], ['F-2', 'add is vacuous']]);
       const m = h.findings[1]!.mutant;
@@ -839,11 +844,12 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
     }
   });
 
-  test('audit.oversized-publication-bounded: one publication over the budget is attached bounded (stat, small files inlined, the large one and a derived output listed with their commands), as is an owner\'s branch, and the lens reports', T, async () => {
+  test('audit.oversized-publication-bounded: one publication over the budget is attached bounded (stat, small files inlined, the large one and a derived output listed with their readable diff files), as is an owner\'s branch, and the lens reports', T, async () => {
     const { d } = auditArc({
       steps: [
-        ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/huge.js': bigSource('hugeone', 300_000), 'dist/bundle.js': 'export const bundled = true;\n' }),
-        ...unitSteps('u2', { 'src/ownerbig.js': bigSource('ownerbig', 300_000), 'src/owner.js': 'export const owner = 1;\n' }),
+        // Each unit's diff overflows the gate's budget too: its gate answers with a cluster map covering every changed path.
+        ...unitSteps('u1', { ...moduleFiles('mul', '*'), 'src/huge.js': bigSource('hugeone', 300_000), 'dist/bundle.js': 'export const bundled = true;\n' }, { clusters: [{ id: 'all', paths: ['**'], review: 'close' }] }),
+        ...unitSteps('u2', { 'src/ownerbig.js': bigSource('ownerbig', 300_000), 'src/owner.js': 'export const owner = 1;\n' }, { clusters: [{ id: 'all', paths: ['**'], review: 'close' }] }),
         lensStep('audit-1', 'vision'),
       ],
       units: [{ id: 'u1' }, { id: 'u2' }], ...I1, mapping: [], audit: { lenses: ['vision'] },
@@ -875,10 +881,17 @@ describe('the lens-range fix: chunks by publication, bounded attachments', () =>
       assert.ok(!stdin.includes('hugeone000100') && !stdin.includes('ownerbig000100'), 'neither large file is attached');
       assert.match(stdin, /src\/huge\.js +\| +\d+ \+/, 'the stat names every file of the range');
       assert.match(stdin, /^\+export function mul\(a, b\) \{/m, 'the small files are inlined');
-      assert.ok(stdin.includes(`- src/huge.js (not inlined: over the budget): git diff ${S0} ${S1} -- 'src/huge.js'`));
-      assert.ok(stdin.includes(`- dist/bundle.js (derived output): git diff ${S0} ${S1} -- 'dist/bundle.js'`));
+      // 1.0.0-dev.12: each file not shown is a readable diff file under the call's diff dir, which the call may read.
+      const diffDir = join(d.runDir, 'evidence', 'jobs', 'audit-1', 'diffs', 'lens-1');
+      const addDirs = call!.argv.flatMap((a, i) => (call!.argv[i - 1] === '--add-dir' ? [a] : []));
+      assert.ok(addDirs.some((x) => diffDir === x || diffDir.startsWith(`${x}/`)), addDirs.join(', '));
+      const huge = join(diffDir, 'range', 'files', 'src/huge.js.diff');
+      assert.match(stdin, new RegExp(`- src/huge\\.js \\(new source, over the budget, \\d+ bytes\\): ${huge.replace(/[.]/g, '\\.')}\\n`));
+      assert.equal(readFileSync(huge, 'utf8').trim(), git(d.repo, 'diff', '--no-color', '-M', S0, S1, '--', 'src/huge.js'), 'the readable file is what git diff prints (both trimmed)');
+      assert.ok(stdin.includes(`- dist/bundle.js (derived output, regenerated from sources this diff changes, `) && stdin.includes(join(diffDir, 'range', 'files', 'dist/bundle.js.diff')));
       assert.doesNotMatch(stdin, /^\+export const bundled/m, 'a derived output is never inlined');
-      assert.match(stdin, /- src\/ownerbig\.js \(not inlined: over the budget\): git diff [0-9a-f]{40} [0-9a-f]{40} -- 'src\/ownerbig\.js'/, 'the owner\'s branch is bounded too');
+      assert.ok(stdin.includes(`- src/ownerbig.js (new source, over the budget, `) && stdin.includes(join(diffDir, 'owner-u2', 'files', 'src/ownerbig.js.diff')), 'the owner\'s branch is bounded too');
+      assert.doesNotMatch(stdin, /git diff [0-9a-f]{40}/, 'no git command: a lens has no shell');
       assert.match(stdin, /^\+export const owner = 1;/m);
       assert.deepEqual(watermarks(ctx, ['vision']), [['vision', S1, false]]);
     } finally {

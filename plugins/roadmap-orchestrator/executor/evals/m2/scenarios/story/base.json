@@ -38,7 +38,9 @@
         "reasons": [
           "A1 and A2 hold."
         ],
-        "premises": []
+        "premises": [],
+        "unreviewed": [],
+        "clusters": null
       }
     }
   ]

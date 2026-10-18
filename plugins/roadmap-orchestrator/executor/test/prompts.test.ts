@@ -1,3 +1,6 @@
+// Seat prompts (owner ruling 2026-10-17): these tests check the contract (inputs and data rendered, blocks omitted when
+// their data is absent, the schema, tool-surface facts, invariants such as "the gate never receives the vision"), never
+// method prose: how a seat reads, reports or delegates is the model's, and its wording is free to change.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -13,10 +16,11 @@ import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, planPath, repoPath, repoPattern } from '../src/core/values.ts';
 import { headingSlug, quotedTextReason } from '../src/docs/contracts.ts';
-import { PROMPTS, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
-import { type BoundedDiff, type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
+import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support } from '../src/prompts/index.ts';
+import type { BoundedDiff } from '../src/git/boundeddiff.ts';
+import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
+  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
   validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
 import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
@@ -106,8 +110,42 @@ const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
   };
 };
 
-/** A bounded diff shown whole: its stat, `inlined`, nothing omitted. */
-const shown = (from: Sha, to: Sha, inlined: string): BoundedDiff => ({ from, to, stat: { text: ` 1 file changed\n`, full: true }, inlined, omitted: [], unlisted: 0 });
+/** A bounded diff shown whole: its stat, one file inlined as `text`, nothing else. */
+const shown = (from: Sha, to: Sha, text: string): BoundedDiff => ({
+  from, to, dir: absPath(`/run/diff-${text}`),
+  orientation: {
+    stat: { text: ` 1 file changed\n`, full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false },
+    packages: { shown: [{ name: 'src', files: 1, added: 1, deleted: 0 }], more: 0 }, substitutions: [], explained: 0,
+  },
+  inlined: [{ path: repoPath('src/a.js'), kind: 'modified-source', representation: 'line', full: null }], text, omitted: { shown: [], more: 0 }, notInlined: [], overflow: 0,
+});
+/** A bounded diff with every part of its orientation and a cut listing. */
+const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDiff => {
+  const d = shown(from, to, text);
+  return {
+    ...d,
+    orientation: {
+      stat: { text: `STAT-${text}`, full: false }, moves: { shown: [{ from: repoPath('src/old.js'), to: repoPath('src/new.js') }], more: 3 },
+      deletions: {
+        shown: [
+          { path: repoPath('src/gone.js'), lines: 40, removes: null, diff: absPath(`${d.dir}/files/src/gone.js.diff`) },
+          { path: repoPath('legacy/x.js'), lines: 1, removes: labelled ? 'legacy' : null, diff: absPath(`${d.dir}/files/legacy/x.js.diff`) },
+        ],
+        more: 0, labelled,
+      },
+      packages: { shown: [{ name: 'packages/core', files: 12, added: 300, deleted: 120 }], more: 4 },
+      substitutions: [{ from: 'oldName', to: 'newName', count: 17 }], explained: 9,
+    },
+    omitted: {
+      shown: [
+        { path: repoPath('dist/b.js'), kind: 'derived', why: 'derived', bytes: 900, diff: absPath(`${d.dir}/files/dist/b.js.diff`) },
+        { path: repoPath("src/it's.js"), kind: 'new-source', why: 'size', bytes: 200_000, diff: absPath(`${d.dir}/files/src/it's.js.diff`) },
+      ],
+      more: 2,
+    },
+    notInlined: [repoPath('dist/b.js'), repoPath('legacy/x.js'), repoPath('src/gone.js'), repoPath("src/it's.js")],
+  };
+};
 
 const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] } = {
   planCheck: [
@@ -116,7 +154,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] },
+      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -138,6 +176,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
         rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
       },
+      escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } },
     },
   ],
   build: [
@@ -158,15 +197,16 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', planCheckNotes: '', obligations: [],
-      diff: { base: SHA_A, head: SHA_B, text: 'DIFF-A' },
+      diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
-      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null },
+      evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
+      escalation: null, largeDiff: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, direction: 'DIR-B', planCheckNotes: 'NOTES-B',
       obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)],
-      diff: { base: SHA_B, head: SHA_A, text: 'DIFF-B' },
+      diff: { bounded: partial(SHA_B, SHA_A, 'DIFF-B', true), claims: { acceptance: [clauseId('A1'), clauseId('A2')], witnesses: [witnessItemId('W-1')], obligations: [obligationId('I-2')] } },
       laneLedger: [{ lane: laneId('lint'), argv: ['npx', 'tsc'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/4-1'),
         ignored: { v: 1, written: { files: 42, bytes: 3_250_000 }, captured: { files: 0, bytes: 0 }, uncaptured: [{ dir: '.local/demo/', files: 42, bytes: 3_250_000, reason: 'not-declared' }] },
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
@@ -181,25 +221,27 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
           missing: [{ lane: laneId('journey'), testId: 'WITNESS-B' }], failed: [],
         },
         smoke: { killed: [], survived: [{ lane: laneId('journey'), testId: 'SURVIVOR-B' }], inconclusive: [], notRun: null },
+        regenerated: [],
       },
+      escalation: { kind: 'risk-trigger' },
+      largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') },
     },
   ],
   lens: [
     {
       vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
-      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null, retry: null,
+      target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'), specsOnly: null,
     },
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
         audited: SHA_A,
-        diff: { ...shown(SHA_B, SHA_A, 'RANGE-B'), stat: { text: 'STAT-B', full: false }, omitted: [{ path: 'dist/b.js', why: 'derived' }, { path: "src/it's.js", why: 'size' }], unlisted: 2 },
+        diff: partial(SHA_B, SHA_A, 'RANGE-B', false),
       },
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
       rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       target: { kind: 'digest', digest: doc('docs/digest.md', 'DIGEST-B'), doc: repoPath('docs/arch2.md') }, checkout: absPath('/wt/audit-2'),
       specsOnly: [{ unit: unitId('u-two'), rev: specRev(4), markdown: 'SPECS-ONLY-B' }],
-      retry: { refused: [{ claim: 'RETRY-CLAIM-B', cause: 'RETRY-CAUSE-B', reason: 'RETRY-REASON-B' }], recorded: [{ claim: 'RECORDED-CLAIM-B', cause: 'RECORDED-CAUSE-B' }] },
     },
   ],
   checkpoint: [
@@ -277,7 +319,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [],
+    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [], unreviewed: [], clusters: null,
   },
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
@@ -391,16 +433,33 @@ describe('prompts', () => {
       const s = PROMPTS[role][model];
       if (s.type === 'inherits') assert.equal(PROMPTS[role][s.from].type, 'prompt', `${role}/${model}: inherits a real module`);
     }
-    // Sonnet 5.5 judges on the efficient class (2026-10-15): every judgment role reads a Claude module, reviewed for it.
+    // W3: every judgment role has one written module, Opus's. Sonnet 5.5 (efficient, 2026-10-15) reads it with the think-first
+    // line ending its system prompt (the Sonnet 5.5 guide, reasoning tasks with JSON output); Fable inherits it unchanged.
     for (const role of ROLES.filter((r) => r !== 'build')) {
+      const opus = promptFor(role, 'claude-opus-5-5');
+      assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt', role);
       const s = PROMPTS[role]['claude-sonnet-5-5'];
-      assert.ok(s.type === 'inherits' && s.reviewed.startsWith('2026-10-15: Sonnet 5.5 migration guidance'), `${role}/sonnet: ${JSON.stringify(s)}`);
-      assert.equal(promptFor(role, 'claude-sonnet-5-5'), promptFor(role, s.from));
+      assert.ok(s.type === 'prompt', `${role}/sonnet: a module of its own`);
+      assert.equal(s.prompt.system, `${opus.system}\n\n${SONNET_THINK_FIRST}`, `${role}/sonnet: the Opus system prompt, then the line`);
+      assert.equal(s.prompt.render, opus.render, `${role}/sonnet: the Opus message`);
+      assert.equal(s.prompt.schema, opus.schema, role);
+      const fable = PROMPTS[role]['claude-fable-5-1'];
+      assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5', `${role}/fable: inherits Opus`);
     }
+    assert.equal(promptFor('build', 'claude-sonnet-5-5'), promptFor('build', 'claude-opus-5-5'), 'the Sonnet build reads the Opus brief unchanged');
+  });
+
+  it('prompts.haiku: every judgment role resolves a prompt for Haiku 5.5 (economy, 1.0.0-dev.12) with the role\'s schema; no Haiku build prompt', () => {
+    for (const role of ROLES.filter((r) => r !== 'build')) {
+      const s = PROMPTS[role]['claude-haiku-5-5'];
+      assert.ok(s.type === 'prompt', `${role}/haiku: a module of its own`);
+      assert.equal(s.prompt.schema, ROLE_SCHEMAS[role], role);
+    }
+    assert.throws(() => promptFor('build', 'claude-haiku-5-5'), (e: unknown) => e instanceof UnsupportedPromptError && /economy, is judgment-only/.test(e.message));
   });
 
   it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => {
-    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5'] as const) {
       const sys = promptFor(role, model).system;
       assert.match(sys, /fresh session/, `${role}/${model}`);
       assert.match(sys, /C-nn/, `${role}/${model}`);
@@ -408,11 +467,11 @@ describe('prompts', () => {
     }
   });
 
-  it('build prompts cover fast lanes, decisions.json, .roadmap/, estate lanes and stopping', () => {
+  it('build prompts cover fast lanes, decisions.json, .roadmap/ and estate lanes', () => {
     for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) {
       const mod = promptFor('build', model);
       const sys = mod.system;
-      for (const needle of [/fast lane/, /decisions\.json/, /\.roadmap\//, /[Ee]state lanes/, /Committing is optional/, /[Ss]top/]) {
+      for (const needle of [/fast lane/, /decisions\.json/, /\.roadmap\//, /[Ee]state lanes/, /Committing is optional/]) {
         assert.match(sys, needle, `build/${model}: ${needle}`);
       }
       assert.doesNotMatch(sys, /decisionsRecorded/, `build/${model}: decisions go only to decisions.json`);
@@ -427,12 +486,10 @@ describe('prompts', () => {
     for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) assert.ok(promptFor('build', model).system.includes(UNIT_POLICY), `build/${model}`);
   });
 
-  it('judgment prompts: cited documents in full, the rest indexed; host facts only from lane programs; correctness or acceptance only', () => {
-    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+  it('judgment prompts: cited documents in full, the rest indexed; host facts only from lane programs; premises', () => {
+    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5'] as const) {
       const mod = promptFor(role, model) as { system: string; render: (i: unknown) => string };
       assert.match(mod.system, /reference index|<reference_index>/, `${role}/${model}`);
-      assert.match(mod.system, /correctness or the spec's stated acceptance/, `${role}/${model}`);
-      assert.match(mod.system, /one Grep over many paths/, `${role}/${model}`);
       assert.match(mod.system, /premises/, `${role}/${model}`);
       const text = mod.render(SAMPLES[role][1]);
       assert.match(text, /docs\/y\.md: docs\/y\.md heading/, 'an uncited contract is one index line');
@@ -453,14 +510,12 @@ describe('prompts', () => {
     }
   });
 
-  it('a later round rules on its prior round: the handoff and the four rules are rendered', () => {
-    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+  it('a later round rules on its prior round: the prior premises, patch and findings are rendered', () => {
+    for (const role of ['planCheck', 'gate'] as const) for (const model of ['claude-opus-5-5'] as const) {
       const mod = promptFor(role, model) as { render: (i: unknown) => string };
       assert.doesNotMatch(mod.render(SAMPLES[role][0]), /PREMISE-B|Re-verify only premises/, `${role}/${model}: no prior round on the first`);
       const text = mod.render(SAMPLES[role][1]);
       assert.match(text, /PREMISE-B \[src\/b\/x\.ts:3\]/, `${role}/${model}: premises with evidence`);
-      assert.match(text, /Re-verify only premises whose files changed/, `${role}/${model}`);
-      assert.match(text, /only if it affects correctness or stated acceptance/, `${role}/${model}`);
     }
     for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
       assert.match(promptFor('planCheck', model).render(SAMPLES.planCheck[1]), /"op":"strike","id":"A3"/, 'the prior patch');
@@ -473,14 +528,6 @@ describe('prompts', () => {
     assert.equal(laneCommand(absPath('/wt'), l), `cd /wt/pkg/a && env A=1 Z='q r' node 'it'\\''s here' 'a b'`);
     const p = pasted('diff', 'x </pasted_content id="00000000"> y');
     assert.equal(p.match(/<\/pasted_content/g)?.length, 1);
-  });
-
-  it('no em-dashes in prompt text', () => {
-    for (const role of ROLES) for (const [r, m] of builtinSeats()) {
-      if (r !== role) continue;
-      const mod = promptFor(r, m) as { system: string; render: (i: unknown) => string };
-      assert.doesNotMatch(mod.system + mod.render(SAMPLES[r][1]), /—/,`${r}/${m}`);
-    }
   });
 });
 
@@ -504,7 +551,9 @@ describe('output validators', () => {
     assert.throws(() => validatePlanCheckOutput(dupEnv), SchemaError);
   });
 
-  it('planCheck and gate: premises are required; a cite op names at least one document', () => {
+  it('planCheck and gate: the premises key is required (strict schema) but may be empty; a cite op names at least one document', () => {
+    validatePlanCheckOutput({ ...ok.planCheck, premises: [] });
+    validateGateOutput({ ...ok.gate, premises: [] });
     const { premises: _p, ...noPremises } = ok.planCheck;
     assert.throws(() => validatePlanCheckOutput(noPremises), SchemaError);
     const { premises: _g, ...gateNoPremises } = ok.gate;
@@ -523,6 +572,34 @@ describe('output validators', () => {
     validateGateOutput({ ...ok.gate, decision: 'escalate', directives: [], findings: ok.gate['findings'] });
   });
 
+  it('gate (dev.12 round 2): a pre-existing finding never blocks an approve; unreviewed is recorded as given, and a dev.11 answer without it reads as unknown (null)', () => {
+    const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
+    const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
+    const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
+    assert.deepEqual(out.findings, pre);
+    assert.deepEqual(out.unreviewed, unreviewed);
+    const { unreviewed: _u, ...dev11 } = ok.gate;
+    assert.equal(validateGateOutput(dev11).unreviewed, null);
+    assert.throws(() => validateGateOutput({ ...ok.gate, unreviewed: [{ path: 'a' }] }), SchemaError);
+    assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...pre[0], severity: 'minor' }] }), SchemaError);
+    const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
+    assert.ok(schema.required.includes('unreviewed'), 'a live gate answers it');
+  });
+
+  it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters reads as none (null)', () => {
+    const clusters = [{ id: 'sweep', paths: ['packages/*/src/**'], review: 'description' }, { id: 'core', paths: ['packages/core/index.ts'], review: 'close' }];
+    assert.deepEqual(validateGateOutput({ ...ok.gate, clusters }).clusters, clusters);
+    assert.equal(validateGateOutput({ ...ok.gate, clusters: null }).clusters, null);
+    const { clusters: _c, ...dev11 } = ok.gate;
+    assert.equal(validateGateOutput(dev11).clusters, null);
+    for (const bad of [
+      [], [{ id: 'a', paths: [], review: 'routine' }], [{ id: 'a', paths: ['x'], review: 'opus' }], [{ id: 'a', paths: ['/abs'], review: 'routine' }],
+      [{ id: 'a', paths: ['x'], review: 'routine' }, { id: 'a', paths: ['y'], review: 'close' }], [{ id: '', paths: ['x'], review: 'routine' }],
+    ]) assert.throws(() => validateGateOutput({ ...ok.gate, clusters: bad }), SchemaError, JSON.stringify(bad));
+    const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
+    assert.ok(schema.required.includes('clusters'), 'a live gate answers it (null under the threshold)');
+  });
+
   it('build and decisions.json: ids checked, unknown keys refused', () => {
     validateBuildOutput(ok.build);
     assert.throws(() => validateBuildOutput({ ...ok.build, extra: 1 }), SchemaError);
@@ -538,13 +615,12 @@ describe('M3 prompts: the vision and the arc roles', () => {
   /** Every Claude model: Opus and Fable have written modules, Sonnet reads them (owner ruling 2026-10-15, efficient judgment). */
   const ARC_MODELS = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'] as const;
 
-  it('the arc roles are supported on every Claude model: lens/Opus and checkpoint/Fable written, the others inherit; Codex unsupported', () => {
-    assert.equal(PROMPTS.lens['claude-opus-5-5'].type, 'prompt');
-    assert.equal(PROMPTS.checkpoint['claude-fable-5-1'].type, 'prompt');
-    assert.equal(promptFor('lens', 'claude-fable-5-1'), promptFor('lens', 'claude-opus-5-5'));
-    assert.equal(promptFor('lens', 'claude-sonnet-5-5'), promptFor('lens', 'claude-opus-5-5'));
-    assert.equal(promptFor('checkpoint', 'claude-opus-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
-    assert.equal(promptFor('checkpoint', 'claude-sonnet-5-5'), promptFor('checkpoint', 'claude-fable-5-1'));
+  it('the arc roles are supported on every Claude model: lens/Opus and checkpoint/Opus written, Fable inherits, Sonnet adds its line; Codex unsupported', () => {
+    for (const role of ['lens', 'checkpoint'] as const) {
+      assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt');
+      assert.equal(promptFor(role, 'claude-fable-5-1'), promptFor(role, 'claude-opus-5-5'));
+      assert.equal(promptFor(role, 'claude-sonnet-5-5').system, `${promptFor(role, 'claude-opus-5-5').system}\n\n${SONNET_THINK_FIRST}`);
+    }
     for (const role of ['lens', 'checkpoint'] as const) {
       for (const model of ['gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.throws(() => promptFor(role, model), UnsupportedPromptError);
       for (const model of ARC_MODELS) {
@@ -585,7 +661,7 @@ describe('M3 prompts: the vision and the arc roles', () => {
       questions: [q, { ...q, id: questionId('Q-2'), text: 'CLOSED', state: 'closed' as const }],
       advances: [visionClauseId('V-1'), visionClauseId('V-4')],
     };
-    const text = promptFor('checkpoint', 'claude-fable-5-1').render({ ...SAMPLES.checkpoint[0], vision: v });
+    const text = promptFor('checkpoint', 'claude-opus-5-5').render({ ...SAMPLES.checkpoint[0], vision: v });
     assert.match(text, /<vision>\nVision revision 3\nV-4 \(world\): W\nV-1 \(purpose\): P\n/);
     assert.match(text, /V-2 \(tradeoff, rank 1\): T/);
     assert.match(text, /V-3 \(good, WITHDRAWN: never cite it\): G/);
@@ -594,19 +670,19 @@ describe('M3 prompts: the vision and the arc roles', () => {
   });
 
   it('the checkpoint conveys OR-V: steer to the vision, cite V-n plus evidence per op, optimistic interpretations, owner-only acts only as requests', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     for (const needle of [
       /not toward the original plan/, /most optimistic reading/, /interpretations/, /cites the active V-n clauses that demand it/, /evidence/,
       /amend its statement or anchor, re-anchor it, split it and drop part of its text, retire, waive or defer it/, /amend the implementation contracts/,
       /irreversible or destructive/, /more than \$10/, /legal ramifications/, /may only request it/, /lane program the plan in force does not already run/,
-      /new environment prerequisite/, /outside the plan's contracts and architecture docs/, /never cited/, /no-op is legitimate/,
-      /[Nn]obody can answer a question/, /not a transcript of your reasoning/,
+      /new environment prerequisite/, /outside the plan's contracts and architecture docs/, /never cited/,
+      /[Nn]obody can answer a question/,
       /Splitting a must-hold obligation \(a latched one included\) keeps every child that restates it must-hold/,
     ]) assert.match(sys, needle);
   });
 
   it('the checkpoint lists the ruling sidecar\'s required schema value and every closed enum from the reader\'s constants (paid m3 run 7: invalid rulings twice)', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     assert.ok(sys.includes(`- schema: "${RULING_SCHEMA}".`), 'the schema value');
     for (const [field, values] of [['kind', RULING_KINDS], ['relation', DOC_RELATIONS], ['disposition', OBLIGATION_DISPOSITIONS], ['lifetime', RULING_LIFETIMES]] as const) {
       assert.ok([`${field}: one of`, `${field} one of`].some((f) => sys.includes(`${f} ${values.map((v) => `"${v}"`).join(', ')}`)), field);
@@ -615,12 +691,12 @@ describe('M3 prompts: the vision and the arc roles', () => {
   });
 
   it('the checkpoint never accepts or defers a P1: dismissed, or left to the repair that names it (paid m3 run 9)', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     assert.ok(sys.includes('A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
   });
 
   it('the checkpoint states anchors as anchorSection reads them: #<heading-slug> or literal text on exactly one line (paid m3 run 9)', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     assert.match(sys, /An anchor \(in docRefs and contractOps\) is #<heading-slug> for a section, .*\(## Money is #money\).*; otherwise it is literal text found on exactly one line/);
     const doc = '# Contract\n\n## Money\n\nformatAmount renders two decimals.\n\n## Other\n\nmoney elsewhere\n';
     assert.equal(headingSlug('Money'), 'money', 'the example is the slug code computes');
@@ -646,36 +722,50 @@ describe('M3 prompts: the vision and the arc roles', () => {
     }
     assert.equal(briefs.size, LENS_KINDS.length);
     assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vision' }), /P2 or P3, never P1/);
-    // M4b: the mutant is exact replacements, never a hand-written diff; a retry names each refused draft and why.
+    // M4b: the mutant is exact replacements, never a hand-written diff (a refused draft goes to the repair turn, dev.12).
     assert.match(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /edits, one or more exact replacements[\s\S]*occurs exactly once/);
-    assert.doesNotMatch(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff|<previous_report>/);
-    assert.match(mod.render(SAMPLES.lens[1]), /<previous_report>[\s\S]*claim: RETRY-CLAIM-B\n  cause: RETRY-CAUSE-B\n  refused: RETRY-REASON-B[\s\S]*claim: RECORDED-CLAIM-B\n  cause: RECORDED-CAUSE-B[\s\S]*<\/previous_report>/);
+    assert.doesNotMatch(mod.render({ ...SAMPLES.lens[0], lens: 'vacuity' }), /unified diff/);
   });
 
-  it('the lens keeps the anti-spiral rules: the finding bar, prior findings not repeated, no reasoning field, nobody will answer', () => {
+  it('the lens: prior findings not repeated, no reasoning field, nobody will answer', () => {
     const sys = promptFor('lens', 'claude-opus-5-5').system;
-    for (const needle of [/Under-reporting a real defect and over-reporting a non-defect are both failures/, /An empty report is legitimate/, /Do not report one again/,
-      /Nobody will answer a question/, /not a transcript of your reasoning/, /At most 8 findings, worst first/]) assert.match(sys, needle);
+    for (const needle of [/Do not report one again/, /Nobody will answer a question/]) assert.match(sys, needle);
     for (const schema of [ROLE_SCHEMAS.lens, ROLE_SCHEMAS.checkpoint]) assert.doesNotMatch(JSON.stringify(schema), /reasoning/);
     const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
     assert.match(text, /F-1 \[P1, invariants, open\] I-1: FINDING-B/, 'prior findings with their states');
-    assert.match(text, /Unit u-two at b{40} \(its diff from a{40}\):\n<pasted_content/, 'owner branches marked as pasted data');
+    assert.match(text, /Unit u-two at b{40} \(its diff from a{40}\):\n<orientation>[\s\S]*?<\/orientation>\n<diff>\n[^\n]*\n<pasted_content/, 'owner branches marked as pasted data');
   });
 
-  it('the lens-range fix: a bounded range names its chunk and the audited SHA, lists each file not shown with the command that prints it, and the lens reads them before it reports', () => {
+  it('the bounded diff: a range names its chunk and the audited SHA, orients the reader, and lists each file not shown with the readable file holding its diff', () => {
     const mod = promptFor('lens', 'claude-opus-5-5');
     const text = mod.render(SAMPLES.lens[1]);
     const [a, b] = [SHA_A, SHA_B];
+    const dir = '/run/diff-RANGE-B';
     assert.ok(text.includes(`<audited_range from="${b}" to="${a}" audited="${a}">`));
-    assert.match(text, /<pasted_content id="[0-9a-f]{8}">\nSTAT-B\nRANGE-B\n<\/pasted_content/, 'the stat, then the inlined diffs, as pasted data');
-    assert.ok(text.includes(`The full stat is too long to attach; \`git diff --stat ${b} ${a}\` prints it.`));
-    assert.ok(text.includes(`- dist/b.js (derived output): git diff ${b} ${a} -- 'dist/b.js'`));
-    assert.ok(text.includes(`- src/it's.js (not inlined: over the budget): git diff ${b} ${a} -- 'src/it'\\''s.js'`), 'the path quoted as one shell word');
-    assert.ok(text.includes(`- 2 more files not inlined, not listed here: \`git diff --name-only ${b} ${a}\``));
-    assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat/, 'a range shown whole lists nothing');
-    for (const needle of [/Every file under <not_inlined> is part of the range and was not shown to you/, /read each one with the command beside it/,
-      /the executor records the whole range as reviewed by your lens, so your report is your statement that you read every part of it/,
-      /Never judge a file from its name or its stat line alone/, /split by publication/, /The same applies to <owner_branches>/]) assert.match(mod.system, needle);
+    assert.ok(text.includes(`<orientation>\nDiff ${b}..${a}. Files named below are readable with Read.\nStat (summary; the full stat is in ${dir}/stat.txt):\nSTAT-RANGE-B\n`));
+    assert.ok(text.includes(`Moved or renamed without content change (no diff below): 4\n- src/old.js → src/new.js\n- and 3 more, all listed in ${dir}/moves.txt\n`));
+    assert.ok(text.includes(`Deleted (no diff below; each file holds the whole deleted content): 2\n- src/gone.js (40 lines): ${dir}/files/src/gone.js.diff\n- legacy/x.js (1 line): ${dir}/files/legacy/x.js.diff\n`), 'a lens has no spec: deletions unlabelled');
+    assert.ok(text.includes(`- packages/core: 12 files; +300 -120\n- and 4 more packages\n`));
+    assert.ok(text.includes(`(removed → added, times; where to look, not a verification):\n- oldName → newName ×17\n- 9 changed files with every changed line explained by these substitutions (a pointer; each is still part of the diff to judge)\n</orientation>`), 'a lens orientation claims nothing');
+    assert.match(text, /<diff>\nPer-file diffs with one line of context[^\n]*\n<pasted_content id="[0-9a-f]{8}">\nRANGE-B\n<\/pasted_content id="[0-9a-f]{8}">\n<\/diff>/, 'the inlined diffs, as pasted data');
+    assert.ok(text.includes(`<not_inlined>\nFiles with changed content not shown above; each file named holds its whole diff.\n- dist/b.js (derived output, regenerated from sources this diff changes, 900 bytes): ${dir}/files/dist/b.js.diff\n- src/it's.js (new source, over the budget, 200000 bytes): ${dir}/files/src/it's.js.diff\n- and 2 more, all listed in ${dir}/not-inlined.txt\n</not_inlined>`));
+    assert.doesNotMatch(text, /git diff/, 'no git command: a judgment has no shell');
+    assert.doesNotMatch(mod.render(SAMPLES.lens[0]), /<not_inlined>|full stat|Moved|Deleted/, 'a range shown whole lists nothing');
+    // W3: the bounded diff's three parts as the system text describes them, and what the executor records.
+    for (const needle of [/<orientation> is a map of the whole range/, /it is not a verdict on any file/, /the absolute path of a readable \.diff file/,
+      /it names the file that lists them all/, /the executor records the whole range as reviewed by your lens/, /split by publication/]) assert.match(mod.system, needle);
+    assert.doesNotMatch(mod.system, /git diff|command beside it/);
+  });
+
+  it('the bounded gate diff: deletions labelled against the spec removes, unexpected first as given, and what the unit claims as id pointers', () => {
+    for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+      const text = promptFor('gate', model).render(SAMPLES.gate[1]);
+      const dir = '/run/diff-DIFF-B';
+      assert.ok(text.includes(`Deleted (no diff below; each file holds the whole deleted content): 2, those not in the spec's removes first\n- src/gone.js (40 lines, not in the spec's removes): ${dir}/files/src/gone.js.diff\n- legacy/x.js (1 line, matches removes "legacy"): ${dir}/files/legacy/x.js.diff\n`), model);
+      assert.ok(text.includes('Claimed by the unit (stated in full above): acceptance A1, A2; witness items W-1; obligations I-2\n</orientation>'), model);
+      assert.ok(text.includes(`Diff ${SHA_A}..${SHA_B}.`) === false && text.includes(`Diff ${SHA_B}..${SHA_A}.`), model);
+      assert.match(promptFor('gate', model).render(SAMPLES.gate[0]), /acceptance A1; witness items none; obligations none/, model);
+    }
   });
 
   it('plan-check (R17): the vision as read-only context, and visionConflict never a redirect by itself', () => {
@@ -741,8 +831,8 @@ describe('M3 prompts: the vision and the arc roles', () => {
 });
 
 describe('M4a prompts: the corpus target, checkpoint intake, the pack review, unattended builds', () => {
-  const JUDGMENTS = [['planCheck', 'claude-opus-5-5'], ['planCheck', 'claude-fable-5-1'], ['gate', 'claude-opus-5-5'], ['gate', 'claude-fable-5-1'],
-    ['lens', 'claude-opus-5-5'], ['checkpoint', 'claude-fable-5-1']] as const;
+  const JUDGMENTS = [['planCheck', 'claude-opus-5-5'], ['gate', 'claude-opus-5-5'],
+    ['lens', 'claude-opus-5-5'], ['checkpoint', 'claude-opus-5-5']] as const;
 
   it('corpus target: the rules index by file and section, the read-only corpus dir, the vision doc only where the role reads it', () => {
     const doc = targetDocument(corpusTarget('/run/corpus/0123abcd', 'docs/vision.md'));
@@ -778,7 +868,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
   });
 
   it('checkpoint issues: trusted data in <pasted_content> under their issue ids, acted on like evidence; an unavailable capture says why', () => {
-    const mod = promptFor('checkpoint', 'claude-fable-5-1');
+    const mod = promptFor('checkpoint', 'claude-opus-5-5');
     const text = mod.render({ ...SAMPLES.checkpoint[1], issuesUnchangedSince: null });
     assert.match(text, /<issues>\nissue-7 \[roadmap:bug\], title "Title 7":\n<pasted_content id="issue-7">\nISSUE-B\n<\/pasted_content id="issue-7">\nComment issue-7\/c-3 \(OWNER\):\n<pasted_content id="issue-7\/c-3">\nISSUE-B comment\n<\/pasted_content id="issue-7\/c-3">\n<\/issues>/);
     assert.match(mod.render(SAMPLES.checkpoint[0]), /<issues>\n\(no open roadmap:bug or roadmap:feedback issues\)\n<\/issues>/);
@@ -811,7 +901,7 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.throws(() => validateCheckpointOutput(dev6), SchemaError, 'a dev.6 answer without amendments and intake is not adopted since 1.0.0-dev.8');
   });
 
-  it('the pack review is the ported Phase-0 review brief: read-only, the hunt in order, capped, an empty report legitimate, the architect adjudicates', () => {
+  it('the pack review is the ported Phase-0 review brief: read-only, the architect adjudicates', () => {
     assert.equal(PROMPTS.packReview['claude-opus-5-5'].type, 'prompt');
     const fable = PROMPTS.packReview['claude-fable-5-1'];
     assert.ok(fable.type === 'inherits' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/.test(fable.reviewed));
@@ -819,8 +909,6 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     for (const needle of [
       /before its first unit is admitted/, /You change nothing/, /adjudicates it/, /holds the arc's first admission/, /Nobody will answer a question/, /fresh session/,
       /Read-only: write no code, create no files, make no commit and edit nothing/, /Judge the pack as drafted/, /Never answer an open question yourself/,
-      /1\. Contradictions[^]*2\. Units that cannot be built[^]*3\. Cuts[^]*4\. Lanes and obligations[^]*5\. The census and the slice[^]*6\. The Phase-0 record/,
-      /At most 12 findings, worst first/, /An empty report is legitimate/, /not a transcript of your reasoning/,
     ]) assert.match(mod.system, needle);
     const text = mod.render(SAMPLES.packReview[1]);
     assert.ok(text.startsWith('<vision>\nVision revision 2\n'), 'the vision first');
@@ -832,17 +920,15 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.deepEqual(out.findings[0]?.target, { type: 'census', rule: 'T-1' });
   });
 
-  it('the flow prompt: the five focusing steps, no tampering, T/I/OE diagnostic only, the ruler out of reach, one proposal, the lever shapes', () => {
+  it('the flow prompt: the ruler out of reach, one proposal, the lever shapes', () => {
     const fable = PROMPTS.flow['claude-fable-5-1'];
     assert.ok(fable.type === 'inherits' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/.test(fable.reviewed));
     const mod = promptFor('flow', 'claude-opus-5-5');
     for (const needle of [
       /You change nothing/, /Nobody will answer a question/, /propose at most one change to one lever/,
-      /1\. Identify the constraint[^]*2\. Exploit the constraint[^]*3\. Subordinate everything else[^]*4\. Elevate the constraint only after[^]*5\. Then the constraint moves/,
-      /common-cause variation: noise, not a signal, and a change made to answer it is tampering/, /diagnostics only, never a goal/,
-      /The ruler is out of reach/, /you must not argue around them/, /Prefer exploit and subordinate before elevate/,
+      /The ruler is out of reach/, /you must not argue around them/,
       /may change only the value of one --test-concurrency=<n> element, in place/, /The lane's cpu must cover its concurrency/,
-      /never held, never wait:finding/, /Exactly one of proposal and noAction/,
+      /whose target is held or wait:finding/, /Exactly one of proposal and noAction/,
     ]) assert.match(mod.system, needle);
     const a = mod.render(SAMPLES.flow[0]);
     assert.match(a, /No chart yet/);
@@ -856,11 +942,10 @@ describe('M4a prompts: the corpus target, checkpoint intake, the pack review, un
     assert.match(b, /Diagnostic only, never a goal\. Obligations first held per hour: 0\.50 serving the advanced clauses/);
   });
 
-  it('build/Opus carries the unattended standing instruction (Opus 5.5 guide): nobody answers mid-task; decide, record in decisions.json, keep going', () => {
+  it('build/Opus states the unattended setting: nobody answers mid-task; decisions go to decisions.json', () => {
     const sys = promptFor('build', 'claude-opus-5-5').system;
     for (const needle of [
-      /You are operating autonomously\. Nobody is watching in real time and nobody can answer a question mid-task/, /record it in decisions\.json/, /keep going/,
-      /proceed without asking/, /check your last paragraph/, /do that work now with tool calls/,
+      /You are operating autonomously\. Nobody is watching in real time and nobody can answer a question mid-task/, /record it in decisions\.json/,
     ]) assert.match(sys, needle);
     assert.equal(promptFor('build', 'claude-sonnet-5-5'), promptFor('build', 'claude-opus-5-5'));
     const sonnet = PROMPTS.build['claude-sonnet-5-5'];
@@ -997,8 +1082,23 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       assert.doesNotMatch(mod.render(SAMPLES.gate[0]), /executable_checks/, `${model}: no block when neither check applied`);
       const text = mod.render(SAMPLES.gate[1]);
       assert.match(text, /<executable_checks>\nWitness presence: 1 required witness test on the arc lanes at this head\.\n- missing \(absent, skipped, selected zero times, or a malformed record\): journey WITNESS-B \(W-1, target\)\n- failing: none\nMutation smoke \(the unit's production change reverted, its test files kept, the target witness tests run again\):\n- killed: none\n- survived: journey SURVIVOR-B\n- inconclusive: none\n<\/executable_checks>/, model);
-      const notRun = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: { killed: [], survived: [], inconclusive: [], notRun: 'no-test-paths' } } });
+      const notRun = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: { killed: [], survived: [], inconclusive: [], notRun: 'no-test-paths' }, regenerated: [] } });
       assert.match(notRun, /<executable_checks>\nMutation smoke did not run: a target lane declares no testPaths, so its test files cannot be told from production code\.\n<\/executable_checks>/);
+      // dev.12: the regenerate checks, one line per derived entry the diff touches, in each state.
+      const gen = ['node', 'tools/gen.ts'];
+      const regenerated = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: null, regenerated: [
+        { state: 'verified', outputs: [repoPattern('goldens/**')], argv: gen },
+        { state: 'differs', outputs: [repoPattern('dist/a.js')], argv: gen, evidenceDir: absPath('/run/ev/regen') },
+        { state: 'not-run', outputs: [repoPattern('dist/b.js')], argv: gen },
+        { state: 'no-generator', outputs: [repoPattern('docs/api.md')] },
+      ] } });
+      assert.match(regenerated, new RegExp([
+        '<executable_checks>', 'Regenerated outputs this diff touches \\(plan `derived` entries\\):',
+        '- goldens/\\*\\*: verified by regeneration\\. The executor ran \\["node","tools/gen\\.ts"\\] in a clean checkout of this head and every output came out byte-identical to the commit[^\\n]*',
+        '- dist/a\\.js: NOT verified\\. [^\\n]*the differences are in /run/ev/regen\\.',
+        '- dist/b\\.js: not verified\\. The plan declares \\["node","tools/gen\\.ts"\\] as their generator, but it did not run at this head\\.',
+        '- docs/api\\.md: not verified\\. The plan declares no generator for them[^\\n]*', '</executable_checks>',
+      ].join('\\n')), model);
       for (const needle of [/A killed test failed without the change/, /A survived test passed without it/, /unless the behaviour it checks existed before this unit/,
         /An inconclusive result proves nothing either way/, /a required test still missing or failing is a blocking finding/, /marks reused/,
         /real clock or the host time zone/, /fixed date the change makes invalid/, /real wait in a fast lane/, /calls a helper instead of driving the real entry point/,
@@ -1010,14 +1110,14 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
   });
 
   it('prompts.checkpoint-failure-matrix: a matrix of each step against process death before admitting an ordering repair, prior repairs of the transaction carried in, put in the spec', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     for (const needle of [/# Transaction repairs/, /reorders the steps of a transaction \(staging, a ledger or file save, a publication, a rollback\)/, /write its failure matrix/,
-      /process dies just before the step, just after it, and when the step itself fails/, /Read the earlier repairs of the same transaction first/,
+      /process dies just before the step, just after it, and when the step itself fails/,
       /Put the matrix in the repair's spec as a facts item/]) assert.match(sys, needle);
   });
 
   it('checkpoint admits (OR-A1, LR-k, LR-m, R35): code classifies from declared targets; honest citation; one opportunity, one follow-up; the rest converts to amendments', () => {
-    const sys = promptFor('checkpoint', 'claude-fable-5-1').system;
+    const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
     for (const needle of [/# Admits in a corpus arc/, /Code classifies every admit after you decide/, /you do not label it/, /- repair: /, /- oversight: /, /- opportunity: /,
       /budget of one opportunity/, /at most one follow-up/, /Honest citation: an admit that targets an out-of-slice rule cites the clause outside the slice that the rule advances/,
       /targets lists the corpus rules \(T-n\) the unit adds or changes behaviour for/, /A finding's vision clauses are context, not scope/, /Every target must be an active rule of the pin/,
@@ -1029,7 +1129,7 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
   });
 
   it('checkpoint inputs (H4, H5, C3, C6): the manifest, never live roadmap-inputs; every spec with its held ids; add vs replace; the next ruling id; the evidence note; the diagnosis right after a park trigger; unchanged issues', () => {
-    const mod = promptFor('checkpoint', 'claude-fable-5-1');
+    const mod = promptFor('checkpoint', 'claude-opus-5-5');
     for (const needle of [/Read a captured input only through its manifest path\. Never read roadmap-inputs/, /add needs an id the spec does not hold, and replace an id it holds/,
       /takes the id in <next_ruling_id>, and each further one the next number \(C-9, then C-10\), written without leading zeros/,
       /The head may advance while you decide: an observation stays valid when the head's run keeps every cited test's outcome and selection; cite the observations your ops rest on\./,
@@ -1089,5 +1189,64 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     assert.match(s[2]!, /already existed before this unit, leave that test as it is/);
     assert.throws(() => smokeFixDirectives([], required), /names a surviving test/);
     assert.match(repeatRedDirective(laneId('unit'), { attempt: 2 }), /^Lane unit failed exactly as it did in attempt 2: .* deterministic, not flaky/);
+  });
+});
+
+describe('W3 seat prompts (2026-10-16)', () => {
+  it('prompts.delegation: the Codex build brief, which has no Agent tool, names none', () => {
+    assert.doesNotMatch(promptFor('build', 'gpt-5.6-luna').system, /Agent tool|subagent/);
+  });
+
+  it('prompts.gate-bounded-diff: the gate\'s system text describes the three parts of its diff input', () => {
+    const sys = promptFor('gate', 'claude-opus-5-5').system;
+    for (const needle of [/<orientation> is a map of the whole change/, /it is not a verdict on any file/, /<diff> holds per-file diffs inlined, in priority order/,
+      /<not_inlined> lists every file whose diff is not inlined/, /the absolute path of a readable \.diff file/]) assert.match(sys, needle);
+  });
+
+  it('prompts.gate-round-2: the gate\'s system text names the answer\'s finding classes and unreviewed field, and how code treats them', () => {
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] as const) {
+      const sys = promptFor('gate', model).system;
+      for (const needle of [
+        /classify each as blocking, note or pre-existing/, /Notes and pre-existing findings are recorded, and never a fix round/,
+        /unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason/,
+      ]) assert.match(sys, needle, `${model}: ${needle}`);
+    }
+  });
+
+  it('prompts.gate-large-diff: <large_diff> only over the threshold, with its overflow, path count and list, before the ask; the system text says clusters is null otherwise', () => {
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const) {
+      const mod = promptFor('gate', model) as { system: string; render: (i: RoleInputs['gate']) => string };
+      assert.match(mod.system, /clusters is null unless[^.]*<large_diff>/);
+      const [small, large] = SAMPLES.gate;
+      assert.doesNotMatch(mod.render(small), /<large_diff>/, `${model}: under the threshold the plain prompt`);
+      const text = mod.render({ ...small, largeDiff: large.largeDiff });
+      const section = /<large_diff>\n[^]*<\/large_diff>/.exec(text)?.[0] ?? '';
+      for (const needle of ['2741', '3012', '/run/ev/b/diff/CHANGED-LIST-B.txt']) assert.ok(section.includes(needle), `${model}: the section carries ${needle}`);
+      for (const depth of CLUSTER_REVIEWS) assert.ok(section.includes(depth), `${model}: the schema's review depth ${depth}`);
+      assert.ok(text.indexOf('<large_diff>') < text.lastIndexOf('Gate unit'), 'before the ask');
+    }
+  });
+
+  it('prompts.lens-brief-last: the vision opens the lens message and the lens brief sits after the data, just before the ask', () => {
+    const text = promptFor('lens', 'claude-opus-5-5').render(SAMPLES.lens[1]);
+    assert.ok(text.startsWith('<vision>'));
+    const brief = text.indexOf('<lens_brief>');
+    for (const tag of ['<obligations>', '<audited_range', '<owner_branches>', '<prior_findings>', '<checkout>']) {
+      assert.ok(text.indexOf(tag) >= 0 && text.indexOf(tag) < brief, `${tag} before the brief`);
+    }
+    assert.match(text.slice(brief), /^<lens_brief>\nlens: vision\n[^]*<\/lens_brief>\n\nAudit the tree at /);
+  });
+
+  it('prompts.escalation-preface: only at the escalation seat, naming a route-up\'s first answer or the risk trigger', () => {
+    for (const [role, name] of [['planCheck', 'plan-check'], ['gate', 'gate']] as const) {
+      const mod = promptFor(role, 'claude-opus-5-5') as { render: (i: unknown) => string };
+      const base = SAMPLES[role][0];
+      assert.doesNotMatch(mod.render(base), /<escalation>/, `${role}: nothing below the seat`);
+      const routed = mod.render({ ...base, escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['FIRST-REASON'] } } });
+      assert.match(routed, new RegExp(`<escalation>\\nThis ${name} is an escalation[^]*decided escalate, and the unit was routed up\\. Its reasons:\\n- FIRST-REASON\\n[^]*not as facts[^]*</escalation>`));
+      assert.match(mod.render({ ...base, escalation: { kind: 'route-up', first: null } }), /gave no answer \(its session was refused\)/);
+      assert.match(mod.render({ ...base, escalation: { kind: 'risk-trigger' } }), /A runtime risk trigger[^]*straight to the escalation seat/);
+      assert.ok(routed.indexOf('<escalation>') < routed.lastIndexOf(role === 'gate' ? 'Gate unit' : 'Check the spec'), `${role}: before the ask`);
+    }
   });
 });

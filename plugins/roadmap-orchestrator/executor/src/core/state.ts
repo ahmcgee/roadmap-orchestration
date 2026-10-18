@@ -13,15 +13,16 @@ import {
 } from './events.ts';
 import { atomicJson, monotonic } from './fsx.ts';
 import {
-  type AmendmentId, type ArcId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
+  type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
   type OpId, type OpKey, type PlanRev, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId,
 } from './ids.ts';
 import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord, effectiveScope } from './records.ts';
+import { type SessionCharge, addCharged } from './usage.ts';
+import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
 import { type BundleOutcome, type FindingStateName, type FindingTo, FINDING_MOVES } from '../holistic/types.ts';
-import type { IsoTime, RepoPattern } from './values.ts';
+import type { IsoTime } from './values.ts';
 import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
 import { type Backend, RISK_TIERS, type RiskTier, type Role } from '../routing/types.ts';
 
@@ -187,23 +188,18 @@ export type UnitState = Readonly<{
   scopeDecisions: readonly ScopeDecision[];
   /**
    * Arc feedback 2026-10-16: the unit's failure outcomes in log order, each a `stage-outcome` that parked or stopped it or
-   * was charged, with what it ran under: the spec, pinned scope and routing then, and the plan in force. A re-entry's
-   * `fixes` names one of these (or a lane failure, src/pipeline/failures.ts), and the classifier compares a re-entry
-   * against what its cited failure ran under (src/input/classify.ts `reentryRow`). Derived from the log alone.
+   * was charged. A re-entry's `fixes` names one of these (or a lane failure, src/pipeline/failures.ts), which the
+   * classifier resolves (src/input/classify.ts `reentryRow`). Derived from the log alone.
    */
   failures: readonly FailedOutcome[];
 }>;
 
-/** One failure outcome of a unit (`UnitState.failures`): the fact, its seq, and what the attempt ran under. */
+/** One failure outcome of a unit (`UnitState.failures`): the fact, its seq and the park it recorded. */
 export type FailedOutcome = Readonly<{
   seq: number;
   fact: StageOutcomeFact;
   /** The park it recorded (classed as `park` reads it), on a parking outcome; else null. */
   park: ParkRecord | null;
-  spec: SpecState | null;
-  /** The unit's latest dispatch record then (its effective scope, ascending: pinned scope and derived outputs, and its routing rev); null before its first pin. */
-  dispatch: Readonly<{ scope: readonly RepoPattern[]; routingRev: RoutingRev }> | null;
-  planRev: PlanRev | null;
 }>;
 
 /** One `scope-decided` fact with the proposals of the plan-check attempt it decided. */
@@ -554,6 +550,7 @@ export class Fold implements JournalView {
   readonly #pinnedSpec = new Map<UnitId, SpecState>();
   readonly #meter = new Map<string, MeterEntry>();
   readonly #metered = new Set<InvocationId>();
+  readonly #sessionCharges = new Map<ClaudeSessionId, SessionCharge>();
   readonly #needsUser = new Map<NeedsUserId, { blocking: boolean }>();
   readonly #acks = new Map<NeedsUserId, NeedsUserAckState>();
   #stop: CommandId | null = null;
@@ -825,6 +822,9 @@ export class Fold implements JournalView {
           charge, routingRev: f.routingRev, known: 0, unavailable: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: 0,
         };
         if (f.kind === 'meter') {
+          if (f.session !== undefined && f.delegated !== undefined) {
+            this.#sessionCharges.set(f.session, addCharged(this.#sessionCharges.get(f.session) ?? null, { tokens: f.usage, delegated: f.delegated }));
+          }
           m.known += 1;
           m.inputTokens += f.usage.inputTokens;
           m.outputTokens += f.usage.outputTokens;
@@ -921,11 +921,7 @@ export class Fold implements JournalView {
           this.#unitParkSeqs.set(at.seq, f.unit);
         }
         if (f.class === 'park' || f.class === 'stop' || f.chargeable) {
-          const d = this.dispatchOf(f.unit);
-          const failed: FailedOutcome = {
-            seq: at.seq, fact: f, park, spec: u.state.spec, dispatch: d === null ? null : { scope: [...effectiveScope(d)].sort(), routingRev: d.routingRev }, planRev: this.#planApplied?.rev ?? null,
-          };
-          u.state = { ...u.state, failures: [...u.state.failures, failed] };
+          u.state = { ...u.state, failures: [...u.state.failures, { seq: at.seq, fact: f, park }] };
         }
         const lineage = u.state.lineage;
         if (f.stage === 'prepare' && f.class !== 'park' && f.class !== 'hold' && lineage !== null) u.state = { ...u.state, lineage: { ...lineage, prepared: true } };
@@ -1646,6 +1642,10 @@ export class Fold implements JournalView {
 
   usageRecorded(inv: InvocationId): boolean {
     return this.#metered.has(inv);
+  }
+
+  sessionCharge(session: ClaudeSessionId): SessionCharge | null {
+    return this.#sessionCharges.get(session) ?? null;
   }
 
   unit(unit: UnitId): UnitState {

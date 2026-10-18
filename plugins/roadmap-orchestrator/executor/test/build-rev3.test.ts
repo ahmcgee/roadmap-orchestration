@@ -2,13 +2,15 @@
 // F8 8d, a resolve round may commit after the merge (`resolvedHead`, src/git/mergein.ts) but must hold the merge of
 // [old, T]: build.resolve-follow-up-commits-accepted, build.resolve-without-merge-in-chain-malformed; I3, the build
 // answer's per-call schema (the spec's fast lane ids, `experiments`) and the resume round quoting why an answer was
-// malformed: build.lane-enum-schema, build.experiments-accepted, build.malformed-keeps-error.
+// malformed: build.lane-enum-schema, build.experiments-accepted, build.malformed-keeps-error. dev.12: a decisions.json
+// that does not validate makes the build malformed, never silently dropped: build.decisions-invalid-malformed.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { arcId } from '../src/core/ids.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
 import { RESOLVE_DIRECTIVE, RESUME_DIRECTIVE } from '../src/prompts/directives.ts';
 import { reached, release } from './helpers/barrier.ts';
@@ -16,7 +18,8 @@ import { git } from './helpers/repo.ts';
 import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
 import {
-  type ArcDescriptor, type ArcRun, MUL, MUL_LANE, U1, codexStep, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil, unitWorktreePath,
+  type ArcDescriptor, type ArcRun, MUL, MUL_LANE, U1, appendSteps, codexStep, contextFor, gateStep, literal, mulBuild, outcomes, setupArc, stepUntil, unitWorktreePath,
+  workDirPattern,
 } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -171,6 +174,50 @@ describe('I3: the build answer schema', () => {
       // RESUME_DIRECTIVE, then why: the validation error, naming the lane field and the lane.
       assert.match(resume.stdin, new RegExp(`${literal(RESUME_DIRECTIVE)}[\\s\\S]*Why it did not match: [^\\n]*lanesRun[^\\n]*`));
       assert.match(resume.stdin, /Why it did not match: [^\n]*suite/);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('build.decisions-invalid-malformed (dev.12): a valid report beside a decisions.json that does not validate is malformed; the resume round quotes why, and its rewritten file reaches the spec', T, async () => {
+    const d = setupArc({ steps: [] });
+    const write = (text: string) => ({ type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text }) as const;
+    const duplicate = JSON.stringify({ decisions: [{ id: 'D1', text: 'a' }, { id: 'D1', text: 'b' }] });
+    appendSteps(d, [
+      planCheckStep({ decision: 'approve' }),
+      mulBuild({}, [write(duplicate)]),
+      codexStep([write(JSON.stringify({ decisions: [{ id: 'D1', text: 'mul multiplies with the * operator.' }] }))], { argv: ['exec', 'resume'], stdinContains: [RESUME_DIRECTIVE] }),
+    ]);
+    const r = contextFor(d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'build');
+      assert.equal(outcomes(d).at(-1), 'build:malformed');
+      await stepUntil(r, 'u1', (f) => f.stage === 'evidence');
+      assert.deepEqual(outcomes(d).slice(-3), ['build:success', 'quiesce:empty', 'evidence:captured'], 'the resume round answered');
+      const resume = codexCalls(d).at(-1)!;
+      assert.match(resume.stdin, new RegExp(`${literal(RESUME_DIRECTIVE)}[\\s\\S]*Why it did not match: the report validated, but decisions\\.json does not validate: [^\\n]*D1`));
+      assert.deepEqual(loadUnitSpec(r.ctx, r.unit('u1')).spec.decisions, [{ id: 'D1', text: 'mul multiplies with the * operator.', state: 'active' }]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('build.decisions-non-decision-malformed (dev.12): a decisions.json entry naming a spec item that is not a decision is malformed, never skipped', T, async () => {
+    const d = setupArc({ steps: [] });
+    const write = (text: string) => ({ type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text }) as const;
+    appendSteps(d, [
+      planCheckStep({ decision: 'approve' }),
+      mulBuild({}, [write(JSON.stringify({ decisions: [{ id: 'A1', text: 'mul(2, 3) is 6 by the * operator.' }] }))]),
+      codexStep([write(JSON.stringify({ decisions: [{ id: 'D1', text: 'mul multiplies with the * operator.' }] }))], { argv: ['exec', 'resume'], stdinContains: [RESUME_DIRECTIVE] }),
+    ]);
+    const r = contextFor(d);
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'build');
+      assert.equal(outcomes(d).at(-1), 'build:malformed');
+      await stepUntil(r, 'u1', (f) => f.stage === 'evidence');
+      const resume = codexCalls(d).at(-1)!;
+      assert.match(resume.stdin, /Why it did not match: the report validated, but decisions\.json does not validate: A1 is an acceptance clause of the spec, not a decision/);
+      assert.deepEqual(loadUnitSpec(r.ctx, r.unit('u1')).spec.decisions, [{ id: 'D1', text: 'mul multiplies with the * operator.', state: 'active' }]);
     } finally {
       r.journal.close();
     }

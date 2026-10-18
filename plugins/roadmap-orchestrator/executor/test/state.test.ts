@@ -82,10 +82,9 @@ describe('fold derives', () => {
       unit: U1, stage: 'lanes', risk: 'med', status: 'active', routedUp: ['plan-check'], promotion: true, approval: null, open: null, interrupted: null,
       pressureHold: null, pressureHolds: 0, spec: { rev: 1, sha256: H }, reopened: null, pendingRevision: null, redirectBase: 0,
       park: null, lastRecovery: null, buildTier: 'med', lineage: null, supersededBy: null, bounds: DEFAULT_BOUNDS, entry: null, steering: null, scopeDecisions: [],
-      // The charged lanes red is the unit's one failure outcome, with what it ran under (arc feedback 2026-10-16: a re-entry's `fixes`).
+      // The charged lanes red is the unit's one failure outcome (arc feedback 2026-10-16: what a re-entry's `fixes` names).
       failures: [{
         seq: 11, fact: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true }, park: null,
-        spec: { rev: 1, sha256: H }, dispatch: { scope: [repoPattern('src/**')], routingRev: REV }, planRev: null,
       }],
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {

@@ -299,7 +299,8 @@ unattended week is only safe if the owner can see, in one place, everything deci
   `apply` re-derive it and refuse drift, and the snapshot keeps every byte, so a judge's view of the target is
   reproducible from the ref alone. The vision document lives in the corpus, and its confirmation is now checked
   against the pinned bytes instead of stored on trust.
-- **Phase 0 is the agent's, checked by code.** The agent fans the reading out to subagents; `phase0 check` runs
+- **Phase 0 is the agent's, checked by code.** The skill states each step's outcome and leaves the method to the
+  agent (subagent prescriptions withdrawn 2026-10-17); `phase0 check` runs
   the same rows `start` runs, so a Phase 0 is green before it costs a start. The pack review became an executor
   job on the frontier class with kept inputs, holding admission until a review matches the current pack.
 - **Issues are trusted or refused.** Owner ruling L6: a repository whose policy lets anyone open issues refuses
@@ -365,7 +366,8 @@ measured number invites the cheapest way to move it: drop the slow test, loosen 
   front of them, the slot and its components). Code names the constraint, the largest wait or else the largest service.
   A proposal must target the constraint or one of its components, and an elevate lever (more cpu, a bigger pool) waits
   until an exploit or subordinate change on that target has a verdict, because elevating an unexploited constraint
-  buys capacity the arc never uses.
+  buys capacity the arc never uses. (Superseded in dev.12, owner 2026-10-16: both are the flow role's method, stated in
+  its prompt; code keeps the fence, the givens and the cpu and floor checks.)
 - **Statistical process control says when.** One XmR chart on log lead time, seeded from earlier arcs on an equal host
   and frozen for the arc. A point inside the limits is common-cause noise; acting on it is tampering. Only a special
   cause, a constraint shift, a closed verdict or a floor of 10 merges triggers a run, behind a cooldown, with at most

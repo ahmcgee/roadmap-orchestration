@@ -124,8 +124,11 @@ describe('unit: one unit merged first time', () => {
     const [call] = gateCalls(r);
     assert.ok(call !== undefined);
     const addDirs = call.argv.flatMap((a, i) => (a === '--add-dir' ? [call.argv[i + 1]!] : []));
-    assert.ok(addDirs.some((a) => a.includes('/evidence/u1/') && a.endsWith('/mul')), `lane evidence among ${addDirs.join(', ')}`);
-    assert.ok(addDirs.some((a) => a.endsWith('-evidence/build')), `build evidence among ${addDirs.join(', ')}`);
+    // The evidence dirs are named in the prompt and lie inside the run dir, which the gate reads (2026-10-16).
+    const listed = /<evidence_dirs>\n([^<]*)<\/evidence_dirs>/.exec(call.stdin)?.[1]?.split('\n').flatMap((l) => (l.startsWith('- ') ? [l.slice(2)] : [])) ?? [];
+    const readable = (p: string): boolean => addDirs.some((d) => p === d || p.startsWith(`${d}/`));
+    assert.ok(listed.some((a) => a.includes('/evidence/u1/') && a.endsWith('/mul') && readable(a)), `lane evidence among ${listed.join(', ')}`);
+    assert.ok(listed.some((a) => a.endsWith('-evidence/build') && readable(a)), `build evidence among ${listed.join(', ')}`);
     assert.ok(call.cwd.includes('u1.verify-'), `the gate reads the verification checkout, not ${call.cwd}`);
     for (const text of [readFileSync(join(r.d.runDir, EVENTS_FILE), 'utf8'), readFileSync(join(r.d.runDir, STATE_FILE), 'utf8')]) {
       for (const model of MODEL_IDS) assert.ok(!text.includes(model), `${model} in the log or state`);
@@ -178,7 +181,7 @@ test('fixture conflict → merge-in → resolve: T moves under the approved unit
     assert.equal(gates.length, 2);
     assert.notEqual(gates[0]!.argv[gates[0]!.argv.indexOf('--session-id') + 1], gates[1]!.argv[gates[1]!.argv.indexOf('--session-id') + 1], 'the re-gate is a fresh session');
     // After the merge-in the diff base is T: the second gate's diff does not carry the integration's change.
-    assert.ok(gates[1]!.stdin.includes(`<diff base="${tip}" head="${unitCommit}">`), "after the merge-in the diff base is T itself");
+    assert.ok(gates[1]!.stdin.includes(`<orientation>\nDiff ${tip}..${unitCommit}.`), "after the merge-in the diff base is T itself");
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
     r.journal.close();

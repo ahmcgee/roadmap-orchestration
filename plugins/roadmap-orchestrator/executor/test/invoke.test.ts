@@ -37,7 +37,7 @@ function summaryOf(runDir: string, index = 0) {
 
 test('invoke.backend-result', T, async () => {
   const r = run();
-  const s = scenario([{ as: 'claude', expect: { argv: ['--tools', 'Read,Grep,Glob'] }, acts: [{ type: 'emit', value: OK }] }]);
+  const s = scenario([{ as: 'claude', expect: { argv: ['--tools', 'Read,Grep,Glob,Agent'] }, acts: [{ type: 'emit', value: OK }] }]);
   const journal = open(r.runDir, r.arc);
   const outcome = await invoke(journal, context(journal, r.runDir).containment, specFor(backend(r, s)));
   journal.close();

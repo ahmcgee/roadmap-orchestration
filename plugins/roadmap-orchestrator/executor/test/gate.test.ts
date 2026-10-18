@@ -3,12 +3,14 @@
 // a revise round's directives and their re-check with the round handoff, the fingerprint's cited-only set, and
 // the empty-diff refusal. M3 step A3: gate.inputs-not-in-ff-window (the capture under the revision fence),
 // gate.obligations-selected, plan-check.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
-// gate.approval-captured-fingerprint, gate.partial-supersession-regates. Paid M4b run 5: gate.read-denied, gate.read-denied-again,
-// plan-check.read-denied, plan-check.read-denied-again.
+// gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
+// voids nothing): gate.read-surface, plan-check.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
+// context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
+// gate.large-diff-seat, gate.cluster-coverage.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { test } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { applyCommand, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
 import { holdFence } from '../src/core/fence.ts';
@@ -16,17 +18,22 @@ import { holderUnits, resourceTable } from '../src/resources/reserve.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { type Wired, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { rulingId } from '../src/core/ids.ts';
-import { absPath } from '../src/core/values.ts';
+import { gateDiffShownOf, gateLargeDiffOf } from '../src/core/upgrade.ts';
+import type { JsonValue } from '../src/core/json.ts';
+import { SchemaError } from '../src/core/validate.ts';
+import { absPath, repoPath } from '../src/core/values.ts';
+import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
+import { clusterCoverage } from '../src/prompts/schemas.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
 import { git } from './helpers/repo.ts';
-import { type CallRecord, readCalls } from './helpers/scenario.ts';
+import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
 import { events } from './fixtures/invoke-specs.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import type { Gate } from '../src/pipeline/unit.ts';
-import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateRepairStep, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { BASE, editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -90,7 +97,8 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     steps: [
       planCheckStep({ decision: 'approve' }),
       mulBuild({ 'contracts/api.md': '# API contract\n\nAlso `mul(a, b)`.\n' }),
-      gateStep({ decision: 'approve' }),
+      // W3: the escalation seat's preface says why the gate sits there.
+      gateStep({ decision: 'approve' }, { stdinContains: ['<escalation>', 'A runtime risk trigger'] }),
     ],
   });
   const r = contextFor(d);
@@ -103,6 +111,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
     assert.ok(planCall!.argv.includes('claude-sonnet-5-5'), 'plan-check sat on the unit\'s med seat (efficient: Sonnet)');
     assert.ok(gateCall!.argv.includes('xhigh'), 'the gate sat on the escalation seat');
+    assert.ok(!planCall!.stdin.includes('<escalation>'), 'no preface below the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
@@ -167,72 +176,120 @@ test('gate.empty-diff: a unit whose branch adds nothing is refused at the gate w
   }
 });
 
-// Paid M4b run 5: a gate Globbed the evidence root above its --add-dirs, was refused, and approved on the ledger alone.
+// Paid M4b run 5: a gate Globbed the evidence root above its --add-dirs and was refused. Since 2026-10-16 the judge's read
+// surface is the repository and the run dir (dispatch.ts `judgmentReadDirs`), named in its system text (`judgmentSurface`), and
+// a refused read is recorded, voiding nothing.
 const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
+const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((t, i) => (c.argv[i - 1] === '--add-dir' ? [t] : []));
 
-test('gate.read-denied: an approve from a session the CLI refused a read is no approval; a fresh gate, uncharged, approves', T, async () => {
-  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), deniedGate(), gateStep({ decision: 'approve' })] });
+test('gate.repair-turn (dev.12): an answer off the gate\'s schema goes back once in its own session with why; the repaired answer is the attempt\'s; refused again, the attempt is malformed', T, async () => {
+  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'] } }] };
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), offSchema, gateRepairStep({ decision: 'approve' }, ['premises'])] });
   const r = contextFor(d);
   try {
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
-    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:')), ['gate:read-denied', 'gate:approve']);
-    const gates = readCalls(d.scenarioPath).filter(isGate);
-    assert.equal(gates.length, 2);
-    const denied = gates[0]!;
-    const firstDir = denied.argv[denied.argv.indexOf('--add-dir') + 1]!;
-    // The refusal is on record in the refused call's reads.json.
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:')), ['gate:approve'], 'no malformed attempt: the repair turn settled it');
+    const [fresh, repair] = readCalls(d.scenarioPath).filter(isGate);
+    assert.equal(repair!.argv[repair!.argv.indexOf('--resume') + 1], sessionOf(fresh!), 'the repair turn resumes the refused answer\'s session');
+    assert.equal(r.journal.view.unit(U1).counters.retries.gate, 0);
+  } finally {
+    r.journal.close();
+  }
+  const twice = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), offSchema, { ...offSchema, expect: { argv: ['--resume'] } }, gateStep({ decision: 'approve' })] });
+  const r2 = contextFor(twice);
+  try {
+    assert.deepEqual(await runUnit(r2.ctx, r2.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(twice).filter((o) => o.startsWith('gate:')), ['gate:malformed', 'gate:approve'], 'refused again: malformed, and the retry is a fresh gate');
+  } finally {
+    r2.journal.close();
+  }
+});
+
+test('gate.read-surface: the gate reads the repository and the run dir; an approve from a session refused a read is an approval, the refusal on record', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), deniedGate()] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:')), ['gate:approve']);
+    const gate = readCalls(d.scenarioPath).filter(isGate)[0]!;
+    const dirs = addDirs(gate);
+    assert.deepEqual(dirs.slice(0, 2), [d.repo, d.runDir], 'the repository and the run dir lead the read surface');
+    assert.ok(dirs.slice(2).every((x) => !x.startsWith(`${d.runDir}/`) && !x.startsWith(`${d.repo}/`)), `no dir inside them is named again: ${dirs.join(' ')}`);
+    // --system-prompt replaces Claude Code's list of working dirs, so the system text names the read surface itself.
+    const system = gate.argv[gate.argv.indexOf('--system-prompt') + 1]!;
+    assert.ok(system.endsWith(`<readable_directories>\nBesides your working directory, you and any subagent you start may read these directories and everything under them, read-only, by absolute path:\n${
+      dirs.map((x) => `- ${x}${x === d.repo ? ' (the repository)' : x === d.runDir ? ' (the executor\'s run directory: evidence, attached diffs, inputs)' : ''}`).join('\n')}\n</readable_directories>`), system.slice(-600));
+    // The refusal is on record in the call's reads.json, for audit.
     const inv = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'meter' && e.fact.subject.type === 'seat' && e.fact.subject.role === 'gate' ? [e.fact.inv] : []))[0]!;
     const reads = JSON.parse(readFileSync(join(invocationDir(absPath(d.runDir), inv), 'reads.json'), 'utf8')) as { denied: unknown[] };
-    assert.deepEqual(reads.denied, [{ tool: 'Glob', pattern: '**/*', path: dirname(dirname(firstDir)) }]);
-    const approvals = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'approval' ? [e.fact.attempt] : []));
-    assert.equal(approvals.length, 1, 'only the second gate approved');
-    const u = r.journal.view.unit(U1).counters;
-    assert.equal(u.chargeableFailures, 0);
-    assert.equal(u.retries.gate, 1);
+    assert.deepEqual(reads.denied, [{ tool: 'Glob', pattern: '**/*', path: dirname(dirname(d.repo)) }]);
+    assert.equal(r.journal.view.unit(U1).counters.retries.gate, 0);
   } finally {
     r.journal.close();
   }
 });
 
-test('gate.read-denied-again: refused again after its retry, the unit parks (env) for the operator', T, async () => {
-  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), deniedGate(), deniedGate()] });
+// 2026-10-16: a call whose prompt or context outgrew the model's window parks its unit, uncharged, operator env, with no
+// probe target and no backend park; the item names the role, the call and the prompt's size.
+const stageOutcome = (d: ArcDescriptor, stage: string) => events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === stage ? [e.fact] : [])).at(-1)!;
+const backendParks = (d: ArcDescriptor) => events(d.runDir).filter((e) => e.type === 'fact' && e.fact.kind === 'backend-park');
+
+function assertContextPark(d: ArcDescriptor, r: ReturnType<typeof contextFor>, result: Awaited<ReturnType<typeof runUnit>>, stage: string, role: string): void {
+  assert.ok(result.kind === 'parked', JSON.stringify(result));
+  assert.equal(result.needsUser.reason, 'context-exceeded');
+  const f = stageOutcome(d, stage);
+  assert.equal(f.outcome, 'context-exceeded');
+  assert.deepEqual(f.park, { class: 'operator', kind: 'env' }, 'operator env: no probe, so no repeat rule');
+  assert.equal(f.chargeable, false);
+  assert.ok(f.detail?.kind === 'context-exceeded' && f.detail.promptBytes > 0, JSON.stringify(f.detail));
+  assert.match(result.needsUser.summary, new RegExp(`The ${role} call ${f.detail.inv.replace(/[#/]/g, '.')} outgrew the model's context window: its prompt was ${f.detail.promptBytes} bytes\\.`));
+  assert.match(result.needsUser.recommendation, new RegExp(`roadmap resume u1\` re-runs ${stage}, uncharged`));
+  assert.deepEqual(backendParks(d), [], 'the backend is not parked');
+  assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
+}
+
+test('context-exceeded.gate: a gate prompt over the model\'s window parks the unit (env, uncharged), naming the gate call and its size', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [{ type: 'contextExceeded' }])] });
   const r = contextFor(d);
   try {
-    const result = await runUnit(r.ctx, r.unit('u1'), live());
-    assert.ok(result.kind === 'parked');
-    assert.equal(result.needsUser.reason, 'read-denied');
-    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:')), ['gate:read-denied', 'gate:read-denied']);
+    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'gate', 'gate');
     assert.equal(r.journal.view.unit(U1).approval, null);
   } finally {
     r.journal.close();
   }
 });
 
-test('plan-check.read-denied: an approve from a plan-check session the CLI refused a read is no approval; a fresh check approves, uncharged', T, async () => {
-  const deniedCheck = planCheckStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
-  const d = setupArc({ steps: [deniedCheck, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+test('context-exceeded.plan-check: a plan-check prompt over the window parks before any build', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }, {}, [{ type: 'contextExceeded' }])] });
   const r = contextFor(d);
   try {
-    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
-    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check:')), ['plan-check:read-denied', 'plan-check:approve']);
-    const u = r.journal.view.unit(U1).counters;
-    assert.equal(u.chargeableFailures, 0);
-    assert.equal(u.retries['plan-check'], 1);
+    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'plan-check', 'planCheck');
+    assert.ok(!outcomes(d).some((o) => o.startsWith('build:')), 'no build ran');
   } finally {
     r.journal.close();
   }
 });
 
-test('plan-check.read-denied-again: refused again after its retry, the unit parks (env) before any build', T, async () => {
-  const deniedCheck = () => planCheckStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
-  const d = setupArc({ steps: [deniedCheck(), deniedCheck()] });
+test('context-exceeded.build: a Codex build over its context window parks the same way', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), codexStep([{ type: 'contextExceeded' }], { argv: ['exec', '-C'] })] });
   const r = contextFor(d);
   try {
-    const result = await runUnit(r.ctx, r.unit('u1'), live());
-    assert.ok(result.kind === 'parked');
-    assert.equal(result.needsUser.reason, 'read-denied');
-    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check:')), ['plan-check:read-denied', 'plan-check:read-denied']);
-    assert.ok(!outcomes(d).some((o) => o.startsWith('build:')), 'no build ran');
+    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'build', 'build');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('plan-check.read-surface: the plan-check reads the repository and the run dir; an approve from a session refused a read is an approval', T, async () => {
+  const deniedCheck = planCheckStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
+  const d = setupArc({ steps: [deniedCheck, mulBuild(), gateStep({ decision: 'approve' })] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check:')), ['plan-check:approve']);
+    const check = readCalls(d.scenarioPath).find((c) => c.as === 'claude' && !isGate(c))!;
+    assert.deepEqual(addDirs(check).slice(0, 2), [d.repo, d.runDir]);
+    assert.equal(r.journal.view.unit(U1).counters.retries['plan-check'], 0);
   } finally {
     r.journal.close();
   }
@@ -342,6 +399,36 @@ test('gate.obligations-selected: in a holistic arc the gate prompt lists the obl
     assert.ok(!('obligationRevs' in fingerprint), 'no obligationRevs key outside a holistic arc');
   } finally {
     p.journal.close();
+  }
+});
+
+test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orientation, inlined diffs, what the unit claims), its files dir readable, and judgment-inputs records what it inlined', T, async () => {
+  const d = setupArc({ steps: straightToGate() });
+  recordFirst(d);
+  const r = contextFor(d);
+  try {
+    await stepTo(followContext(r), 'u1', (f) => f.stage === 'gate');
+    const [g] = readCalls(d.scenarioPath).filter(isGate);
+    assert.match(g!.stdin, /<orientation>\nDiff [0-9a-f]{40}\.\.[0-9a-f]{40}\. Files named below are readable with Read\.\nStat:\n src\/mul\.js/);
+    assert.match(g!.stdin, /Claimed by the unit \(stated in full above\): acceptance A1[^;]*; witness items none; obligations none\n<\/orientation>\n<diff>\n/);
+    assert.match(g!.stdin, /<pasted_content id="[0-9a-f]{8}">\ndiff --git a\/src\/mul\.js b\/src\/mul\.js/);
+    assert.ok(!g!.stdin.includes('<not_inlined>'), 'a small diff is inlined whole');
+    const addDirs = g!.argv.flatMap((a, i) => (g!.argv[i - 1] === '--add-dir' ? [a] : []));
+    const attempt = Number(new RegExp(`- ${d.runDir}/evidence/u1/(\\d+)-gate/diff\\n`).exec(g!.stdin)?.[1]);
+    assert.ok(attempt > 0 && addDirs.includes(d.runDir), `the attachment's dir is readable, inside the run dir: ${addDirs.join(', ')}`);
+    assert.match(g!.stdin, new RegExp(`<evidence_dirs>[^<]*- ${d.runDir}/evidence/u1/${attempt}-gate/diff\\n[^<]*</evidence_dirs>`), 'and listed with the evidence');
+    const inputs = r.journal.view.judgmentInputs(U1, 'gate', attempt)!;
+    assert.deepEqual(inputs.diffShown, { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] });
+    assert.deepEqual(gateDiffShownOf(inputs), inputs.diffShown);
+    // A dev.11 executor's gate recorded none: read as nothing recorded (scaffolding).
+    const { diffShown: _, ...dev11 } = inputs;
+    assert.deepEqual(gateDiffShownOf(dev11), { inlined: [], notInlined: [] });
+    // Under the large-diff threshold: the unit's own seat (med: efficient), the plain prompt, no map.
+    assert.equal(inputs.largeDiff, null);
+    assert.ok(g!.argv.includes('claude-sonnet-5-5'), 'a small diff keeps the unit\'s seat');
+    assert.ok(!g!.stdin.includes('<large_diff>'), 'and the plain prompt');
+  } finally {
+    r.journal.close();
   }
 });
 
@@ -474,4 +561,115 @@ test('gate.partial-supersession-regates: an approved unit citing C-1; C-2 partia
     stop();
     r.journal.close();
   }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// The large-diff gate (1.0.0-dev.12)
+
+/** Generated sources too large to inline together: 40 new files of ~8 KB each under src/gen/ (the gate's budget is 128 KiB). */
+const BIG: Readonly<Record<string, string>> = Object.fromEntries(Array.from({ length: 40 }, (_, f) => [
+  `src/gen/table-${f.toString().padStart(2, '0')}.js`,
+  Array.from({ length: 160 }, (_, i) => `export const t${f}_${i.toString().padStart(4, '0')} = ${f * 1000 + i}; // generated row\n`).join(''),
+]));
+/** A cluster map covering MUL and BIG exactly once. */
+const COVERING: readonly JsonValue[] = [
+  { id: 'generated', paths: ['src/gen/**'], review: 'description' },
+  { id: 'mul', paths: ['src/mul.js', 'test/'], review: 'close' },
+];
+
+test('gate.large-diff: at low risk a diff over the threshold seats the gate on high, renders the large-diff method, records the threshold, and a map missing a path takes the repair turn naming it', T, async () => {
+  const d = setupArc({
+    units: [{ id: 'u1', risk: 'low' }],
+    steps: [
+      planCheckStep({ decision: 'approve', risk: 'low' }),
+      mulBuild(BIG),
+      gateStep({ decision: 'approve', clusters: [COVERING[0]!] }, { stdinContains: ['<large_diff>'] }),
+      gateRepairStep({ decision: 'approve', clusters: COVERING }, ['2 paths in no cluster: src/mul.js, test/mul.test.js']),
+    ],
+  });
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+    assert.equal(outcomes(d).at(-1), 'gate:approve', 'the repaired map covers every path');
+    const [fresh] = readCalls(d.scenarioPath).filter(isGate);
+    assert.ok(fresh!.argv.includes('claude-opus-5-5') && !fresh!.argv.includes('xhigh'), `the gate sat on the high seat (frontier), not escalation: ${fresh!.argv.join(' ')}`);
+    const attempt = r.journal.view.unit(U1).decided!.attempt;
+    const inputs = r.journal.view.judgmentInputs(U1, 'gate', attempt)!;
+    assert.ok(inputs.largeDiff !== null && inputs.largeDiff !== undefined && inputs.largeDiff.overflow > 0, `largeDiff recorded: ${JSON.stringify(inputs.largeDiff)}`);
+    assert.deepEqual(gateLargeDiffOf(inputs), inputs.largeDiff);
+    const list = `${d.runDir}/evidence/u1/${attempt}-gate/diff/${CHANGED_LIST}`;
+    assert.ok(fresh!.stdin.includes(list), 'the prompt names the list of paths the map covers');
+    assert.deepEqual(readFileSync(list, 'utf8').split('\n').filter((l) => l !== ''), [...Object.keys(BIG), ...Object.keys(MUL)].sort());
+    assert.ok(fresh!.stdin.includes(`${inputs.largeDiff.overflow} of its files did not fit`), 'the section carries the overflow');
+    // The seat follows from the recorded inputs: a dev.11 gate recorded none, read as under the threshold (scaffolding).
+    const { largeDiff: _, ...dev11 } = inputs;
+    assert.equal(gateLargeDiffOf(dev11), null);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('gate.large-diff-seat: at med risk the large diff seats the gate on high; a pending risk promotion keeps the escalation seat', T, async () => {
+  const med = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(BIG), gateStep({ decision: 'approve', clusters: COVERING }, { stdinContains: ['<large_diff>'] })] });
+  const r = contextFor(med);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+    assert.equal(outcomes(med).at(-1), 'gate:approve');
+    const [g] = readCalls(med.scenarioPath).filter(isGate);
+    assert.ok(g!.argv.includes('claude-opus-5-5') && !g!.argv.includes('xhigh'), `med moved to high: ${g!.argv.join(' ')}`);
+  } finally {
+    r.journal.close();
+  }
+  const contract = { 'contracts/api.md': '# API contract\n\nAlso `mul(a, b)`.\n' };
+  const covering = [...COVERING, { id: 'contract', paths: ['contracts/api.md'], review: 'close' }];
+  const promoted = setupArc({
+    steps: [planCheckStep({ decision: 'approve' }), mulBuild({ ...BIG, ...contract }), gateStep({ decision: 'approve', clusters: covering }, { stdinContains: ['<large_diff>', '<escalation>'] })],
+  });
+  const p = contextFor(promoted);
+  try {
+    await stepUntil(p, 'u1', (f) => f.stage === 'gate');
+    assert.equal(outcomes(promoted).at(-1), 'gate:approve');
+    const [g] = readCalls(promoted.scenarioPath).filter(isGate);
+    assert.ok(g!.argv.includes('xhigh'), 'the escalation seat stays');
+  } finally {
+    p.journal.close();
+  }
+});
+
+describe('gate.cluster-coverage: the large-diff answer\'s cluster map against the diff\'s paths', () => {
+  const answer = (clusters: JsonValue): JsonValue => ({ decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters });
+  const paths = ['packages/a/src/x.ts', 'packages/a/src/y.ts', 'packages/b/[id].tsx', 'README.md'].map((p) => repoPath(p));
+  const large = { overflow: 2 };
+  const refused = (f: () => unknown, pattern: RegExp): void => {
+    assert.throws(f, (e: unknown) => e instanceof SchemaError && pattern.test(e.message));
+  };
+
+  it('valid: exact paths, directories and globs, each path in one cluster', () => {
+    const out = gateAnswerFor(large, paths)(answer([
+      { id: 'a', paths: ['packages/a/src/*.ts'], review: 'description' }, { id: 'b', paths: ['packages/b/[id].tsx'], review: 'close' }, { id: 'docs', paths: ['README.md'], review: 'routine' },
+    ]));
+    assert.deepEqual(out.clusters?.map((c) => c.id), ['a', 'b', 'docs']);
+    assert.deepEqual(clusterCoverage(out.clusters!, paths), { uncovered: [], duplicated: [] });
+  });
+
+  it('missing: the paths no cluster covers are named', () => {
+    refused(() => gateAnswerFor(large, paths)(answer([{ id: 'a', paths: ['packages/a/'], review: 'routine' }])), /2 paths in no cluster: packages\/b\/\[id\]\.tsx, README\.md/);
+  });
+
+  it('duplicate: a path in two clusters is named with both', () => {
+    refused(() => gateAnswerFor(large, paths)(answer([
+      { id: 'all', paths: ['**'], review: 'routine' }, { id: 'a', paths: ['packages/a/src/x.ts'], review: 'close' },
+    ])), /1 paths in more than one: packages\/a\/src\/x\.ts \(all, a\)/);
+  });
+
+  it('a long list is cut to CLUSTER_PATHS_SHOWN and counted', () => {
+    const many = Array.from({ length: CLUSTER_PATHS_SHOWN + 5 }, (_, i) => repoPath(`src/f${i.toString().padStart(3, '0')}.ts`));
+    refused(() => gateAnswerFor(large, many)(answer([{ id: 'none', paths: ['docs/'], review: 'routine' }])), new RegExp(`${many.length} paths in no cluster: [^;]* and 5 more`));
+  });
+
+  it('threshold: a map is required over it and refused under it; under it null passes', () => {
+    refused(() => gateAnswerFor(large, paths)(answer(null)), /a cluster map covering each of the diff's 4 changed paths/);
+    refused(() => gateAnswerFor(null, [])(answer([{ id: 'a', paths: ['**'], review: 'routine' }])), /null: the diff fit/);
+    assert.equal(gateAnswerFor(null, [])(answer(null)).clusters, null);
+  });
 });

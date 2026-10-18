@@ -9,11 +9,13 @@
 // obligations, witnesses, judgment seats, risk) is out of reach: no lever touches it, and the prompt says not to argue
 // around it. One proposal or noAction. The lever catalogue gives each action's exact shape and code's checks, so the
 // role writes what code will keep: a suite-lane argv edit changes only `--test-concurrency=<n>`'s value in place and
-// raises the lane's `cpu` to cover it (the lane-cpu check), and an elevate lever waits for an exploit or subordinate
-// verdict on its target (elevate-early). M4b rev 3 (RC-10..12): a saturated host cpu is a constraint of its own,
+// raises the lane's `cpu` to cover it (the lane-cpu check). The step order and the choice of target are the role's
+// method, stated, not refused (dev.12 dropped the elevate-early and constraint-target checks). M4b rev 3 (RC-10..12): a saturated host cpu is a constraint of its own,
 // `host:cpu`; the prompt explains how code names it, that only load decreases or host advice are kept there, and how to
 // tell the arc's own load (its `@cpu` tokens against the host's cpus, its lanes' concurrency) from an outside tenant's,
 // which no lever reaches (host advice). Rendered from the kept `FlowInputs` alone: no clock, no timestamps.
+// W3 (2026-10-16): delegation, withdrawn 2026-10-17 (re-reviewed against "Prompting best practices" and "Prompting Claude
+// Opus 5.5" alone).
 import { HOST_CPU_STATION } from '../../core/ids.ts';
 import type { FlowPromptInputs } from '../../flow/types.ts';
 import type { LeverState, LeverTarget } from '../../flow/types.ts';
@@ -29,7 +31,7 @@ Work the five focusing steps in order:
 1. Identify the constraint. Code names one from the station table. First the host: when the mean cpu pressure over the window is at or above the threshold, code names host:cpu (see <host_cpu>). Otherwise the station with the largest mean wait in front of it when that wait is at least 10 % of mean lead, else the station with the largest mean service; for the integration slot it names the slot's largest service component too (suite:<lane>, arc-lanes, candidate-rest, ff, snapshot). Check its reading against the table. Dispute it (agree false, your station, the reason) only when the table shows it is wrong, for example a wait whose cause is plainly elsewhere.
 2. Exploit the constraint: get more out of it as it is (a suite lane's test concurrency, a build tier's class).
 3. Subordinate everything else to it: order the work so the constraint never starves or waits (a unit's priority).
-4. Elevate the constraint only after exploiting or subordinating it has had its verdict: add capacity (the cpu capacity, a resource pool). Code refuses an elevate lever on a target before an exploit or subordinate verdict closed on that target this arc.
+4. Elevate the constraint only after exploiting or subordinating it has had its verdict: add capacity (the cpu capacity, a resource pool).
 5. Then the constraint moves. Do not let the previous change become the new constraint, and do not chase a station that is not the constraint: improving a non-constraint does not shorten lead time.
 </method>
 
@@ -59,7 +61,7 @@ Each proposal names one lever, a target station and an action in exactly one of 
 - sequence {lever: "sequence", unit, priority: "high"}: an active unit to high priority; one flow-set high unit at a time, never while a repair unit waits. Subordinate.
 - build-class {lever: "build-class", tier, class}: a build tier's model class (efficient, frontier, summit), one step from its class in force and never below its built-in class; spend per merge is a guard. Exploit.
 - host {lever: "host", note}: advice for the owner, never applied, for a constraint no lever reaches (the machine, the network, a service outside the build). Elevate.
-Code drops a proposal that breaks any of these rules, or whose target is neither code's constraint, one of its components, nor the station you dispute (never held, never wait:finding: a wait behind an open P1 finding is moved by repairing the finding, which is the checkpoint's work), whose lever a given in force forbids, whose (station, lever, target) was rejected before, or that is not host advice while a verdict window is open. Prefer exploit and subordinate before elevate.
+Code drops a proposal that breaks any of these rules, or whose target is held or wait:finding (a wait behind an open P1 finding is moved by repairing the finding, which is the checkpoint's work), whose lever a given in force forbids, whose (station, lever, target) was rejected before, or that is not host advice while a verdict window is open. Prefer exploit and subordinate before elevate.
 </levers>
 
 <workspace>
@@ -67,7 +69,7 @@ Your working directory is the repository at the integration head, read-only: wri
 </workspace>
 
 <output>
-constraint: the station you take as the constraint, whether you agree with code's, and why in one sentence. diagnosis: what the station table, the chart and the verdicts show, in a few plain sentences. proposal: the one change (target, action, rationale: why it shortens lead time at the constraint, risks: what it could break and which guard would show it), or null. noAction: why no change now, or null. Exactly one of proposal and noAction. Write every field as plain, literal sentences.
+constraint: station is the one station id you take as the constraint, written exactly as the station table or code's constraint writes it (for example slot:integration or suite:unit) and nothing else; agree is whether it is code's; reason is why, in one sentence, where any component or qualifier belongs. diagnosis: what the station table, the chart and the verdicts show, in a few plain sentences. proposal: the one change (target, action, rationale: why it shortens lead time at the constraint, risks: what it could break and which guard would show it), or null. noAction: why no change now, or null. Exactly one of proposal and noAction. A station or target field holds only its id; write every other text field as plain, literal sentences.
 </output>`;
 
 const fmt = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(2));

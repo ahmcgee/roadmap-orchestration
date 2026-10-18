@@ -22,8 +22,8 @@ import type { SchemaVersion } from './version.ts';
 import { applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend, isRepairRole, modelClass,
-  profileName, riskTier,
+  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
+  buildClass, type BuildClass, modelClass, profileName, riskTier, MODEL_CLASSES,
 } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -142,8 +142,8 @@ function binding(f: Fields): InvocationBinding {
 }
 
 /**
- * A judgment session: fresh, or (2026-10-15, a repair role's repair turn only: `REPAIR_ROLES`) the same session resumed once
- * with the reasons its answer was refused. The reader refuses a resumed session on any other role.
+ * A judgment session: fresh, or (dev.12, every judgment role; 2026-10-15 plan-check and the checkpoint only) the same session
+ * resumed once with the reasons its answer was refused: the repair turn.
  */
 export type JudgmentSession = Readonly<{ backend: 'claude'; mode: 'fresh' | 'resume'; id: JudgmentSessionId }>;
 /** Codex assigns its own thread id on a fresh exec, so a fresh Codex session carries no id until its result. */
@@ -187,9 +187,9 @@ export type LaunchFile = InvocationBinding & Readonly<{
   terminal: LaunchTerminal;
 }>;
 
-const judgmentSession = (r: FreshRole): Read<JudgmentSession> => object((f) => ({
+const judgmentSession: Read<JudgmentSession> = object((f) => ({
   backend: f.get('backend', literal('claude')),
-  mode: f.get('mode', isRepairRole(r) ? oneOf(['fresh', 'resume'] as const) : literal('fresh')),
+  mode: f.get('mode', oneOf(['fresh', 'resume'] as const)),
   id: f.get('id', (v, p) => judgmentSessionId(v, p)),
 }));
 
@@ -221,7 +221,7 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
       };
       return r === 'build'
         ? { ...base, role: f.get('role', literal('build')), session: f.get('session', implementerSession) }
-        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', judgmentSession(r)) };
+        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', judgmentSession) };
     })(value, path);
   },
 });
@@ -349,10 +349,31 @@ export type TokenUsage = Readonly<{
   /** The CLI's own list-price cost estimate in USD (Claude `total_cost_usd`); null when not reported (Codex). */
   costUsd: number | null;
 }>;
+/** One usage class's tokens and list-price cost (Claude `modelUsage`, per model, summed per class). */
+export type ClassUsage = Readonly<{
+  class: ModelClass;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}>;
 export const USAGE_UNAVAILABLE_REASONS = ['no-result', 'absent', 'malformed'] as const;
 export type UsageUnavailableReason = (typeof USAGE_UNAVAILABLE_REASONS)[number];
-/** Usage validity is independent of the outcome: missing usage never invalidates a judgment. */
-export type Usage = Readonly<{ kind: 'known'; tokens: TokenUsage }> | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason }>;
+/**
+ * Usage validity is independent of the outcome: missing usage never invalidates a judgment.
+ *
+ * `delegated` (2026-10-16) is present exactly on a Claude call's known usage (the adapter writes it, empty when nothing was
+ * delegated): what the models other than the session's own spent (its subagents'), per usage class (classes.ts
+ * `delegateClass`), ascending by class. With it, `tokens` and `delegated` are the session's cumulative usage as the CLI
+ * reports it (the last result event's `modelUsage`, every model, and `total_cost_usd`): a resumed session's include its
+ * earlier processes', so the meter charges each reading as the difference from the session's previous one (meter.ts);
+ * `turns` alone is this process's. Absent (Codex; a Claude result an executor before 1.0.0-dev.12 wrote, whose `tokens`
+ * were the last turn's own model's alone): the invocation's own usage, charged as recorded.
+ */
+export type Usage =
+  | Readonly<{ kind: 'known'; tokens: TokenUsage; delegated?: readonly ClassUsage[] }>
+  | Readonly<{ kind: 'unavailable'; reason: UsageUnavailableReason }>;
 
 const usd: Read<number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new SchemaError(path, 'a finite non-negative number', value);
@@ -366,13 +387,35 @@ export const tokenUsage: Read<TokenUsage> = object((f) => ({
   turns: f.get('turns', nullable(nat)),
   costUsd: f.get('costUsd', nullable(usd)),
 }));
+export const classUsage: Read<ClassUsage> = object((f) => ({
+  class: f.get('class', modelClass),
+  inputTokens: f.get('inputTokens', nat),
+  outputTokens: f.get('outputTokens', nat),
+  cacheReadTokens: f.get('cacheReadTokens', nat),
+  cacheWriteTokens: f.get('cacheWriteTokens', nat),
+  costUsd: f.get('costUsd', usd),
+}));
+/** Per-class usage, one entry per class, ascending in `MODEL_CLASSES` order. */
+export const classUsages: Read<readonly ClassUsage[]> = (value, path) => {
+  const list = arrayOf(classUsage)(value, path);
+  const order = list.map((c) => MODEL_CLASSES.indexOf(c.class));
+  for (let i = 1; i < order.length; i++) if (!((order[i - 1] as number) < (order[i] as number))) throw new SchemaError(`${path}[${i}]`, 'classes ascending, each once', value);
+  return list;
+};
 export const usageUnavailableReason: Read<UsageUnavailableReason> = oneOf(USAGE_UNAVAILABLE_REASONS);
 const usage: Read<Usage> = tagged('kind', {
-  known: object((f): Usage => ({ kind: f.get('kind', literal('known')), tokens: f.get('tokens', tokenUsage) })),
+  known: object((f): Usage => {
+    const delegated = f.optional('delegated', classUsages);
+    return { kind: f.get('kind', literal('known')), tokens: f.get('tokens', tokenUsage), ...(delegated === undefined ? {} : { delegated }) };
+  }),
   unavailable: object((f): Usage => ({ kind: f.get('kind', literal('unavailable')), reason: f.get('reason', usageUnavailableReason) })),
 });
 
-export const BACKEND_ERROR_CLASSES = ['usage-limit', 'capacity', 'platform', 'backend'] as const;
+/**
+ * `context-exceeded` (2026-10-16): the call's prompt or context outgrew the model's window; neither a backend park nor a
+ * generic process fault (dispatch.ts `verdictOf`).
+ */
+export const BACKEND_ERROR_CLASSES = ['usage-limit', 'capacity', 'platform', 'backend', 'context-exceeded'] as const;
 export type BackendErrorClass = (typeof BACKEND_ERROR_CLASSES)[number];
 /** Classified only from `turn.failed` / CLI error events, never from command output. */
 export type BackendError = Readonly<{ class: BackendErrorClass; message: string }>;
@@ -545,10 +588,10 @@ export type ToolRead =
   | Readonly<{ tool: 'Read'; path: string }>
   | Readonly<{ tool: 'Grep' | 'Glob'; pattern: string; path: string | null }>;
 /**
- * What a Claude session read, in call order, from its stream-json stdout, and the reads the CLI refused (`denied`:
- * the result event's `permission_denials` of Read, Grep and Glob, a path outside the cwd and every `--add-dir`). A
- * gate's or plan-check's approve binds `denied`: one from a session refused a read is not an approval (`read-denied`,
- * `readRefused`, src/pipeline/stages.ts). `denied` is absent from a reads.json an executor before it wrote (`readsDeniedOf`).
+ * What a Claude session read, in call order, from its stream-json stdout (its subagents' reads included), and the reads
+ * the CLI refused (`denied`: the result event's `permission_denials` of Read, Grep and Glob, a path outside the cwd and
+ * every `--add-dir`). An audit and eval record (2026-10-16): no judgment is decided on it. `denied` is absent from a
+ * reads.json an executor before paid M4b run 5 wrote.
  */
 export type ReadsFile = InvocationBinding & Readonly<{ reads: readonly ToolRead[]; denied?: readonly ToolRead[] }>;
 
@@ -1344,7 +1387,7 @@ export type CommandBody =
    * record; `class` null keeps the unit's routing; `resume`: a green steer continues instead of parking (R11).
    * Scope {u}.
    */
-  | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: ModelClass | null; resume: boolean }>
+  | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
   /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
   /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
@@ -1417,7 +1460,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     unit: f.get('unit', unit),
     brief: f.get('brief', object((g) => ({ path: g.get('path', abs), sha256: g.get('sha256', (v, p) => sha256(v, p)) }))),
     budgetMin: f.get('budgetMin', positive),
-    class: f.get('class', nullable(modelClass)),
+    class: f.get('class', nullable(buildClass)),
     resume: f.get('resume', bool),
   })),
   'merge-in': object((f): CommandBody => ({ type: f.get('type', literal('merge-in')), unit: f.get('unit', unit) })),
@@ -1487,6 +1530,7 @@ export const NEEDS_USER_REASONS = [
   // changed by the root agent's `apply` after the first admission (G11).
   'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
   // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
+  // No longer raised since 2026-10-16 (a refused read voids nothing); kept so a 1.0.0-dev.11 item still reads (scaffolding).
   'read-denied',
   // Scope growth (2026-10-15), blocking: a plan-check proposed scope growth code verified; the unit is held until the root
   // agent's `scope accept | reject <unit>`.
@@ -1495,6 +1539,8 @@ export const NEEDS_USER_REASONS = [
   'witness-lane-missing',
   // Plan defects (2026-10-16), blocking: a unit's missing witness is a plan defect code diagnosed (lanes `plan-defect`).
   'plan-defect',
+  // 2026-10-16, blocking: a plan-check, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
+  'context-exceeded',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

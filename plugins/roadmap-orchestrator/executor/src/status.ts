@@ -94,6 +94,7 @@
 //                      src/pipeline/failures.ts: the log and each red run's red.json, never raw evidence); the lanes
 //                      park's needs-user lists the same
 //   units[].running.lane  the lane, journey or mutant run open in the running attempt now (8c)
+//   units[].gate  (dev.12 round 2) the latest gate answer: decision, findings by class, and `unreviewed` (src/pipeline/gate.ts)
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
 //   checkpointWaits  each checkpoint rejected `busy` still waiting for the attempts it named (C5): "checkpoint <job>
@@ -132,15 +133,16 @@ import { type AbsPath, type IsoTime, type RepoPattern, absPath, branchRef, isoTi
 import { HEARTBEAT_FILE, REJECTION_FILE, START_FILE } from './executor.ts';
 import { type BlockingItem, blockingItems, fileNeedsUser, holdsUnit, openNeedsUser, recordOf, supersededPackItems } from './needsuser.ts';
 import { type LaneFailure, laneFailures } from './pipeline/failures.ts';
+import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
-import { PRE_DEV10_BUILTIN_SEATS, bundleClassesOf } from './core/upgrade.ts';
+import { EARLIER_BUILTIN_SEATS, bundleClassesOf, gateLargeDiffOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, knownDefectsOf, lensSetOf, parsePlan } from './input/plan.ts';
-import { type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byModel, meterOf } from './meter.ts';
+import { type ClassTotal, type JobTotal, type Meter, type ModelTotal, type RoleTotal, type SmokeTotal, byClass, byModel, meterOf, ownShare } from './meter.ts';
 import { escalateAt, probeTargets, trippedTargets } from './park/schedule.ts';
 import { type RejectionFile, rejectionFile } from './preflight/startup.ts';
-import { judgmentSeat } from './pipeline/transitions.ts';
+import { judgmentSeat, largeDiffSeat } from './pipeline/transitions.ts';
 import { cpuCapacity, isDirty, poolUnits } from './resources/pool.ts';
 import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf, admitter, nextStage, rankOf } from './schedule/ready.ts';
@@ -290,9 +292,15 @@ export type UnitStatusLine = Readonly<{
   running: UnitRunning | null;
   /** M4a rev 3 (F3): its lanes attempts' red, flaky and repeat lanes, host-suspected ones marked (src/pipeline/failures.ts). */
   failures: readonly LaneFailure[];
+  /**
+   * dev.12 round 2: its latest gate answer (src/pipeline/gate.ts `latestGateAnswer`): attempt, decision, every finding
+   * (blocking, note, pre-existing) and what the gate said it did not review (null on a dev.11 answer: unknown); null before
+   * any gate answer.
+   */
+  gate: GateAnswerView | null;
 }>;
-/** A unit's line as `derive` (and `watch`) reads it: everything but the failures, which read each red lane's `red.json`. */
-type UnitCore = Omit<UnitStatusLine, 'failures'>;
+/** A unit's line as `derive` (and `watch`) reads it: everything but the failures and the gate answer, which read files. */
+type UnitCore = Omit<UnitStatusLine, 'failures' | 'gate'>;
 
 /** The routing in force for the latest start, as classes: never a model. */
 export type RoutingView = Readonly<{
@@ -472,7 +480,13 @@ export type Status = Readonly<{
   }>;
   spend: Readonly<{
     byRole: readonly RoleTotal[];
+    /** Each seat's own share (less its subagents') on the model its revision seats there. */
     byModel: Readonly<{ models: readonly ModelTotal[]; unresolvedRevs: readonly RoutingRev[] }>;
+    /**
+     * 2026-10-16: spend per usage class: each seat's own share on its class, its subagents' on theirs (meter.ts `byClass`),
+     * over the same resolvable revisions as `byModel`.
+     */
+    byClass: Readonly<{ classes: readonly ClassTotal[]; unresolvedRevs: readonly RoutingRev[] }>;
     /** M3: each job's lens and checkpoint calls, M4a's pack review calls (also in `byRole` and `byModel`). */
     byJob: readonly JobTotal[];
     /** Start-up smokes per backend: in neither `byRole` nor `byModel`. */
@@ -574,7 +588,10 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
   if (u.risk === null) return null;
   if ((JUDGMENT_STAGES as readonly string[]).includes(u.stage)) {
     const stage = u.stage as JudgmentStage;
-    return { role: stage === 'plan-check' ? 'planCheck' : 'gate', tier: judgmentSeat(u, stage) };
+    if (stage === 'plan-check') return { role: 'planCheck', tier: judgmentSeat(u, stage) };
+    // A running gate attempt's captured inputs say whether its diff is over the large-diff threshold (1.0.0-dev.12).
+    const inputs = u.open?.stage === 'gate' ? view.judgmentInputs(unit, 'gate', u.open.attempt) : null;
+    return { role: 'gate', tier: largeDiffSeat(judgmentSeat(u, stage), inputs === null ? null : gateLargeDiffOf(inputs)) };
   }
   return u.stage === 'build' ? { role: 'build', tier: u.risk } : null;
 }
@@ -605,15 +622,16 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
 }
 
 /**
- * The routing table of every routing revision the log's plan revisions resolve to (the arc's and each unit layer's), from
- * their recorded provenance only: what `spend.byModel` renders historical usage with (never the live repo config). The
- * class catalogue and the built-in seats bind every revision (OR-L3), so a 1.0.0-dev.9 meter row's recorded rev is also
- * registered, aliased to its revision's current table (`preDev10RevAlias`, scaffolding): its spend joins and is
+ * The routing of every routing revision the log's plan revisions resolve to (the arc's and each unit layer's), from
+ * their recorded provenance only: what `spend.byModel` and `spend.byClass` render historical usage with (never the live
+ * repo config). The
+ * class catalogue and the built-in seats bind every revision (OR-L3), so an earlier release's meter row's recorded rev is also
+ * registered, aliased to its revision's current table (`earlierRevAliases`, scaffolding): its spend joins and is
  * attributed to today's bindings. An alias never displaces a rev HEAD resolves.
  */
-function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, RoutingTable> {
-  const out = new Map<RoutingRev, RoutingTable>();
-  const aliases = new Map<RoutingRev, RoutingTable>();
+function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
+  const out = new Map<RoutingRev, ResolvedRouting>();
+  const aliases = new Map<RoutingRev, ResolvedRouting>();
   for (const e of events) {
     if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') continue;
     const provenance = e.fact.routingProvenance;
@@ -621,20 +639,21 @@ function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<R
     for (const unit of [null, ...(Object.keys(provenance.unitLayers) as UnitId[])]) {
       const stack = provenanceStack(provenance, scope, unit);
       const r = resolveRouting(stack);
-      out.set(r.rev, r.table);
-      aliases.set(preDev10RevAlias(stack), r.table);
+      out.set(r.rev, r);
+      for (const rev of earlierRevAliases(stack)) aliases.set(rev, r);
     }
   }
-  for (const [rev, table] of aliases) if (!out.has(rev)) out.set(rev, table);
+  for (const [rev, r] of aliases) if (!out.has(rev)) out.set(rev, r);
   return out;
 }
 
 /**
- * TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete", efficient judgment): the `routingRev` an executor before
- * 1.0.0-dev.10 recorded for `stack`, its resolution under the built-in seats it hashed (`PRE_DEV10_BUILTIN_SEATS`).
+ * TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete", efficient judgment and the gate risk ladder): the `routingRev`s
+ * earlier executors recorded for `stack`, its resolutions under the built-in seats each hashed (`EARLIER_BUILTIN_SEATS`:
+ * before 1.0.0-dev.10, and 1.0.0-dev.10 and dev.11).
  */
-function preDev10RevAlias(stack: RoutingStack): RoutingRev {
-  return resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, stack).rev;
+function earlierRevAliases(stack: RoutingStack): readonly RoutingRev[] {
+  return EARLIER_BUILTIN_SEATS.map((seats) => resolveRoutingUnder(seats, stack).rev);
 }
 
 function routingView(profile: ProfileName, r: ResolvedRouting): RoutingView {
@@ -1632,7 +1651,8 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   const now = Date.now();
   const meter = meterOf(events);
   const tables = routingTables(runDir, events);
-  const resolvable = meter.bySeat.filter((t) => tables.has(t.routingRev));
+  const resolvable = { bySeat: meter.bySeat.filter((t) => tables.has(t.routingRev)), delegatedBySeat: meter.delegatedBySeat };
+  const each = <V>(of: (r: ResolvedRouting) => V): ReadonlyMap<RoutingRev, V> => new Map([...tables].map(([rev, r]) => [rev, of(r)]));
   const unresolvedRevs = [...new Set(meter.bySeat.filter((t) => !tables.has(t.routingRev)).map((t) => t.routingRev))].sort();
 
   const needsUser: readonly OpenItem[] = [
@@ -1665,12 +1685,18 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
   return {
     arc,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
-    units: d.units.map((l) => ({ ...l, failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }) })),
+    units: d.units.map((l) => ({ ...l, failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
     needsUser,
     commands,
-    spend: { byRole: meter.byRole, byModel: { models: byModel(resolvable, tables), unresolvedRevs }, byJob: meter.byJob, bySmoke: meter.bySmoke },
+    spend: {
+      byRole: meter.byRole,
+      byModel: { models: byModel(ownShare(resolvable), each((r) => r.table)), unresolvedRevs },
+      byClass: { classes: byClass(resolvable, each((r) => r.classes)), unresolvedRevs },
+      byJob: meter.byJob,
+      bySmoke: meter.bySmoke,
+    },
     host: {
       containment: { mode: view.containmentMode(), guarantee: SESSION_GUARANTEE },
       resources: hostResources(view),

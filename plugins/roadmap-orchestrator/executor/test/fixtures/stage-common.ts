@@ -24,7 +24,7 @@ import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { reserveNow } from '../../src/pipeline/lanes.ts';
 import { rankOf } from '../../src/schedule/ready.ts';
-import { resolveRouting } from '../../src/routing/layers.ts';
+import { type RepoConfig, resolveRouting } from '../../src/routing/layers.ts';
 import type { ProfileName, RiskTier } from '../../src/routing/types.ts';
 import { fixture } from '../helpers/proc.ts';
 import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
@@ -75,6 +75,10 @@ export type SetupOptions = Readonly<{
   gitignore?: string;
   /** The plan's suite lanes (default none). */
   suite?: readonly LaneJson[];
+  /** Files the base commit holds beside the fixture repo's (default none). */
+  files?: Readonly<Record<string, string>>;
+  /** The plan's `derived` entries as plan.json writes them (default none). */
+  derived?: readonly JsonValue[];
 }>;
 
 export type StageRun = Readonly<{
@@ -119,7 +123,7 @@ export function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, pr
  * Records the plan file as revision 1 (`scheduling: 'dag'`), as a first start does (src/input/inforce.ts `recordPlan`). A
  * corpus arc's files pass the shared Phase-0 rows first, which open its corpus source, and its corpus files are kept.
  */
-export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default'): void {
+export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default', config: RepoConfig | null = null): void {
   writeStart(runDir, repo, planPath, profile);
   const files = readInputFiles(planPath, repo);
   if (files.corpus !== null) {
@@ -127,7 +131,7 @@ export function recordFirstPlan(journal: Journal, runDir: AbsPath, planPath: Abs
     if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
     keepCorpusFiles(runDir, rows.opened.files);
   }
-  recordPlan(journal, runDir, files, [], { profile, config: null, arcRoles: 'm4b' });
+  recordPlan(journal, runDir, files, [], { profile, config, arcRoles: 'm4b' });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
@@ -167,7 +171,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const repo = tmpDir('stage-repo');
   cpSync(REPO_FILES, repo, { recursive: true });
   writeFileSync(join(repo, '.gitignore'), opts.gitignore ?? 'out/\n');
-  makeRepo(repo, { files: {} });
+  makeRepo(repo, { files: opts.files ?? {} });
   const base = sha(revParse(repo, 'HEAD'));
 
   const planDir = tmpDir('stage-plan');
@@ -190,6 +194,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
     suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [] }],
+    ...(opts.derived === undefined ? {} : { derived: opts.derived }),
   }));
   const plan: PlanM1 = parsePlan(JSON.parse(readFileSync(planPath, 'utf8')));
   const unit = plan.units[0]!;
@@ -233,8 +238,8 @@ export type PlanCheckAnswer = Readonly<{
 
 /** A plan-check the fake Claude answers: a judgment call (read-only tools, fresh session, no resume). `expect` adds to that check. */
 export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
-  // 2026-10-15: a plan-check's fresh session persists (no --no-session-persistence) so its repair turn can resume it.
-  const argv = ['-p', '--tools', 'Read,Grep,Glob', '--session-id', ...(expect.argv ?? [])];
+  // A judgment's fresh session persists (no --no-session-persistence) so its repair turn can resume it (dev.12: every role).
+  const argv = ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id', ...(expect.argv ?? [])];
   return {
     as: 'claude',
     expect: { ...expect, argv, argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] },
@@ -254,7 +259,7 @@ export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
 export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly string[] = [], before: readonly ClaudeAct[] = []): Step {
   return {
     as: 'claude',
-    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
+    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
     acts: [...before, { type: 'emit', value: planCheckAnswer(a) }],
   };
 }

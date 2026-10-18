@@ -84,7 +84,9 @@
         "reasons": [
           "A1, A2 and A3 hold after the fix round."
         ],
-        "premises": []
+        "premises": [],
+        "unreviewed": [],
+        "clusters": null
       }
     },
     {
@@ -134,7 +136,9 @@
         "reasons": [
           "B2 is not delivered."
         ],
-        "premises": []
+        "premises": [],
+        "unreviewed": [],
+        "clusters": null
       }
     },
     {
@@ -163,7 +167,9 @@
         "reasons": [
           "B1 to B4 hold after the revise round."
         ],
-        "premises": []
+        "premises": [],
+        "unreviewed": [],
+        "clusters": null
       },
       "stdinContains": [
         "Deliver B2: when slugify(title) is empty, pageId must use 'page' as the slug part (pageId('!!!', 3) is 'page-3'), and test it."

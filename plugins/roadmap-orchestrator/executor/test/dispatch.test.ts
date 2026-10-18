@@ -14,10 +14,11 @@ import {
 } from '../src/pipeline/dispatch.ts';
 import { build, planCheck } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
+import { largeDiffSeat } from '../src/pipeline/transitions.ts';
 import { type RoutingStack, arcStack, parseRepoConfig, resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
-import { PRE_DEV10_BUILTIN_SEATS } from '../src/core/upgrade.ts';
+import { PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS } from '../src/core/upgrade.ts';
 import {
-  CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, MODEL_IDS, RISK_TIERS, type RoutingLayer, type Triple, routingLayer,
+  CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, JUDGMENT_SEATS, type JudgmentSeat, MODEL_IDS, RISK_TIERS, type RoutingLayer, type Triple, routingLayer,
 } from '../src/routing/types.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit, started } from './fixtures/stage-common.ts';
 
@@ -43,6 +44,12 @@ test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRe
   assert.equal(dispatches(run).length, 1);
   assert.equal(seated(judgmentDispatch(run.ctx, U1, 'plan-check')).tier, 'low');
   assert.equal(seated(implementerDispatch(run.ctx, U1)).triple.backend, 'codex', 'default profile: the efficient class builds low');
+  // 1.0.0-dev.12: a gate over the large-diff threshold sits at least at high; only a gate takes a large diff.
+  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate')).tier, 'low');
+  assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate', { overflow: 1 })).tier, 'high');
+  assert.throws(() => judgmentDispatch(run.ctx, U1, 'plan-check', { overflow: 1 }), /a large diff given to a plan-check seat/);
+  assert.deepEqual(JUDGMENT_SEATS.map((t: JudgmentSeat) => largeDiffSeat(t, { overflow: 3 })), ['high', 'high', 'high', 'escalation']);
+  assert.deepEqual(JUDGMENT_SEATS.map((t: JudgmentSeat) => largeDiffSeat(t, null)), ['low', 'med', 'high', 'escalation']);
 });
 
 test('dispatch.risk-raise: a plan-check that raises the risk records a new dispatch fact; every later seat follows it', T, async () => {
@@ -256,5 +263,33 @@ test('dispatch.dev9-adopted: a unit dispatched and built under the built-in seat
   assert.equal(repinned?.implementerSeatRev, first?.implementerSeatRev, 'the implementer seat is unchanged');
   assert.notEqual(run.journal.view.unit(U1).decided?.outcome, 'routing-changed');
   assert.deepEqual(seated(judgmentDispatch(head, U1, 'plan-check')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' });
-  assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'gate.med stays frontier');
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' }, 'gate.med moves to efficient (the 1.0.0-dev.12 gate ladder)');
+});
+
+// The gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): gate.med moved to efficient; gate.low stays efficient
+// (it moved to economy, then reverted after the paid gate role eval).
+
+test('dispatch.dev11-adopted: a unit dispatched and built under the seats 1.0.0-dev.10 and dev.11 hashed re-pins under HEAD\'s without a park, its build resumes, and its med gate moves from Opus medium to Sonnet high', T, async () => {
+  const run = setupUnit({
+    steps: [
+      planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [MALFORMED] },
+      { as: 'codex', expect: { argv: ['exec', 'resume'], argvLacks: ['-C'] }, acts: [{ type: 'emit', value: BUILD_REPORT }] },
+    ],
+  });
+  const dev11Routing = resolveRoutingUnder(PRE_DEV12_BUILTIN_SEATS, arcStack('default', null, null));
+  assert.deepEqual(dev11Routing.table.gate.med, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'dev.11 gated med on frontier');
+  const dev11: StageContext = { ...run.ctx, routing: () => dev11Routing };
+  started(await planCheck(dev11, run.unit));
+  assert.equal(started(await build(dev11, run.unit, { kind: 'fresh' })).outcome.kind, 'malformed');
+  const head = under(run, arcStack('default', null, null));
+  const s = await step(head, run.unit);
+  assert.equal(s.kind, 'continue', `the resumed build ran: ${JSON.stringify(s)}`);
+  const [first, repinned, ...more] = dispatches(run);
+  assert.deepEqual(more, [], 'one re-pin');
+  assert.equal(first?.routingRev, dev11Routing.rev);
+  assert.equal(repinned?.routingRev, head.routing(null).rev);
+  assert.equal(repinned?.implementerSeatRev, first?.implementerSeatRev, 'the implementer seat is unchanged');
+  assert.notEqual(run.journal.view.unit(U1).decided?.outcome, 'routing-changed');
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'plan-check')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' }, 'plan-check did not move');
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' }, 'gate.med moves to efficient');
 });

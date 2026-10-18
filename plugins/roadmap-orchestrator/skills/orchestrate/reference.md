@@ -53,7 +53,8 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke,
   advisories, numbered}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
-  files outside a unit's scope that still name what its spec `removes`. They never refuse. A revision
+  files outside a unit's scope that still name what its spec `removes`; and `derived-unregenerated{outputs, units}`: a
+  `derived` entry with no `regenerate` whose outputs those units take in. They never refuse. A revision
   that changes the plan or the vision cancels a checkpoint deciding on the earlier one (rejected `stale`); its trigger
   is decided again on your revision.
 - `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
@@ -91,7 +92,8 @@ Not queued, no host lock, no run needed. Run them any time, a running arc includ
   the `.roadmap/` layout, `plan-invalid`, routing, lanes, `holistic-needs-corpus`, and every corpus, Phase-0,
   vision, issue-policy, chain and `tree-uncommitted` row (not the host, residue or smoke rows). Prints `{rows, sliceCandidates, advisories}`; exit 0 with no rows, else 78.
   `advisories` never refuse: `scope-references-outside{unit, removed, referrers}`, the files outside a unit's scope that
-  still name something its spec `removes` (searched at the integration tip, or the baseline before it exists).
+  still name something its spec `removes` (searched at the integration tip, or the baseline before it exists), and
+  `derived-unregenerated{outputs, units}`, a `derived` entry declaring no `regenerate` that a live unit takes in.
   `sliceCandidates`: the active world clauses whose census rules are not all held on the baseline.
 - `roadmap phase0 check --repo <path> --from-ref <arc>`: the same over every input the arc's `refs/roadmap/<arc>`
   recorded, never the live files; only the corpus, census, obligation, debt, question, amendment, intake and vision
@@ -164,10 +166,11 @@ registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the e
 unknown keys refused; read at `start`. `flow.givens` are the owner's repo givens, never yours to add. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
 effort}` and is the only place a model is named (ids in `executor/src/routing/models.ts`). A rebind applies at every seat
 that names the class, judgment seats included: a Codex triple there is refused `unsupported-routing{codex-judgment}`, so
-move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `efficient` builds low
-and med, plan-checks low and med, gates low, and runs the lenses and flow; `frontier` builds high, plan-checks high, gates
-med and high, and runs the pack review; `summit` holds both escalation seats and the checkpoint. A class binds a build
+move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `efficient`
+builds low and med, plan-checks low and med, gates low and med, and runs the lenses and flow; `frontier` builds high, plan-checks
+high, gates high, and runs the pack review; `summit` holds both escalation seats and the checkpoint. A class binds a build
 model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
+`economy` is judgment-only and no built-in seat names it (reach it through `routing.seats`, a plan or `route`): no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`.
 
 **Run dir** `$(git rev-parse --path-format=absolute --git-common-dir)/roadmap-runtime/<arc>/`. Read, never write:
 
@@ -244,7 +247,12 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
 - `plan{rev, planSha256}`; `routing{profile, rev, seats, sources, bindings}` (classes, never models).
 - `units[]`: `unit, stage, status, attempts, chargeableFailures, risk, seat{role, tier}, state, waitingFor, holds,
   priority{priority, origin, waitStartSeq, bypassMerges, promoted}, park, lineage, supersededBy, buildTier, running,
-  failures`. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
+  failures, gate`. `gate{attempt, decision, findings[{severity: blocking|note|pre-existing, path, text, contractRef}],
+  unreviewed[{path, reason}]}` is the unit's latest gate answer, or null before one: a `pre-existing` finding is a real
+  defect already at the base (never blocking); `unreviewed` is what the gate says it did not review (null on an answer
+  from dev.11: unknown), recorded and never enforced. A gate whose diff is too large for its attachment (files left out for
+  size) sits at least at the high seat whatever the unit's risk (`seat` shows it once the gate has started), and its answer
+  carries a cluster map that code checks covers every changed path exactly once; a file in a cluster counts as reviewed. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
   `parked`, `merged`, `cut` or `superseded`. `waitingFor{deps, edges, resources, envBlocked, admission, drainFor}`;
   `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare. `running{stage,
   attempt, elapsed (ms), deadline, resources, lane}`, `lane{id, set: spec|suite|journey|mutant, inv, startedAt}` the
@@ -256,8 +264,9 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
   by itself once its probes pass.
 - `edges[]` (`after{unit, on, effective, met}`, `contingent{unit, edge, condition, resolved}`), `runOnly`.
 - `commands{pending[{id, type}], receipts}` (the last 10 terminal receipts).
-- `spend{byRole, byModel{models, unresolvedRevs}, byJob, bySmoke}`: token totals; `byModel` is the only place
-  `status` names a model.
+- `spend{byRole, byModel{models, unresolvedRevs}, byClass{classes, unresolvedRevs}, byJob, bySmoke}`: token totals and
+  list-price cost. A Claude call's totals include its subagents'; `byClass` splits spend by class (`efficient`, `frontier`,
+  `summit`, `economy`): each seat's own share on its class, subagent spend on the subagent model's class. `byModel` counts each seat's own share and is the only place `status` names a model.
 - `host{containment, resources, pools, queue, probes, backends, log{bytes, events, foldMs, compactionDue}}`,
   `parkedBackends`, `rejection`.
 - `timings[{stage, count, p50Ms, maxMs}]`: completed attempts per stage.
@@ -388,9 +397,7 @@ lineage merged or cut, or the apply cuts a fixer an entry still names), `known-d
 the lane) and `known-defect-cycle` (the `after` edges plus the holds form a cycle, named). A re-entry whose scope
 leaves its lineage's envelope is refused unless its spec cites an active ruling for it naming exactly the added
 patterns. A re-entry the apply adds is refused without `fixes` (once its lineage recorded a failure) or with one that names no failure of its lineage (the
-refusal lists the lineage's failures), and as an unchanged retry: its cited failure is a design failure of the unit, it
-has no `reset`, and its spec content, effective scope (derived outputs included), suite lanes and resolved routing are all as the failure ran under (the
-refusal names each). Priority, known-defect and plan-check-shape edits drain nothing.
+refusal lists the lineage's failures); a re-entry that changes nothing the cited failure ran under is accepted. Priority, known-defect and plan-check-shape edits drain nothing.
 
 ## Needs-user reasons
 
@@ -412,6 +419,9 @@ Blocking unless noted. Read the item file before acting.
 - `scope-growth` (the unit is held at plan-check, or at lanes): its plan-check proposes scope growth code verified
   (each pattern matches a file, lies outside the scope, and could land), or salvage reverted the same path on its last
   two build rounds. `scope accept` or `scope reject` (SKILL.md "Scope growth").
+- `context-exceeded` (the unit is parked at plan-check, build or gate, uncharged): the call's prompt or context outgrew
+  its model's window; the item names the role, the call and the prompt's size. Shrink the stage's inputs or route the
+  seat to a larger window, then `resume` (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
 - `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
   witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
   (SKILL.md "Handling parks").
@@ -445,6 +455,7 @@ Blocking unless noted. Read the item file before acting.
 - "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck`, spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
 - "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row and park, plan `derived`
-  and the dispatch record's `derived`, the lanes `scope-growth` hold.
+  and the dispatch record's `derived`, the lanes `scope-growth` hold; a derived entry's `regenerate` and its check
+  ("Regenerate checks").
 - "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,
   proofs, verdicts, givens and the flow facts.

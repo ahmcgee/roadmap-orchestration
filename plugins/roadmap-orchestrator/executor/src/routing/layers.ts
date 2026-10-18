@@ -27,8 +27,8 @@
 //   { "routing": {
 //       "profile": "default" | "claude-only",                      optional; the base profile
 //       "seats": { "<planCheck|gate>": { "<low|med|high|escalation>": "<class>" },
-//                  "build": { "<low|med|high>": "<class>" } },        optional; any subset of seats
-//       "classes": { "<efficient|frontier|summit>":                    optional; rebinds for this repo
+//                  "build": { "<low|med|high>": "<build class>" } },  optional; any subset of seats
+//       "classes": { "<efficient|frontier|summit|economy>":            optional; rebinds for this repo
 //                      { "backend", "model", "effort" } } },
 //     "chain": { "k": <positive> },                                  optional (M4a): unacked chained starts allowed
 //     "flow": { "givens": [{ "lever": "<lever class>", "note" }] } }  optional (M4b): repo givens, owner-committed
@@ -39,7 +39,8 @@
 //   and a note; code drops a flow proposal using a given's lever. The owner commits them; host givens live in the git
 //   common dir (src/flow/givens.ts).
 //
-//   Classes: `efficient | frontier | summit`. A seat value that is a triple is refused: triples are bound
+//   Classes: `efficient | frontier | summit | economy`; economy is judgment-only, so a build seat naming it is refused,
+//   in every layer. A seat value that is a triple is refused: triples are bound
 //   only under `classes`, which is repo-level (a plan cannot rebind a class). A rebind is one triple for the class at
 //   build and judgment seats alike; a Codex one refuses any judgment seat in force that names the class. A binding's effort is one its
 //   model lists in models.ts: a Claude model low | medium | high | xhigh | max, a Codex model low | medium | high. Unknown
@@ -190,10 +191,10 @@ export function resolveRouting(stack: RoutingStack): ResolvedRouting {
 
 /**
  * `resolveRouting` with `builtin` as the lowest layer. Only `status` passes another table: the built-in seats an
- * earlier release hashed, to alias its recorded revs (`PRE_DEV10_BUILTIN_SEATS`, src/core/upgrade.ts; scaffolding).
+ * earlier release hashed, to alias its recorded revs (`EARLIER_BUILTIN_SEATS`, src/core/upgrade.ts; scaffolding).
  */
 export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): ResolvedRouting {
-  const bound = (c: ModelClass, seat: SeatRef): Triple => stack.classes?.[c] ?? boundAt(CLASS_CATALOGUE[stack.profile][c], seat.role);
+  const bound = (c: ModelClass, seat: SeatRef): Triple => stack.classes?.[c] ?? boundAt(stack.profile, c, seat.role);
   const named = (seat: SeatRef): readonly [ModelClass, RoutingLayerName] => {
     for (const [name, key] of LAYERS) {
       const c = (stack[key]?.[seat.role] as Readonly<Partial<Record<string, ModelClass>>> | undefined)?.[seat.tier];
@@ -201,7 +202,8 @@ export function resolveRoutingUnder(builtin: ClassTable, stack: RoutingStack): R
     }
     return [atSeat(builtin, seat), 'builtin'];
   };
-  const classes = seatTable((s) => named(s)[0]);
+  // Every layer and the built-in table name a build class at a build seat (`ClassOf`), so the merged table does too.
+  const classes = seatTable((s) => named(s)[0]) as ClassTable;
   const table = seatTable((s) => bound(atSeat(classes, s), s));
   const bindings = Object.fromEntries(MODEL_CLASSES.map((c) => [c, stack.classes?.[c] === undefined ? 'builtin' : 'repo-config'])) as ResolvedRouting['bindings'];
   const arcScope = stack.arcScope ?? 'none';

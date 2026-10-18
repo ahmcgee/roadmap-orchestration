@@ -8,9 +8,10 @@ import { canonicalJson } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { planPath } from '../src/core/values.ts';
 import { support } from '../src/prompts/index.ts';
-import { CLASS_CATALOGUE } from '../src/routing/classes.ts';
+import { EARLIER_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS } from '../src/core/upgrade.ts';
+import { CLASS_CATALOGUE, boundAt } from '../src/routing/classes.ts';
 import {
-  type RoutingStack, arcStack, parseRepoConfig, planStack, resolveRouting, routingRevOf, seatsInForce, selectProfile, unsupportedSeats,
+  type RoutingStack, arcStack, parseRepoConfig, planStack, resolveRouting, resolveRoutingUnder, routingRevOf, seatsInForce, selectProfile, unsupportedSeats,
 } from '../src/routing/layers.ts';
 import { MODELS } from '../src/routing/models.ts';
 import { BUILTIN_SEATS } from '../src/routing/profiles.ts';
@@ -29,12 +30,14 @@ const FABLE: Triple = { backend: 'claude', model: 'claude-fable-5-1', effort: 'h
 const SONNET: Triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' };
 /** The efficient class's judgment binding in both profiles (owner ruling 2026-10-15): Sonnet 5.5 at high. */
 const SONNET_HIGH: Triple = { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' };
+/** The economy class's judgment binding in both profiles (1.0.0-dev.12): Haiku 5.5 at high. */
+const HAIKU_HIGH: Triple = { backend: 'claude', model: 'claude-haiku-5-5', effort: 'high' };
 const LUNA: Triple = { backend: 'codex', model: 'gpt-5.6-luna', effort: 'medium' };
 const SOL_HIGH: Triple = { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' };
 const base: RoutingStack = arcStack('default', null, null);
 
 describe('routing', () => {
-  it('catalogue: five pinned models, Claude effort low|medium|high|xhigh|max, Codex low|medium|high', () => {
+  it('catalogue: six pinned models, Claude effort low|medium|high|xhigh|max, Codex low|medium|high', () => {
     assert.deepEqual(Object.keys(MODELS).sort(), [...MODEL_IDS].sort());
     for (const m of MODEL_IDS) {
       const info = MODELS[m];
@@ -45,14 +48,14 @@ describe('routing', () => {
   it('routing.classes: the class catalogue is the one binding, per profile; seats name classes, never models', () => {
     const both = (t: Triple) => ({ build: t, judgment: t });
     assert.deepEqual(CLASS_CATALOGUE, {
-      default: { efficient: { build: LUNA, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_XHIGH) },
-      'claude-only': { efficient: { build: SONNET, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_XHIGH) },
+      default: { efficient: { build: LUNA, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_XHIGH), economy: { judgment: HAIKU_HIGH } },
+      'claude-only': { efficient: { build: SONNET, judgment: SONNET_HIGH }, frontier: both(OPUS), summit: both(OPUS_XHIGH), economy: { judgment: HAIKU_HIGH } },
     });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(BUILTIN_SEATS), new RegExp(m.replace('.', '\\.')));
     assert.deepEqual(BUILTIN_SEATS, {
       planCheck: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
       build: { low: 'efficient', med: 'efficient', high: 'frontier' },
-      gate: { low: 'efficient', med: 'frontier', high: 'frontier', escalation: 'summit' },
+      gate: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
       lens: { arc: 'efficient' },
       checkpoint: { arc: 'summit' },
       packReview: { arc: 'frontier' },
@@ -60,14 +63,14 @@ describe('routing', () => {
     });
   });
 
-  it('built-in profiles resolve: efficient builds low/med (Luna; Sonnet medium under claude-only) and judges plan-check low/med, gate low, the lenses and flow on Sonnet high; Opus medium builds high and judges the rest; Opus xhigh holds escalation', () => {
+  it('built-in profiles resolve: efficient builds low/med (Luna; Sonnet medium under claude-only) and judges plan-check low/med, gate low/med, the lenses and flow on Sonnet high; Opus medium builds high and judges the rest; Opus xhigh holds escalation', () => {
     const d = resolveRouting(base).table;
     assert.deepEqual(d.build, { low: LUNA, med: LUNA, high: OPUS });
     const c = resolveRouting(arcStack('claude-only', null, null)).table;
     assert.deepEqual(c.build, { low: SONNET, med: SONNET, high: OPUS });
     for (const t of [d, c]) {
       assert.deepEqual(t.planCheck, { low: SONNET_HIGH, med: SONNET_HIGH, high: OPUS, escalation: OPUS_XHIGH });
-      assert.deepEqual(t.gate, { low: SONNET_HIGH, med: OPUS, high: OPUS, escalation: OPUS_XHIGH });
+      assert.deepEqual(t.gate, { low: SONNET_HIGH, med: SONNET_HIGH, high: OPUS, escalation: OPUS_XHIGH });
       assert.deepEqual([t.lens.arc, t.checkpoint.arc, t.packReview.arc, t.flow.arc], [SONNET_HIGH, OPUS_XHIGH, OPUS, SONNET_HIGH]);
     }
     for (const p of PROFILES) {
@@ -92,6 +95,55 @@ describe('routing', () => {
     assert.deepEqual(resolveRouting(arcStack('claude-only', null, layer({ build: { high: 'efficient' } }))).table.build.high, SONNET);
   });
 
+  it('routing.economy: a judgment-only class on Haiku 5.5 high in both profiles; any judgment seat may name it, with a prompt for every judgment role; a build seat naming it is refused in every layer; a rebind moves it', () => {
+    const everyJudgment = layer({
+      planCheck: { low: 'economy', med: 'economy', high: 'economy', escalation: 'economy' },
+      gate: { low: 'economy', med: 'economy', high: 'economy', escalation: 'economy' },
+      lens: { arc: 'economy' }, checkpoint: { arc: 'economy' }, packReview: { arc: 'economy' }, flow: { arc: 'economy' },
+    });
+    for (const p of PROFILES) {
+      assert.deepEqual(CLASS_CATALOGUE[p].economy, { judgment: HAIKU_HIGH }, `${p}: no build triple`);
+      const r = resolveRouting({ ...arcStack(p, null, everyJudgment), arcScope: 'corpus', arcRoles: 'm4b' });
+      for (const s of SEAT_REFS) if (s.role !== 'build') assert.deepEqual(atSeat(r.table, s), HAIKU_HIGH, `${p} ${s.role}.${s.tier}`);
+      assert.deepEqual(unsupportedSeats(r, null), [], `${p}: route may seat economy at any judgment seat`);
+    }
+    // A build seat names a build class: economy there is refused by the repo config, a plan layer and a unit layer alike.
+    assert.throws(() => parseRepoConfig({ routing: { seats: { build: { low: 'economy' } } } }), (e: unknown) => e instanceof SchemaError && e.field === 'config.routing.seats.build.low');
+    assert.throws(() => layer({ build: { high: 'economy' } }), (e: unknown) => e instanceof SchemaError && e.field === 'layer.build.high');
+    assert.throws(() => boundAt('default', 'economy', 'build'), /binds no build triple/);
+    // No built-in seat names economy (the 2026-10-17 gate eval reverted gate.low): with the built-in seats nothing resolves
+    // to Haiku, and even a Codex rebind of economy refuses nothing.
+    for (const p of PROFILES) {
+      const r = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
+      assert.doesNotMatch(JSON.stringify(r.classes), /economy/, p);
+      assert.doesNotMatch(JSON.stringify(r.table), /claude-haiku/, p);
+    }
+    const lunaEconomy = { economy: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'low' } } as const;
+    assert.deepEqual(unsupportedSeats(resolveRouting(arcStack('default', parseRepoConfig({ routing: { classes: lunaEconomy } }), null)), null), []);
+    // A repo rebind binds it at every judgment seat naming it (here the repo seats gate.low on it); a Codex rebind refuses
+    // them; Haiku has no build prompt.
+    const lowOnEconomy = { gate: { low: 'economy' } } as const;
+    const onOpus = resolveRouting(arcStack('default', parseRepoConfig({ routing: { seats: lowOnEconomy, classes: { economy: OPUS } } }), null));
+    assert.deepEqual([onOpus.table.gate.low, onOpus.bindings.economy], [OPUS, 'repo-config']);
+    const onLuna = unsupportedSeats(resolveRouting(arcStack('default', parseRepoConfig({ routing: { seats: lowOnEconomy, classes: lunaEconomy } }), null)), null);
+    assert.deepEqual(onLuna, [{ kind: 'unsupported-routing', role: 'gate', tier: 'low', layer: 'repo-config', class: 'economy', unit: null, why: 'codex-judgment' }]);
+    const efficientOnHaiku = unsupportedSeats(resolveRouting(arcStack('claude-only', parseRepoConfig({ routing: { classes: { efficient: HAIKU_HIGH } } }), null)), null);
+    assert.deepEqual(efficientOnHaiku.map((x) => x.kind === 'unsupported-routing' ? [x.role, x.tier, x.why] : null), [['build', 'low', 'no-prompt'], ['build', 'med', 'no-prompt']]);
+  });
+
+  it('routing.gate-ladder-adopted: an arc started on 1.0.0-dev.10 or dev.11 hashed the seats PRE_DEV12_BUILTIN_SEATS keeps; HEAD binds them to the triples it hashed, and only gate.med moved (gate.low went to economy and back within dev.12)', () => {
+    for (const p of PROFILES) {
+      const stack = { ...arcStack(p, null, null), arcRoles: 'm4b' } as const;
+      const before = resolveRoutingUnder(PRE_DEV12_BUILTIN_SEATS, stack);
+      const now = resolveRouting(stack);
+      assert.deepEqual([before.table.gate.low, before.table.gate.med], [SONNET_HIGH, OPUS], `${p}: dev.11 gated low on Sonnet high, med on Opus medium`);
+      assert.notEqual(before.rev, now.rev, `${p}: the ladder moved the rev`);
+      const moved = SEAT_REFS.filter((s) => JSON.stringify(atSeat(before.table, s)) !== JSON.stringify(atSeat(now.table, s))).map((s) => `${s.role}.${s.tier}`);
+      assert.deepEqual(moved, ['gate.med'], p);
+      assert.deepEqual(EARLIER_BUILTIN_SEATS.at(-1), PRE_DEV12_BUILTIN_SEATS);
+    }
+  });
+
   it('routing.layers: each layer overrides the one below, per seat; sources name the layer that chose the class', () => {
     const config = parseRepoConfig(fixture('config-seats.json'));
     const plan = layer({ build: { low: 'efficient', med: 'frontier' }, planCheck: { escalation: 'frontier' } });
@@ -107,7 +159,7 @@ describe('routing', () => {
     assert.equal(r.sources.gate.med, 'repo-config');
     assert.deepEqual(r.table.gate.med, OPUS_XHIGH);
     assert.equal(r.sources.build.high, 'builtin');
-    assert.deepEqual(r.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin' });
+    assert.deepEqual(r.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin', economy: 'builtin' });
     // Without the unit layer, the plan's build.low shows; without the plan too, the repo config's.
     assert.deepEqual(resolveRouting(arcStack('default', config, plan)).table.build.low, LUNA);
     const onlyRepo = resolveRouting(arcStack('default', config, null));
@@ -124,7 +176,7 @@ describe('routing', () => {
     assert.deepEqual(r.table.planCheck.low, SOL_HIGH, 'a rebind binds the judgment seats that name the class too');
     assert.equal(r.classes.build.low, 'efficient');
     assert.equal(r.sources.build.low, 'builtin', 'the class was chosen by the profile');
-    assert.deepEqual(r.bindings, { efficient: 'repo-config', frontier: 'builtin', summit: 'builtin' });
+    assert.deepEqual(r.bindings, { efficient: 'repo-config', frontier: 'builtin', summit: 'builtin', economy: 'builtin' });
     assert.notEqual(r.rev, resolveRouting(base).rev);
     // A plan cannot rebind: `classes` is not a routing layer key.
     assert.throws(() => layer({ classes: { efficient: SOL_HIGH } }), (e: unknown) => e instanceof SchemaError && e.field === 'layer.classes');
@@ -165,7 +217,7 @@ describe('routing', () => {
     const efficientOnSol = unsupportedSeats(resolveRouting(arcStack('default', parseRepoConfig(fixture('config-classes.json')), null)), null);
     assert.deepEqual(efficientOnSol.map((x) => x.kind === 'unsupported-routing' ? [x.role, x.tier, x.layer, x.class, x.why] : null), [
       ['planCheck', 'low', 'builtin', 'efficient', 'codex-judgment'], ['planCheck', 'med', 'builtin', 'efficient', 'codex-judgment'],
-      ['gate', 'low', 'builtin', 'efficient', 'codex-judgment'],
+      ['gate', 'low', 'builtin', 'efficient', 'codex-judgment'], ['gate', 'med', 'builtin', 'efficient', 'codex-judgment'],
     ]);
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(rejections), new RegExp(m.replace('.', '\\.')));
     // A Claude model without a prompt for the role is `no-prompt` (Fable 5.1, reached by a repo rebind, has no build prompt).

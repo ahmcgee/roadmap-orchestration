@@ -25,6 +25,10 @@ A change is not done until the ladder passes, in order (from `executor/`):
    purpose). Both tiers keep runnable load within the host's cpus: a saturated host fails timing-bound tests, so a
    file that runs eight or more cells of real processes at once goes in the serial tier, never the parallel one.
 3. `node evals/probe.ts`: real CLIs, pennies
+3.5. Role evals (`evals/roles/`, `node evals/roles/run.ts gate --set dev --n 3`): paid, path-triggered (`node
+   evals/roles/triggers.ts <base>` names the roles a batch's changes trigger; none triggered, the rung is skipped), once per
+   merged batch, never per worktree agent. The holdout set (untracked `evals/roles/holdout/`, `--set holdout --compare
+   <dev summary.json>`) runs only at acceptance.
 4. The paid fixture (`evals/m1/`): once per merged batch, never per worktree agent
 
 Tests are a hard line: never skip, weaken or drop one. The integrated tier uses real processes and real git.

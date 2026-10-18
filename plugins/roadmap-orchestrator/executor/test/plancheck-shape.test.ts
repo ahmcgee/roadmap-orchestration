@@ -34,7 +34,7 @@ const isAssess = (c: CallRecord): boolean => (c.argv[c.argv.indexOf('--json-sche
 /** A plan-check call: a Claude judgment whose schema has a patch and no ops (the checkpoint's), whatever its shape. */
 const isPlanCheck = (c: CallRecord): boolean => {
   const schema = c.argv[c.argv.indexOf('--json-schema') + 1] ?? '';
-  return c.as === 'claude' && c.argv.includes('Read,Grep,Glob') && schema.includes('"patch"') && !schema.includes('"ops"') && !isGateCall(c);
+  return c.as === 'claude' && c.argv.includes('Read,Grep,Glob,Agent') && schema.includes('"patch"') && !schema.includes('"ops"') && !isGateCall(c);
 };
 
 /** A claude implementer's fresh in-session assessment answering `a` (after `before` acts). */

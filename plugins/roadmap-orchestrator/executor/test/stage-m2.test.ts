@@ -134,7 +134,11 @@ test('gate.judgment-inputs: plan-check and gate write their inputs before the en
       assert.equal(f.specRev, 1);
       assert.equal(f.planRev, planRevNow);
       assert.equal(f.routingRev, r.ctx.routing(null).rev);
-      const fingerprint = f.stage === 'gate' ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)) } : {};
+      // 1.0.0-dev.12: the gate's also record what its bounded diff inlined (the unit's two files) and did not, and that the
+      // diff is under the large-diff threshold.
+      const fingerprint = f.stage === 'gate'
+        ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)), diffShown: { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] }, largeDiff: null }
+        : {};
       assert.deepEqual(r.journal.view.judgmentInputs(U1, f.stage, f.attempt), {
         unit: f.unit, stage: f.stage, attempt: f.attempt, tip: f.tip, head: f.head, specRev: f.specRev, specSha256: f.specSha256, planRev: f.planRev, routingRev: f.routingRev, ...fingerprint,
       });

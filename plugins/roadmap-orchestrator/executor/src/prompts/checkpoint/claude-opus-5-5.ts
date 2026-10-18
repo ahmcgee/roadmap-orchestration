@@ -1,9 +1,12 @@
-// checkpoint × claude-fable-5-1 (M3, §2.8, OR-V). Guide: Anthropic "Prompting best practices" and "Prompting
-// Claude Fable 5.1" (platform.claude.com, reviewed 2026-09-30). Written for Fable, which holds the summit seat:
-// the autonomous-operation opening the Fable guide says carries most of the "finish the whole task" effect,
-// adapted to a steward (weigh every open finding before deciding); plain literal prose for reasons and
-// interpretations (Fable's writing runs dense); ops held to what the cited clauses demand (Fable widens scope
-// on open-ended work); recognising a name is not knowing its state (open the evidence you cite). The vision
+// checkpoint × claude-opus-5-5 (M3, §2.8, OR-V). Guides: Anthropic "Prompting best practices" and "Prompting Claude Opus
+// 5.5" (platform.claude.com). Only the 5.5-generation guides bind (owner ruling 2026-10-17): "Prompting Claude Opus 5.5", "Prompting Claude Sonnet 5.5",
+// "Prompting Claude Haiku 5.5" and "Prompting best practices" as it applies to current models; earlier-generation guides do not. The checkpoint sits on summit, which Opus 5.5 holds at xhigh
+// (OR-Q17); Fable reads this module unchanged (src/prompts/index.ts). First written for Fable 5.1 (reviewed 2026-09-30,
+// when Fable held summit) and served to Opus since M4a; W3 (2026-10-16) made it the Opus module by name. Kept from the Fable
+// writing, and what the Opus 5.5 guide also asks of an unattended run: the autonomous-operation opening, adapted to a
+// steward (weigh every open finding before deciding; the guide's unattended runs end early otherwise); plain literal prose
+// for reasons and interpretations; ops held to what the cited clauses demand (the bundle's own citation rule, §2.8: every
+// op cites the V-n that demand it; re-derived 2026-10-17, no guide needed); recognising a name is not knowing its state (open the evidence you cite). W3: delegation (withdrawn 2026-10-17). The vision
 // goes first and in full and wins every conflict; the checkpoint steers toward it, not toward the original plan
 // (owner ruling OR-V). Its authority and limits are the plan's: it amends, re-anchors, splits and drops,
 // retires, waives or defers obligations and amends contracts, each op citing the active V-n that demand it
@@ -35,14 +38,14 @@
 // corpusAmendments; an opportunity clause no obligation serves is shown apart and is not a gap to close. Owner ruling
 // (2026-10-10): an opportunity without its witness converts `unwitnessed`.
 // Arc feedback 2026-10-16 (a re-entry without the cause, one more doomed try): a park trigger's diagnosis from the
-// executor's records goes right after the trigger; a reenter op cites the failure it fixes and changes what that failure
-// ran under, or the bundle is invalid.
+// executor's records goes right after the trigger; a reenter op cites the failure it fixes, or the bundle is invalid
+// (dev.12: whether the retry differs is the model's method, no longer refused).
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
   checkpointSpecsText, coverageText, diagnosisText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
   priorRejectedText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
 } from '../inputs.ts';
-import { CHECKPOINT_SCHEMA, MAX_PREMISES } from '../schemas.ts';
+import { CHECKPOINT_SCHEMA } from '../schemas.ts';
 import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA } from '../../holistic/types.ts';
 
 /** A closed enum as the prompt lists it, from the sidecar reader's own constants (src/holistic/types.ts). */
@@ -68,7 +71,7 @@ You may amend the implementation contracts, the unit specs, routing, limits and 
 - admit: a new unit. spec is its complete spec.json as an object, in the schema of the plan's unit specs: schema roadmap/spec-m1, unit its id, rev 1, every item with its state (active), a lane item's env.set a list of {name, value}, obligations and repairs [] when it declares none. It holds no witness items; a later patch adds them. origin is repair for a unit that repairs findings, else checkpoint. targets lists the corpus rules (T-n) the unit adds or changes behaviour for; leave it empty only for pure test, witness or documentation work. A rule the spec merely mentions or must keep holding is not a target.
 - patch-spec: patch ops against a unit's current spec, the same ops a plan-check redirect uses. Every unit's spec is in <unit_specs> in full, with the item ids it holds: add needs an id the spec does not hold, and replace an id it holds. A lane item's env.set is a list of {name, value}.
 A lane's evidenceGlobs (in an admit or a patch) name only the files that lane's run writes, its outputs (logs, reports, coverage), never the unit's source or tests: a matched file is never committed or merged. An entry that matches a literal path of the unit's scope, or equals one of its scope patterns, makes the bundle invalid. Paths a lane reads go in its inputs.
-- reenter: a new unit that re-enters a parked or held unit (reenters), from plan-check, build or verify (enterAt, or null for the default); reset names a ruling that resets its chargeable failures, or is null. fixes names the failure the re-entry fixes, by its reference in <diagnosis> (<unit>/<stage>#<attempt> for a failure outcome, <unit>/lanes#<attempt>/<lane> for a lane failure); it is null only for a unit whose lineage recorded no failure. The new unit starts from the re-entered unit's spec, scope and routing: unless the cited failure is a flaky or host-suspected lane, or a park that is not the unit's design failure, the same bundle must change what it ran under (a patch-spec of the new unit, its route, or a ruling's reset), or the bundle is invalid. Re-running a design failure unchanged only fails again; find its cause in the diagnosis first, and when you cannot, cut the unit or request the owner's decision instead.
+- reenter: a new unit that re-enters a parked or held unit (reenters), from plan-check, build or verify (enterAt, or null for the default); reset names a ruling that resets its chargeable failures, or is null. fixes names the failure the re-entry fixes, by its reference in <diagnosis> (<unit>/<stage>#<attempt> for a failure outcome, <unit>/lanes#<attempt>/<lane> for a lane failure); it is null only for a unit whose lineage recorded no failure. The new unit starts from the re-entered unit's spec, scope and routing; a patch-spec of the new unit, its route, or a ruling's reset changes them. Re-running a design failure unchanged only fails again; find its cause in the diagnosis first, and when you cannot, cut the unit or request the owner's decision instead.
 - cut: a unit leaves the plan, with the reason.
 - route: a unit's seats, by model class (efficient, frontier, summit).
 - limits: bounds for one unit, or for the arc when unit is null (convergenceK is arc-wide).
@@ -129,7 +132,7 @@ Weigh every open finding, every obligation not held, the coverage gaps, the unco
 Change as little as settles the arc's course. no-op is legitimate and often right: when nothing in front of you needs the plan to change, decide no-op with no ops and no rulings (interpretations and finding dispositions may still be recorded). A bundle is checked against the head and revisions you were given: an op on stale evidence is rejected. The head may advance while you decide: an observation stays valid when the head's run keeps every cited test's outcome and selection; cite the observations your ops rest on. A second material op on the same finding or obligation lineage goes to the owner, so an op should settle what it addresses rather than try again. The Direction breaks ties where the vision, contracts and rulings are silent; it never overrides the vision.
 
 # Output
-decision is no-op or bundle; a bundle has at least one op. reasons holds the decision's justification, one point per entry, each citing V-n, finding, obligation or C-nn ids; it is not a transcript of your reasoning. cites lists the vision clauses, the observations (their full keys as given) and the findings the decision as a whole rests on. premises lists the claims about the repository the decision relies on, at most ${MAX_PREMISES}, each with the file and line where you read it. corpusAmendments and issueIntake are as described above, on a no-op as on a bundle.
+decision is no-op or bundle; a bundle has at least one op. reasons holds the decision's justification, one point per entry; it is not a transcript of your reasoning. cites lists the vision clauses, the observations (their full keys as given) and the findings the decision as a whole rests on. premises lists the claims about the repository the decision relies on, each with the file and line where you read it, or is empty. corpusAmendments and issueIntake are as described above, on a no-op as on a bundle.
 
 Write every reason, summary, interpretation and disposition as plain, literal sentences: what, where and why, without metaphor or flourish.`;
 

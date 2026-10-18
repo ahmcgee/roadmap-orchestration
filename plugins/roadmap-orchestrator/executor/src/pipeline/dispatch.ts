@@ -14,7 +14,7 @@
 //   transient rules its candidate runs under (`transientRules: 'm3'`, H15). A `limits` or scope-growth revision
 //   re-pins at the next dispatch check, as a routing change does; a re-pin copies `transientRules`.
 // - A routing change mid-unit (a new routingRev at a later dispatch; lead ruling, arc-1 feedback item 7):
-//   every judgment is a fresh session (a repair turn resumes only its own judgment's), so a judgment seat may change harmlessly; the implementer's session
+//   every judgment is a fresh session (its repair turn resumes only its own), so a judgment seat may change harmlessly; the implementer's session
 //   resumes, so its session key (`implementerSessionKey`: backend and model, R4) may not change. The unit is re-pinned
 //   under the new rev (a new dispatch fact, scope and floor unchanged) when no build has started for it or its
 //   implementer seat keeps its key under both revs (an effort-only change re-pins, and the session resumes with the new
@@ -24,7 +24,8 @@
 //   `steer --class` moves the implementer seat on purpose.
 // - Seats: the implementer sits on the unit's risk tier for the whole unit (it keeps its model); a
 //   judgment stage sits on `judgmentSeat` (transitions.ts): the role's `escalation` seat once it routed up
-//   (for the rest of the unit) or while a risk trigger is pending (the next judgment dispatch only).
+//   (for the rest of the unit) or while a risk trigger is pending (the next judgment dispatch only). A gate whose diff is
+//   over the large-diff threshold sits at least at `high` (`largeDiffSeat`, 1.0.0-dev.12), recorded on its judgment-inputs.
 // - The backend call: prompt text and schema are content-addressed input files written before the spawn
 //   intent; the launch names the role and routingRev, never the model, except in argv (launch.json is the
 //   one executor-written file allowed a model id). The workload env is `backendEnv(host)`; the implementer's
@@ -41,11 +42,11 @@
 //   on the judgment profile at the role's one seat `arc` of the arc's routing, spawned as `arc-backend` under `job{job}`
 //   and metered to the job by role and routingRev. A resumed job reads a call it made back (`recordedArcCall`); its
 //   verdict is read as a unit judgment's (`verdictOf` takes a job parent: a usage limit parks the backend arc-wide).
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes } from '../backends/argv.ts';
+import { type BackendCall, type ClaudeTriple, type CodexTriple, backendArgv, freshJudgmentSession, promptBytes, resumedJudgmentSession } from '../backends/argv.ts';
 import {
-  BACKEND_PARK_CLASSES, type BackendParkClass, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
+  BACKEND_PARK_CLASSES, type BackendParkClass, type GateLargeDiff, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OpOutcome, type Parent,
 } from '../core/events.ts';
 import { type ArcId, type InvocationId, type JobId, type RoutingRev, type SeatRev, type UnitId, invocationId, opKey, seatRev } from '../core/ids.ts';
 import type { IntentBody, Journal, JournalView } from '../core/interfaces.ts';
@@ -73,7 +74,7 @@ import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
 import { abortReason } from './redlane.ts';
 import { type LaunchSpec, type SpawnOrigin, invocationDir, invoke } from './invoke.ts';
 import { callRuling, pressureCause } from './starved.ts';
-import { judgmentSeat } from './transitions.ts';
+import { judgmentSeat, largeDiffSeat } from './transitions.ts';
 
 /**
  * Everything a unit's stages need: processes, resources, the resolved routing and the host environment. In the
@@ -315,12 +316,16 @@ export type ImplementerDispatch = Readonly<{ role: 'build'; tier: RiskTier; trip
 
 const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'planCheck', gate: 'gate' };
 
-/** The seat of a judgment dispatch: the unit's risk, or the escalation seat after a route-up or a risk trigger. */
-export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: JudgmentStage): Pinned<JudgmentDispatch> {
+/**
+ * The seat of a judgment dispatch: the unit's risk, or the escalation seat after a route-up or a risk trigger. A gate passes
+ * its diff's `largeDiff` (1.0.0-dev.12): over the threshold a low or med seat moves to `high` (`largeDiffSeat`).
+ */
+export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: JudgmentStage, largeDiff: GateLargeDiff | null = null): Pinned<JudgmentDispatch> {
   const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
   if (pinned.kind !== 'pinned') return pinned;
   const role = ROLE_OF[stage];
-  const tier = judgmentSeat(ctx.journal.view.unit(unit), stage);
+  if (largeDiff !== null && stage !== 'gate') throw new Error(`${unit}: a large diff given to a ${stage} seat`);
+  const tier = largeDiffSeat(judgmentSeat(ctx.journal.view.unit(unit), stage), largeDiff);
   const triple = ctx.routing(unit).table[role][tier];
   // Startup refuses every Codex judgment seat (unsupported-routing), so this is a bug if it happens.
   if (triple.backend !== 'claude') throw new Error(`the ${role} seat ${tier} resolves to ${triple.backend}; judgment is Claude only in M1`);
@@ -455,7 +460,44 @@ function isJsonLine(line: string): boolean {
  * recovery table); the outcome is the retry's. An implementer call that may have changed the tree is not
  * retried: its work is salvaged and verified (`lost-tree-effects`).
  */
-export async function callBackend(ctx: StageContext, spec: BackendCallSpec): Promise<BackendCallOutcome> {
+/**
+ * A judgment session's read surface (2026-10-16): the repository and the run dir, then each of `extra` (the dirs its role
+ * names: evidence, the rulings ledger, a corpus, a branch checkout) not already inside one of them, in order; the tree it
+ * judges is its cwd. Read-only: a judgment's tools (argv.ts `JUDGMENT_TOOLS`) and its subagents' write nothing. A read
+ * outside the surface is refused by the CLI and recorded (reads.json `denied`); it no longer voids an approval.
+ */
+export function judgmentReadDirs(ctx: Readonly<{ repo: AbsPath; runDir: AbsPath }>, extra: readonly AbsPath[]): readonly AbsPath[] {
+  const out: AbsPath[] = [ctx.repo, ctx.runDir];
+  const covered = (dir: AbsPath): boolean => out.some((d) => dir === d || dir.startsWith(`${d}/`));
+  for (const dir of extra) if (!covered(dir)) out.push(dir);
+  return out;
+}
+
+/**
+ * A judgment's system text and `--add-dir` list: the module's text, then `<readable_directories>` naming every dir of its
+ * read surface (`judgmentReadDirs`). `--system-prompt` replaces Claude Code's default prompt, which is what would list the
+ * additional working directories, so without this a judge learns those paths only from inputs naming files under them
+ * (the bounded diff's .diff files and the run dir's evidence are read by absolute path, by the judge or its subagents).
+ * The CLI keeps a session's first system prompt on resume, so a repair turn reads the same list.
+ */
+export function judgmentSurface(
+  ctx: Readonly<{ repo: AbsPath; runDir: AbsPath }>, system: string, extra: readonly AbsPath[],
+): Readonly<{ system: string; evidenceDirs: readonly AbsPath[] }> {
+  const evidenceDirs = judgmentReadDirs(ctx, extra);
+  const label = (d: AbsPath): string => (d === ctx.repo ? ' (the repository)' : d === ctx.runDir ? ' (the executor\'s run directory: evidence, attached diffs, inputs)' : '');
+  const listed = evidenceDirs.map((d) => `- ${d}${label(d)}`).join('\n');
+  return {
+    system: `${system}\n\n<readable_directories>\nBesides your working directory, you and any subagent you start may read these directories and everything under them, read-only, by absolute path:\n${listed}\n</readable_directories>`,
+    evidenceDirs,
+  };
+}
+
+export async function callBackend(ctx: StageContext, given: BackendCallSpec): Promise<BackendCallOutcome> {
+  let spec = given;
+  if (given.request.kind === 'judgment') {
+    const { system, evidenceDirs } = judgmentSurface(ctx, given.system, given.request.evidenceDirs);
+    spec = { ...given, system, request: { ...given.request, evidenceDirs } };
+  }
   const r = spec.request;
   const seat: UnitSeatRef = r.kind === 'judgment' ? { role: r.dispatch.role, tier: r.dispatch.tier } : { role: 'build', tier: r.dispatch.tier };
   const role: Role = seat.role;
@@ -514,14 +556,49 @@ export type ArcCallSpec = Readonly<{
   cwd: AbsPath;
   evidenceDirs: readonly AbsPath[];
   deadlineAt: IsoTime;
-  /** A fresh session, or (2026-10-15, the checkpoint's repair turn) the refused answer's own, resumed. */
+  /** A fresh session, or (the repair turn, `repairTurnOf`) the refused answer's own, resumed. */
   session: JudgmentSession;
 }>;
 
+/** What a repair turn reuses of its refused call: its session (resumed), its schema and its cwd. */
+export type RepairTurn = Readonly<{ session: JudgmentSession; schema: JsonValue; cwd: AbsPath }>;
+
+function judgmentLaunch(runDir: AbsPath, inv: InvocationId) {
+  const launch = runnerFiles(invocationDir(runDir, inv), inv).read('launch.json');
+  if (launch === null || launch.terminal.type !== 'backend' || launch.terminal.role === 'build') throw new Error(`${inv}: a judgment call without its judgment launch.json`);
+  return { ...launch, terminal: launch.terminal };
+}
+
+/** Whether judgment call `inv` is the repair turn of call `of`: its session is `of`'s, resumed. */
+export function isRepairTurnOf(runDir: AbsPath, inv: InvocationId, of: InvocationId): boolean {
+  const session = judgmentLaunch(runDir, inv).terminal.session;
+  return session.mode === 'resume' && session.id === judgmentLaunch(runDir, of).terminal.session.id;
+}
+
+/**
+ * The judgment repair turn (dev.12, one for every judgment role; 2026-10-15 plan-check and the checkpoint): an answer the
+ * executor refuses (off its schema, or refused by the role's own validator) goes back once, in its own session, resumed,
+ * with every reason (`judgmentRepairDirective`), the call's own schema and in its own cwd (a resumed Claude session is
+ * found by its cwd, so the caller makes that checkout again first when it removed it). The repair turn's answer is the
+ * role's answer; refused again it is the role's malformed or invalid outcome. What a repair turn of judgment call `inv`
+ * reuses from its launch, or null when it takes none: `inv` is itself a repair turn (a resumed session), or (adoption,
+ * scaffolding) an earlier release's unpersisted session (`--no-session-persistence`: a gate, lens, pack-review or flow
+ * call made before 1.0.0-dev.12), whose refusal then stands, with a warning on stderr.
+ */
+export function repairTurnOf(runDir: AbsPath, inv: InvocationId): RepairTurn | null {
+  const launch = judgmentLaunch(runDir, inv);
+  const { session, schemaPath } = launch.terminal;
+  if (session.mode === 'resume') return null;
+  if (launch.argv.includes('--no-session-persistence')) {
+    process.stderr.write(`roadmap: ${inv}: its ${launch.terminal.role} session was not persisted (an earlier release's call), so its refused answer takes no repair turn\n`);
+    return null;
+  }
+  return { session: resumedJudgmentSession(session.id), schema: JSON.parse(readFileSync(schemaPath, 'utf8')) as JsonValue, cwd: launch.cwd };
+}
+
 /**
  * An arc-role call through `invoke`: a read-only session on the judgment profile (the unit judgments' argv), fresh but for
- * the checkpoint's repair turn,
- * spawned as `arc-backend{role, tier: arc, routingRev, job, attempt}` under `job{job}`, so its usage is metered to the
+ * a repair turn (`repairTurnOf`), spawned as `arc-backend{role, tier: arc, routingRev, job, attempt}` under `job{job}`, so its usage is metered to the
  * job by role and routingRev, never a model. Its workload env is `backendEnv` alone (a judgment holds no resource).
  * A call lost with its runner is retried once, uncharged, as the op's next invocation, as a unit judgment's is.
  */
@@ -530,7 +607,7 @@ export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise
   const { session } = spec;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
-  const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, system: spec.system, evidenceDirs: spec.evidenceDirs };
+  const c: BackendCall = { kind: 'claude-judgment', role: spec.role, triple, session, schemaText, ...judgmentSurface(ctx, spec.system, spec.evidenceDirs) };
   const stdin = inputFile(ctx.runDir, promptBytes(c, spec.rendered), 'prompt.txt');
   const env = backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
@@ -585,6 +662,8 @@ export type Interruption = 'pause' | 'stop' | BackendParkClass | 'host-pressure'
 export type BackendVerdict =
   | Readonly<{ kind: 'success'; value: JsonValue; result: BackendResult }>
   | Readonly<{ kind: 'refusal' | 'malformed' | 'process-fault'; detail: string }>
+  /** 2026-10-16: the call's prompt or context outgrew the model's window; `detail` names the role, the call and the size. */
+  | Readonly<{ kind: 'context-exceeded'; detail: string; inv: InvocationId; promptBytes: number }>
   | Readonly<{ kind: 'interrupted'; reason: Interruption; cause: HoldCause | null; needsUser: NeedsUserContent | null }>;
 
 /** Who a backend call ran for: a unit's stage attempt, or (M3) a job's arc-role call. */
@@ -615,9 +694,23 @@ export function backendOf(called: BackendCallOutcome): Backend {
 }
 
 /**
+ * The size in bytes of the prompt a backend call was launched with: its stdin (for Codex the system text leads it) and
+ * Claude's `--system-prompt` or `--append-system-prompt` value.
+ */
+export function launchedPromptBytes(called: Readonly<{ inv: InvocationId; invDir: AbsPath }>): number {
+  const launch = runnerFiles(called.invDir, called.inv).read('launch.json');
+  if (launch === null) throw new Error(`${called.invDir}: a finished backend call without its launch.json`);
+  const at = launch.argv.findIndex((t) => t === '--system-prompt' || t === '--append-system-prompt');
+  const system = at === -1 ? 0 : Buffer.byteLength(launch.argv[at + 1] ?? '', 'utf8');
+  return (launch.stdinPath === null ? 0 : statSync(launch.stdinPath).size) + system;
+}
+
+/**
  * Reads a finished call. Order: an interruption (outcome `cancelled`: a pause or stop) first, then the
  * usage-limit/capacity park (outcome != success with such an error: a `backend-park` fact, arc-wide, whose seq
- * is the park's epoch and the hold's cause), then, for a unit's stage, a starved call (M4b rev 3, RC-11: a process
+ * is the park's epoch and the hold's cause), then a context overrun (2026-10-16: outcome != success with a
+ * `context-exceeded` error: the call's own failure, never a backend park and never a process fault, so no probe and no
+ * repeat rule), then, for a unit's stage, a starved call (M4b rev 3, RC-11: a process
  * fault its deadline or stall watchdog ended under host pressure, `callRuling`: held with cause `host-pressure`,
  * uncharged), then the outcome itself. A job's call is never starved: no unit is charged for it.
  */
@@ -636,6 +729,12 @@ export function verdictOf(ctx: StageContext, parent: CallParent, called: Backend
       const parkSeq = ctx.journal.fact({ kind: 'backend-park', backend, class: park, inv: called.inv });
       const needsUser = park === 'usage-limit' ? usageLimitNeedsUser(parent, backend, called) : null;
       return { kind: 'interrupted', reason: park, cause: { type: 'backend', backend, parkSeq }, needsUser };
+    }
+    const exceeded = result.backendErrors.find((e) => e.class === 'context-exceeded');
+    if (exceeded !== undefined) {
+      const promptBytes = launchedPromptBytes(called);
+      const detail = `the ${result.role} call ${called.inv} outgrew the model's context with a prompt of ${promptBytes} bytes: ${exceeded.message}`;
+      return { kind: 'context-exceeded', detail, inv: called.inv, promptBytes };
     }
   }
   if (parent.type === 'stage' && result.outcome.kind === 'process-fault') {

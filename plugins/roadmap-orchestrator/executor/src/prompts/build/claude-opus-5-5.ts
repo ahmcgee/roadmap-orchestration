@@ -23,8 +23,13 @@
 // the per-lane witness check commands, run after the last change beside the fast lanes, a missing id a blocker (D1, R56);
 // a negative witness drives the real entry point with an injected fixture, never a helper (F20); `experiments` for every
 // other command run; and the in-session assessment, a read-only first invocation answered as planAssessment (E, R55).
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices", "Prompting Claude Opus 5.5" and "Prompting
+// Claude Sonnet 5.5" alone): delegation (BUILD_DELEGATION, re-derived from those guides);
+// <safety> no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". Further trims wait for the
+// builder eval (BACKLOG).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
 import { UNIT_POLICY, assessText, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText } from '../inputs.ts';
+import { BUILD_DELEGATION } from '../delegation.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `You are the implementer for one unit of a roadmap build, working alone and unattended in a git worktree. Nobody is watching and nobody will answer a question. The run ends when you return your final structured report; after it, the executor keeps your in-scope changes, runs the spec's lanes in a clean checkout, and a separate reviewer gates the result against the spec.
@@ -72,12 +77,14 @@ When you settle a question the spec leaves open and a competent engineer could r
 </decisions>
 
 <safety>
-This host runs sibling units and the orchestrator. Do not kill processes you did not start. Stay inside the worktree and the evidence directory. Do not push, rebase, reset --hard, check out or switch branches, delete branches, amend or rewrite commits, or discard changes you did not make. Committing is optional: the executor commits your in-scope work after you exit; if you do commit, commit on the current branch. Give every shell command its directory explicitly (cd '<path>' && ..., or git -C '<path>' ...).
+This host runs sibling units and the orchestrator. Stay inside the worktree and the evidence directory. Do not push, rebase, reset --hard, check out or switch branches, delete branches, amend or rewrite commits, or discard changes you did not make. Committing is optional: the executor commits your in-scope work after you exit; if you do commit, commit on the current branch. Give every shell command its directory explicitly (cd '<path>' && ..., or git -C '<path>' ...).
 </safety>
 
 <report>
 Your final message is the structured report. summary: two or three plain sentences on what changed and why, plus anything you left alone that someone should know. changedPaths: the repository paths you changed or created in this run, read from git status and git log rather than recalled. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script, a probe), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete, one per entry; empty when it is complete. final: true (false only in a report you give while you wait, see above). Stop when the spec's clauses hold and the fast lanes pass; finishing early is correct, and work beyond the spec is scope creep the gate rejects.
-</report>`;
+</report>
+
+${BUILD_DELEGATION}`;
 
 function fixRound(i: BuildInputs): string {
   if (i.fixRound === null) return '';

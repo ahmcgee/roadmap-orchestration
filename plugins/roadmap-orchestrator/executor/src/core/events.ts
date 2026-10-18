@@ -10,7 +10,7 @@ import {
   type ProposalId, type UnitId, type VisionClauseId, INTEGRATION_SLOT, proposalId, proposalJob, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
   findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseOpId,
   parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId, idList,
+  visionClauseId, idList, type ClaudeSessionId, claudeSessionId,
 } from './ids.ts';
 import { type BankReason, type DebtSource, BANK_REASONS, debtSource } from '../debt/types.ts';
 import {
@@ -25,7 +25,7 @@ import { canonicalJson, sha256Hex } from './json.ts';
 import {
   COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
   type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
-  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type UsageUnavailableReason, approvalFingerprint, containmentMode,
+  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
   usageUnavailableReason,
 } from './records.ts';
@@ -417,14 +417,22 @@ export const STAGE_OUTCOME_KINDS = {
   reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed'],
   // M4a rev 3 (E): `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check call, the
   // build assesses in session).
-  // Paid M4b run 5: `read-denied`, as at the gate.
+  // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
   // Scope growth (2026-10-15): `scope-growth` (the answer proposed scope growth code verified: a hold until the root agent's
   // `scope accept|reject <unit>`, src/commands/scope.ts).
-  'plan-check': ['approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'in-session', 'read-denied', 'scope-growth'],
+  // 2026-10-16: `context-exceeded` (the call's prompt or context outgrew the model's window: an uncharged env park), at
+  // plan-check, build and gate.
+  'plan-check': [
+    'approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed',
+    'in-session', 'read-denied', 'scope-growth', 'context-exceeded',
+  ],
   // M4a rev 3 (E, R55): the in-session assessment found the spec `infeasible`, or raised the risk floor onto another
   // implementer seat (`risk-raised`).
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
-  build: ['success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible', 'risk-raised', 'witness-lane-missing'],
+  build: [
+    'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible',
+    'risk-raised', 'witness-lane-missing', 'context-exceeded',
+  ],
   quiesce: ['empty'],
   evidence: ['captured'],
   salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
@@ -442,9 +450,11 @@ export const STAGE_OUTCOME_KINDS = {
     'witness-lane-missing', 'plan-defect', 'scope-growth',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
-  // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry,
-  // `readRefused`, src/pipeline/stages.ts).
-  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied'],
+  // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
+  // TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): no longer recorded since 2026-10-16, when the judge's read
+  // surface widened to the repository and the run dir and a refused read stopped voiding an approval; kept, with its
+  // transition row, so a 1.0.0-dev.11 log whose latest gate or plan-check outcome is one still folds and retries.
+  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded'],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
   candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked'],
@@ -546,7 +556,12 @@ export type StageOutcomeDetail =
    */
   | Readonly<{ kind: 'scope-growth'; proposals: readonly ScopeGrowthProposal[] }>
   /** Plan defects (2026-10-16): lanes `plan-defect`, the defects code found behind the missing witnesses (non-empty). */
-  | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>;
+  | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>
+  /**
+   * 2026-10-16: plan-check, build or gate `context-exceeded`, the call whose prompt or context outgrew the model's window and
+   * its prompt's size in bytes (stdin and the system prompt; dispatch.ts `verdictOf`).
+   */
+  | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>;
 /**
  * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
  * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
@@ -558,6 +573,7 @@ export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
   'lanes/base-red': 'base-red',
   'plan-check/scope-growth': 'scope-growth', 'lanes/scope-growth': 'scope-growth', 'lanes/plan-defect': 'plan-defect',
+  'plan-check/context-exceeded': 'context-exceeded', 'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -599,13 +615,39 @@ export type JudgmentInputs = Readonly<{
    * fence; an approval records exactly it. Present exactly on a gate's.
    */
   fingerprint?: ApprovalFingerprint;
+  /**
+   * 1.0.0-dev.12: what the gate's attached diff inlined and what it did not (src/git/boundeddiff.ts: files with changed
+   * content not inlined and deleted files; a pure move is neither), each ascending. Only on a gate's; absent on one a
+   * dev.11 executor recorded: read through `gateDiffShownOf`.
+   */
+  diffShown?: DiffShown;
+  /**
+   * 1.0.0-dev.12 (the large-diff gate): null when the attached diff inlined every file it could, else how many files with
+   * changed content it left out for size (`BoundedDiff.overflow`). Above that threshold the gate sits at least at `high`
+   * (transitions.ts `largeDiffSeat`), renders its large-diff method and must answer a cluster map covering the diff. Only
+   * on a gate's; absent on one a dev.11 executor recorded: read through `gateLargeDiffOf`.
+   */
+  largeDiff?: GateLargeDiff | null;
 }>;
+
+/** The paths a gate's attached diff inlined and did not (`JudgmentInputs.diffShown`). */
+export type DiffShown = Readonly<{ inlined: readonly RepoPath[]; notInlined: readonly RepoPath[] }>;
+/** A gate's diff over the large-diff threshold (`JudgmentInputs.largeDiff`): the files its attachment left out for size. */
+export type GateLargeDiff = Readonly<{ overflow: number }>;
 
 export type Fact =
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
   /** One usage fact per invocation, charged to `subject`. */
-  | Readonly<{ kind: 'meter'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage }>
+  /**
+   * `usage` is what the invocation is charged. 2026-10-16, a Claude call's fact also names its `session` and the `delegated`
+   * share of `usage` per usage class (its subagents' models): its result reports the session's cumulative usage, and
+   * `usage` and `delegated` are that less what the session's earlier facts charged (src/core/usage.ts `chargedUsage`).
+   * Both absent: a Codex call's, or one an executor before 1.0.0-dev.12 wrote (nothing delegated).
+   */
+  | Readonly<{
+    kind: 'meter'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
+  }>
   | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason }>
   | Readonly<{ kind: 'dispatch'; record: DispatchRecord }>
   /**
@@ -1583,6 +1625,9 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   }),
   'scope-growth': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('scope-growth')), proposals: f.get('proposals', arrayOf(scopeGrowthProposal, { nonEmpty: true })) })),
   'plan-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('plan-defect')), defects: f.get('defects', arrayOf(planDefect, { nonEmpty: true })) })),
+  'context-exceeded': object((f): StageOutcomeDetail => ({
+    kind: f.get('kind', literal('context-exceeded')), inv: f.get('inv', invR), promptBytes: f.get('promptBytes', nat),
+  })),
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {
@@ -1889,10 +1934,15 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
 export const fact: Read<Fact> = tagged('kind', {
   'tail-discarded': object((f): Fact => ({ kind: f.get('kind', literal('tail-discarded')), offset: f.get('offset', nat), length: f.get('length', positive), sha256: f.get('sha256', sha256R) })),
   'containment-mode': object((f): Fact => ({ kind: f.get('kind', literal('containment-mode')), mode: f.get('mode', containmentMode) })),
-  meter: object((f): Fact => ({
-    kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
-    usage: f.get('usage', tokenUsage),
-  })),
+  meter: object((f): Fact => {
+    const session = f.optional('session', (v, p) => claudeSessionId(v, p));
+    const delegated = f.optional('delegated', classUsages);
+    if ((session === undefined) !== (delegated === undefined)) throw new SchemaError(f.path, 'session and delegated together, or neither', { session, delegated });
+    return {
+      kind: f.get('kind', literal('meter')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
+      usage: f.get('usage', tokenUsage), ...(session === undefined || delegated === undefined ? {} : { session, delegated }),
+    };
+  }),
   'usage-unavailable': object((f): Fact => ({
     kind: f.get('kind', literal('usage-unavailable')), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
     reason: f.get('reason', usageUnavailableReason),
@@ -1940,9 +1990,14 @@ export const fact: Read<Fact> = tagged('kind', {
     if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);
     const fingerprint = f.optional('fingerprint', approvalFingerprint);
     if ((fingerprint !== undefined) !== (out.stage === 'gate')) throw new SchemaError(`${f.path}.fingerprint`, out.stage === 'gate' ? 'the gate\'s approval fingerprint' : 'absent on a plan-check', fingerprint);
+    const paths = sortedBy((v, p) => repoPath(v, p), (x) => x);
+    const diffShown = f.optional('diffShown', object((g): DiffShown => ({ inlined: g.get('inlined', paths), notInlined: g.get('notInlined', paths) })));
+    if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a plan-check', diffShown);
+    const largeDiff = f.optional('largeDiff', nullable(object((g): GateLargeDiff => ({ overflow: g.get('overflow', positive) }))));
+    if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a plan-check', largeDiff);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
-    return { ...out, fingerprint };
+    return { ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }) };
   }),
   'edge-resolved': object((f): Fact => ({
     kind: f.get('kind', literal('edge-resolved')), edge: f.get('edge', (v, p) => edgeId(v, p)), command: f.get('command', cmdR), evidence: f.get('evidence', str),

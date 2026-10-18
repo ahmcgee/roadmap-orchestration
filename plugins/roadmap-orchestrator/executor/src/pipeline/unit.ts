@@ -65,7 +65,7 @@ import { SchemaError } from '../core/validate.ts';
 import { patternPath } from '../git/evidence.ts';
 import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
-import { buildOutputFor } from '../prompts/schemas.ts';
+import { DECISIONS_FILE, buildOutputFor } from '../prompts/schemas.ts';
 import { type InvocationId, type OpId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
 import { type EntryPoint, type UnitState, openAttempt } from '../core/state.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
@@ -75,6 +75,7 @@ import { type AbsPath, absPath } from '../core/values.ts';
 import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
 import { failuresText, laneFailures } from './failures.ts';
 import { capturedEvidence } from '../git/evidence.ts';
+import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type NextStage, nextStage } from '../schedule/ready.ts';
 import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
@@ -94,9 +95,10 @@ import {
 } from './rounds.ts';
 import {
   type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
-  nowInside, planCheck, quiesce, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
+  nowInside, planCheck, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
 import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
+import type { Role } from '../routing/types.ts';
 import { requiredAt } from './witnesscheck.ts';
 import { type Next, type Target, decidedBy } from './transitions.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
@@ -115,6 +117,9 @@ export type Step = UnitResult | Readonly<{ kind: 'continue' }>;
 
 /** The stages that make a backend call. */
 const CALL_STAGES: readonly OutcomeStage[] = ['plan-check', 'build', 'gate'];
+type CallStage = 'plan-check' | 'build' | 'gate';
+/** The role each call stage's backend call sits on. */
+const STAGE_ROLE = { 'plan-check': 'planCheck', build: 'build', gate: 'gate' } as const satisfies Readonly<Record<CallStage, Role>>;
 
 /** Reasons that concern the arc rather than one unit: the base is broken, or someone else moved a ref. */
 const ARC_REASONS: ReadonlySet<NeedsUserReason> = new Set(['base-red', 'foreign-ref-move', 'usage-limit']);
@@ -156,8 +161,13 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   const f = ctx.journal.view.unit(unit.id).decided;
   if (f === null) throw new Error(`unit ${unit.id} halted without a decided outcome`);
   const { path, spec } = loadUnitSpec(ctx, unit);
+  const exceeded = f.detail?.kind === 'context-exceeded' ? f.detail : null;
+  if (reason === 'context-exceeded' && exceeded === null) throw new Error(`unit ${unit.id}: ${f.stage}#${f.attempt} context-exceeded without its detail`);
   const recommendation = kind === 'stop'
     ? 'Read the evidence and the log, find and fix the cause, then acknowledge this item and start the arc again.'
+    : exceeded !== null
+      ? `Make the ${f.stage} inputs fit: split the unit or narrow its spec through a spec revision, or route ${STAGE_ROLE[f.stage as CallStage]}'s seat `
+        + `to a class whose model has a larger context window. Then \`roadmap resume ${unit.id}\` re-runs ${f.stage}, uncharged.`
     : reason === 'steered'
       ? `Review the steer pass (its build and ${f.stage} evidence). \`roadmap resume ${unit.id}\` re-runs ${f.stage} with the pass over, so the pipeline goes on as usual `
         + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
@@ -171,7 +181,11 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
     subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },
     reason,
     // F3: a lanes park lists the unit's lane failures, host-suspected ones marked, so a reset re-entry can cite them.
-    summary: [`Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`, ...(f.stage === 'lanes' ? [failuresText(laneFailures(ctx, unit))] : [])]
+    summary: [
+      `Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`,
+      ...(exceeded === null ? [] : [`The ${STAGE_ROLE[f.stage as CallStage]} call ${exceeded.inv} outgrew the model's context window: its prompt was ${exceeded.promptBytes} bytes.`]),
+      ...(f.stage === 'lanes' ? [failuresText(laneFailures(ctx, unit))] : []),
+    ]
       .filter((x) => x !== '').join(' '),
     recommendation,
     options: [],
@@ -239,7 +253,8 @@ export function candidateRedCause(ctx: StageContext, unit: PlanUnit, at: StagePa
 
 /**
  * I3 (F25): why the build answer that decided `f` (a malformed build) did not validate, for the resume round to quote: the
- * schema error of its recorded answer, or the uncommitted merge of a resolve round; null when the call left no answer.
+ * schema error of its recorded answer, its decisions.json's (dev.12), or the uncommitted merge of a resolve round, in
+ * `buildRead`'s order; null when the call left no answer.
  */
 function malformedError(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): string | null {
   const called = recordedCall(ctx, stageParent(f));
@@ -253,6 +268,8 @@ function malformedError(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact):
     if (error instanceof SchemaError) return error.message;
     throw error;
   }
+  const decisions = readDecisions(absPath(join(workDir(ctx.runDir, stageParent(f)), DECISIONS_FILE)), loadUnitSpec(ctx, unit).spec);
+  if (typeof decisions === 'string') return `the report validated, but ${decisions}. Write ${DECISIONS_FILE} again, complete, in the evidence directory`;
   return 'the report claimed success, but the merge of the integration branch is not committed on the unit branch';
 }
 
@@ -300,7 +317,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
   const root = specSeriesRoot(ctx.runDir, parent);
   const ledger = seriesLedger(ctx, parent, spec.lanes, 'spec', tip, root);
   const suiteRoot = fastSuiteRoot(ctx.runDir, parent, 'suite');
-  const series = [...ledger, ...seriesLedger(ctx, parent, ctx.plan().suite.lanes, 'suite', tip, suiteRoot)];
+  const series = [...ledger, ...seriesLedger(ctx, parent, [...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes], 'suite', tip, suiteRoot)];
   const dirty = [...seriesDirty(view, root), ...seriesDirty(view, suiteRoot)];
   switch (f.outcome) {
     case 'witnesses-missing': {

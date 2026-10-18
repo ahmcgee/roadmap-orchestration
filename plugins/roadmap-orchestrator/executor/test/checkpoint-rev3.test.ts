@@ -38,7 +38,7 @@ import { reached, release } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { withForge } from './helpers/corpusarc.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
-import { VALID_OP, checkpointAnswer, checkpointRepairStep, checkpointStep, intakeOutcome, lensStep, noteLensStep } from './helpers/holistic.ts';
+import { VALID_OP, checkpointAnswer, jobRepairStep, checkpointStep, intakeOutcome, lensStep, noteLensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -151,7 +151,7 @@ describe('admit classes and conversions in a corpus arc (B)', () => {
       const withTargets = (cites: readonly string[]): JsonValue => ({ ...(admitCiting(x, 'more', cites) as Json), targets: ['T-2'] } as JsonValue);
       const dishonest = checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1']), witnessSplit('more', 'V-3')] });
       appendSteps(x.a.d, [
-        checkpointStep('ckpt-1', dishonest), checkpointRepairStep('ckpt-1', dishonest, ['dishonest-citation']),
+        checkpointStep('ckpt-1', dishonest), jobRepairStep('ckpt-1', dishonest, ['dishonest-citation']),
         checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [withTargets(['V-1', 'V-3']), witnessSplit('more', 'V-3')] })),
       ]);
       const first = await run(x);
@@ -412,7 +412,7 @@ describe('rulings and split census (C2–C4)', () => {
     });
     try {
       const untestable = checkpointAnswer({ decision: 'bundle', ops: [splitTo('T-3')] });
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', untestable), checkpointRepairStep('ckpt-1', untestable, ['whose census state is untestable'])]);
+      appendSteps(x.a.d, [checkpointStep('ckpt-1', untestable), jobRepairStep('ckpt-1', untestable, ['whose census state is untestable'])]);
       const out = await run(x);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
       assert.match(out.decision.detail, /child I-2 is anchored at T-3, whose census state is untestable: anchor the child at its parent's rule T-1, or admit it as an opportunity/);
@@ -427,7 +427,7 @@ describe('rulings and split census (C2–C4)', () => {
     try {
       // 2026-10-15: the answer off its schema takes its repair turn, told the violation; repeating it, it is invalid.
       const answer = checkpointAnswer({ decision: 'bundle', ops: [draught] });
-      appendSteps(x.a.d, [checkpointStep('ckpt-1', answer), checkpointRepairStep('ckpt-1', answer, ['malformed: ', 'schema violation at $.ops[0]'])]);
+      appendSteps(x.a.d, [checkpointStep('ckpt-1', answer), jobRepairStep('ckpt-1', answer, ['malformed: ', 'schema violation at $.ops[0]'])]);
       const out = await run(x);
       const argv = callOf(x, 'ckpt-1').argv;
       const schema = JSON.parse(argv[argv.indexOf('--json-schema') + 1]!) as Json;
@@ -674,8 +674,8 @@ describe('the checkpoint\'s inputs (H4, H5)', () => {
       try {
         const dishonest = checkpointAnswer({ decision: 'bundle', ops: [withTargets(x.a)] });
         appendSteps(x.a.d, [
-          checkpointStep('ckpt-1', dishonest), checkpointRepairStep('ckpt-1', dishonest),
-          checkpointStep('ckpt-2', dishonest), checkpointRepairStep('ckpt-2', dishonest),
+          checkpointStep('ckpt-1', dishonest), jobRepairStep('ckpt-1', dishonest),
+          checkpointStep('ckpt-2', dishonest), jobRepairStep('ckpt-2', dishonest),
           noteLensStep('audit-2'),
           checkpointStep('ckpt-3', checkpointAnswer({ decision: 'no-op' })),
         ]);
@@ -761,7 +761,7 @@ describe('issue reuse (H5, F27)', () => {
       const applied = await applyCommand(x.w.commands, submitCommand(x.r.ctx.runDir, x.r.journal.view.arc, applyBody(x.a.d)));
       assert.equal(applied.kind, 'applied', JSON.stringify(applied));
       await completedAudit(x.r, x.ctx);
-      appendSteps(x.a.d, [checkpointRepairStep('ckpt-2', relisted, ['issueIntake gives issue-2 no outcome'])]);
+      appendSteps(x.a.d, [jobRepairStep('ckpt-2', relisted, ['issueIntake gives issue-2 no outcome'])]);
       const out = await run(x);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
       assert.match(out.decision.detail, /issueIntake gives issue-2 no outcome/);
@@ -796,7 +796,7 @@ describe('a unit merged around the capture (paid M4a run 10)', () => {
 
   test('bundle.merged-at-capture-invalid: a spec op on a unit already merged at capture stays invalid (the model was shown it merged)', T, async () => {
     const merged = checkpointAnswer({ decision: 'bundle', ops: [patchU1] });
-    const x = await arc([...toMerge(), checkpointStep('ckpt-1', merged), checkpointRepairStep('ckpt-1', merged, ['unit u1 is merged; its spec is fixed'])]);
+    const x = await arc([...toMerge(), checkpointStep('ckpt-1', merged), jobRepairStep('ckpt-1', merged, ['unit u1 is merged; its spec is fixed'])]);
     try {
       assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
       const out = await run(x);

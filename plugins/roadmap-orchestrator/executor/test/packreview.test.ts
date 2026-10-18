@@ -2,7 +2,7 @@
 // git, real processes, the fake claude answering the review calls by job. Named tests: packreview.key-excludes-job,
 // packreview.holds-admission, packreview.ack-releases, packreview.key-pending-holds, packreview.superseded-by-rereview (with
 // R-17: status, watch and --actionable drop the superseded item),
-// packreview.none-after-first-admission, packreview.abandoned, packreview.consumed-on-restart,
+// packreview.none-after-first-admission, packreview.abandoned, packreview.context-exceeded, packreview.consumed-on-restart,
 // packreview.inputs-only-on-recovery, packreview.delta-rereview-dispositions (M4a rev 3, N5),
 // packreview.no-review-between-rule-and-apply (M4a rev 3, I2), and the
 // crash cells of the matrix row PACK_REVIEW_JOB.
@@ -25,7 +25,7 @@ import { ActionableFilter, HEARTBEAT_MIN, watch } from '../src/watch.ts';
 import { recover } from '../src/recover/recover.ts';
 import { arcHolds, holisticContexts } from '../src/schedule/scheduler.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { packReviewStep, packTargetOf } from './helpers/holistic.ts';
+import { jobRepairStep, packReviewAnswer, packReviewStep, packTargetOf } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
@@ -206,8 +206,11 @@ describe('the hold before the first admission (K14, H9)', () => {
     }
   });
 
-  test('packreview.abandoned: a review that gives no valid report ends abandoned with a blocking item saying why; its ack releases', T, async () => {
-    const x = await arcWith([{ as: 'claude', unit: 'review-1', expect: {}, acts: [{ type: 'emit', value: { findings: 'not a list' } }] }]);
+  test('packreview.abandoned: a review that gives no valid report, its repair turn included, ends abandoned with a blocking item saying why; its ack releases', T, async () => {
+    const x = await arcWith([
+      { as: 'claude', unit: 'review-1', expect: {}, acts: [{ type: 'emit', value: { findings: 'not a list' } }] },
+      jobRepairStep('review-1', { findings: 'not a list' }, ['malformed report']),
+    ]);
     try {
       const out = await runPackReview(x.ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'abandoned' && out.needsUser !== null, JSON.stringify(out));
@@ -216,6 +219,18 @@ describe('the hold before the first admission (K14, H9)', () => {
       await x.ack(out.needsUser);
       assert.ok(!x.holds().includes('pack-review'));
       assert.deepEqual(await runPackReview(x.ctx), { kind: 'none' }, 'not asked again for the same key');
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('packreview.context-exceeded (2026-10-16): a review whose prompt outgrew the window ends abandoned; its item names the call and the prompt size, and the backend is not parked', T, async () => {
+    const x = await arcWith([{ as: 'claude', unit: 'review-1', expect: {}, acts: [{ type: 'contextExceeded' }] }]);
+    try {
+      const out = await runPackReview(x.ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'abandoned' && out.needsUser !== null, JSON.stringify(out));
+      assert.match(readNeedsUser(x.r.ctx.runDir, out.needsUser)!.summary, /context-exceeded: the packReview call \S+ outgrew the model's context with a prompt of \d+ bytes: Prompt is too long/);
+      assert.deepEqual(x.r.journal.view.parkedBackends(), []);
     } finally {
       x.r.journal.close();
     }
@@ -265,6 +280,7 @@ test('packreview.delta-rereview-dispositions (H3): a re-review reads what change
     packReviewStep('review-1', BLOCKING),
     packReviewStep('review-2', [{ severity: 'note', claim: 'NEW-IN-2' }], [], [{ job: 'review-1', index: 0, disposition: 'still-open' }, { job: 'review-1', index: 1, disposition: 'resolved' }]),
     packReviewStep('review-3', [], [], [{ job: 'review-1', index: 0, disposition: 'resolved' }]),
+    jobRepairStep('review-3', packReviewAnswer([], [{ job: 'review-1', index: 0, disposition: 'resolved' }]), ['dispositions: none for review-2#0']),
     packReviewStep('review-4', [], [], [{ job: 'review-1', index: 0, disposition: 'resolved' }, { job: 'review-2', index: 0, disposition: 'withdrawn' }]),
   ]);
   try {

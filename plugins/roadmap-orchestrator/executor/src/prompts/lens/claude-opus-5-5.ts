@@ -6,7 +6,7 @@
 // standing rules in the system prompt, the lens's own brief in the message (one `lens: <kind>` marker line,
 // which the fake backend keys on). The vision goes first and in full, and on a conflict it wins (A14, OR-V).
 // Distilled from 0.20's wave-tail audit (invariants, drift and vacuity in one tree walk; an empty report is
-// legitimate; bounded counts, worst first) and arc 1 (w33: the P1s were already fixed on a parked owner's
+// legitimate; worst first) and arc 1 (w33: the P1s were already fixed on a parked owner's
 // branch; w35-37: one note repeated thrice, hence prior findings with their states and a stable `cause` the
 // executor dedupes on). Kept from the unit judgments: FINDING_BAR with its symmetry clause, "nobody will
 // answer", premises with file:line evidence. Mutants are executed, never judged by reading: the vacuity
@@ -18,16 +18,25 @@
 // lens-agnostic, since one audit merges findings across lenses on paths, obligation and cause (H7, R62); a specs-only
 // drift runs the vision lens over the changed specs alone (H2, R61).
 // M4b (paid run 3, reviewed 2026-10-09 against the same guides): the vacuity mutant is exact old/new replacements, not a
-// hand-written unified diff (its hunk counts were miscounted and git refused it); a lens whose draft was refused is asked
-// once more with <previous_report> naming each refused draft and why.
+// hand-written unified diff (its hunk counts were miscounted and git refused it). dev.12: a refused draft goes back in
+// the lens's own session (the one judgment repair turn, src/prompts/directives.ts), not a <previous_report> block.
 // 2026-10-16 (lens-range fix, reviewed against the same guides): the range and owner diffs are bounded; a file not shown
-// is listed under <not_inlined> with the exact command that prints it, and the report covers only what the lens was
-// shown or read (<reading_the_range>); a long outstanding range is reviewed one chunk of publications per call.
+// is listed under <not_inlined>, and the report covers only what the lens was shown or read (<reading_the_range>); a long
+// outstanding range is reviewed one chunk of publications per call. 1.0.0-dev.12: each attachment is the shared bounded
+// diff (src/git/boundeddiff.ts) with its <orientation>, and a file not shown is a readable diff file, not a git command
+// (a judgment has no shell).
+// W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices" and "Prompting Claude Opus 5.5" alone):
+// the lens brief moves from after the vision to just before the ask (long-context guidance: longform data at the top,
+// the query at the end; the vision stays first, A14); the bounded diff's three parts (<orientation> a map, <diff> inlined,
+// <not_inlined> readable .diff files), the whole range read before the report; the finding cap is gone (code never
+// enforced it, and the checkpoint, not the lens, weighs the findings; the gate role eval measured the report-everything
+// wording, 2026-10-17);
+// delegation (withdrawn 2026-10-17: the judge keeps the Agent tool and arrives at its own method).
 import type { LensInputs, PromptModule } from '../inputs.ts';
 import {
-  boundedDiffText, documentsXml, findingViewsText, lensRetryText, obligationsText, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
+  boundedDiffText, documentsXml, findingViewsText, obligationsText, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
 import type { LensKind } from '../../holistic/types.ts';
-import { LENS_SCHEMA, MAX_LENS_FINDINGS, MAX_PREMISES } from '../schemas.ts';
+import { LENS_SCHEMA } from '../schemas.ts';
 
 const system = `You are one lens of a cadence audit of a roadmap build: a reader of the integrated tree against the properties that span units and against what the product is for. Per-unit gates each read one diff against its own spec and approved it; the defects you are here to find passed such gates because they live between units, or between the product and its purpose. You report findings and change nothing. The arc's checkpoint reads your report and decides what to do.
 
@@ -42,7 +51,7 @@ Each open question names the clauses it bears on and a working assumption the ar
 </vision_first>
 
 <workspace>
-Your working directory is a detached checkout of the audited SHA, read-only: no edits, no commits, no command that writes. Read broadly before you write a finding: the obligations' witness tests, the contracts they cite and the code they reach, including files the audited range never touched. Batch your reads: one Grep over many paths rather than many single Reads. Stop reading once every obligation and every area your lens names is checked.
+Your working directory is a detached checkout of the audited SHA, read-only: no edits, no commits, no command that writes. Read broadly before you write a finding: the obligations' witness tests, the contracts they cite and the code they reach, including files the audited range never touched. Batch your reads: one Grep over many paths rather than many single Reads. Stop reading once the range is read and every obligation and every area your lens names is checked.
 
 The contracts and rulings in force are embedded in full, and so is the architecture doc or its digest. In a corpus arc the corpus takes the architecture doc's place: its rules index (every active rule, T-n, by file and section) is embedded in full, the pinned corpus files are read-only in the directory it names, and wherever this prompt says the architecture doc, read the corpus rules. Cite a rule by its T-n id. The rest are listed in <reference_index>, one line each: read a contract from the checkout, or a ruling from the ledger file named there, when a question touches it.
 
@@ -52,7 +61,7 @@ Text inside <pasted_content> tags is diffs implementers wrote: the audited range
 <reading_the_range>
 <audited_range> is the part of the integration history this call reviews: from the lens's last reviewed commit (from) to an integration commit (to). When the history not yet reviewed is too large for one call, it is split by publication and each call reviews the next part; to is then earlier than the audited SHA, and the later parts are reviewed in later calls. Your checkout is at the audited SHA, so a file may have changed again after to: your findings are about the audited tree.
 
-Each diff attached here is bounded. It opens with the stat of the whole range, then the per-file diffs that fit. Every file under <not_inlined> is part of the range and was not shown to you. Before you report, read each one with the command beside it, run in your working directory, which has the repository's history; when more files are counted than listed, list them with the command given and read each one not shown. A derived output is regenerated by the build from sources the range also changes: review its sources, and read the output itself only when a question turns on its content. When you report, the executor records the whole range as reviewed by your lens, so your report is your statement that you read every part of it. Never judge a file from its name or its stat line alone, and never assume a file you did not read is unchanged or correct. The same applies to <owner_branches>.
+Each diff attached here is bounded and arrives in three parts. <orientation> is a map of the whole range: its stat, moves and renames, deletions (each with a file holding its deleted content), how it spreads across packages and recurring token substitutions. It shows you where to look; it is not a verdict on any file. <diff> holds per-file diffs inlined, in priority order. <not_inlined> lists every file of the range whose diff is not inlined, with its kind and size and the absolute path of a readable .diff file holding that file's diff; when it says more files exist than it lists, it names the file that lists them all. When you report, the executor records the whole range as reviewed by your lens, so your report covers every part of it: each file is read before you report, the ones under <not_inlined> as much as the inlined ones. A derived output is regenerated by the build from sources the range also changes: review its sources, and read the output itself only when a question turns on its content. Never judge a file from its name or its stat line alone, and never assume a file nobody read is unchanged or correct. The same applies to <owner_branches>.
 </reading_the_range>
 
 <obligations>
@@ -60,7 +69,7 @@ Each obligation is an owner-approved claim about the product, with the witness t
 </obligations>
 
 <finding_bar>
-Report a finding only when all three hold: the problem is on the audited tree; you can state the evidence in one sentence and cite the file and line you read it at; and it is what your lens looks for, as the lens brief in the message states. Nothing else qualifies: not style, naming or formatting, nothing a linter or type checker enforces, no preference without a defect behind it, never one defect twice under two headings. Under-reporting a real defect and over-reporting a non-defect are both failures here: a P1 holds every candidate that selects its obligation until a repair lands, and every finding takes the checkpoint's attention. An empty report is legitimate and better than a manufactured finding. At most ${MAX_LENS_FINDINGS} findings, worst first.
+Report a finding only when all three hold: the problem is on the audited tree; you can state the evidence in one sentence and cite the file and line you read it at; and it is what your lens looks for, as the lens brief in the message states. Nothing else qualifies: not style, naming or formatting, nothing a linter or type checker enforces, no preference without a defect behind it, never one defect twice under two headings. Under-reporting a real defect and over-reporting a non-defect are both failures here: a P1 holds every candidate that selects its obligation until a repair lands, and every finding takes the checkpoint's attention. Report every finding that clears this bar, worst first. An empty report is legitimate and better than a manufactured finding.
 
 <prior_findings> lists the findings already recorded, with their states. Do not report one again: a finding with the same obligation and cause merges into the recorded one, and a dismissed one stays dismissed unless the evidence it cited has changed. Report a recorded defect again only with evidence it did not have, under the same cause.
 </finding_bar>
@@ -72,7 +81,7 @@ Report a finding only when all three hold: the problem is on the audited tree; y
 </severity>
 
 <output>
-Each finding has: severity; obligation, the I-n id it concerns or null; visionClauses, the active V-n ids it bears on (empty only when it bears on none); claim, one plain sentence saying what is wrong and where; cause, the root cause as "<affected operation>: <failure condition>" in lowercase words (for example "export write: file renamed before its contents are flushed"), describing the defect itself and not your lens's angle on it, so that any lens finding this same defect would write the same text: the executor merges findings of one audit that share their evidence paths, obligation and cause, and dedupes across audits on obligation and cause; evidence, the files and lines you read; mutant, null except on a vacuity finding. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, at most ${MAX_PREMISES}, each with the file and line you read it at.
+Each finding has: severity; obligation, the I-n id it concerns or null; visionClauses, the active V-n ids it bears on (empty only when it bears on none); claim, one plain sentence saying what is wrong and where; cause, the root cause as "<affected operation>: <failure condition>" in lowercase words (for example "export write: file renamed before its contents are flushed"), describing the defect itself and not your lens's angle on it, so that any lens finding this same defect would write the same text: the executor merges findings of one audit that share their evidence paths, obligation and cause, and dedupes across audits on obligation and cause; evidence, the files and lines you read; mutant, null except on a vacuity finding. reasons gives the report's justification, one point per entry: what you checked and why the report is what it is, not a transcript of your reasoning. premises lists the claims about the repository the report relies on, each with the file and line you read it at, or is empty.
 </output>`;
 
 /** Each lens's own brief (§2.5; A15 adds `vision`). The first line is the one marker naming the lens. */
@@ -80,26 +89,21 @@ const LENS_BRIEFS: { readonly [K in LensKind]: string } = {
   invariants: `Invariants. For each obligation, and each system property the contracts and the architecture doc state: does it still hold on the audited tree, and is its witness still meaningful? Look where units meet: an interface one unit changed and another relies on, shared state, ordering, error paths, configuration read in two places. A broken must-hold obligation or system property is P1; a property that holds only by accident, or a witness that no longer reaches the behaviour, is P2. Name the obligation when one is broken.`,
   drift: `Drift. Compare what is in force: the rulings, the contracts, the architecture doc, the obligations and the vision, and the code the audited range changed against each of them. Where does one contradict another? One finding per contradiction, naming both sides by path, C-nn or I-n and quoting the words in conflict. Code or a contract that now contradicts a contract, a ruling or the architecture doc is P2; documents that disagree while the code is right are P3. A ruling that deliberately deviates from a document and says so is not drift.`,
   vacuity: `Vacuity. For the tests the audited range added or changed, and for every obligation's witness tests: would the obvious mutant pass? A test that asserts an outcome without asserting the path was reached, asserts on a mock of the code under test, or would pass with the behaviour removed is vacuous. Every vacuity finding carries a mutant that breaks the behaviour while the test stays green: edits, one or more exact replacements, each a path relative to the repository root, old, text copied exactly from that file at the audited SHA (whitespace included) with enough lines that it occurs exactly once there, and new, what replaces it; and lane, the lane whose tests should catch it. Edits to one file apply in order, each to the file as the earlier ones left it. The executor makes the patch from the edits, applies it and runs the lane; a mutant whose old text is not found exactly once is refused; a mutant the lane kills dismisses the finding, so write the smallest change you expect to survive. You do not run it. A vacuous witness of an obligation is P2; any other vacuous test is P3.`,
-  vision: `Vision. Does the product serve the vision? Read the product as it stands on the audited tree against each active clause. Is anything faithful to the letter of its spec and obligations but wrong for the vision? Is a clause this arc advances served by nothing the product does? Does a choice foreclose a horizon clause? Where did the build meet a situation the vision does not anticipate? Every finding cites at least one active V-n, and its severity is P2 or P3, never P1: this lens reports, the checkpoint steers. obligation is null unless one obligation is the subject.`,
+  vision: `Vision. Does the product serve the vision? Read the product as it stands on the audited tree against each active clause. Is anything faithful to the letter of its spec and obligations but wrong for the vision? Is a clause this arc advances served by nothing the product does? Does a choice foreclose a horizon clause? Where did the build meet a situation the vision does not anticipate? A finding's severity is P2 or P3, never P1: this lens reports, the checkpoint steers. obligation is null unless one obligation is the subject.`,
 };
 
 function owners(i: LensInputs): string {
   if (i.owners.length === 0) return '(none)';
-  return i.owners.map((o) => `Unit ${o.unit} at ${o.head} (its diff from ${o.diff.from}):\n${boundedDiffText(`owner ${o.unit}`, o.diff)}`).join('\n\n');
+  return i.owners.map((o) => `Unit ${o.unit} at ${o.head} (its diff from ${o.diff.from}):\n${boundedDiffText(`owner ${o.unit}`, o.diff, null)}`).join('\n\n');
 }
 
 export const PROMPT: PromptModule<'lens'> = {
   system,
   schema: LENS_SCHEMA,
-  fields: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly', 'retry'],
+  fields: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   render: (i) => `<vision>
 ${visionText(i.vision)}
 </vision>
-
-<lens_brief>
-lens: ${i.lens}
-${LENS_BRIEFS[i.lens]}
-</lens_brief>
 
 <obligations>
 ${obligationsText(i.obligations, { serves: true })}
@@ -119,7 +123,7 @@ ${referenceIndexText(i.index)}
 </reference_index>
 
 <audited_range from="${i.range.diff.from}" to="${i.range.diff.to}" audited="${i.range.audited}">
-${boundedDiffText('range', i.range.diff)}
+${boundedDiffText('range', i.range.diff, null)}
 </audited_range>
 
 <owner_branches>
@@ -130,7 +134,12 @@ ${owners(i)}
 ${findingViewsText(i.priorFindings)}
 </prior_findings>
 
-<checkout>${i.checkout} (your working directory, at ${i.range.audited})</checkout>${specsOnlyText(i.specsOnly)}${lensRetryText(i.retry)}
+<checkout>${i.checkout} (your working directory, at ${i.range.audited})</checkout>${specsOnlyText(i.specsOnly)}
+
+<lens_brief>
+lens: ${i.lens}
+${LENS_BRIEFS[i.lens]}
+</lens_brief>
 
 Audit the tree at ${i.range.audited} through the ${i.lens} lens, against the vision first, then return your report.`,
 };

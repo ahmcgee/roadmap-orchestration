@@ -6,7 +6,7 @@
 //
 // Derived from the M1 transition table (plan "Pipeline for one serial unit"):
 //   planCheck: approve → build · redirect → spec.patch, re-check · infeasible → escalate · escalate → route up
-// Both judgments also return their premises (claim + file:line evidence): the next round's handoff.
+// Both judgments also return their premises (claim + file:line evidence, possibly none): the next round's handoff.
 //   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
 //   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
 import {
@@ -20,7 +20,7 @@ import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, 
 import {
   Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
-import { type RepoPath, type RepoPattern, repoPath, repoPattern } from '../core/values.ts';
+import { type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
   ACTIVATIONS, type Activation, DOC_RELATIONS, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
   OWNER_ONLY_CLASSES, PACK_DISPOSITIONS, PACK_SEVERITIES, type DocRef, type PackDisposition, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
@@ -28,14 +28,14 @@ import {
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
-  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, gateClustersDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
   FIXES_UNRECORDED,
   reenterFixesDefault,
 } from '../core/upgrade.ts';
 import type { MutantEdit } from '../git/mutant.ts';
 import { specBytes } from '../spec/spec.ts';
 import {
-  JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
+  BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
 } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -58,11 +58,10 @@ function sObj(properties: { readonly [key: string]: Schema }): Schema {
 /**
  * A claim about the repository a judgment's decision relies on, with the file:line evidence it read. The
  * next round of the same unit re-verifies only the premises whose files changed since (the executor
- * compares blobs); it trusts the rest unless it has evidence against one.
+ * compares blobs); it trusts the rest unless it has evidence against one. Method, not invariant (W4, 2026-10-16): the key is
+ * present (strict schema) but the list may be empty, and nothing caps it; an empty list re-checks nothing next round.
  */
 export type Premise = Readonly<{ claim: string; evidence: readonly Readonly<{ path: string; line: number }>[] }>;
-/** The premise cap the prompts state: the premises the decision relies on, not everything read. Not enforced. */
-export const MAX_PREMISES = 12;
 
 const S_PREMISES = sArr(sObj({ claim: S_STR, evidence: sArr(sObj({ path: S_STR, line: S_INT })) }));
 const premise: Read<Premise> = object((f) => ({
@@ -76,7 +75,7 @@ const premise: Read<Premise> = object((f) => ({
 export const PLAN_CHECK_DECISIONS = ['approve', 'redirect', 'infeasible', 'escalate'] as const;
 
 type PlanCheckCommon = Readonly<{
-  /** The decision's justification: each reason cites the clause, contract or C-nn it rests on. */
+  /** The decision's justification, one point per entry (a reason need not cite; a cite given elsewhere must resolve). */
   reasons: readonly string[];
   /** The unit's risk after the check: the dispatch floor or higher. The executor refuses a lower tier. */
   risk: RiskTier;
@@ -376,13 +375,11 @@ export function validateDecisionsFile(value: unknown): DecisionsFile {
 // gate
 
 export const GATE_DECISIONS = ['approve', 'revise', 'escalate'] as const;
-/** `blocking`: the merge cannot carry it (it has a directive). `note`: recorded, never blocks. */
-export const FINDING_SEVERITIES = ['blocking', 'note'] as const;
 /**
- * The directive cap the gate prompt states (anti-spiral core: the cap bounds reporting, never reading).
- * The validator does not enforce it: overflow banks in code (the gate stage), it is not malformed.
+ * `blocking`: the merge cannot carry it (it has a directive). `note`: recorded, never blocks. `pre-existing` (dev.12 round
+ * 2): a real defect the unit did not introduce, present at the base; recorded and handled as a note, never blocks.
  */
-export const MAX_DIRECTIVES = 5;
+export const FINDING_SEVERITIES = ['blocking', 'note', 'pre-existing'] as const;
 
 export type GateFinding = Readonly<{
   severity: (typeof FINDING_SEVERITIES)[number];
@@ -391,7 +388,32 @@ export type GateFinding = Readonly<{
   /** A C-nn id, a contract path (with an optional #anchor) or a corpus rule T-n the finding rests on. */
   contractRef: string | null;
 }>;
-type GateCommon = Readonly<{ findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
+/** A part of the change the gate says it did not review (dev.12 round 2): recorded and reported, never enforced. */
+export type GateUnreviewed = Readonly<{ path: string; reason: string }>;
+/**
+ * How deeply a cluster of a large diff was reviewed (1.0.0-dev.12, the large-diff gate): `description` (a subagent's
+ * description of the cluster sufficed: a purely mechanical cluster its substitutions fully explain, with no deviation),
+ * `routine` or `close` review of the cluster's raw hunks. Review depths, never models: records name roles.
+ */
+export const CLUSTER_REVIEWS = ['description', 'routine', 'close'] as const;
+export type ClusterReview = (typeof CLUSTER_REVIEWS)[number];
+/** One cluster of a large diff's cluster map: its id, the paths it covers (exact paths, directories or globs) and its review depth. */
+export type GateCluster = Readonly<{ id: string; paths: readonly RepoPattern[]; review: ClusterReview }>;
+type GateCommon = Readonly<{
+  findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[];
+  /**
+   * What the gate did not review, by repository path or path pattern; null on a dev.11 answer (`gateUnreviewedDefault`):
+   * unknown. Above the large-diff threshold a file in a cluster counts as reviewed at the cluster's depth, and `unreviewed`
+   * names only the gaps the gate admits beyond that.
+   */
+  unreviewed: readonly GateUnreviewed[] | null;
+  /**
+   * 1.0.0-dev.12: the cluster map, above the large-diff threshold only (null below it, and on a dev.11 answer:
+   * `gateClustersDefault`). Code holds it to the diff: every changed path in exactly one cluster (src/pipeline/gate.ts
+   * `gateAnswerFor`, `clusterCoverage`).
+   */
+  clusters: readonly GateCluster[] | null;
+}>;
 export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'approve' | 'escalate'; directives: readonly [] }>)
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
@@ -402,6 +424,8 @@ export const GATE_SCHEMA: Schema = sObj({
   directives: sArr(S_STR),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
+  unreviewed: sArr(sObj({ path: S_STR, reason: S_STR })),
+  clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
 });
 
 const finding: Read<GateFinding> = object((f) => ({
@@ -410,6 +434,17 @@ const finding: Read<GateFinding> = object((f) => ({
   text: f.get('text', str),
   contractRef: f.get('contractRef', nullable(str)),
 }));
+const unreviewedEntry: Read<GateUnreviewed> = object((f) => ({ path: f.get('path', str), reason: f.get('reason', str) }));
+const clusterEntry: Read<GateCluster> = object((f) => ({
+  id: f.get('id', str), paths: f.get('paths', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), review: f.get('review', oneOf(CLUSTER_REVIEWS)),
+}));
+const clusterMap: Read<readonly GateCluster[]> = (value, path) => {
+  const clusters = arrayOf(clusterEntry, { nonEmpty: true })(value, path);
+  assertUnique(clusters, (c) => c.id, path);
+  return clusters;
+};
+/** Absent (a dev.11 answer): no map, with the upgrade warning; null: no map. */
+const readClusters = (read: readonly GateCluster[] | null | undefined): readonly GateCluster[] | null => (read === undefined ? gateClustersDefault() : read);
 const emptyList: Read<readonly []> = (value, path) => {
   if (!Array.isArray(value) || value.length !== 0) throw new SchemaError(path, 'an empty array (directives only with revise)', value);
   return [];
@@ -419,6 +454,8 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const decision = f.get('decision', oneOf(GATE_DECISIONS));
   const common = {
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
+    unreviewed: f.optional('unreviewed', arrayOf(unreviewedEntry)) ?? gateUnreviewedDefault(),
+    clusters: readClusters(f.optional('clusters', nullable(clusterMap))),
   };
   if (decision === 'revise') return { ...common, decision, directives: f.get('directives', arrayOf(str, { nonEmpty: true })) };
   if (decision === 'approve') {
@@ -430,6 +467,21 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
 
 export function validateGateOutput(value: unknown): GateOutput {
   return gateOutput(value, 'gate');
+}
+
+/** How a cluster map covers a diff's paths: the paths no cluster matches, and those more than one does (with their ids). */
+export type ClusterCoverage = Readonly<{ uncovered: readonly RepoPath[]; duplicated: readonly Readonly<{ path: RepoPath; clusters: readonly string[] }>[] }>;
+
+/** Matches each of `paths` against the clusters' patterns (`matchesPattern`: an exact path, a directory or a glob). */
+export function clusterCoverage(clusters: readonly GateCluster[], paths: readonly RepoPath[]): ClusterCoverage {
+  const uncovered: RepoPath[] = [];
+  const duplicated: { path: RepoPath; clusters: readonly string[] }[] = [];
+  for (const path of paths) {
+    const hits = clusters.filter((c) => c.paths.some((p) => matchesPattern(path, p))).map((c) => c.id);
+    if (hits.length === 0) uncovered.push(path);
+    else if (hits.length > 1) duplicated.push({ path, clusters: hits });
+  }
+  return { uncovered, duplicated };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -470,8 +522,6 @@ export type LensFinding = Readonly<{
   mutant: LensMutant | null;
 }>;
 export type LensOutput = Readonly<{ findings: readonly LensFinding[]; reasons: readonly string[]; premises: readonly Premise[] }>;
-/** The finding cap the lens prompt states (anti-spiral: it bounds reporting, never reading). Not enforced. */
-export const MAX_LENS_FINDINGS = 8;
 
 export const LENS_SCHEMA: Schema = sObj({
   findings: sArr(sObj({
@@ -573,7 +623,11 @@ export type CheckpointOutput = Readonly<{
    */
   rulings: readonly string[];
   findingDispositions: readonly Readonly<{ finding: FindingId; disposition: FindingDisposition; reason: string }>[];
-  /** H12: readings of the vision where it does not anticipate a situation; each records a divergence, even on a `no-op`. */
+  /**
+   * H12: readings of the vision where it does not anticipate a situation; each records a divergence, even on a `no-op`.
+   * Method, not invariant (W4, 2026-10-16): the key is present (strict schema), the list may be empty; one given cites
+   * at least one active clause (its divergence's cites), resolved as every cite is.
+   */
   interpretations: readonly Readonly<{ clauses: readonly VisionClauseId[]; situation: string; reading: string }>[];
   cites: Readonly<{ vision: readonly VisionClauseId[]; observations: readonly ObservationKey[]; findings: readonly FindingId[] }>;
   premises: readonly Premise[];
@@ -812,7 +866,7 @@ function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
           const g = new Fields(v, p);
           const role = g.get('role', oneOf(ROLES));
           const tier = g.get('tier', oneOf(SEATS[role] as readonly Seat[]));
-          const out = { role, tier, class: g.get('class', oneOf(MODEL_CLASSES)) };
+          const out = { role, tier, class: g.get('class', classAt(role)) };
           g.end();
           return out;
         }, { nonEmpty: true })),
@@ -944,7 +998,7 @@ export const FLOW_SCHEMA: Schema = sObj({
         sObj({ lever: sEnum(['resource-pool']), resource: S_STR, size: S_INT }),
         sObj({ lever: sEnum(['suite-lane']), lane: S_STR, argv: sNullable(sArr(S_STR)), reporter: sNullable(sEnum(FLOW_REPORTERS)), cpu: sNullable(S_INT) }),
         sObj({ lever: sEnum(['sequence']), unit: S_STR, priority: sEnum(['high']) }),
-        sObj({ lever: sEnum(['build-class']), tier: sEnum(RISK_TIERS), class: sEnum(MODEL_CLASSES) }),
+        sObj({ lever: sEnum(['build-class']), tier: sEnum(RISK_TIERS), class: sEnum(BUILD_CLASSES) }),
         sObj({ lever: sEnum(['host']), note: S_STR }),
       ],
     },

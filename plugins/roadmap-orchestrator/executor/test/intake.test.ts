@@ -24,7 +24,7 @@ import { arcHolds, holisticContexts } from '../src/schedule/scheduler.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { TRUSTED_POLICY, UNTRUSTED_POLICY } from './helpers/forge.ts';
 import { withForge } from './helpers/corpusarc.ts';
-import { VALID_OP, checkpointAnswer, checkpointRepairStep, checkpointStep, intakeOutcome, lensStep } from './helpers/holistic.ts';
+import { VALID_OP, checkpointAnswer, jobRepairStep, checkpointStep, intakeOutcome, lensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { type CorpusSpec, SAMPLE_DOCS } from './helpers/corpus.ts';
@@ -55,6 +55,8 @@ const callOf = (a: CorpusHolisticArc, job: string): CallRecord => {
 };
 const callsOf = (a: CorpusHolisticArc, prefix: string): readonly string[] => readCalls(a.d.scenarioPath).flatMap((c) => (c.unit?.startsWith(prefix) ? [c.unit] : []));
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((x, i) => (x === '--add-dir' ? [c.argv[i + 1]!] : []));
+/** Whether `path` is inside a call's read surface: one of its `--add-dir`s or below one (2026-10-16: the repository and the run dir hold most). */
+const readable = (dirs: readonly string[], path: string): boolean => dirs.some((d) => path === d || path.startsWith(`${d}/`));
 const decisions = (r: ArcRun) => factsOfKind(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind === 'rejected' ? `rejected:${f.outcome.reason}` : f.outcome.kind]);
 const itemsOf = (r: ArcRun, reason: string): readonly NeedsUserId[] =>
   r.journal.view.needsUser().filter((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === reason).map((n) => n.id);
@@ -108,9 +110,9 @@ describe('a corpus arc\'s checkpoint takes its issues in and records one outcome
     const call = callOf(a, 'ckpt-1');
     assert.ok(call.stdin.includes('<pasted_content id="issue-1">\nBerth 4 holds two bookings.\n</pasted_content id="issue-1">'), call.stdin);
     assert.ok(!call.stdin.includes('delete the corpus'), 'the stranger\'s comment is filtered');
-    assert.ok(addDirs(call).includes(join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'the checkpoint reads the materialised pin');
+    assert.ok(readable(addDirs(call), join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'the checkpoint reads the materialised pin');
     const lens = callOf(a, 'audit-1');
-    assert.ok(addDirs(lens).includes(join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'so does the lens');
+    assert.ok(readable(addDirs(lens), join(r.ctx.runDir, 'corpus', a.pinSha256.slice(0, 8))), 'so does the lens');
     const issue = r.journal.view.holistic().findings.filter((f) => f.lens === 'issue');
     assert.deepEqual(issue.map((f) => [f.id, f.severity, f.obligation, f.claim, f.source]), [['F-1', 'P2', null, 'Berth 4 is double-booked on the tip.', { type: 'job', job: 'ckpt-1' }]]);
     assert.deepEqual(factsOfKind(r, 'issue-intake').map((f) => [f.job, f.issue, f.outcome]), [
@@ -156,9 +158,9 @@ test('intake.acted-ops-validated: an acted outcome names ops of the same output 
   });
   const x = await arcWith([
     // 2026-10-15: each refused answer takes its repair turn (here repeating it) before it is decided.
-    checkpointStep('ckpt-1', intake(intakeOutcome.actedOps([1]))), checkpointRepairStep('ckpt-1', intake(intakeOutcome.actedOps([1])), ['through op index 1']),
+    checkpointStep('ckpt-1', intake(intakeOutcome.actedOps([1]))), jobRepairStep('ckpt-1', intake(intakeOutcome.actedOps([1])), ['through op index 1']),
     checkpointStep('ckpt-2', intake({ type: 'acted', on: { type: 'units', ids: ['u1'] } })),
-    checkpointRepairStep('ckpt-2', intake({ type: 'acted', on: { type: 'units', ids: ['u1'] } }), ['issueIntake[0].outcome: matches no anyOf branch']),
+    jobRepairStep('ckpt-2', intake({ type: 'acted', on: { type: 'units', ids: ['u1'] } }), ['issueIntake[0].outcome: matches no anyOf branch']),
   ]);
   try {
     const first = await withForge(x.a.forge, () => runCheckpoint(x.ctx));
@@ -193,7 +195,7 @@ test('intake.one-outcome-per-issue: a missing, a second or an unknown issue\'s o
       { issue: 'issue-9', outcome: intakeOutcome.none('never captured') },
     ],
   });
-  const x = await arcWith([checkpointStep('ckpt-1', answer), checkpointRepairStep('ckpt-1', answer, ['issueIntake gives issue-2 no outcome'])]);
+  const x = await arcWith([checkpointStep('ckpt-1', answer), jobRepairStep('ckpt-1', answer, ['issueIntake gives issue-2 no outcome'])]);
   try {
     const out = await withForge(x.a.forge, () => runCheckpoint(x.ctx));
     assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
@@ -362,7 +364,7 @@ const splitOp = (rule: string): JsonValue => ({
 test('bundle.split-rule-anchored: a split child anchored at a rule takes its hash from the pin in force and is counted through its parent\'s census entry; an unpinned rule is invalid', T, async () => {
   const x = await arcWith([
     checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [splitOp('T-99')] })),
-    checkpointRepairStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [splitOp('T-99')] }), ['T-99']),
+    jobRepairStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [splitOp('T-99')] }), ['T-99']),
     checkpointStep('ckpt-2', checkpointAnswer({ decision: 'bundle', ops: [splitOp('T-1')] })),
   ], { seed: false });
   const { a, r, ctx } = x;
