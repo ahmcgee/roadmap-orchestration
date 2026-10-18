@@ -1,0 +1,12 @@
+{
+  "books": [
+    { "id": "b1", "title": "The Left Hand of Darkness", "author": "Ursula K. Le Guin", "condition": "Good, a little sun-faded", "arrived": "2026-10-03", "reservedBy": null },
+    { "id": "b2", "title": "A Month in the Country", "author": "J. L. Carr", "condition": "Like new", "arrived": "2026-10-05", "reservedBy": "Priya" },
+    { "id": "b3", "title": "The Salt Path", "author": "Raynor Winn", "condition": "Worn spine, clean pages", "arrived": "2026-10-06", "reservedBy": null },
+    { "id": "b4", "title": "Small Things Like These", "author": "Claire Keegan", "condition": "Good", "arrived": "2026-10-09", "reservedBy": null },
+    { "id": "b5", "title": "The Wind in the Willows", "author": "Kenneth Grahame", "condition": "Illustrated hardback, inscribed", "arrived": "2026-10-11", "reservedBy": null },
+    { "id": "b6", "title": "Persuasion", "author": "Jane Austen", "condition": "Pencil notes in the margins", "arrived": "2026-10-12", "reservedBy": null },
+    { "id": "b7", "title": "The Dispossessed", "author": "Ursula K. Le Guin", "condition": "Good", "arrived": "2026-10-14", "reservedBy": null },
+    { "id": "b8", "title": "Braiding Sweetgrass", "author": "Robin Wall Kimmerer", "condition": "Coffee ring on the cover", "arrived": "2026-10-16", "reservedBy": null }
+  ]
+}

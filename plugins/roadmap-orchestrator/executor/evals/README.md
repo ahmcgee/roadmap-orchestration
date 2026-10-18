@@ -12,15 +12,16 @@ A change is not done until the ladder passes, in order, from `executor/`:
    `pressure`, whose burners saturate the host on purpose. Either tier keeps the host's runnable load within its cpus;
    a file that runs eight or more cells of real processes at once belongs in the serial tier. Pure-module and
    integrated tests, fake backends only. The main tier
-   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts` and `test/evals-m3.test.ts`, and the serial tier
+   includes `test/evals-m1.test.ts`, `test/evals-m2.test.ts` and `test/evals-m3.test.ts` (and `test/evals-m5.test.ts`, the M5
+   fixture's validity and criteria, below), and the serial tier
    `test/serial/evals-m4a.test.ts`, which run the M1, M2, M3 and M4a fixtures below end to end against the fakes, and `test/serial/upgrade.test.ts`, which starts the M1 fixture on
    the previous release's executor (`PREVIOUS_RELEASE`, extracted with `git archive`), stops, parks or crashes it
    mid-arc and finishes it on HEAD.
 3. `node evals/probe.ts`: the targeted probe against the real, authenticated CLIs.
 3.5. Role evals, `node evals/roles/run.ts gate --set dev --n 3` (below): paid and path-triggered (`node evals/roles/triggers.ts
    <base>`), once per merged batch, never per worktree agent; the holdout set only at acceptance.
-4. The paid fixtures, `evals/m1/`, `evals/m2/`, `evals/m3/` and (M4a's acceptance) `evals/m4a/`: once per merged batch,
-   never per worktree agent. M4a's delegated adjudication (`evals/m4a/adjudicate.ts`) is acceptance, not a rung: once,
+4. The paid fixtures, `evals/m1/`, `evals/m2/`, `evals/m3/`, (M4a's acceptance) `evals/m4a/` and (dev.13's UI end to end)
+   `evals/m5/`: once per merged batch, never per worktree agent. M4a's delegated adjudication (`evals/m4a/adjudicate.ts`) is acceptance, not a rung: once,
    after the M4a paid run.
 
 ## The targeted probe
@@ -467,6 +468,69 @@ by the frozen FLOW_SCHEMA reader.
 `NOT EXERCISED` by the paid run (each has a fake integrated test): other-repo and checkout corpus sources,
 `issue-policy-untrusted` (start refusal and mid-arc flip), a mid-arc re-pin, debt promote, rewording a T-n, the
 vision-silent stop.
+
+## The M5 fixture
+
+dev.13's UI end to end (plan `dev13-implementation.md` §7 "Rung 4", D3): a headless root-agent session runs the
+orchestrate skill from bootstrap through one corpus arc with two milestones on a small web product, `swapshelf` (the page
+for a street's book swap shelf: a zero-dependency Node 24 HTTP server rendering its pages on the server). One paid run, in
+a fresh directory outside this repository; it uses the machine's host lock:
+
+```sh
+node evals/m5/setup.ts /var/tmp/m5
+node evals/m5/driver.ts /var/tmp/m5 [--profile default|claude-only]   # default claude-only
+node evals/m5/check.ts /var/tmp/m5
+```
+
+- `setup.ts <dir>` lays out M4a's directory layout (`evals/m4a/layout.ts`) with the product from `files/product/`: the
+  shelf's page as it is today (`/` lists the books; `public/style.css` the flyers' paper-and-ink look), `node --test`
+  tests, and a curated, confirmed corpus under `docs/corpus/`: the shelf's page (T-1..T-7: search, reserving with a first
+  name, the collection window, never twice), the keeper's tools (T-8..T-14: a `swapshelf` CLI and a `swapshelf.json`
+  settings file on top of the page), how it is built (T-15..T-17), and `vision.md`, whose `## Experience standards`
+  (V-9..V-13) set the walks' bar: three steps to a reservation, WCAG AA on a phone outdoors, the shelf's own feel, errors
+  that say what to do, help text as the manual. `.roadmap/config.json` names the Playwright MCP server as
+  `walkthrough.mcp` (`playwright-mcp --headless --isolated --browser chromium --output-dir {evidence} --viewport-size
+  {viewport}`); Anthropic's frontend-design skill is vendored at `.claude/skills/frontend-design/` with its licences
+  (Apache-2.0; a plugin never reaches a unit worktree, a committed project skill does). The fake forge is trusted and
+  empty. **The plant** (`layout.ts` `PLANT`, answer-key.json): each book's condition-and-arrival line on the shelf's page,
+  the entry of the reservation journey, is `--ink-faint` on `--paper`, 2.12:1, in the stylesheet the browser milestone's
+  units build on.
+- `driver.ts <dir>` is M4a's session (it reuses `evals/m4a/driver.ts`'s staging, launch env, turns, wakes, cleanup and
+  forensics) with M5's owner: code answers K (1), the slice (both world scenes, V-1 and V-2, so the one arc's plan holds
+  both milestones and the corpus is one arc's worth), a brief ack (never) and the frontend-design recommendation (already
+  satisfied); everything else goes to a frontier-medium owner simulator given only answer-key.json's owner answers (design
+  it yourself, keep the look, the browser drive is installed, keep a demo running, add the issue templates, ...). The owner
+  declines nothing the arc needs. It records `status.demo` whenever it changes and, at the end before stopping the held
+  arc, GETs the demo's URL (`report.json` `demo`). Fail-fast: the first plan in force must have the M5 shape
+  (`shape.ts`), else the run ends `fail-fast`. Hard timeout 360 min.
+- `check.ts <dir>` prints one JSON line and exits non-zero on any failed criterion (its header lists them): isolation,
+  session-stopped (`vision-silent` or `k-limit`, one arc), arc-complete, milestones-planned (a browser milestone with its
+  design unit ahead of its units; a shell milestone whose every unit descends from one of them), design-first (the
+  design unit published, with its reference dirs, before any browser-milestone unit dispatched), node-held (no
+  shell-milestone unit dispatched before `milestone-passed` of the browser one), walk-screenshots (every reported browser
+  walk's evidence dir holds a PNG), plant-caught (the plant still failed at the first walk's SHA, and a walkthrough
+  contrast finding on the browser milestone was resolved by a published unit), plant-repaired (`.book-meta` computes at
+  4.5:1 or more at the completed head, `css.ts`), polish-bounded (rounds within `walkRounds`; each polish unit judged
+  once, `keep` before it published), demo-serving (the latest `demo-promoted` is what `status.demo` showed at the end, at
+  an http URL that answered and never moved), skill-vendored, no-model-ids, host-released, profile.
+
+Two criteria read pieces built in parallel with the fixture: `polish-bounded`'s `tweak-judged` (agent D, the compare
+stage) and `demo-serving`'s `demo-promoted` and `status.demo` (agent G, the demo; the frozen shapes of SCHEMAS.md
+"dev.13"). Until both are merged a run fails them by construction.
+
+M5 has no scripted root agent, so it has no fake end-to-end run: `test/evals-m5.test.ts` (main tier) covers setup's
+validity (the product's tests pass, the vision, guide and config parse, the skill is vendored, the plant computes below
+the floor at the seed), the contrast oracle, the plan shape, the log reader, and every criterion over inputs built in
+place, one passing and at least one failing case each; the walk, polish and demo machinery have their own integrated
+tests. A fake story through a scripted root (as M4a's) is deferred until the polish and demo pieces are merged.
+
+Cost and time (list prices, subscription-covered; plan §8 estimates $150–220). The root session (Opus high) with its
+Phase-0 subagents over a small curated corpus, then supervision: about $30–50. Six to seven units at plan-check, build and
+gate (two design units, which are risk `high` and so Opus-built, four or five builds, one contrast repair a checkpoint
+admits): about $40–70. Three to four walks (Opus medium, a browser session each, up to 90 minutes: MS-1 round 1 finds
+the plant, round 2 passes it, MS-2 once or twice) at about $8–20 each, and one or two polish proposals judged with two
+instances each at $3–8: about $35–90. The audits' lenses, checkpoints (summit) and the pack review: about $25–40. Expect
+4 to 6 hours.
 
 ## Role evals (rung 3.5)
 
