@@ -1,0 +1,9 @@
+# The ledgerly pipeline. CI runs these steps in order on every push; run them locally with:
+#   node ci/run.js
+# design/ci.md describes the format and what a failure reports.
+name: ledgerly
+steps:
+  - name: config
+    run: node bin/ledgerly.js config check
+  - name: unit
+    run: node --test test/*.test.js

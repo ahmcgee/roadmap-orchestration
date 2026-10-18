@@ -1,0 +1,14 @@
+{
+  "name": "ledgerly",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "A spend ledger for platform teams: record spend, watch monthly budgets, get statements.",
+  "bin": { "ledgerly": "bin/ledgerly.js" },
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node server/main.js",
+    "test": "node --test test/*.test.js",
+    "ci": "node ci/run.js"
+  }
+}

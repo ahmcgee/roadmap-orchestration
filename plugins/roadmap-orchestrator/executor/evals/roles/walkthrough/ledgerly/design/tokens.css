@@ -1,0 +1,42 @@
+/* ledgerly design tokens: the only colours, type sizes, spaces and radii the dashboard uses (design/DESIGN.md, "Tokens").
+   Served as /static/tokens.css. Contrast pairs are measured on --ll-paper unless noted. */
+:root {
+  /* Colour */
+  --ll-paper: #F3F5F4;        /* page background: cool ledger paper */
+  --ll-surface: #FFFFFF;      /* cards, tables, inputs */
+  --ll-ink: #17212B;          /* body text: 14.9:1 */
+  --ll-ink-muted: #66716C;    /* captions, hints, metadata only: 4.6:1 (5.1:1 on surface) */
+  --ll-ledger: #1B5E4A;       /* primary actions, the burn stroke, links: 7.0:1 */
+  --ll-amber: #8A5A00;        /* near the limit: 5.4:1 */
+  --ll-over: #A1332B;         /* over the limit, errors: 6.3:1 */
+  --ll-rule: #CBD5D1;         /* rules and borders (never text) */
+  --ll-highlight: #E3EFE9;    /* the highlight card's ground; ink on it 13.8:1 */
+  --ll-focus: #1D5FD1;        /* the focus ring: 5.3:1 against paper */
+
+  /* Type */
+  --ll-face-display: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+  --ll-face-text: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --ll-size-caption: 0.875rem;  /* 14px */
+  --ll-size-body: 1rem;         /* 16px */
+  --ll-size-h3: 1.25rem;        /* 20px */
+  --ll-size-h2: 1.5625rem;      /* 25px */
+  --ll-size-h1: 1.953rem;       /* 31px */
+  --ll-size-figure: 1.5625rem;  /* the one figure a card is about */
+  --ll-leading: 1.5;
+  --ll-measure: 66ch;
+
+  /* Space: a 4px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Shape */
+  --ll-radius-card: 6px;
+  --ll-radius-control: 4px;
+  --ll-stroke: 10px;            /* the burn bar's stroke */
+  --ll-ring: 3px;               /* the focus ring's width */
+}
