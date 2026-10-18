@@ -39,7 +39,7 @@ import { DEBT_BANK, crashCells } from './matrix.ts';
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U1 = unitId('u1');
 
-const note = (text: string) => ({ severity: 'note', path: null, text, contractRef: null });
+const note = (text: string) => ({ severity: 'note', path: null, text, contractRef: null, experiments: [] });
 const NOTE = 'Rename mul to multiply once the API settles.';
 const PRE = 'add() drops a trailing zero; the base has the same code, so it predates this unit.';
 /**

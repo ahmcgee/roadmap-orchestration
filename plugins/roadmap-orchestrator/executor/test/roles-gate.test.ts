@@ -34,7 +34,7 @@ async function fakeRun(gate: GateKind, cells: readonly string[], caps: Caps = {}
   const out = join(tmpDir('roles-out'), 'run');
   const lines: string[] = [];
   const summary = await run({
-    set: 'dev', n: caps.n ?? 1, cells, parallel: 1, size: 150, seed: 'harness', risk: 'med', config: null, out, compare: null, gate, cap: caps.cap ?? null, trialCap: caps.trialCap ?? null,
+    set: 'dev', n: caps.n ?? 1, cells, parallel: 1, size: 150, seed: 'harness', risk: 'med', config: null, out, compare: null, gate, cap: caps.cap ?? null, trialCap: caps.trialCap ?? null, readOnly: false, baseline: null,
   }, (l) => lines.push(l));
   assert.ok(lines.includes('ARM gate.med efficient claude-sonnet-5-5:high'), 'the report names the arm: the med seat, Sonnet 5.5 high');
   const rows = readFileSync(join(out, 'trials.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as TrialRow);
@@ -47,7 +47,7 @@ const criterion = (s: Summary, name: string): boolean | null => s.criteria.find(
 test('roles.risk-arms: a trial runs at every risk tier, its scripted build on the backend that tier\'s build seat routes to (codex low/med, Claude high)', T, async () => {
   for (const risk of ['low', 'med', 'high'] as const) {
     const out = join(tmpDir('roles-out'), `run-${risk}`);
-    await run({ set: 'dev', n: 1, cells: ['G1'], parallel: 1, size: 150, seed: 'harness', risk, config: null, out, compare: null, gate: 'approve-all', cap: null, trialCap: null }, () => {});
+    await run({ set: 'dev', n: 1, cells: ['G1'], parallel: 1, size: 150, seed: 'harness', risk, config: null, out, compare: null, gate: 'approve-all', cap: null, trialCap: null, readOnly: false, baseline: null }, () => {});
     const rows = readFileSync(join(out, 'trials.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as TrialRow);
     assert.equal(rows.length, 1);
     assert.equal(rows[0]!.void, null, `${risk}: ${JSON.stringify(rows[0]!.void)}`);
@@ -118,7 +118,7 @@ const KEY: AnswerKey = {
 };
 const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/rough-edge.ts\n+x\n<not_inlined>\npackages/fern/src/early-index.ts\npackages/fern/src/late-gate.ts\n</not_inlined>\n';
 const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
-const CITE: GateOutput = { decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null }], directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null };
+const CITE: GateOutput = { decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [] }], directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null };
 
 const tool = (id: string, name: string, input: Record<string, unknown>, result: string, parent: string | null = null): readonly Record<string, unknown>[] => [
   { type: 'assistant', parent_tool_use_id: parent, message: { id: `m-${id}`, content: [{ type: 'tool_use', id, name, input }] } },
@@ -145,7 +145,7 @@ test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Rea
 
   const row = (verdict: ReturnType<typeof grade>): TrialRow => ({
     set: 'dev', cell: 'G3b', family: 'G3', trial: 0, planted: true, gate: 'cite-plant', outcome: 'revise', caught: null, decision: 'revise', void: null, graded: verdict,
-    largeDiff: false, clusters: null, usage: null, estimatedUsd: 0, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: '/x',
+    readOnly: false, experiments: 0, largeDiff: false, clusters: null, usage: null, estimatedUsd: 0, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: '/x',
   });
   const s = summarise('dev', [row(lucky), row(caught)]);
   assert.equal(s.criteria.find((c) => c.name === 'zero-lucky')!.pass, false);
@@ -259,13 +259,13 @@ test('roles.clusters: a cluster map graded against the diff\'s paths (uncovered,
   assert.deepEqual(gappy, { files: 4, uncovered: 1, duplicated: 1, depth: { description: 0, routine: 3, close: 0 } });
   const row = (clusters: TrialRow['clusters'], largeDiff: boolean): TrialRow => ({
     set: 'dev', cell: 'G3b', family: 'G3', trial: 0, planted: false, gate: 'real', outcome: 'approve', caught: null, decision: 'approve', void: null, graded: null,
-    largeDiff, clusters, usage: null, estimatedUsd: 0, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [],
+    readOnly: false, experiments: 0, largeDiff, clusters, usage: null, estimatedUsd: 0, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [],
     method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: '/x',
   });
   const s = summarise('dev', [row(whole, true), row(gappy, true), row(null, true), row(null, false)]);
   assert.deepEqual(s.cells[0]!.clusters, { required: 3, mapped: 2, complete: 1 });
   assert.deepEqual(s.cells[0]!.reviewMix, { description: 2, routine: 3, close: 2 });
-  assert.ok(reportLines(s).some((l) => l.startsWith('CELL G3b ') && l.endsWith(' clusters=1/3 mapped=2 mix=description:2,routine:3,close:2')), reportLines(s).join('\n'));
+  assert.ok(reportLines(s).some((l) => l.startsWith('CELL G3b ') && l.endsWith(' clusters=1/3 mapped=2 mix=description:2,routine:3,close:2 experiments=0')), reportLines(s).join('\n'));
 });
 
 test('roles.wilson: Wilson intervals', () => {

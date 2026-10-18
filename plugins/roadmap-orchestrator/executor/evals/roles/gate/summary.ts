@@ -8,6 +8,8 @@
 //   voids              void trials (runaway, cap, error, needle, placement-miss) <= 25% of all
 //   cost-check         every call's per-model costs sum to its total_cost_usd
 //   holdout-gap        (with a dev summary to compare) holdout detection within 15 points of dev
+//   exec-gain          (dev.13, with the read-only arm's summary as `baseline`) the execution-only cells' detection above
+//                      the read-only gate's on the same cells; each cell's median cost against the arm's is reported (INFO)
 //
 // Coverage (the median share of not-inlined files the session read; target 90%), the gate's claimed coverage against it
 // (`silent`: not-inlined files neither read nor declared unreviewed, median per trial) and the method (tools, subagents)
@@ -16,9 +18,10 @@
 //
 // The large-diff gate (1.0.0-dev.12), reported per cell, never failed: of the trials whose diff was over the threshold, how
 // many answers carried a cluster map and how many maps covered every path exactly once, and the files per review depth
-// summed over the maps. A trial's cost is `spentOf`: its CLI-reported cost, or its transcript estimate when that is larger
+// summed over the maps. Per cell, the trials whose answer cited an experiment (dev.13, the gate's shell) are counted. A trial's cost is `spentOf`: its CLI-reported cost, or its transcript estimate when that is larger
 // (a session the spend brake killed has no result). With `--cap`, `capped` counts the trials the cap kept from starting.
 import { CLUSTER_REVIEWS, type ClusterReview } from '../../../src/prompts/schemas.ts';
+import { EXEC_FAMILIES } from '../gen/exec.ts';
 import { type Interval, fmtRate, median, quantile, wilson } from '../stats.ts';
 import type { TrialRow, VoidReason } from './arc.ts';
 
@@ -49,6 +52,8 @@ export type CellSummary = Readonly<{
   clusters: Readonly<{ required: number; mapped: number; complete: number }>;
   /** Files per review depth, summed over the cell's cluster maps. */
   reviewMix: Readonly<Record<ClusterReview, number>>;
+  /** dev.13: trials whose answer cited at least one experiment (absent in a summary written before). */
+  experiments?: number;
 }>;
 
 export type Criterion = Readonly<{ name: string; pass: boolean | null; detail: string }>;
@@ -69,6 +74,11 @@ export type Summary = Readonly<{
   totalUsd: number;
   /** `--cap`: the cap and how many trials it kept from starting; null without one (absent in a summary written before caps). */
   capped: Readonly<{ capUsd: number; notStarted: number }> | null;
+  /**
+   * dev.13, `--baseline`: the read-only arm compared against, and per cell the median cost per trial here and there (null
+   * where a side ran no such cell); null without a baseline (absent in a summary written before).
+   */
+  versus?: Readonly<{ arm: string | null; cells: readonly Readonly<{ cell: string; costMedian: number | null; baselineCostMedian: number | null }>[] }> | null;
 }>;
 
 const graded = (rows: readonly TrialRow[]): readonly TrialRow[] => rows.filter((r) => r.void === null && r.graded !== null);
@@ -107,16 +117,28 @@ function cellSummary(rows: readonly TrialRow[]): CellSummary {
     subagentsMedian: median(rows.map((r) => r.method.subagents.length)),
     subagentModels: [...new Set(rows.flatMap((r) => r.method.subagents.flatMap((a) => (a.model === null ? [] : [a.model]))))].sort(),
     clusters: { required: rows.filter((r) => r.largeDiff).length, mapped: maps.length, complete: maps.filter((m) => m.uncovered === 0 && m.duplicated === 0).length },
-    reviewMix,
+    reviewMix, experiments: rows.filter((r) => r.experiments > 0).length,
   };
+}
+
+const isExecFamily = (family: string): boolean => (EXEC_FAMILIES as readonly string[]).includes(family);
+
+/** Caught of graded over a summary's planted execution-only cells (dev.13). */
+function execDetection(cells: readonly CellSummary[]): Interval {
+  const planted = cells.filter((c) => c.planted && isExecFamily(c.family));
+  return wilson(planted.reduce((a, c) => a + c.rate.k, 0), planted.reduce((a, c) => a + c.graded, 0));
 }
 
 const pct = (x: number | null): string => (x === null ? '-' : `${(x * 100).toFixed(0)}%`);
 const usd = (x: number | null): string => (x === null ? '-' : `$${x.toFixed(3)}`);
 
-/** The summary of `rows`; `compare`, a dev summary, adds the holdout-gap criterion. */
+/**
+ * The summary of `rows`; `compare`, a dev summary, adds the holdout-gap criterion; `baseline`, the read-only arm's summary on
+ * the same cells (dev.13), adds exec-gain and the per-cell cost comparison.
+ */
 export function summarise(
   set: 'dev' | 'holdout', rows: readonly TrialRow[], compare: Summary | null = null, arm: string | null = null, capped: Summary['capped'] = null,
+  baseline: Summary | null = null,
 ): Summary {
   const cellIds = [...new Set(rows.map((r) => r.cell))];
   const cells = cellIds.map((id) => cellSummary(rows.filter((r) => r.cell === id)));
@@ -145,6 +167,16 @@ export function summarise(
     const gap = detection.rate === null || compare.detection.rate === null ? null : Math.abs(detection.rate - compare.detection.rate);
     criteria.push({ name: 'holdout-gap', pass: gap === null ? false : gap <= 0.15, detail: `holdout ${pct(detection.rate)} [${arm ?? 'unlabelled'}] vs dev ${pct(compare.detection.rate)} [${compare.arm ?? 'unlabelled'}]` });
   }
+  let versus: Summary['versus'] = null;
+  if (baseline !== null) {
+    const ours = execDetection(cells);
+    const theirs = execDetection(baseline.cells);
+    criteria.push({
+      name: 'exec-gain', pass: ours.rate === null || theirs.rate === null ? null : ours.rate > theirs.rate,
+      detail: `execution-only cells caught ${fmtRate(ours)} [${arm ?? 'unlabelled'}] vs ${fmtRate(theirs)} [${baseline.arm ?? 'unlabelled'}]`,
+    });
+    versus = { arm: baseline.arm, cells: cells.map((c) => ({ cell: c.cell, costMedian: c.cost.median, baselineCostMedian: baseline.cells.find((b) => b.cell === c.cell)?.cost.median ?? null })) };
+  }
   const usage: Record<string, ModelTotals> = {};
   for (const r of rows) {
     for (const [m, u] of Object.entries(r.usage?.byModel ?? {})) {
@@ -155,7 +187,7 @@ export function summarise(
       };
     }
   }
-  return { set, arm, trials: rows.length, cells, detection, falsePositives, coverageMedian, criteria, usage, totalUsd: rows.reduce((a, r) => a + costOf(r), 0), capped };
+  return { set, arm, trials: rows.length, cells, detection, falsePositives, coverageMedian, criteria, usage, totalUsd: rows.reduce((a, r) => a + costOf(r), 0), capped, versus };
 }
 
 /** The report: the ARM line, one CELL line per cell, COST lines per cell and model, a PASS|FAIL|INFO line per criterion, USAGE per model. */
@@ -165,11 +197,12 @@ export function reportLines(s: Summary): readonly string[] {
     out.push(`CELL ${c.cell} ${c.planted ? 'planted' : 'clean'} trials=${c.trials} graded=${c.graded} regenerate=${c.regenerate} ${c.planted ? 'caught' : 'fp'}=${fmtRate(c.rate)} lucky=${c.lucky} `
       + `coverage=${pct(c.coverageMedian)} silent=${c.silentMedian ?? '-'} cost=${usd(c.cost.median)}/p90 ${usd(c.cost.p90)} perCatch=${usd(c.cost.perCatch)} wall=${c.wallMedianS?.toFixed(0) ?? '-'}s `
       + `turns=${c.turnsMedian ?? '-'} subagents=${c.subagentsMedian ?? '-'}${c.subagentModels.length > 0 ? ` (${c.subagentModels.join(',')})` : ''} voids=${JSON.stringify(c.voids)} `
-      + `clusters=${c.clusters.complete}/${c.clusters.required} mapped=${c.clusters.mapped} mix=${CLUSTER_REVIEWS.map((d) => `${d}:${c.reviewMix[d]}`).join(',')}`);
+      + `clusters=${c.clusters.complete}/${c.clusters.required} mapped=${c.clusters.mapped} mix=${CLUSTER_REVIEWS.map((d) => `${d}:${c.reviewMix[d]}`).join(',')} experiments=${c.experiments ?? '-'}`);
     for (const [m, x] of Object.entries(c.costByModel)) out.push(`COST ${c.cell} ${m} median=${usd(x.median)} p90=${usd(x.p90)}`);
   }
   for (const k of s.criteria) out.push(`${k.pass === null ? 'INFO' : k.pass ? 'PASS' : 'FAIL'} ${k.name} ${k.detail}`);
   out.push(`INFO coverage-median ${pct(s.coverageMedian)} (target 90%)`);
+  for (const v of s.versus?.cells ?? []) out.push(`INFO cost-vs-baseline ${v.cell} median=${usd(v.costMedian)} baseline=${usd(v.baselineCostMedian)} [${s.versus!.arm ?? 'unlabelled'}]`);
   if (s.capped !== null) out.push(`INFO cap $${s.capped.capUsd.toFixed(2)}: ${s.capped.notStarted} trials not started`);
   for (const [m, u] of Object.entries(s.usage)) {
     out.push(`USAGE ${m} costUsd=${u.costUsd.toFixed(4)} input=${u.inputTokens} output=${u.outputTokens} cacheRead=${u.cacheReadTokens} cacheWrite=${u.cacheWriteTokens}`);

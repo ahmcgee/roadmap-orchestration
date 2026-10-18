@@ -381,12 +381,19 @@ export const GATE_DECISIONS = ['approve', 'revise', 'escalate'] as const;
  */
 export const FINDING_SEVERITIES = ['blocking', 'note', 'pre-existing'] as const;
 
+/** dev.13: an ad hoc experiment the gate ran in its checkout, cited as a finding's evidence: the command as run and what it printed. */
+export type GateExperiment = Readonly<{ command: string; output: string }>;
 export type GateFinding = Readonly<{
   severity: (typeof FINDING_SEVERITIES)[number];
   path: string | null;
   text: string;
   /** A C-nn id, a contract path (with an optional #anchor) or a corpus rule T-n the finding rests on. */
   contractRef: string | null;
+  /**
+   * dev.13: the experiments the finding cites as evidence, in the order they ran; empty when it rests on reading alone.
+   * Required of a live answer; absent on a dev.12 answer, read as none (lasting: a dev.12 gate had no shell).
+   */
+  experiments: readonly GateExperiment[];
 }>;
 /** A part of the change the gate says it did not review (dev.12 round 2): recorded and reported, never enforced. */
 export type GateUnreviewed = Readonly<{ path: string; reason: string }>;
@@ -420,7 +427,9 @@ export type GateOutput =
 
 export const GATE_SCHEMA: Schema = sObj({
   decision: sEnum(GATE_DECISIONS),
-  findings: sArr(sObj({ severity: sEnum(FINDING_SEVERITIES), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR) })),
+  findings: sArr(sObj({
+    severity: sEnum(FINDING_SEVERITIES), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
+  })),
   directives: sArr(S_STR),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
@@ -428,11 +437,13 @@ export const GATE_SCHEMA: Schema = sObj({
   clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
 });
 
+const gateExperiment: Read<GateExperiment> = object((f) => ({ command: f.get('command', str), output: f.get('output', str) }));
 const finding: Read<GateFinding> = object((f) => ({
   severity: f.get('severity', oneOf(FINDING_SEVERITIES)),
   path: f.get('path', nullable(str)),
   text: f.get('text', str),
   contractRef: f.get('contractRef', nullable(str)),
+  experiments: f.optional('experiments', arrayOf(gateExperiment)) ?? [],
 }));
 const unreviewedEntry: Read<GateUnreviewed> = object((f) => ({ path: f.get('path', str), reason: f.get('reason', str) }));
 const clusterEntry: Read<GateCluster> = object((f) => ({

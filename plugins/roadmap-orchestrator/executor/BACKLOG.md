@@ -179,10 +179,28 @@ at triage stay in git history.
   3. **Background subagents:** the gate states as a fact that its answer ends the session and a subagent still running
      is lost, or code holds the answer until they finish.
   Trigger: real arcs show large-diff gate spend that matters (`status` spend by seat), or the next gate batch. Measure on
-  G2b/G3b/G3a with clean twins; pass bar: catches hold at 9/9-level, cost per planted trial roughly halves.
+  G2b/G3b/G3a with clean twins; pass bar: catches hold at 9/9-level, cost per planted trial roughly halves. dev.13 gave the
+  gate a shell (an acting judge in a throwaway checkout), so the replay Opus asked for it can now run itself: re-measure
+  G2b/G3b with the dev.13 gate before building the verifier, which may then be unnecessary.
 - **The role eval's per-trial cap undercounts.** `--trial-cap` estimates live spend from the stream, which carries only
   part of the subagents' tokens: one trial read $15 live against $33 reported, so a $25 cap never fired. `--cap` (between
   trials) works. Fix: price the per-agent token totals the monitor already traces, or call the per-trial cap approximate.
+
+### Deferred from dev.13, the gate's shell
+
+- **Cited experiments checked against the session.** A gate finding's `experiments [{command, output}]` is recorded and
+  reported, never checked. Code could match each command to a Bash call in the session's stream and its output to that
+  call's result, and refuse (repair turn) an answer citing an experiment it never ran. Trigger: a role-eval transcript or a
+  real arc shows a gate citing an experiment it did not run, or quoting output its command did not print.
+- **A shell for plan-check and the lenses.** Owner 2026-10-18: the gate first; the others by the gate eval's result.
+  Trigger: the dev set's `exec-gain` passes (the X cells beat the read-only arm) at a cost per trial the owner accepts, and
+  a plan-check or lens miss in a real arc is one an experiment would have caught.
+- **A probe row for the gate's acting argv.** `evals/probe.ts` checks the judgment and walkthrough argv against the real
+  CLI; the gate's acting call (Bash runs in its cwd, writes stay in its checkout, no MCP server listed in the init event)
+  has no row of its own, and the smoke's `CallRequest` has no acting-judge kind yet. Trigger: the next probe batch, or a
+  gate call on a real arc that fails to launch.
+- **The Fable gate row** inherits the Opus module with a review dated 2026-10-16; the dev.13 `<your_checkout>` section was
+  not reviewed against the Fable guide. Trigger: a repo rebinds a class to Fable at a gate seat.
 
 ## Convergence and integrity (unscheduled, wanted)
 

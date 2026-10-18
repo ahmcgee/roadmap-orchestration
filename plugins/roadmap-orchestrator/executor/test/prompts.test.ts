@@ -27,6 +27,9 @@ import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '..
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
 import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
 
+/** The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones and the gate (dev.13, an acting judge). */
+const JUDGING = [...FRESH_ROLES, 'gate'] as const;
+
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
 const spec = (rev: number, text: string) => ({ unit: unitId('u-one'), rev: specRev(rev), markdown: text });
@@ -234,7 +237,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
-        directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null }],
+        directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }] }],
         premises: [premise('PREMISE-B', 'src/b/x.ts')], fixPaths: [repoPath('src/b/x.ts')], changedPremiseFiles: ['src/b/x.ts'],
       },
       checks: {
@@ -354,7 +357,8 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [], unreviewed: [], clusters: null,
+    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }] }],
+    premises: [], unreviewed: [], clusters: null,
   },
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
@@ -470,7 +474,7 @@ describe('prompts', () => {
     }
     // W3: every judgment role has one written module, Opus's. Sonnet 5.5 (efficient, 2026-10-15) reads it with the think-first
     // line ending its system prompt (the Sonnet 5.5 guide, reasoning tasks with JSON output); Fable inherits it unchanged.
-    for (const role of FRESH_ROLES) {
+    for (const role of JUDGING) {
       const opus = promptFor(role, 'claude-opus-5-5');
       assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt', role);
       const s = PROMPTS[role]['claude-sonnet-5-5'];
@@ -490,7 +494,7 @@ describe('prompts', () => {
   });
 
   it('prompts.haiku: every judgment role resolves a prompt for Haiku 5.5 (economy, 1.0.0-dev.12) with the role\'s schema; no Haiku build prompt', () => {
-    for (const role of FRESH_ROLES) {
+    for (const role of JUDGING) {
       const s = PROMPTS[role]['claude-haiku-5-5'];
       assert.ok(s.type === 'prompt', `${role}/haiku: a module of its own`);
       assert.equal(s.prompt.schema, ROLE_SCHEMAS[role], role);
@@ -560,6 +564,7 @@ describe('prompts', () => {
     for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
       assert.match(promptFor('planCheck', model).render(SAMPLES.planCheck[1]), /"op":"strike","id":"A3"/, 'the prior patch');
       assert.match(promptFor('gate', model).render(SAMPLES.gate[1]), /\[blocking\] src\/b\/x\.ts: FINDING-B/, 'the prior findings');
+      assert.match(promptFor('gate', model).render(SAMPLES.gate[1]), /FINDING-B\n  ran: node EXPERIMENT-B\.mjs/, 'a prior finding names the experiments it cited');
     }
   });
 
@@ -616,7 +621,7 @@ describe('output validators', () => {
     const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
     const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
     const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
-    assert.deepEqual(out.findings, pre);
+    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [] })), 'a finding without experiments (a dev.12 answer) cites none');
     assert.deepEqual(out.unreviewed, unreviewed);
     const { unreviewed: _u, ...dev11 } = ok.gate;
     assert.equal(validateGateOutput(dev11).unreviewed, null);
@@ -624,6 +629,19 @@ describe('output validators', () => {
     assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...pre[0], severity: 'minor' }] }), SchemaError);
     const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
     assert.ok(schema.required.includes('unreviewed'), 'a live gate answers it');
+  });
+
+  it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, a dev.12 finding without it reads as none', () => {
+    const experiments = [{ command: 'node probe.mjs', output: 'expected 9, got 2' }];
+    const finding = { severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 fails on two-digit inputs.', contractRef: null, experiments };
+    assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [finding] }).findings[0]!.experiments, experiments);
+    for (const bad of [[{ command: 'node probe.mjs' }], [{ command: 1, output: '' }], 'node probe.mjs']) {
+      assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...finding, experiments: bad }] }), SchemaError, JSON.stringify(bad));
+    }
+    const { experiments: _e, ...dev12 } = finding;
+    assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [dev12] }).findings[0]!.experiments, []);
+    const item = ((GATE_SCHEMA as { properties: Record<string, { items: { required: readonly string[] } }> }).properties['findings']!).items;
+    assert.ok(item.required.includes('experiments'), 'a live gate answers it on every finding');
   });
 
   it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters reads as none (null)', () => {

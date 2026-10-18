@@ -356,7 +356,10 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | Facts | `+ walk-started, walk-ended, polish-proposed, tweak-judged, milestone-passed, demo-promoted, demo-failed` (`WalkFact`) | none |
 | `Role` | `+ walkthrough, polishJudge` (seat `arc`, frontier), in force only under milestones | not in force: no rev, check or smoke moves |
 | `launch.json` terminal, result.json | backend `role` may be a walk role with a `JudgmentSession` (`JudgmentSessionRole`) | none: dev.12 records name earlier roles |
-| `BackendCall` (not persisted) | `+ claude-acting-judge` | none |
+| `BackendCall` (not persisted) | `+ claude-acting-judge`; the gate's call is one (agent I) | none |
+| Roles (not persisted) | `FRESH_ROLES - gate`; `ACTING_ROLES + gate`; `JudgmentSessionRole = FreshRole \| ActingJudgeRole` | none: a dev.12 gate's launch and result records still name `gate` with a `JudgmentSession` |
+| `launch.json` of a gate call | argv the acting judge's (no `--system-prompt`); cwd `<worktreeRoot>/<arc>/<unit>.gate-<attempt>`, a `worktree.create` of the gate attempt (removed, citing its snapshot, when the call is read) | none: a dev.12 gate's cwd was its verification checkout, which `judgedHead` still reads (any detached checkout) |
+| Gate answer (`GATE_SCHEMA`, `gateOutput`) | `findings[] + experiments: [{command, output}]` (required of a live answer) | absent: none (lasting, no warning) |
 | `.roadmap/config.json` | `+ walkthrough?: {mcp}` | absent: no browser drive (lasting) |
 | `StartupRejection`, Phase-0 advisories | `+ milestones-need-holistic`, `+ walk-tools-missing`; advisory `+ milestone-unit-before-design` | none |
 | `ORIGIN_RANK` (not persisted) | `polish` 2, `planned` 3 | none |
@@ -921,8 +924,8 @@ changedPremiseFiles}`; a plan-check whose previous answer was refused (since 202
 reason: its schema, its cites, its patch through `evaluateRevision`; the latest call's, its repair turn's when it made
 one) gets `priorInvalid` (every reason, `; `-joined); a gate after its own revise gets `priorRound {directives, findings, premises, fixPaths,
 changedPremiseFiles}`. Changed premise files compare blobs between the commits the prior round read (a plan-check's
-checkouts from its `worktree.create` intents; a gate's verification checkout from its launch cwd) and the current
-ones; a premise path that names no repository file counts as changed.
+checkouts from its `worktree.create` intents; a gate's checkout from its launch cwd: its own since dev.13, a verification
+checkout before) and the current ones; a premise path that names no repository file counts as changed.
 
 **Plan-check checkouts**: each plan-check attempt reads detached checkouts at
 `<worktreeRoot>/<arc>/<unit>.plan-check-<attempt>` (the integration tip, its cwd) and, when the unit branch
@@ -930,6 +933,15 @@ exists and differs from the tip, `...-branch` (passed with `--add-dir`, as is th
 are `worktree.create` ops of the attempt, removed (each citing a snapshot of its dirty paths, normally zero files)
 when the attempt's call is read, live or after recovery, and by the next plan-check attempt or retire when a crash
 left one.
+
+**Gate checkouts** (dev.13): each gate attempt's session runs in its own detached checkout at
+`<worktreeRoot>/<arc>/<unit>.gate-<attempt>` (`gateWorktree`, src/pipeline/gate.ts) of the head its inputs captured (the
+salvage SHA the green verification checkout holds, which the gate still requires and never runs in). It is a
+`worktree.create` op of the attempt, made after its `@cpu` entry, and removed when the attempt's call is read, live or after
+recovery, before its outcome is recorded, citing a snapshot of its dirty paths at
+`<runDir>/evidence/<unit>/<attempt>-gate/<unit>.gate-<attempt>/` (the experiments the gate wrote, kept as evidence); a
+leftover of an attempt a crash cut short goes before the next gate attempt makes its own, or at the next lanes attempt or
+retire (stages.ts `removeJudgmentCheckouts`, shared with plan-check).
 
 **Architect spec edits** are `roadmap apply` edits ("Plan in force"): the architect edits a unit's `spec.json`
 in place, keeps the schema and every id (items are struck or deferred, never deleted or reused; scope and
@@ -3933,9 +3945,11 @@ proposals are recorded in its `walk-ended.dropped`, never applied or banked.
 
 - `ROLES` and `ARC_ROLES` + `walkthrough`, `polishJudge` (appended, seat `arc`), `BUILTIN_SEATS` both `frontier` (Opus 5.5
   medium; R4). `WALK_ROLES = ['walkthrough', 'polishJudge']`.
-- `FRESH_ROLES` is an explicit list, `['planCheck', 'gate', 'lens', 'checkpoint', 'packReview', 'flow']`; beside it
-  `ACTING_ROLES = ['build', 'walkthrough', 'polishJudge']` (the two partition `ROLES`). `JudgmentSessionRole = FreshRole |
-  WalkRole` is what a launch/result record with a `JudgmentSession` names. `ACTING_JUDGE_ROLES = ['gate', ...WALK_ROLES]`.
+- `FRESH_ROLES` is an explicit list, `['planCheck', 'lens', 'checkpoint', 'packReview', 'flow']` (agent I: the gate left it
+  when it moved onto the acting-judge profile); beside it `ACTING_JUDGE_ROLES = ['gate', ...WALK_ROLES]` and `ACTING_ROLES =
+  ['build', ...ACTING_JUDGE_ROLES]` (`FRESH_ROLES` and `ACTING_ROLES` partition `ROLES`). `JudgmentSessionRole = FreshRole |
+  ActingJudgeRole` (every role but `build`) is what a launch/result record with a `JudgmentSession` names, so a dev.12
+  gate's records read unchanged: still `{role: gate, routingRev}`.
 - **In force only under milestones.** `RoutingStack.milestones?: true`, `ResolvedRouting.milestones`;
   `arcRolesInForce(scope, arcRoles, milestones)`, `routingRevOf(table, scope, arcRoles, milestones)`,
   `provenanceStack(provenance, scope, unit, milestones)` and `planStack` (from the plan, `hasMilestones`) carry it. The walk
@@ -3954,8 +3968,13 @@ evidenceDirs}`. argv: `claude -p --output-format stream-json --verbose --strict-
 (ACTING_JUDGE_TOOLS) --permission-mode bypassPermissions --session-id|--resume <id> --append-system-prompt <system>
 [--add-dir <dir>]...`. Slash commands are not disabled (project skills load). The cwd (the launch's) is the detached
 checkout it works in. `mcpConfig` null: no MCP server (the gate's). Fresh, or resumed once for the repair turn. Its launch
-terminal and result records name the role with a `JudgmentSession` like a judgment. The gate's move onto this kind belongs
-to another agent.
+terminal and result records name the role with a `JudgmentSession` like a judgment.
+
+- **The gate** (agent I, owner 2026-10-18): a unit's gate call (`callBackend`, src/pipeline/dispatch.ts) is this kind with
+  `role: gate` and `mcpConfig` null, on the gate's unit seat as before (its tier, large-diff seat, escalation seat, deadline,
+  repair turn, retry of a lost call and verdict reading unchanged). Its cwd is the attempt's gate checkout ("Gate checkouts"),
+  its `--add-dir` surface a judgment's (`judgmentReadDirs`) and its system text the module's, appended with no
+  `<readable_directories>` block (Claude Code's default prompt names the added dirs). Plan-check stays `claude-judgment`.
 
 - **MCP tools** need no `--tools` or `--allowed-tools` entry (agent A, verified on Claude Code 2.1.301, 2026-10-18): `--tools`
   names built-in tools only and does not restrict MCP tools, and bypassPermissions allows them; with this argv and the
@@ -3999,6 +4018,13 @@ journey has a `breaks` finding on it. A polish `spec` is an admit's spec object 
 canonical text), not the plan's `string` (step 0 decided: one admit path with two authors). The walk job's validation
 (agent C) adds what needs its inputs: every journey reported, cited evidence files under the evidence dir, a design path
 inside a milestone reference, vision clauses active, a polish scope covering a reference; one repair turn.
+
+**Gate answer, `findings[].experiments`** (agent I): `GATE_SCHEMA`'s finding gains `experiments: {command: string, output:
+string}[]` (required of a live answer): the ad hoc experiments the gate ran in its checkout that the finding rests on, the
+command as run and the output that shows the result, in order; empty for a finding that rests on reading. Recorded and
+reported (status's gate findings; the next round's `priorRound.findings` render each command as `ran: <command>`), never
+checked against the transcript (backlog). Absent on a dev.12 answer: none (lasting; a dev.12 gate had no shell), with no
+warning.
 
 `POLISH_JUDGE_SCHEMA` / `validatePolishJudgeOutput` → `{final: true, decision: keep | drop, evidence: string[]
 (non-empty), reasons: string[] (non-empty), premises}` (step 0 decided: `final`, as the judge drives a browser).

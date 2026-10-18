@@ -1017,9 +1017,11 @@ export function patchText(ops: readonly SpecPatchOp[]): string {
   return ops.map((op) => `- ${JSON.stringify(op)}`).join('\n');
 }
 
+/** A gate round's findings for the next round's handoff: each with the commands of the experiments it cited (dev.13), not their output. */
 export function findingsText(findings: readonly GateFinding[]): string {
   if (findings.length === 0) return '(none)';
-  return findings.map((f) => `- [${f.severity}] ${f.path ?? '(no path)'}: ${f.text}${f.contractRef === null ? '' : ` (${f.contractRef})`}`).join('\n');
+  return findings.map((f) => `- [${f.severity}] ${f.path ?? '(no path)'}: ${f.text}${f.contractRef === null ? '' : ` (${f.contractRef})`}`
+    + f.experiments.map((e) => `\n  ran: ${e.command}`).join('')).join('\n');
 }
 
 // ---------------------------------------------------------------------------------------------------

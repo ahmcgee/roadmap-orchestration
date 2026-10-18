@@ -46,29 +46,29 @@ export type ArcRole = (typeof ARC_ROLES)[number];
 export type JudgmentRole = 'planCheck' | 'gate';
 export type ImplementerRole = 'build';
 /**
- * Every role that runs a fresh read-only session on the judgment profile (`claude-judgment`, `JUDGMENT_TOOLS`): the unit
- * judgments and the judging arc roles. An explicit list (dev.13): the walk roles are arc roles that act.
+ * Every role that runs a fresh read-only session on the judgment profile (`claude-judgment`, `JUDGMENT_TOOLS`): plan-check
+ * and the judging arc roles. An explicit list (dev.13): the gate and the walk roles judge by acting.
  */
-export const FRESH_ROLES = ['planCheck', 'gate', 'lens', 'checkpoint', 'packReview', 'flow'] as const satisfies readonly Role[];
+export const FRESH_ROLES = ['planCheck', 'lens', 'checkpoint', 'packReview', 'flow'] as const satisfies readonly Role[];
 export type FreshRole = (typeof FRESH_ROLES)[number];
 /**
- * dev.13: the arc roles that use the product (`claude-walk`: a shell, the walkthrough MCP servers, bypassPermissions, cwd a
- * detached checkout), in force only when the plan has milestones (src/routing/layers.ts `arcRolesInForce`).
+ * dev.13: the arc roles that use the product (`claude-acting-judge` with the walkthrough MCP servers, cwd a detached
+ * checkout of the product), in force only when the plan has milestones (src/routing/layers.ts `arcRolesInForce`).
  */
 export const WALK_ROLES = ['walkthrough', 'polishJudge'] as const satisfies readonly ArcRole[];
 export type WalkRole = (typeof WALK_ROLES)[number];
-/** The roles whose session may change things: the implementer and the walk roles (dev.13). Every other role is a `FreshRole`. */
-export const ACTING_ROLES = ['build', ...WALK_ROLES] as const satisfies readonly Role[];
-export type ActingRole = (typeof ACTING_ROLES)[number];
 /**
- * dev.13: the roles that may run as an acting judge (`claude-acting-judge`, src/backends/argv.ts): the walk roles, and the
- * gate (owner 2026-10-18: a shell for ad hoc experiments; another agent moves it onto the profile).
+ * dev.13: the roles that may run as an acting judge (`claude-acting-judge`, src/backends/argv.ts): the gate (owner
+ * 2026-10-18: a shell for ad hoc experiments in a throwaway checkout of the unit's tip, no MCP server) and the walk roles.
  */
 export const ACTING_JUDGE_ROLES = ['gate', ...WALK_ROLES] as const satisfies readonly Role[];
 export type ActingJudgeRole = (typeof ACTING_JUDGE_ROLES)[number];
+/** The roles whose session may change things: the implementer and the acting judges (dev.13). Every other role is a `FreshRole`. */
+export const ACTING_ROLES = ['build', ...ACTING_JUDGE_ROLES] as const satisfies readonly Role[];
+export type ActingRole = (typeof ACTING_ROLES)[number];
 /** The roles whose session is a `JudgmentSession` (fresh, or resumed once for the repair turn): every role but `build`. */
-export type JudgmentSessionRole = FreshRole | WalkRole;
-export const JUDGMENT_SESSION_ROLES = [...FRESH_ROLES, ...WALK_ROLES] as const satisfies readonly Role[];
+export type JudgmentSessionRole = FreshRole | ActingJudgeRole;
+export const JUDGMENT_SESSION_ROLES = [...FRESH_ROLES, ...ACTING_JUDGE_ROLES] as const satisfies readonly Role[];
 
 /** A unit's risk. Never `escalation`: that seat is a judgment role's route-up target, not a risk. */
 export const RISK_TIERS = ['low', 'med', 'high'] as const;

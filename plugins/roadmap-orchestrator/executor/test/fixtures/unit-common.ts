@@ -173,7 +173,14 @@ export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPa
 // ---------------------------------------------------------------------------------------------------
 // Scenario steps
 
-const JUDGMENT: Expect = { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] };
+/**
+ * dev.13: the gate is an acting judge (argv.ts `claude-acting-judge`): a shell and bypassPermissions in its own checkout, a
+ * fresh persisted session, no MCP server.
+ */
+const GATE: Expect = {
+  argv: ['-p', '--strict-mcp-config', '--setting-sources', 'project', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'],
+  argvLacks: ['--resume', '--mcp-config', '--no-session-persistence', '--system-prompt'],
+};
 
 export type GateAnswer = Readonly<{
   decision: 'approve' | 'revise' | 'escalate';
@@ -184,11 +191,11 @@ export type GateAnswer = Readonly<{
   clusters?: readonly JsonValue[] | null;
 }>;
 
-/** A gate the fake Claude answers after `before`: a fresh judgment call. `expect` adds to the judgment argv check. */
+/** A gate the fake Claude answers after `before`: a fresh acting-judge call. `expect` adds to the gate argv check. */
 export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   return {
     as: 'claude',
-    expect: { ...JUDGMENT, ...expect, argv: [...(JUDGMENT.argv ?? []), ...(expect.argv ?? [])] },
+    expect: { ...GATE, ...expect, argv: [...(GATE.argv ?? []), ...(expect.argv ?? [])] },
     acts: [...before, { type: 'emit', value: gateAnswer(a) }],
   };
 }
@@ -205,7 +212,10 @@ const gateAnswer = (a: GateAnswer): JsonValue => ({
 export function gateRepairStep(a: GateAnswer, stdinContains: readonly string[] = []): Step {
   return {
     as: 'claude',
-    expect: { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--resume'], argvLacks: ['--session-id', '--permission-mode', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
+    expect: {
+      argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--resume'], argvLacks: ['--session-id', '--mcp-config', '--no-session-persistence'],
+      stdinContains: ['Your answer was refused: ', ...stdinContains],
+    },
     acts: [{ type: 'emit', value: gateAnswer(a) }],
   };
 }

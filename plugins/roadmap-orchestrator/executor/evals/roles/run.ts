@@ -4,11 +4,17 @@
 //   node evals/roles/run.ts gate --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1]
 //                           [--risk low|med|high] [--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <dev summary.json>]
 //                           [--fake approve-all|revise-all|cite-every-path|cite-plant] [--cap <usd>] [--trial-cap <usd>]
+//                           [--read-only] [--baseline <read-only summary.json>]
 //
 // The arm: `--risk` picks the gate seat (built-in: low and med efficient/Sonnet 5.5, high frontier/Opus 5.5)
 // and `--rebind` (repeatable) rebinds a class for the run through the production mechanism, the repo config's
 // `routing.classes` (e.g. `--risk low --rebind efficient=claude-opus-5-5:medium` runs Opus on the low seat). The ARM line,
 // summary.json's `arm` and the compare criterion name the seat, its class and the model:effort serving it.
+//
+// dev.13, the gate's shell: `--read-only` runs the same cells with the dev.12 gate's read-only judgment profile
+// (gate/readonly.ts; the ARM line ends `read-only`), the comparison arm; `--baseline <its summary.json>` then adds, to a run
+// of the acting gate on the same cells, the execution-only cells' detection against the arm's (`exec-gain`) and each
+// cell's median cost against the arm's (summary.ts).
 //
 // Writes <out>/trials.jsonl (one row per trial, as each finishes), <out>/summary.json and <out>/<cell>-<trial>/ (key.json,
 // prompt.txt, gate-<n>.jsonl, transcript.jsonl, answer.json, row.json); prints the workers' TRACE and BRAKE lines, a TRIAL
@@ -32,7 +38,7 @@ import { type RepoConfig, parseRepoConfig } from '../../src/routing/layers.ts';
 import { modelInfo } from '../../src/routing/models.ts';
 import { MODEL_IDS, type ModelId, RISK_TIERS, type RiskTier } from '../../src/routing/types.ts';
 import { FAKE_GATES, type GateKind, type TrialRow, gateArm } from './gate/arc.ts';
-import { type CellSet, cellsFor } from './gate/cells.ts';
+import { type CellSet, cellsFor, isPlanted } from './gate/cells.ts';
 import { type Summary, failed, reportLines, spentOf, summarise } from './gate/summary.ts';
 import { median } from './stats.ts';
 import type { WorkerArgs } from './trial.ts';
@@ -40,7 +46,7 @@ import type { WorkerArgs } from './trial.ts';
 const WORKER = fileURLToPath(new URL('./trial.ts', import.meta.url));
 const TRIAL_TIMEOUT_MS = 60 * 60_000;
 const USAGE = 'usage: node evals/roles/run.ts gate --set dev|holdout [--n 3] [--cells G0,G3a] [--parallel 4] [--size 3000] [--seed roles-1] [--risk med] '
-  + '[--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <summary.json>] [--fake <kind>] [--cap <usd>] [--trial-cap <usd>]';
+  + '[--rebind <class>=<model>:<effort> ...] [--out <dir>] [--compare <summary.json>] [--fake <kind>] [--cap <usd>] [--trial-cap <usd>] [--read-only] [--baseline <summary.json>]';
 
 export type RunOptions = Readonly<{
   set: CellSet;
@@ -59,6 +65,10 @@ export type RunOptions = Readonly<{
   cap: number | null;
   /** `--trial-cap`: a running trial is killed once its live spend passes this many USD; null: no cap. */
   trialCap: number | null;
+  /** `--read-only`: the dev.12 gate's read-only profile, the comparison arm (dev.13). */
+  readOnly: boolean;
+  /** `--baseline`: the read-only arm's summary.json on the same cells, or null. */
+  baseline: string | null;
 }>;
 
 export function parseRun(argv: readonly string[]): RunOptions {
@@ -68,7 +78,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
       set: { type: 'string' }, n: { type: 'string', default: '3' }, cells: { type: 'string' }, parallel: { type: 'string', default: '4' },
       size: { type: 'string', default: '3000' }, seed: { type: 'string', default: 'roles-1' }, risk: { type: 'string', default: 'med' },
       rebind: { type: 'string', multiple: true }, out: { type: 'string' }, compare: { type: 'string' }, fake: { type: 'string' },
-      cap: { type: 'string' }, 'trial-cap': { type: 'string' },
+      cap: { type: 'string' }, 'trial-cap': { type: 'string' }, 'read-only': { type: 'boolean', default: false }, baseline: { type: 'string' },
     },
   });
   if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(only the gate role has evals so far)`);
@@ -94,7 +104,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
   return {
     set: values.set, n: int('n', values.n, 1, 100), cells: values.cells === undefined ? null : values.cells.split(','), parallel: int('parallel', values.parallel, 1, 16),
     size, seed: values.seed, risk: values.risk as RiskTier, config: rebindConfig(values.rebind ?? []), out, compare: values.compare ?? null, gate,
-    cap: usd('cap', values.cap), trialCap: usd('trial-cap', values['trial-cap']),
+    cap: usd('cap', values.cap), trialCap: usd('trial-cap', values['trial-cap']), readOnly: values['read-only'], baseline: values.baseline ?? null,
   };
 }
 
@@ -120,7 +130,7 @@ export function rebindConfig(flags: readonly string[]): RepoConfig | null {
 function errorRow(a: WorkerArgs, family: string, planted: boolean, detail: string): TrialRow {
   return {
     set: a.set, cell: a.cell, family, trial: a.trial, planted, gate: a.gate, outcome: null, caught: null, decision: null, void: { reason: 'error', detail }, graded: null,
-    largeDiff: false, clusters: null, usage: null, estimatedUsd: 0, wallMs: 0, turns: 0, load: 0, calls: 0, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: a.out,
+    readOnly: a.readOnly, experiments: 0, largeDiff: false, clusters: null, usage: null, estimatedUsd: 0, wallMs: 0, turns: 0, load: 0, calls: 0, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: a.out,
   };
 }
 
@@ -151,7 +161,9 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
   const cells = o.cells === null ? all : all.filter((c) => o.cells!.includes(c.id));
   if (existsSync(o.out) && readdirSync(o.out).length > 0) throw new Error(`--out ${o.out} is not empty`);
   mkdirSync(o.out, { recursive: true });
-  const arm = gateArm(o.risk, o.config);
+  const arm = gateArm(o.risk, o.config, o.readOnly);
+  const baseline = o.baseline === null ? null : (JSON.parse(readFileSync(o.baseline, 'utf8')) as Summary);
+  if (baseline !== null && (o.readOnly || baseline.arm === null || !baseline.arm.endsWith(' read-only'))) throw new Error(`--baseline compares an acting run with a --read-only run's summary (its arm ${baseline.arm})`);
   writeFileSync(join(o.out, 'run.json'), `${JSON.stringify(o, null, 2)}\n`);
   const compare = o.compare === null ? null : (JSON.parse(readFileSync(o.compare, 'utf8')) as Summary);
   const queue = cells.flatMap((c) => Array.from({ length: o.n }, (_, trial) => ({ cell: c, trial })));
@@ -169,11 +181,11 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
       }
       const a: WorkerArgs = {
         role: 'gate', set: o.set, cell: job.cell.id, trial: job.trial, seed: o.seed, size: o.size, gate: o.gate, risk: o.risk, config: o.config,
-        out: join(o.out, `${job.cell.id}-${job.trial}`), medianLoad: medianLoad(job.cell.id), trialCap: o.trialCap,
+        out: join(o.out, `${job.cell.id}-${job.trial}`), medianLoad: medianLoad(job.cell.id), trialCap: o.trialCap, readOnly: o.readOnly,
       };
       const died = await runWorker(a, log);
       const rowFile = join(a.out, 'row.json');
-      const row = died === null && existsSync(rowFile) ? (JSON.parse(readFileSync(rowFile, 'utf8')) as TrialRow) : errorRow(a, job.cell.family, job.cell.plant !== null, died ?? 'no row.json');
+      const row = died === null && existsSync(rowFile) ? (JSON.parse(readFileSync(rowFile, 'utf8')) as TrialRow) : errorRow(a, job.cell.family, isPlanted(job.cell), died ?? 'no row.json');
       rows.push(row);
       appendFileSync(join(o.out, 'trials.jsonl'), `${JSON.stringify(row)}\n`);
       log(`TRIAL ${row.cell}#${row.trial} ${row.void !== null ? `void:${row.void.reason} ${row.void.detail}` : row.caught !== null ? `caught-by:${row.caught}` : row.graded?.verdict} `
@@ -182,7 +194,7 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
   };
   await Promise.all(Array.from({ length: Math.min(o.parallel, queue.length) }, next));
   rows.sort((x, y) => (x.cell === y.cell ? x.trial - y.trial : cells.findIndex((c) => c.id === x.cell) - cells.findIndex((c) => c.id === y.cell)));
-  const summary = summarise(o.set, rows, compare, arm, o.cap === null ? null : { capUsd: o.cap, notStarted });
+  const summary = summarise(o.set, rows, compare, arm, o.cap === null ? null : { capUsd: o.cap, notStarted }, baseline);
   writeFileSync(join(o.out, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
   for (const l of reportLines(summary)) log(l);
   log(`run dir ${o.out}`);

@@ -97,7 +97,7 @@ export const ACTING_JUDGE_TOOLS = 'Read,Grep,Glob,Bash,Write,Edit,Agent';
 export type BackendCall =
   | Readonly<{
     kind: 'claude-judgment';
-    /** A unit judgment (plan-check, gate) or an arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. */
+    /** Plan-check or a judging arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. The gate acts (dev.13). */
     role: FreshRole;
     triple: ClaudeTriple;
     session: JudgmentSession;

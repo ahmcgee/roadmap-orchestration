@@ -380,7 +380,7 @@ export type BackendCallSpec = Readonly<{
   system: string;
   rendered: string;
   schema: JsonValue;
-  /** The session's working directory: the tree a judge reads, or the worktree an implementer edits. */
+  /** The session's working directory: the tree a judge reads (the gate's own throwaway checkout, dev.13), or the worktree an implementer edits. */
   cwd: AbsPath;
   deadlineAt: IsoTime;
 }>;
@@ -398,7 +398,12 @@ export function inputFile(runDir: AbsPath, text: string, ext: string): AbsPath {
 function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, invDir: AbsPath): BackendCall {
   const r = spec.request;
   if (r.kind === 'judgment') {
-    return { kind: 'claude-judgment', role: r.dispatch.role, triple: r.dispatch.triple, session: r.session, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs };
+    const { role, triple } = r.dispatch;
+    // dev.13 (owner 2026-10-18): the gate judges by acting, with a shell in its own checkout of the unit's tip and no MCP
+    // server; plan-check reads.
+    return role === 'gate'
+      ? { kind: 'claude-acting-judge', role, triple, session: r.session, schemaText, system: spec.system, mcpConfig: null, evidenceDirs: r.evidenceDirs }
+      : { kind: 'claude-judgment', role, triple, session: r.session, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs };
   }
   const { triple } = r.dispatch;
   const s = r.session;
@@ -496,7 +501,10 @@ export function judgmentSurface(
 export async function callBackend(ctx: StageContext, given: BackendCallSpec): Promise<BackendCallOutcome> {
   let spec = given;
   if (given.request.kind === 'judgment') {
-    const { system, evidenceDirs } = judgmentSurface(ctx, given.system, given.request.evidenceDirs);
+    // The gate's system text is appended to Claude Code's default prompt, which names its `--add-dir` dirs itself.
+    const { system, evidenceDirs } = given.request.dispatch.role === 'gate'
+      ? { system: given.system, evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) }
+      : judgmentSurface(ctx, given.system, given.request.evidenceDirs);
     spec = { ...given, system, request: { ...given.request, evidenceDirs } };
   }
   const r = spec.request;

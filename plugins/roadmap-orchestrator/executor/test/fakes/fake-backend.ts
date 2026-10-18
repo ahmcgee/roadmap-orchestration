@@ -8,6 +8,7 @@
 // was pinned against.
 import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LensKindName } from '../../src/core/records.ts';
@@ -225,9 +226,15 @@ function realClaude(scenarioDir: string): string {
   throw new Error(`fake claude: a real act found no claude on PATH outside ${shims}`);
 }
 
-/** The `real` act: the real CLI with the call's argv, stdin, cwd and environment; its exit status ends the fake. */
-function runReal(call: Call, scenarioDir: string): never {
-  const r = spawnSync(realClaude(scenarioDir), [...call.argv], { cwd: call.cwd, env: process.env, input: call.stdin, stdio: ['pipe', 'inherit', 'inherit'] });
+/**
+ * The `real` act: the real CLI with the call's argv (`readOnly`: rewritten into the judgment profile, the gate eval's
+ * comparison arm), stdin, cwd and environment; its exit status ends the fake.
+ */
+function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: string; runDir: string }> | undefined): never {
+  // Loaded (synchronously: require of an ES module) only by the arm, so no other fake call pays for the import.
+  const arm = (): typeof import('../../evals/roles/gate/readonly.ts') => createRequire(import.meta.url)('../../evals/roles/gate/readonly.ts');
+  const argv = readOnly === undefined ? call.argv : arm().readOnlyArgs(call.argv, readOnly);
+  const r = spawnSync(realClaude(scenarioDir), [...argv], { cwd: call.cwd, env: process.env, input: call.stdin, stdio: ['pipe', 'inherit', 'inherit'] });
   if (r.error !== undefined) throw r.error;
   if (r.signal !== null) process.kill(process.pid, r.signal);
   process.exit(r.status ?? 1);
@@ -287,7 +294,7 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'exitZeroNoop':
       process.exit(0);
     case 'real':
-      runReal(call, scenarioDir);
+      runReal(call, scenarioDir, act.readOnly);
     case 'checkoutTree':
       git(call.cwd, 'read-tree', '-u', '--reset', act.sha);
       git(call.cwd, 'commit', '--quiet', '--message', act.message);

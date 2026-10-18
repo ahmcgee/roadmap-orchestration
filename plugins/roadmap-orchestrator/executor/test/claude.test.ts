@@ -218,7 +218,7 @@ describe('claude', () => {
       assert.ok((init['tools'] as string[]).every((t) => !t.startsWith('mcp__')));
     });
     it('the argv carries the flags that make it so: no settings for a judgment, project settings for an implementer', () => {
-      const judgment = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: TRIPLE, session: freshJudgmentSession(), schemaText: '{}', system: 'S', evidenceDirs: [] });
+      const judgment = backendArgv({ kind: 'claude-judgment', role: 'planCheck', triple: TRIPLE, session: freshJudgmentSession(), schemaText: '{}', system: 'S', evidenceDirs: [] });
       const build = backendArgv({ kind: 'claude-build', triple: TRIPLE, session: freshClaudeImplementerSession(), schemaText: '{}', system: 'S', evidenceDirs: [] });
       for (const argv of [judgment, build]) {
         for (const flag of ['--strict-mcp-config', '--disable-slash-commands', '--verbose']) assert.ok(argv.includes(flag), flag);
@@ -235,15 +235,15 @@ describe('claude', () => {
       const a = freshJudgmentSession();
       const b = freshJudgmentSession();
       assert.notEqual(a.id, b.id);
-      const argv = backendArgv({ kind: 'claude-judgment', role: 'gate', triple: TRIPLE, session: a, schemaText: '{}', system: 'S', evidenceDirs: [] });
+      const argv = backendArgv({ kind: 'claude-judgment', role: 'planCheck', triple: TRIPLE, session: a, schemaText: '{}', system: 'S', evidenceDirs: [] });
       assert.equal(argv[argv.indexOf('--session-id') + 1], a.id);
       assert.equal(argv.includes('--resume'), false);
       assert.equal(argv.includes('--no-session-persistence'), false);
       assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Grep,Glob,Agent');
     });
-    it('every judgment role (dev.12) persists its fresh session and resumes it with --resume for its repair turn', () => {
+    it('every read-only judgment role (dev.12; the gate acts since dev.13) persists its fresh session and resumes it with --resume for its repair turn', () => {
       const id = judgmentSessionId('18b3bbf3-98ce-4ced-87c2-639d61b25ef1');
-      for (const role of ['planCheck', 'gate', 'lens', 'checkpoint', 'packReview', 'flow'] as const) {
+      for (const role of ['planCheck', 'lens', 'checkpoint', 'packReview', 'flow'] as const) {
         const fresh = backendArgv({ kind: 'claude-judgment', role, triple: TRIPLE, session: { backend: 'claude', mode: 'fresh', id }, schemaText: '{}', system: 'S', evidenceDirs: [] });
         assert.equal(fresh[fresh.indexOf('--session-id') + 1], id);
         assert.equal(fresh.includes('--no-session-persistence'), false, `${role}: its session persists for the repair turn`);
@@ -255,7 +255,7 @@ describe('claude', () => {
     it('a Codex judgment call is unrepresentable', () => {
       // @ts-expect-error: judgment is Claude only (R21); a Codex triple does not fit a judgment call
       const call: BackendCall = {
-        kind: 'claude-judgment', role: 'gate', session: freshJudgmentSession(), schemaText: '{}', system: 'S', evidenceDirs: [],
+        kind: 'claude-judgment', role: 'planCheck', session: freshJudgmentSession(), schemaText: '{}', system: 'S', evidenceDirs: [],
         triple: { backend: 'codex', model: 'gpt-5.6-sol', effort: 'low' },
       };
       assert.equal(call.kind, 'claude-judgment');
