@@ -3868,12 +3868,33 @@ unit.origin + 'polish'; unit.polish?: { milestone: MS-n; proposal: X-n }   // pr
   `polish` without origin `polish` or the reverse. A unit may be in several milestones (step 0 decided: nothing forbids it).
 - **`milestones-need-holistic`** is a Phase-0 startup row (`StartupRejection{kind: milestones-need-holistic}`, beside
   `holistic-needs-corpus`), not a parse refusal (step 0 decided: it is named, like its sibling, in the start and apply
-  refusal output). Agent B implements the row; `arcRolesInForce` fails loud on milestones in a non-holistic scope.
+  refusal output). It is shared row 15 (`milestonesNeedHolisticRows`, src/phase0/rows.ts; the predicate
+  `milestonesNeedHolistic`, src/input/plan.ts), in every mode, so start (fresh or not), `apply` and `phase0 check` (both
+  sources) refuse it. The classifier names it too, as the reason `{"kind":"milestones-need-holistic"}`, and resolves no
+  routing on such a revision; `phase0 check --plan` skips the routing row for it. `arcRolesInForce` fails loud on
+  milestones in a non-holistic scope.
 - **Accessors**: `milestonesOf`, `hasMilestones`, `milestoneOf(plan, id)`, `milestonesOfUnit(plan, unit)`,
   `designUnitOf(m)` (null for `supplied`), `walkRoundsOf`, `portNames`.
-- **Plan edits**: `PlanChange + {type: 'milestones'}` (src/core/events.ts), written by an `apply` only, a new edit class
-  in src/input/classify.ts modelled on `unit-priority` (agent B: detection, validation and what it drains; step 0 only
-  added the variant, classified as draining nothing). The checkpoint cannot edit milestones (backlog).
+- **Plan edits**: `PlanChange + {type: 'milestones'}` (src/core/events.ts), the `milestones` edit class of
+  src/input/classify.ts (`milestoneRows`), modelled on `unit-priority`: pushed when `milestonesOf` differs, it **drains
+  nothing** (scope none: the milestone node gates readiness, and a walk reads the plan in force when it starts). The
+  checkpoint cannot edit milestones (backlog). Refused (all or nothing, each reason listed):
+  - a change by any proposer but an architect `apply`: `the milestones change only through an architect \`apply\`, not a <proposer>`;
+  - removing a milestone a `walk-started` names: `milestone <MS> has been walked (<walk-n, …>); it cannot be removed`;
+  - any edit of a milestone whose walk has started and not ended: `milestone <MS> is being walked (<walk-n>); edit it once
+    the walk ends`;
+  - a walked milestone's `units` or `design` changed (its text, references, bring-up, journeys and resources may change
+    between walks: a fix to a failed bring-up is an apply): `milestone <MS> has been walked (…): its units and design are
+    fixed; plan another milestone for more`;
+  - a milestone added, or whose `units` changed, never walked, whose units have all merged (no publication would reach
+    it): `milestone <MS>: every unit it lists has merged, so no publication would reach it; list a unit still to merge`;
+  - on every revision, by any proposer (a checkpoint's cut included): a milestone listing a cut unit (it would never be
+    reached): `milestone <MS> lists <unit, …>, cut: a cut unit never merges, so the milestone would never be reached; drop it
+    from the milestone's units in the same apply`.
+
+  A revision that gives the plan its first milestones (or removes its last) moves the walk seats into (out of) force and
+  so the routing rev, with no `routing` change (as adding `holistic` does): the classifier returns the new plan routing in
+  `routings`, so `apply` runs the routing row over it and smokes any backend it newly seats.
 - **`ORIGIN_RANK`** (src/schedule/types.ts): `repair 0, checkpoint 1, polish 2, planned 3`.
 - **Polish units** (step 0 decided, agent D applies): risk `high` (Opus builds design tweaks: only its guide carries design
   guidance), `after: []`, `resources` the milestone's, `scope` and `spec` as the walkthrough authored them.
@@ -3951,9 +3972,9 @@ servers (agent F).
 
 | Row | Shape | Owner |
 |---|---|---|
-| `milestones-need-holistic` | `StartupRejection{kind}` | B |
+| `milestones-need-holistic` | `StartupRejection{kind}`: shared row 15, every mode | B |
 | `walk-tools-missing` | `StartupRejection{kind, milestone, problem: program{step, argv0} \| mcp-unconfigured \| mcp-unconnected{server, detail}}`; `step` names the command: `setup[i]`, `serve.<name>`, `seed[i]` | A (the MCP smoke: a one-turn call on the cheapest seat reading the init event's `mcp_servers[].status`), B (the row's argv0 half) |
-| `milestone-unit-before-design` | advisory `Phase0Advisory{kind, milestone, unit, design}`: a milestone unit not a descendant (through `after`) of its design unit | B |
+| `milestone-unit-before-design` | advisory `Phase0Advisory{kind, milestone, unit, design}`: shared row 14, every mode: a live (not cut, not re-entered) milestone unit not a descendant (through `after`, transitively) of its design unit; a supplied design has none | B |
 
 ### Outputs (`src/prompts/schemas.ts`)
 

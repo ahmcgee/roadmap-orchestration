@@ -67,6 +67,9 @@ than today, set against how it is now. Distant is fine. Visceral and specific be
 ## Trade-offs, in rank order
 1. <A over B, where both are goods> {V-6} (in: V-1)
 
+## Experience standards
+- <what someone meeting the product must experience, or what they must never meet> {V-7} (in: V-1)
+
 ## Open questions
 - <the question> {Q-1}. Bears on V-1, V-4. Who could answer: <person, or "only real use will tell">.
   Meanwhile: <the working assumption the arc acts on>.
@@ -74,6 +77,8 @@ than today, set against how it is now. Distant is fine. Visceral and specific be
 
 Each clause carries one `{V-n}` anchor; each facet notes the scenes it serves with `(in: V-…)`. Show only the
 living vision: a clause that is replaced or dropped leaves `vision.md` and is withdrawn in `vision.json`.
+`## Experience standards` is there only when the world has a human-facing surface (below); an older vision without it
+is complete without it.
 
 ## Distil
 
@@ -92,6 +97,31 @@ Get past the surface with these:
   ask for a ranking in the abstract.
 - **Bolder worlds.** When the owner's fragments point past what they said, propose the more ambitious world.
   They accept or reject it; never adopt it silently.
+
+### Experience standards
+
+When the world has a human-facing surface, something a person or a client meets: a web UI or dashboard, an API or SDK
+a developer integrates against, a CLI, a message bus a consumer subscribes to, a pipeline someone waits on, a config
+format or template someone edits, the docs they follow. Then the vision also says what meeting it must be like, and
+the arc's walkthroughs judge each milestone against it. Skip this when nobody meets the product directly. Ask these
+the same way as the rest, one at a time, leading with your guess:
+
+1. Name one or two products whose feel this should match, and one it must never resemble. What exactly do you like
+   or dislike about them?
+2. Who uses this first, and what is the one task they must complete without help? How long should it take?
+3. Where must this be polished, and where is plain acceptable?
+4. Which of these do you refuse: generic AI-looking design, dense dashboards, modal-heavy flows, silent failures?
+   Name your own.
+5. Which devices and screen sizes must it work on, and what accessibility floor must it meet (keyboard only, a screen
+   reader, WCAG AA)?
+6. For an API, SDK, CLI or config format: what should a newcomer be able to do in their first five minutes, and what
+   must every error message tell them?
+
+Each answer that survives becomes a standard: an outcome someone would notice ("a first-time user finishes signup
+unaided in under two minutes", "every error names what to do next") or a refusal ("never a modal over a modal"),
+anchored to the scenes it serves. A standard is free of solutions like every clause: "use a stepper", "a design
+system in Tailwind" or "return RFC 9457 problems" are mechanisms, so push back to the experience they would deliver.
+The design units decide the mechanisms; the vision says what they must achieve.
 
 Stop pressing a point when the answer survives one more probe without shifting, not when the owner tires. An
 owner's "move on" on something unresolved makes it an open question (below), never a silent gap.
@@ -131,18 +161,22 @@ The vision is complete when every test passes or is covered by an open question:
 6. **Each non-negotiable has a stated cost.**
 7. **Trade-offs are ranked between real goods,** each settled at a concrete fork, covering the forks the arcs
    will hit.
-8. **Free of solutions** (above).
-9. **Decidable.** The playback (below) passes.
+8. **Free of solutions** (above), experience standards included.
+9. **Experience is specified** when the world has a human-facing surface: for each surface someone meets, the first
+   task and its time budget, where polish matters, the refused patterns and the accessibility floor, and for an API,
+   SDK, CLI or config format the first five minutes and what every error tells.
+10. **Decidable.** The playback (below) passes.
 
 ## Playback and confirmation
 
-When tests 1–8 pass or are covered, play back:
+When tests 1–9 pass or are covered, play back:
 
 1. **The whole `vision.md`**, in final form, so the owner reads exactly what will be recorded.
 2. **Three to five decisions you would make on their behalf**, at concrete forks the arc or the horizon will
    hit, each decided only from the vision and citing the clauses that decided it ("an import is malformed:
    refuse and explain, never guess; V-6 over V-9"). At least one rests on an open question's working
-   assumption, to show how the provisional parts will behave.
+   assumption, to show how the provisional parts will behave. When the vision has experience standards, at least one
+   decides how something should feel to use, citing them.
 3. **What the vision rules out**: things you would refuse to build even if asked.
 
 Confirmation is the owner agreeing with every decision and every exclusion, then an explicit "confirmed".
@@ -160,8 +194,8 @@ On confirmation:
      guide's `vision` field spells it (relative to `root`). The executor hashes the pinned copy of that file at
      every `start` and `apply` and refuses a mismatch (`vision-unconfirmed`).
    - `clauses`: every anchored clause as `{id, kind, text, rank, state: "active"}`. The kind follows the
-     section: world, purpose, serves, good, non-negotiable, tradeoff. `rank` is the trade-off's position and
-     null otherwise. `text` is the clause's prose with its cost and its `(in: …)` note. Every withdrawn clause
+     section: world, purpose, serves, good, non-negotiable, tradeoff, experience (`## Experience standards`).
+     `rank` is the trade-off's position and null otherwise. `text` is the clause's prose with its cost and its `(in: …)` note. Every withdrawn clause
      carries over from the previous `vision.json` unchanged.
    - `questions`: each open question as `{id, text, bears, assumption, state: "open"}`. Every answered one
      carries over from the previous file as `closed`.
@@ -197,7 +231,9 @@ questions the corpus raised), the product as it now stands, `vision.md`, and the
 1. **Open questions first.** For each one: is it answered now? Fold the answer into the world and close the
    question. If the answer contradicts the working assumption, name what the arc built on that assumption.
 2. **Reality against the scenes.** For each scene in the last slice, describe what now exists and ask whether
-   that day feels the way the scene says. A gap is either work for the next slice or a wrong scene.
+   that day feels the way the scene says. A gap is either work for the next slice or a wrong scene. Do the same for
+   each experience standard, with the owner using the demo the arc left: a standard the owner's experience
+   contradicts is mis-stated or missing.
 3. **Interpretations.** Each place the checkpoint read the vision in a way the owner reversed, or that
    surprised them, is an ambiguity. Propose the clarification.
 4. **What has the owner learned about what they want?** The vision grows as the arcs do. Propose bolder or
@@ -211,7 +247,7 @@ calibration that changes nothing still re-confirms: same rev, fresh `confirmatio
 
 ## What you never do
 
-- Write a mechanism into the vision, or a design question into its open questions.
+- Write a mechanism into the vision (an experience standard included), or a design question into its open questions.
 - Adopt a bolder world, or resolve an open question, without the owner saying so.
 - Save raw notes, transcripts or tensions in `vision.md`.
 - Compile `vision.json` without an explicit "confirmed", edit it by hand, or reuse an id.

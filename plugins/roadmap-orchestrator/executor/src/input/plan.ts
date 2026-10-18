@@ -233,6 +233,12 @@ export type Milestone = Readonly<{
 export const milestonesOf = (plan: Pick<PlanM1, 'milestones'>): readonly Milestone[] => plan.milestones ?? [];
 /** Whether the plan has milestones: what puts the walk roles in force (src/routing/layers.ts). */
 export const hasMilestones = (plan: Pick<PlanM1, 'milestones'>): boolean => milestonesOf(plan).length > 0;
+/**
+ * Whether the plan has milestones without the holistic layer (ruling 2: a walk's findings need the ledger, the checkpoint
+ * and fix units): the Phase-0 row `milestones-need-holistic` (src/phase0/rows.ts), which the classifier names too, before
+ * it resolves a routing that would put the walk roles in force outside a holistic arc.
+ */
+export const milestonesNeedHolistic = (plan: Pick<PlanM1, 'milestones' | 'holistic'>): boolean => hasMilestones(plan) && plan.holistic === undefined;
 /** The milestone `id` of the plan; an unknown id is a bug. */
 export function milestoneOf(plan: Pick<PlanM1, 'milestones'>, id: MilestoneId): Milestone {
   const m = milestonesOf(plan).find((x) => x.id === id);
