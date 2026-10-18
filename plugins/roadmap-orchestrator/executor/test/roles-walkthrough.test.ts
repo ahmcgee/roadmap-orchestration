@@ -366,6 +366,21 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
         assert.match(red.stdout, /\n {4}test at test\/money\.test\.js:\d+:\d+\n {4}✖ amounts parse into minor units \(/, `${label}: the failing test named`);
         assert.match(red.stdout, /AssertionError \[ERR_ASSERTION\]/);
         assert.match(readFileSync(join(copy, 'design/ci.md'), 'utf8'), /\n {4}test at test\/report\.test\.js:\d+:1\n {4}✖ /, `${label}: the golden output shows it`);
+        // A file that does not load reports its load error and where it points, never only "test failed" (design/ci.md).
+        const csv = join(copy, 'test/csv.test.js');
+        const csvText = readFileSync(csv, 'utf8');
+        writeFileSync(csv, `${csvText}\nconst broken = ;\n`);
+        const syntaxLine = csvText.split('\n').length + 1;
+        const syntax = spawnSync('node', ['ci/run.js'], { cwd: copy, encoding: 'utf8', env: PLAIN_ENV });
+        assert.equal(syntax.status, 1, label);
+        assert.match(syntax.stdout, new RegExp(`\n {2}test/csv\\.test\\.js\n {4}the file did not load; no test ran\n {4}test/csv\\.test\\.js:${syntaxLine}\n {6}const broken = ;\n {6}\\s*\\^\n {4}SyntaxError: Unexpected token ';'\n {2}rerun it locally: node --test test/csv\\.test\\.js\n`), `${label}: a syntax error`);
+        assert.doesNotMatch(syntax.stdout, /'test failed'/, label);
+        writeFileSync(csv, csvText.replace(/^(import .*\n)/, "$1import { nope } from '../src/missing.js';\n"));
+        const missing = spawnSync('node', ['ci/run.js'], { cwd: copy, encoding: 'utf8', env: PLAIN_ENV });
+        assert.equal(missing.status, 1, label);
+        assert.match(missing.stdout, /\n {2}test\/csv\.test\.js\n {4}the file did not load; no test ran\n {4}Error \[ERR_MODULE_NOT_FOUND\]: Cannot find module 'src\/missing\.js' imported from test\/csv\.test\.js\n {2}rerun it locally: node --test test\/csv\.test\.js\n/, `${label}: a bad import`);
+        assert.doesNotMatch(missing.stdout, /'test failed'/, label);
+        assert.match(readFileSync(join(copy, 'design/ci.md'), 'utf8'), /\n {4}the file did not load; no test ran\n {4}test\/money\.test\.js:\d+\n/, `${label}: the golden output shows a load failure`);
       }
       return;
     }

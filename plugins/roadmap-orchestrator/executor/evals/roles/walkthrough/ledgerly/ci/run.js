@@ -49,14 +49,32 @@ function testFilesOf(argv) {
 const seconds = (ms) => `${(ms / 1000).toFixed(2)}s`;
 const tail = (text, n) => text.trimEnd().split('\n').slice(-n).map((l) => `    ${l}`).join('\n');
 
+/** A path node prints (a file:// URL or an absolute path) relative to the project root, as the rest of the report is. */
+const local = (text) => text.replaceAll(`file://${process.cwd()}/`, '').replaceAll(`${process.cwd()}/`, '');
+
+/**
+ * A test file that failed before any test ran (it did not load: a syntax error, a bad import): the error's message and
+ * the first location node prints outside its own internals (file:line, with the source line and its caret), from the
+ * output before the test runner's summary. A missing module has no such location; its message names both files.
+ */
+function loadFailure(text) {
+  const lines = text.slice(0, text.indexOf('\n\u2716 ')).split('\n');
+  const error = lines.findIndex((l) => /^\w*(Error|Exception)\b.*: /.test(l));
+  if (error < 0) return tail(text, 12);
+  const at = lines.slice(0, error).findIndex((l) => /^\S+:\d+$/.test(l) && !l.startsWith('node:'));
+  const source = at < 0 ? [] : [local(lines[at]), ...lines.slice(at + 1, error).filter((l) => l.trim() !== '').map((l) => `  ${l}`)];
+  return ['the file did not load; no test ran', ...source, local(lines[error])].map((l) => `    ${l}`).join('\n');
+}
+
 /**
  * A failing test file's report: the test runner's "failing tests" section, each failing test's file and line, its name,
  * its error and the stack frame it failed at (the rest of the stack and the error's properties are dropped). A file that
- * failed without a failing test (it did not load) reports the tail of its output.
+ * failed before any test ran (the runner names the file itself as the failing test, at 1:1) reports its load error.
  */
 function failingTests(text) {
   const at = text.indexOf('failing tests:');
   if (at < 0) return tail(text, 12);
+  if (/^test at (\S+):1:1\n\u2716 \1 \(/m.test(text.slice(at))) return loadFailure(text);
   const out = [];
   let frames = 0;
   for (const line of text.slice(at + 'failing tests:'.length).trim().split('\n')) {
