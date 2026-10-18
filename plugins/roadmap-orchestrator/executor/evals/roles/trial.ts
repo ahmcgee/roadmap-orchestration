@@ -61,4 +61,14 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-if (import.meta.main) await main();
+// A failed trial's last stderr line is its error's message (runWorker's void detail keeps the tail, where Node's own
+// uncaught-error print ends in stack frames).
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`${e instanceof Error ? e.stack : message}\ntrial error: ${message.replaceAll('\n', ' | ')}\n`);
+    process.exit(1);
+  }
+}

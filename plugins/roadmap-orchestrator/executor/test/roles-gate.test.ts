@@ -2,7 +2,7 @@
 // processes, real git, real lanes), the graders on a gate that cites the plant without reading it, the stream-json
 // transcript and cost parser on a captured subagent run, the fake backend's `real` and `checkoutTree` acts, and the
 // triggers. Named tests: roles.approve-all, roles.revise-all, roles.cite-every-path, roles.lucky, roles.transcript-cost,
-// roles.real-act, roles.checkout-tree-act, roles.triggers, roles.arm, roles.wilson, roles.regenerate-check; the spend caps
+// roles.real-act, roles.checkout-tree-act, roles.triggers, roles.arm, roles.worker-error, roles.wilson, roles.regenerate-check; the spend caps
 // and the large-diff gate's grading (1.0.0-dev.12): roles.cap, roles.trial-cap, roles.live-cost, roles.clusters.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -17,6 +17,7 @@ import { type GateKind, type TrialRow, gateArm } from '../evals/roles/gate/arc.t
 import type { AnswerKey } from '../evals/roles/gate/fixture.ts';
 import { grade, gradeClusters } from '../evals/roles/gate/grade.ts';
 import { type Summary, reportLines, summarise } from '../evals/roles/gate/summary.ts';
+import { runWorker } from '../evals/roles/pool.ts';
 import { rebindConfig, run } from '../evals/roles/run.ts';
 import { contextFor, setupArc } from './fixtures/unit-common.ts';
 import { wilson } from '../evals/roles/stats.ts';
@@ -273,6 +274,14 @@ test('roles.clusters: a cluster map graded against the diff\'s paths (uncovered,
   assert.deepEqual(s.cells[0]!.clusters, { required: 3, mapped: 2, complete: 1 });
   assert.deepEqual(s.cells[0]!.reviewMix, { description: 2, routine: 3, close: 2 });
   assert.ok(reportLines(s).some((l) => l.startsWith('CELL G3b ') && l.endsWith(' clusters=1/3 mapped=2 mix=description:2,routine:3,close:2 experiments=0')), reportLines(s).join('\n'));
+});
+
+test('roles.worker-error: a worker that throws voids with its error\'s message, not only the stack frames Node prints last', T, async () => {
+  const died = await runWorker({
+    role: 'gate', set: 'dev', cell: 'NOPE', trial: 0, seed: 'harness', size: 150, gate: 'approve-all', risk: 'med', config: null,
+    out: join(tmpDir('roles-out'), 'w'), medianLoad: null, trialCap: null, readOnly: false,
+  }, () => {});
+  assert.ok(died !== null && died.endsWith('trial error: no cell NOPE in the dev set'), String(died));
 });
 
 test('roles.wilson: Wilson intervals', () => {
