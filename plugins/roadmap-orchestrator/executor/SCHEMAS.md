@@ -3977,7 +3977,31 @@ at bootstrap. Code passes the servers as an `--mcp-config` file holding `{"mcpSe
 session's evidence dir (absolute) and `{viewport}` `WALK_VIEWPORT` = `1280x800` (step 0 decided: the pinned desktop
 viewport; a narrow pass resizes in session, method). This repo's server: `playwright-mcp --headless --isolated --browser
 chromium --output-dir {evidence} --viewport-size {viewport}`. Builds in a milestone with a `browser` journey get the same
-servers (agent F).
+servers ("Build sessions" below).
+
+### Build sessions (agent F)
+
+- **`claude-build` + `mcpConfig: AbsPath | null`** (src/backends/argv.ts): the `--mcp-config` file right after
+  `--strict-mcp-config`, as an acting judge's. A Claude build of a unit that a milestone with a `browser` journey lists,
+  or that is such a milestone's design unit, gets `walkMcpConfig(walkthrough.mcp, <the build's evidence dir>)`, kept as
+  `<runDir>/inputs/<sha256>.mcp.json` (`BackendRequest.implementer.mcpConfig` is its text; `buildBrowser`,
+  src/pipeline/stages.ts); every other build gets null and no server. The servers are the repo config's the arc started
+  under (`routingBase.config`); a browser journey without `walkthrough.mcp` is refused at bootstrap, so a build that meets
+  one fails loud. A Codex seat gets none (an MCP config there throws). The assessment call and every round of the
+  attempt pass the same file.
+- **Slash commands are no longer disabled for builds** (owner 2026-10-18): `--disable-slash-commands` stays on judgments
+  only, so a build loads the project's skills, as an acting judge does. The pre-dev.13 implementer captures carry the flag;
+  argv.test compares the builder's argv with them less it.
+- **What loads, measured** (Claude Code 2.1.301, 2026-10-18; a temp git repo and one Haiku call per variant under the build
+  argv, killed after the init event): under `--setting-sources project` the init event's `skills` lists a skill committed
+  under the checkout's `.claude/skills/<name>/SKILL.md`, in a git worktree of the repo too (a unit worktree's case), beside
+  Claude Code's built-ins. A plugin does not reach a unit worktree: one the repo's `.claude/settings.json` `enabledPlugins`
+  names loads only in the directory it is installed for (installed_plugins.json `projectPath`), so with frontend-design
+  installed at project scope for the repo root, a session there lists `frontend-design:frontend-design`, and one in a git
+  worktree of that repo, or a fresh repo enabling it (as `frontend-design@claude-plugins-official` or
+  `@anthropic-plugin-directory`), lists no plugin. A user-scope plugin and the user's own skills (`~/.claude/skills`) never
+  load: user settings are not a source (with `user,project` they do). So a design skill reaches builds, gates and walks
+  only as a project skill committed to the repo (the m5 fixture vendors frontend-design's with its licence).
 
 ### Phase 0 and startup rows
 
@@ -4011,6 +4035,22 @@ milestone's open walkthrough findings), product: ProductInstance {checkout, port
 units), evidenceDir}`. `PolishJudgeInputs = {vision, milestone, journey, proposal: {id, unit, text, evidence}, references,
 referenceDiff: BoundedDiff, walkEvidenceDir, before, after: ProductInstance & {entry}, evidenceDir}`. Rubric lenses are
 method, in the prompt, not inputs.
+
+Agent F: `PlanCheckInputs`, `BuildInputs` and `GateInputs` + `milestones: MilestonesInput | null` (`unitMilestones`,
+src/pipeline/stages.ts, at the revision the call reads: the plan-check's tip checkout, the build's integration tip, the
+gate's tip); `BuildInputs` + `browser: BuildBrowser | null`.
+```ts
+MilestonesInput = { of: UnitMilestone[] /* plan order, non-empty */; references: DocText[]; binary: RepoPath[] }
+UnitMilestone   = { as: 'member'; id: MS-n; text; dirs: RepoPath[] }                        // the milestone lists the unit
+                | { as: 'design'; id: MS-n; text; dirs: RepoPath[]; journeys: Journey[] }   // the unit is its design.unit
+BuildBrowser    = { servers: string[] /* walkthrough.mcp names */; bringUps: {milestone: MS-n; bringUp: BringUp}[] }
+```
+`references`: every file under any of the unit's milestones' reference dirs at that revision, in path order, once each
+(`referenceFiles`), embedded as documents beside the contracts (`design reference <path>`); `binary` names the files with a
+NUL in their first 8000 bytes (git's rule), read from the checkout. A dir not there yet (its design unit unmerged, or the
+design unit's own) has none. Null when the unit is in no milestone, and the prompt then carries no milestone block.
+`browser`: the milestones (member or design) with a `browser` journey, on a Claude seat only; its block tells the session
+it has the servers and the bring-ups, and stops there (using them is the builder's).
 
 ### Job, evidence and checkouts (step 0 decided; agents C and D implement)
 

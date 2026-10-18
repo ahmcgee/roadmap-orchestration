@@ -371,7 +371,11 @@ function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch 
 
 export type BackendRequest =
   | Readonly<{ kind: 'judgment'; dispatch: JudgmentDispatch; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
-  | Readonly<{ kind: 'implementer'; dispatch: ImplementerDispatch; session: ImplementerSession; evidenceDirs: readonly AbsPath[] }>;
+  /**
+   * `mcpConfig` (dev.13): the `--mcp-config` text of a Claude build in a milestone with a `browser` journey
+   * (src/backends/mcp.ts `walkMcpConfig`), kept under the run dir's inputs like an acting judge's; null for none.
+   */
+  | Readonly<{ kind: 'implementer'; dispatch: ImplementerDispatch; session: ImplementerSession; evidenceDirs: readonly AbsPath[]; mcpConfig: string | null }>;
 
 export type BackendCallSpec = Readonly<{
   unit: UnitId;
@@ -395,7 +399,7 @@ export function inputFile(runDir: AbsPath, text: string, ext: string): AbsPath {
   return inputPath(runDir, keepInput(runDir, Buffer.from(text, 'utf8'), ext), ext);
 }
 
-function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, invDir: AbsPath): BackendCall {
+function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, invDir: AbsPath, mcpConfig: AbsPath | null): BackendCall {
   const r = spec.request;
   if (r.kind === 'judgment') {
     return { kind: 'claude-judgment', role: r.dispatch.role, triple: r.dispatch.triple, session: r.session, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs };
@@ -404,9 +408,10 @@ function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, in
   const s = r.session;
   if (triple.backend === 'claude') {
     if (s.backend !== 'claude') throw new Error(`a ${s.backend} session on the Claude implementer seat`);
-    return { kind: 'claude-build', triple, session: s, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs };
+    return { kind: 'claude-build', triple, session: s, schemaText, system: spec.system, mcpConfig, evidenceDirs: r.evidenceDirs };
   }
   if (s.backend !== 'codex') throw new Error(`a ${s.backend} session on the Codex implementer seat`);
+  if (mcpConfig !== null) throw new Error(`${spec.unit}: an MCP config on the Codex implementer seat`);
   return { kind: 'codex-build', triple, session: s, cwd: spec.cwd, outputPath: absPath(join(invDir, CODEX_OUTPUT_FILE)), schemaPath, system: spec.system };
 }
 
@@ -504,8 +509,9 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
   const role: Role = seat.role;
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
+  const mcpConfig = r.kind === 'implementer' && r.mcpConfig !== null ? inputFile(ctx.runDir, r.mcpConfig, MCP_CONFIG_INPUT) : null;
   // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
-  const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir), spec.rendered), 'prompt.txt');
+  const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir, mcpConfig), spec.rendered), 'prompt.txt');
   // Only the implementer may create resources (its builds run the unit's tooling); a judgment holds none. It
   // is bound to the pool instances its build holds (F7), as its lanes, probes and teardowns are.
   const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan().arc, spec.unit), ...buildInstanceEnv(ctx, spec.parent) } : backendEnv(ctx.hostEnv);
@@ -514,7 +520,7 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
     origin,
     subject: { purpose: 'backend', ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
     launch: (invDir) => {
-      const c = call(spec, schemaText, schemaPath, invDir);
+      const c = call(spec, schemaText, schemaPath, invDir, mcpConfig);
       return { argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, stallMs: null, graceMs: BACKEND_GRACE_MS, terminal: terminal(spec, c, schemaPath, invDir) };
     },
   });

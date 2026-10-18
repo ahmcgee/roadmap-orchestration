@@ -215,11 +215,16 @@ Keep the arc's inputs in their own directory outside the product working tree, f
       `design: {supplied: true}`, with `references` pointing at it. An owner who asks for a mediated design: do the
       design unit's work with them in session at Phase 0, commit the reference before `start`, and mark the milestone
       `supplied`.
-    - **The `frontend-design` skill.** When a milestone has a `browser` journey and Anthropic's `frontend-design` skill
-      is not in your own skill list, recommend among Phase 0's owner questions that the owner install it
-      (`/plugin install frontend-design@claude-plugins-official`): builds, gates and walkthroughs load the
-      environment's skills, and Claude designs better with it loaded. Working assumption: proceed without it.
-      It is never a reason to hold the arc.
+    - **The `frontend-design` skill.** When a milestone has a `browser` journey and the repo has no committed
+      `.claude/skills/frontend-design/SKILL.md`, recommend among Phase 0's owner questions that the owner add
+      Anthropic's `frontend-design` skill to the repo as a project skill: builds, gates and walkthroughs load the
+      repo's project skills, and Claude designs better with it loaded. Your own skill list does not answer this: those
+      sessions run with project settings only, in unit worktrees, so a user-scope plugin or user skill never reaches
+      them, and neither does a plugin installed at project scope (`/plugin install
+      frontend-design@claude-plugins-official --scope project`), which loads only in the directory it was installed
+      for, not in a worktree (measured on Claude Code 2.1.301). The way that reaches them: install the plugin, copy its
+      `skills/frontend-design/` directory and its `LICENSE` into the repo's `.claude/skills/frontend-design/`, and
+      commit before `start`. Working assumption: proceed without it. It is never a reason to hold the arc.
     - When a milestone settles, its build becomes the demo the owner picks up ("The demo").
 13. **Integration branch.** `git branch <branch> <baseline>` (move it with `git branch -f` while nothing has
     started). One branch per arc, e.g. `arc/<arc>`, checked out in no worktree.
