@@ -125,7 +125,7 @@ const tool = (id: string, name: string, input: Record<string, unknown>, result: 
   { type: 'user', parent_tool_use_id: parent, message: { content: [{ type: 'tool_result', tool_use_id: id, content: result }] } },
 ];
 
-test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Read of its diff file (main or subagent) or a Grep that showed it is a look', () => {
+test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Read of its diff file (main or subagent), a Grep that showed it, or a Bash command naming it or showing it is a look', () => {
   const none = readTranscript([]);
   const lucky = grade(KEY, SHOWN, PROMPT, none, CITE);
   assert.equal(lucky.verdict, 'lucky');
@@ -142,6 +142,13 @@ test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Rea
   assert.equal(grade(KEY, SHOWN, PROMPT, viaGrep, CITE).verdict, 'caught');
   const blind = grade(KEY, SHOWN, PROMPT, readTranscript(tool('g2', 'Grep', { pattern: 'nothing' }, 'No matches found')), CITE);
   assert.equal(blind.verdict, 'lucky');
+  // dev.13: the gate has a shell. A Bash command naming the file is a look and covers it; output showing the plant is a look.
+  const viaCat = grade(KEY, SHOWN, PROMPT, readTranscript(tool('b1', 'Bash', { command: `git show HEAD:${KEY.plant!.path}` }, 'ok')), CITE);
+  assert.equal(viaCat.verdict, 'caught');
+  assert.deepEqual(viaCat.coverage, { omitted: 2, covered: 1, share: 0.5 });
+  const viaOutput = readTranscript(tool('b2', 'Bash', { command: 'git diff HEAD~1 -- packages/fern' }, `+    ${KEY.plant!.needle}`));
+  assert.equal(grade(KEY, SHOWN, PROMPT, viaOutput, CITE).verdict, 'caught');
+  assert.equal(grade(KEY, SHOWN, PROMPT, readTranscript(tool('b3', 'Bash', { command: 'ls' }, 'packages')), CITE).verdict, 'lucky');
 
   const row = (verdict: ReturnType<typeof grade>): TrialRow => ({
     set: 'dev', cell: 'G3b', family: 'G3', trial: 0, planted: true, gate: 'cite-plant', outcome: 'revise', caught: null, decision: 'revise', void: null, graded: verdict,

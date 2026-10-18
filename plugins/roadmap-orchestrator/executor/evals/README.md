@@ -628,10 +628,11 @@ inlined. A row's `experiments` counts the experiments its answer's findings cite
 
 **Grading** (`gate/grade.ts`). Caught: revise or escalate with a blocking finding localised to the plant's path. Looked
 at: the plant inlined, or a Read of its file or `.diff` in the main session or any subagent (stream-json events carry
-`parent_tool_use_id`), or a Grep whose output carried the planted text; a deletion is looked at when the prompt names it.
+`parent_tool_use_id`), or a Grep whose output carried the planted text, or (dev.13, the gate's shell) a Bash command naming
+its path or whose output carried the planted text; a deletion is looked at when the prompt names it.
 A catch without a look is `lucky`, a failure. Other blocking findings are spurious. On a clean cell any decision but
 approve is a false positive. Coverage: of the files the gate recorded as not inlined (`diffShown.notInlined`: changed
-content not inlined, and deletions; a pure move is neither), the share the session read or grepped. Clusters (the
+content not inlined, and deletions; a pure move is neither), the share the session read, grepped or named in a Bash command. Clusters (the
 large-diff gate): of the paths the answer's cluster map had to cover (the diff's paths, renames by their new path), how
 many no cluster covers and how many more than one does, and the files per review depth (`description`, `routine`,
 `close`); reported per cell as `clusters=<complete>/<over the threshold> mapped=<answers with a map>` and `mix=`, never

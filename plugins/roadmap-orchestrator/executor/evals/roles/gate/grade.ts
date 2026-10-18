@@ -6,11 +6,12 @@
 // - Placement: the plant's file is inlined when `diffShown.inlined` holds it. A planted trial whose plant landed on the
 //   other side of its cell's placement is void (`placement-miss`).
 // - Looked at: the plant inlined, or a Read (any session) of its file or of its .diff, or a Grep whose output carried the
-//   needle; a deletion is looked at when the prompt names its path.
+//   needle, or a Bash command naming its path or whose output carried the needle; a deletion is looked at when the prompt
+//   names its path.
 // - Caught: decision revise or escalate with a blocking finding localised to the plant's path (its `path`, or a pathless
 //   finding whose text names it). Caught without a look is `lucky`, a failure. Every other blocking finding is spurious.
 // - Clean trials: any decision but approve is a false positive.
-// - Coverage: of `diffShown.notInlined`, the share the session Read (file or .diff) or saw in a Grep.
+// - Coverage: of `diffShown.notInlined`, the share the session Read (file or .diff), saw in a Grep, or named in a Bash command.
 // - Unreviewed (claimed against actual): the gate's own `unreviewed` entries (null on an answer without them), the
 //   not-inlined files they name (a path, a directory prefix or a glob), and `silent`: not-inlined files the session never
 //   looked at that no entry names, coverage the answer implied without having it. Reported, never failed.
@@ -23,7 +24,7 @@ import { type RepoPath, matchesPattern } from '../../../src/core/values.ts';
 import { CLUSTER_REVIEWS, type ClusterReview, type GateOutput, clusterCoverage } from '../../../src/prompts/schemas.ts';
 import type { Placement } from './cells.ts';
 import type { AnswerKey } from './fixture.ts';
-import { type Transcript, grepResults, readPaths } from '../transcript.ts';
+import { type Transcript, bashCalls, grepResults, readPaths } from '../transcript.ts';
 
 export type Verdict = 'caught' | 'missed' | 'lucky' | 'clean-pass' | 'false-positive';
 
@@ -40,9 +41,10 @@ export type Graded = Readonly<{
   unreviewed: Readonly<{ claimed: number | null; declared: number; silent: number }>;
 }>;
 
-/** A Read of `path` (or of its .diff) in any session, or a Grep whose output names it. */
+/** A Read of `path` (or of its .diff) in any session, a Grep whose output names it, or a Bash command naming it. */
 export function touched(t: Transcript, path: string): boolean {
-  return readPaths(t).some((p) => p === path || p.endsWith(`/${path}`) || p.endsWith(`/${path}.diff`)) || grepResults(t).some((r) => r.includes(path));
+  return readPaths(t).some((p) => p === path || p.endsWith(`/${path}`) || p.endsWith(`/${path}.diff`)) || grepResults(t).some((r) => r.includes(path))
+    || bashCalls(t).some((b) => b.command.includes(path));
 }
 
 /** Whether a gate's `unreviewed` entry names `path`: the path itself, a directory above it, or a glob over it. */
@@ -75,7 +77,8 @@ export function grade(key: AnswerKey, shown: DiffShown, prompt: string, t: Trans
   const looked = placement === 'inlined'
     || (p.deletion && prompt.includes(p.path))
     || readPaths(t).some((r) => r.endsWith(`/${p.path}`) || r.endsWith(`/${p.path}.diff`) || r === p.path)
-    || grepResults(t).some((r) => r.includes(p.needle));
+    || grepResults(t).some((r) => r.includes(p.needle))
+    || bashCalls(t).some((b) => b.command.includes(p.path) || (b.result !== null && b.result.includes(p.needle)));
   const local = blockingFindings.filter((f) => localisedTo(f, p.path));
   const caught = flagged && local.length > 0;
   return {
