@@ -94,7 +94,7 @@ import { type StageContext, type StageParent, evidenceRoot, runOp, verificationW
 import { invocationDir, invoke } from './invoke.ts';
 import {
   type FailureSignature, type LaneCancel, type LaneHost, type RedClass, type RedEvidence, type RepeatOf, classifyRed, failureSignature, hostWasBusy,
-  laneAbortReason, readRedClass, redLane, writeRedClass,
+  laneAbortReason, laneCancelOf, readRedClass, redLane, writeRedClass,
 } from './redlane.ts';
 import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
 
@@ -642,7 +642,7 @@ async function runLane(
 
   const record = laneRun(ctx, spawned, lane, dir);
   const exit = runnerFiles(invDir, outcome.inv).read('exit.json');
-  const interrupted = outcome.kind === 'result' && outcome.result.type === 'command' && outcome.result.verdict === 'cancelled' ? outcome.result.reason : null;
+  const interrupted = outcome.kind === 'result' && outcome.result.type === 'command' && outcome.result.verdict === 'cancelled' ? laneCancelOf(outcome.inv, outcome.result.reason) : null;
   const blocked = outcome.kind === 'lost' ? `${outcome.inv} was lost with its runner` : record.verdict === 'process-fault' ? `${outcome.inv} ended by ${exit?.cause ?? 'unknown'}` : null;
   return { record, evidence, interrupted, blocked };
 }
@@ -1242,7 +1242,7 @@ export async function runJourneySeries(
     }
     if (outcome.result.type !== 'command') throw new Error(`${outcome.inv}: a lane produced a ${outcome.result.type} result`);
     const { verdict } = outcome.result;
-    const interrupted = outcome.result.verdict === 'cancelled' ? outcome.result.reason : null;
+    const interrupted = outcome.result.verdict === 'cancelled' ? laneCancelOf(outcome.inv, outcome.result.reason) : null;
     const blocked = verdict === 'process-fault' ? `${outcome.inv} ended by ${runnerFiles(invDir, outcome.inv).read('exit.json')?.cause ?? 'unknown'}` : null;
     const signatures = isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)]) : [];
     return { inv: outcome.inv, dir, verdict, exitCode: outcome.result.exitCode, evidence: { signatures, host }, interrupted, blocked, evidenceOp };

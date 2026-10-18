@@ -1290,3 +1290,24 @@ describe('W3 seat prompts (2026-10-16)', () => {
     }
   });
 });
+
+describe('dev.13 prompts: the walkthrough', () => {
+  it('prompts.walkthrough-contract: Fable inherits the Opus module with a dated review; the vision opens the message and the ask closes it; the system text names every field the schema requires', () => {
+    const fable = PROMPTS.walkthrough['claude-fable-5-1'];
+    assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/i.test(fable.reviewed));
+    const sample = SAMPLES.walkthrough[0];
+    for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+      const mod = promptFor('walkthrough', model);
+      assert.equal(mod, promptFor('walkthrough', 'claude-opus-5-5'), `${model}: the Opus module`);
+      assert.equal(mod.schema, ROLE_SCHEMAS.walkthrough, model);
+      assert.deepEqual(mod.fields, ROLE_INPUTS.walkthrough, model);
+      const text = mod.render(sample);
+      assert.ok(text.startsWith('<vision>'), `${model}: the vision first`);
+      assert.ok(text.endsWith('return your report.'), `${model}: the ask last`);
+      for (const needle of [sample.evidenceDir, sample.product.checkout, 'port 4100', 'MODE=A', 'entry /entry-A', 'via browser', '5 steps', '60 s', 'round="1"']) {
+        assert.ok(text.includes(needle), `${model}: renders ${needle}`);
+      }
+      namesEvery(mod.system, requiredKeys(mod.schema, [], ['journeys'], ['findings'], ['findings', 'against'], ['polish'], ['polish', 'unit']), `walkthrough/${model}`);
+    }
+  });
+});

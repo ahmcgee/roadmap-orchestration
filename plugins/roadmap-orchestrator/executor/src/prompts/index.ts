@@ -173,11 +173,18 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
   },
   // dev.13: the walk roles, on frontier (Opus 5.5). Only Opus modules are written (plan §6): the Sonnet and Haiku guides
-  // carry no design guidance. The modules are step 0 placeholders (agents C and D write them); Fable's row becomes a dated
-  // `inherits` with them. Codex has no walkthrough prompt, so `unsupportedSeats` refuses a Codex rebind.
+  // carry no design guidance. A role's Fable row becomes a dated `inherits` once its Opus module is written and
+  // reviewed against the Fable guide. Codex has no walkthrough prompt, so `unsupportedSeats` refuses a Codex rebind.
   walkthrough: {
     'claude-opus-5-5': { type: 'prompt', prompt: WALKTHROUGH_OPUS },
-    'claude-fable-5-1': { type: 'unsupported', reason: WALK_PLACEHOLDER },
+    // Fable reads the Opus walkthrough module unchanged: what its guide asks of a long autonomous task (finish the whole
+    // task, check the last paragraph, no stop to ask) is the module's <working_unattended> and <how_your_session_ends>, and
+    // its vision advice (crop and zoom tools) is the module's <seeing>.
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-10-18: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 walkthrough prompt (unattended to the final report, crops and zoom for dense screens, the rubric lenses, the classes and polish units); no Fable-specific change needed, and no built-in seat routes Fable',
+    },
     'claude-sonnet-5-5': { type: 'unsupported', reason: WALK_OPUS_ONLY },
     'claude-haiku-5-5': { type: 'unsupported', reason: WALK_OPUS_ONLY },
     'gpt-5.6-luna': { type: 'unsupported', reason: WALK_CODEX },

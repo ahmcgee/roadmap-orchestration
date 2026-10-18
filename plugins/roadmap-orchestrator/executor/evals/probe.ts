@@ -73,6 +73,11 @@
 //                       plan-declared derived output, is not inlined: the answer validates, a not-inlined file is read or
 //                       grepped (main session or subagent), the init event lists Agent, result.modelUsage is present and
 //                       its per-model costs sum to total_cost_usd. Needs the merged dev.12 tree (W1 bounded diff, W2 Agent)
+//   walk.cli            (dev.13) one real walkthrough through the production walk job on a two-step CLI product (no browser),
+//                       the real claude behind the fake's `real` act on the walkthrough seat (frontier) with the acting-judge
+//                       argv: the report validates (schema and the walk's own checks), the init event lists Bash and Write
+//                       and no MCP server, the session ended exited or reported, and nothing is left behind (no open intent,
+//                       no walk checkout, no live process of the arc); its findings are printed, not graded
 //   effort.*            (OI-2) a session started at one effort, resumed at another: claude (high then medium), codex
 //                       (low then medium); reports whether each CLI accepts the change
 //
@@ -126,7 +131,12 @@ import { FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, keepInput, keptInput } from '../sr
 import { commitAll, writeFiles } from '../test/helpers/repo.ts';
 import { wire } from '../test/fixtures/publish-common.ts';
 import { followingContext } from '../test/fixtures/steer-common.ts';
-import { contextFor, setupArc } from '../test/fixtures/unit-common.ts';
+import { appendSteps, contextFor, setupArc } from '../test/fixtures/unit-common.ts';
+import { moduleFiles, unitSteps } from '../test/fixtures/audit-common.ts';
+import { ACTING_ARGV, milestoneJson, unitInForce, walkArc, walkContext } from '../test/fixtures/walk-common.ts';
+import { runUnit } from '../src/pipeline/unit.ts';
+import { runWalk } from '../src/walk/walk.ts';
+import { scan } from '../src/contain/proc.ts';
 import { runGateTrial } from './roles/gate/arc.ts';
 import { DEV_CELLS } from './roles/gate/cells.ts';
 
@@ -871,6 +881,56 @@ async function main(): Promise<void> {
     const u = row.usage;
     report(u !== null && Object.keys(u.byModel).length > 0, 'gate.bounded.model-usage', JSON.stringify(u?.byModel ?? null));
     report(u !== null && u.check === 'ok', 'gate.bounded.cost-check', `total_cost_usd=${u?.totalUsd ?? null} per-model sum=${u === null ? null : Object.values(u.byModel).reduce((a, m) => a + m.costUsd, 0)}`);
+  });
+
+  // dev.13: one real walkthrough through the production walk job (src/walk/walk.ts), as an arc runs it: u1 merges through the
+  // fakes, then walk-1 brings up a two-step CLI product (setup, no serve entry: nothing long-lived) and the real claude (the
+  // fake's `real` act) walks its two shell journeys on the walkthrough seat (frontier) with the acting-judge argv. Graded
+  // on the contract only: the report validates (schema and the walk's own checks, so every cited evidence file exists in
+  // the evidence dir), the session had a shell and no MCP server, its final report ended it, and nothing is left behind
+  // (no open intent, no checkout, no live process of the arc). What it found is printed, not graded (the role evals judge).
+  await rev3('walk.cli', async () => {
+    const d = walkArc({
+      steps: unitSteps('u1', moduleFiles('mul', '*')),
+      milestone: milestoneJson({
+        bringUp: { setup: [['node', 'product/setup.js']], serve: [], env: {}, seed: [] },
+        journeys: [
+          { id: 'J-1', text: 'Ask the greeter CLI for a greeting.', via: 'shell', entry: 'node product/cli.js greet', budget: { steps: 2, seconds: 60 } },
+          { id: 'J-2', text: 'Run the greeter CLI with no arguments and learn how to use it.', via: 'shell', entry: 'node product/cli.js', budget: null },
+        ],
+      }),
+    });
+    appendSteps(d, [{ as: 'claude', unit: 'walk-1', expect: { argv: ACTING_ARGV, argvLacks: ['--mcp-config'] }, acts: [{ type: 'real' }] }]);
+    const r = contextFor(d);
+    try {
+      const { ctx, w } = walkContext(r);
+      const tick = setInterval(() => w.arbiter.wake(), 50);
+      try {
+        const merged = await runUnit(w.stage, unitInForce(r, 'u1'), () => Promise.resolve(true));
+        if (merged.kind !== 'merged') throw new Error(`u1 did not merge: ${JSON.stringify(merged)}`);
+        const out = await runWalk(ctx);
+        const view = r.journal.view;
+        const ended = view.walkFacts().map((x) => x.fact).find((f) => f.kind === 'walk-ended');
+        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'walkthrough');
+        const inv = spawn === undefined ? null : invocationId(spawn.op, spawn.ordinal);
+        const invDir = inv === null ? null : invocationDir(r.ctx.runDir, inv);
+        const exit = inv === null || invDir === null ? null : runnerFiles(invDir, inv).read('exit.json');
+        const init = invDir === null ? null : readFileSync(join(invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as Record<string, unknown>)
+          .find((e) => e['type'] === 'system' && e['subtype'] === 'init') ?? null;
+        const tools = (init?.['tools'] ?? []) as readonly string[];
+        const findings = view.holistic().findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id} ${f.severity} ${f.claim}`);
+        report(out.kind === 'ended' && out.outcome === 'reported', 'walk.cli.reported', `${JSON.stringify(out)} ended=${JSON.stringify(ended)} findings=${JSON.stringify(findings)} dir=${invDir}`);
+        report(tools.includes('Bash') && tools.includes('Write') && JSON.stringify(init?.['mcp_servers'] ?? []) === '[]', 'walk.cli.tools', `tools=${JSON.stringify(tools)} mcp=${JSON.stringify(init?.['mcp_servers'] ?? null)}`);
+        report(exit !== null && (exit.cause === 'exited' || exit.cause === 'reported'), 'walk.cli.final', `exit=${JSON.stringify(exit?.cause ?? null)}`);
+        const live = scan().filter((p) => p.env?.get('ROADMAP_ARC') === d.arc).map((p) => p.pid).join(',');
+        const checkout = execFileSync('git', ['-C', d.repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' }).includes('walk-1.');
+        report(view.openIntents().length === 0 && !checkout && live === '', 'walk.cli.teardown', `open=${view.openIntents().length} checkout=${checkout} live=${JSON.stringify(live)}`);
+      } finally {
+        clearInterval(tick);
+      }
+    } finally {
+      r.journal.close();
+    }
   });
 
   // Effort-changed resume (OI-2): the same session, a different effort.

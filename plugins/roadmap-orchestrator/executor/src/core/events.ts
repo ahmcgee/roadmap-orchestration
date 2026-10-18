@@ -181,6 +181,13 @@ export type SpawnSubject =
    * `flow-proof`.
    */
   | Readonly<{ purpose: 'proof'; job: JobId; proposal: ProposalId; lane: LaneId; side: 'old' | 'new'; at: Sha }>
+  /**
+   * dev.13: one command of milestone `milestone`'s bring-up (src/walk/bringup.ts), its owner the spawn's parent (a walk
+   * job). `step` names it as the `walk-tools-missing` row does: `setup[i]`, `serve.<name>`, `seed[i]`. A `serve` process
+   * runs until its owner stops it (`proc.kill{teardown}`); recovery cancels a live one (its owner brings the product up
+   * again).
+   */
+  | Readonly<{ purpose: 'bring-up'; milestone: MilestoneId; step: string }>
   | Readonly<{
     purpose: 'smoke';
     check: string;
@@ -1268,6 +1275,9 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   proof: object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('proof')), job: f.get('job', (v, p) => jobIdOfKind('proof')(v, p)), proposal: f.get('proposal', proposalR), lane: f.get('lane', laneR),
     side: f.get('side', oneOf(['old', 'new'] as const)), at: f.get('at', shaR),
+  })),
+  'bring-up': object((f): SpawnSubject => ({
+    purpose: f.get('purpose', literal('bring-up')), milestone: f.get('milestone', (v, p): MilestoneId => milestoneId(v, p)), step: f.get('step', str),
   })),
   smoke: object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('smoke')),
