@@ -500,11 +500,16 @@ node evals/m5/check.ts /var/tmp/m5
   both milestones and the corpus is one arc's worth), a brief ack (never) and the frontend-design recommendation (already
   satisfied); everything else goes to a frontier-medium owner simulator given only answer-key.json's owner answers (design
   it yourself, keep the look, the browser drive is installed, keep a demo running, add the issue templates, ...). The owner
-  declines nothing the arc needs. It records `status.demo` whenever it changes and, at the end before stopping the held
-  arc, GETs the demo's URL (`report.json` `demo`). Fail-fast: the first plan in force must have the M5 shape
-  (`shape.ts`), else the run ends `fail-fast`. Hard timeout 360 min.
-- `check.ts <dir>` prints one JSON line and exits non-zero on any failed criterion (its header lists them): isolation,
-  session-stopped (`vision-silent` or `k-limit`, one arc), arc-complete, milestones-planned (a browser milestone with its
+  declines nothing the arc needs. It records the first arc's `status.demo` whenever it changes and, at the end before
+  stopping the held arc, GETs the demo's URL (`where` `{type: url}`; `report.json` `demo`). Fail-fast: the first plan in
+  force (of the first arc, in start order) must have the M5 shape (`shape.ts`), else the run ends `fail-fast`. Hard
+  timeout 360 min.
+- `check.ts <dir>` prints one JSON line and exits non-zero on any failed criterion (its header lists them). The arc under
+  test is the first arc started whose first plan in force has the M5 shape (else the first with a plan); every arc
+  criterion grades it alone, so a later arc the root agent opened after it completed is not graded. The criteria:
+  isolation, session-stopped (`vision-silent` or `k-limit`, any other end failing with its reason, a usage-limit
+  `session-failed` among them; the arc under test the first started, any later arc only after it completed),
+  arc-complete, milestones-planned (a browser milestone with its
   design unit ahead of its units; a dependent milestone, at least one of whose units descends through `after` from one
   of them: its held units; the slice and the decomposition are the root agent's, so no shell journey is required, the
   walkthrough role eval covers the shell drive), design-first (the design unit published, with its reference dirs,

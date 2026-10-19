@@ -20,11 +20,11 @@
 //     wait on it nudges, at most MAX_NUDGES times in a row (`stalled`).
 //
 // The demo (agent G's `status.demo`, SCHEMAS.md "The demo"). Every owner poll and at the session's end, before the held
-// arc is stopped, the driver reads `roadmap status` of the product's latest arc and records its `demo` whenever it
-// changes (`demo.seen`); at the end it also GETs the demo's `where` when it is a URL (`demo.final.probe`). check.ts's
-// `demo-serving` grades both.
+// arc is stopped, the driver reads `roadmap status` of the first arc to apply a plan (the fail-fast's arc, the one
+// check.ts grades) and records its `demo` whenever it changes (`demo.seen`); at the end it also GETs the demo's `where`
+// when it is a URL (`{type: url}`, `demo.final.probe`). check.ts's `demo-serving` grades both.
 //
-// Fail-fast: once the arc's first plan in force is in its run dir, `planShape` (shape.ts) must hold: two or more
+// Fail-fast: once the first arc's first plan in force is in its run dir (arcs in start order), `planShape` (shape.ts) must hold: two or more
 // milestones, a browser flow with its design unit, and a dependent milestone with a unit descending from it. Otherwise
 // the turn is killed and the run ends `fail-fast` (it would cost hours and grade nothing of M5).
 import { spawnSync } from 'node:child_process';
@@ -162,7 +162,8 @@ export type DemoProbe = Readonly<{ url: string; status: number | null; error: st
 export type DemoFinal = Readonly<{ arc: string; demo: unknown; probe: DemoProbe | null }>;
 
 async function statusDemo(l: Layout, env: Readonly<Record<string, string>>): Promise<Readonly<{ arc: string; demo: unknown }> | null> {
-  const arc = runDirs(absPath(l.product)).at(-1)?.arc;
+  // The arc under test's demo (the fail-fast's arc): a later arc's status is no part of the grade.
+  const arc = firstPlan(l)?.arc;
   if (arc === undefined) return null;
   const [cmd, args] = roadmapArgv(l, REAL, ['status', '--repo', l.product, '--arc', arc]);
   const r = await run(cmd, args, { cwd: l.product, env, timeoutMs: 120_000 });
@@ -170,9 +171,10 @@ async function statusDemo(l: Layout, env: Readonly<Record<string, string>>): Pro
   return { arc, demo: (JSON.parse(r.stdout) as { demo?: unknown }).demo ?? null };
 }
 
-const demoWhere = (demo: unknown): string | null => {
-  const where = (demo as { where?: unknown } | null)?.where;
-  return typeof where === 'string' ? where : null;
+/** The URL `status.demo.where` names (`DemoWhere` `{type: url}`), null for a path, no `where` or no demo. */
+export const demoUrl = (demo: unknown): string | null => {
+  const where = (demo as { where?: { type?: unknown; url?: unknown } | null } | null)?.where;
+  return where?.type === 'url' && typeof where.url === 'string' ? where.url : null;
 };
 
 async function probe(url: string): Promise<DemoProbe> {
@@ -185,17 +187,26 @@ async function probe(url: string): Promise<DemoProbe> {
   }
 }
 
-/** The arc's first plan in force (the first `plan-applied` of the product's first arc), or null before there is one. */
-export function firstPlan(l: Layout): Readonly<{ arc: string; plan: PlanM1 }> | null {
-  for (const a of runDirs(absPath(l.product))) {
-    if (!existsSync(join(a.dir, 'events.jsonl'))) continue;
-    const first = readJournal(a.dir, arcId(a.arc)).events.find((e) => e.type === 'fact' && e.fact.kind === 'plan-applied');
-    if (first === undefined || first.type !== 'fact' || first.fact.kind !== 'plan-applied') continue;
+/** An arc of the product with its first plan in force (its first `plan-applied`), null before it has one. */
+export type StartedArc = Readonly<{ arc: string; plan: PlanM1 | null }>;
+
+/** The product's arcs that have a journal, in the order they started (each journal's first record), with their first plans. */
+export function arcsStarted(l: Layout): readonly StartedArc[] {
+  const arcs = runDirs(absPath(l.product)).filter((a) => existsSync(join(a.dir, 'events.jsonl'))).map((a) => {
+    const events = readJournal(a.dir, arcId(a.arc)).events;
+    const first = events.find((e) => e.type === 'fact' && e.fact.kind === 'plan-applied');
+    if (first === undefined || first.type !== 'fact' || first.fact.kind !== 'plan-applied') return { arc: a.arc, at: events[0]?.at ?? '', plan: null };
     const bytes = keptInput(a.dir, first.fact.planSha256, PLAN_INPUT);
     if (bytes === null) throw new Error(`${a.arc}: its first plan-applied names ${first.fact.planSha256}.${PLAN_INPUT}, which its run dir does not keep`);
-    return { arc: a.arc, plan: parsePlan(JSON.parse(bytes.toString('utf8'))) };
-  }
-  return null;
+    return { arc: a.arc, at: events[0]!.at, plan: parsePlan(JSON.parse(bytes.toString('utf8'))) };
+  });
+  return arcs.sort((a, b) => a.at.localeCompare(b.at)).map(({ arc, plan }) => ({ arc, plan }));
+}
+
+/** The first plan in force of the first arc to have one (arcs in start order), or null before there is one. */
+export function firstPlan(l: Layout): Readonly<{ arc: string; plan: PlanM1 }> | null {
+  const a = arcsStarted(l).find((x) => x.plan !== null);
+  return a === undefined ? null : { arc: a.arc, plan: a.plan! };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -366,7 +377,7 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
       await observeDemo();
       const last = seen.at(-1);
       if (last !== undefined) {
-        const where = demoWhere(last.demo);
+        const where = demoUrl(last.demo);
         final = { arc: last.arc, demo: last.demo, probe: where !== null && /^https?:\/\//.test(where) ? await probe(where) : null };
       }
     } catch (error) {

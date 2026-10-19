@@ -3,21 +3,26 @@
 // vision, corpus guide and walkthrough config parse, and which vendors the design skill), the contrast oracle, the plan
 // shape, and each check criterion over inputs built in place: one passing and at least one failing case per criterion.
 // Named tests: evals-m5.setup-valid, evals-m5.css-oracle, evals-m5.plan-shape, evals-m5.log-of, evals-m5.criterion.<name>,
-// evals-m5.owner-code-answers, evals-m5.check-without-arc.
+// evals-m5.owner-code-answers, evals-m5.check-without-arc, evals-m5.check-arc-under-test.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import type { Event } from '../src/core/events.ts';
+import type { Event, Fact } from '../src/core/events.ts';
+import { arcId } from '../src/core/ids.ts';
+import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
+import { gitCommonDir } from '../src/git/git.ts';
+import { runDir } from '../src/input/cli.ts';
+import { PLAN_INPUT, keepInput } from '../src/input/inforce.ts';
 import { parseGuideText } from '../src/corpus/guide.ts';
 import { parseVision } from '../src/holistic/types.ts';
-import type { Milestone, PlanM1 } from '../src/input/plan.ts';
+import { type Milestone, type PlanM1, parsePlan } from '../src/input/plan.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import {
-  type M5Log, PLANT_WORDS, check, demoServingVerdict, designFirstVerdict, isPng, logOf, milestonesPlannedVerdict, nodeHeldVerdict, plantAt,
+  type M5Log, PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, logOf, milestonesPlannedVerdict, nodeHeldVerdict, plantAt,
   plantCaughtVerdict, plantRepairedVerdict, polishBoundedVerdict, walkScreenshotsVerdict,
 } from '../evals/m5/check.ts';
 import { contrastRatio, parseColor, selectorContrast } from '../evals/m5/css.ts';
@@ -243,15 +248,33 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
   });
 
   test('evals-m5.criterion.demo-serving: the latest promotion serves at one URL; no promotion, no status.demo, a stale demo, a dead URL or a moved URL fails', () => {
-    const demo = { where: 'http://127.0.0.1:4100/', milestone: 'MS-2', sha: SHA('6'), held: false };
-    const seen = [{ at: 't1', arc: 'a', demo: { ...demo, milestone: 'MS-1', sha: SHA('4') } }, { at: 't2', arc: 'a', demo }];
-    const final = { arc: 'a', demo, probe: { url: demo.where, status: 200, error: null } };
+    const where = (url: string) => ({ type: 'url', url, ports: { web: Number(new URL(url).port) } });
+    const url = 'http://127.0.0.1:4100/';
+    const demo = { where: where(url), milestone: 'MS-2', sha: SHA('6'), held: false };
+    // Each status read is a fresh object: the same URL is no move.
+    const seen = [{ at: 't1', arc: 'a', demo: { ...demo, where: where(url), milestone: 'MS-1', sha: SHA('4') } }, { at: 't2', arc: 'a', demo }];
+    const final = { arc: 'a', demo, probe: { url, status: 200, error: null } };
     assert.ok(demoServingVerdict(goodLog(), seen, final).pass);
     assert.match(demoServingVerdict(goodLog({ demos: [] }), seen, final).detail, /no demo-promoted/);
     assert.match(demoServingVerdict(goodLog(), seen, { arc: 'a', demo: null, probe: null }).detail, /status.demo/);
     assert.match(demoServingVerdict(goodLog(), seen, { ...final, demo: { ...demo, sha: SHA('4') } }).detail, /the latest promotion MS-2/);
-    assert.match(demoServingVerdict(goodLog(), seen, { ...final, probe: { url: demo.where, status: null, error: 'ECONNREFUSED' } }).detail, /did not serve/);
-    assert.match(demoServingVerdict(goodLog(), [{ at: 't0', arc: 'a', demo: { ...demo, where: 'http://127.0.0.1:4200/' } }, ...seen], final).detail, /the demo moved/);
+    assert.match(demoServingVerdict(goodLog(), seen, { ...final, probe: { url, status: null, error: 'ECONNREFUSED' } }).detail, /did not serve/);
+    assert.match(demoServingVerdict(goodLog(), seen, { ...final, demo: { ...demo, where: null } }).detail, /status.demo.where null is no URL/);
+    assert.match(demoServingVerdict(goodLog(), [{ at: 't0', arc: 'a', demo: { ...demo, where: where('http://127.0.0.1:4200/') } }, ...seen], final).detail, /the demo moved: http:\/\/127.0.0.1:4200\/ → http:\/\/127.0.0.1:4100\//);
+  });
+
+  test('evals-m5.criterion.session-stopped: a vision-silent or k-limit stop of the arc under test passes, a later arc after its completion too; any other end, an earlier arc, or a later one before completion fails, naming the end', () => {
+    const stopped = { endedBy: 'stopped', stopReason: 'k-limit', failure: null } as const;
+    assert.ok(sessionStoppedVerdict(stopped, 'a', ['a'], true).pass);
+    const later = sessionStoppedVerdict(stopped, 'a', ['a', 'b'], true);
+    assert.ok(later.pass, later.detail);
+    assert.match(later.detail, /ended stopped \(k-limit\); a under test, then b \(not graded\)/);
+    const killed = sessionStoppedVerdict({ endedBy: 'session-failed', stopReason: null, failure: 'turn 1 exited 1 (turn-1.stderr)' }, 'a', ['a', 'b'], true);
+    assert.equal(killed.pass, false);
+    assert.match(killed.detail, /the session ended session-failed \(turn 1 exited 1 \(turn-1.stderr\)\)/);
+    assert.match(sessionStoppedVerdict(stopped, 'a', ['a', 'b'], false).detail, /b started after a, which never completed/);
+    assert.match(sessionStoppedVerdict(stopped, 'b', ['a', 'b'], true).detail, /a started before the arc under test b/);
+    assert.match(sessionStoppedVerdict(stopped, null, [], false).detail, /no arc under test/);
   });
 });
 
@@ -308,6 +331,49 @@ describe('the log and the files (evals/m5/check.ts)', () => {
     assert.match(by['milestones-planned']!.detail, /no plan in force/);
     assert.match(by['arc-complete']!.detail, /threw: the product has no arc ref/);
     for (const name of ['design-first', 'node-held', 'walk-screenshots', 'plant-caught', 'plant-repaired', 'polish-bounded', 'demo-serving', 'skill-vendored', 'profile']) assert.equal(by[name]!.pass, false, name);
+  });
+
+  test('evals-m5.check-arc-under-test: of two arcs, the first started whose first plan has the M5 shape is graded; a later shell-only arc (sorting first by name) is not', T, () => {
+    const l = setup(join(tmpDir('m5-two-arcs'), 'fx'));
+    writeFileSync(l.report, JSON.stringify({
+      schema: 'roadmap/m5-report', profile: 'claude-only', endedBy: 'session-failed', stopReason: null, failure: 'turn 1 exited 1 (turn-1.stderr)', hostDir: join(l.dir, 'host'),
+      launch: { envKeys: [], gh: join(l.forgeBin, 'gh'), ghConfigDir: l.ghConfig, xdgConfigHome: l.xdgConfig, gitConfigGlobal: l.gitConfig },
+      demo: { seen: [], final: null }, released: [], leftovers: [],
+    }));
+    const unit = (id: string, after: readonly string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: [`src/${id}/**`], resources: [], after, contingent: [] });
+    const ms = (id: string, units: readonly string[], design: string, via: 'browser' | 'shell') => ({
+      id, text: `${id} text`, units, design: { unit: design }, references: ['docs/design'], bringUp: { setup: [], serve: [], env: {}, seed: [] },
+      journeys: [journey(`J-${id.slice(3)}`, via)], resources: [],
+    });
+    const plan = (arc: string, units: readonly object[], milestones: readonly object[]) => ({
+      schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/wt', contracts: [], rulings: 'rulings.md',
+      architectureDoc: 'docs/arch.md', direction: 'd', suite: { lanes: [] }, resources: [], units, holistic: { vision: 'vision.json', advances: ['V-1'] }, milestones,
+    });
+    const shaped = plan('reserve-a-book', [unit('page-design'), unit('reserve', ['page-design']), unit('search', ['reserve'])], [ms('MS-1', ['reserve'], 'page-design', 'browser'), ms('MS-2', ['search'], 'page-design', 'browser')]);
+    const shellOnly = plan('keeper-tools', [unit('cli-design'), unit('cli', ['cli-design']), unit('settings', ['cli'])], [ms('MS-1', ['cli'], 'cli-design', 'shell'), ms('MS-2', ['settings'], 'cli-design', 'shell')]);
+    for (const p of [shaped, shellOnly]) {
+      parsePlan(p);
+      const arc = arcId(p.arc);
+      const dir = runDir(gitCommonDir(absPath(l.product)), arc);
+      mkdirSync(dir, { recursive: true });
+      const planSha256 = keepInput(dir, Buffer.from(JSON.stringify(p)), PLAN_INPUT);
+      const j = openJournal(dir, arc);
+      j.fact({
+        kind: 'plan-applied', rev: 1, command: null, changes: [], planSha256, specs: Object.fromEntries(p.units.map((u) => [(u as { id: string }).id, 'd'.repeat(64)])), source: { type: 'start' }, payloadSha256: 'd'.repeat(64), rulingsSha256: 'd'.repeat(64),
+        scheduling: 'dag', routingProvenance: { profile: 'claude-only', arcRoles: 'm4b', repoConfig: { seats: null, classes: null }, planLayer: null, unitLayers: {} },
+      } as unknown as Fact);
+      j.close();
+      // Start order is the journals' first `at` (milliseconds): the later arc starts on a later one.
+      for (const t = Date.now(); Date.now() <= t;);
+    }
+    const by = Object.fromEntries(check(l.dir).criteria.map((c) => [c.name, c]));
+    assert.ok(by['milestones-planned']!.pass, by['milestones-planned']!.detail);
+    assert.match(by['milestones-planned']!.detail, /design \{"unit":"page-design"\}/);
+    assert.match(by['design-first']!.detail, /the design unit page-design never published/);
+    // The usage-limit kill is reported, not hidden; the later arc is named as not graded.
+    assert.equal(by['session-stopped']!.pass, false);
+    assert.match(by['session-stopped']!.detail, /the session ended session-failed \(turn 1 exited 1/);
+    assert.match(by['session-stopped']!.detail, /keeper-tools started after reserve-a-book, which never completed/);
   });
 });
 

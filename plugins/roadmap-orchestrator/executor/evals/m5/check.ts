@@ -3,12 +3,18 @@
 // product's git trees. Agent-facing output: one JSON line `{pass, criteria[{name, pass, detail}]}`. Exits 1 when any
 // criterion fails. The browser and dependent milestones are found by shape (shape.ts), never by id.
 //
+// The arc under test is the first arc (in start order) whose first plan in force has the M5 shape; with none shaped, the
+// first arc with a plan (so milestones-planned names its problems). Every arc criterion grades that arc alone: a later arc
+// the session went on to start (the root agent may open a next arc once this one completes) is no part of the grade.
+//
 //   isolation          the staged plugin has no executor/evals or executor/test; the launch env has no denied key, its
 //                      GH_CONFIG_DIR and XDG_CONFIG_HOME are the fixture's and still empty, its GIT_CONFIG_GLOBAL the
 //                      fixture's gitconfig; `command -v gh` was the staged fake; the transcript's tool traffic names
 //                      neither the answer key nor `evals/m5` nor this repository (re-scanned)
-//   session-stopped    the session ended with the skill's session-end line, reason `vision-silent` or `k-limit`, after
-//                      exactly one arc (the corpus is one arc's worth: the owner takes both world scenes in the slice)
+//   session-stopped    the session ended with the skill's session-end line, reason `vision-silent` or `k-limit` (any
+//                      other end, a usage-limit `session-failed` among them, fails with its reason); the arc under test
+//                      was the first arc started, and any later arc started only after it completed (the corpus is one
+//                      arc's worth, but a later arc in progress at the stop is the session's business, not the grade's)
 //   arc-complete       the arc's verified ref holds an active completion
 //   milestones-planned the arc's first plan in force has the M5 shape (shape.ts `planShape`): a browser milestone whose
 //                      units all run after its design unit, and a dependent milestone at least one of whose units
@@ -57,7 +63,7 @@ import { DENIED, UNSTAGED } from '../m4a/driver.ts';
 import { hostReleasedVerdict, modelIdHits, profileVerdict } from '../m4a/check.ts';
 import { scanTranscript } from '../m4a/transcript.ts';
 import { type PairResult, selectorContrast } from './css.ts';
-import { type DemoFinal, type DemoSeen, type Report, firstPlan, needles } from './driver.ts';
+import { type DemoFinal, type DemoSeen, type Report, arcsStarted, demoUrl, needles } from './driver.ts';
 import { DESIGN_SKILL, type Layout, PLANT, layout } from './layout.ts';
 import { SEED_FILE } from './setup.ts';
 import { type PlanShape, planShape } from './shape.ts';
@@ -270,8 +276,6 @@ export function polishBoundedVerdict(log: M5Log, polishUnits: readonly string[],
   return verdict(problems, `${shown} within ${walkRounds}; ${polishUnits.length} polish unit(s), each judged once (${log.tweaks.map((t) => `${t.unit} ${t.decision}`).join(', ') || 'none'})`);
 }
 
-const whereOf = (demo: unknown): unknown => (demo as { where?: unknown } | null)?.where;
-
 export function demoServingVerdict(log: M5Log, seen: readonly DemoSeen[], final: DemoFinal | null): Verdict {
   const last = log.demos.at(-1);
   if (last === undefined) return { pass: false, detail: 'no demo-promoted in the log' };
@@ -279,17 +283,19 @@ export function demoServingVerdict(log: M5Log, seen: readonly DemoSeen[], final:
   const d = final.demo as { milestone?: unknown; sha?: unknown; where?: unknown };
   const problems: string[] = [];
   if (d.milestone !== last.milestone || d.sha !== last.sha) problems.push(`status.demo is ${d.milestone}@${d.sha}, the latest promotion ${last.milestone}@${last.sha}`);
-  if (typeof d.where !== 'string' || !/^https?:\/\//.test(d.where)) problems.push(`status.demo.where ${JSON.stringify(d.where)} is no URL`);
-  else if (final.probe === null || final.probe.status === null || final.probe.status >= 500) problems.push(`${d.where} did not serve: ${JSON.stringify(final.probe)}`);
-  const urls = [...new Set(seen.map((s) => whereOf(s.demo)).filter((w) => w !== undefined && w !== null))];
-  if (urls.length > 1) problems.push(`the demo moved: ${urls.map((u) => JSON.stringify(u)).join(' → ')}`);
-  return verdict(problems, `${log.demos.length} promotion(s), the latest ${last.milestone}@${last.sha}; ${String(d.where)} answered ${final.probe?.status}`);
+  const url = demoUrl(d);
+  if (url === null || !/^https?:\/\//.test(url)) problems.push(`status.demo.where ${JSON.stringify(d.where)} is no URL`);
+  else if (final.probe === null || final.probe.status === null || final.probe.status >= 500) problems.push(`${url} did not serve: ${JSON.stringify(final.probe)}`);
+  const urls = [...new Set(seen.map((s) => demoUrl(s.demo)).filter((w) => w !== null))];
+  if (urls.length > 1) problems.push(`the demo moved: ${urls.join(' → ')}`);
+  return verdict(problems, `${log.demos.length} promotion(s), the latest ${last.milestone}@${last.sha}; ${url} answered ${final.probe?.status}`);
 }
 
 // ---------------------------------------------------------------------------------------------------
 // Criteria that read the fixture
 
-type Run = Readonly<{ l: Layout; report: Report; product: AbsPath; ref: ArcRef | null; runDir: AbsPath | null; log: M5Log | null; shape: PlanShape }>;
+/** `arc`: the arc under test (null when no arc has a plan); `arcs`: every arc with a journal, in start order. */
+type Run = Readonly<{ l: Layout; report: Report; product: AbsPath; arc: string | null; arcs: readonly string[]; ref: ArcRef | null; runDir: AbsPath | null; log: M5Log | null; shape: PlanShape }>;
 
 const needRef = (run: Run): ArcRef => {
   if (run.ref === null) throw new Error('the product has no arc ref');
@@ -343,13 +349,19 @@ function isolation(run: Run): Verdict {
   return verdict(problems, `${report.launch.envKeys.length} env keys, gh ${report.launch.gh}, transcript clean`);
 }
 
-function sessionStopped(run: Run): Verdict {
+export function sessionStoppedVerdict(report: Pick<Report, 'endedBy' | 'stopReason' | 'failure'>, arc: string | null, arcs: readonly string[], completed: boolean): Verdict {
+  const ended = `the session ended ${report.endedBy} (${report.stopReason ?? report.failure})`;
   const problems: string[] = [];
-  if (run.report.endedBy !== 'stopped' || !['vision-silent', 'k-limit'].includes(run.report.stopReason ?? '')) problems.push(`the session ended ${run.report.endedBy} (${run.report.stopReason ?? run.report.failure})`);
-  const arcs = arcsWithRefs(run.product);
-  if (arcs.length !== 1) problems.push(`${arcs.length} arcs have refs: ${arcs.join(', ')}`);
-  return verdict(problems, `stopped ${run.report.stopReason} after one arc`);
+  if (report.endedBy !== 'stopped' || !['vision-silent', 'k-limit'].includes(report.stopReason ?? '')) problems.push(ended);
+  if (arc === null) return verdict([...problems, 'no arc under test'], ended);
+  const at = arcs.indexOf(arc);
+  if (at > 0) problems.push(`${arcs.slice(0, at).join(', ')} started before the arc under test ${arc}`);
+  const later = arcs.slice(at + 1);
+  if (later.length > 0 && !completed) problems.push(`${later.join(', ')} started after ${arc}, which never completed`);
+  return verdict(problems, `${ended}; ${arc} under test${later.length === 0 ? '' : `, then ${later.join(', ')} (not graded)`}`);
 }
+
+const sessionStopped = (run: Run): Verdict => sessionStoppedVerdict(run.report, run.arc, run.arcs, run.ref !== null && completedHeadOf(run.ref) !== null);
 
 function arcComplete(run: Run): Verdict {
   const ref = needRef(run);
@@ -407,13 +419,15 @@ export function check(dir: string): CheckResult {
   if (!existsSync(l.report)) throw new Error(`${l.report} is missing: run evals/m5/driver.ts first`);
   const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
   const product = absPath(l.product);
-  const arc = arcsWithRefs(product)[0];
-  const ref = arc === undefined ? null : readArcRef(product, arc);
-  const dir_ = arc === undefined ? null : runDir(gitCommonDir(product), arc);
-  const log = dir_ === null || !existsSync(join(dir_, 'events.jsonl')) ? null : logOf(readJournal(dir_, arcId(arc!)).events);
-  const first = firstPlan(l);
-  const shape: PlanShape = first === null ? { kind: 'off', problems: ['the arc has no plan in force'] } : planShape(first.plan);
-  const run: Run = { l, report, product, ref, runDir: dir_, log, shape };
+  const started = arcsStarted(l);
+  const planned = started.flatMap((a) => (a.plan === null ? [] : [{ arc: a.arc, shape: planShape(a.plan) }]));
+  const underTest = planned.find((a) => a.shape.kind === 'ok') ?? planned[0];
+  const arc = underTest === undefined ? null : arcId(underTest.arc);
+  const ref = arc === null || !arcsWithRefs(product).includes(arc) ? null : readArcRef(product, arc);
+  const dir_ = arc === null ? null : runDir(gitCommonDir(product), arc);
+  const log = dir_ === null ? null : logOf(readJournal(dir_, arc!).events);
+  const shape: PlanShape = underTest === undefined ? { kind: 'off', problems: ['the arc has no plan in force'] } : underTest.shape;
+  const run: Run = { l, report, product, arc, arcs: started.map((a) => a.arc), ref, runDir: dir_, log, shape };
   const criteria = CRITERIA.map(([name, grade]): Criterion => {
     try {
       return { name, ...grade(run) };
