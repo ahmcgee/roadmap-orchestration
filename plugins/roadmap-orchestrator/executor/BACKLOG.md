@@ -233,8 +233,11 @@ at triage stay in git history.
   design unit repaired the planted 2.12:1 contrast before the first walk, the walks found one P2 the checkpoint ruled
   accepted, so no repair or polish unit ran (the loop is covered by the fake-backend integrated tests and the role evals
   only). The plant is now a data row only rendering reveals (an unbreakable URL in the first book's condition, so the page
-  scrolls sideways at 320 px; check.ts grades it by rendering, reflow.ts). Open until a paid run shows the walk catch it
-  and a repair unit fix it. Trigger: the next m5 run.
+  scrolls sideways at 320 px; check.ts grades it by rendering, reflow.ts). Run 5 (/var/tmp/m5-dev13-5, 2026-10-20) ran
+  the loop on another defect: walk-1 found F-34 (the no-match heading overflows at 320 px), `headings` repaired it,
+  walk-2 passed MS-1 (check.ts `repair-loop` grades this on any milestone now). But the vision audit lens caught the
+  plant itself (F-1) before any walk, so plant-caught still fails "repaired upstream". Open until a paid run shows a walk
+  catch the plant. Trigger: the next m5 run.
 - **A direct `demo down` with no live arc.** Demo acts are queued commands; with no executor running they wait for the
   next start. Trigger: the owner wants the demo stopped between arcs.
 - **Write-deny rules cover paths existing at call start.** A directory created later beside the path to a writable

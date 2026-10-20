@@ -1,7 +1,7 @@
 // The M5 paid fixture, step 3: `node evals/m5/check.ts <dir>` grades a finished session (setup → driver) from
-// report.json, the transcript, the product's arc ref and run dir (its full events.jsonl and the walk evidence) and the
-// product's git trees. Agent-facing output: one JSON line `{pass, criteria[{name, pass, detail}]}`. Exits 1 when any
-// criterion fails. The browser and dependent milestones are found by shape (shape.ts), never by id.
+// report.json, the transcript, the product's arc ref and run dir (its full events.jsonl with the plan and specs in force,
+// read by log.ts, and the walk evidence) and the product's git trees. Agent-facing output: one JSON line `{pass,
+// criteria[{name, pass, detail}]}`. Exits 1 when any criterion fails. The browser and dependent milestones are found by shape (shape.ts), never by id.
 //
 // The arc under test is the first arc (in start order) whose first plan in force has the M5 shape; with none shaped, the
 // first arc with a plan (so milestones-planned names its problems). Every arc criterion grades that arc alone: a later arc
@@ -11,11 +11,15 @@
 //                      GH_CONFIG_DIR and XDG_CONFIG_HOME are the fixture's and still empty, its GIT_CONFIG_GLOBAL the
 //                      fixture's gitconfig; `command -v gh` was the staged fake; the transcript's tool traffic names
 //                      neither the answer key nor `evals/m5` nor this repository (re-scanned)
-//   session-stopped    the session ended with the skill's session-end line, reason `vision-silent` or `k-limit` (any
-//                      other end, a usage-limit `session-failed` among them, fails with its reason); the arc under test
-//                      was the first arc started, and any later arc started only after it completed (the corpus is one
-//                      arc's worth, but a later arc in progress at the stop is the session's business, not the grade's)
-//   arc-complete       the arc's verified ref holds an active completion
+//   session-stopped    the driver stopped the arc once the evidence was complete (`evidence-complete`, log.ts), or the
+//                      session ended with the skill's session-end line, reason `vision-silent` or `k-limit` (any other
+//                      end, a usage-limit `session-failed` among them, fails with its reason); the arc under test was the
+//                      first arc started, and any later arc started only after it completed (the corpus is one arc's
+//                      worth, but a later arc in progress at the stop is the session's business, not the grade's)
+//   milestones-settled the driver's stop rule (log.ts `evidenceComplete`) holds over the run dir's log and plan in force:
+//                      every milestone passed, the demo promoted after the last pass and on the latest round's walked SHA,
+//                      no walk, compare or walk-originated unit pending, every polish unit judged or cut. Completion is
+//                      m1's to grade: M5 stops the arc before its audit tail
 //   milestones-planned the arc's first plan in force has the M5 shape (shape.ts `planShape`): a browser milestone whose
 //                      units all run after its design unit, and a dependent milestone at least one of whose units
 //                      descends (through `after`) from a unit of another, upstream, milestone (those are its held units)
@@ -30,33 +34,34 @@
 //                      the walk had nothing to catch), and a walkthrough finding on the browser milestone whose claim or
 //                      cause speaks of the overflow (PLANT_WORDS) reached `resolved` from `fixed-on-branch` of a unit whose
 //                      publication came first
-//   plant-repaired     at the arc's completed head, `/` rendered at 320 CSS px lays out no wider than the viewport, and the
-//                      planted book (its title and URL) is still in the page; a book gone fails, for the lead to
-//                      adjudicate by hand
-//   polish-bounded     no milestone was walked more rounds than the final plan's `walkRounds`; no round's walk failed more
+//   repair-loop        the walk → repair → re-walk loop on any milestone: a walkthrough finding reached `resolved` from
+//                      `fixed-on-branch` of a unit whose publication came first, and a walk of its milestone started after
+//                      that wrote the milestone's `milestone-passed` (the plant's loop is the case plant-caught names)
+//   plant-repaired     at the arc's latest integrated head (the verified ref's latest published `integration.ff`; the
+//                      arc is stopped, not completed), `/` rendered at 320 CSS px lays out no wider than the viewport,
+//                      and the planted book (its title and URL) is still in the page; a book gone fails, for the lead
+//                      to adjudicate by hand
+//   polish-bounded     no milestone was walked more rounds than the plan in force's `walkRounds`; no round's walk failed more
 //                      than WALK_ATTEMPTS times nor a unit compared more than COMPARE_ATTEMPTS (the brakes); every polish unit
-//                      of the final plan not cut outside its compare has exactly one `tweak-judged`, and a published one was
+//                      of that plan not cut outside its compare has exactly one `tweak-judged`, and a published one was
 //                      judged `keep` before it published
 //   demo-serving       (needs agent G's demo) a `demo-promoted` was recorded; the driver's end-of-run `status.demo` names
 //                      the latest promotion's milestone and SHA, its `where` is an http(s) URL that answered below 500, and
 //                      every `status.demo` the driver saw named that same URL
-//   skill-vendored     the frontend-design skill's files are byte-identical at the completed head and the seed
+//   skill-vendored     the frontend-design skill's files are byte-identical at the latest integrated head and the seed
 //   no-model-ids       no model id in the run dir (launch inputs and captured backend output aside) or the ref (M4a's)
 //   host-released      every arc the driver found holding the host at the end was stopped and cleared; none holds it now
 //   profile            the arc's first `plan-applied` resolved under the report's profile
 import { existsSync, openSync, readFileSync, readSync, closeSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { type ArcRef, arcsWithRefs, completedHeadOf, readArcRef } from '../../src/chain.ts';
-import type { Event, Fact, IntentOf, TweakDecision, TweakReason, WalkOutcome } from '../../src/core/events.ts';
 import { arcId, type JobId } from '../../src/core/ids.ts';
-import { readJournal } from '../../src/core/log.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
 import { git, gitCommonDir } from '../../src/git/git.ts';
 import { jobEvidenceRoot } from '../../src/git/snapshot.ts';
-import type { FindingTo } from '../../src/holistic/types.ts';
 import { readClaim } from '../../src/host/lock.ts';
 import { runDir } from '../../src/input/cli.ts';
-import { type PlanM1, walkRoundsOf } from '../../src/input/plan.ts';
+import { walkRoundsOf } from '../../src/input/plan.ts';
 import { POLISH_DROPPED } from '../../src/input/classify.ts';
 import { COMPARE_ATTEMPTS } from '../../src/walk/compare.ts';
 import { WALK_ATTEMPTS } from '../../src/walk/milestones.ts';
@@ -65,6 +70,7 @@ import { hostReleasedVerdict, modelIdHits, profileVerdict } from '../m4a/check.t
 import { scanTranscript } from '../m4a/transcript.ts';
 import { type DemoFinal, type DemoSeen, type Report, arcsStarted, demoUrl, needles } from './driver.ts';
 import { DESIGN_SKILL, type Layout, PLANT, layout } from './layout.ts';
+import { type ArcLog, type FindingLog, type M5Log, evidenceComplete, readArcLog, repairsOf } from './log.ts';
 import { type Reflow, reflowAt } from './reflow.ts';
 import { SEED_FILE } from './setup.ts';
 import { type PlanShape, planShape } from './shape.ts';
@@ -73,96 +79,6 @@ export type Criterion = Readonly<{ name: string; pass: boolean; detail: string }
 export type CheckResult = Readonly<{ pass: boolean; criteria: readonly Criterion[] }>;
 export type Verdict = Readonly<{ pass: boolean; detail: string }>;
 const verdict = (problems: readonly string[], ok: string): Verdict => ({ pass: problems.length === 0, detail: problems.length === 0 ? ok : problems.join('; ') });
-
-// ---------------------------------------------------------------------------------------------------
-// The log as the criteria read it
-
-/** `interrupted`: an abandoned walk a pause, a stop or a backend park cut short (no try of its round's brake; absent: false). */
-export type Walk = Readonly<{ job: string; milestone: string; round: number; sha: string; seq: number; outcome: WalkOutcome | null; interrupted?: boolean }>;
-/** A polish unit's compare job (agent D): `abandoned` without a judgment, `interrupted` when a pause, stop or park cut it short. */
-export type CompareLog = Readonly<{ job: string; unit: string; seq: number; abandoned: boolean; interrupted: boolean }>;
-export type FindingLog = Readonly<{ id: string; seq: number; lens: string; milestone: string | null; claim: string; cause: string | null; transitions: readonly Readonly<{ seq: number; to: FindingTo }>[] }>;
-export type M5Log = Readonly<{
-  /** Each unit's first `dispatch` fact. */
-  firstDispatch: ReadonlyMap<string, number>;
-  /** Unit publications (a published `integration.ff` with a stage parent): the seq of the done, the commit published. */
-  publications: readonly Readonly<{ seq: number; unit: string; commit: string }>[];
-  walks: readonly Walk[];
-  passed: readonly Readonly<{ seq: number; milestone: string; job: string }>[];
-  findings: readonly FindingLog[];
-  tweaks: readonly Readonly<{ seq: number; unit: string; decision: TweakDecision; reason: TweakReason }>[];
-  /** Agent D: the compare jobs (`compare-started`, closed by `compare-abandoned` or the unit's `tweak-judged`). */
-  compares: readonly CompareLog[];
-  demos: readonly Readonly<{ seq: number; milestone: string; sha: string }>[];
-}>;
-
-export function logOf(events: readonly Event[]): M5Log {
-  const firstDispatch = new Map<string, number>();
-  const ffs = new Map<string, IntentOf<'integration.ff'>>();
-  const publications: { seq: number; unit: string; commit: string }[] = [];
-  const walks = new Map<string, { job: string; milestone: string; round: number; sha: string; seq: number; outcome: WalkOutcome | null; interrupted?: boolean }>();
-  const compares = new Map<string, { job: string; unit: string; seq: number; abandoned: boolean; interrupted: boolean }>();
-  const passed: M5Log['passed'][number][] = [];
-  const findings = new Map<string, { id: string; seq: number; lens: string; milestone: string | null; claim: string; cause: string | null; transitions: { seq: number; to: FindingTo }[] }>();
-  const tweaks: M5Log['tweaks'][number][] = [];
-  const demos: M5Log['demos'][number][] = [];
-  for (const e of events) {
-    if (e.type === 'intent' && e.kind === 'integration.ff') ffs.set(e.op, e);
-    if (e.type === 'done' && e.kind === 'integration.ff' && e.outcome.kind === 'published') {
-      const i = ffs.get(e.op);
-      if (i === undefined) throw new Error(`integration.ff ${e.op} done without an intent`);
-      if (i.expect.subject === undefined && i.parent.type === 'stage') publications.push({ seq: e.seq, unit: i.parent.unit, commit: i.expect.new });
-    }
-    if (e.type !== 'fact') continue;
-    const f: Fact = e.fact;
-    switch (f.kind) {
-      case 'dispatch':
-        if (!firstDispatch.has(f.record.unit)) firstDispatch.set(f.record.unit, e.seq);
-        break;
-      case 'walk-started':
-        walks.set(f.job, { job: f.job, milestone: f.milestone, round: f.round, sha: f.sha, seq: e.seq, outcome: null });
-        break;
-      case 'walk-ended': {
-        const w = walks.get(f.job);
-        if (w === undefined) throw new Error(`walk-ended ${f.job} without its walk-started`);
-        w.outcome = f.outcome;
-        if (f.interrupted === true) w.interrupted = true;
-        break;
-      }
-      case 'compare-started':
-        compares.set(f.job, { job: f.job, unit: f.unit, seq: e.seq, abandoned: false, interrupted: false });
-        break;
-      case 'compare-abandoned': {
-        const c = compares.get(f.job);
-        if (c === undefined) throw new Error(`compare-abandoned ${f.job} without its compare-started`);
-        c.abandoned = true;
-        c.interrupted = f.interrupted === true;
-        break;
-      }
-      case 'milestone-passed':
-        passed.push({ seq: e.seq, milestone: f.milestone, job: f.job });
-        break;
-      case 'finding-opened':
-        findings.set(f.id, { id: f.id, seq: e.seq, lens: f.lens, milestone: f.milestone ?? null, claim: f.claim, cause: f.cause ?? null, transitions: [] });
-        break;
-      case 'finding-transition': {
-        const x = findings.get(f.id);
-        if (x === undefined) throw new Error(`finding-transition ${f.id} without its finding-opened`);
-        x.transitions.push({ seq: e.seq, to: f.to });
-        break;
-      }
-      case 'tweak-judged':
-        tweaks.push({ seq: e.seq, unit: f.unit, decision: f.decision, reason: f.reason });
-        break;
-      case 'demo-promoted':
-        demos.push({ seq: e.seq, milestone: f.milestone, sha: f.sha });
-        break;
-      default:
-        break;
-    }
-  }
-  return { firstDispatch, publications, walks: [...walks.values()], passed, findings: [...findings.values()], tweaks, compares: [...compares.values()], demos };
-}
 
 type Shaped = Extract<PlanShape, { kind: 'ok' }>;
 const needShape = (shape: PlanShape): Shaped => {
@@ -230,14 +146,42 @@ export async function plantCaughtVerdict(shape: PlanShape, log: M5Log, reflow: (
   if (candidates.length === 0) return { pass: false, detail: `no walkthrough finding on ${browser.id} speaks of the overflow (/ ${at.scrollWidth} px wide at ${at.viewport} px; ${log.findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id}: ${f.claim}`).join(' | ') || 'no walkthrough findings'})` };
   const problems: string[] = [];
   for (const f of candidates) {
-    const resolved = f.transitions.findLast((t) => t.to.state === 'resolved');
-    const fixed = f.transitions.filter((t) => resolved === undefined || t.seq < resolved.seq).findLast((t) => t.to.state === 'fixed-on-branch');
-    const unit = fixed !== undefined && fixed.to.state === 'fixed-on-branch' ? fixed.to.unit : null;
-    const pub = unit === null ? undefined : log.publications.find((p) => p.unit === unit && (resolved === undefined || p.seq < resolved.seq));
-    if (resolved !== undefined && pub !== undefined) return { pass: true, detail: `${f.id} (${f.claim}) resolved at seq ${resolved.seq} by ${unit}'s publication at seq ${pub.seq}` };
-    problems.push(`${f.id} (${f.claim}) is ${f.transitions.at(-1)?.to.state ?? 'open'}${unit === null ? '' : ` (fixed on ${unit}'s branch, ${pub === undefined ? 'unpublished' : 'published'})`}`);
+    const r = repairOf(f, log);
+    if (r.kind === 'resolved') return { pass: true, detail: `${f.id} (${f.claim}) resolved at seq ${r.seq} by ${r.unit}'s publication at seq ${r.pub}` };
+    problems.push(r.detail);
   }
   return { pass: false, detail: problems.join('; ') };
+}
+
+type Repair = Readonly<{ kind: 'resolved'; seq: number; unit: string; pub: number }> | Readonly<{ kind: 'not'; detail: string }>;
+
+/** Whether finding `f` reached `resolved` after `fixed-on-branch` of a unit whose publication came first. */
+function repairOf(f: FindingLog, log: M5Log): Repair {
+  const resolved = f.transitions.findLast((t) => t.to.state === 'resolved');
+  const fixed = f.transitions.filter((t) => resolved === undefined || t.seq < resolved.seq).findLast((t) => t.to.state === 'fixed-on-branch');
+  const unit = fixed !== undefined && fixed.to.state === 'fixed-on-branch' ? fixed.to.unit : null;
+  const pub = unit === null ? undefined : log.publications.find((p) => p.unit === unit && (resolved === undefined || p.seq < resolved.seq));
+  if (resolved !== undefined && pub !== undefined) return { kind: 'resolved', seq: resolved.seq, unit: unit!, pub: pub.seq };
+  return { kind: 'not', detail: `${f.id} (${f.claim}) is ${f.transitions.at(-1)?.to.state ?? 'open'}${unit === null ? '' : ` (fixed on ${unit}'s branch, ${pub === undefined ? 'unpublished' : 'published'})`}` };
+}
+
+/**
+ * The walk → repair → re-walk loop on any milestone: a walkthrough finding resolved by a published unit (`repairOf`), and a
+ * walk of its milestone started after that resolution whose job wrote the milestone's `milestone-passed`.
+ */
+export function repairLoopVerdict(log: M5Log): Verdict {
+  const problems: string[] = [];
+  for (const f of log.findings.filter((x) => x.lens === 'walkthrough' && x.milestone !== null)) {
+    const r = repairOf(f, log);
+    if (r.kind === 'not') {
+      problems.push(r.detail);
+      continue;
+    }
+    const rewalk = log.walks.find((w) => w.milestone === f.milestone && w.seq > r.seq && log.passed.some((p) => p.milestone === f.milestone && p.job === w.job));
+    if (rewalk !== undefined) return { pass: true, detail: `${f.milestone}: ${f.id} (${f.claim}) resolved at seq ${r.seq} by ${r.unit}'s publication at seq ${r.pub}; ${rewalk.job} (round ${rewalk.round}) re-walked it and passed the milestone` };
+    problems.push(`${f.id} on ${f.milestone} resolved at seq ${r.seq} by ${r.unit}, and no later walk of ${f.milestone} passed it`);
+  }
+  return { pass: false, detail: problems.length === 0 ? 'no walkthrough finding on a milestone' : problems.join('; ') };
 }
 
 export function plantRepairedVerdict(head: string, at: Reflow): Verdict {
@@ -293,19 +237,22 @@ export function demoServingVerdict(log: M5Log, seen: readonly DemoSeen[], final:
 // Criteria that read the fixture
 
 /** `arc`: the arc under test (null when no arc has a plan); `arcs`: every arc with a journal, in start order. */
-type Run = Readonly<{ l: Layout; report: Report; product: AbsPath; arc: string | null; arcs: readonly string[]; ref: ArcRef | null; runDir: AbsPath | null; log: M5Log | null; shape: PlanShape }>;
+type Run = Readonly<{ l: Layout; report: Report; product: AbsPath; arc: string | null; arcs: readonly string[]; ref: ArcRef | null; runDir: AbsPath | null; arcLog: () => ArcLog | null; shape: PlanShape }>;
 
 const needRef = (run: Run): ArcRef => {
   if (run.ref === null) throw new Error('the product has no arc ref');
   return run.ref;
 };
-const needLog = (run: Run): M5Log => {
-  if (run.log === null) throw new Error('the product has no run dir');
-  return run.log;
+const needArcLog = (run: Run): ArcLog => {
+  const a = run.arcLog();
+  if (a === null) throw new Error('the product has no run dir with a plan in force');
+  return a;
 };
+const needLog = (run: Run): M5Log => needArcLog(run).log;
+/** The arc's latest integrated head as its verified ref has it (the latest published `integration.ff`). */
 const headOf = (ref: ArcRef): string => {
-  const h = completedHeadOf(ref)?.head;
-  if (h === undefined) throw new Error(`${ref.arc} has no completed head`);
+  const h = ref.view.integrationHead();
+  if (h === null) throw new Error(`${ref.arc} has published nothing`);
   return h;
 };
 
@@ -343,7 +290,7 @@ function isolation(run: Run): Verdict {
 export function sessionStoppedVerdict(report: Pick<Report, 'endedBy' | 'stopReason' | 'failure'>, arc: string | null, arcs: readonly string[], completed: boolean): Verdict {
   const ended = `the session ended ${report.endedBy} (${report.stopReason ?? report.failure})`;
   const problems: string[] = [];
-  if (report.endedBy !== 'stopped' || !['vision-silent', 'k-limit'].includes(report.stopReason ?? '')) problems.push(ended);
+  if (report.endedBy !== 'evidence-complete' && (report.endedBy !== 'stopped' || !['vision-silent', 'k-limit'].includes(report.stopReason ?? ''))) problems.push(ended);
   if (arc === null) return verdict([...problems, 'no arc under test'], ended);
   const at = arcs.indexOf(arc);
   if (at > 0) problems.push(`${arcs.slice(0, at).join(', ')} started before the arc under test ${arc}`);
@@ -354,18 +301,18 @@ export function sessionStoppedVerdict(report: Pick<Report, 'endedBy' | 'stopReas
 
 const sessionStopped = (run: Run): Verdict => sessionStoppedVerdict(run.report, run.arc, run.arcs, run.ref !== null && completedHeadOf(run.ref) !== null);
 
-function arcComplete(run: Run): Verdict {
-  const ref = needRef(run);
-  const c = completedHeadOf(ref);
-  const h = ref.view.holistic().completion;
-  return { pass: c !== null && h !== null && h.active, detail: c === null ? `${ref.arc} holds no arc-completed after its last revision` : `${ref.arc} completed at ${c.head} (active ${h?.active ?? false})` };
+/** The driver's stop rule (log.ts `evidenceComplete`) at the end of the run: m1 grades completion, M5 grades the milestones. */
+function milestonesSettled(run: Run): Verdict {
+  const a = needArcLog(run);
+  const e = evidenceComplete(a.log, a.plan, repairsOf(a));
+  return { pass: e.complete, detail: e.detail };
 }
 
 const missingRefs = (product: AbsPath) => (commit: string, dirs: readonly string[]): readonly string[] =>
   dirs.filter((d) => git(product, ['ls-tree', '-d', '--name-only', commit, '--', d.replace(/\/$/, '')]).trim() === '');
 
 function polishBounded(run: Run): Verdict {
-  const plan: PlanM1 = needRef(run).plan;
+  const plan = needArcLog(run).plan;
   // A polish unit the checkpoint (or an owner) cut before its compare is never judged; a dropped tweak's cut is the compare's.
   return polishBoundedVerdict(needLog(run), plan.units.filter((u) => u.origin === 'polish' && (u.cut === undefined || u.cut.reason === POLISH_DROPPED)).map((u) => u.id), walkRoundsOf(plan));
 }
@@ -390,12 +337,13 @@ type Grade = readonly [string, (run: Run) => Verdict | Promise<Verdict>];
 export const CRITERIA: readonly Grade[] = [
   ['isolation', isolation],
   ['session-stopped', sessionStopped],
-  ['arc-complete', arcComplete],
+  ['milestones-settled', milestonesSettled],
   ['milestones-planned', (run) => milestonesPlannedVerdict(run.shape)],
   ['design-first', (run) => designFirstVerdict(run.shape, needLog(run), missingRefs(run.product))],
   ['node-held', (run) => nodeHeldVerdict(run.shape, needLog(run))],
   ['walk-screenshots', (run) => walkScreenshotsVerdict(run.shape, needLog(run), (job) => filesUnder(jobEvidenceRoot(run.runDir!, job as JobId)).filter(isPng))],
   ['plant-caught', (run) => plantCaughtVerdict(run.shape, needLog(run), (sha) => reflowAt(run.product, sha))],
+  ['repair-loop', (run) => repairLoopVerdict(needLog(run))],
   ['plant-repaired', async (run) => plantRepairedVerdict(headOf(needRef(run)), await reflowAt(run.product, headOf(needRef(run))))],
   ['polish-bounded', polishBounded],
   ['demo-serving', (run) => demoServingVerdict(needLog(run), run.report.demo.seen, run.report.demo.final)],
@@ -416,9 +364,14 @@ export async function check(dir: string): Promise<CheckResult> {
   const arc = underTest === undefined ? null : arcId(underTest.arc);
   const ref = arc === null || !arcsWithRefs(product).includes(arc) ? null : readArcRef(product, arc);
   const dir_ = arc === null ? null : runDir(gitCommonDir(product), arc);
-  const log = dir_ === null ? null : logOf(readJournal(dir_, arc!).events);
+  // Read on first use, so a run dir that does not read fails the criteria that need it, naming why.
+  let read: ArcLog | null | undefined;
+  const arcLog = (): ArcLog | null => {
+    if (read === undefined) read = dir_ === null ? null : readArcLog(dir_, arc!);
+    return read;
+  };
   const shape: PlanShape = underTest === undefined ? { kind: 'off', problems: ['the arc has no plan in force'] } : underTest.shape;
-  const run: Run = { l, report, product, arc, arcs: started.map((a) => a.arc), ref, runDir: dir_, log, shape };
+  const run: Run = { l, report, product, arc, arcs: started.map((a) => a.arc), ref, runDir: dir_, arcLog, shape };
   const criteria: Criterion[] = [];
   for (const [name, grade] of CRITERIA) {
     try {
