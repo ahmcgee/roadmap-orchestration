@@ -243,6 +243,8 @@ export const initialPrompt = (profile: ProfileName): string => [
   'If you end your turn, the harness resumes you on actionable `roadmap watch` events only.',
   'End the session with the skill\'s session-end line.',
   `Start every arc with \`--profile ${profile}\`; never change it.`,
+  // Run 3 (2026-10-20) sliced V-1 alone without asking, so the slice answer never applied: the owner gives it up front.
+  `The owner's direction for the first arc: ${SLICE_ANSWER}`,
 ].join('\n');
 
 export async function drive(dir: string, profile: ProfileName): Promise<Report> {

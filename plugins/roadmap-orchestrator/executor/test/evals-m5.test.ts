@@ -26,7 +26,7 @@ import {
   type M5Log, PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, logOf, milestonesPlannedVerdict, nodeHeldVerdict,
   plantCaughtVerdict, plantRepairedVerdict, polishBoundedVerdict, walkScreenshotsVerdict,
 } from '../evals/m5/check.ts';
-import { SKILL_SATISFIED, SLICE_ANSWER, codeAnswer } from '../evals/m5/driver.ts';
+import { SKILL_SATISFIED, SLICE_ANSWER, codeAnswer, initialPrompt } from '../evals/m5/driver.ts';
 import { CORPUS_ROOT, DESIGN_SKILL, PLANT, VISION_DOC, layout } from '../evals/m5/layout.ts';
 import type { Reflow } from '../evals/m5/reflow.ts';
 import { CLAUSES, setup } from '../evals/m5/setup.ts';
@@ -371,6 +371,7 @@ test('evals-m5.owner-code-answers: K, a brief ack, the slice (both scenes) and t
   assert.match(codeAnswer('Shall I acknowledge brief B-1 for you?')!, /do not acknowledge/);
   assert.equal(codeAnswer('Do you accept this first slice (V-1)?'), SLICE_ANSWER);
   assert.match(SLICE_ANSWER, /V-1 and V-2/);
+  assert.ok(initialPrompt('claude-only').includes(SLICE_ANSWER));
   assert.equal(codeAnswer('I recommend vendoring Anthropic\'s frontend-design skill into .claude/skills/. Will you add it?'), SKILL_SATISFIED);
   assert.equal(codeAnswer('Should reservations expire at six?'), null);
 });
