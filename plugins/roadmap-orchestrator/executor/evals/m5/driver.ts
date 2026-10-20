@@ -7,8 +7,9 @@
 // server or a memory path in the init event, `wake` on actionable `roadmap watch` events, the turn-end and session-end
 // cleanup, `stopHeldArc`, the forensics and the cost export): `claude -p --model claude-opus-5-5 --effort high
 // --plugin-dir <staged plugin> --permission-mode bypassPermissions --strict-mcp-config` resumed turn after turn, hard
-// timeout 360 min. The root agent's own session has no MCP server; the walk sessions get the Playwright server from the
-// product's `.roadmap/config.json` through the executor. After each turn:
+// timeout 360 min (a backstop: the early stop below ends a run that goes to plan). The root agent's own session has no
+// MCP server; the walk sessions get the Playwright server from the product's `.roadmap/config.json` through the
+// executor. After each turn:
 //   - the skill's session-end line ends the session (reason in the skill's closed set);
 //   - numbered questions go to the owner: code answers K (= 1), the first slice (both world scenes, V-1 and V-2: SLICE_ANSWER), a brief ack (never: the owner
 //     read none) and the frontend-design recommendation (already satisfied: the skill is committed); everything else
@@ -18,6 +19,12 @@
 //     every turn end; a spend or cost hold gets "spend approved", once per arc;
 //   - any other final text is the skill's headless wait: resumed on the next actionable watch event; with nothing to
 //     wait on it nudges, at most MAX_NUDGES times in a row (`stalled`).
+//
+// The early stop. M5 grades dev.13's evidence, not convergence (m1's job; run 5, 2026-10-20, spent 85 minutes of audit
+// tail after its last walk and demo). Every owner poll while a turn runs, at every turn end and every ANSWER_POLL_MS (or
+// watch event) of a wait, the driver evaluates log.ts's stop rule (`evidenceComplete`) over the run dir of the arc under
+// test (the fail-fast's arc). Once it holds, the turn is killed (or the wait ends), the run ends `evidence-complete` with
+// the moment and the rule's detail in `report.evidence`, and the end-of-run steps below stop the held arc.
 //
 // The demo (agent G's `status.demo`, SCHEMAS.md "The demo"). Every owner poll and at the session's end, before the held
 // arc is stopped, the driver reads `roadmap status` of the first arc to apply a plan (the fail-fast's arc, the one
@@ -38,6 +45,8 @@ import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { HOST_DIR } from '../../src/host/hostdir.ts';
 import { readClaim } from '../../src/host/lock.ts';
+import { runDir } from '../../src/input/cli.ts';
+import { gitCommonDir } from '../../src/git/git.ts';
 import { PLAN_INPUT, keptInput } from '../../src/input/inforce.ts';
 import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
 import { parseBriefPayload } from '../../src/phase0/types.ts';
@@ -52,6 +61,7 @@ import {
 import { exportCosts, repositoryPaths, scanTranscript } from '../m4a/transcript.ts';
 import { json } from '../m4a/setup.ts';
 import { DESIGN_SKILL, type Layout, SESSION_END, STOP_REASONS, type StopReason, layout } from './layout.ts';
+import { type Evidence, evidenceComplete, readArcLog, repairsOf } from './log.ts';
 import { planShape } from './shape.ts';
 
 export const REPORT_SCHEMA = 'roadmap/m5-report';
@@ -212,7 +222,9 @@ export function firstPlan(l: Layout): Readonly<{ arc: string; plan: PlanM1 }> | 
 // ---------------------------------------------------------------------------------------------------
 // The session
 
-export type EndedBy = 'stopped' | 'timeout' | 'turn-timeout' | 'stalled' | 'session-failed' | 'fail-fast';
+export type EndedBy = 'stopped' | 'evidence-complete' | 'timeout' | 'turn-timeout' | 'stalled' | 'session-failed' | 'fail-fast';
+/** When the stop rule first held (`evidence-complete`), with its detail. */
+export type EvidenceSeen = Readonly<{ at: string; arc: string; detail: string }>;
 
 export type Report = Readonly<{
   schema: typeof REPORT_SCHEMA;
@@ -228,6 +240,7 @@ export type Report = Readonly<{
   turns: readonly Turn[];
   owner: readonly OwnerExchange[];
   demo: Readonly<{ seen: readonly DemoSeen[]; final: DemoFinal | null }>;
+  evidence: EvidenceSeen | null;
   released: readonly Released[];
   leftovers: readonly string[];
   arcs: readonly ArcForensics[];
@@ -268,6 +281,18 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
     const s = await statusDemo(l, env);
     if (s !== null && JSON.stringify(s.demo) !== JSON.stringify(seen.at(-1)?.demo ?? null)) seen.push({ at: new Date().toISOString(), ...s });
   };
+  // The stop rule over the arc under test's run dir (null until it holds; see the header).
+  let evidence: EvidenceSeen | null = null;
+  const checkEvidence = (): boolean => {
+    if (evidence !== null) return true;
+    const first = firstPlan(l);
+    if (first === null) return false;
+    const a = readArcLog(runDir(gitCommonDir(absPath(l.product)), arcId(first.arc)), arcId(first.arc));
+    const e: Evidence | null = a === null ? null : evidenceComplete(a.log, a.plan, repairsOf(a));
+    if (e === null || !e.complete) return false;
+    evidence = { at: new Date().toISOString(), arc: first.arc, detail: e.detail };
+    return true;
+  };
   let shapeChecked = false;
   let shapeFailure: string | null = null;
   const checkShape = (): void => {
@@ -303,7 +328,7 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
         inFlight = true;
         polling = answerFromBrief(ownerCtx, memory, owner, n).then(observeDemo).then(() => {
           checkShape();
-          if (shapeFailure !== null) abort.abort();
+          if (shapeFailure !== null || checkEvidence()) abort.abort();
         }).catch((error: unknown) => void (pollFailure = error)).finally(() => void (inFlight = false));
       }, ANSWER_POLL_MS);
       const r = await runTurn(l, REAL, env, n, session, prompt, deadline, abort.signal).finally(() => clearInterval(poller));
@@ -315,6 +340,10 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
       if (shapeFailure !== null) {
         endedBy = 'fail-fast';
         failure = shapeFailure;
+        break;
+      }
+      if (evidence !== null) {
+        endedBy = 'evidence-complete';
         break;
       }
       if (r.isolation !== null) {
@@ -344,6 +373,10 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
         }
         break;
       }
+      if (checkEvidence()) {
+        endedBy = 'evidence-complete';
+        break;
+      }
       const reply = await ownerReply(ownerCtx, r.result, memory, owner);
       if (reply !== null) {
         prompt = reply;
@@ -351,7 +384,13 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
         nudges = 0;
         continue;
       }
-      const woke = await wake(l, REAL, env, watched, deadline, () => {});
+      // Waits in ANSWER_POLL_MS slices, so the stop rule is read between watch events too.
+      let woke: string | null = '';
+      while (woke === '' && Date.now() < deadline && !checkEvidence()) woke = await wake(l, REAL, env, watched, Math.min(deadline, Date.now() + ANSWER_POLL_MS), () => {});
+      if (evidence !== null) {
+        endedBy = 'evidence-complete';
+        break;
+      }
       if (woke === '') break;
       if (woke === null) {
         if (++nudges > MAX_NUDGES) {
@@ -413,6 +452,7 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
     transcriptHits: scanTranscript(l.transcript, needles()),
     turns, owner,
     demo: { seen, final },
+    evidence,
     released, leftovers, arcs,
     postRun: arcs.flatMap((a) => postRunOf(a) ?? []),
   };
@@ -431,5 +471,5 @@ if (import.meta.main) {
   process.title = 'fixture-harness';
   const report = await drive(resolve(dir), profile as ProfileName);
   process.stdout.write(`${JSON.stringify({ report: layout(resolve(dir)).report, endedBy: report.endedBy, stopReason: report.stopReason, turns: report.turns.length, failure: report.failure })}\n`);
-  process.exitCode = report.endedBy === 'stopped' ? 0 : 1;
+  process.exitCode = report.endedBy === 'stopped' || report.endedBy === 'evidence-complete' ? 0 : 1;
 }

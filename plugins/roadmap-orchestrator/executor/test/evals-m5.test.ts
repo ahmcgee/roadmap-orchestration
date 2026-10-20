@@ -2,9 +2,10 @@
 // so its free tier is the fixture's validity (setup lays out a product whose tests pass, whose plant is in play, whose
 // vision, corpus guide and walkthrough config parse, and which vendors the design skill), the plan shape, and each check
 // criterion over inputs built in place (the reflow measurements injected): one passing and at least one failing case per
-// criterion. The real-browser reflow oracle is test/serial/evals-m5-reflow.test.ts.
-// Named tests: evals-m5.setup-valid, evals-m5.plan-shape, evals-m5.log-of, evals-m5.criterion.<name>,
-// evals-m5.owner-code-answers, evals-m5.check-without-arc, evals-m5.check-arc-under-test.
+// criterion, and the driver's stop rule (log.ts), on synthetic logs and on paid run 5's log trimmed to what the rule reads
+// (evals/m5/testdata/run5-log.json). The real-browser reflow oracle is test/serial/evals-m5-reflow.test.ts.
+// Named tests: evals-m5.setup-valid, evals-m5.plan-shape, evals-m5.log-of, evals-m5.criterion.<name>, evals-m5.stop-rule,
+// evals-m5.stop-rule-run5, evals-m5.owner-code-answers, evals-m5.check-without-arc, evals-m5.check-arc-under-test.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -23,9 +24,10 @@ import { type Milestone, type PlanM1, parsePlan } from '../src/input/plan.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import {
-  type M5Log, PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, logOf, milestonesPlannedVerdict, nodeHeldVerdict,
-  plantCaughtVerdict, plantRepairedVerdict, polishBoundedVerdict, walkScreenshotsVerdict,
+  PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, milestonesPlannedVerdict, nodeHeldVerdict,
+  plantCaughtVerdict, plantRepairedVerdict, polishBoundedVerdict, repairLoopVerdict, walkScreenshotsVerdict,
 } from '../evals/m5/check.ts';
+import { type EvidencePlan, type M5Log, type Repairs, evidenceComplete, logOf } from '../evals/m5/log.ts';
 import { SKILL_SATISFIED, SLICE_ANSWER, codeAnswer, initialPrompt } from '../evals/m5/driver.ts';
 import { CORPUS_ROOT, DESIGN_SKILL, PLANT, VISION_DOC, layout } from '../evals/m5/layout.ts';
 import type { Reflow } from '../evals/m5/reflow.ts';
@@ -132,18 +134,22 @@ describe('the plan shape (evals/m5/shape.ts)', () => {
 const SHA = (c: string): string => c.repeat(40);
 /** The shelf's page at 320 px, `scrollWidth` wide, the planted book on it. */
 const measured = (scrollWidth: number): Reflow => ({ kind: 'measured', scrollWidth, viewport: 320, html: `<li>${PLANT.title} … ${PLANT.url}</li>` });
-/** A log of the story the fixture expects: design publishes, MS-1 builds, walk-1 finds the plant, a repair lands, walk-2 passes, MS-2 builds. */
+/**
+ * A log of the story the fixture expects: design publishes, MS-1 builds, walk-1 finds the plant and proposes two tweaks, a
+ * repair lands, walk-2 passes, the kept tweak publishes, MS-2 builds and passes, the demo follows each pass.
+ */
 function goodLog(over: Partial<M5Log> = {}): M5Log {
   return {
     firstDispatch: new Map([['design', 10], ['reserve', 30], ['search', 31], ['design-keeper', 50], ['repair-contrast', 70], ['cli', 120], ['settings', 121]]),
     publications: [
       { seq: 20, unit: 'design', commit: SHA('1') }, { seq: 40, unit: 'reserve', commit: SHA('2') }, { seq: 45, unit: 'search', commit: SHA('3') },
-      { seq: 80, unit: 'repair-contrast', commit: SHA('4') }, { seq: 130, unit: 'cli', commit: SHA('5') }, { seq: 140, unit: 'settings', commit: SHA('6') },
+      { seq: 80, unit: 'repair-contrast', commit: SHA('4') }, { seq: 98, unit: 'polish-x1', commit: SHA('8') }, { seq: 130, unit: 'cli', commit: SHA('5') },
+      { seq: 140, unit: 'settings', commit: SHA('6') },
     ],
     walks: [
-      { job: 'walk-1', milestone: 'MS-1', round: 1, sha: SHA('3'), seq: 46, outcome: 'reported' },
-      { job: 'walk-2', milestone: 'MS-1', round: 2, sha: SHA('4'), seq: 90, outcome: 'reported' },
-      { job: 'walk-3', milestone: 'MS-2', round: 1, sha: SHA('6'), seq: 141, outcome: 'reported' },
+      { job: 'walk-1', milestone: 'MS-1', round: 1, sha: SHA('3'), seq: 46, outcome: 'reported', findings: ['F-1'], proposals: ['X-1', 'X-2'], dropped: [] },
+      { job: 'walk-2', milestone: 'MS-1', round: 2, sha: SHA('4'), seq: 90, outcome: 'reported', findings: [], proposals: [], dropped: [] },
+      { job: 'walk-3', milestone: 'MS-2', round: 1, sha: SHA('6'), seq: 141, outcome: 'reported', findings: [], proposals: [], dropped: [] },
     ],
     passed: [{ seq: 100, milestone: 'MS-1', job: 'walk-2' }, { seq: 150, milestone: 'MS-2', job: 'walk-3' }],
     findings: [{
@@ -152,6 +158,7 @@ function goodLog(over: Partial<M5Log> = {}): M5Log {
     }] as M5Log['findings'],
     tweaks: [{ seq: 95, unit: 'polish-x1', decision: 'keep', reason: 'judged' }, { seq: 96, unit: 'polish-x2', decision: 'drop', reason: 'judged' }],
     compares: [{ job: 'compare-1', unit: 'polish-x1', seq: 93, abandoned: false, interrupted: false }, { job: 'compare-2', unit: 'polish-x2', seq: 94, abandoned: false, interrupted: false }],
+    refused: [],
     demos: [{ seq: 101, milestone: 'MS-1', sha: SHA('4') }, { seq: 151, milestone: 'MS-2', sha: SHA('6') }],
     ...over,
   };
@@ -186,7 +193,7 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     const bare = walkScreenshotsVerdict(SHAPE, goodLog(), (job) => (job === 'walk-2' ? [] : ['shot.png']));
     assert.equal(bare.pass, false);
     assert.match(bare.detail, /walk-2's evidence holds no PNG/);
-    assert.equal(walkScreenshotsVerdict(SHAPE, goodLog({ walks: [{ job: 'walk-1', milestone: 'MS-1', round: 1, sha: SHA('3'), seq: 46, outcome: 'bring-up-failed' }] }), () => ['x']).pass, false);
+    assert.equal(walkScreenshotsVerdict(SHAPE, goodLog({ walks: [{ ...goodLog().walks[0]!, outcome: 'bring-up-failed' }] }), () => ['x']).pass, false);
   });
 
   test('evals-m5.criterion.plant-caught: an overflow finding resolved by a published unit; repaired upstream, unmeasurable, no such finding, or unresolved fails', async () => {
@@ -233,7 +240,7 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     const dropped = goodLog({ publications: [...goodLog().publications, { seq: 97, unit: 'polish-x2', commit: SHA('7') }] });
     assert.match(polishBoundedVerdict(dropped, ['polish-x2'], 3).detail, /polish unit polish-x2 published at seq 97 after a drop/);
     // Agent D's brakes: a round's failed walks at most twice, a unit's compares at most twice (interrupted ones are no tries).
-    const abandonedWalk = (job: string, interrupted = false) => ({ job, milestone: 'MS-2', round: 1, sha: SHA('6'), seq: 135, outcome: 'abandoned' as const, interrupted });
+    const abandonedWalk = (job: string, interrupted = false) => ({ job, milestone: 'MS-2', round: 1, sha: SHA('6'), seq: 135, outcome: 'abandoned' as const, interrupted, findings: [], proposals: [], dropped: [] });
     assert.ok(polishBoundedVerdict(goodLog({ walks: [...goodLog().walks, abandonedWalk('walk-4'), abandonedWalk('walk-5', true), abandonedWalk('walk-6')] }), ['polish-x1', 'polish-x2'], 3).pass);
     assert.match(polishBoundedVerdict(goodLog({ walks: [...goodLog().walks, abandonedWalk('walk-4'), abandonedWalk('walk-5'), abandonedWalk('walk-6')] }), ['polish-x1'], 3).detail, /MS-2 round 1 was abandoned 3 times, past the brake of 2/);
     const compare = (n: number, interrupted = false) => ({ job: `compare-${n}`, unit: 'polish-x1', seq: 90 + n, abandoned: true, interrupted });
@@ -269,11 +276,96 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     assert.match(sessionStoppedVerdict(stopped, 'a', ['a', 'b'], false).detail, /b started after a, which never completed/);
     assert.match(sessionStoppedVerdict(stopped, 'b', ['a', 'b'], true).detail, /a started before the arc under test b/);
     assert.match(sessionStoppedVerdict(stopped, null, [], false).detail, /no arc under test/);
+    // The driver's early stop is an end the grade accepts; the arc is stopped, not completed.
+    const early = sessionStoppedVerdict({ endedBy: 'evidence-complete', stopReason: null, failure: null }, 'a', ['a'], false);
+    assert.ok(early.pass, early.detail);
+    assert.match(sessionStoppedVerdict({ endedBy: 'timeout', stopReason: null, failure: null }, 'a', ['a'], false).detail, /ended timeout/);
+  });
+
+  test('evals-m5.criterion.repair-loop: a walkthrough finding resolved by a published unit, then a later walk that passes its milestone; no later passing walk, or no resolution, fails', () => {
+    const ok = repairLoopVerdict(goodLog());
+    assert.ok(ok.pass, ok.detail);
+    assert.match(ok.detail, /MS-1: F-1 .* resolved at seq 82 by repair-contrast's publication at seq 80; walk-2 \(round 2\) re-walked it/);
+    // The milestone passed on the walk that found it, before the repair: no re-walk passed it.
+    assert.match(repairLoopVerdict(goodLog({ passed: [{ seq: 50, milestone: 'MS-1', job: 'walk-1' }] })).detail, /F-1 on MS-1 resolved at seq 82 by repair-contrast, and no later walk of MS-1 passed it/);
+    const [f] = goodLog().findings;
+    assert.match(repairLoopVerdict(goodLog({ findings: [{ ...f!, transitions: f!.transitions.slice(0, 2) }] })).detail, /F-1 .* is fixed-on-branch/);
+    assert.match(repairLoopVerdict(goodLog({ findings: [] })).detail, /no walkthrough finding on a milestone/);
   });
 });
 
-describe('the log and the files (evals/m5/check.ts)', () => {
-  test('evals-m5.log-of: dispatches, unit publications, walks, passes, findings, tweaks and promotions from events', () => {
+// ---------------------------------------------------------------------------------------------------
+// The driver's stop rule (evals/m5/log.ts)
+
+const unit = (id: string, more: object = {}) => ({ id, after: [], ...more });
+/** goodLog's plan: two rounds, the plant's repair, a kept and a dropped (cut) tweak of walk-1. */
+const EVIDENCE_PLAN = {
+  limits: { walkRounds: 2 },
+  milestones: [{ id: 'MS-1', units: ['reserve', 'search'] }, { id: 'MS-2', units: ['cli', 'settings'] }],
+  units: [
+    ...['design', 'reserve', 'search', 'design-keeper', 'cli', 'settings'].map((u) => unit(u)), unit('repair-contrast', { origin: 'repair' }),
+    unit('polish-x1', { origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-1' } }),
+    unit('polish-x2', { origin: 'polish', polish: { milestone: 'MS-1', proposal: 'X-2' }, cut: { reason: 'dropped' } }),
+  ],
+} as unknown as EvidencePlan;
+const REPAIRS: Repairs = new Map([['repair-contrast', ['F-1']]]);
+const planWith = (over: object): EvidencePlan => ({ ...EVIDENCE_PLAN, ...over }) as EvidencePlan;
+
+describe('the stop rule (evals/m5/log.ts)', () => {
+  test('evals-m5.stop-rule: complete on the fixture\'s story; a milestone unpassed, no demo after the last pass or on the latest walk\'s SHA, a walk or compare in flight, a walk due (unless braked), an unweighed finding, an unplaced proposal, a walk-originated unit unsettled (followed to its re-entry) or a tweak unjudged is not', () => {
+    const ok = evidenceComplete(goodLog(), EVIDENCE_PLAN, REPAIRS);
+    assert.ok(ok.complete, ok.detail);
+    assert.match(ok.detail, /MS-1 passed at seq 100, MS-2 passed at seq 150; demo promoted at seq 151; 3 walk-originated unit\(s\) settled \(repair-contrast, polish-x1, polish-x2\)/);
+    const not = (log: M5Log, why: RegExp, plan: EvidencePlan = EVIDENCE_PLAN, repairs: Repairs = REPAIRS) => {
+      const e = evidenceComplete(log, plan, repairs);
+      assert.equal(e.complete, false, e.detail);
+      assert.match(e.detail, why);
+    };
+    const walk3 = goodLog().walks[2]!;
+    not(goodLog({ passed: goodLog().passed.slice(0, 1) }), /MS-2 has no milestone-passed/);
+    not(goodLog({ demos: goodLog().demos.slice(0, 1) }), /no demo-promoted after the last milestone-passed \(seq 150\)/);
+    // Run 5: MS-2 settled 48 ms before its promotion; a later promotion on an older walk's SHA is not the latest walk's.
+    not(goodLog({ demos: [...goodLog().demos.slice(0, 1), { seq: 151, milestone: 'MS-1', sha: SHA('4') }] }), /the demo was never promoted on walk-3's SHA/);
+    not(goodLog({ walks: [...goodLog().walks, { ...walk3, job: 'walk-4', round: 2, seq: 160, outcome: null }] }), /walk-4 \(MS-2 round 2\) is in flight/);
+    not(goodLog({ compares: [...goodLog().compares, { job: 'compare-3', unit: 'polish-x1', seq: 200, abandoned: false, interrupted: false }] }), /compare-3 \(polish-x1\) is in flight/);
+    // With a third round allowed, walk-2's landed tweak makes round 3 due, unless round 3's walk failed twice (the brake).
+    const proposing = goodLog({ walks: [goodLog().walks[0]!, { ...goodLog().walks[1]!, proposals: ['X-1'] }, walk3] });
+    const three = planWith({ limits: { walkRounds: 3 } });
+    not(proposing, /MS-1 round 3's walk is due \(polish-x1 landed after walk-2\)/, three);
+    const abandoned = (job: string, seq: number, interrupted = false) => ({ ...walk3, job, milestone: 'MS-1', round: 3, seq, outcome: 'abandoned' as const, interrupted });
+    const braked = evidenceComplete(goodLog({ walks: [...proposing.walks, abandoned('walk-5', 160), abandoned('walk-6', 170)] }), three, REPAIRS);
+    assert.ok(braked.complete, braked.detail);
+    not(goodLog({ walks: [...proposing.walks, abandoned('walk-5', 160), abandoned('walk-6', 170, true)] }), /MS-1 round 3's walk is due/, three);
+    const finding = { id: 'F-9', seq: 142, lens: 'walkthrough', milestone: 'MS-2', claim: 'x', cause: null, transitions: [] };
+    not(goodLog({ walks: [...goodLog().walks.slice(0, 2), { ...walk3, findings: ['F-9'] }], findings: [...goodLog().findings, finding] }), /walk-3's F-9 not yet weighed/);
+    not(goodLog({ walks: [...goodLog().walks.slice(0, 2), { ...walk3, proposals: ['X-7'] }] }), /walk-3's proposal X-7 in no polish unit yet/);
+    assert.ok(evidenceComplete(goodLog({ walks: [...goodLog().walks.slice(0, 2), { ...walk3, proposals: ['X-7'] }], refused: ['X-7'] }), EVIDENCE_PLAN, REPAIRS).complete);
+    not(goodLog({ publications: goodLog().publications.filter((p) => p.unit !== 'repair-contrast') }), /walk-originated repair-contrast neither published nor cut/);
+    // A re-entry carries the lineage on: the re-entered unit's publication does not settle it.
+    const reentered = planWith({ units: [...EVIDENCE_PLAN.units, unit('repair-contrast-2', { origin: 'repair', reenters: { unit: 'repair-contrast' } })] });
+    not(goodLog(), /walk-originated repair-contrast, repair-contrast-2 neither published nor cut/, reentered, new Map([...REPAIRS, ['repair-contrast-2', ['F-1']]]));
+    not(goodLog({ tweaks: goodLog().tweaks.slice(1) }), /polish polish-x1 not judged/);
+    // A unit repairing only a non-walkthrough finding is no walk evidence: unpublished, it does not hold the stop.
+    assert.ok(evidenceComplete(goodLog(), planWith({ units: [...EVIDENCE_PLAN.units, unit('audit-fix', { origin: 'repair' })] }), new Map([...REPAIRS, ['audit-fix', ['F-50']]])).complete);
+  });
+
+  test('evals-m5.stop-rule-run5: on paid run 5\'s log (trimmed) the rule first holds at seq 7449, MS-2\'s demo promotion at 08:12:49, 85 minutes before arc-completed; its repair loop is F-34 by headings', () => {
+    const run5 = JSON.parse(readFileSync(new URL('../evals/m5/testdata/run5-log.json', import.meta.url), 'utf8')) as { plan: EvidencePlan; repairs: Record<string, readonly string[]>; events: readonly Event[] };
+    const repairs: Repairs = new Map(Object.entries(run5.repairs));
+    const at = (seq: number) => evidenceComplete(logOf(run5.events.filter((e) => e.seq <= seq)), run5.plan, repairs);
+    const first = run5.events.find((e) => at(e.seq).complete);
+    assert.deepEqual(first && { seq: first.seq, at: first.at }, { seq: 7449, at: '2026-10-20T08:12:49.979Z' });
+    assert.match(at(7444).detail, /the demo was never promoted on walk-6's SHA 473f7e30/);
+    assert.match(at(6101).detail, /MS-2 round 2's walk is due \(keeper-instead landed after walk-3\)/);
+    assert.ok(at(Infinity).complete);
+    const loop = repairLoopVerdict(logOf(run5.events));
+    assert.ok(loop.pass, loop.detail);
+    assert.match(loop.detail, /MS-1: F-34 .* by headings's publication .*; walk-2 \(round 2\)/);
+  });
+});
+
+describe('the log and the files (evals/m5/log.ts, check.ts)', () => {
+  test('evals-m5.log-of: dispatches, unit publications, walks, passes, findings, tweaks, refusals and promotions from events', () => {
     const ev = (seq: number, rec: object): Event => ({ v: 1, seq, prev: null, at: '2026-10-18T00:00:00.000Z', arc: 'arc-1', ...rec }) as unknown as Event;
     const fact = (seq: number, f: object): Event => ev(seq, { type: 'fact', fact: f });
     const events = [
@@ -290,11 +382,13 @@ describe('the log and the files (evals/m5/check.ts)', () => {
       fact(11, { kind: 'milestone-passed', milestone: 'MS-1', job: 'walk-1' }),
       fact(12, { kind: 'tweak-judged', unit: 'p', decision: 'keep', reason: 'judged' }),
       fact(13, { kind: 'demo-promoted', milestone: 'MS-1', sha: SHA('1') }),
+      fact(14, { kind: 'polish-refused', proposal: 'X-2', reasons: ['no reference touched'] }),
     ];
     const log = logOf(events);
     assert.deepEqual([...log.firstDispatch], [['design', 1]]);
     assert.deepEqual(log.publications, [{ seq: 4, unit: 'design', commit: SHA('1') }]);
-    assert.deepEqual(log.walks, [{ job: 'walk-1', milestone: 'MS-1', round: 1, sha: SHA('1'), seq: 7, outcome: 'reported' }]);
+    assert.deepEqual(log.walks, [{ job: 'walk-1', milestone: 'MS-1', round: 1, sha: SHA('1'), seq: 7, outcome: 'reported', findings: ['F-1'], proposals: [], dropped: [] }]);
+    assert.deepEqual(log.refused, ['X-2']);
     assert.deepEqual(log.passed, [{ seq: 11, milestone: 'MS-1', job: 'walk-1' }]);
     assert.deepEqual(log.findings, [{ id: 'F-1', seq: 8, lens: 'walkthrough', milestone: 'MS-1', claim: 'faint', cause: 'contrast', transitions: [{ seq: 10, to: { state: 'resolved' } }] }]);
     assert.deepEqual(log.tweaks, [{ seq: 12, unit: 'p', decision: 'keep', reason: 'judged' }]);
@@ -323,8 +417,8 @@ describe('the log and the files (evals/m5/check.ts)', () => {
     assert.ok(by['host-released']!.pass, by['host-released']!.detail);
     assert.match(by['session-stopped']!.detail, /ended stalled/);
     assert.match(by['milestones-planned']!.detail, /no plan in force/);
-    assert.match(by['arc-complete']!.detail, /threw: the product has no arc ref/);
-    for (const name of ['design-first', 'node-held', 'walk-screenshots', 'plant-caught', 'plant-repaired', 'polish-bounded', 'demo-serving', 'skill-vendored', 'profile']) assert.equal(by[name]!.pass, false, name);
+    assert.match(by['milestones-settled']!.detail, /threw: the product has no run dir with a plan in force/);
+    for (const name of ['design-first', 'node-held', 'walk-screenshots', 'plant-caught', 'repair-loop', 'plant-repaired', 'polish-bounded', 'demo-serving', 'skill-vendored', 'profile']) assert.equal(by[name]!.pass, false, name);
   });
 
   test('evals-m5.check-arc-under-test: of two arcs, the first started whose first plan has the M5 shape is graded; a later shell-only arc (sorting first by name) is not', T, async () => {

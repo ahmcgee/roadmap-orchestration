@@ -504,14 +504,21 @@ node evals/m5/check.ts /var/tmp/m5
   it yourself, keep the look, the browser drive is installed, keep a demo running, add the issue templates, ...). The owner
   declines nothing the arc needs. It records the first arc's `status.demo` whenever it changes and, at the end before
   stopping the held arc, GETs the demo's URL (`where` `{type: url}`; `report.json` `demo`). Fail-fast: the first plan in
-  force (of the first arc, in start order) must have the M5 shape (`shape.ts`), else the run ends `fail-fast`. Hard
-  timeout 360 min.
+  force (of the first arc, in start order) must have the M5 shape (`shape.ts`), else the run ends `fail-fast`. Early
+  stop: M5 grades dev.13's evidence, not convergence (m1 grades completion), so at every owner poll, turn end and wait
+  slice the driver evaluates `log.ts`'s stop rule over the arc's run dir; once it holds it stops the arc and ends
+  `evidence-complete` (`report.json` `evidence`: when, and the rule's detail). The rule: every milestone passed, a
+  `demo-promoted` after the last pass and on the latest round's walked SHA, no walk or compare in flight, no walk due
+  (a landed repair or tweak of a milestone's last round below `walkRounds`, unless braked), no finding of a last round
+  unweighed or proposal unplaced, every polish unit and every unit repairing a walkthrough finding published or cut,
+  every polish unit judged or cut. Run 5 (2026-10-20) would have stopped at 08:12:49, seq 7449, about 3 h 55 min in,
+  instead of an 85-minute audit tail to `arc-completed` at 09:38. Hard timeout 360 min, a backstop.
 - `check.ts <dir>` prints one JSON line and exits non-zero on any failed criterion (its header lists them). The arc under
   test is the first arc started whose first plan in force has the M5 shape (else the first with a plan); every arc
   criterion grades it alone, so a later arc the root agent opened after it completed is not graded. The criteria:
-  isolation, session-stopped (`vision-silent` or `k-limit`, any other end failing with its reason, a usage-limit
-  `session-failed` among them; the arc under test the first started, any later arc only after it completed),
-  arc-complete, milestones-planned (a browser milestone with its
+  isolation, session-stopped (`evidence-complete`, or the session's own `vision-silent` or `k-limit`; any other end
+  failing with its reason, a usage-limit `session-failed` among them; the arc under test the first started, any later
+  arc only after it completed), milestones-settled (the stop rule holds at the end), milestones-planned (a browser milestone with its
   design unit ahead of its units; a dependent milestone, at least one of whose units descends through `after` from one
   of them: its held units; the slice and the decomposition are the root agent's, so no shell journey is required, the
   walkthrough role eval covers the shell drive), design-first (the design unit published, with its reference dirs,
@@ -519,11 +526,14 @@ node evals/m5/check.ts /var/tmp/m5
   browser one; the dependent milestone's other units are not held), walk-screenshots (every reported browser
   walk's evidence dir holds a PNG), plant-caught (`/` rendered at 320 CSS px in the devcontainer's Playwright Chromium,
   `reflow.ts`, still overflowed at the first walk's SHA, and a walkthrough finding on the browser milestone about the
-  overflow was resolved by a published unit), plant-repaired (at the completed head `/` lays out no wider than 320 px with
+  overflow was resolved by a published unit), repair-loop (on any milestone, a walkthrough finding resolved by a unit
+  that published first, then a later walk of that milestone that passed it), plant-repaired (at the arc's latest
+  integrated head, the verified ref's latest published `integration.ff`, `/` lays out no wider than 320 px with
   the planted book still listed; the book gone is for the lead to adjudicate), polish-bounded (rounds within `walkRounds`; a round's failed walks
   and a unit's compares within their brakes, two each; each polish unit not cut outside its compare judged once, `keep`
   before it published), demo-serving (the latest `demo-promoted` is what `status.demo` showed at the end, at
-  an http URL that answered and never moved), skill-vendored, no-model-ids, host-released, profile.
+  an http URL that answered and never moved), skill-vendored (at the latest integrated head), no-model-ids,
+  host-released, profile.
 
 Two criteria read pieces built in parallel with the fixture: `polish-bounded`'s `tweak-judged` (agent D, the compare
 stage) and `demo-serving`'s `demo-promoted` and `status.demo` (agent G, the demo; the frozen shapes of SCHEMAS.md
@@ -532,7 +542,8 @@ stage) and `demo-serving`'s `demo-promoted` and `status.demo` (agent G, the demo
 M5 has no scripted root agent, so it has no fake end-to-end run: `test/evals-m5.test.ts` (main tier) covers setup's
 validity (the product's tests pass, the vision, guide and config parse, the skill is vendored, the planted row is first
 and free and no seed rule wraps it), the plan shape, the log reader, and every criterion over inputs built in place (the
-reflow measurements injected), one passing and at least one failing case each; `test/serial/evals-m5-reflow.test.ts`
+reflow measurements injected), one passing and at least one failing case each, and the stop rule, on synthetic logs and
+on run 5's log trimmed to what it reads (`evals/m5/testdata/run5-log.json`); `test/serial/evals-m5-reflow.test.ts`
 renders the seed in the real browser (it overflows) and again after a wrapping commit (it does not); the walk, polish and demo machinery have their own integrated
 tests. A fake story through a scripted root (as M4a's) is deferred until the polish and demo pieces are merged.
 
@@ -541,8 +552,8 @@ Phase-0 subagents over a small curated corpus, then supervision: about $30–50.
 gate (two design units, which are risk `high` and so Opus-built, four or five builds, one reflow repair a checkpoint
 admits): about $40–70. Three to four walks (Opus medium, a browser session each, up to 90 minutes: MS-1 round 1 finds
 the plant, round 2 passes it, MS-2 once or twice) at about $8–20 each, and one or two polish proposals judged with two
-instances each at $3–8: about $35–90. The audits' lenses, checkpoints (summit) and the pack review: about $25–40. Expect
-4 to 6 hours.
+instances each at $3–8: about $35–90. The pack review, and the audits' lenses and checkpoints (summit) up to the early stop: about $15–30.
+Expect about 4 hours (run 5's evidence was complete 3 h 55 min in).
 
 ## Role evals (rung 3.5)
 
