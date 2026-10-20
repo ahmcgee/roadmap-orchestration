@@ -80,7 +80,7 @@ export function milestoneOf(data: SeedData): Milestone {
       journey(5, "Get a team's monthly total from the CLI as JSON a script can use", 'shell', `node bin/ledgerly.js report --data ${DATA}`, 3, 60),
       journey(6, 'Record an entry through the HTTP API and list it back, as another tool would', 'shell', `${ADDRESS}/api/v1`, 4, 120),
       journey(7, 'Add a team to ledgerly.conf by hand and check the file', 'shell', 'ledgerly.conf', 3, 120),
-      journey(8, 'Run the CI pipeline locally, break a test on purpose and find what to fix from its output', 'shell', 'node ci/run.js', 4, 180),
+      journey(8, 'Run the CI pipeline locally and break a test on purpose, to see the pipeline fail as CI would', 'shell', 'node ci/run.js', 4, 180),
       journey(9, 'Follow the README quickstart from a fresh copy of the repository', 'shell', 'README.md', 4, 120),
     ],
     resources: [],

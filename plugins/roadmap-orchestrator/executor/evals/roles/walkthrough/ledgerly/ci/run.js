@@ -52,6 +52,9 @@ const tail = (text, n) => text.trimEnd().split('\n').slice(-n).map((l) => `    $
 /** A path node prints (a file:// URL or an absolute path) relative to the project root, as the rest of the report is. */
 const local = (text) => text.replaceAll(`file://${process.cwd()}/`, '').replaceAll(`${process.cwd()}/`, '');
 
+/** A step's output for its failure report: its last lines, without node's own stack frames, so an error's message survives. */
+const stepOutput = (text) => tail(local(text).split('\n').filter((l) => !/^\s+at .*\bnode:/.test(l)).join('\n'), 12);
+
 /**
  * A test file that failed before any test ran (it did not load: a syntax error, a bad import): the error's message and
  * the first location node prints outside its own internals (file:line, with the source line and its caret), from the

@@ -308,7 +308,7 @@ const W12: Family = {
         "    lines.push(`${failing.length} test ${failing.length === 1 ? 'file' : 'files'} failed:`);",
         '    for (const { f, r } of failing) lines.push(`  ${f}`, failingTests(`${r.stdout}${r.stderr}`), `  rerun it locally: node --test ${f}`);',
         '  } else {',
-        '    lines.push(tail(`${result.stdout}${result.stderr}`, 12), `Rerun it locally: ${step.run}`);',
+        '    lines.push(stepOutput(`${result.stdout}${result.stderr}`), `Rerun it locally: ${step.run}`);',
         '  }',
         "  process.stdout.write(`${lines.join('\\n')}\\n`);",
       ].join('\n'),
