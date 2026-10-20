@@ -227,8 +227,8 @@ at triage stay in git history.
   before it counts. Trigger: the next fixture or family change.
 - **W12 (CI log text) is the one class boundary the walker still crosses** (dev-6 2/12 trials and holdout-4 1/6 classed
   the plant breaks/journey or contract). 78f2e74 reworded J-8, which had made "find what to fix" the journey's outcome; the
-  first dev-7 trials since (S2, 3/3) class it deviates. Trigger: it recurs in the rest of dev-7/holdout-5 or in a real
-  arc's walk; then a sharper example in the prompt's reason.
+  full re-runs since (dev-7 + dev-7b 12/12 trials, holdout-5 6/6) pass every criterion with 0 false blocks. Trigger: it
+  recurs in a real arc's walk; then a sharper example in the prompt's reason.
 - **The m5 paid run has not shown a walk-to-repair loop on a real arc.** Run 2 (/var/tmp/m5-dev13-2, 2026-10-19): the
   design unit repaired the planted 2.12:1 contrast before the first walk, the walks found one P2 the checkpoint ruled
   accepted, so no repair or polish unit ran (the loop is covered by the fake-backend integrated tests and the role evals
