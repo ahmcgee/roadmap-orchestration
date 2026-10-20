@@ -120,7 +120,7 @@ describe('unit: one unit merged first time', () => {
     git(r.d.repo, 'rev-parse', '--verify', `refs/roadmap-run/${r.ctx.plan().arc}/candidate/u1`);
   });
 
-  test('the gate read the verification checkout and every evidence dir, and nothing written names a model', () => {
+  test('the gate read its own checkout and every evidence dir, and nothing written names a model', () => {
     const [call] = gateCalls(r);
     assert.ok(call !== undefined);
     const addDirs = call.argv.flatMap((a, i) => (a === '--add-dir' ? [call.argv[i + 1]!] : []));
@@ -129,7 +129,7 @@ describe('unit: one unit merged first time', () => {
     const readable = (p: string): boolean => addDirs.some((d) => p === d || p.startsWith(`${d}/`));
     assert.ok(listed.some((a) => a.includes('/evidence/u1/') && a.endsWith('/mul') && readable(a)), `lane evidence among ${listed.join(', ')}`);
     assert.ok(listed.some((a) => a.endsWith('-evidence/build') && readable(a)), `build evidence among ${listed.join(', ')}`);
-    assert.ok(call.cwd.includes('u1.verify-'), `the gate reads the verification checkout, not ${call.cwd}`);
+    assert.ok(call.cwd.includes('u1.gate-'), `the gate runs in its own checkout (dev.13), not ${call.cwd}`);
     for (const text of [readFileSync(join(r.d.runDir, EVENTS_FILE), 'utf8'), readFileSync(join(r.d.runDir, STATE_FILE), 'utf8')]) {
       for (const model of MODEL_IDS) assert.ok(!text.includes(model), `${model} in the log or state`);
     }
@@ -341,7 +341,8 @@ async function pauseAt(r: ArcRun, name: string): Promise<void> {
 }
 
 const barrier = (name: string) => ({ type: 'barrier', name, timeoutMs: 120_000 } as const);
-const implementerCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => c.argv.includes('--permission-mode') || c.as === 'codex');
+/** The implementer's calls (dev.13: the gate, an acting judge, also runs under bypassPermissions, so its calls are left out). */
+const implementerCalls = (r: ArcRun) => readCalls(r.d.scenarioPath).filter((c) => (c.argv.includes('--permission-mode') && !isGateCall(c)) || c.as === 'codex');
 const flag = (argv: readonly string[], name: string): string | undefined => argv[argv.indexOf(name) + 1];
 /** The unit's edits reached integration as the paused session left them. */
 const mulMerged = (r: ArcRun): void => {

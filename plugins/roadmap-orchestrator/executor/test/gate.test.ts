@@ -6,9 +6,9 @@
 // gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
 // voids nothing): gate.read-surface, plan-check.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
 // context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
-// gate.large-diff-seat, gate.cluster-coverage.
+// gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, it, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -23,6 +23,10 @@ import type { JsonValue } from '../src/core/json.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath } from '../src/core/values.ts';
 import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
+import { ACTING_JUDGE_TOOLS, writeDenyRules } from '../src/backends/argv.ts';
+import { FILES_DIR } from '../src/git/evidence.ts';
+import { evidenceRoot, verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { promptFor } from '../src/prompts/index.ts';
 import { clusterCoverage } from '../src/prompts/schemas.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
@@ -121,7 +125,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
 
 test('gate.revise: the directives go to a fix round, and the next gate rules on its prior round with the delta since', T, async () => {
   const directive = 'Export mul as the default export too.';
-  const finding = { severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md' };
+  const finding = { severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md', experiments: [], debt: null };
   const premises = [
     { claim: 'mul multiplies', evidence: [{ path: 'src/mul.js', line: 2 }] },
     { claim: 'add is untouched', evidence: [{ path: 'src/add.js', line: 1 }] },
@@ -205,6 +209,51 @@ test('gate.repair-turn (dev.12): an answer off the gate\'s schema goes back once
   }
 });
 
+test('gate.acting-checkout (dev.13): the gate is an acting judge with no MCP server, in its own detached checkout of the salvage SHA, removed once its call is read with what it wrote kept as evidence', T, async () => {
+  const experiment = { 'probe-mul.mjs': "import { mul } from './src/mul.ts';\nconsole.log(mul(2, 3));\n" };
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [{ type: 'dirty', files: experiment }])] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    const gate = readCalls(d.scenarioPath).filter(isGate)[0]!;
+    const after = (flag: string): string | undefined => gate.argv[gate.argv.indexOf(flag) + 1];
+    // The acting-judge profile (argv.ts `claude-acting-judge`): a shell, bypassPermissions, project settings, no MCP server.
+    assert.equal(after('--tools'), ACTING_JUDGE_TOOLS);
+    assert.equal(after('--permission-mode'), 'bypassPermissions');
+    assert.equal(after('--setting-sources'), 'project');
+    assert.ok(gate.argv.includes('--strict-mcp-config') && !gate.argv.includes('--mcp-config'), 'no MCP server');
+    assert.ok(!gate.argv.includes('--system-prompt') && !gate.argv.includes('--no-session-persistence'), 'its text is appended; its session persists');
+    assert.equal(after('--append-system-prompt'), promptFor('gate', after('--model') as 'claude-sonnet-5-5').system, 'the module\'s system text, appended as it stands');
+    assert.deepEqual(addDirs(gate).slice(0, 2), [d.repo, d.runDir], 'the judgment read surface');
+    // Its Write, Edit and NotebookEdit are denied the repository and the run dir (Bash stays trusted to the prompt).
+    const rules = gate.argv.slice(gate.argv.indexOf('--disallowedTools') + 1, gate.argv.indexOf('--permission-mode'));
+    assert.deepEqual(rules, writeDenyRules([absPath(d.repo), absPath(d.runDir)]));
+    // Its cwd: the attempt's own checkout, detached at the salvage SHA the lanes certified, never the verification checkout.
+    const view = r.journal.view;
+    const attempt = view.unit(U1).approval!.attempt;
+    const plan = r.ctx.plan();
+    assert.equal(gate.cwd, join(plan.worktreeRoot, plan.arc, `u1.gate-${attempt}`));
+    const created = view.opsOf('worktree.create').find((i) => i.expect.path === gate.cwd)!;
+    assert.ok(created !== undefined && view.doneOf(created.op) !== null, 'code made the checkout');
+    assert.deepEqual(created.parent, { type: 'stage', unit: U1, stage: 'gate', attempt });
+    const verify = view.opsOf('worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.stage === 'lanes'
+      && i.expect.path === verificationWorktree(plan.worktreeRoot, plan.arc, U1, i.parent.attempt)).at(-1)!;
+    assert.notEqual(gate.cwd, verify.expect.path);
+    assert.deepEqual(created.expect.checkout, { type: 'detached', at: view.unit(U1).approval!.fingerprint.unitCommit });
+    assert.deepEqual(created.expect.checkout, verify.expect.checkout, 'the same commit the lanes ran at');
+    // Removed by code once the call was read, citing a snapshot that kept the experiment the gate wrote.
+    const removed = view.opsOf('worktree.remove').find((i) => i.expect.path === gate.cwd)!;
+    assert.ok(removed !== undefined && view.doneOf(removed.op) !== null && !existsSync(gate.cwd), 'the checkout is gone');
+    assert.deepEqual(removed.parent, created.parent);
+    const kept = join(evidenceRoot(absPath(d.runDir), { type: 'stage', unit: U1, stage: 'gate', attempt }), `u1.gate-${attempt}`, FILES_DIR, 'probe-mul.mjs');
+    assert.equal(readFileSync(kept, 'utf8'), experiment['probe-mul.mjs']);
+    // The transitions are unchanged: an approve, then the candidate.
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:') || o.startsWith('candidate:')), ['gate:approve', 'candidate:green']);
+  } finally {
+    r.journal.close();
+  }
+});
+
 test('gate.read-surface: the gate reads the repository and the run dir; an approve from a session refused a read is an approval, the refusal on record', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), deniedGate()] });
   const r = contextFor(d);
@@ -215,10 +264,10 @@ test('gate.read-surface: the gate reads the repository and the run dir; an appro
     const dirs = addDirs(gate);
     assert.deepEqual(dirs.slice(0, 2), [d.repo, d.runDir], 'the repository and the run dir lead the read surface');
     assert.ok(dirs.slice(2).every((x) => !x.startsWith(`${d.runDir}/`) && !x.startsWith(`${d.repo}/`)), `no dir inside them is named again: ${dirs.join(' ')}`);
-    // --system-prompt replaces Claude Code's list of working dirs, so the system text names the read surface itself.
-    const system = gate.argv[gate.argv.indexOf('--system-prompt') + 1]!;
-    assert.ok(system.endsWith(`<readable_directories>\nBesides your working directory, you and any subagent you start may read these directories and everything under them, read-only, by absolute path:\n${
-      dirs.map((x) => `- ${x}${x === d.repo ? ' (the repository)' : x === d.runDir ? ' (the executor\'s run directory: evidence, attached diffs, inputs)' : ''}`).join('\n')}\n</readable_directories>`), system.slice(-600));
+    // dev.13: the gate's text is appended to Claude Code's default prompt, which names the --add-dir dirs itself, so the
+    // executor adds no <readable_directories> list (a read-only judgment's --system-prompt does).
+    const system = gate.argv[gate.argv.indexOf('--append-system-prompt') + 1]!;
+    assert.ok(!system.includes('<readable_directories>'), system.slice(-600));
     // The refusal is on record in the call's reads.json, for audit.
     const inv = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'meter' && e.fact.subject.type === 'seat' && e.fact.subject.role === 'gate' ? [e.fact.inv] : []))[0]!;
     const reads = JSON.parse(readFileSync(join(invocationDir(absPath(d.runDir), inv), 'reads.json'), 'utf8')) as { denied: unknown[] };

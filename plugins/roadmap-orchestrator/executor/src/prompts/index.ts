@@ -11,6 +11,8 @@ import type { PromptModule, PromptModules } from './inputs.ts';
 import { PROMPT as LENS_OPUS } from './lens/claude-opus-5-5.ts';
 import { PROMPT as PACK_REVIEW_OPUS } from './packReview/claude-opus-5-5.ts';
 import { PROMPT as PLAN_CHECK_OPUS } from './planCheck/claude-opus-5-5.ts';
+import { PROMPT as POLISH_JUDGE_OPUS } from './polishJudge/claude-opus-5-5.ts';
+import { PROMPT as WALKTHROUGH_OPUS } from './walkthrough/claude-opus-5-5.ts';
 
 /** Every Codex judgment triple is unsupported in M1 (R21); layers.ts reports it as `codex-judgment`. */
 const CODEX_JUDGMENT = 'no read-only Codex judgment profile exists yet (R21)';
@@ -58,6 +60,10 @@ const HAIKU_FINISH = [
 function haiku<M extends Readonly<{ system: string }>>(opus: M): { readonly type: 'prompt'; readonly prompt: M } {
   return { type: 'prompt', prompt: { ...opus, system: `${opus.system}\n\n${HAIKU_FINISH}` } };
 }
+
+/** dev.13: why a walk role has no prompt on a model. */
+const WALK_OPUS_ONLY = 'the walk roles have Opus 5.5 modules only: the Sonnet and Haiku guides carry no design guidance (dev.13 plan §6)';
+const WALK_CODEX = 'Codex has no walkthrough prompt and no acting-judge profile';
 
 /** Fable 5.1 holds no built-in seat (a repo rebind reaches it) and reads each judgment role's Opus module unchanged. */
 const fableJudgment = (module: string) => ({
@@ -164,6 +170,38 @@ export const PROMPTS: PromptTable<PromptModules> = {
     'claude-haiku-5-5': haiku(FLOW_OPUS),
     'gpt-5.6-luna': { type: 'unsupported', reason: CODEX_JUDGMENT },
     'gpt-5.6-sol': { type: 'unsupported', reason: CODEX_JUDGMENT },
+  },
+  // dev.13: the walk roles, on frontier (Opus 5.5). Only Opus modules are written (plan §6): the Sonnet and Haiku guides
+  // carry no design guidance. A role's Fable row becomes a dated `inherits` once its Opus module is written and
+  // reviewed against the Fable guide. Codex has no walkthrough prompt, so `unsupportedSeats` refuses a Codex rebind.
+  walkthrough: {
+    'claude-opus-5-5': { type: 'prompt', prompt: WALKTHROUGH_OPUS },
+    // Fable reads the Opus walkthrough module unchanged: what its guide asks of a long autonomous task (finish the whole
+    // task, check the last paragraph, no stop to ask) is the module's <working_unattended> and <how_your_session_ends>, and
+    // its vision advice (crop and zoom tools) is the module's <seeing>.
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-10-18: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 walkthrough prompt (unattended to the final report, crops and zoom for dense screens, the rubric lenses, the classes and polish units); no Fable-specific change needed, and no built-in seat routes Fable',
+    },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: WALK_OPUS_ONLY },
+    'claude-haiku-5-5': { type: 'unsupported', reason: WALK_OPUS_ONLY },
+    'gpt-5.6-luna': { type: 'unsupported', reason: WALK_CODEX },
+    'gpt-5.6-sol': { type: 'unsupported', reason: WALK_CODEX },
+  },
+  polishJudge: {
+    'claude-opus-5-5': { type: 'prompt', prompt: POLISH_JUDGE_OPUS },
+    // Fable reads the Opus polish judge module unchanged, as it does the walkthrough's: unattended to the final answer, the
+    // last-paragraph check, crops and zoom for the side-by-side captures.
+    'claude-fable-5-1': {
+      type: 'inherits',
+      from: 'claude-opus-5-5',
+      reviewed: '2026-10-18: Prompting Claude Fable 5.1 (Anthropic) checked against the Opus 5.5 polish judge prompt (unattended to the final decision, side-by-side captures with crops and zoom, keep only on an improvement on the proposal\'s terms and the reference); no Fable-specific change needed, and no built-in seat routes Fable',
+    },
+    'claude-sonnet-5-5': { type: 'unsupported', reason: WALK_OPUS_ONLY },
+    'claude-haiku-5-5': { type: 'unsupported', reason: WALK_OPUS_ONLY },
+    'gpt-5.6-luna': { type: 'unsupported', reason: WALK_CODEX },
+    'gpt-5.6-sol': { type: 'unsupported', reason: WALK_CODEX },
   },
 };
 

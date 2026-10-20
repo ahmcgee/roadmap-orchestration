@@ -8,7 +8,9 @@
 //      once at its start: a crash right after a decision leaves no checkpoint due), and raise `respec-second` for a
 //      design park on a lineage the checkpoint already respecified (OR-Q1: the second goes to the owner).
 //   1. A running job (captured, undecided) resumes from its recorded inputs. Otherwise the first due trigger, parks
-//      first (they hold units), then completed audits in order. A trigger is due while it has no job, or its latest job
+//      first (they hold units), then (dev.13) milestone walks that ended as a round with a finding no checkpoint has
+//      weighed (`unweighedWalkFindings`, src/walk/milestones.ts: a walk that opened nothing new needs no checkpoint, as
+//      an audit's `nothingNew`; the walk's evidence dir joins the session's readable dirs), then completed audits in order. A trigger is due while it has no job, or its latest job
 //      was rejected (`stale` or `evidence`: re-evaluated whole; `busy` (M4a rev 3, C5): once every open attempt it named
 //      has closed, so no paid call is made while a unit it changes is mid-stage; `invalid`: once, the second goes to the
 //      owner; whatever the reason, the next job's prompt carries every rejected job of its trigger with its reason and
@@ -114,7 +116,8 @@ import { renderSpec } from '../spec/render.ts';
 import { nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, rewitnessP1s, withCpu } from './audit.ts';
-import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, type Refused, activate, effectiveOps, raiseOnce, recordedAdmits, settleDecided, vectorAt } from './bundle.ts';
+import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, type Refused, activate, effectiveOps, raiseOnce, recordedAdmits, settleDecided, tailWorldOf, vectorAt } from './bundle.ts';
+import { brakeOf } from './tail.ts';
 import { opportunityClauses } from './admits.ts';
 import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
@@ -124,6 +127,8 @@ import { captureCheckpointIssues, issueReuse, issuesInputOf, unseenIssues } from
 import { keyOf, reuse } from './observe.ts';
 import { type ArcLaneDef, type BusyAttempt, type CheckpointTrigger, type ObligationDef, type Obligations, type Vision, observationKeyText, parseObligations, parseRulingSidecar, parseVision } from './types.ts';
 import { visionCoverage } from './vision.ts';
+import { jobEvidenceRoot } from '../git/snapshot.ts';
+import { type WalkRecord, unweighedWalkFindings, walksOf } from '../walk/milestones.ts';
 
 export type { CheckpointContext } from './bundle.ts';
 
@@ -323,7 +328,15 @@ function dueAgain(ctx: CheckpointContext, last: CheckpointState | undefined): bo
   return approved(ctx, last);
 }
 
-/** The first due trigger, parks first; null when none is. */
+/**
+ * dev.13 (agent D): the walk triggers: each milestone walk that ended as a round (`reported` or `bring-up-failed`), in log
+ * order, with the seq of its end.
+ */
+function walkTriggers(ctx: CheckpointContext): readonly Readonly<{ walk: WalkRecord; at: number }>[] {
+  return walksOf(ctx.journal.view).flatMap((w) => (w.ended !== null && w.ended.outcome !== 'abandoned' ? [{ walk: w, at: w.ended.seq }] : []));
+}
+
+/** The first due trigger, parks first, then walks (their P1s hold a milestone's descendants), then audits; null when none is. */
 function dueTrigger(ctx: CheckpointContext): Due | null {
   const fold = ctx.journal.view.holistic();
   const latest = (t: CheckpointTrigger): CheckpointState | undefined => fold.checkpoints.filter((c) => triggerKey(c.inputs.trigger) === triggerKey(t)).at(-1);
@@ -332,7 +345,15 @@ function dueTrigger(ctx: CheckpointContext): Due | null {
   const skipped = new Set(fold.checkpointSkips.map((s) => s.audit));
   const audits = fold.audits.flatMap((a) => (a.ended?.outcome === 'completed' && !skipped.has(a.started.job)
     ? [{ trigger: { type: 'audit', job: a.started.job } as CheckpointTrigger, generation: a.started.generation, at: a.ended.seq }] : []));
-  for (const { at, ...t } of [...parks, ...audits]) {
+  // dev.13: a walk's trigger runs only while a finding of the walk is unweighed (an owner-approved request still enacts):
+  // a walk that opened nothing, or only findings a checkpoint already weighed, has nothing new (as `nothingNew` for an audit).
+  const walks = walkTriggers(ctx).flatMap(({ walk, at }) => {
+    const trigger = { type: 'walk', job: walk.job } as CheckpointTrigger;
+    const last = latest(trigger);
+    const needed = unweighedWalkFindings(ctx.journal.view, walk).length > 0 || (last !== undefined && approved(ctx, last));
+    return needed ? [{ trigger, generation: latestGeneration(ctx), at }] : [];
+  });
+  for (const { at, ...t } of [...parks, ...walks, ...audits]) {
     const last = latest(t.trigger);
     if (dueAgain(ctx, last)) return { ...t, prev: last ?? null, since: last?.inputs.seq ?? at };
   }
@@ -539,6 +560,11 @@ function findingViews(ctx: CheckpointContext, ids: readonly Captured['findings']
  */
 function triggerView(ctx: CheckpointContext, t: CheckpointTrigger): TriggerView {
   if (t.type === 'audit') return t;
+  if (t.type === 'walk') {
+    const w = walksOf(ctx.journal.view).find((x) => x.job === t.job);
+    if (w?.ended == null) throw new Error(`checkpoint trigger ${t.job}: no ended walk`);
+    return { ...t, milestone: w.milestone, round: w.round, findings: w.ended.findings, evidenceDir: jobEvidenceRoot(ctx.runDir, t.job) };
+  }
   const view = ctx.journal.view;
   const u = view.unit(t.unit);
   const f = u.decided;
@@ -663,6 +689,21 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     nextRulingId: nextRulingId(rulings),
     issuesUnchangedSince: reuse?.since ?? null,
     diagnosis: parkDiagnosis(ctx, s.trigger),
+    brakes: brakesShown(ctx, s.findings),
+  };
+}
+
+/** The brakes as the checkpoint is shown them (dev.13, src/holistic/tail.ts): the settled point, each shown finding below a brake. */
+function brakesShown(ctx: CheckpointContext, ids: readonly Captured['findings'][number][]): CheckpointInputs['brakes'] {
+  const world = tailWorldOf(ctx);
+  const fold = ctx.journal.view.holistic().findings;
+  return {
+    settled: world.settled,
+    findings: canonicalIds(ids).flatMap((id) => {
+      const f = fold.find((x) => x.id === id);
+      const brake = f === undefined || !isActive(f) ? null : brakeOf(world, f);
+      return brake === null ? [] : [{ finding: id, brake }];
+    }),
   };
 }
 
@@ -813,7 +854,7 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     const rendered = prompt.render(inputs);
     const called = await withCpu(ctx, s.job, () => supersedable(ctx, s, () => callArcRole(ctx, {
       job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered, schema: checkpointSchemaFor(checkpointIdsOf(r.obligations)), cwd: checkout,
-      evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target)],
+      evidenceDirs: [ledgerDir(ctx), ...targetDirs(inputs.target), ...walkEvidenceOf(ctx, s.trigger)],
       deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: freshJudgmentSession(),
     })));
     await removeCheckout(ctx, s.job, checkout);
@@ -822,6 +863,13 @@ async function ask(ctx: CheckpointContext, s: Captured): Promise<Asked> {
     return read(ctx, s.job, called, attempt, false);
   }
 }
+
+/**
+ * dev.13 (agent D): a walk trigger's evidence dir, which the checkpoint reads (its screenshots render under Read); none for
+ * another trigger. It lies under the run dir today, which every judgment's read surface already holds (`judgmentReadDirs`
+ * then adds no `--add-dir` for it); the prompt names it.
+ */
+const walkEvidenceOf = (ctx: CheckpointContext, t: CheckpointTrigger): readonly AbsPath[] => (t.type === 'walk' ? [jobEvidenceRoot(ctx.runDir, t.job)] : []);
 
 /**
  * 2026-10-15 (arc feedback #3; dev.12 the one judgment repair turn, `repairTurnOf`): the repair turn of the answer call
@@ -847,7 +895,7 @@ async function repairCall(ctx: CheckpointContext, s: Captured, inv: InvocationId
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${s.job}`, jobParent(s.job), { path: checkout, checkout: { type: 'detached', at: s.headSha } });
     const called = await withCpu(ctx, s.job, () => supersedable(ctx, s, () => callArcRole(ctx, {
       job: s.job, role: 'checkpoint', attempt, system: prompt.system, rendered: judgmentRepairDirective(reasons), schema: turn.schema,
-      cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(architecture(ctx, s.headSha))],
+      cwd: checkout, evidenceDirs: [ledgerDir(ctx), ...targetDirs(architecture(ctx, s.headSha)), ...walkEvidenceOf(ctx, s.trigger)],
       deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)), session: turn.session,
     })));
     await removeCheckout(ctx, s.job, checkout);

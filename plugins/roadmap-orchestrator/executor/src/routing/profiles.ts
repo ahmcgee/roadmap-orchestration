@@ -20,7 +20,8 @@ const GATE: { readonly [S in JudgmentSeat]: ModelClass } = { low: 'efficient', m
  * The efficient class builds low/med, frontier builds high. The arc roles: the lenses (M3) and the flow role (M4b) on
  * efficient (owner ruling 2026-10-15), the pack review (M4a, OR-Q16) on frontier, the checkpoint (M3) on summit; each is
  * in force only in the arcs its `ArcScope` names (layers.ts: lens and checkpoint in a holistic arc, the pack review in a
- * corpus arc only, LR-0a-1; flow in every arc of the `m4b` role set).
+ * corpus arc only, LR-0a-1; flow in every arc of the `m4b` role set). dev.13 (R4): the walkthrough and the polish judge on
+ * frontier (Opus 5.5 medium), in force only in an arc whose plan has milestones.
  */
 export const BUILTIN_SEATS: ClassTable = {
   planCheck: PLAN_CHECK,
@@ -30,4 +31,6 @@ export const BUILTIN_SEATS: ClassTable = {
   checkpoint: { arc: 'summit' },
   packReview: { arc: 'frontier' },
   flow: { arc: 'efficient' },
+  walkthrough: { arc: 'frontier' },
+  polishJudge: { arc: 'frontier' },
 };

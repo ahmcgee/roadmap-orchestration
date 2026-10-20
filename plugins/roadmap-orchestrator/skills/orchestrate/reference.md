@@ -53,8 +53,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke,
   advisories, numbered}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
-  files outside a unit's scope that still name what its spec `removes`; and `derived-unregenerated{outputs, units}`: a
-  `derived` entry with no `regenerate` whose outputs those units take in. They never refuse. A revision
+  files outside a unit's scope that still name what its spec `removes`; `derived-unregenerated{outputs, units}`: a
+  `derived` entry with no `regenerate` whose outputs those units take in; and `milestone-unit-before-design{milestone,
+  unit, design}`: a milestone unit that does not run after its milestone's design unit. They never refuse. A revision
   that changes the plan or the vision cancels a checkpoint deciding on the earlier one (rejected `stale`); its trigger
   is decided again on your revision.
 - `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
@@ -80,6 +81,11 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   for a single lens call is reviewed in chunks by publication within that audit, so no range needs a smaller audit.
 - `roadmap close-admissions`: latch `draining`; checkpoint admissions become requests to you; an `apply` adding a
   unit reopens.
+- `roadmap demo up|down|hold|release`: the owner's act on the demo (milestone arcs; queued, no scope). `hold` freezes
+  promotion, so the demo keeps its version and data; `release` resumes it and promotes the latest settled milestone at
+  once when it is newer; `down` stops the instance (its checkout and ports are kept); `up` starts it again, and retries a
+  version whose bring-up failed. Rejected: `hold` while held, `release` while not held, `down` while down. Acts apply
+  through the arc's executor: with no live executor they wait in the queue for its next start.
 - `roadmap gc --repo <path> [--keep <K>] [--dry-run]`: not queued. Under the host lock, prunes sealed arcs (raw
   evidence; run dirs beyond K, which the ref restores). Prints its report, or `{refused}` with exit 75 or 78.
 - `roadmap --version`
@@ -89,11 +95,14 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 Not queued, no host lock, no run needed. Run them any time, a running arc included.
 
 - `roadmap phase0 check --repo <path> --plan <plan.json>`: read-only, the rows a fresh `start` runs on its inputs:
-  the `.roadmap/` layout, `plan-invalid`, routing, lanes, `holistic-needs-corpus`, and every corpus, Phase-0,
+  the `.roadmap/` layout, `plan-invalid`, routing, lanes, `holistic-needs-corpus`, `milestones-need-holistic`,
+  `walk-tools-missing`, and every corpus, Phase-0,
   vision, issue-policy, chain and `tree-uncommitted` row (not the host, residue or smoke rows). Prints `{rows, sliceCandidates, advisories}`; exit 0 with no rows, else 78.
   `advisories` never refuse: `scope-references-outside{unit, removed, referrers}`, the files outside a unit's scope that
   still name something its spec `removes` (searched at the integration tip, or the baseline before it exists), and
-  `derived-unregenerated{outputs, units}`, a `derived` entry declaring no `regenerate` that a live unit takes in.
+  `derived-unregenerated{outputs, units}`, a `derived` entry declaring no `regenerate` that a live unit takes in, and
+  `milestone-unit-before-design{milestone, unit, design}`, a live milestone unit that does not run after (transitively)
+  its milestone's design unit.
   `sliceCandidates`: the active world clauses whose census rules are not all held on the baseline.
 - `roadmap phase0 check --repo <path> --from-ref <arc>`: the same over every input the arc's `refs/roadmap/<arc>`
   recorded, never the live files; only the corpus, census, obligation, debt, question, amendment, intake and vision
@@ -162,8 +171,10 @@ working draft of the next vision) and `notes.md` (work for later, deferred rulin
 registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the executor; and `config.json`,
 `vision.json`, `corpus.md`, yours, committed. Anything else is a 0.x layout (`legacy-roadmap-dir`).
 
-**`.roadmap/config.json`**: `{routing?: {profile?, seats?, classes?}, chain?: {k}, flow?: {givens: [{lever, note}]}}`;
-unknown keys refused; read at `start`. `flow.givens` are the owner's repo givens, never yours to add. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
+**`.roadmap/config.json`**: `{routing?: {profile?, seats?, classes?}, chain?: {k}, flow?: {givens: [{lever, note}]},
+walkthrough?: {mcp: {<name>: {command, args?, env?}}}}`; unknown keys refused; read at `start`. `walkthrough.mcp` names
+the MCP servers a walkthrough session gets (and only those), with `{evidence}` and `{viewport}` substituted in `args` and
+`env`; absent, no browser drive, so a `browser` journey is refused `walk-tools-missing`. `flow.givens` are the owner's repo givens, never yours to add. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
 effort}` and is the only place a model is named (ids in `executor/src/routing/models.ts`). A rebind applies at every seat
 that names the class, judgment seats included: a Codex triple there is refused `unsupported-routing{codex-judgment}`, so
 move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `efficient`
@@ -171,6 +182,22 @@ builds low and med, plan-checks low and med, gates low and med, and runs the len
 high, gates high, and runs the pack review; `summit` holds both escalation seats and the checkpoint. A class binds a build
 model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
 `economy` is judgment-only and no built-in seat names it (reach it through `routing.seats`, a plan or `route`): no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`.
+
+**`walkthrough.mcp`** names the stdio MCP servers a walk session gets, exactly these (`--strict-mcp-config`); the
+environment provides them, the executor ships no browser. Code substitutes `{evidence}` (the session's evidence dir) and
+`{viewport}` (`1280x800`) in `args` and `env` values. Without it a milestone with a `browser` journey is refused
+`walk-tools-missing{mcp-unconfigured}`; `phase0 check` and `start` start each server and do the MCP handshake
+(`mcp-unconnected{server, detail}` when it fails). The expected server is Playwright MCP:
+
+```json
+{"walkthrough": {"mcp": {"playwright": {"command": "playwright-mcp", "args": ["--headless", "--isolated",
+  "--browser", "chromium", "--output-dir", "{evidence}", "--viewport-size", "{viewport}"]}}}}
+```
+
+It defaults to the Chrome channel, so pass `--browser chromium` where only Playwright's Chromium is installed (`npx
+playwright install chromium`). It refuses `file:` URLs, so the bring-up serves pages over HTTP. A screenshot without a
+`filename` lands in `--output-dir`; a relative `filename` resolves against the session's cwd (the checkout), so a named
+one is absolute (checked on 0.0.83). Install it in the project's devcontainer, pinned (`@playwright/mcp`).
 
 **Run dir** `$(git rev-parse --path-format=absolute --git-common-dir)/roadmap-runtime/<arc>/`. Read, never write:
 
@@ -308,6 +335,12 @@ waits on you), `blocked` (work remains and nothing can move), `complete`, `refus
     for a cpu half its time or more) and whether the host reports it (Linux schedstat).
   - `next{running, due, cooldownUntil, bypass}`: the flow run in progress, the triggers due now (`host-pressure`: a unit
     held for host pressure since the last run), the cooldown's end and whether a request may still bypass it.
+- Milestone arcs: `demo` (null before the first promotion): `{milestone, sha, held, up, since{milestones, tweaks, fixes},
+  roughEdges, where, serving, failed}`. `where` is `{type: url, url, ports}` (the first serve entry's address and every
+  stable port) or `{type: path, path}` (`<worktreeRoot>/demo/current/bin` for a product with nothing long-lived), null until
+  the host's instance runs this arc's version. `serving` is the SHA running now (null while down or starting); `failed`
+  `{sha, log}` the latest version that did not come up since the promotion (the old one kept serving; its walkthrough P1
+  is in `findings`). `since` is against the promotion before; `roughEdges` the open walkthrough P2s.
 - Every arc: `knownDefects[{id, match, fixUnit, fixMerged, holds}]` (the units each holds at prepare now);
   `checkpointWaits[{job, waitingFor, line}]`, a checkpoint rejected `busy` waiting for "<unit> <stage> boundary".
 - Corpus arcs (empty otherwise): `admits[{seq, job, index, unit, class: repair|oversight|opportunity, clauses,
@@ -338,6 +371,9 @@ the first 16 hex of its sha256, so any change (forge state included) is a new id
   (T/I/OE, diagnostic), and in the delta `verdicts`, `rulerChanges` (command revisions after the first admission that
   touched a ruler path), `hostAdvice` (`flow-host` proposals), and `dropped` (a lever the previous arc applied, with no
   worse verdict, that this arc's plan no longer carries). The Markdown's Flow section.
+
+- `arcs[].demo` (null before the arc's first promotion): `{milestone, sha, held, up, since, roughEdges}` at the ref, the
+  Markdown's Demo section. Where it runs is in `status.demo.where` only.
 
 The brief reads only the verified snapshot refs: an arc joins it with its first snapshot (its first fast-forward
 or docs publication), and anything not yet published to the ref is not in it.
@@ -380,6 +416,8 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 | `undispositioned-residue` | a residue from earlier work | `roadmap sweep`, or answer its needs-user |
 | `previous-arc-unreconciled`, `recovery-holder-dead`, `owner-mismatch`, `log-corrupt`, `containment-mode-changed` | host-level | read `status` and the needs-user; never clear host files by hand |
 | `holistic-needs-corpus` | a fresh holistic plan names `architectureDoc` | make it a corpus arc |
+| `milestones-need-holistic` | the plan has `milestones` but no `holistic` (also an `apply` adding them) | milestones need the holistic layer: make it a holistic (corpus) arc, or drop the milestones |
+| `walk-tools-missing{milestone, problem}` | `program{step, argv0}`: a bring-up command's program is not installed (`step` `setup[i]`, `serve.<name>`, `seed[i]`); `mcp-unconfigured`: a `browser` journey and no `walkthrough.mcp`; `mcp-unconnected{server, detail}`: the server did not start or connect | install it in the project's devcontainer; configure and commit `walkthrough.mcp` (SKILL.md "Bootstrap", walk tools) |
 | `vision-unconfirmed{ref, expected, actual}` | `.roadmap/vision.json` unconfirmed, or its `corpus:` hash differs from the pinned vision document (`actual` null: no such pinned file) | run the `vision` skill; commit; re-pin |
 | `corpus-invalid{problems}` | `pin-drift`, `rule-reused{id}`, `rule-retired-reappears{id}`, `rules-in-vision`, `guide-missing`, `source-unreadable{detail}`, `source-remote-mismatch`, `scope-overlaps-corpus{unit}`, `contract-overlaps-corpus{path}` | re-pin after any corpus change; a new meaning takes a new id; no rules block in the vision document; scopes and contracts stay off corpus files |
 | `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `intake-missing{issue}`, `intake-unknown{issue}`, `intake-duplicate{issue}`, `capture-missing`, `capture-foreign{expected, actual}`, `question-reused{id}`, `answer-unapplied{question}` (a fresh start: a recorded owner answer the record does not mark
@@ -396,8 +434,11 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 lineage merged or cut, or the apply cuts a fixer an entry still names), `known-defect-lane` (no spec in force declares
 the lane) and `known-defect-cycle` (the `after` edges plus the holds form a cycle, named). A re-entry whose scope
 leaves its lineage's envelope is refused unless its spec cites an active ruling for it naming exactly the added
-patterns. A re-entry the apply adds is refused without `fixes` (once its lineage recorded a failure) or with one that names no failure of its lineage (the
-refusal lists the lineage's failures); a re-entry that changes nothing the cited failure ran under is accepted. Priority, known-defect and plan-check-shape edits drain nothing.
+patterns. Milestones change only by `apply` (`milestones`, draining nothing), refused when the apply removes a
+milestone a walk started on, edits one whose walk is running, changes a walked milestone's `units` or `design`, adds a
+milestone (or changes its units) whose units have all merged, or leaves a cut unit in a milestone's `units` (this last
+on every revision, a checkpoint's cut included). A re-entry the apply adds is refused without `fixes` (once its lineage recorded a failure) or with one that names no failure of its lineage (the
+refusal lists the lineage's failures); a re-entry that changes nothing the cited failure ran under is accepted. Priority, known-defect, plan-check-shape and milestones edits drain nothing.
 
 ## Needs-user reasons
 
@@ -459,3 +500,6 @@ Blocking unless noted. Read the item file before acting.
   ("Regenerate checks").
 - "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,
   proofs, verdicts, givens and the flow facts.
+- "dev.13: milestone walkthroughs and design units": `milestones` (design, references, bring-up, journeys),
+  `limits.walkRounds`, polish units, the `experience` vision clause, the walk facts and findings, the walkthrough MCP
+  config, the Phase-0 rows and advisories, the demo.

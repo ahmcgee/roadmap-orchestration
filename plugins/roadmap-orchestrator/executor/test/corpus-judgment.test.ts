@@ -39,14 +39,20 @@ import { DEBT_BANK, crashCells } from './matrix.ts';
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U1 = unitId('u1');
 
-const note = (text: string) => ({ severity: 'note', path: null, text, contractRef: null });
+const note = (text: string, drag: string | null) => ({ severity: 'note', path: null, text, contractRef: null, experiments: [], debt: drag === null ? null : { drag } });
 const NOTE = 'Rename mul to multiply once the API settles.';
+const DRAG = 'Every later caller is written against the old name and must be renamed with it.';
+/** What the note banks (dev.13): its text, then its drag. */
+const NOTE_DEBT = `${NOTE} Drag: ${DRAG}`;
+/** A status remark: recorded in the gate answer, never debt (dev.13). */
+const REMARK = 'The earlier finding about the missing export is resolved.';
 const PRE = 'add() drops a trailing zero; the base has the same code, so it predates this unit.';
 /**
- * The approving gate's findings (an approve carries no blocking one): a note (banked), a blank note (nothing), the note
- * again up to whitespace (deduped by key), and (dev.12 round 2) a pre-existing defect, banked as a note is.
+ * The approving gate's findings (an approve carries no blocking one): a note with its drag (banked), a blank note
+ * (nothing), the note again up to whitespace (deduped by key), (dev.13) a status remark whose debt is null (recorded,
+ * never banked), and (dev.12 round 2) a pre-existing defect, banked whatever its debt.
  */
-const FINDINGS = [note(NOTE), note('   '), note(`  Rename  mul to multiply\nonce the API settles.`), { ...note(PRE), severity: 'pre-existing' }];
+const FINDINGS = [note(NOTE, DRAG), note('   ', DRAG), note(`  Rename  mul to multiply\nonce the API settles.`, ` ${DRAG}`), note(REMARK, null), { ...note(PRE, null), severity: 'pre-existing' }];
 
 /** The ledger the baseline publishes: B-1 open, kept by this arc's Phase 0. */
 const BASELINE_DEBT: DebtLedger = {
@@ -87,7 +93,7 @@ function expectedLedger(r: ArcRun): DebtLedger {
     schema: DEBT_SCHEMA,
     items: [
       { ...BASELINE_DEBT.items[0]!, history: [{ arc: arcId(r.d.arc), disposition: { type: 'keep', reason: 'not this arc' } }] },
-      { id: 'B-2' as never, originArc: arcId(r.d.arc), bankReason: 'gate-note', what: NOTE, unit: U1, key: debtKey({ unit: U1, bankReason: 'gate-note', what: NOTE }), history: [], state: 'open' },
+      { id: 'B-2' as never, originArc: arcId(r.d.arc), bankReason: 'gate-note', what: NOTE_DEBT, unit: U1, key: debtKey({ unit: U1, bankReason: 'gate-note', what: NOTE_DEBT }), history: [], state: 'open' },
       { id: 'B-3' as never, originArc: arcId(r.d.arc), bankReason: 'gate-note', what: PRE, unit: U1, key: debtKey({ unit: U1, bankReason: 'gate-note', what: PRE }), history: [], state: 'open' },
     ],
   };
@@ -142,15 +148,15 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     assert.deepEqual(fp.contractRevs.map((c) => c.path), ['contracts/api.md'], 'the cited contract only: a corpus arc has no target document');
   });
 
-  it('gate.debt-banked: the approving answer\'s note and pre-existing finding are banked once after the approval, continuing the baseline\'s ids; a blank note never, a repeat deduped', () => {
+  it('gate.debt-banked: the approving answer\'s note with its drag and pre-existing finding are banked once after the approval, continuing the baseline\'s ids; a blank note never, a repeat deduped, a note without debt never (dev.13)', () => {
     const attempt = r.journal.view.unit(U1).approval!.attempt;
     const debt = r.journal.view.holistic().debt;
     assert.deepEqual(debt.map(({ seq: _seq, ...d }) => d), [{
-      kind: 'debt-banked', id: 'B-2', bankReason: 'gate-note', what: NOTE, key: debtKey({ unit: U1, bankReason: 'gate-note', what: NOTE }),
+      kind: 'debt-banked', id: 'B-2', bankReason: 'gate-note', what: NOTE_DEBT, key: debtKey({ unit: U1, bankReason: 'gate-note', what: NOTE_DEBT }),
       source: { type: 'gate', unit: U1, attempt, index: 0 },
     }, {
       kind: 'debt-banked', id: 'B-3', bankReason: 'gate-note', what: PRE, key: debtKey({ unit: U1, bankReason: 'gate-note', what: PRE }),
-      source: { type: 'gate', unit: U1, attempt, index: 3 },
+      source: { type: 'gate', unit: U1, attempt, index: 4 },
     }]);
     const log = readJournal(absPath(a.d.runDir), arcId(a.d.arc)).events;
     const seqOf = (kind: string): number => log.find((e) => e.type === 'fact' && e.fact.kind === kind)!.seq;
@@ -272,7 +278,7 @@ describe(`matrix row ${DEBT_BANK}`, () => {
       assert.deepEqual(now.approvals, killed.approvals, 'the approval is kept, not recorded twice');
       assert.equal(now.gates, 1);
       assert.deepEqual(now.debt.map((f) => (f.kind === 'debt-banked' ? [f.id, f.source] : null)), [
-        ['B-2', { type: 'gate', unit: 'u1', attempt: killed.approvals[0], index: 0 }], ['B-3', { type: 'gate', unit: 'u1', attempt: killed.approvals[0], index: 3 }],
+        ['B-2', { type: 'gate', unit: 'u1', attempt: killed.approvals[0], index: 0 }], ['B-3', { type: 'gate', unit: 'u1', attempt: killed.approvals[0], index: 4 }],
       ]);
       assert.equal(readCalls(a.d.scenarioPath).filter(isGateCall).length, 1, 'the recorded gate call is consumed, never asked again');
     });

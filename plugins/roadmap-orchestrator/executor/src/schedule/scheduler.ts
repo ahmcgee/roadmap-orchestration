@@ -50,8 +50,11 @@
 // The holistic layer (M3; only while the plan in force names a vision, A5). One holistic job runs at a time, in
 // this order of preference: in a corpus arc before its first admission, the pack review (`runPackReview`, M4a OR-Q16,
 // R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
-// (`runCheckpoint`, B6) while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running
-// (one audit at a time, its clock `processClock`). A job that waits on a condition a command changes (skipped for a
+// (`runCheckpoint`, B6) while one is due or running; (dev.13) the milestone walk (`runWalk`, src/walk/walk.ts) while one is
+// due or running; (dev.13, agent D) the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
+// applied proposals are unsettled, and a polish unit's compare or a dropped tweak's cut (`runCompare`, src/walk/compare.ts)
+// while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
+// `processClock`). A job that waits on a condition a command changes (skipped for a
 // parked backend or a paused arc, an interrupted call, nothing due) is not asked again for HOLISTIC_RETRY_MS. One whose
 // lane gave no verdict is retried on the retryable-park backoff (`noVerdictDelayMs`: 1, 2, 4, 8, 16, then every 30
 // minutes) and, once its episode is PARK_ESCALATE_MS old, raises one non-blocking `park-escalated` parented by the job
@@ -64,6 +67,9 @@
 // the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a
 // holistic job runs, and no holistic job starts while it runs. While a proposal is pending its apply, new candidates
 // wait (`flowApply`). Right before `arc-completed`, the verdicts the completion closes and the compact flow series.
+// dev.13, the demo (src/demo/promote.ts): each iteration of an arc with milestones journals the demo failures the host
+// record lists, promotes the latest settled milestone (unless held) and rewrites the keeper's desired file; right before
+// `arc-completed`, the final tip is promoted (`promoteFinal`).
 // M4b rev 3: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
 // a restart starts it fresh), which admission reads to release a host-pressure hold (`AdmitInput.pressure`,
 // src/schedule/ready.ts) and a flow run's inputs bind as the host's cpu wait now (`FlowTrackInput.hostPressure`).
@@ -129,17 +135,22 @@ import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.t
 import { type CheckpointContext, type DesignParkRoute, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
 import { beforeCompletion, flowApplyHeld, flowOn, runFlowTrack } from '../flow/track.ts';
+import { demoTicker, promoteFinal, writeDesired } from '../demo/promote.ts';
 import { PressureTicks, hostPressure, readHostCpu } from '../host/pressure.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
 import { isActive, raiseFindingItems } from '../holistic/findings.ts';
+import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
+import { applyPolish, polishPending } from '../walk/polish.ts';
+import { comparePending, runCompare } from '../walk/compare.ts';
+import { walksPending } from '../walk/milestones.ts';
 import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
 import { type Observation, type ObservationStore, keyOf, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import type { RoutingBase } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
-import { type PlanM1, type PlanUnit, lensSetOf } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, hasMilestones, lensSetOf } from '../input/plan.ts';
 import { type BlockingItem, blockingItems, holdsUnit, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue, trippedTargets } from '../park/schedule.ts';
@@ -261,7 +272,7 @@ type Task = {
 /** Invocation purposes a pause kills among a paused unit's spawns (and, under `pause --all`, a flow proof's runs: M4b). */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
 /** Invocation purposes a stop kills (lens, checkpoint and flow calls and flow proofs included; never a docs publication's lanes). */
-const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof'];
+const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof', 'bring-up'];
 
 /** A holistic job that made no progress is asked again only this long after. */
 export const HOLISTIC_RETRY_MS = 5 * POLL_MS;
@@ -412,7 +423,7 @@ const CLOSE_OUT_BLOCKERS = ['generation-not-quiescent', 'close-out', 'obligation
 /** Why a holistic arc is not `complete` now: each condition of §2.10 that fails, in this order. */
 export const COMPLETION_BLOCKERS = [
   'units-open', 'blocking-items', 'pending-commands', 'residues', 'baseline-owed', 'audit-pending', 'coverage-outstanding', 'audit-owed',
-  'checkpoint-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+  'checkpoint-pending', 'walk-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
 ] as const;
 export type CompletionBlocker = (typeof COMPLETION_BLOCKERS)[number];
 
@@ -527,6 +538,8 @@ export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocki
   if (coverageOf(fold, c.base, lensSetOf(holistic), c.head).some((x) => x.outstanding)) out.add('coverage-outstanding');
   if (c.owed.length > 0) out.add('audit-owed');
   if (checkpointPending(h.checkpoint)) out.add('checkpoint-pending');
+  // dev.13: a milestone walk due or running, or a round still open (src/walk/milestones.ts).
+  if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) out.add('walk-pending');
   const g = Math.max(0, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((x) => x.inputs.generation));
   const vision = view.planApplied()?.visionSha256;
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
@@ -711,11 +724,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const h = holisticContexts(x);
   const holistic = (): boolean => view().holistic().on;
   const route = designRoute(h);
+  const demo = demoTicker(x.stage);
   // A crash right after a checkpoint's decision leaves no checkpoint due, so `runCheckpoint` (which settles too) would
   // not run: the decision's aftermath a crash cut short (a no-op's divergences, dispositions, the digest) is settled here.
   if (holistic()) {
     settleLatest(h.checkpoint);
     settlePackReviews(h.checkpoint);
+    settleWalks(x.stage);
   }
 
   const tasks = new Map<UnitId, Task>();
@@ -1060,6 +1075,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     if (!holistic() || Date.now() - lastTick < POLL_MS) return;
     lastTick = Date.now();
     raiseFindingItems(journal, runDir, new Date());
+    raiseWalkItems(x.stage, new Date());
     const c = cadence(x.stage, h.audit.clock);
     if (c !== null) raiseAuditOwed(h.audit, c);
   };
@@ -1088,6 +1104,18 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         });
       } else if (checkpointPending(h.checkpoint) || respecSecondDue()) {
         trackRetrying('holistic:checkpoint', 'holistic', async () => (['decided', 'not-needed'].includes((await runCheckpoint(h.checkpoint)).kind) ? PROGRESS : WAIT));
+      } else if (walkPending(h.audit)) {
+        trackRetrying('holistic:walk', 'holistic', async () => {
+          const out = await runWalk(h.audit);
+          return out.kind === 'ended' && out.outcome !== 'abandoned' ? PROGRESS : WAIT;
+        });
+      } else if (polishPending(h.checkpoint)) {
+        trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+      } else if (comparePending(h.checkpoint)) {
+        trackRetrying('holistic:compare', 'holistic', async () => {
+          const out = await runCompare(h.checkpoint);
+          return out.kind === 'judged' || (out.kind === 'cut' && out.committed) ? PROGRESS : WAIT;
+        });
       } else if (auditPending(h.audit)) {
         trackRetrying('holistic:audit', 'holistic', async () => {
           const out = await runAudit(h.audit);
@@ -1177,7 +1205,11 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.checkpoint)) return null;
     if (blockers.length === 0) {
       // M4b: the verdicts the completion closes and the compact flow series, right before `arc-completed`.
-      if (view().holistic().completion?.active !== true) beforeCompletion(h.checkpoint);
+      if (view().holistic().completion?.active !== true) {
+        beforeCompletion(h.checkpoint);
+        promoteFinal(x.stage, integrationHeadNow(x.stage));
+        writeDesired(x.stage);
+      }
       completeArc(x.stage);
       if (view().holistic().completion !== null) await terminalSnapshot(x.stage);
       return { kind: 'complete', units: summary() };
@@ -1256,6 +1288,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       // 4. A halted unit's, the schedule's and the holistic layer's needs-user; the holistic jobs; the end.
       raiseHalted();
       raiseHolistic();
+      demo.tick();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
       const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()) };

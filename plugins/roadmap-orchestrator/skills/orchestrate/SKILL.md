@@ -69,6 +69,14 @@ Work on a branch you own (`git switch -c roadmap-work main`), never the integrat
    `tree-uncommitted` while those three files differ from `HEAD`.
 7. **Boot hook.** When the product runs in a devcontainer, offer the owner the `resume-arc` boot hook
    (`reference.md`, "Recovery") so a host restart brings a dead arc's supervisor back.
+8. **Walk tools**, when the arc will have milestones (Phase 0 step 12). Every program a milestone's bring-up names
+   is installed, and for a `browser` journey `.roadmap/config.json` names a walkthrough MCP server (`walkthrough.mcp`,
+   `reference.md` "Files") that starts and connects. `phase0 check` refuses `walk-tools-missing` until both hold. Fix
+   the environment, preferably in the project's devcontainer (its image or features, versions pinned), so every
+   session and a rebuilt host has them; never the plan. The Playwright MCP server is the expected browser drive:
+   `playwright-mcp --headless --isolated --browser chromium --output-dir {evidence} --viewport-size {viewport}`.
+   `--browser chromium` is needed where only Playwright's Chromium is installed, and it refuses `file:` URLs, so the
+   product's pages are served over HTTP. Commit the config with the rest of `.roadmap/`.
 
 The issue templates in `templates/` (`roadmap-bug.yml`, `roadmap-feedback.yml`) label issues for intake. Offer them;
 they work only once committed under `.github/ISSUE_TEMPLATE/` on the default branch, so they go in the bootstrap
@@ -166,6 +174,67 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     `phase0 check` lists them as `scope-references-outside{unit, removed, referrers}` advisories (and `apply` in its
     receipt). Add each referrer to the unit's scope, or make sure another unit owns it. A scope too narrow costs a
     build, a hold and your ruling for every file it misses.
+    **Milestones.** Mark one (`plan.milestones`, SCHEMAS.md "dev.13") wherever units combine into something a person
+    or a client can experience end to end: a web UI or dashboard flow, an HTTP API a developer integrates against, an
+    SDK, a message bus a consumer subscribes to, a CLI, a CI/CD pipeline, deploy tooling or IaC, a config format or
+    template, the docs and quickstart they follow. Platform engineering is the common case; native desktop apps are
+    out of reach. A milestone is the smallest such experience: its `text` says what someone can now do, in their
+    words, and its `units` are the units that build it. When its last unit merges, code brings the product up and a
+    walkthrough uses it along its journeys; a break keeps the units that build on the milestone waiting until it is
+    fixed, so several small milestones beat one at the end. A break is a defect whose later fix would force rework of
+    what is built on it: a journey that cannot be completed, a wrong interface contract (status codes, error shapes,
+    exit codes, streams, command grammar, config keys, message schemas, public names, tokens) or a declared floor
+    violated (a non-negotiable vision clause, the reference's quality-floor section); everything else the walkthrough
+    finds (wording, visuals within the tokens, layout, docs that disagree with a correct contract) is a deviation,
+    repaired alongside without holding anything. Only a holistic arc has milestones
+    (`milestones-need-holistic`).
+    - **Its design unit comes first.** Each milestone names a planned design unit (`design.unit`, outside its
+      `units`), and every milestone unit runs `after` it, directly or transitively (`phase0 check` advises
+      `milestone-unit-before-design` otherwise). Risk `high`, so the `frontier` class builds it. It designs
+      what the milestone exposes into the reference directories `references` names. The first milestone that exposes
+      a surface writes its reference; a later milestone's design unit extends that reference rather than starting
+      another, so names, voice, tokens and the error model stay one language across milestones.
+    - **What the reference holds**, the design unit's acceptance, for whatever the milestone exposes. UI: a
+      `DESIGN.md` with subject, audience and primary job, principles, named anti-patterns (the vision's refusals among
+      them) and the one memorable thing; a `Quality floor` section stating what every screen keeps (contrast, visible
+      keyboard focus, a full keyboard path, reflow at the narrow viewport), since a walkthrough breaks only on a floor so
+      stated or a non-negotiable vision clause; machine-readable tokens (named colours with roles and checked contrast pairs,
+      type roles and scale, spacing, radius, elevation, motion); a layout concept and wireframe per key screen; each
+      flow with every state (empty, loading, error, success) and a step budget; copy conventions; a component
+      inventory with variants and states; the journeys and viewports the walkthrough will use. HTTP API: a style guide
+      (naming, methods, pagination, idempotency, versioning), an RFC 9457 error catalogue with an example of each, the
+      auth model and three to five end-to-end example sessions. CLI: the command tree, flags, output formats, exit
+      codes, error voice and golden transcripts of the core tasks. SDK and tooling: a naming glossary, an error
+      taxonomy and a quickstart that runs in a clean container within a time-to-first-success budget. Message bus:
+      the topics and message schemas, delivery and dead-letter behaviour, and an example consumer. CI/CD and IaC: what
+      a run or a plan prints, how a failure names the step, file and fix, and the dry-run-then-apply path. Config: the
+      schema, defaults, validation errors that name the key and the fix, a minimal and a full example. Code checks
+      only that the reference paths exist once the design unit merged; the gate judges the rest against its spec.
+    - **Bring-up and journeys.** `bringUp` brings the product up from a clean checkout of the integration tip with no
+      shell: `setup` commands, long-lived `serve` entries each with a readiness probe (`[]` for a CLI or an SDK),
+      `env` with `{port:<name>}` for the ports code allocates, and `seed` data. Ports belong to `serve`'s env and argv:
+      `setup` must not bake a port into the build, because the demo builds on spare ports and then restarts `serve`
+      (and reseeds) on its stable ones. Anything a journey needs beyond the
+      product (a local CI runner, a broker, Docker, a cluster) is part of the bring-up and the milestone's
+      `resources`. Each journey is a task in the words the user or client would use, `via: browser` for a page and
+      `shell` for everything else, with its `entry` and the step and time budget the vision's experience standards
+      set. The journeys are the reference's walkthrough script; when the design unit refines them, bring the plan's
+      journeys in line with an `apply` before the milestone's last unit merges.
+    - **The owner steers the design only by asking.** The arc proceeds on your design. An owner who supplies one:
+      `design: {supplied: true}`, with `references` pointing at it. An owner who asks for a mediated design: do the
+      design unit's work with them in session at Phase 0, commit the reference before `start`, and mark the milestone
+      `supplied`.
+    - **The `frontend-design` skill.** When a milestone has a `browser` journey and the repo has no committed
+      `.claude/skills/frontend-design/SKILL.md`, recommend among Phase 0's owner questions that the owner add
+      Anthropic's `frontend-design` skill to the repo as a project skill: builds, gates and walkthroughs load the
+      repo's project skills, and Claude designs better with it loaded. Your own skill list does not answer this: those
+      sessions run with project settings only, in unit worktrees, so a user-scope plugin or user skill never reaches
+      them, and neither does a plugin installed at project scope (`/plugin install
+      frontend-design@claude-plugins-official --scope project`), which loads only in the directory it was installed
+      for, not in a worktree (measured on Claude Code 2.1.301). The way that reaches them: install the plugin, copy its
+      `skills/frontend-design/` directory and its `LICENSE` into the repo's `.claude/skills/frontend-design/`, and
+      commit before `start`. Working assumption: proceed without it. It is never a reason to hold the arc.
+    - When a milestone settles, its build becomes the demo the owner picks up ("The demo").
 13. **Integration branch.** `git branch <branch> <baseline>` (move it with `git branch -f` while nothing has
     started). One branch per arc, e.g. `arc/<arc>`, checked out in no worktree.
 14. **Check.** `roadmap phase0 check --repo <repo> --plan <inputs>/plan.json` until it exits 0. Fix inputs, never
@@ -351,6 +420,29 @@ brief. It acknowledges the brief's non-blocking digest and convergence items and
 no longer count toward K. A `stale` reply (exit 78) means something changed: show the new brief and ask again.
 Blocking items are never acked by a brief.
 
+## The demo
+
+On an arc with milestones the owner gets a running build of what is being built, to check and steer when they choose.
+Walks and lanes never touch it, so it never shifts under them while agents test.
+
+- **What it runs.** Each milestone that settles (its walks done, no open walkthrough P1) is promoted: code moves
+  `refs/roadmap/demo` to the SHA its last walk confirmed, and the supervisor brings that version up beside the old one,
+  seeds it, and switches only once it is ready. The URL stays the same: its ports are allocated once and kept. A
+  completed arc promotes its final tip. A blocked milestone never promotes, so the demo stays at the last good one. A
+  CLI, SDK or pipeline product is the promoted checkout with its setup run; the owner runs it from its `bin/`.
+- **Where it is.** `status.demo` names the URL or path, the milestone and SHA, what changed since the last promotion
+  (settled milestones, kept tweaks, fixes) and the open walkthrough P2s as known rough edges; the brief's Demo section
+  repeats all but the address. Tell the owner the address at the first promotion and when a check-in has a new one.
+- **A version that does not come up** leaves the old one serving, and opens a walkthrough P1 on its milestone citing the
+  bring-up log (`status.demo.failed`): the checkpoint repairs it like any P1. A bring-up that works for walks but not for
+  the demo is a real defect.
+- **The owner's acts**, which you run when the owner asks: `roadmap demo hold` (keep this version and its data; promotion
+  freezes), `roadmap demo release` (promote the latest settled milestone now), `roadmap demo down` and `roadmap demo
+  up`. Steering what they saw goes through `steer` or an issue, as always. Each promotion reseeds the demo: an owner who
+  wants to keep their own data holds it first.
+- The demo outlives the arc and a host restart: the next `roadmap start` on this host brings it back from
+  `refs/roadmap/demo`.
+
 ## Chaining
 
 At arc completion (`status.run.state` `complete`, `completion.active`):
@@ -522,6 +614,10 @@ rejected. An edit you never apply has no effect, even after a restart.
   `roadmap apply --ruling <sidecar>`. A rule anchor whose hash changed with the statement unchanged is an edit, not
   a weakening.
 - **Priority, known defects, plan-check shape**: apply at once, draining nothing ("Supervising the executor").
+- **Milestones**: only by `apply`, draining nothing. A milestone being walked waits for its walk to end; once walked it
+  stays, with its units and design (plan another milestone for more), while its text, references, bring-up, journeys
+  and resources may change between walks: a failed bring-up is fixed this way. A new milestone lists a unit still to
+  merge, and no milestone lists a cut unit (cut it and drop it from the milestone in one apply).
 - **Corpus** (a re-pin) and **Phase-0 record** edits are `apply` edit classes; mid-arc, only for an owner's answer.
   A re-pin re-gates every approval.
   Both change the pack, so before the first admission they trigger a new pack review.

@@ -201,8 +201,9 @@ function backendCall(b: BackendInvocation, invDir: AbsPath): BackendCall {
   const r = b.request;
   switch (r.kind) {
     case 'claude-judgment':
-    case 'claude-build':
       return { ...r, system: b.system, schemaText };
+    case 'claude-build':
+      return { ...r, system: b.system, schemaText, mcpConfig: null };
     case 'codex-build':
       return {
         ...r, system: b.system, cwd: b.cwd,
@@ -215,6 +216,7 @@ function backendTerminal(b: BackendInvocation, call: BackendCall, invDir: AbsPat
   const base = { type: 'backend', purpose: 'smoke', routingRev: b.routingRev, schemaPath: absPath(join(invDir, SCHEMA_FILE)) } as const;
   switch (call.kind) {
     case 'claude-judgment':
+    case 'claude-acting-judge':
       return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: call.role, session: call.session };
     case 'claude-build':
       return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: 'build', session: call.session };
@@ -309,8 +311,9 @@ function smokeRequest(resolved: ResolvedRouting, backend: Backend): Readonly<{ s
   const triple = atSeat(resolved.table, seat);
   if (triple.backend === 'claude') {
     if (seat.role === 'build') return { seat, request: { kind: 'claude-build', triple, session: freshClaudeImplementerSession(), evidenceDirs: [] } };
-    // The first Claude seat is always a unit judgment's (planCheck and gate resolve to Claude; the arc seats come last).
-    if (seat.role === 'lens' || seat.role === 'checkpoint') throw new Error(`seat ${seatName(seat)}: an arc seat is never a backend's first seat`);
+    // The first Claude seat is always plan-check's: it comes first in seat order and resolves to Claude (startup refuses a
+    // Codex judgment seat), ahead of the gate (an acting judge since dev.13) and the arc seats.
+    if (seat.role !== 'planCheck') throw new Error(`seat ${seatName(seat)}: only a plan-check seat is a Claude backend's first seat`);
     return { seat, request: { kind: 'claude-judgment', role: seat.role, triple, session: freshJudgmentSession(), evidenceDirs: [] } };
   }
   if (seat.role !== 'build') throw new Error(`seat ${seatName(seat)} resolves to Codex judgment, which the unsupported-routing row refuses before the smoke`);

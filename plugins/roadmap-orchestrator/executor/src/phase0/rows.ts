@@ -55,6 +55,11 @@
 //  13. regenerate (advisory, never a rejection; every arc, every mode; dev.12) a derived entry declaring no `regenerate` whose
 //                  outputs a live unit's effective scope may reach: `derived-unregenerated{outputs, units}`. Its outputs are
 //                  checked by no regeneration, so a hand edit in them is caught only by a reader (src/input/derived.ts).
+//  14. design first (advisory, never a rejection; every arc, every mode; dev.13) a live unit of a milestone that does not run
+//                  after the milestone's design unit, transitively: `milestone-unit-before-design{milestone, unit, design}`.
+//  15. milestones (every arc, every mode; dev.13) milestones on a plan without `holistic`: `milestones-need-holistic`.
+//                  `walk-tools-missing` (the bring-up programs and the walkthrough MCP servers) is not one of these rows: its
+//                  smoke is a backend call (see `milestonesNeedHolisticRows`).
 // A record that names something absent (a debt disposition of no open item, a promote to a unit the plan does not
 // hold, a resolve by a ruling the ledger does not hold active, an intake act on an unknown unit or rule, an amendment
 // disposition of no amendment) is `plan-invalid{schema}` naming it.
@@ -62,7 +67,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { answerLog, latestAnswers, refQuestions, unappliedOf } from '../answers.ts';
 import { type ArcRef, amendmentsOf, chainBack, committedAcks, completedHeadOf, previousIncomplete, questionClosure, quotaOf } from '../chain.ts';
-import { type ArcId, type DebtId, type IssueId, type Sha256Hex, type UnitId, issueId, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
+import { type ArcId, type DebtId, type IssueId, type MilestoneId, type Sha256Hex, type UnitId, issueId, phaseQuestionSeq, sha, sha256 } from '../core/ids.ts';
 import { type SpecM1, specRemoves } from '../core/records.ts';
 import { sha256Hex } from '../core/json.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -90,7 +95,7 @@ import { coversSource, derivedWidening } from '../input/derived.ts';
 import { visionUnconfirmed } from '../holistic/vision.ts';
 import { mayOverlap } from '../input/classify.ts';
 import { isLive } from '../preflight/lanerows.ts';
-import { type PlanM1, type PlanUnit, derivedOf } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, derivedOf, designUnitOf, milestonesNeedHolistic, milestonesOf } from '../input/plan.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import type { RepoConfig } from '../routing/layers.ts';
 import { type Ruling, type RulingCorpus, parseRulings } from '../spec/rulings.ts';
@@ -147,12 +152,18 @@ export type ScopeReference = Readonly<{ kind: 'scope-references-outside'; unit: 
  */
 export type DerivedUnregenerated = Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }>;
 
-/** A Phase-0 advisory: never a refusal (rows 10 and 13). */
-export type Phase0Advisory = ScopeReference | DerivedUnregenerated;
+/**
+ * dev.13, advisory: a unit of milestone `milestone` that does not descend (through `after`, transitively) from the
+ * milestone's design unit `design`, so it may build before the design it builds to exists.
+ */
+export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-design'; milestone: MilestoneId; unit: UnitId; design: UnitId }>;
+
+/** A Phase-0 advisory: never a refusal (rows 10, 13 and 14, dev.13's `milestone-unit-before-design`). */
+export type Phase0Advisory = ScopeReference | DerivedUnregenerated | MilestoneUnitBeforeDesign;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
- * `advisories`: rows 10's and 13's, which never refuse.
+ * `advisories`: rows 10's, 13's and 14's, which never refuse.
  */
 export type Phase0Outcome = Readonly<{ rows: readonly StartupRejection[]; opened: OpenedSource | null; pin: CorpusPin | null; advisories: readonly Phase0Advisory[] }>;
 
@@ -190,7 +201,8 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const rows: StartupRejection[] = [];
   if (mode.tree) rows.push(...treeUncommitted(input.repo));
   const { plan } = input;
-  const advisories = [...referenceRows(input), ...derivedUnregenerated(plan)];
+  rows.push(...milestonesNeedHolisticRows(plan));
+  const advisories = [...referenceRows(input), ...derivedUnregenerated(plan), ...milestoneUnitsBeforeDesign(plan)];
   const defects: PlanDefect[] = [...derivedOwned(plan)];
   if (plan.target !== 'corpus') {
     if (defects.length > 0) rows.push({ kind: 'plan-defect', defects });
@@ -362,6 +374,19 @@ function derivedUnregenerated(plan: PlanM1): readonly DerivedUnregenerated[] {
   return derivedOf(plan).filter((d) => d.regenerate === undefined).flatMap((d) => {
     const units = plan.units.filter((u) => isLive(plan, u) && unitEffectiveScope(plan, u).some((s) => d.outputs.some((o) => mayOverlap(s, o)))).map((u) => u.id).sort();
     return units.length === 0 ? [] : [{ kind: 'derived-unregenerated' as const, outputs: d.outputs, units }];
+  });
+}
+
+/**
+ * Row 14 (dev.13), advisory: each live unit of a milestone that does not run after the milestone's design unit (through
+ * `after`, transitively), so it may build before the design it builds to exists. A supplied design has no unit.
+ */
+function milestoneUnitsBeforeDesign(plan: PlanM1): readonly MilestoneUnitBeforeDesign[] {
+  return milestonesOf(plan).flatMap((m) => {
+    const design = designUnitOf(m);
+    if (design === null) return [];
+    return plan.units.filter((u) => m.units.includes(u.id) && isLive(plan, u) && !withDependencies(plan, u.after).some((d) => d.id === design))
+      .map((u) => ({ kind: 'milestone-unit-before-design' as const, milestone: m.id, unit: u.id, design }));
   });
 }
 
@@ -629,6 +654,18 @@ export function treeUncommitted(repo: AbsPath): readonly Row<'tree-uncommitted'>
 export function holisticNeedsCorpus(plan: PlanM1): readonly Row<'holistic-needs-corpus'>[] {
   return plan.target === 'architecture-doc' && plan.holistic !== undefined ? [{ kind: 'holistic-needs-corpus' }] : [];
 }
+
+/**
+ * Row 15 (dev.13): milestones on a plan without the holistic layer (ruling 2: a walk's findings need the ledger, the
+ * checkpoint and fix units). Every mode: an apply adding milestones to a plan without `holistic` is refused too.
+ */
+export function milestonesNeedHolisticRows(plan: PlanM1): readonly Row<'milestones-need-holistic'>[] {
+  return milestonesNeedHolistic(plan) ? [{ kind: 'milestones-need-holistic' }] : [];
+}
+
+// `walk-tools-missing` (dev.13, agent A): the bring-up programs (argv0) and, for a `browser` journey, the walkthrough MCP
+// servers' smoke. The smoke is a backend call, so the row is not one of these synchronous rows: start, apply and
+// `phase0 check` run it beside them.
 
 /** The parsed vision and obligations of `input`, when they load (for `sliceCandidates`). */
 export function visionAndObligations(input: Phase0Input): Readonly<{ vision: Vision | null; obligations: Obligations | null }> {

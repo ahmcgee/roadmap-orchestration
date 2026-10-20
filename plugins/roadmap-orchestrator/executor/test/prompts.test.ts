@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   clauseId, divergenceId, envId, findingId, issueContentRef, issueId, jobId, laneId, laneRev, obligationId, questionId, ruleId, rulingId, sha, sha256, specRev, unitId,
-  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId,
+  type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName,
 } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
 import { failureRef } from '../src/core/records.ts';
@@ -25,7 +25,10 @@ import {
 } from '../src/prompts/schemas.ts';
 import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
-import { MODEL_IDS, PROFILES, ROLES, type Role, atSeat } from '../src/routing/types.ts';
+import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
+
+/** The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones and the gate (dev.13, an acting judge). */
+const JUDGING = [...FRESH_ROLES, 'gate'] as const;
 
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
@@ -82,6 +85,47 @@ const corpusTarget = (dir: string, visionDoc: string | null) => ({
 });
 const findingView = (id: string, claim: string) => ({
   id: findingId(id), lens: 'invariants' as const, severity: 'P1' as const, state: 'open' as const, obligation: obligationId('I-1'), claim, owner: null,
+});
+
+const journeySample = (k: 'A' | 'B') => ({
+  id: journeyId(k === 'A' ? 'J-1' : 'J-2'), text: `JOURNEY-${k}`, via: k === 'A' ? 'browser' as const : 'shell' as const, entry: `/entry-${k}`,
+  budget: k === 'A' ? { steps: 5, seconds: 60 } : null,
+});
+const instanceSample = (k: 'A' | 'B', port: number) => ({ checkout: absPath(`/wt/${k}.walk`), ports: { [serveName('web')]: port }, env: { MODE: k } });
+const walkSample = (k: 'A' | 'B'): RoleInputs['walkthrough'] => ({
+  vision: vision(k === 'A' ? 1 : 2, `VISION-${k}`), milestone: { id: milestoneId(k === 'A' ? 'MS-1' : 'MS-2'), text: `MILESTONE-${k}` }, round: k === 'A' ? 1 : 2,
+  journeys: [journeySample(k)], references: [doc(`design/${k}.md`, `REFERENCE-${k}`)],
+  tweaks: [{ unit: unitId(`tweak-${k.toLowerCase()}`), proposal: polishId(k === 'A' ? 'X-1' : 'X-2'), text: `TWEAK-${k}` }],
+  findings: [{ ...findingView(k === 'A' ? 'F-1' : 'F-2', `FINDING-${k}`), cause: `CAUSE-${k}` }], product: instanceSample(k, k === 'A' ? 4100 : 4200),
+  units: [spec(k === 'A' ? 1 : 2, `SPEC-${k}`)], evidenceDir: absPath(`/run/evidence/jobs/walk-${k === 'A' ? 1 : 2}`),
+});
+const polishSample = (k: 'A' | 'B'): RoleInputs['polishJudge'] => ({
+  vision: vision(k === 'A' ? 1 : 2, `VISION-${k}`), milestone: { id: milestoneId(k === 'A' ? 'MS-1' : 'MS-2'), text: `MILESTONE-${k}` }, journey: journeySample(k),
+  proposal: { id: polishId(k === 'A' ? 'X-1' : 'X-2'), unit: unitId(`tweak-${k.toLowerCase()}`), text: `PROPOSAL-${k}`, evidence: [`shot-${k}.png`] },
+  references: [doc(`design/${k}.md`, `REFERENCE-${k}`)], referenceDiff: k === 'A' ? shown(SHA_A, SHA_B, 'DIFF-A') : shown(SHA_B, SHA_A, 'DIFF-B'),
+  walkEvidenceDir: absPath(`/run/evidence/jobs/walk-${k === 'A' ? 1 : 2}`),
+  before: { ...instanceSample(k, k === 'A' ? 4101 : 4201), entry: `http://127.0.0.1:${k === 'A' ? 4101 : 4201}/` },
+  after: { ...instanceSample(k, k === 'A' ? 4102 : 4202), entry: `http://127.0.0.1:${k === 'A' ? 4102 : 4202}/` },
+  evidenceDir: absPath(`/run/evidence/jobs/cmp-${k}`),
+});
+
+// dev.13: a unit in two milestones (a member of MS-2, the design unit of MS-3), and a build's browser drive.
+const milestonesSample = (): RoleInputs['build']['milestones'] => ({
+  of: [
+    { as: 'member', id: milestoneId('MS-2'), text: 'MEMBER-MILESTONE-B', dirs: [repoPath('design/b')] },
+    { as: 'design', id: milestoneId('MS-3'), text: 'DESIGN-MILESTONE-B', dirs: [repoPath('design/b'), repoPath('design/b2')], journeys: [journeySample('A'), journeySample('B')] },
+  ],
+  references: [doc('design/b/DESIGN.md', 'REFERENCE-B'), doc('design/b2/tokens.json', 'TOKENS-B')], binary: [repoPath('design/b/WIRE-B.png')],
+});
+const browserSample = (): RoleInputs['build']['browser'] => ({
+  servers: ['playwright'],
+  bringUps: [{
+    milestone: milestoneId('MS-2'),
+    bringUp: {
+      setup: [['npm', 'ci']], serve: [{ name: serveName('web'), argv: ['node', 'SERVER-B.js', '--port', '{port:web}'], ready: { http: 'http://127.0.0.1:{port:web}/health' } }],
+      env: { MODE: 'BRINGUP-B' }, seed: [['node', 'SEED-B.js']],
+    },
+  }],
 });
 
 const flowSample = (k: 'A' | 'B'): RoleInputs['flow'] => {
@@ -154,7 +198,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null,
+      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -176,21 +220,21 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
         rejected: [{ patterns: [repoPattern('docs/b/**')], reason: 'GROWTH-REASON-B', rejection: 'REJECTION-B' }],
       },
-      escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } },
+      escalation: { kind: 'route-up', first: { decision: 'escalate', reasons: ['ESCALATE-REASON-B'] } }, milestones: milestonesSample(),
     },
   ],
   build: [
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null,
+      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null, milestones: null, browser: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
-      assess: { risk: 'high', vision: vision(2, 'VISION-B') },
+      assess: { risk: 'high', vision: vision(2, 'VISION-B') }, milestones: milestonesSample(), browser: browserSample(),
     },
   ],
   gate: [
@@ -200,7 +244,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
-      escalation: null, largeDiff: null,
+      escalation: null, largeDiff: null, milestones: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -212,7 +256,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
-        directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null }],
+        directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null }],
         premises: [premise('PREMISE-B', 'src/b/x.ts')], fixPaths: [repoPath('src/b/x.ts')], changedPremiseFiles: ['src/b/x.ts'],
       },
       checks: {
@@ -224,7 +268,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         regenerated: [],
       },
       escalation: { kind: 'risk-trigger' },
-      largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') },
+      largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') }, milestones: milestonesSample(),
     },
   ],
   lens: [
@@ -250,7 +294,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
       contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', issues: { type: 'captured', issues: [] },
-      manifest: [], specs: [], nextRulingId: rulingId('C-2'), issuesUnchangedSince: null, diagnosis: null,
+      manifest: [], specs: [], nextRulingId: rulingId('C-2'), issuesUnchangedSince: null, diagnosis: null, brakes: { settled: false, findings: [] },
     },
     {
       vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40, cause: { stage: 'candidate', attempt: 9, outcome: 'red', reason: 'candidate-red', design: false, detail: ['TRIGGER-B'] } },
@@ -270,6 +314,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         }],
         reentries: [],
       },
+      brakes: { settled: true, findings: [{ finding: findingId('F-2'), brake: 'regress' }] },
     },
   ],
   packReview: [
@@ -287,9 +332,22 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     },
   ],
   flow: [flowSample('A'), flowSample('B')],
+  walkthrough: [walkSample('A'), walkSample('B')],
+  polishJudge: [polishSample('A'), polishSample('B')],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
+  walkthrough: {
+    final: true,
+    journeys: [{ journey: 'J-1', outcome: 'blocked', evidence: ['j1-submit.png'], note: 'the submit posts to a 404' }],
+    findings: [{
+      class: 'breaks', journey: 'J-1', evidence: ['j1-submit.png'], claim: 'Submitting the form leads to a 404.', cause: 'form action', against: { type: 'journey' },
+      paths: ['src/form.html'],
+    }],
+    polish: [],
+    premises: [], reasons: ['J-1 cannot be completed'],
+  },
+  polishJudge: { final: true, decision: 'keep', evidence: ['before.png', 'after.png'], reasons: ['the after page reads as the reference asks'], premises: [] },
   flow: {
     constraint: { station: 'slot:integration', agree: true, reason: 'the suite lane holds the slot' },
     diagnosis: 'Units wait for the integration slot; the unit suite lane is most of its service.',
@@ -319,7 +377,8 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null }], premises: [], unreviewed: [], clusters: null,
+    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null }],
+    premises: [], unreviewed: [], clusters: null,
   },
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
@@ -339,11 +398,11 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
 };
 
-/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc of the m4b role set (every arc role) included. */
+/** Every (role, model) either built-in profile can resolve, the arc seats of a corpus arc of the m4b role set with milestones (every arc role) included. */
 function builtinSeats(): readonly (readonly [Role, (typeof MODEL_IDS)[number]])[] {
   const seen = new Map<string, readonly [Role, (typeof MODEL_IDS)[number]]>();
   for (const p of PROFILES) {
-    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
+    const resolved = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
     for (const s of seatsInForce(resolved)) {
       const m = atSeat(resolved.table, s).model;
       seen.set(`${s.role}/${m}`, [s.role, m]);
@@ -435,7 +494,7 @@ describe('prompts', () => {
     }
     // W3: every judgment role has one written module, Opus's. Sonnet 5.5 (efficient, 2026-10-15) reads it with the think-first
     // line ending its system prompt (the Sonnet 5.5 guide, reasoning tasks with JSON output); Fable inherits it unchanged.
-    for (const role of ROLES.filter((r) => r !== 'build')) {
+    for (const role of JUDGING) {
       const opus = promptFor(role, 'claude-opus-5-5');
       assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt', role);
       const s = PROMPTS[role]['claude-sonnet-5-5'];
@@ -447,10 +506,15 @@ describe('prompts', () => {
       assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5', `${role}/fable: inherits Opus`);
     }
     assert.equal(promptFor('build', 'claude-sonnet-5-5'), promptFor('build', 'claude-opus-5-5'), 'the Sonnet build reads the Opus brief unchanged');
+    // dev.13 (plan §6): the walk roles have an Opus module only; no Sonnet, Haiku or Codex prompt.
+    for (const role of WALK_ROLES) {
+      assert.equal(PROMPTS[role]['claude-opus-5-5'].type, 'prompt', role);
+      for (const model of ['claude-sonnet-5-5', 'claude-haiku-5-5', 'gpt-5.6-luna', 'gpt-5.6-sol'] as const) assert.equal(PROMPTS[role][model].type, 'unsupported', `${role}/${model}`);
+    }
   });
 
   it('prompts.haiku: every judgment role resolves a prompt for Haiku 5.5 (economy, 1.0.0-dev.12) with the role\'s schema; no Haiku build prompt', () => {
-    for (const role of ROLES.filter((r) => r !== 'build')) {
+    for (const role of JUDGING) {
       const s = PROMPTS[role]['claude-haiku-5-5'];
       assert.ok(s.type === 'prompt', `${role}/haiku: a module of its own`);
       assert.equal(s.prompt.schema, ROLE_SCHEMAS[role], role);
@@ -478,6 +542,35 @@ describe('prompts', () => {
       const text = mod.render(SAMPLES.build[1]);
       assert.match(text, /\/run\/inv\/9-1/, 'fix round names the failing evidence dir');
       assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/, 'lane rendered as its exact command');
+    }
+  });
+
+  it('dev.13: a milestone unit\'s plan-check, build and gate embed its design references as documents and name its milestones; others carry none', () => {
+    for (const role of ['planCheck', 'build', 'gate'] as const) for (const model of MODEL_IDS) {
+      const s = support(role, model);
+      if (s.type !== 'prompt') continue;
+      const mod = s.prompt as { render: (i: unknown) => string };
+      const text = mod.render(SAMPLES[role][1]);
+      for (const needle of ['REFERENCE-B', 'TOKENS-B', 'design/b/DESIGN.md', 'design/b2/tokens.json', 'design/b/WIRE-B.png', 'MS-2', 'MEMBER-MILESTONE-B', 'MS-3', 'DESIGN-MILESTONE-B']) {
+        assert.ok(text.includes(needle), `${role}/${model}: ${needle}`);
+      }
+      // A design unit sees the journeys its references serve; a member sees none.
+      for (const needle of ['J-1', 'JOURNEY-A', '/entry-A', 'J-2', 'JOURNEY-B']) assert.ok(text.includes(needle), `${role}/${model}: ${needle}`);
+      if (model.startsWith('claude-')) assert.match(text, /<source>design reference design\/b\/DESIGN\.md<\/source>\n<document_content>\nREFERENCE-B/, `${role}/${model}: a document`);
+      const none = mod.render(SAMPLES[role][0]);
+      for (const needle of ['<milestones>', 'design reference', 'MILESTONE']) assert.ok(!none.includes(needle), `${role}/${model}: none outside a milestone (${needle})`);
+    }
+  });
+
+  it('dev.13: only a build with a browser drive is told of its MCP servers and given the bring-up', () => {
+    for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) {
+      const mod = promptFor('build', model);
+      const text = mod.render(SAMPLES.build[1]);
+      for (const needle of ['<browser>', 'playwright', 'npm ci', 'SERVER-B.js', '{port:web}', 'http://127.0.0.1:{port:web}/health', 'MODE=BRINGUP-B', 'SEED-B.js']) {
+        assert.ok(text.includes(needle), `build/${model}: ${needle}`);
+      }
+      assert.ok(!mod.render({ ...SAMPLES.build[1], browser: null }).includes('<browser>'), `build/${model}: no browser block without the drive`);
+      assert.ok(!mod.render(SAMPLES.build[0]).includes('<browser>'), `build/${model}`);
     }
   });
 
@@ -520,6 +613,7 @@ describe('prompts', () => {
     for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
       assert.match(promptFor('planCheck', model).render(SAMPLES.planCheck[1]), /"op":"strike","id":"A3"/, 'the prior patch');
       assert.match(promptFor('gate', model).render(SAMPLES.gate[1]), /\[blocking\] src\/b\/x\.ts: FINDING-B/, 'the prior findings');
+      assert.match(promptFor('gate', model).render(SAMPLES.gate[1]), /FINDING-B\n  ran: node EXPERIMENT-B\.mjs/, 'a prior finding names the experiments it cited');
     }
   });
 
@@ -576,7 +670,7 @@ describe('output validators', () => {
     const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
     const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
     const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
-    assert.deepEqual(out.findings, pre);
+    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded' })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded');
     assert.deepEqual(out.unreviewed, unreviewed);
     const { unreviewed: _u, ...dev11 } = ok.gate;
     assert.equal(validateGateOutput(dev11).unreviewed, null);
@@ -584,6 +678,30 @@ describe('output validators', () => {
     assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...pre[0], severity: 'minor' }] }), SchemaError);
     const schema = GATE_SCHEMA as { properties: Record<string, unknown>; required: readonly string[] };
     assert.ok(schema.required.includes('unreviewed'), 'a live gate answers it');
+  });
+
+  it('gate (dev.13, the gate\'s shell): a finding cites the experiments it rests on, each a command and its output; a live answer gives the list, a dev.12 finding without it reads as none', () => {
+    const experiments = [{ command: 'node probe.mjs', output: 'expected 9, got 2' }];
+    const finding = { severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 fails on two-digit inputs.', contractRef: null, experiments };
+    assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [finding] }).findings[0]!.experiments, experiments);
+    for (const bad of [[{ command: 'node probe.mjs' }], [{ command: 1, output: '' }], 'node probe.mjs']) {
+      assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...finding, experiments: bad }] }), SchemaError, JSON.stringify(bad));
+    }
+    const { experiments: _e, ...dev12 } = finding;
+    assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [dev12] }).findings[0]!.experiments, []);
+    const item = ((GATE_SCHEMA as { properties: Record<string, { items: { required: readonly string[] } }> }).properties['findings']!).items;
+    assert.ok(item.required.includes('experiments'), 'a live gate answers it on every finding');
+  });
+
+  it('gate (dev.13, the convergence tail): a finding says whether it is debt, {drag} or null; a live answer gives it on every finding, a dev.12 finding without it reads as unrecorded', () => {
+    const note = { severity: 'note', path: 'src/a/parse.ts', text: 'parse re-reads the file per call.', contractRef: null, experiments: [] };
+    const debt = { drag: 'Every later reader of big inputs pays the re-read.' };
+    assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt }] }).findings[0]!.debt, debt);
+    assert.equal(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt: null }] }).findings[0]!.debt, null);
+    assert.equal(validateGateOutput({ ...ok.gate, findings: [note] }).findings[0]!.debt, 'unrecorded');
+    for (const bad of [{}, { drag: 1 }, 'slow']) assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...note, debt: bad }] }), SchemaError, JSON.stringify(bad));
+    const item = ((GATE_SCHEMA as { properties: Record<string, { items: { required: readonly string[] } }> }).properties['findings']!).items;
+    assert.ok(item.required.includes('debt'), 'a live gate answers it on every finding');
   });
 
   it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters reads as none (null)', () => {
@@ -690,10 +808,11 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.match(sys, /appliesTo: \{"type": "arc"\} or \{"type": "units", "units": \[unit ids, ascending\]\}/);
   });
 
-  it('the checkpoint never accepts or defers a P1: dismissed, or left to the repair that names it (paid m3 run 9)', () => {
+  it('the checkpoint never accepts, defers or releases a P1: dismissed, or left to the repair that names it (paid m3 run 9; dev.13 released)', () => {
     const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
-    assert.ok(sys.includes('A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
+    assert.ok(sys.includes('A P1 is never accepted, deferred or released by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
   });
+
 
   it('the checkpoint states anchors as anchorSection reads them: #<heading-slug> or literal text on exactly one line (paid m3 run 9)', () => {
     const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
@@ -1247,6 +1366,53 @@ describe('W3 seat prompts (2026-10-16)', () => {
       assert.match(mod.render({ ...base, escalation: { kind: 'route-up', first: null } }), /gave no answer \(its session was refused\)/);
       assert.match(mod.render({ ...base, escalation: { kind: 'risk-trigger' } }), /A runtime risk trigger[^]*straight to the escalation seat/);
       assert.ok(routed.indexOf('<escalation>') < routed.lastIndexOf(role === 'gate' ? 'Gate unit' : 'Check the spec'), `${role}: before the ask`);
+    }
+  });
+});
+
+describe('dev.13 prompts: the walkthrough', () => {
+  it('prompts.walkthrough-contract: Fable inherits the Opus module with a dated review; the vision opens the message and the ask closes it; the system text names every field the schema requires', () => {
+    const fable = PROMPTS.walkthrough['claude-fable-5-1'];
+    assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/i.test(fable.reviewed));
+    const sample = SAMPLES.walkthrough[0];
+    for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+      const mod = promptFor('walkthrough', model);
+      assert.equal(mod, promptFor('walkthrough', 'claude-opus-5-5'), `${model}: the Opus module`);
+      assert.equal(mod.schema, ROLE_SCHEMAS.walkthrough, model);
+      assert.deepEqual(mod.fields, ROLE_INPUTS.walkthrough, model);
+      const text = mod.render(sample);
+      assert.ok(text.startsWith('<vision>'), `${model}: the vision first`);
+      assert.ok(text.endsWith('return your report.'), `${model}: the ask last`);
+      for (const needle of [sample.evidenceDir, sample.product.checkout, 'port 4100', 'MODE=A', 'entry /entry-A', 'via browser', '5 steps', '60 s', 'round="1"']) {
+        assert.ok(text.includes(needle), `${model}: renders ${needle}`);
+      }
+      namesEvery(mod.system, requiredKeys(mod.schema, [], ['journeys'], ['findings'], ['findings', 'against'], ['polish'], ['polish', 'unit']), `walkthrough/${model}`);
+    }
+  });
+});
+
+describe('dev.13 prompts: the polish judge', () => {
+  it('prompts.polishJudge-contract: Fable inherits the Opus module with a dated review; the vision opens the message and the ask closes it; both instances, the proposal, the diff and the evidence dirs render; the system text names every field the schema requires', () => {
+    const fable = PROMPTS.polishJudge['claude-fable-5-1'];
+    assert.ok(fable.type === 'inherits' && fable.from === 'claude-opus-5-5' && /^\d{4}-\d{2}-\d{2}: /.test(fable.reviewed) && !/placeholder/i.test(fable.reviewed));
+    assert.ok(!/PLACEHOLDER/.test(promptFor('polishJudge', 'claude-opus-5-5').system), 'the step-0 placeholder is gone');
+    for (const [i, sample] of SAMPLES.polishJudge.entries()) {
+      for (const model of ['claude-opus-5-5', 'claude-fable-5-1'] as const) {
+        const mod = promptFor('polishJudge', model);
+        assert.equal(mod, promptFor('polishJudge', 'claude-opus-5-5'), `${model}: the Opus module`);
+        assert.equal(mod.schema, ROLE_SCHEMAS.polishJudge, model);
+        assert.deepEqual(mod.fields, ROLE_INPUTS.polishJudge, model);
+        const text = mod.render(sample);
+        assert.ok(text.startsWith('<vision>'), `${model}: the vision first`);
+        assert.ok(text.endsWith(`return your decision on proposal ${sample.proposal.id}.`), `${model}: the ask last`);
+        const k = i === 0 ? 'A' : 'B';
+        for (const needle of [
+          `VISION-${k}`, `MILESTONE-${k}`, `JOURNEY-${k}`, `PROPOSAL-${k}`, `REFERENCE-${k}`, `DIFF-${k}`, `shot-${k}.png`, sample.walkEvidenceDir, sample.evidenceDir,
+          sample.before.checkout, sample.before.entry, sample.after.checkout, sample.after.entry, `MODE=${k}`, `via="${sample.journey.via}"`,
+        ]) assert.ok(text.includes(needle), `${model}: renders ${needle}`);
+        assert.ok(text.indexOf('<before>') < text.indexOf('<after>'), `${model}: before, then after`);
+        namesEvery(mod.system, requiredKeys(mod.schema, []), `polishJudge/${model}`);
+      }
     }
   });
 });

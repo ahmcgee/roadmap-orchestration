@@ -27,6 +27,13 @@
 //       so the next executor has its own handshake) and spawn again. The third crash in the window: write
 //       `needs-user/sup-<generation>-<n>.json` (blocking, host-level), release, exit.
 //
+// dev.13, the demo (src/demo/keeper.ts): from the claim to its release the supervisor also runs the host's demo keeper,
+// which brings the arc's promoted versions up from `demo.desired.json` into the host's one demo instance (`demo.json`).
+// Its processes live in sessions of their own, so the demo outlives every executor generation and the supervisor itself.
+// Before releasing the claim the keeper is finished: after an arc that completed, its last reconcile runs (the final
+// promotion is serving when the supervisor exits); after any other end, a trial in progress is abandoned and the old
+// version keeps serving.
+//
 // A supervisor that starts with the window already at the limit (a start after a crash-limit exit) runs its
 // first executor with `--control-only`: it applies commands before recovery and dispatches only once no
 // blocking needs-user remains (src/executor.ts). The limit leaves no room for a third backoff step: the
@@ -54,6 +61,7 @@ import {
   EXIT_REASON_FILE, HEARTBEAT_FILE, type RefusedReason, executorArgv, exitLine, raiseClaimRefusal, refusedOf, refusedReason, writeFileNeedsUser,
   writeRejection,
 } from './executor.ts';
+import { startDemoKeeper } from './demo/keeper.ts';
 import { compactResidues } from './host/compact.ts';
 import { hostPath, openHostDir } from './host/hostdir.ts';
 import { selfIdentity } from './host/liveness.ts';
@@ -365,6 +373,7 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
   }
 
   compactAtStart(dir, gitCommonDir(args.repo));
+  const keeper = startDemoKeeper(dir, runDir);
 
   const staleMs = args.heartbeatStaleMs ?? HEARTBEAT_STALE_MS;
   let claim = claimed.claim;
@@ -379,6 +388,7 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
     crashPoint('sup.after-claim');
     const end = await superviseOne(args, claim, first && controlOnly, wasReady, staleMs);
     if (end.kind === 'intentional') {
+      await keeper.finish(exitReasonOf(dir, claim.generation)?.reason === 'complete');
       releaseHost(dir, claim);
       settleReadiness(dir, claim.generation, end.owed);
       return end.code;
@@ -390,6 +400,7 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
     saveState(dir, claim.generation, crashes, staleMs);
     if (crashes.length >= CRASH_LIMIT) {
       writeFileNeedsUser(runDir, plan.arc, supervisorNeedsUserId(claim.generation, crashes.length), crashLimitContent(crashes, evidence, end.detail));
+      await keeper.finish(false);
       releaseHost(dir, claim);
       settleReadiness(dir, claim.generation, end.owed);
       return EXIT_START_FAILED;

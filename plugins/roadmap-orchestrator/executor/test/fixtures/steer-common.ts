@@ -4,7 +4,7 @@
 // apply, and `steer --class` is one.
 import type { UnitId } from '../../src/core/ids.ts';
 import { requirePlanInForce, routingProvenanceOf } from '../../src/input/inforce.ts';
-import type { PlanUnit } from '../../src/input/plan.ts';
+import { type PlanUnit, hasMilestones } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { type ResolvedRouting, arcScopeOf, provenanceStack, resolveRouting } from '../../src/routing/layers.ts';
 import type { ArcRun } from './unit-common.ts';
@@ -16,7 +16,7 @@ export function followingContext(r: ArcRun): StageContext {
     const { plan, fact } = inForce();
     // A revision recorded without provenance (rev 1 of these arcs) is rebuilt from its plan, as the executor does.
     const provenance = fact.routingProvenance ?? routingProvenanceOf({ profile: 'default', config: null, arcRoles: 'm4b' }, plan);
-    return resolveRouting(provenanceStack(provenance, arcScopeOf(plan), unit));
+    return resolveRouting(provenanceStack(provenance, arcScopeOf(plan), unit, hasMilestones(plan)));
   };
   return { ...r.ctx, plan: () => inForce().plan, routing };
 }

@@ -1,0 +1,66 @@
+# ledgerly CI
+
+`ci/pipeline.yml` is the pipeline; CI runs it on every push, and `node ci/run.js` runs exactly the same steps locally,
+from the project root, with nothing to install. A green local run means a green CI run.
+
+## Format
+
+A YAML subset: `name:`, then `steps:`, each step a `- name:` line followed by an indented `run:` line. A step's command
+runs without a shell; `node --test` expands its own globs.
+
+```yaml
+name: ledgerly
+steps:
+  - name: config
+    run: node bin/ledgerly.js config check
+  - name: unit
+    run: node --test test/*.test.js
+```
+
+## Output
+
+One line per step that passed (`  unit       ok      0.84s`), then `Pipeline passed in 1.02s.` The runner stops at the
+first failing step and exits with that step's exit code.
+
+A failure must let the person fix it without opening CI's logs:
+
+- the step that failed, with its command and the command's line in `ci/pipeline.yml` (the `run:` line);
+- for a test step, each failing test file, each failing test in it (its file and line, its name and its error), and the
+  command that reruns just that file;
+- for a test file that fails before any test runs (it does not load: a syntax error, a bad import), the file, the
+  error's message and where it points (file:line, with the source line), and the command that reruns that file;
+- for any other step, the tail of its output and the command that reruns it.
+
+```
+ledgerly: 2 steps
+  config     ok      0.11s
+  unit       FAILED  0.92s (exit 1)
+
+Step "unit" failed (ci/pipeline.yml:9): node --test test/*.test.js
+1 test file failed:
+  test/report.test.js
+    test at test/report.test.js:16:1
+    ✖ a team month totals its own entries only (1.2ms)
+      AssertionError [ERR_ASSERTION]: ...the test's own error...
+  rerun it locally: node --test test/report.test.js
+```
+
+A test file that does not load:
+
+```
+Step "unit" failed (ci/pipeline.yml:9): node --test test/*.test.js
+1 test file failed:
+  test/money.test.js
+    the file did not load; no test ran
+    test/money.test.js:3
+      import { formatMoney, parseAmont, percent, plainAmount } from '../src/money.js';
+                            ^^^^^^^^^^
+    SyntaxError: The requested module '../src/money.js' does not provide an export named 'parseAmont'
+  rerun it locally: node --test test/money.test.js
+```
+
+## Rules
+
+- Time to feedback: the whole pipeline runs in seconds; a step that needs more is split.
+- No step needs the network or a secret, and no step echoes one.
+- One way to run CI locally: `node ci/run.js`.

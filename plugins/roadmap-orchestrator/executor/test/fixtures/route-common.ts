@@ -13,7 +13,7 @@ import { openJournal } from '../../src/core/log.ts';
 import type { CommandBody } from '../../src/core/records.ts';
 import { absPath } from '../../src/core/values.ts';
 import { type RoutingBase, readInputFiles, recordPlan, requirePlanInForce } from '../../src/input/inforce.ts';
-import type { PlanUnit } from '../../src/input/plan.ts';
+import { type PlanUnit, hasMilestones } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
 import { arcScopeOf, provenanceStack, resolveRouting } from '../../src/routing/layers.ts';
@@ -52,7 +52,7 @@ export function followContext(r: ArcRun): StageContext {
   const routing: StageContext['routing'] = (unit) => {
     const { fact, plan: p } = inForce();
     if (fact.routingProvenance === undefined) throw new Error(`plan rev ${fact.rev} records no routing provenance`);
-    return resolveRouting(provenanceStack(fact.routingProvenance, arcScopeOf(p), unit));
+    return resolveRouting(provenanceStack(fact.routingProvenance, arcScopeOf(p), unit, hasMilestones(p)));
   };
   const resources = { ...r.ctx, plan };
   return { ...resources, routing, ...serialRuntime(resources) };

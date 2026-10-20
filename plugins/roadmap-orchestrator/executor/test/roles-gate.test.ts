@@ -2,7 +2,7 @@
 // processes, real git, real lanes), the graders on a gate that cites the plant without reading it, the stream-json
 // transcript and cost parser on a captured subagent run, the fake backend's `real` and `checkoutTree` acts, and the
 // triggers. Named tests: roles.approve-all, roles.revise-all, roles.cite-every-path, roles.lucky, roles.transcript-cost,
-// roles.real-act, roles.checkout-tree-act, roles.triggers, roles.arm, roles.wilson, roles.regenerate-check; the spend caps
+// roles.real-act, roles.checkout-tree-act, roles.triggers, roles.arm, roles.worker-error, roles.wilson, roles.regenerate-check; the spend caps
 // and the large-diff gate's grading (1.0.0-dev.12): roles.cap, roles.trial-cap, roles.live-cost, roles.clusters.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -17,6 +17,7 @@ import { type GateKind, type TrialRow, gateArm } from '../evals/roles/gate/arc.t
 import type { AnswerKey } from '../evals/roles/gate/fixture.ts';
 import { grade, gradeClusters } from '../evals/roles/gate/grade.ts';
 import { type Summary, reportLines, summarise } from '../evals/roles/gate/summary.ts';
+import { runWorker } from '../evals/roles/pool.ts';
 import { rebindConfig, run } from '../evals/roles/run.ts';
 import { contextFor, setupArc } from './fixtures/unit-common.ts';
 import { wilson } from '../evals/roles/stats.ts';
@@ -34,7 +35,7 @@ async function fakeRun(gate: GateKind, cells: readonly string[], caps: Caps = {}
   const out = join(tmpDir('roles-out'), 'run');
   const lines: string[] = [];
   const summary = await run({
-    set: 'dev', n: caps.n ?? 1, cells, parallel: 1, size: 150, seed: 'harness', risk: 'med', config: null, out, compare: null, gate, cap: caps.cap ?? null, trialCap: caps.trialCap ?? null,
+    set: 'dev', n: caps.n ?? 1, cells, parallel: 1, size: 150, seed: 'harness', risk: 'med', config: null, out, compare: null, gate, cap: caps.cap ?? null, trialCap: caps.trialCap ?? null, readOnly: false, baseline: null,
   }, (l) => lines.push(l));
   assert.ok(lines.includes('ARM gate.med efficient claude-sonnet-5-5:high'), 'the report names the arm: the med seat, Sonnet 5.5 high');
   const rows = readFileSync(join(out, 'trials.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as TrialRow);
@@ -47,7 +48,7 @@ const criterion = (s: Summary, name: string): boolean | null => s.criteria.find(
 test('roles.risk-arms: a trial runs at every risk tier, its scripted build on the backend that tier\'s build seat routes to (codex low/med, Claude high)', T, async () => {
   for (const risk of ['low', 'med', 'high'] as const) {
     const out = join(tmpDir('roles-out'), `run-${risk}`);
-    await run({ set: 'dev', n: 1, cells: ['G1'], parallel: 1, size: 150, seed: 'harness', risk, config: null, out, compare: null, gate: 'approve-all', cap: null, trialCap: null }, () => {});
+    await run({ set: 'dev', n: 1, cells: ['G1'], parallel: 1, size: 150, seed: 'harness', risk, config: null, out, compare: null, gate: 'approve-all', cap: null, trialCap: null, readOnly: false, baseline: null }, () => {});
     const rows = readFileSync(join(out, 'trials.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as TrialRow);
     assert.equal(rows.length, 1);
     assert.equal(rows[0]!.void, null, `${risk}: ${JSON.stringify(rows[0]!.void)}`);
@@ -118,14 +119,14 @@ const KEY: AnswerKey = {
 };
 const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/rough-edge.ts\n+x\n<not_inlined>\npackages/fern/src/early-index.ts\npackages/fern/src/late-gate.ts\n</not_inlined>\n';
 const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
-const CITE: GateOutput = { decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null }], directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null };
+const CITE: GateOutput = { decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null }], directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null };
 
 const tool = (id: string, name: string, input: Record<string, unknown>, result: string, parent: string | null = null): readonly Record<string, unknown>[] => [
   { type: 'assistant', parent_tool_use_id: parent, message: { id: `m-${id}`, content: [{ type: 'tool_use', id, name, input }] } },
   { type: 'user', parent_tool_use_id: parent, message: { content: [{ type: 'tool_result', tool_use_id: id, content: result }] } },
 ];
 
-test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Read of its diff file (main or subagent) or a Grep that showed it is a look', () => {
+test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Read of its diff file (main or subagent), a Grep that showed it, or a Bash command naming it or showing it is a look', () => {
   const none = readTranscript([]);
   const lucky = grade(KEY, SHOWN, PROMPT, none, CITE);
   assert.equal(lucky.verdict, 'lucky');
@@ -142,10 +143,17 @@ test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Rea
   assert.equal(grade(KEY, SHOWN, PROMPT, viaGrep, CITE).verdict, 'caught');
   const blind = grade(KEY, SHOWN, PROMPT, readTranscript(tool('g2', 'Grep', { pattern: 'nothing' }, 'No matches found')), CITE);
   assert.equal(blind.verdict, 'lucky');
+  // dev.13: the gate has a shell. A Bash command naming the file is a look and covers it; output showing the plant is a look.
+  const viaCat = grade(KEY, SHOWN, PROMPT, readTranscript(tool('b1', 'Bash', { command: `git show HEAD:${KEY.plant!.path}` }, 'ok')), CITE);
+  assert.equal(viaCat.verdict, 'caught');
+  assert.deepEqual(viaCat.coverage, { omitted: 2, covered: 1, share: 0.5 });
+  const viaOutput = readTranscript(tool('b2', 'Bash', { command: 'git diff HEAD~1 -- packages/fern' }, `+    ${KEY.plant!.needle}`));
+  assert.equal(grade(KEY, SHOWN, PROMPT, viaOutput, CITE).verdict, 'caught');
+  assert.equal(grade(KEY, SHOWN, PROMPT, readTranscript(tool('b3', 'Bash', { command: 'ls' }, 'packages')), CITE).verdict, 'lucky');
 
   const row = (verdict: ReturnType<typeof grade>): TrialRow => ({
     set: 'dev', cell: 'G3b', family: 'G3', trial: 0, planted: true, gate: 'cite-plant', outcome: 'revise', caught: null, decision: 'revise', void: null, graded: verdict,
-    largeDiff: false, clusters: null, usage: null, estimatedUsd: 0, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: '/x',
+    readOnly: false, experiments: 0, largeDiff: false, clusters: null, usage: null, estimatedUsd: 0, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [], method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: '/x',
   });
   const s = summarise('dev', [row(lucky), row(caught)]);
   assert.equal(s.criteria.find((c) => c.name === 'zero-lucky')!.pass, false);
@@ -259,13 +267,21 @@ test('roles.clusters: a cluster map graded against the diff\'s paths (uncovered,
   assert.deepEqual(gappy, { files: 4, uncovered: 1, duplicated: 1, depth: { description: 0, routine: 3, close: 0 } });
   const row = (clusters: TrialRow['clusters'], largeDiff: boolean): TrialRow => ({
     set: 'dev', cell: 'G3b', family: 'G3', trial: 0, planted: false, gate: 'real', outcome: 'approve', caught: null, decision: 'approve', void: null, graded: null,
-    largeDiff, clusters, usage: null, estimatedUsd: 0, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [],
+    readOnly: false, experiments: 0, largeDiff, clusters, usage: null, estimatedUsd: 0, wallMs: 1000, turns: 1, load: 0, calls: 1, models: [],
     method: { available: [], tools: {}, subagents: [], firstReadS: null, firstAgentS: null, denials: 0, unavailable: [] }, stages: [], dir: '/x',
   });
   const s = summarise('dev', [row(whole, true), row(gappy, true), row(null, true), row(null, false)]);
   assert.deepEqual(s.cells[0]!.clusters, { required: 3, mapped: 2, complete: 1 });
   assert.deepEqual(s.cells[0]!.reviewMix, { description: 2, routine: 3, close: 2 });
-  assert.ok(reportLines(s).some((l) => l.startsWith('CELL G3b ') && l.endsWith(' clusters=1/3 mapped=2 mix=description:2,routine:3,close:2')), reportLines(s).join('\n'));
+  assert.ok(reportLines(s).some((l) => l.startsWith('CELL G3b ') && l.endsWith(' clusters=1/3 mapped=2 mix=description:2,routine:3,close:2 experiments=0')), reportLines(s).join('\n'));
+});
+
+test('roles.worker-error: a worker that throws voids with its error\'s message, not only the stack frames Node prints last', T, async () => {
+  const died = await runWorker({
+    role: 'gate', set: 'dev', cell: 'NOPE', trial: 0, seed: 'harness', size: 150, gate: 'approve-all', risk: 'med', config: null,
+    out: join(tmpDir('roles-out'), 'w'), medianLoad: null, trialCap: null, readOnly: false,
+  }, () => {});
+  assert.ok(died !== null && died.endsWith('trial error: no cell NOPE in the dev set'), String(died));
 });
 
 test('roles.wilson: Wilson intervals', () => {
@@ -310,9 +326,9 @@ test('roles.checkout-tree-act: checkoutTree commits exactly the given commit\'s 
   assert.equal(existsSync(join(repo, 'a.txt')), false);
 });
 
-test('roles.triggers: gate paths trigger the gate eval; unrelated paths none', () => {
+test('roles.triggers: gate paths trigger the gate eval; shared paths (routing) the walkthrough and polish-judge evals too; unrelated paths none', () => {
   assert.deepEqual(triggeredRoles(['src/prompts/gate/claude-opus-5-5.ts']), ['gate']);
   assert.deepEqual(triggeredRoles(['src/git/boundeddiff.ts', 'README.md']), ['gate']);
-  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate']);
+  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge']);
   assert.deepEqual(triggeredRoles(['src/holistic/audit.ts', 'test/gate.test.ts']), []);
 });

@@ -75,6 +75,11 @@ export type WorldAct =
    */
   | Readonly<{ type: 'writeToPrompt'; pattern: string; file: string; text: string }>
   /**
+   * dev.13 (a fake walkthrough): GET the URL `pattern` finds in stdin (one capture group) and write `<status> <body>` (or
+   * `error <message>`) to `<dir>/<file>`, where `dirPattern` finds `dir`: how a fake walk uses the product it was given.
+   */
+  | Readonly<{ type: 'fetchFromPrompt'; pattern: string; dirPattern: string; file: string }>
+  /**
    * Commit the tree of commit `sha` (already in the repository's object store) onto the cwd's branch, with `message`:
    * the index and working tree become exactly that tree, deletions included. How a fake implementer lays down a
    * generated unit commit (the role evals, evals/roles/).
@@ -89,12 +94,14 @@ export type WorldAct =
  * `real` (the role evals, evals/roles/): run the real `claude` (the first one on PATH after the shims' own dir) with the
  * call's exact argv, stdin, cwd and environment, its stdout and stderr passed through and its exit status the fake's.
  * Nothing after it runs. The production prompt, capture, tools and add-dirs reach the real model byte for byte, with no
- * test seam in production code.
+ * test seam in production code. `readOnly` (the gate eval's comparison arm, dev.13): the acting gate call's argv is first
+ * rewritten into the dev.12 gate's judgment profile (evals/roles/gate/readonly.ts `readOnlyArgs`); all else is the call's.
  * `stream` (the role evals' spend brake): print `events` to stdout as stream-json lines, as a running session prints its
  * messages before any result.
  */
 export type ClaudeOnlyAct =
-  | Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real' }> | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>;
+  | Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real'; readOnly?: Readonly<{ repo: string; runDir: string }> }>
+  | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>;
 /**
  * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on
  * stderr, exit 1). `threadStarted`: print the `thread.started` event now, as the real CLI does first, so a

@@ -1,8 +1,10 @@
-// Minting debt (M4a, R7, A4): turn a gate note on an approved attempt, a checkpoint-deferred P2/P3 finding without an
-// obligation, or (M4a rev 3, LR-k) a checkpoint admit code converted as an opportunity's follow-up overrun, into the
-// `debt-banked` fact's fields. Pure; the caller appends the fact. Correctness never banks: an obligation-affecting
-// finding is refused, an overrun names its opportunity (never a finding: the repaired findings stay active), and
-// directive overflow is not a source.
+// Minting debt (M4a, R7, A4): turn a gate note on an approved attempt (dev.13: one that names its drag on future work,
+// or a pre-existing defect), a checkpoint-deferred P2 finding without an obligation, or (M4a rev 3, LR-k) a checkpoint
+// admit code converted as an opportunity's follow-up overrun, into the `debt-banked` fact's fields. Pure; the caller
+// appends the fact. Correctness never banks: an obligation-affecting finding is refused, an overrun names its
+// opportunity (never a finding: the repaired findings stay active), and directive overflow is not a source. dev.13
+// (owner ruling 2026-10-20: debt is for substantive issues that drag down future work, never a dumping ground for
+// nitpicks): a P3 finding is refused; a P3 nobody fixes is released (src/holistic/tail.ts).
 import type { Fact } from '../core/events.ts';
 import type { DebtId, FindingId, JobId, ObligationId, OpportunityId, UnitId } from '../core/ids.ts';
 import { normalizeText } from '../corpus/rules.ts';
@@ -14,7 +16,8 @@ export type DebtBanked = Extract<Fact, { kind: 'debt-banked' }>;
 /** What a bank request names. */
 export type DebtCandidate =
   | Readonly<{ type: 'gate-note'; unit: UnitId; attempt: number; index: number; what: string }>
-  | Readonly<{ type: 'finding-deferred'; finding: FindingId; severity: 'P1' | 'P2' | 'P3'; obligation: ObligationId | null; unit: UnitId | null; what: string }>
+  /** `witness`: a vacuity finding, about the strength of an obligation's witness, not about the obligation's truth. */
+  | Readonly<{ type: 'finding-deferred'; finding: FindingId; severity: 'P1' | 'P2' | 'P3'; obligation: ObligationId | null; witness: boolean; unit: UnitId | null; what: string }>
   /** The converted admit `index` of checkpoint `job` (its unit `unit`, never planned): opportunity `opportunity`'s second follow-up. */
   | Readonly<{ type: 'opportunity-overrun'; opportunity: OpportunityId; job: JobId; index: number; unit: UnitId; what: string }>;
 
@@ -34,7 +37,7 @@ function sameSource(a: DebtSource, b: DebtSource): boolean {
 /**
  * The fact to append for a candidate, or null when nothing is to be banked: its source already banked (idempotent), or an
  * unresolved item with the same `debtKey` exists (in the baseline ledger or already banked this arc). Throws on a
- * finding that is P1 or has an obligation, or whose text is empty. Ids continue from the highest in the baseline and the
+ * finding that is P1 or P3 or has an obligation, or whose text is empty. Ids continue from the highest in the baseline and the
  * arc's own facts.
  */
 export function mintDebt(baseline: DebtLedger, banked: readonly DebtBanked[], c: DebtCandidate): DebtBanked | null {
@@ -43,8 +46,8 @@ export function mintDebt(baseline: DebtLedger, banked: readonly DebtBanked[], c:
     ? { type: 'gate', unit: c.unit, attempt: c.attempt, index: c.index }
     : c.type === 'finding-deferred' ? { type: 'finding', finding: c.finding } : { type: 'admit', job: c.job, index: c.index };
   if (c.type === 'finding-deferred') {
-    if (c.obligation !== null) throw new DebtRefusedError(`${c.finding} affects ${c.obligation}: a finding with an obligation is never debt`);
-    if (c.severity === 'P1') throw new DebtRefusedError(`${c.finding} is P1: only P2 or P3 findings are banked`);
+    if (c.obligation !== null && !c.witness) throw new DebtRefusedError(`${c.finding} affects ${c.obligation}: a finding with an obligation is never debt (a vacuous witness of one may be)`);
+    if (c.severity !== 'P2') throw new DebtRefusedError(`${c.finding} is ${c.severity}: only P2 findings are banked (a P3 is never debt)`);
   }
   const what = normalizeText(c.what);
   if (what === '') throw new DebtRefusedError('debt text is empty');

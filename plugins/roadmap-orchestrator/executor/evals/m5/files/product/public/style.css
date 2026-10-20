@@ -1,0 +1,70 @@
+/* The shelf's look: the paper and ink of the hand-lettered flyers taped to the shelf. */
+:root {
+  --paper: #fbf7ef;
+  --ink: #2b2620;
+  --ink-soft: #706657;
+  --rule: #d9cfbf;
+  --rust: #9c3d1f;
+  --letter: "Bradley Hand", "Segoe Print", "Comic Neue", cursive;
+  --text: Georgia, "Iowan Old Style", "Times New Roman", serif;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 1.0625rem/1.5 var(--text);
+}
+
+header {
+  padding: 1.5rem 1rem 0.75rem;
+  border-bottom: 2px solid var(--rule);
+  text-align: center;
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--letter);
+  font-size: 2.25rem;
+  color: var(--rust);
+}
+
+.tagline {
+  margin: 0.25rem 0 0;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+h2 {
+  font-family: var(--letter);
+  font-weight: normal;
+}
+
+.books {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.book {
+  padding: 0.75rem 0;
+  border-bottom: 1px dashed var(--rule);
+}
+
+.book-title {
+  font-weight: bold;
+}
+
+.book-meta {
+  margin: 0.25rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+a {
+  color: var(--rust);
+}

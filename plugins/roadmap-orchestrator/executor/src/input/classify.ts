@@ -69,6 +69,23 @@
 //   plan-check shape (E)        `plan-check-shape` (no drain)
 //   derived files (2026-10-16)  `derived` (no drain; the dispatch check re-pins each unit's widening, src/input/derived.ts)
 //
+// dev.13 (SCHEMAS.md "dev.13"):
+//   milestones                  `milestones` (no drain), an architect `apply` only (`milestoneRows`): a walked milestone
+//                               (a `walk-started` names it) is never removed and keeps its units and design; one being
+//                               walked does not change until its walk ends; a milestone added or whose units change lists a
+//                               unit still to merge; on every revision no milestone lists a cut unit. Milestones without
+//                               the holistic layer are refused `milestones-need-holistic` before routing resolves; a first
+//                               milestone added (or the last removed) moves the walk seats into (out of) force, so the
+//                               revision's routing is checked and smoked (`routingRows`); a walked milestone whose bringUp
+//                               or journeys change is listed in the change's `rewalk` (its walk abandonment brake resets)
+//
+// dev.13, agent D (`polishRows`):
+//   polish units                a polish unit added (not a re-entry) only by the polish revision of the walk whose
+//                               proposal it carries (proposer `walk{job}`), the proposal of its milestone and the unit
+//                               the proposal names; that proposer changes nothing else
+//   a dropped tweak's cut       proposer `compare{unit}` cuts only `unit`, reason `polish-dropped`, judged `drop`; the
+//                               in-a-task refusal does not apply (the unit waits at its candidate admission, in no stage)
+//
 // M3 (plan "Obligations as a revisioned input"; step A2). Who proposes the revision (`Proposer`) decides what
 // it may touch:
 //   rulings ledger + sidecars   executor-owned after start (A3): only `rule`, `apply --ruling` (M4a rev 3, I2: the
@@ -148,7 +165,8 @@ import {
 import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
-  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, knownDefectsOf, parsePlan, planCheckShapeOf, planFieldValue, priorityOf, reservedUnitIdReason,
+  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, hasMilestones, knownDefectsOf, milestonesNeedHolistic, milestonesOf, parsePlan, planCheckShapeOf,
+  planFieldValue, priorityOf, reservedUnitIdReason,
 } from './plan.ts';
 
 /**
@@ -176,7 +194,11 @@ export type Proposer =
    */
   | Readonly<{
     type: 'bundle'; job: JobId; cites: readonly VisionClauseId[]; evidence: readonly string[]; admits: readonly ClassifiedAdmit[]; fixesUnrecorded: readonly UnitId[];
-  }>;
+  }>
+  /** dev.13 (agent D): the code-applied polish revision of walk `job` (src/walk/polish.ts): it only admits that walk's proposals. */
+  | Readonly<{ type: 'walk'; job: JobId }>
+  /** dev.13 (agent D): the cut of polish unit `unit` its compare judged `drop` (src/walk/compare.ts): it only cuts that unit. */
+  | Readonly<{ type: 'compare'; unit: UnitId }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -666,7 +688,7 @@ export function classify(input: ClassifyInput): Classified {
     if (was.cut !== undefined && unit.cut === undefined) reasons.push(`unit ${unit.id} is cut; a cut is final`);
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
-      const refusal = cutRefusal(view, unit.id);
+      const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit) : cutRefusal(view, unit.id);
       const ruling = unit.cut.ruling === undefined ? null : rulingReason(ledger, unit.cut.ruling, `unit ${unit.id}'s cut`);
       if (refusal !== null) reasons.push(refusal);
       if (ruling !== null) reasons.push(ruling);
@@ -759,26 +781,17 @@ export function classify(input: ClassifyInput): Classified {
   if (planCheckShapeOf(cur) !== planCheckShapeOf(plan)) changes.push({ type: 'plan-check-shape' });
   if (!same(derivedOf(cur), derivedOf(plan))) changes.push({ type: 'derived' });
 
-  // Routing: the plan's layer, then each unit's (`route`, M3).
+  // dev.13: the milestones (an architect `apply` only), and the holistic layer they need before any routing resolves
+  // (the walk roles are in force only in a holistic arc).
+  const needsHolistic = milestonesNeedHolistic(plan);
+  if (needsHolistic) reasons.push(canonicalJson({ kind: 'milestones-need-holistic' }));
+  milestoneRows(view, cur, plan, proposer, changes, reasons);
+
+  // Routing: the plan's layer, then each unit's (`route`, M3); dev.13: milestones added to a plan without any, or all
+  // removed, move the walk seats in or out of force (no `routing` change, as for `holistic`: the arc's rev moves with
+  // its plan), so the new routing is checked and its newly seated backends smoked.
   const routings: ResolvedRouting[] = [];
-  if (!same(cur.routing, plan.routing)) {
-    const resolved = planRouting(input.routing, plan);
-    if (resolved.rev !== planRouting(input.routing, cur).rev) {
-      routings.push(resolved);
-      changes.push({ type: 'routing', routingRev: resolved.rev });
-    }
-  }
-  for (const unit of plan.units) {
-    const was = cur.units.find((u) => u.id === unit.id);
-    if (same(was?.routing, unit.routing)) continue;
-    const resolved = unitRouting(input.routing, plan, unit);
-    const unsupported = unsupportedSeats(resolved, unit.id).filter((r) => r.kind === 'unsupported-routing' && (UNIT_ROLES as readonly string[]).includes(r.role));
-    reasons.push(...unsupported.map((r) => canonicalJson(r)));
-    if (was === undefined || unsupported.length > 0 || resolved.rev === unitRouting(input.routing, cur, was).rev) continue;
-    routings.push(resolved);
-    changes.push({ type: 'routing', routingRev: resolved.rev, unit: unit.id });
-    scoped.add(unit.id);
-  }
+  if (!needsHolistic) routingRows(input, cur, plan, changes, routings, scoped, reasons);
 
   // Limits (M3): never below what a unit has spent.
   const limitsChecked = new Set<UnitId>();
@@ -890,6 +903,8 @@ export function classify(input: ClassifyInput): Classified {
   specRows(input, inputs, specs, changes, reasons);
   censusRows(input, inputs, specs, reasons);
   corpusRows(input, inputs, changes, reasons);
+  // dev.13 (agent D): polish units and the code proposers, over every change listed.
+  polishRows(view, cur, plan, proposer, changes, reasons);
 
   if (reasons.length > 0) return { kind: 'rejected', reasons };
   // No change but other bytes (whitespace, key order): the new bytes come into force with no change listed.
@@ -965,6 +980,144 @@ function knownDefectRows(
     return;
   }
   if (!same(was, now)) changes.push({ type: 'known-defects' });
+}
+
+/**
+ * The routing rows (M3 `route`): the plan's layer, then each unit's, re-resolved; the unit seats an apply cannot support
+ * refused. dev.13: a revision that gives a plan its first milestones, or removes its last, moves the walk seats in or out
+ * of force without a layer edit; its routing is pushed for the routing check and the smoke of newly seated backends.
+ */
+function routingRows(
+  input: ClassifyInput, cur: PlanM1, plan: PlanM1, changes: PlanChange[], routings: ResolvedRouting[], scoped: Set<UnitId>, reasons: string[],
+): void {
+  if (!same(cur.routing, plan.routing)) {
+    const resolved = planRouting(input.routing, plan);
+    if (resolved.rev !== planRouting(input.routing, cur).rev) {
+      routings.push(resolved);
+      changes.push({ type: 'routing', routingRev: resolved.rev });
+    }
+  }
+  for (const unit of plan.units) {
+    const was = cur.units.find((u) => u.id === unit.id);
+    if (same(was?.routing, unit.routing)) continue;
+    const resolved = unitRouting(input.routing, plan, unit);
+    const unsupported = unsupportedSeats(resolved, unit.id).filter((r) => r.kind === 'unsupported-routing' && (UNIT_ROLES as readonly string[]).includes(r.role));
+    reasons.push(...unsupported.map((r) => canonicalJson(r)));
+    if (was === undefined || unsupported.length > 0 || resolved.rev === unitRouting(input.routing, cur, was).rev) continue;
+    routings.push(resolved);
+    changes.push({ type: 'routing', routingRev: resolved.rev, unit: unit.id });
+    scoped.add(unit.id);
+  }
+  if (same(cur.routing, plan.routing) && hasMilestones(cur) !== hasMilestones(plan)) {
+    const resolved = planRouting(input.routing, plan);
+    if (resolved.rev !== planRouting(input.routing, cur).rev) routings.push(resolved);
+  }
+}
+
+/**
+ * dev.13: the milestones edit class (`milestones`, no drain: the milestone node gates readiness and a walk reads the plan
+ * in force when it starts, so nothing running reads them). Only an architect `apply` changes them (the checkpoint cannot:
+ * backlog). A milestone a walk started on stays in the plan (its walk facts name it) with the units and design it was
+ * walked on; one being walked (started, not ended) does not change until its walk ends; a milestone added, or whose units
+ * change, lists a unit still to merge (it is reached on the publication that retires its last unit). On every revision, by
+ * any proposer: no milestone lists a cut unit, which never merges, so the milestone would never be reached and its
+ * descendants would wait on it for ever.
+ */
+function milestoneRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: PlanChange[], reasons: string[]): void {
+  const cut = new Set(plan.units.filter((u) => u.cut !== undefined).map((u) => u.id));
+  for (const m of milestonesOf(plan)) {
+    const on = m.units.filter((u) => cut.has(u));
+    if (on.length > 0) reasons.push(`milestone ${m.id} lists ${on.join(', ')}, cut: a cut unit never merges, so the milestone would never be reached; drop it from the milestone's units in the same apply`);
+  }
+  const was = milestonesOf(cur);
+  const now = milestonesOf(plan);
+  if (same(was, now)) return;
+  if (proposer.type !== 'apply') {
+    reasons.push(`the milestones change only through an architect \`apply\`, not a ${proposer.type}`);
+    return;
+  }
+  const walks = view.walkFacts().flatMap((x) => (x.fact.kind === 'walk-started' ? [x.fact] : []));
+  const ended = new Set(view.walkFacts().flatMap((x) => (x.fact.kind === 'walk-ended' ? [x.fact.job] : [])));
+  const before = reasons.length;
+  for (const m of was) {
+    const started = walks.filter((w) => w.milestone === m.id);
+    const next = now.find((x) => x.id === m.id);
+    if (started.length === 0 || same(m, next)) continue;
+    const jobs = started.map((w) => w.job).join(', ');
+    const open = started.find((w) => !ended.has(w.job));
+    if (next === undefined) reasons.push(`milestone ${m.id} has been walked (${jobs}); it cannot be removed`);
+    else if (open !== undefined) reasons.push(`milestone ${m.id} is being walked (${open.job}); edit it once the walk ends`);
+    else if (!same(m.units, next.units) || !same(m.design, next.design)) {
+      reasons.push(`milestone ${m.id} has been walked (${jobs}): its units and design are fixed; plan another milestone for more`);
+    }
+  }
+  const merged = (u: UnitId): boolean => view.unit(u).status === 'retired';
+  for (const m of now) {
+    const prior = was.find((x) => x.id === m.id);
+    if ((prior !== undefined && same(prior.units, m.units)) || walks.some((w) => w.milestone === m.id)) continue;
+    if (m.units.every(merged)) reasons.push(`milestone ${m.id}: every unit it lists has merged, so no publication would reach it; list a unit still to merge`);
+  }
+  if (reasons.length !== before) return;
+  // A walked milestone whose bring-up or journeys the apply edits (allowed: a broken bring-up is fixed so) gets a fresh
+  // walk attempt count (src/walk/milestones.ts, the walk abandonment brake).
+  const rewalk = was.flatMap((m) => {
+    const next = now.find((x) => x.id === m.id);
+    return next !== undefined && walks.some((w) => w.milestone === m.id) && (!same(m.bringUp, next.bringUp) || !same(m.journeys, next.journeys)) ? [m.id] : [];
+  });
+  changes.push({ type: 'milestones', ...(rewalk.length === 0 ? {} : { rewalk }) });
+}
+
+/** The cut reason of a polish unit its compare judged `drop` (src/walk/compare.ts). */
+export const POLISH_DROPPED = 'polish-dropped';
+
+/**
+ * Why the compare's cut of polish unit `unit` may not land, or null (dev.13, agent D). The unit waits at its candidate
+ * admission, which a dropped tweak never passes (src/schedule/ready.ts `compare` constraint), so it is in no stage although
+ * its task may be waiting there: the in-a-task refusal (`cutRefusal`) does not apply. Its `tweak-judged` is a `drop`, the
+ * reason `polish-dropped`, and it has no open attempt.
+ */
+function droppedCutRefusal(view: JournalView, unit: PlanUnit): string | null {
+  const judged = view.walkFacts().find((x) => x.fact.kind === 'tweak-judged' && x.fact.unit === unit.id)?.fact;
+  if (judged?.kind !== 'tweak-judged' || judged.decision !== 'drop') return `unit ${unit.id}: a compare cuts only a tweak it judged drop`;
+  if (unit.cut?.reason !== POLISH_DROPPED) return `unit ${unit.id}: a dropped tweak is cut with the reason ${POLISH_DROPPED}`;
+  const u = view.unit(unit.id);
+  if (u.status === 'retired' || u.status === 'superseded') return `unit ${unit.id} is ${u.status}; it cannot be cut`;
+  const open = openAttempt(view, unit.id);
+  return open === null ? null : `unit ${unit.id} has an open ${open.stage} attempt; a dropped tweak waits at its candidate admission`;
+}
+
+/**
+ * dev.13 (agent D): polish units and the two code proposers (one admit path, two authors: the checkpoint's `admit` and a
+ * walk's proposals go through the same admit validation and this classifier).
+ * - A polish unit added (not a re-entry) is a walk's: its proposer is the polish revision of the walk whose proposal it
+ *   carries, the proposal is of the unit's milestone, and the unit is the proposal's own (its id and scope).
+ * - The polish revision (`walk{job}`) only adds such units: any other change is refused.
+ * - The compare's cut (`compare{unit}`) only cuts that unit (`droppedCutRefusal` holds the rest).
+ */
+function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
+  const curIds = new Set(cur.units.map((u) => u.id));
+  const proposals = new Map(view.walkFacts().flatMap((x) => (x.fact.kind === 'polish-proposed' ? [[x.fact.id, x.fact] as const] : [])));
+  for (const u of plan.units) {
+    if (curIds.has(u.id) || u.origin !== 'polish' || u.reenters !== undefined) continue;
+    const origin = u.polish!;
+    if (proposer.type !== 'walk') {
+      reasons.push(`unit ${u.id} is a polish unit: only the executor admits one, from a walkthrough's proposal, not a ${proposer.type}`);
+      continue;
+    }
+    const p = proposals.get(origin.proposal);
+    if (p === undefined || p.job !== proposer.job) reasons.push(`unit ${u.id} carries proposal ${origin.proposal}, which is no proposal of ${proposer.job}`);
+    else if (p.milestone !== origin.milestone) reasons.push(`unit ${u.id} names milestone ${origin.milestone}; its proposal ${p.id} is of ${p.milestone}`);
+    else if (p.unit.id !== u.id || !same([...u.scope].sort(), p.unit.scope)) reasons.push(`unit ${u.id} is not the unit proposal ${p.id} names (${p.unit.id}, scope ${p.unit.scope.join(', ')})`);
+  }
+  if (proposer.type === 'walk') {
+    const added = new Set(plan.units.filter((u) => !curIds.has(u.id) && u.origin === 'polish').map((u) => u.id as string));
+    const other = changes.filter((c) => !(c.type === 'unit-added' && added.has(c.unit)));
+    if (other.length > 0) reasons.push(`the polish revision of ${proposer.job} only admits its polish units; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
+  }
+  if (proposer.type === 'compare') {
+    const other = changes.filter((c) => !(c.type === 'unit-cut' && c.unit === proposer.unit));
+    if (other.length > 0) reasons.push(`the compare's cut of ${proposer.unit} only cuts it; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
+  }
 }
 
 type ObligationRows = Readonly<{
@@ -1224,6 +1377,8 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'known-defects':
       case 'plan-check-shape':
       case 'derived':
+      // dev.13: a milestones edit drains nothing (the node gates readiness; a walk reads the plan in force when it starts).
+      case 'milestones':
         break;
       case 'unit-added':
       case 'unit-removed':
@@ -1436,6 +1591,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'close-admissions':
       case 'flow-decide':
       case 'flow-request':
+      case 'demo':
         return NONE;
       // M3 (plan "Commands"): `reverse` restores revisions of any artifact; `steer` and `merge-in` touch their unit.
       case 'reverse':

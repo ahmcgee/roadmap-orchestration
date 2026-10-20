@@ -9,15 +9,20 @@ import { sha } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { boundedDiff } from '../src/git/boundeddiff.ts';
 import { GATE_DIFF_BUDGET } from '../src/pipeline/gate.ts';
-import { DEV_CELLS, type Cell } from '../evals/roles/gate/cells.ts';
+import { DEV_CELLS, type SweepCell, isExecCell } from '../evals/roles/gate/cells.ts';
 import { DERIVED_PATTERNS, type Fixture, buildFixture, materialise, trimEnds } from '../evals/roles/gate/fixture.ts';
 import { rng } from '../evals/roles/gen/prng.ts';
 import { TEST_ARGV, generate, gitOut } from '../evals/roles/gen/tsrepo.ts';
 import { tmpDir } from './helpers/repo.ts';
 
-const cell = (id: string): Cell => DEV_CELLS.find((c) => c.id === id)!;
+/** A sweep cell (the execution-only cells are roles-gate-exec.test.ts's). */
+const cell = (id: string): SweepCell => {
+  const c = DEV_CELLS.find((x) => x.id === id)!;
+  if (isExecCell(c)) throw new Error(`${id} is an execution-only cell`);
+  return c;
+};
 /** A cell, or (`<id>*`) the cell with placement `any`: the same plant without the bounded-diff placement checks. */
-const cellOf = (id: string): Cell => {
+const cellOf = (id: string): SweepCell => {
   if (!id.endsWith('*')) return cell(id);
   const c = cell(id.slice(0, -1));
   return { ...c, plant: { plant: c.plant!.plant, placement: 'any' } };
@@ -45,8 +50,10 @@ test('roles.size-knob: the file count follows the size knob within a few percent
 
 test('roles.plant-in-diff: every planted dev cell plants inside the diff, away from both ends, with its needle in place', () => {
   // Placement `any` only: the inlined and omitted cells are placement-omitted's (each placement check is a bounded diff).
-  for (const c of [...DEV_CELLS.filter((x) => x.plant !== null && x.plant.placement === 'any'), cellOf('G2a*'), cellOf('G3a*')]) {
+  const sweeps = DEV_CELLS.flatMap((x) => (isExecCell(x) ? [] : [x]));
+  for (const c of [...sweeps.filter((x) => x.plant !== null && x.plant.placement === 'any'), cellOf('G2a*'), cellOf('G3a*')]) {
     const f = buildFixture(c, { seed: 'gen-test', trial: 0, size: 300, scratch: tmpDir('roles-scratch') });
+    const swept = f.swept!;
     const p = f.key.plant!;
     assert.ok(f.key.changed.includes(p.path), `${c.id}: ${p.path} is not in the diff`);
     if (p.deletion) {
@@ -56,7 +63,7 @@ test('roles.plant-in-diff: every planted dev cell plants inside the diff, away f
     } else {
       assert.ok(f.head.get(p.path)!.includes(p.needle), `${c.id}: the needle ${p.needle} is not in ${p.path}`);
     }
-    const eligible = trimEnds(c.plant!.plant.eligible({ repo: f.repo, swept: f.swept, rng: rng('unused') }, c.plant!.plant.phase === 'source' ? f.swept.files : f.head));
+    const eligible = trimEnds(c.plant!.plant.eligible({ repo: f.repo, swept, rng: rng('unused') }, c.plant!.plant.phase === 'source' ? swept.files : f.head));
     if (!p.deletion && c.plant!.plant.phase === 'source') assert.ok(eligible.includes(p.path), `${c.id}: ${p.path} is outside the trimmed eligible files`);
   }
 });
@@ -78,7 +85,7 @@ test('roles.placement-omitted: an omitted placement is really not inlined by the
     const f = build(id, 400);
     const dir = tmpDir('roles-place');
     const { base, head } = materialise(f, dir);
-    const d = boundedDiff(absPath(dir), sha(base), sha(head), { budget: GATE_DIFF_BUDGET, derived: DERIVED_PATTERNS, removes: f.swept.removes, dir: absPath(join(tmpDir('roles-bd'), 'bd')) });
+    const d = boundedDiff(absPath(dir), sha(base), sha(head), { budget: GATE_DIFF_BUDGET, derived: DERIVED_PATTERNS, removes: f.removes, dir: absPath(join(tmpDir('roles-bd'), 'bd')) });
     assert.equal(d.inlined.some((x) => x.path === f.key.plant!.path), inlined, `${id}: ${f.key.plant!.path}`);
     assert.equal(f.key.plant!.predicted, inlined ? 'inlined' : 'omitted');
   }

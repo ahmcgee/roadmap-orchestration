@@ -6,9 +6,10 @@
 //   E. Every open `bundle-request` (non-blocking, A9) is declined by the executor: in a corpus arc first a corpus amendment
 //      `source: request{job, needsUser}` carrying its proposal to the next Phase 0, then `needs-user-declined{id, choice,
 //      reason}`, which closes it as an acknowledgement would (its generation is quiescent again).
-//   F. In a corpus arc, every active P2 or P3 finding that names no obligation is banked as `finding-deferred` debt (the
-//      next Phase 0 dispositions it), then ruled `deferred` by `code{close-out}`. A finding with an obligation never banks
-//      (correctness never banks): it keeps holding completion through its obligation, as before.
+//   F. In a corpus arc, every active P2 finding that names no obligation is banked as `finding-deferred` debt (the next
+//      Phase 0 dispositions it), then ruled `deferred` by `code{close-out}`; every such P3 is ruled `released` by
+//      `code{close-out}` (dev.13: a P3 is never debt). A finding with an obligation never banks (correctness never banks):
+//      it keeps holding completion through its obligation, as before.
 //
 // Each step is idempotent by its source (the amendment's, the debt item's), so a crash between the two writes of one item
 // is finished by the next settlement (crash labels `closeout.after-request-amendment`, `closeout.after-deferred-debt`).
@@ -43,12 +44,16 @@ export function settleCloseOut(ctx: CheckpointContext): boolean {
     wrote = true;
   }
   if (!corpus) return wrote;
-  const deferred = ctx.journal.view.holistic().findings.filter((f): f is typeof f & Readonly<{ severity: 'P2' | 'P3' }> => isActive(f) && f.severity !== 'P1' && f.obligation === null);
-  if (deferred.length === 0) return wrote;
+  // A vacuous witness of an obligation is about the test, not the obligation's truth: it closes out like any other finding.
+  const open = ctx.journal.view.holistic().findings.filter((f) => isActive(f) && f.severity !== 'P1' && (f.obligation === null || f.lens === 'vacuity'));
+  if (open.length === 0) return wrote;
+  for (const f of open) if (f.severity === 'P3') ruleFinding(ctx.journal, f.id, 'released', { type: 'code', reason: 'close-out' });
+  const deferred = open.filter((f) => f.severity === 'P2');
+  if (deferred.length === 0) return true;
   const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);
   for (const f of deferred) {
     const fact = mintDebt(baseline, ctx.journal.view.holistic().debt, {
-      type: 'finding-deferred', finding: f.id, severity: f.severity, obligation: null, unit: f.owner, what: f.claim,
+      type: 'finding-deferred', finding: f.id, severity: f.severity, obligation: f.obligation, witness: f.lens === 'vacuity', unit: f.owner, what: f.claim,
     });
     if (fact !== null) {
       ctx.journal.fact(fact);

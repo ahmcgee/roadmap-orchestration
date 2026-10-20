@@ -126,7 +126,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
     });
     await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
     const record = r.journal.view.dispatchOf(U1)!;
-    const reproduced = resolveRouting(provenanceStack(provenance!, 'none', U1));
+    const reproduced = resolveRouting(provenanceStack(provenance!, 'none', U1, false));
     assert.equal(record.routingRev, reproduced.rev, 'the provenance reproduces the unit\'s dispatch rev');
     const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
     assert.equal(reproduced.rev, unitRouting(base, plan, unitOf(ctx, 'u1')).rev, 'the same routing the start resolved');
@@ -135,7 +135,7 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
       ['repo-config', 'unit', 'repo-config', 'plan'],
     );
     assert.equal(reproduced.table.build.med.model, 'claude-sonnet-5-5', 'the repo config rebinds the efficient class');
-    assert.notEqual(resolveRouting(provenanceStack(provenance!, 'none', U2)).rev, record.routingRev, 'u2 has no unit layer');
+    assert.notEqual(resolveRouting(provenanceStack(provenance!, 'none', U2, false)).rev, record.routingRev, 'u2 has no unit layer');
 
     // The architect edits the live config: a revision's routing never re-reads it (H7).
     writeFileSync(configPath, JSON.stringify({ routing: { classes: { efficient: sonnet('high') } } }));

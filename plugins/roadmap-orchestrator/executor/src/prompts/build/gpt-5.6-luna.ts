@@ -9,7 +9,8 @@
 // channel in `codex exec`: the launcher delivers `system` ahead of `render` on stdin.
 // Distilled from 0.20's Codex build and fix briefs and RATIONALE §19: pinned scope as the fact salvage
 // enforces, no .roadmap/, exact lane commands composed by code, estate lanes executor-only, a fix round
-// restates its stopping rule, never encode wrong behaviour in a test. Commit-as-you-go is dropped
+// restates its stopping rule, never encode wrong behaviour in a test. dev.13 tail (2026-10-20): tests fail for the two or
+// three most plausible wrong versions, the auditor's question, not only for the behaviour removed. Commit-as-you-go is dropped
 // (salvage commits); specGap/contractMismatch become blockers and decisions.json. From arc 1: the
 // executor's UNIT_POLICY, overriding AGENTS.md and the like (feedback item 20; Codex reads the repo's
 // AGENTS.md, which in arc 1 granted cloud use and sudo installs); cited documents in full and an index for
@@ -19,8 +20,10 @@
 // through the real entry point (F20); `experiments` in the output; the read-only in-session assessment (E, R55).
 // W3 (2026-10-16): Host no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". No delegation
 // text: the Claude role prompts' guidance names the Agent tool, which `codex exec` does not have.
+// dev.13: a milestone unit's design references and milestones, as the Claude module's; `browser` is always null on this
+// seat (Codex gets no MCP config), rendered by the shared helper all the same.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, assessText, bullets, fastLanesText, referenceIndexText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, assessText, bullets, buildBrowserText, fastLanesText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
@@ -33,7 +36,7 @@ ${UNIT_POLICY}
 Make every acceptance clause in the spec hold, with every fast lane passing, and stop.
 
 # Success criteria
-- Each acceptance clause holds. Where a clause admits a test, a test demonstrates it and fails if the behaviour is broken (break it, see the test fail, restore).
+- Each acceptance clause holds. Where a clause admits a test, tests demonstrate it and fail for each of the two or three most plausible wrong versions of the code, not only for the behaviour removed (break it that way, see a test fail, restore). An auditor later makes the smallest breaking edit to your code and runs the lane; a witness that stays green sends work back. Wrong versions that most often survive: only some items handled (a test checking a sample, not every item and field); the boundary (at a limit, empty, zero, the instant a window ends); the default path production takes where every test injects its own; the wrong clock, time zone or locale; a rule applied to every case instead of the selected one; an outcome asserted without the path that produces it.
 - Every fast lane was run exactly as listed after your last change and exited with its expected code.
 - Every acceptance clause and every witness item in the spec maps to a test that exists under exactly the id the spec gives and runs in its lane; the executor looks each required witness test up by that id before the gate. Each witness check in the message, run after your last change, exits 0.
 - Every decision the spec left open, where a competent engineer could have chosen otherwise, is in ${DECISIONS_FILE}.
@@ -85,6 +88,16 @@ The executor runs these after your fast lanes, in a clean checkout of your commi
 ${fastLanesText(i.worktree, i.suiteLanes)}`;
 }
 
+/** dev.13: the milestones' design references, in full, beside the contracts. */
+function designReferences(i: BuildInputs): string {
+  const docs = i.milestones?.references ?? [];
+  if (docs.length === 0) return '';
+  return `
+
+# Design references
+${docs.map((d) => `<reference path="${d.path}">\n${d.text}\n</reference>`).join('\n')}`;
+}
+
 function witnessChecks(i: BuildInputs): string {
   if (i.witnessChecks.length === 0) return '';
   return `
@@ -105,7 +118,10 @@ function task(i: BuildInputs): string {
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  fields: [
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
+    'milestones', 'browser',
+  ],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
 ${i.spec.markdown}
 
@@ -116,7 +132,7 @@ ${i.contracts.length === 0 ? '(none cited)' : i.contracts.map((c) => `<contract 
 ${rulingsText(i.rulings)}
 
 # Reference index
-${referenceIndexText(i.index)}
+${referenceIndexText(i.index)}${designReferences(i)}${milestonesText(i.milestones)}
 
 # Plan-check notes
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
@@ -128,7 +144,7 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 ${bullets(i.scope, '(empty)')}
 
 # Fast lanes
-${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${fixRound(i)}
+${fastLanesText(i.worktree, i.fastLanes)}${suiteLanes(i)}${witnessChecks(i)}${buildBrowserText(i.browser)}${fixRound(i)}
 
 # Task
 ${task(i)}`,

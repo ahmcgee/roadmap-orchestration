@@ -225,6 +225,11 @@ export const readPaths = (t: Transcript): readonly string[] =>
 /** The result texts of the session's Grep calls (any session). */
 export const grepResults = (t: Transcript): readonly string[] => t.calls.flatMap((c) => (c.name === 'Grep' && c.result !== null ? [c.result] : []));
 
+/** The session's Bash calls (any session), each as its command and its result text (null while unanswered). Since dev.13
+ * the gate has a shell, so it may read a file with `cat` or `git show` instead of Read. */
+export const bashCalls = (t: Transcript): readonly Readonly<{ command: string; result: string | null }>[] =>
+  t.calls.flatMap((c) => (c.name === 'Bash' && typeof c.input['command'] === 'string' ? [{ command: c.input['command'], result: c.result }] : []));
+
 /** Tool calls by tool name. */
 export function toolCounts(t: Transcript): Readonly<Record<string, number>> {
   const out: Record<string, number> = {};

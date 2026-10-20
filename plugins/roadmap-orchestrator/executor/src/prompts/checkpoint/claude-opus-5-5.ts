@@ -40,9 +40,16 @@
 // Arc feedback 2026-10-16 (a re-entry without the cause, one more doomed try): a park trigger's diagnosis from the
 // executor's records goes right after the trigger; a reenter op cites the failure it fixes, or the bundle is invalid
 // (dev.12: whether the retry differs is the model's method, no longer refused).
+// dev.13 (plan §4): a milestone walk is a trigger; it names its findings and evidence dir (readable, images rendered),
+// and the checkpoint plans repairs from claim, cause and evidence, never judging looks (R3: polish skips it).
+// dev.13, the convergence tail (owner ruling 2026-10-20, after m5 run 5's two-hour audit tail of test nitpicks): the
+// rules code enforces when it applies a decision, told as facts so the checkpoint rules within them (src/holistic/tail.ts):
+// the released disposition, P3 never debt, deferral banks only a substantive P2, the regress and settled brakes (never
+// over a walkthrough finding), a repaired finding's disposition left unrecorded, and the <brakes> block naming the
+// settled point and the findings below a brake.
 import type { CheckpointInputs, PromptModule } from '../inputs.ts';
 import {
-  checkpointSpecsText, coverageText, diagnosisText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
+  brakesText, checkpointSpecsText, coverageText, diagnosisText, divergencesText, documentsXml, findingViewsText, issuesText, issuesUnchangedText, manifestText, obligationsText,
   priorRejectedText, referenceIndexText, refusedText, rulingsText, targetDocument, triggerText, visionText,
 } from '../inputs.ts';
 import { CHECKPOINT_SCHEMA } from '../schemas.ts';
@@ -51,7 +58,7 @@ import { DOC_RELATIONS, OBLIGATION_DISPOSITIONS, RULE_RELATIONS, RULING_KINDS, R
 /** A closed enum as the prompt lists it, from the sidecar reader's own constants (src/holistic/types.ts). */
 const quoted = (values: readonly string[]): string => values.map((v) => `"${v}"`).join(', ');
 
-const system = `You are operating autonomously as the checkpoint of a roadmap build: the one seat that steers the arc as a whole. You run after every completed audit and whenever a unit parks for want of a spec revision or a re-entry. The trigger says why it parked: a design question its judgment raised, or an executor-side cause (a spent bound, the obligations its candidate left red); address the cause it names. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. You write nothing yourself. The executor validates your decision and applies it as one bundle, all or nothing.
+const system = `You are operating autonomously as the checkpoint of a roadmap build: the one seat that steers the arc as a whole. You run after every completed audit, whenever a unit parks for want of a spec revision or a re-entry, and when a milestone walkthrough reports findings. For a park, the trigger says why it parked: a design question its judgment raised, or an executor-side cause (a spent bound, the obligations its candidate left red); address the cause it names. For a walkthrough, the trigger names its findings and the directory holding the evidence they cite; plan repairs from each finding's claim, cause and evidence, reading the evidence where it helps, and leave visual judgment to the walkthrough, which used the product. Nobody is watching and nobody can answer a question mid-task: your whole output is one structured decision. You write nothing yourself. The executor validates your decision and applies it as one bundle, all or nothing.
 
 This is a fresh session. Every input was captured when the checkpoint was triggered, and is in the message or in the input manifest, which names each captured input's kept path and hash. Read a captured input only through its manifest path. Never read roadmap-inputs or any other live copy of the plan, specs, ledger or obligations: it may have moved since the capture, and a decision built on it is rejected as stale.
 
@@ -126,8 +133,16 @@ issueIntake records exactly one outcome for every issue in <issues>, by its id (
 - none: no action, and reason says why in one sentence (already fixed, the same defect as a finding, outside the vision).
 When <issues> says the capture failed, issueIntake is empty. When <issues> says the issues not listed are unchanged since an earlier checkpoint, their dispositions there stand, and issueIntake records the listed issues only.
 
+# Findings, debt and the brakes
+Debt is for substantive issues in the code that will drag down the delivery of later work; it is never a record of test nitpicks. The executor holds these rules when it applies your decision:
+- released is a finding nobody will act on: it is recorded, it is never debt, and a lens's later report of the same defect never opens it again. Release a finding that is real but not worth a unit now and does not drag down later work.
+- A finding named in the repairs of a unit you admit or re-enter is owned by that unit and resolved when it publishes; its disposition is not recorded, so leave it out of findingDispositions.
+- A P3 is never debt. A P3 this decision does not fix (no unit you admit or re-enter names it in its repairs, and no unit owns it) is released, whether you defer it, accept it or leave it out of findingDispositions.
+- deferred banks a P2 with no obligation as debt for the owner's next Phase 0. Defer a P2 only when it is a substantive issue in the code that slows later work; release the rest.
+- The regress brake: a finding about code or tests that units admitted for findings introduced. The settled brake: once every milestone of the plan has passed and every planned unit has merged, every finding below P1 that names no obligation and bears on no active non-negotiable clause. <brakes> names the findings below a brake. Such a finding spawns no unit: an admit whose every repair is such a finding is converted (dropped, nothing of it applied), and an admit that names one beside other repairs makes the bundle invalid. Defer such a P2 when it is a substantive issue in the code, otherwise release it; one you leave out, or accept while nothing fixes it, is released. No brake applies to a P1, to a finding that an obligation is broken, or to a walkthrough finding; a vacuity finding on an obligation's witness is braked like any other.
+
 # How to decide
-Weigh every open finding, every obligation not held, the coverage gaps, the uncovered divergences and every issue before you decide; do not stop at the first. For each finding, either address it with an op, or dispose of it in findingDispositions: dismissed (not a defect; say why), deferred (real, not now) or accepted (real, handled by the ops or already owned). A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it (one you admit or patch, or the unit that already owns it), which resolves it when that unit publishes. Open the files your evidence names before you rely on them: recognising a name is not knowing its state in this repository.
+Weigh every open finding, every obligation not held, the coverage gaps, the uncovered divergences and every issue before you decide; do not stop at the first. For each finding, either address it with an op, or dispose of it in findingDispositions: dismissed (not a defect; say why), deferred (real, not now, and debt as above), accepted (real, and already owned or handled by ops that name no repair of it) or released (real, and nobody will act on it). A P1 is never accepted, deferred or released by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it (one you admit or re-enter, or the unit that already owns it), which resolves it when that unit publishes. Open the files your evidence names before you rely on them: recognising a name is not knowing its state in this repository.
 
 Change as little as settles the arc's course. no-op is legitimate and often right: when nothing in front of you needs the plan to change, decide no-op with no ops and no rulings (interpretations and finding dispositions may still be recorded). A bundle is checked against the head and revisions you were given: an op on stale evidence is rejected. The head may advance while you decide: an observation stays valid when the head's run keeps every cited test's outcome and selection; cite the observations your ops rest on. A second material op on the same finding or obligation lineage goes to the owner, so an op should settle what it addresses rather than try again. The Direction breaks ties where the vision, contracts and rulings are silent; it never overrides the vision.
 
@@ -141,7 +156,7 @@ export const PROMPT: PromptModule<'checkpoint'> = {
   schema: CHECKPOINT_SCHEMA,
   fields: [
     'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis',
+    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis', 'brakes',
   ],
   render: (i) => `<vision>
 ${visionText(i.vision)}
@@ -158,6 +173,10 @@ ${coverageText(i.coverage)}
 <findings>
 ${findingViewsText(i.findings)}
 </findings>
+
+<brakes>
+${brakesText(i.brakes)}
+</brakes>
 
 <obligations>
 ${obligationsText(i.obligations, { serves: true })}

@@ -54,9 +54,9 @@ describe('debt.mint-dedupe', () => {
   it('is idempotent per source', () => {
     const a = mintDebt(EMPTY_LEDGER, [], gate(0, 'one'))!;
     assert.equal(mintDebt(EMPTY_LEDGER, [a], gate(0, 'one reworded entirely')), null);
-    const f = mintDebt(EMPTY_LEDGER, [], { type: 'finding-deferred', finding: F1, severity: 'P2', obligation: null, unit: null, what: 'f' })!;
+    const f = mintDebt(EMPTY_LEDGER, [], { type: 'finding-deferred', finding: F1, severity: 'P2', obligation: null, witness: false, unit: null, what: 'f' })!;
     assert.deepEqual(f.source, { type: 'finding', finding: F1 });
-    assert.equal(mintDebt(EMPTY_LEDGER, [f], { type: 'finding-deferred', finding: F1, severity: 'P2', obligation: null, unit: null, what: 'g' }), null);
+    assert.equal(mintDebt(EMPTY_LEDGER, [f], { type: 'finding-deferred', finding: F1, severity: 'P2', obligation: null, witness: false, unit: null, what: 'g' }), null);
   });
   it('dedupes by key against the arc and the unresolved baseline, normalising whitespace', () => {
     const a = mintDebt(EMPTY_LEDGER, [], gate(0, 'same  thing'))!;
@@ -74,10 +74,12 @@ describe('debt.mint-dedupe', () => {
 });
 
 describe('debt.obligation-refused', () => {
-  const f = (over: object) => ({ type: 'finding-deferred' as const, finding: F1, severity: 'P2' as const, obligation: null, unit: null, what: 'w', ...over });
+  const f = (over: object) => ({ type: 'finding-deferred' as const, finding: F1, severity: 'P2' as const, obligation: null, witness: false, unit: null, what: 'w', ...over });
   it('refuses a finding with an obligation', () => assert.throws(() => mintDebt(EMPTY_LEDGER, [], f({ obligation: obligationId('I-1') })), DebtRefusedError));
   it('refuses a P1', () => assert.throws(() => mintDebt(EMPTY_LEDGER, [], f({ severity: 'P1' })), DebtRefusedError));
-  it('banks a P3 without an obligation', () => assert.equal(mintDebt(EMPTY_LEDGER, [], f({ severity: 'P3' }))!.bankReason, 'finding-deferred'));
+  it('refuses a P3 (dev.13: a P3 is never debt)', () => assert.throws(() => mintDebt(EMPTY_LEDGER, [], f({ severity: 'P3' })), /a P3 is never debt/));
+  it('banks a P2 without an obligation', () => assert.equal(mintDebt(EMPTY_LEDGER, [], f({}))!.bankReason, 'finding-deferred'));
+  it('banks a P2 vacuous witness of an obligation (dev.13: the test is the debt)', () => assert.equal(mintDebt(EMPTY_LEDGER, [], f({ obligation: obligationId('I-1'), witness: true }))!.bankReason, 'finding-deferred'));
 });
 
 describe('debt.render-block', () => {

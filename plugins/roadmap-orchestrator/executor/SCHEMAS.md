@@ -1,11 +1,12 @@
-# Executor schemas and contracts (frozen in M1 step 1a; M2 additions in M2 step 0a; M3 additions in M3 step 0a; M4a additions in M4a step 0a; M4a rev 3 additions in step N0)
+# Executor schemas and contracts (frozen in M1 step 1a; M2 additions in M2 step 0a; M3 additions in M3 step 0a; M4a additions in M4a step 0a; M4a rev 3 additions in step N0; dev.13 additions in dev.13 step 0)
 
 The specification every later step compiles against, current as of 1.0.0-dev.7 (M4a). M2's records and scheduling
 interfaces are in place below and summarised in "M2: scheduling, resources, parks"; M3's are in "M3: the holistic
 layer", whose later "Choices made in M3 …" sections state the rule where an earlier section is
 superseded; M4a's are in "M4a: corpus, debt, forge, brief, chaining", which supersedes the M3 text it names
 (the plan target, obligation anchors, sidecar refs, the vision's home and confirmation); the run-10 batch's (M4a plan
-revision 3.1) are in "M4a rev 3: the run-10 batch" at the end. Each schema names the TypeScript type and the
+revision 3.1) are in "M4a rev 3: the run-10 batch"; dev.13's (milestone walkthroughs, design units, the demo) in "dev.13:
+milestone walkthroughs and design units" at the end. Each schema names the TypeScript type and the
 validator that implement it; if you change one, change the other in the same commit. Owner: the lead.
 Other steps request changes rather than edit.
 
@@ -41,9 +42,10 @@ inputs (plan, specs, ledger).
 - `test/serial/upgrade.test.ts` is the guard: it starts the M1 fixture on `PREVIOUS_RELEASE` (extracted with `git
   archive`), stops it mid-arc, and finishes it on HEAD. Move `PREVIOUS_RELEASE` at each release.
 - Only the previous release is adopted (owner ruling OR-L4): 1.0.0-dev.6 by M4a, 1.0.0-dev.7 since M4b (1.0.0-dev.8,
-  `PREVIOUS_RELEASE` b55ad88). Since 1.0.0-dev.12 `PREVIOUS_RELEASE` is 1f7f696 (1.0.0-dev.11, PR #113); arcs started on
-  dev.7 to dev.10 stay adopted through their defaults until none is in flight. An arc started on dev.10 is in flight, so
-  the test also starts arcs on dev.10 (`DEV10_RELEASE` b1c3666, the `upgrade.dev10.*` cells); it starts none on dev.7 to dev.9. An
+  `PREVIOUS_RELEASE` b55ad88). Since 1.0.0-dev.13 `PREVIOUS_RELEASE` is 4ef225c (1.0.0-dev.12, PR #114); arcs started on
+  dev.7 to dev.11 stay adopted through their defaults until none is in flight. Arcs started on dev.10 and dev.11 may be in
+  flight, so the test also starts arcs on them (`DEV10_RELEASE` b1c3666, the `upgrade.dev10.*` cells; `DEV11_RELEASE`
+  1f7f696, the `upgrade.dev11.*` cells); it starts none on dev.7 to dev.9. An
   arc started on an earlier release finishes on the executor release it started on. M4a step X0 deleted every older read-time layer (the 1.0.0-dev.1, dev.3, dev.4 and
   dev.5 defaults recorded below as history), so each field those releases lacked is required where it was defaulted:
   `launch.json` `stallMs`; a first start records revision 1 before anything runs (no arc without a `plan-applied`);
@@ -337,6 +339,52 @@ Every judgment role's refused answer (its schema, or the role's validator) takes
 | Gate answer `clusters` (`GATE_SCHEMA`, `gateOutput`) | `+ clusters: [{id, paths: RepoPattern[], review: description\|routine\|close}] \| null` (required key of a live answer): the cluster map, non-null exactly over the large-diff threshold, ids unique, paths non-empty (an exact path, a directory or a glob, `matchesPattern`). Code holds it to the diff (`gateAnswerFor`, src/pipeline/gate.ts): every path of `diffPaths(base, head)` (`-M`: a rename by its new path, a deletion by its old) in exactly one cluster; under the threshold the map must be null. A violation is refused like an answer off its schema (the repair turn names up to 20 uncovered and 20 doubly covered paths, counting the rest), refused again `malformed`; a later round reads an earlier attempt's answer through the same check (`gateAnswerAt`). Over the threshold a file in a cluster counts as reviewed at its depth; `unreviewed` keeps the gaps the gate admits | a dev.11 answer: `clusters` absent reads as null (`gateClustersDefault`, warned once; scaffolding) |
 | `status.units[].seat` | a unit at its gate shows the large-diff seat once the attempt's inputs are captured (`largeDiffSeat` over its `judgment-inputs`) | derived |
 
+**1.0.0-dev.12 → 1.0.0-dev.13 (milestone walkthroughs and design units, 2026-10-18).** `SCHEMA_VERSION` stays 1;
+`PREVIOUS_RELEASE` is 4ef225c (1.0.0-dev.12, PR #114). Every change is additive with a lasting absent-means-none default
+(no new scaffolding, no warning): an arc without milestones never names any of it, and its routing revs are unchanged.
+The dev.11 and dev.10 scaffolding stays (BACKLOG "Scaffolding to delete": arcs started on them may still be in flight),
+and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
+
+| Record | Change | Read-time default for dev.12 state |
+|---|---|---|
+| `plan.json` | `+ milestones?: Milestone[]` (non-empty), `limits + walkRounds?`, unit origin `+ polish` with `+ polish?: {milestone, proposal}` | none (`milestonesOf`), 3 (`walkRoundsOf`); lasting |
+| `PlanChange` | `+ milestones` | none |
+| `JobId` | `+ walk-<n>` | none |
+| Ids | `MilestoneId MS-n`, `JourneyId J-n`, `PolishId X-n`, `ServeName`; `NumberedId` two-letter prefixes | none |
+| vision | clause kind `+ experience` | none |
+| `finding-opened` | `+ milestone?` (exactly on a walkthrough finding); `+ cause?` (only on a walkthrough finding, agent C); `lens + walkthrough`; `FindingSource + demo{sha}` | absent: none (lasting) |
+| Facts | `+ walk-started, walk-ended, polish-proposed, tweak-judged, milestone-passed, demo-promoted, demo-failed` (`WalkFact`) | none |
+| `Role` | `+ walkthrough, polishJudge` (seat `arc`, frontier), in force only under milestones | not in force: no rev, check or smoke moves |
+| `launch.json` terminal, result.json | backend `role` may be a walk role with a `JudgmentSession` (`JudgmentSessionRole`) | none: dev.12 records name earlier roles |
+| `BackendCall` (not persisted) | `+ claude-acting-judge`; the gate's call is one (agent I) | none |
+| Roles (not persisted) | `FRESH_ROLES - gate`; `ACTING_ROLES + gate`; `JudgmentSessionRole = FreshRole \| ActingJudgeRole` | none: a dev.12 gate's launch and result records still name `gate` with a `JudgmentSession` |
+| `launch.json` of a gate call | argv the acting judge's (no `--system-prompt`); cwd `<worktreeRoot>/<arc>/<unit>.gate-<attempt>`, a `worktree.create` of the gate attempt (removed, citing its snapshot, when the call is read) | none: a dev.12 gate's cwd was its verification checkout, which `judgedHead` still reads (any detached checkout) |
+| Walkthrough answer (`WALKTHROUGH_SCHEMA`, `walkthroughOutput`; owner ruling 2026-10-18) | `against + contract{path, anchor, dependents}` (a `breaks` only); a floor citing a vision clause needs a non-negotiable one (the walk job) | none: the answer is per call, never persisted; findings mint as before |
+| Gate answer (`GATE_SCHEMA`, `gateOutput`) | `findings[] + experiments: [{command, output}]` (required of a live answer) | absent: none (lasting, no warning) |
+| `.roadmap/config.json` | `+ walkthrough?: {mcp}` | absent: no browser drive (lasting) |
+| `StartupRejection`, Phase-0 advisories | `+ milestones-need-holistic`, `+ walk-tools-missing`; advisory `+ milestone-unit-before-design` | none |
+| `ORIGIN_RANK` (not persisted) | `polish` 2, `planned` 3 | none |
+| Facts | `+ demo-acted{command, act}` (`WalkFact`, agent G) | none |
+| `CommandBody` | `+ demo{act: up \| down \| hold \| release}` | none |
+| `<runDir>/demo.desired.json`, `<hostDir>/demo.json` | new (derived; the keeper's record) | absent: nothing promoted, no demo on the host |
+| `status`, `BriefArc` | `+ demo` | derived: null before a promotion |
+| `proc.spawn` subject | `+ bring-up{milestone, step}` (agent C) | none: dev.12 records name earlier purposes |
+| launch.json / result.json command | `purpose + bring-up`; a cancelled command's `reason + teardown` (`COMMAND_CANCEL_REASONS`) | none |
+| `proc.kill`, cancel.json | `reason + teardown` (a bring-up serve, by its owner) | none |
+| `status` (derived) | `+ milestones`; `edges[] + {type: milestone}`; `units[].waitingFor + milestones`; `completion` blocker `+ walk-pending` | derived (an arc without milestones shows none) |
+| Facts (agent D) | `+ polish-refused, compare-started, compare-abandoned` (`+ interrupted?: true`); `tweak-judged.reason + bring-up-failed, abandoned`; `walk-ended + interrupted?: true` (only on an abandoned walk) | none; absent `interrupted`: a failed attempt (lasting) |
+| `JobId` (agent D) | `+ compare-<n>` | none |
+| `CheckpointTrigger` (`checkpoint-inputs.trigger`) | `+ walk{job}` | none: dev.12 checkpoints name audits and parks |
+| `RevisionSource` (`plan-applied.source`, `revision.commit`) | `+ walk{job}`, `+ compare{unit}` | none |
+| `AdmissionConstraint` (derived, sched.json) | `+ compare{decision: drop \| null}` | derived |
+| `PlanChange` `milestones` (agent J) | `+ rewalk?: MilestoneId[]` (non-empty): the walked milestones whose `bringUp` or `journeys` the apply edited | absent: none (lasting) |
+| `JournalView` (fold, not persisted) | `+ rewalkSeq(milestone)`; `supersededPackItems` is `supersededItems` (+ a reset walk's escalation) | derived |
+| `finding-transition` (the convergence tail) | `ruled.disposition + released`; `ruled.by + release{job: ckpt-n, reason: p3 \| regress \| settled}` (only with `released`; a reader refusal otherwise); `code{close-out}` may release (a P3) | none: dev.12 logs never release |
+| Bundle decision record (`revision.commit` / `plan-applied` `source: bundle`, `bundle-decided` no-op) | `Conversion.reason + regress-brake, settled-brake` (`opportunity` null); `source: bundle{job, conversions}` without `admits` is legal outside a corpus arc when every conversion is a brake's (non-empty) | none: dev.12 records name earlier reasons, and `admits` without `conversions` is still refused |
+| Gate answer (`GATE_SCHEMA`, `gateOutput`) | `findings[] + debt: {drag} \| null` (required of a live answer) | absent: `unrecorded` (`gateNoteDebtDefault`, warned once; scaffolding): the note banks as dev.12 banked it |
+| `CheckpointInputs` (not persisted) | `+ brakes: {settled, findings: [{finding, brake: regress \| settled}]}`, rendered `<brakes>` | none: rendered per call |
+| `status.findings` (derived) | `+ released: {checkpoint, p3, regress, settled, closeOut}`, `+ refusedAdmits: {regress, settled}` | derived |
+
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
 1. `launch.json` is the only executor-written file allowed to contain a model id, and only inside `argv`.
@@ -625,8 +673,8 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 
 ## Op kinds (`OP_KINDS`, `OP_SCHEMAS`)
 
-`proc.spawn` purposes: `backend | lane | teardown | probe | smoke` (M3 subjects add `arc-backend | journey | mutant`).
-`proc.kill` reasons: `deadline | stall | pause | stop | recovery | external-unknown | preempt | supersede` (`preempt`: M3, lanes only; `supersede`: M4b, a checkpoint call only).
+`proc.spawn` purposes: `backend | lane | teardown | probe | smoke` (M3 subjects add `arc-backend | journey | mutant`; M4b `proof`; dev.13 `bring-up`).
+`proc.kill` reasons: `deadline | stall | pause | stop | recovery | external-unknown | preempt | supersede | reported | teardown` (`preempt`: M3, lanes only; `supersede`: M4b, a checkpoint call only; `teardown`: dev.13, a bring-up's serve process only).
 
 | Kind | `expect` (`OpExpect`) | `post` (`OpPost`) | done `outcome` (`OpOutcome`) |
 |---|---|---|---|
@@ -705,7 +753,7 @@ invocation of `op`, `op` of `arc`) and written by `fsx.durable()`. Workload stdo
 |---|---|---|---|
 | `launch.json` | `LaunchFile` / `launchFile` | executor, after the spawn intent is durable, before the act | `argv` (argv[0] non-empty; a later argument may be empty), `cwd, env` (declared; no `ROADMAP_*`), `stdinPath\|null, deadlineAt, stallMs\|null` (the runner's stall watchdog: no progress, meaning no member CPU time, no output growth and no member started or ended, for `stallMs` → kill, cause `stall`; lanes carry `LANE_STALL_MS`, every other launch null; required), `graceMs` (≥ `MIN_GRACE_MS` = 1000: the backstop fires at deadline + 2·grace and the runner polls every 500 ms), `containment, test: {crash}\|null, terminal` |
 | `runner.json` | `RunnerFile` / `runnerFile` | runner, before spawning (`child: null`); rewritten after | `runner{pid, start, bootId}, child{pid, start, sid}\|null` |
-| `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only) |
+| `cancel.json` | `CancelFile` / `cancelFile` | executor, before signalling the workload | `reason: pause\|stop\|recovery\|preempt\|supersede\|teardown, at` (`preempt`: M3, a lane only; `supersede`: M4b, a checkpoint call only; `teardown`: dev.13, a bring-up's serve process only) |
 | `exit.json` | `ExitFile` / `exitFile` | runner, after workload quiescence | `child: exited{code}\|signalled{signal}\|spawn-failed{error}, cause: exited\|deadline\|stall\|cancel\|recovery-kill\|reported, endedAt ≤ quiescedAt` (`reported`: see "The report rule" below) |
 | `result.json` | `ResultFile` / `resultFile` | executor (the adapter, pure over the files above), after the runner has exited with `exit.json` present; re-run at recovery whenever `exit.json` exists without it (lead ruling, 1a: the runner never runs the adapter, so it needs no backend schema) | union below |
 | `runner.log` | none (plain text, not a record) | the runner's own stdout and stderr, opened by the executor when it starts the runner (`RUNNER_LOG`, `src/runner/launch.ts`) | free text; empty on a clean run |
@@ -728,7 +776,7 @@ src/pipeline/dispatch.ts; every judgment's fresh call persists its session); `bu
 
 `result.json` = `backend{role, routingRev, session, outcome, usage, backendErrors[]}` \| `command{purpose,
 exitCode|null, expectedExit, verdict: pass|fail|stall|process-fault|cancelled}`, `reason: pause|stop` (a command's
-also `preempt`, M3) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or `fail`; cause `stall` ⇒ `stall`, whatever the exit: a lane
+also `preempt`, M3, and `teardown`, dev.13: a bring-up's serve process) beside `cancelled` only (`exitCode: null` ⇒ not `pass` or `fail`; cause `stall` ⇒ `stall`, whatever the exit: a lane
 that hung is red, a verdict on the tree; cause `cancel` ⇒ `cancelled{reason}` from cancel.json, the same
 interruption a backend call records as outcome `cancelled{reason}`; `classifyCommand(exit, cancel, expectedExit)`).
 `outcome = success{value} | refusal{stopReason} | malformed{detail} | process-fault{detail} |
@@ -897,8 +945,8 @@ changedPremiseFiles}`; a plan-check whose previous answer was refused (since 202
 reason: its schema, its cites, its patch through `evaluateRevision`; the latest call's, its repair turn's when it made
 one) gets `priorInvalid` (every reason, `; `-joined); a gate after its own revise gets `priorRound {directives, findings, premises, fixPaths,
 changedPremiseFiles}`. Changed premise files compare blobs between the commits the prior round read (a plan-check's
-checkouts from its `worktree.create` intents; a gate's verification checkout from its launch cwd) and the current
-ones; a premise path that names no repository file counts as changed.
+checkouts from its `worktree.create` intents; a gate's checkout from its launch cwd: its own since dev.13, a verification
+checkout before) and the current ones; a premise path that names no repository file counts as changed.
 
 **Plan-check checkouts**: each plan-check attempt reads detached checkouts at
 `<worktreeRoot>/<arc>/<unit>.plan-check-<attempt>` (the integration tip, its cwd) and, when the unit branch
@@ -906,6 +954,15 @@ exists and differs from the tip, `...-branch` (passed with `--add-dir`, as is th
 are `worktree.create` ops of the attempt, removed (each citing a snapshot of its dirty paths, normally zero files)
 when the attempt's call is read, live or after recovery, and by the next plan-check attempt or retire when a crash
 left one.
+
+**Gate checkouts** (dev.13): each gate attempt's session runs in its own detached checkout at
+`<worktreeRoot>/<arc>/<unit>.gate-<attempt>` (`gateWorktree`, src/pipeline/gate.ts) of the head its inputs captured (the
+salvage SHA the green verification checkout holds, which the gate still requires and never runs in). It is a
+`worktree.create` op of the attempt, made after its `@cpu` entry, and removed when the attempt's call is read, live or after
+recovery, before its outcome is recorded, citing a snapshot of its dirty paths at
+`<runDir>/evidence/<unit>/<attempt>-gate/<unit>.gate-<attempt>/` (the experiments the gate wrote, kept as evidence); a
+leftover of an attempt a crash cut short goes before the next gate attempt makes its own, or at the next lanes attempt or
+retire (stages.ts `removeJudgmentCheckouts`, shared with plan-check).
 
 **Architect spec edits** are `roadmap apply` edits ("Plan in force"): the architect edits a unit's `spec.json`
 in place, keeps the schema and every id (items are struck or deferred, never deleted or reused; scope and
@@ -1031,6 +1088,7 @@ inherits{from, reviewed} | unsupported{reason}}}`; step 5 fills `PROMPTS` and th
 | `residues.jsonl` | `ResidueLine` = `ChainEnvelope & ResidueRecord` | envelope `{v, seq, prev, at}` (no `arc`), same chain and tail rules as the event log (`parseChainLine`); since M3 a compacted index starts with a `compacted` head (A5a) |
 | `residues.archive.<prevSeq>.<sha8>.jsonl` (M3) | the index file a compaction replaced, byte for byte | named by its last line's seq and the first 8 hex of that line's hash (`residueArchiveName`) |
 | `residues.jsonl.compact` (M3) | `COMPACT_TMP` | a compaction's new index before its rename; a stray one is removed by the next compaction |
+| `demo.json` (dev.13) | `DemoRecord` (`src/demo/records.ts`) | the host's one demo instance: stable ports, the serving instance, a trial in progress, the failures; written by the supervisor's keeper alone (see "dev.13" "The demo") |
 
 `ResidueRecord = residue{key, teardown: {argv, cwd, env}, label} | disposition{key, cleaned, by{arc, inv}} |
 disposition{key, isolated|transferred, by{arc, needsUser}}`; `ResidueKey = {arc, inv, resource} & (unit | job)` (per
@@ -1042,7 +1100,7 @@ passes, read by `status` for the repo and plan file); `status.rejection.json` (`
 
 | File (run dir) | Type | Content |
 |---|---|---|
-| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{base: RevisionManifest\|null, manifest: ApplyManifest, rulings?: HashedFile[], visionEdit: boolean} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") |
+| `commands/incoming/<id>.json` | `CommandFile` | `{v, id, arc, at, body}`; `body = pause{target} \| stop \| ack{needsUser, choice\|null} \| resume{target} \| sweep{resource\|null} \| apply{base: RevisionManifest\|null, manifest: ApplyManifest, rulings?: HashedFile[], visionEdit: boolean} \| resolve-edge{edge: EdgeId, evidence} \| run-only{units: UnitId[] (ascending, non-empty)\|null}` (the last two M2) \| M3: `rule{path, sha256}` \| `reverse{divergence}` \| `steer{unit, brief{path, sha256}, budgetMin, class\|null, resume}` \| `merge-in{unit}` \| `audit{lenses\|null}` \| `close-admissions` (see "M3: commands") \| M4b: `flow-decide`, `flow-request` (see "M4b") \| `scope-decide{unit, decision: accept\|reject, reason}` (see "Scope growth") \| dev.13: `demo{act: up\|down\|hold\|release}` (see "dev.13" "The demo") |
 | `commands/receipts/<id>.<state>.json` | `Receipt` | `accepted{at}` \| `applied{at, op, verified[] (non-empty)}` \| `rejected{at, reason}`; write-once each, by temp + `link` |
 | `needs-user/<id>.json` | `NeedsUserRecord` | `{v, id, arc, raisedAt, blocking, subject: unit{unit}\|arc\|host, reason, summary, recommendation, options[{id, label}], evidence[]}`; write-once. `NeedsUserContent` (`records.ts`) is the record without `v, id, arc, raisedAt`: what stages produce |
 | `needs-user/<id>.ack.json` | `NeedsUserAck` | `{v, id, command, choice\|null, at}`; write-once, by temp + `link` |
@@ -1535,7 +1593,7 @@ added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`, `a
 | `witnessed` | `lane, laneRev, envId, treeSha, inv, recordsSha256, purpose: witness\|mutant, for: candidate{unit, attempt} \| job{job} \| mutant{finding, of}`; `purpose: mutant` exactly with `for: mutant` (G13: never certifies). Batch lanes are `job{batch-n}` (H4) |
 | `obligation-latched` | `obligation, unit, treeSha`: after `ff{published}`, before the snapshot; once per obligation |
 | `finding-opened` | `id, key (findingKey = sha256 of canonical {lens, obligation, cause}), lens: LensKind\|witness\|plan-check, severity: P1\|P2\|P3, obligation\|null, visionClauses (ascending), claim, evidence: [{path, blob\|null}], mutant: {patchSha256, lane}\|null (vacuity only), source: job{job} \| stage{unit, stage: plan-check, attempt}, gateHadPassed`. Plan-check (R17) opens only P3 findings citing clauses, from its attempt (the only `stage` source); a `witness` finding is a P1 over its obligation; a `vision` finding is P2 or P3 |
-| `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced \| close-out}}` (`close-out`: run 10, F) |
+| `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced \| close-out}}` (`close-out`: run 10, F; dev.13: `disposition + released`, `by + release{job, reason}`, "dev.13: the convergence tail") |
 | `audit-started` | `job (audit-n), triggers: [cadence \| unwitnessed{obligation} \| drift{planRev} \| wall-clock \| requested{command} \| final] (non-empty), generation, lenses (ascending, a subset of L), integrationSha, planRev, ledgerSha256\|null, obligationsSha256\|null, visionSha256, owners: [{unit, head}] (ascending), priorFindings, highWater, diffBudget?` (bytes, positive; absent on an audit a dev.10 executor started) |
 | `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens; `to` as far as the lens's reported chunks reached), findings, suppressed, outcome: completed\|abandoned, refused?: [{lens, attempt, claim, cause, reason}]` (M4b: each lens draft refused at admission, in call order; absent on an earlier executor's) |
 | `docs-covered` | `pub, from: U, to: D` (A17, H8) |
@@ -3277,7 +3335,8 @@ The record rows are in "Record evolution" (M4a rev 3 table, "run 10"). Behaviour
   choice: its reject or decline option (null when it offers none), reason}`. The fold closes the item (`ackOf` →
   `{command: null, choice}`); a later `ack` is rejected. No `.ack.json` twin.
 - **F. Findings at the close-out**: in the same settlement, a corpus arc's every active P2 or P3 finding with no obligation
-  is banked (`mintDebt` `finding-deferred`, idempotent by source), then ruled `deferred` by `code{close-out}`; the
+  is banked (`mintDebt` `finding-deferred`, idempotent by source), then ruled `deferred` by `code{close-out}` (dev.13: a P2
+  only; such a P3 is ruled `released` by `code{close-out}`, never banked); the
   close-out publication renders the ledger into `debt.md`. A finding over an obligation is untouched.
 - Crash row "close-out settlement" (test/matrix.ts): labels `closeout.after-request-amendment`,
   `closeout.after-deferred-debt`; the next settlement finds the amendment and the debt item by source.
@@ -3791,3 +3850,559 @@ re-export, re-sync and hand numbering. An apply now rebases; the executor never 
   returns a `RulingDraft`, and `numberRulings` gives each `C-?` the ledger's next C-n after the records before it, its
   bytes then its JSON with that id. The receipt's `verified` names it (`ruling <path> numbered C-n`); the dry run lists
   `numbered`. A numbered record must still be the next id.
+
+## dev.13: milestone walkthroughs and design units (frozen in step 0; 1.0.0-dev.13)
+
+The binding plan is `/claude-state/plans/dev13-implementation.md` (rev 2); this section freezes its records and contracts so
+the parallel agents (A browser drive, B plan/Phase 0/vision, C walkthrough job, D polish and compare, E role-eval harness,
+F prompt inputs, G demo, H the m5 fixture) build against one shape. "Step 0 decided" marks a rule the plan left open.
+Everything is additive with lasting read-time defaults ("Record evolution", 1.0.0-dev.12 → 1.0.0-dev.13): an arc without
+milestones runs exactly as on dev.12, with unchanged routing revs. `SCHEMA_VERSION` stays 1; the plan literal stays
+`roadmap/plan-m1`.
+
+### Ids (`src/core/ids.ts`)
+
+| Type | Form | Notes |
+|---|---|---|
+| `MilestoneId` | `MS-<n>` | plan-scoped, unique in the plan, never reused (`milestoneId`, `milestoneIdOf`) |
+| `JourneyId` | `J-<n>` | unique across all of the plan's milestones (step 0 decided), so a journey names its milestone (`journeyId`) |
+| `PolishId` | `X-<n>` | arc-scoped, numbered in log order of `polish-proposed` (the fold's `nextPolishId`) |
+| `ServeName` | slug | a bring-up serve entry's name, unique in its bring-up; `{port:<name>}` names it |
+| `JobId` | `+ walk-<n>` | `JOB_KINDS + walk`: a milestone walk (`walk-started` opens it) |
+
+`NumberedId` gains `MilestoneId | JourneyId | PolishId`; the numbered form is now `<one or two capitals>-<n>` (`MS`), and the
+canonical order is unchanged for every earlier prefix (`M-…` sorts before `MS-…`).
+
+### Plan (`plan.json`, `src/input/plan.ts`)
+
+```ts
+milestones?: Milestone[]            // non-empty when present; absent: none (milestonesOf, hasMilestones), lasting
+limits.walkRounds?: positive        // walks per milestone; absent: 3 (walkRoundsOf, DEFAULT_WALK_ROUNDS)
+Milestone = { id: MS-n; text; units: UnitId[] /* non-empty, unique */; design: {unit: UnitId} | {supplied: true};
+              references: RepoPath[] /* unique; the design reference dirs */; bringUp: BringUp; journeys: Journey[];
+              resources: ResourceName[] /* unique */ }
+BringUp   = { setup: Argv[]; serve: ServeEntry[] /* names unique */; env: Record<EnvName, string>; seed: Argv[] }
+ServeEntry = { name: ServeName; argv: Argv; ready: {http: string} | {log: string} }
+Journey   = { id: J-n; text; via: 'browser' | 'shell'; entry: string; budget: {steps, seconds} | null }
+Argv      = string[] (non-empty)
+unit.origin + 'polish'; unit.polish?: { milestone: MS-n; proposal: X-n }   // present exactly when origin is polish
+```
+
+- **Bring-up semantics** (step 0 decided). Every command runs with no shell from the root of the checkout it brings up (a
+  walk's, a compare instance's, the demo's), with `env` added. `setup` in order, each to exit 0; then each `serve` entry
+  as a contained spawn tied to its owner; then each is probed ready: `http` is a URL, ready when a GET answers below 500;
+  `log` is a substring (never a regex) of the entry's stdout or stderr; then `seed`, in order, each to exit 0.
+  `serve: []` is a product with nothing long-lived (a CLI, an SDK).
+- **`{port:<name>}`** (`PORT_PLACEHOLDER`, `portNames`) is the one placeholder: code allocates one free port per serve
+  entry and substitutes it in `env` values, every argv element (setup, serve, seed), `ready.http` and a journey's `entry`.
+  The name must be a serve entry of the same bring-up (a parse refusal).
+- **Parse refusals** (`milestoneRefusals`, thrown by `parsePlan` as a `SchemaError` at the field): a milestone unit or
+  design unit the plan does not hold; a design unit whose origin is not `planned`; a design unit listed in its own
+  milestone's `units`; no journeys; no references; a resource the plan does not declare (step 0 decided: in-file, unlike a
+  unit's resources); a `{port:<name>}` naming no serve entry; duplicate milestone ids or journey ids (across milestones);
+  `polish` without origin `polish` or the reverse. A unit may be in several milestones (step 0 decided: nothing forbids it).
+- **`milestones-need-holistic`** is a Phase-0 startup row (`StartupRejection{kind: milestones-need-holistic}`, beside
+  `holistic-needs-corpus`), not a parse refusal (step 0 decided: it is named, like its sibling, in the start and apply
+  refusal output). It is shared row 15 (`milestonesNeedHolisticRows`, src/phase0/rows.ts; the predicate
+  `milestonesNeedHolistic`, src/input/plan.ts), in every mode, so start (fresh or not), `apply` and `phase0 check` (both
+  sources) refuse it. The classifier names it too, as the reason `{"kind":"milestones-need-holistic"}`, and resolves no
+  routing on such a revision; `phase0 check --plan` skips the routing row for it. `arcRolesInForce` fails loud on
+  milestones in a non-holistic scope.
+- **Accessors**: `milestonesOf`, `hasMilestones`, `milestoneOf(plan, id)`, `milestonesOfUnit(plan, unit)`,
+  `designUnitOf(m)` (null for `supplied`), `walkRoundsOf`, `portNames`.
+- **Plan edits**: `PlanChange + {type: 'milestones'}` (src/core/events.ts), the `milestones` edit class of
+  src/input/classify.ts (`milestoneRows`), modelled on `unit-priority`: pushed when `milestonesOf` differs, it **drains
+  nothing** (scope none: the milestone node gates readiness, and a walk reads the plan in force when it starts). The
+  checkpoint cannot edit milestones (backlog). Refused (all or nothing, each reason listed):
+  - a change by any proposer but an architect `apply`: `the milestones change only through an architect \`apply\`, not a <proposer>`;
+  - removing a milestone a `walk-started` names: `milestone <MS> has been walked (<walk-n, …>); it cannot be removed`;
+  - any edit of a milestone whose walk has started and not ended: `milestone <MS> is being walked (<walk-n>); edit it once
+    the walk ends`;
+  - a walked milestone's `units` or `design` changed (its text, references, bring-up, journeys and resources may change
+    between walks: a fix to a failed bring-up is an apply): `milestone <MS> has been walked (…): its units and design are
+    fixed; plan another milestone for more`;
+  - a milestone added, or whose `units` changed, never walked, whose units have all merged (no publication would reach
+    it): `milestone <MS>: every unit it lists has merged, so no publication would reach it; list a unit still to merge`;
+  - on every revision, by any proposer (a checkpoint's cut included): a milestone listing a cut unit (it would never be
+    reached): `milestone <MS> lists <unit, …>, cut: a cut unit never merges, so the milestone would never be reached; drop it
+    from the milestone's units in the same apply`.
+
+  A revision that gives the plan its first milestones (or removes its last) moves the walk seats into (out of) force and
+  so the routing rev, with no `routing` change (as adding `holistic` does): the classifier returns the new plan routing in
+  `routings`, so `apply` runs the routing row over it and smokes any backend it newly seats.
+- **`ORIGIN_RANK`** (src/schedule/types.ts): `repair 0, checkpoint 1, polish 2, planned 3`.
+- **Polish units** (step 0 decided, agent D applies): risk `high` (Opus builds design tweaks: only its guide carries design
+  guidance), `after: []`, `resources` the milestone's, `scope` and `spec` as the walkthrough authored them.
+
+### Vision
+
+`VISION_CLAUSE_KINDS + 'experience'` (src/holistic/types.ts): an experience standard from the vision's `## Experience
+standards` section; an outcome or a refusal, never a mechanism; unranked (`rank: null`). Nothing requires one.
+
+### Findings
+
+- `FINDING_LENSES + 'walkthrough'`. `finding-opened + milestone?: MilestoneId` (absent: none, lasting).
+- Reader rules (`fact`, `finding-opened`): `milestone` is present exactly on a walkthrough finding; a walkthrough finding
+  is P1 or P2 (a P3 is refused); its source is a `walk-<n>` job or the demo; its obligation may be null.
+- `FindingSource + {type: 'demo'; sha: Sha}` (step 0 decided: a demo bring-up failure has no job): only a walkthrough P1.
+- Class to severity (minting, agent C): `breaks` → P1 (class 1), `deviates` → P2 (class 2). What a class means (owner
+  ruling 2026-10-18): `breaks` is a defect whose later fix would force rework of what is built on it: the journey cannot
+  be completed as its user or client would because the product's own action fails (a dead end, a crash or stack trace, an
+  action that errors or is wrongly refused, a wrong outcome), not because a message or diagnostic leaves the user to dig,
+  which is `deviates` unless the text is itself a contract others build on (an exit code, the stream it goes to); the interface
+  contract is wrong (what a client, script, consumer or later unit relies on: HTTP status codes and error shapes, CLI exit
+  codes, stdout/stderr, command grammar and typo behaviour, config keys and their validation, event and message schemas,
+  public names, design tokens); or a declared floor is violated (a `non-negotiable` vision clause, or a design
+  reference's explicit quality-floor section). `deviates` is everything else measured against a reference or an
+  experience clause, whose fix changes nothing anything builds on: UI copy and error wording, help text, visuals within
+  the tokens, layout, docs text that disagrees with a correct contract (the docs are fixed), CI and log output text. A failed bring-up of a walk is
+  a code-opened P1 citing the setup or serve log; so is a failed demo bring-up (`demo-failed`, agent G). Dedupe is
+  `findingKey('walkthrough', null, cause)`.
+
+### Facts (`WalkFact`, `src/core/events.ts`; the fold keeps them in `walkFacts()`)
+
+| Fact | Fields | Reader and fold rules |
+|---|---|---|
+| `walk-started` | `job: walk-n, milestone, round: positive, sha, ports: Record<ServeName, 1..65535>` | opens the job (the next `walk-n`); `sha` the integration SHA captured under the revision fence |
+| `polish-proposed` | `id: X-n, job, milestone, journey, evidence: string[] (non-empty), text, unit: {id, scope (ascending, non-empty), spec: spec.json canonical text}` | the next `X-n`; its walk started and not ended |
+| `walk-ended` | `job, outcome: reported \| bring-up-failed \| abandoned, findings: F-n[], proposals: X-n[], dropped: X-n[]` | once per started walk; `proposals` exactly the walk's `polish-proposed` ids in order; `dropped` ⊆ `proposals`; proposals only when `reported`; `bring-up-failed` names its P1; `abandoned` none |
+| `tweak-judged` | `unit, decision: keep \| drop, reason: judged \| reference-untouched` | once per unit; `reference-untouched` is a `drop` |
+| `milestone-passed` | `milestone, job` | once per milestone; `job` an ended walk |
+| `demo-promoted` | `milestone, sha` | the plan's `at` is dropped (step 0 decided: the envelope's `at` is the time) |
+| `demo-failed` | `milestone, sha, log: AbsPath` | step 0 decided: names its milestone (the P1 it opens is on it) |
+| `demo-acted` | `command: CommandId, act: up \| down \| hold \| release` | agent G: the owner's act (`roadmap demo <act>`); the fold reads `held` and `up` from these ("The demo") |
+
+`dropped` (step 0 decided): the walk of round k applies its polish proposals only when k < `walkRounds`; the last round's
+proposals are recorded in its `walk-ended.dropped`, never applied or banked.
+
+### Roles, seats, classes (`src/routing/types.ts`, `profiles.ts`, `layers.ts`)
+
+- `ROLES` and `ARC_ROLES` + `walkthrough`, `polishJudge` (appended, seat `arc`), `BUILTIN_SEATS` both `frontier` (Opus 5.5
+  medium; R4). `WALK_ROLES = ['walkthrough', 'polishJudge']`.
+- `FRESH_ROLES` is an explicit list, `['planCheck', 'lens', 'checkpoint', 'packReview', 'flow']` (agent I: the gate left it
+  when it moved onto the acting-judge profile); beside it `ACTING_JUDGE_ROLES = ['gate', ...WALK_ROLES]` and `ACTING_ROLES =
+  ['build', ...ACTING_JUDGE_ROLES]` (`FRESH_ROLES` and `ACTING_ROLES` partition `ROLES`). `JudgmentSessionRole = FreshRole |
+  ActingJudgeRole` (every role but `build`) is what a launch/result record with a `JudgmentSession` names, so a dev.12
+  gate's records read unchanged: still `{role: gate, routingRev}`.
+- **In force only under milestones.** `RoutingStack.milestones?: true`, `ResolvedRouting.milestones`;
+  `arcRolesInForce(scope, arcRoles, milestones)`, `routingRevOf(table, scope, arcRoles, milestones)`,
+  `provenanceStack(provenance, scope, unit, milestones)` and `planStack` (from the plan, `hasMilestones`) carry it. The walk
+  seats are checked, smoked and hashed exactly while the plan revision has milestones, so an arc without them keeps every
+  routing rev (dev13-schemas test). `ARC_ROLES_IN_FORCE` is unchanged.
+- `PROMPTS`: Opus modules only (`walkthrough/claude-opus-5-5.ts`, `polishJudge/claude-opus-5-5.ts`, placeholders until
+  agents C and D write them); Sonnet and Haiku `unsupported`; Fable `unsupported` until the modules exist, then a dated
+  `inherits`; Codex `unsupported`, so `unsupportedSeats` refuses a Codex rebind of a walk seat (`codex-judgment`).
+- `callArcRole` takes a judging arc role only (`Exclude<ArcRole, WalkRole>`); a walk role is called as an acting judge.
+
+### `BackendCall` kind `claude-acting-judge` (`src/backends/argv.ts`; owner 2026-10-18: generic, the gate will use it too)
+
+`{kind, role: ActingJudgeRole, triple: ClaudeTriple, session: JudgmentSession, schemaText, system, mcpConfig: AbsPath | null,
+evidenceDirs, denyWrites: AbsPath[]}`. argv: `claude -p --output-format stream-json --verbose --strict-mcp-config [--mcp-config <file>]
+--setting-sources project --json-schema <schema> --model --effort --tools Read,Grep,Glob,Bash,Write,Edit,Agent
+(ACTING_JUDGE_TOOLS) [--disallowedTools <rule>...] --permission-mode bypassPermissions --session-id|--resume <id>
+--append-system-prompt <system> [--add-dir <dir>]...`. Slash commands are not disabled (project skills load). The cwd (the launch's) is the detached
+checkout it works in. `mcpConfig` null: no MCP server (the gate's). Fresh, or resumed once for the repair turn. Its launch
+terminal and result records name the role with a `JudgmentSession` like a judgment.
+
+- **Write safety** (agent I, lead 2026-10-18): for every acting judge, `denyWrites` (dispatch.ts `actingWriteDenials`) is
+  the repository and the run dir less the dirs the call writes in (the gate: its cwd; a walk role: its cwd and its
+  `evidenceDirs`): a root holding none of them is denied whole, one holding some entry by entry as it stands at the call,
+  descending only along the way to a writable dir, so an entry created later beside that way is not covered. Each path
+  becomes `Write|Edit|NotebookEdit(//<path>)` and `(//<path>/**)` rules in `--disallowedTools` (argv.ts `writeDenyRules`;
+  `//` is an absolute path). Deny rules hold under bypassPermissions (verified on Claude Code 2.1.301, 2026-10-18, one
+  Haiku call: a Write into a denied dir was refused and listed in `permission_denials`, a Write and an Edit beside it
+  succeeded). **Bash is not restricted**: what a shell command writes stays trusted to the prompt (the gate's
+  `<your_checkout>`, the walkthrough's checkout paragraph).
+- **The gate** (agent I, owner 2026-10-18): a unit's gate call (`callBackend`, src/pipeline/dispatch.ts) is this kind with
+  `role: gate` and `mcpConfig` null, on the gate's unit seat as before (its tier, large-diff seat, escalation seat, deadline,
+  repair turn, retry of a lost call and verdict reading unchanged). Its cwd is the attempt's gate checkout ("Gate checkouts"),
+  its `--add-dir` surface a judgment's (`judgmentReadDirs`) and its system text the module's, appended with no
+  `<readable_directories>` block (Claude Code's default prompt names the added dirs). Plan-check stays `claude-judgment`.
+
+- **MCP tools** need no `--tools` or `--allowed-tools` entry (agent A, verified on Claude Code 2.1.301, 2026-10-18): `--tools`
+  names built-in tools only and does not restrict MCP tools, and bypassPermissions allows them; with this argv and the
+  Playwright server the init event lists every `mcp__playwright__browser_*` tool and the server `connected`.
+- **The MCP config is a file** (agent A): `walkMcpConfig(servers, evidenceDir)` (src/backends/mcp.ts) is its text, kept
+  content-addressed as `<runDir>/inputs/<sha256>.mcp.json` (`MCP_CONFIG_INPUT`) like the schema and prompt, and
+  `mcpConfig` is its path, so launch.json names it and its bytes stay on record.
+- **A walk role's call** is `callActingJudge(ctx, ActingJudgeCallSpec)` (src/pipeline/dispatch.ts): the role's arc seat,
+  spawned, metered (`arc-backend`), retried and read back (`recordedArcCall`) exactly as `callArcRole`; `--add-dir` is a
+  judgment's surface (`judgmentReadDirs`: the repository, the run dir, then the spec's `evidenceDirs`), and the spec's
+  `mcpConfig` is the config text or null.
+
+### Repo config (`.roadmap/config.json`, `src/routing/layers.ts`)
+
+`walkthrough?: { mcp: { <name>: { command: string; args?: string[]; env?: Record<EnvName, string> } } }` (non-empty; a
+name is `[A-Za-z0-9_-]{1,64}`; `args` and `env` absent: none). Absent: no browser drive, so a `browser` journey is refused
+at bootstrap. Code passes the servers as an `--mcp-config` file holding `{"mcpServers": {<name>: {"type": "stdio", "command",
+"args", "env"}}}` with `--strict-mcp-config`, substituting in `args` and `env` values only (`WALK_SUBSTITUTIONS`): `{evidence}` the
+session's evidence dir (absolute) and `{viewport}` `WALK_VIEWPORT` = `1280x800` (step 0 decided: the pinned desktop
+viewport; a narrow pass resizes in session, method). This repo's server: `playwright-mcp --headless --isolated --browser
+chromium --output-dir {evidence} --viewport-size {viewport}`. Builds in a milestone with a `browser` journey get the same
+servers ("Build sessions" below).
+
+### Build sessions (agent F)
+
+- **`claude-build` + `mcpConfig: AbsPath | null`** (src/backends/argv.ts): the `--mcp-config` file right after
+  `--strict-mcp-config`, as an acting judge's. A Claude build of a unit that a milestone with a `browser` journey lists,
+  or that is such a milestone's design unit, gets `walkMcpConfig(walkthrough.mcp, <the build's evidence dir>)`, kept as
+  `<runDir>/inputs/<sha256>.mcp.json` (`BackendRequest.implementer.mcpConfig` is its text; `buildBrowser`,
+  src/pipeline/stages.ts); every other build gets null and no server. The servers are the repo config's the arc started
+  under (`routingBase.config`); a browser journey without `walkthrough.mcp` is refused at bootstrap, so a build that meets
+  one fails loud. A Codex seat gets none (an MCP config there throws). The assessment call and every round of the
+  attempt pass the same file.
+- **Slash commands are no longer disabled for builds** (owner 2026-10-18): `--disable-slash-commands` stays on judgments
+  only, so a build loads the project's skills, as an acting judge does. The pre-dev.13 implementer captures carry the flag;
+  argv.test compares the builder's argv with them less it.
+- **What loads, measured** (Claude Code 2.1.301, 2026-10-18; a temp git repo and one Haiku call per variant under the build
+  argv, killed after the init event): under `--setting-sources project` the init event's `skills` lists a skill committed
+  under the checkout's `.claude/skills/<name>/SKILL.md`, in a git worktree of the repo too (a unit worktree's case), beside
+  Claude Code's built-ins. A plugin does not reach a unit worktree: one the repo's `.claude/settings.json` `enabledPlugins`
+  names loads only in the directory it is installed for (installed_plugins.json `projectPath`), so with frontend-design
+  installed at project scope for the repo root, a session there lists `frontend-design:frontend-design`, and one in a git
+  worktree of that repo, or a fresh repo enabling it (as `frontend-design@claude-plugins-official` or
+  `@anthropic-plugin-directory`), lists no plugin. A user-scope plugin and the user's own skills (`~/.claude/skills`) never
+  load: user settings are not a source (with `user,project` they do). So a design skill reaches builds, gates and walks
+  only as a project skill committed to the repo (the m5 fixture vendors frontend-design's with its licence).
+
+### Phase 0 and startup rows
+
+| Row | Shape | Owner |
+|---|---|---|
+| `milestones-need-holistic` | `StartupRejection{kind}`: shared row 15, every mode | B |
+| `walk-tools-missing` | `StartupRejection{kind, milestone, problem: program{step, argv0} \| mcp-unconfigured \| mcp-unconnected{server, detail}}`; `step` names the command: `setup[i]`, `serve.<name>`, `seed[i]` | A, both halves (src/preflight/walktools.ts `walkToolsCheck`; start group 2 and `phase0 check --plan`, against the working tree's repo config). Changed from the plan (agent A): the MCP check makes no model call. Code starts each configured server, substituted with a scratch evidence dir, sends the MCP `initialize` request over stdio and needs a JSON-RPC result within 30 s (`MCP_HANDSHAKE_MS`), then stops it (`mcpHandshake`, src/backends/mcp.ts). That is what Claude Code's init event reports as `connected`. `detail` names the spawn error, the error answer, the exit or the timeout, with stderr's tail. Each server is checked once, and every milestone with a `browser` journey gets a row per server that failed. The argv0 half resolves each bring-up command's argv[0] as a lane's is, on the bring-up `env`'s PATH or else the executor's; a relative path with a slash is a checkout file and is not checked |
+| `milestone-unit-before-design` | advisory `Phase0Advisory{kind, milestone, unit, design}`: shared row 14, every mode: a live (not cut, not re-entered) milestone unit not a descendant (through `after`, transitively) of its design unit; a supplied design has none | B |
+
+### Outputs (`src/prompts/schemas.ts`)
+
+`WALKTHROUGH_SCHEMA` / `validateWalkthroughOutput` → `WalkthroughOutput = {final: true, journeys: {journey, outcome:
+completed | blocked, evidence: string[], note}[] (non-empty, journeys unique), findings: {class: breaks | deviates, journey,
+evidence (non-empty), claim, cause, against: journey | contract{path: RepoPath, anchor, dependents} | floor{text,
+source: RepoPath | V-n} | design{path, anchor} | vision{clause}, paths: RepoPath[]}[], polish: {journey, evidence (non-empty), text, unit: {id, scope (non-empty), spec}}[]
+(unit ids unique), premises, reasons}`. The reader's rules: `final` true only; a finding or polish names a reported
+journey; `breaks` cites `journey`, `contract` (owner ruling 2026-10-18: where the contract is stated, and who builds
+on it) or `floor`, `deviates` `design` or `vision` (`WALK_AGAINST`: a declared floor missed is always `breaks`); a `blocked`
+journey has a `breaks` finding on it. A polish `spec` is an admit's spec object (`S_ADMIT_SPEC`, read into spec.json's
+canonical text), not the plan's `string` (step 0 decided: one admit path with two authors). The walk job's validation
+(agent C) adds what needs its inputs: every journey reported, cited evidence files under the evidence dir, a design or
+contract path inside a milestone reference, vision clauses active, a floor's vision clause `non-negotiable` (a floor whose
+source is a repository path is taken as given: a reference's quality-floor section), a polish scope covering a reference;
+one repair turn.
+
+**Gate answer, `findings[].experiments`** (agent I): `GATE_SCHEMA`'s finding gains `experiments: {command: string, output:
+string}[]` (required of a live answer): the ad hoc experiments the gate ran in its checkout that the finding rests on, the
+command as run and the output that shows the result, in order; empty for a finding that rests on reading. Recorded and
+reported (status's gate findings; the next round's `priorRound.findings` render each command as `ran: <command>`), never
+checked against the transcript (backlog). Absent on a dev.12 answer: none (lasting; a dev.12 gate had no shell), with no
+warning.
+
+`POLISH_JUDGE_SCHEMA` / `validatePolishJudgeOutput` → `{final: true, decision: keep | drop, evidence: string[]
+(non-empty), reasons: string[] (non-empty), premises}` (step 0 decided: `final`, as the judge drives a browser).
+
+### Role inputs (`src/prompts/inputs.ts`)
+
+`WalkthroughInputs = {vision, milestone: {id, text}, round, journeys (entries substituted), references: DocText[] (every
+file under the reference dirs at the walked SHA), tweaks: KeptTweak[] {unit, proposal, text}, findings: FindingView[] (the
+milestone's open walkthrough findings), product: ProductInstance {checkout, ports, env}, units: RenderedSpec[] (merged
+units), evidenceDir}`. `PolishJudgeInputs = {vision, milestone, journey, proposal: {id, unit, text, evidence}, references,
+referenceDiff: BoundedDiff, walkEvidenceDir, before, after: ProductInstance & {entry}, evidenceDir}`. Rubric lenses are
+method, in the prompt, not inputs.
+
+Agent F: `PlanCheckInputs`, `BuildInputs` and `GateInputs` + `milestones: MilestonesInput | null` (`unitMilestones`,
+src/pipeline/stages.ts, at the revision the call reads: the plan-check's tip checkout, the build's integration tip, the
+gate's tip); `BuildInputs` + `browser: BuildBrowser | null`.
+```ts
+MilestonesInput = { of: UnitMilestone[] /* plan order, non-empty */; references: DocText[]; binary: RepoPath[] }
+UnitMilestone   = { as: 'member'; id: MS-n; text; dirs: RepoPath[] }                        // the milestone lists the unit
+                | { as: 'design'; id: MS-n; text; dirs: RepoPath[]; journeys: Journey[] }   // the unit is its design.unit
+BuildBrowser    = { servers: string[] /* walkthrough.mcp names */; bringUps: {milestone: MS-n; bringUp: BringUp}[] }
+```
+`references`: every file under any of the unit's milestones' reference dirs at that revision, in path order, once each
+(`referenceFiles`), embedded as documents beside the contracts (`design reference <path>`); `binary` names the files with a
+NUL in their first 8000 bytes (git's rule), read from the checkout. A dir not there yet (its design unit unmerged, or the
+design unit's own) has none. Null when the unit is in no milestone, and the prompt then carries no milestone block.
+`browser`: the milestones (member or design) with a `browser` journey, on a Claude seat only; its block tells the session
+it has the servers and the bring-ups, and stops there (using them is the builder's).
+
+### Job, evidence and checkouts (step 0 decided; agents C and D implement)
+
+- Walk: checkout `<worktreeRoot>/<walk-n>.walk` at `walk-started.sha`; evidence dir `<runDir>/evidence/jobs/<walk-n>/` (the
+  existing job convention), the servers' stdout and stderr captured there by code; teardown after the report (the runner
+  reaps the session, code stops the product).
+- Compare: instances `<worktreeRoot>/<unit>.compare-<attempt>-before|after`; evidence under the unit's attempt evidence dir.
+- Compare (agent D, changed from the line above): a durable job `compare-<n>`, its checkouts
+  `<worktreeRoot>/<arc>/<compare-n>.before|after` and its evidence under `<runDir>/evidence/jobs/<compare-n>/` (the job
+  convention), since the polish judge is an arc seat whose calls are metered to a job (`callActingJudge`). See "Fix units
+  and the polish loop" below.
+
+### The milestone node (agent C, src/schedule/ready.ts)
+
+A unit that descends (through `after`, following lineage heads) from any unit of milestone M, and is not one of M's units,
+is not ready until `milestone-passed{M}`: the readiness of an unmerged `after` dependency. Repair, checkpoint-admitted and
+polish units are exempt (they never wait on a node). `graph` and `status` show the inserted edge. The node passes when a
+walk of M has ended `reported` and M has no active walkthrough P1. Round k+1's walk starts when every unit admitted from
+round k (repairs and polish) is retired or cut, at least one landed, and k < `walkRounds`; otherwise M settles.
+`status` milestone state: `walking | blocked | passed | polishing | settled`.
+
+### Needs-user
+
+No new reason (step 0 decided). `finding-p1-escalated` (blocking) is raised also for a walkthrough P1 nobody owns past
+`PARK_ESCALATE_MS`, and for a milestone node still unpassed when its rounds run out; its content names the milestone.
+
+### The walk job (agent C: src/walk/; implementation decisions)
+
+- **Modules.** `src/walk/node.ts` the node (readiness), `milestones.ts` where a milestone stands (rounds, states,
+  escalations, the demo's hook), `bringup.ts` the product's lifecycle (D's compare instances and G's demo reuse it),
+  `report.ts` validation and minting, `walk.ts` the job (`runWalk`, one per scheduler turn; the scheduler runs it as a
+  holistic job after the checkpoint and before the audit).
+- **Order.** Capture `walk-started` under the fence first (ports allocated just before it), then the reservation: the
+  milestone's `resources` and `@cpu`×4 (`WALK_CPU`, a build's) under `job{walk-n}`, served first and probed; an occupied
+  resource leaves the started walk waiting (`incomplete`), its occupancy item raised once. The detached checkout and the
+  bring-up are made lazily, before the first call the walk must make: a resumed walk whose call was recorded consumes it
+  and brings nothing up.
+- **Bring-up spawns.** `SpawnSubject + {purpose: 'bring-up'; milestone; step}` (`step` as `walk-tools-missing` names it:
+  `setup[i]`, `serve.<name>`, `seed[i]`; its op key brackets-free, `bring-up:<job>:setup.0`), a command terminal of
+  `COMMAND_PURPOSES + 'bring-up'`, parent the job, env PATH and HOME plus the substituted bring-up `env`, no stall
+  watchdog. setup and seed each within 30 min, readiness within 120 s (`READY_TIMEOUT_MS`), polled every 200 ms; a serve
+  process runs to its owner's `proc.kill{teardown}` (`KILL_REASONS + 'teardown'`, `CANCEL_REASONS + 'teardown'`; its
+  result `verdict: cancelled, reason: teardown`, `COMMAND_CANCEL_REASONS`; only a bring-up serve is torn down: a lane, a
+  backend call never is), its deadline the session's plus 15 min. Stop kills bring-up spawns (`STOP_KILLS`). Recovery
+  cancels a live bring-up runner (`cancel.json{recovery}`) before adopting it: the walk brings the product up again.
+- **Logs.** Each serve entry's stdout and stderr are linked into `<evidence>/server/serve.<name>.stdout|stderr` while it
+  runs and copied there when it stops; a failed step's output is copied to `<evidence>/server/<step>.stdout|stderr`,
+  which the bring-up P1 cites (claim names the step and why, `cause: "bring-up: <step> failed"`, no obligation).
+- **The session.** Agent A's `callActingJudge` (src/pipeline/dispatch.ts): `claude-acting-judge` as
+  `arc-backend{walkthrough.arc}` under `job{walk-n}`, cwd the checkout, `--add-dir` a judgment's surface plus the evidence
+  dir, `--mcp-config` only for a milestone with a `browser` journey (`walkSessionMcp` over src/backends/mcp.ts
+  `walkMcpConfig`, the servers of the repo config the arc started under, `routingBase.config`; a browser journey without
+  the config is a bug here, Phase 0 refuses it). The references input is src/pipeline/stages.ts `referenceFiles` at the
+  walked SHA (a binary file left out). The open findings are shown with their recorded cause (below), deadline 90 min (`WALK_SESSION_MIN`),
+  a lost call retried once. Call 1 is the walk; call 2 its one repair turn (`repairTurnOf`); refused again, interrupted,
+  failed or parked, the walk ends `abandoned` and the same round is due again, once ("The abandonment brakes" below).
+- **Validation** (`walkRefusals`): a cited evidence path is read relative to the evidence dir, or absolute inside it, and
+  must be a file there; a polish scope covers a reference when a pattern's literal part lies inside a reference dir or holds
+  one; a polish unit's spec must be its own unit's at rev 1 and its id no unit of the plan.
+- **A walkthrough finding keeps its cause** (`finding-opened + cause?`, present only on a walkthrough finding; absent:
+  none, lasting): the next walk is shown it (`WalkFindingView`) and re-reports a defect still present under exactly that
+  cause, so the key dedupes it.
+- **Minting.** A finding's evidence is its `paths` (blobs at the walked SHA), then its evidence files (absolute, blob null);
+  its claim is prefixed with its journey; a vision clause it cites (`vision`, or a floor's `V-n` source) is kept;
+  `gateHadPassed: true`. A finding merged into an active one of the same key is the walk's finding too (`walk-ended.findings`).
+  A resumed walk re-mints the same report: findings merge, proposals already recorded for the walk are skipped.
+- **Crash labels.** `walk.after-started`, `walk.after-mint`, `walk.before-ended`, `walk.after-ended`, `walk.after-passed`.
+  A crash between `walk-ended` and `milestone-passed` is settled at the scheduler's start (`settleWalks`): the latest walk
+  ended `reported`, no walk of the milestone started since, and the log read through that end held no active walkthrough P1.
+- **The rounds brake** (`milestoneProgress`). Round k's admitted units: the plan's polish units carrying k's applied
+  proposals (its proposals less `dropped`) and the units whose specs repair a finding of k (`repairUnits`), each followed
+  to its lineage head. Round k is open while an author has yet to act (`pending`: `checkpoint`, a finding of k still
+  `open` and no checkpoint captured after k's end decided; `polish`, an applied proposal in no unit of the plan: agent D's
+  revision applies them, and D extends this rule for a proposal its admit refuses) or one of its units is neither merged
+  nor cut. Then k+1 is due when one landed and k < `walkRounds`; else the milestone settles (derived, no fact). A
+  `bring-up-failed` walk is a round; an `abandoned` one is not (a round abandoned twice ends: "The abandonment brakes").
+- **Milestone node.** Exemption is by the lineage root's origin: a re-entry of a gated planned unit stays gated, whatever
+  its own origin.
+- **Escalation** (`walkItemsDue`, raised by the scheduler's tick with the findings' items): `finding-p1-escalated`
+  (blocking) parented by the walk job (one item per walk job): a P1 of the walk still `open` PARK_ESCALATE_MS after the
+  walk ended; or the milestone settled with its node unpassed (parented by its last walk).
+- **Demo hook (agent G).** `settledMilestones(view, plan, repairs)`: each settled milestone, whether it passed, and its
+  last walk (job, SHA). A settled milestone is the promotion point; G decides the SHA it promotes.
+- **Completion.** `COMPLETION_BLOCKERS + 'walk-pending'` (after `checkpoint-pending`): a walk due or running, or a round
+  open.
+- **Status.** `Status.milestones: [{id, state, passed, round, walks: [{job, round, outcome | null}], findings}]` (state
+  `building` before the milestone is reached, then `walking | blocked | passed | polishing | settled`: `walking` a walk
+  due or running unpassed, `blocked` a round open or settled unpassed, `passed` a walk due or running after the pass,
+  `polishing` a round open after it, `settled` settled passed); `EdgeView + {type: 'milestone', unit, milestone,
+  passed}`; `WaitingFor + milestones` (the unpassed nodes a unit waits on; its compact state `milestones=MS-1`).
+
+### Fix units and the polish loop (agent D: src/walk/polish.ts, src/walk/compare.ts; plan §4)
+
+- **The checkpoint's walk trigger.** `CheckpointTrigger + {type: 'walk'; job: walk-n}`: due for a walk that ended as a
+  round (`reported`, `bring-up-failed`) while one of its findings is unweighed (`unweighedWalkFindings`, src/walk/milestones.ts:
+  active, `open`, and captured by no checkpoint that settled a decision, applied, no-op or requested, under the vision in
+  force); a walk that opened nothing, or only weighed findings, has nothing new and no checkpoint (as an audit's
+  `nothingNew`; no `checkpoint-skipped` is written: that fact is an audit's). Order: parks, then walks, then audits; the
+  generation is the latest recorded (as a park's). `TriggerView + {type: 'walk'; job, milestone, round, findings,
+  evidenceDir}`; the session's readable dirs gain the walk's evidence dir (Read renders its screenshots). The checkpoint
+  plans repairs from claim, cause and evidence; nothing asks it to judge looks. The rounds brake's `pending: checkpoint`
+  is the same predicate.
+- **The polish revision** (code, no model call, `applyPolish`, a holistic job after the walk). Due: the first walk in log
+  order that ended `reported` with an applied proposal (proposals less `dropped`) carried by no plan unit and not refused.
+  A proposal is refused, `polish-refused{proposal: X-n, reasons (non-empty)}` (once per proposal; settled: never applied, and
+  the rounds brake's `pending: polish` treats it as settled), when the arc is draining, when it is not from its milestone's
+  latest round, when its scope covers no milestone reference (`coversReference`), or when the admit path or the classifier
+  refuses its unit admitted alone; the rest are admitted together (refused together, each is refused with the combined
+  reasons). THE admit path (src/holistic/bundle.ts `admitUnit`, `fillMappedObligations`; a checkpoint `admit` takes it
+  too): the unit not planned, its spec a unit spec of that unit at rev 1, then its entry `{id, spec: <id>.json, risk: high,
+  scope, resources: the milestone's, after: [], origin: polish, polish: {milestone, proposal}}`; then `evaluateRevision`
+  with proposer `walk{job}` and `commitUnderFence` with source `walk{job}` (parent the walk job). A commit the arc moved
+  under is retried at the next run.
+- **Classifier rows** (`polishRows`, src/input/classify.ts; `Proposer + walk{job} | compare{unit}`): a polish unit added
+  (not a re-entry) only by proposer `walk{job}` whose proposal it carries (`polish-proposed` of that job, of the unit's
+  milestone, whose unit id and scope are the unit's); proposer `walk` changes nothing but adding such units; proposer
+  `compare{unit}` changes nothing but cutting `unit`, judged `drop`, with reason `polish-dropped` (`POLISH_DROPPED`), no
+  open attempt: the in-a-task refusal does not apply to it (the unit waits at its candidate admission, in no stage).
+- **Candidate admission** (src/schedule/ready.ts): a polish unit's candidate waits under `AdmissionConstraint{type:
+  'compare'; decision: null | 'drop'}` until its `tweak-judged` is a `keep`; a `drop` never admits (its cut follows).
+- **The compare job** (`runCompare`, a holistic job after the polish revision). First a dropped tweak not cut is cut
+  (`cutDropped`: the unit's plan entry gains `cut: {reason: polish-dropped}`, proposer and source `compare{unit}`, parent
+  `arc`; a classifier refusal is a bug). Else a running compare resumes; else the first polish unit in plan order, active,
+  approved, its decided next stage `candidate`, no `tweak-judged`: its unit diff (`unitDiffPaths` of the integration tip and
+  the approval's `unitCommit`) touching no milestone reference is `tweak-judged{drop, reference-untouched}` with no job;
+  otherwise (skipped while the polishJudge backend is parked or the arc paused or stopped)
+  `compare-started{job: compare-n, unit, before: Sha (the integration tip), after: Sha (the approval's unit commit), ports:
+  {before, after}}` under the fence (fold: opens the job; one compare open at a time; never for a judged unit). Then the
+  milestone job reservation (`reserveJob`, src/walk/walk.ts), two detached checkouts, each brought up (bring-up keys
+  `bring-up:<job>:before|after`, logs `<evidence>/server-before|server-after/`): a failed before, or a stop, is
+  `compare-abandoned{job, detail}` (fold: closes the open compare; a later compare runs); a failed after with the before
+  up is `tweak-judged{drop, bring-up-failed}` (`TWEAK_REASONS + bring-up-failed`). The judge: `polishJudge` via
+  `callActingJudge` in the after checkout, `--mcp-config` for a `browser` journey, `--add-dir` its evidence dir and the
+  original walk's; one repair turn (a cited file must exist under either dir, `judgeRefusals`); refused again, failed,
+  interrupted or parked: `compare-abandoned`. Teardown, then `tweak-judged{decision, judged}` (which closes the compare), and
+  a drop's cut. `PolishJudgeInputs.references` are the after commit's; `referenceDiff` is the unit's bounded diff
+  (merge-base..after, `GATE_DIFF_BUDGET`, attachment under `<evidence>/diff/`), which holds the reference diff.
+- **Crash labels.** `polish.after-refused`, `polish.after-revision`, `compare.after-started`, `compare.after-judged`,
+  `compare.after-cut`.
+- **The abandonment brakes** (lead ruling 2026-10-18: brakes in code, never a retry for ever). An abandonment a pause, a
+  stop or a backend park cut short carries `interrupted: true` (`walk-ended`, `compare-abandoned`) and is no try.
+  - A compare: a unit gets COMPARE_ATTEMPTS = 2 compares; its second failed one (`failedCompares`) writes, right after its
+    `compare-abandoned`, `tweak-judged{drop, abandoned}` (`TWEAK_REASONS + abandoned`), and the cut follows as for a drop.
+  - A walk: a round gets WALK_ATTEMPTS = 2 walks (its first and one retry); once its walk failed twice since the previous
+    round's walk, `milestoneProgress` is `{kind: 'abandoned', round, last}`: no further walk is due, the milestone is not
+    settled (`settledMilestones` omits it, so the demo never promotes on it), `walksPending` is false, its status state is
+    `blocked` (unpassed) or `settled` (passed), and `walkItemsDue` raises one `finding-p1-escalated` parented by its last
+    walk, blocking while the node is unpassed, non-blocking once it passed. The owner's way out (agent J, owner-facing): an
+    `apply` that edits the milestone's `bringUp` or `journeys` (allowed on a walked milestone exactly so a broken bring-up
+    can be fixed) lists it in its `milestones` change's `rewalk` (src/input/classify.ts `milestoneRows`); the fold keeps the
+    latest such revision's seq (`view.rewalkSeq(m)`), and the brake counts only the tries after it (and after the previous
+    round's walk): the round's walk is due again with a fresh WALK_ATTEMPTS, `walkItemsDue` no longer raises the escalation,
+    and the one raised is superseded (src/needsuser.ts `supersededItems`: the item parented by a failed abandoned walk job
+    whose milestone's `rewalkSeq` is after the walk's end; open no more, it holds and blocks nothing). Otherwise the brake
+    is final for that round: the owner plans another milestone for the experience if it still needs walking.
+- **Prompt.** `prompts/polishJudge/claude-opus-5-5.ts` (Opus 5.5 guide only); Fable a dated `inherits`.
+
+### The demo (agent G: src/demo/promote.ts, executor side; src/demo/keeper.ts, the supervisor's keeper)
+
+A stable build for the owner to pick up (plan §4a). Walks and lanes never touch it. No model call.
+
+- **The reserved name** (agent G decided): `refs/roadmap/demo` sits beside the arcs' snapshot refs and `<worktreeRoot>/demo`
+  beside `<worktreeRoot>/<arc>`, so `parsePlan` refuses the arc id `demo` (`DEMO_NAME`, a parse refusal at `plan.arc`) and
+  the chain's ref listing (`arcsWithRefs`, src/chain.ts) skips `refs/roadmap/demo`.
+
+- **Settled** (`settledMilestones`; agent G decided, the rounds brake's twin of agent C's `settled` state, one rule): a
+  milestone with `milestone-passed`, no active walkthrough P1, its latest walk ended, and that walk's round closed: every
+  unit admitted from it (the polish units of its applied proposals, `proposals` less `dropped`, and every `repair` or
+  `checkpoint` unit whose spec `repairs` one of its `findings`) retired, cut or superseded; every applied proposal's unit in
+  the plan or the proposal refused (`polish-refused`, agent D; an admission still to come keeps it open); every finding of the walk weighed (not `open`, or captured by a
+  decided checkpoint); and the round is `walkRounds` or none of those units landed. The settled SHA is that walk's
+  `walk-started.sha`, what it confirmed.
+- **Promotion** (each scheduler iteration of an arc with milestones, `demoTicker`): unless held, the settled milestone whose
+  closing walk started last is promoted when it is newer: its walk started after the latest promotion's position, on
+  another SHA (the integration branch only moves forward; the final tip's check is `merge-base --is-ancestor`):
+  `demo-promoted{milestone, sha}`, then `refs/roadmap/demo` moved to it. The fact is first; the ref follows the facts
+  (`syncDemoRef`: after each promotion and on the first tick of every start). Crash point `demo-promoted` (between the
+  two). Completion (`promoteFinal`, right before `arc-completed`, in the same step as the flow loop's `beforeCompletion`):
+  an arc with a settled milestone and no active walkthrough P1 on any milestone promotes its integration head, named by
+  its last settled milestone, unless held. A promotion's **position** (what it holds): its closing walk's
+  `walk-started` seq (the milestone's latest walk on that SHA before the fact), else (the final tip) the fact's own seq.
+- **`demo-acted{command: CommandId, act: up | down | hold | release}`** (a `WalkFact`; the fold keeps it in `walkFacts`).
+  `held`: the latest `hold` not followed by a `release`; `up`: the latest `up` or `down` (up before any), `upSeq` its seq
+  (0 before one). Command `{type: 'demo'; act}` (CLI `roadmap demo <act>`), a mutation with scope none (`actOnDemo`):
+  rejected `demo hold: promotion is already held (by <cmd>)`, `demo release: promotion is not held`, `demo down: the demo
+  is already down`; `up` is always applied (it retries a failed version). `release` promotes at once when newer and its
+  receipt names the promotion (`promoted <MS> at <sha>`), or `the demo is current (…)`, or `nothing settled to promote
+  yet`. The effect checks for its own fact first.
+- **`<runDir>/demo.desired.json`** (`DemoDesired`, derived, rewritten when its canonical text changes: on every tick and
+  act): `{v, arc, repo, worktreeRoot, up, upSeq, target: {milestone, sha, bringUp} | null}`, `bringUp` the promoted
+  milestone's in the plan in force. The keeper's only input from the arc.
+- **`<hostDir>/demo.json`** (`DemoRecord`, the keeper's alone, atomic writes): `{v, ports: {<ServeName>: port}, serving:
+  DemoInstance & {state: up | down} | null, trial: DemoInstance | null, failures: DemoFailure[]}`; `DemoInstance = {arc,
+  repo, worktreeRoot, slot, milestone, sha, bringUp, boot, processes: [{name, pid, start, sid}]}`; `DemoFailure = {arc,
+  milestone, sha, log, upSeq, boot, at}`. `ports` are the stable ports, one per serve name, allocated the first time a
+  bring-up names it and kept.
+- **The keeper** (`startDemoKeeper`, run by the supervisor from its claim to its release; one reconcile at a time, one a
+  second): a recorded `trial` is stopped first (a crash's); `up` false stops the serving processes (`state: down`, slot
+  kept); a target that differs from what serves (SHA or arc) is **swapped**: a detached worktree of the SHA in the spare
+  slot, trial ports (free, none of the stable ones), `setup`, `serve` and ready, `seed` (reseeded on each promotion), then
+  the trial stopped, the old instance stopped, the new one's serve entries started on the stable ports and probed ready,
+  `seed` run again on them (R5: each promotion reseeds; seeded data that names a port names the stable one), and
+  `current` linked to its slot; a trial, or a stable start or reseed, that fails is a `DemoFailure` (log `…/bringup.log`) and the
+  old instance keeps serving, or is restarted from its slot. Otherwise a serving instance that is not running (other
+  boot, a process gone, `down` then `up`) is **restored**: its serve entries restarted on the stable ports from its slot
+  (no setup, no seed: its data is kept), or brought up afresh when the slot is gone. A SHA is not tried again with the
+  same `upSeq` on the same boot. With no desired file the host's demo is kept, and restored after a host restart: one
+  demo per host, the latest any arc promoted. Every process runs in a session of its own (it outlives the executor and
+  the supervisor; the demo serves after the arc completes) and is stopped whole (TERM, 5 s, KILL). Deadlines: a setup or
+  seed command 30 min, readiness 120 s (the walk's `BRING_UP_STEP_MS`, `READY_TIMEOUT_MS`). On a supervisor's intentional end the keeper finishes
+  before the release: after `complete` its last reconcile runs (≤ 30 min, `KEEPER_FINAL_MS`), so the final promotion
+  serves; after any other end (and at the crash limit) a trial in progress is abandoned. The demo reserves none of the
+  milestone's `resources` (step G decided: a reservation held for the arc's life would starve the walks).
+- **Layout**: `<worktreeRoot>/demo/{a,b}` (the slots), `current` (link to the serving slot), `logs/<ms>-<sha8>/{bringup.log,
+  <serve>.log}`. The bring-up is the walk's (src/walk/bringup.ts, its detached half: the same steps, environment (the
+  host's PATH and HOME, then the bring-up's `env`), ports, deadlines and probes, each command in a session of its own
+  outside any runner and journal), `{port:<name>}` substituted with the trial's or the stable ports.
+- **Failures**: each `DemoFailure` of this arc the log lacks (by `log`) is journaled `demo-failed{milestone, sha, log}`,
+  then a walkthrough P1 on that milestone (source `demo{sha}`, cause `demo bring-up failed`, evidence `[{path: log, blob:
+  null}]`, no obligation, no vision clauses); a crash between the two opens the P1 on the next tick.
+- **`status.demo`** (`DemoStatus`): `{milestone, sha, held, up, since: {milestones, tweaks, fixes}, roughEdges: F-n[],
+  where: {type: url, url, ports} | {type: path, path} | null, serving: Sha | null, failed: {sha, log} | null} | null`. Null
+  before the arc's first promotion. `since`, against the promotion before (positions `(previous, current]`): the
+  milestones settled (closing walk), the tweaks kept (`tweak-judged keep`, retired) and the fixes (`repair`/`checkpoint`
+  units repairing a walkthrough finding, retired) in that range. `roughEdges`: every active walkthrough P2 of a passed
+  milestone. `where`, once the host's instance is this arc's: `http://127.0.0.1:<port>/` of the first serve entry with
+  every stable port, or (`serve: []`) `<worktreeRoot>/demo/current/bin`. `serving`: the SHA the instance runs now, alive.
+  `failed`: the latest `demo-failed` after the promotion.
+- **The brief's twin** (`BriefArc.demo`, `BriefDemo`): `{milestone, sha, held, up, since, roughEdges} | null` at the ref,
+  not a delta; `where` is status's alone (the brief reads refs only). The Markdown's Demo section.
+
+### The convergence tail (owner ruling 2026-10-20; src/holistic/tail.ts)
+
+m5 run 5 passed both milestones and promoted its demo, then spent two hours auditing the tests its own repair units had
+added; 41 debt items were banked, most of them gate notes that were no debt and test nitpicks. Ruling: debt is for
+substantive issues in the code that drag down later work, never a dumping ground for test nitpicks; a nitpick not fixed
+at once is released; brakes on the tail are code. The record rows are in "Record evolution" (1.0.0-dev.12 →
+1.0.0-dev.13, the rows marked the convergence tail, the bundle decision record, the gate answer's `debt`).
+
+- **`released`** (`FINDING_DISPOSITIONS`): terminal, never debt. `admissionOf` suppresses a draft whose key matches a
+  released finding whatever its evidence (a dismissal still lifts on a changed blob). A checkpoint may dispose
+  `released` (never a P1: `rulingRefusal`); code releases with `release{job, reason}` or (a P3 at the close-out)
+  `code{close-out}`. `accepted` (unchanged) is terminal too: "handled by the ops or already owned", never debt, and a
+  later report of its key opens a new finding; it is never written for a finding the decision repairs (below).
+- **P3 is never debt**: `mintDebt` refuses a P3 (`DebtRefusedError`), and `bankDeferred` banks only a P2.
+- **Finding-origin unit**: a plan unit whose lineage root has origin `repair` or whose spec in force repairs a finding
+  (`findingOriginRoots`). **Settled point** (`settledPoint`): every milestone of the plan in force has
+  `milestone-passed`, and every unit whose root is not finding-origin is cut or its lineage head `retired` or `cut`
+  (a plan without milestones: the second alone).
+- **Brake of a finding** (`brakeOf`; none for a P1, a finding that an obligation is broken, or a walkthrough finding
+  (lens `walkthrough`: a milestone walk's verdict, bounded by the walk rounds and the walk and compare attempts; m5 run
+  6); a vacuity finding on an obligation's witness is braked, and banks when deferred): `regress` when finding-origin units
+  introduced it (`introducedByFindingOrigin`: an audit lens's finding whose R46 attribution, `findingAttribution`, is
+  non-empty and wholly finding-origin; with no attribution, when its lens's covered range of its audit holds at least
+  one merge and only finding-origin merges); else `settled` at the settled point unless it cites an active
+  non-negotiable clause.
+- **Judging a bundle** (src/holistic/bundle.ts `judge`, after validation, before a corpus arc's classification, any arc):
+  `brakeConversions` over the admits' spec `repairs`: every repair a finding below a brake → a conversion
+  `{index, unit, reason: settled-brake (each below the settled brake) | regress-brake, opportunity: null}`, dropped
+  from the proposal like a corpus conversion (`conversionReasons` holds: nothing may name its unit); a finding below a
+  brake beside other repairs → an invalid reason (the repair turn). The conversions persist in the decision record
+  (`source.conversions`, beside a corpus arc's classes and conversions, merged by index; or a no-op's); a brake's
+  conversion makes no amendment (`settleConversions`, `conversionAmendment` refuses one).
+- **Settling a decision** (`settleFindings`, after an applied or no-op decision, before the corpus steps): `tailRulings`
+  over the findings, the captured ids, the dispositions and the findings repaired (named in the repairs of a unit the
+  effective ops admit, or re-enter: its reentered unit's spec in force), a finding named by one of the job's brake
+  conversions staying below that brake. A repaired finding's disposition is not written, whatever it is: the repairs
+  route rules it (owned, `fixed-on-branch`, `resolved` when its unit publishes; m5 run 6's ckpt-4 accepted F-18 beside
+  the admit repairing it, which ended it `ruled/accepted` before the unit published). Each other disposition of an active finding: `dismissed`
+  and `released` as given; a P3 `deferred` → `release{p3}`; a P3 `accepted` that nothing fixes (not repaired, its state is `open`) → `release{p3}`; a P2 below a brake `deferred` → `deferred` (it banks), `accepted`
+  that nothing fixes → `release{brake}`; anything else as given. Then each captured finding without a disposition,
+  active, `open` and not repaired: a P3 → `release{p3}`, a P2 below a brake → `release{brake}`. Each
+  ruling is one `finding-transition`; a re-settlement writes only what a crash lost.
+- **The checkpoint is told** (`<brakes>`, `brakesText`): whether the arc is at the settled point, and each shown finding
+  below a brake, read when its inputs render; its system text states the rules as facts. The lens is told a released
+  finding never opens again and a P3 nobody fixes at once is released. The gate is told `debt`: `{drag}` only on a
+  note that is a substantive issue in the code slowing later work; null on a test nitpick, a status remark, a
+  preference, and every blocking or pre-existing finding.
+- **Gate notes** (`gateDebtNotes`): a pre-existing finding banks its text; a note banks `<text> Drag: <drag>` only
+  with a non-blank drag; a dev.12 note (`debt` unrecorded) banks its text, as dev.12 did, so a recovery re-read of a
+  consumed dev.12 answer banks exactly what that executor would have; a blocking finding or a blank text never.
+- **`status.findings`**: `released` counts the released findings by `release.reason`, `code{close-out}` (`closeOut`)
+  or a checkpoint (`checkpoint`); `refusedAdmits` counts the brake conversions of every decision record.

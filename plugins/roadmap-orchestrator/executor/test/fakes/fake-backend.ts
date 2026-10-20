@@ -8,6 +8,7 @@
 // was pinned against.
 import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LensKindName } from '../../src/core/records.ts';
@@ -225,9 +226,15 @@ function realClaude(scenarioDir: string): string {
   throw new Error(`fake claude: a real act found no claude on PATH outside ${shims}`);
 }
 
-/** The `real` act: the real CLI with the call's argv, stdin, cwd and environment; its exit status ends the fake. */
-function runReal(call: Call, scenarioDir: string): never {
-  const r = spawnSync(realClaude(scenarioDir), [...call.argv], { cwd: call.cwd, env: process.env, input: call.stdin, stdio: ['pipe', 'inherit', 'inherit'] });
+/**
+ * The `real` act: the real CLI with the call's argv (`readOnly`: rewritten into the judgment profile, the gate eval's
+ * comparison arm), stdin, cwd and environment; its exit status ends the fake.
+ */
+function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: string; runDir: string }> | undefined): never {
+  // Loaded (synchronously: require of an ES module) only by the arm, so no other fake call pays for the import.
+  const arm = (): typeof import('../../evals/roles/gate/readonly.ts') => createRequire(import.meta.url)('../../evals/roles/gate/readonly.ts');
+  const argv = readOnly === undefined ? call.argv : arm().readOnlyArgs(call.argv, readOnly);
+  const r = spawnSync(realClaude(scenarioDir), [...argv], { cwd: call.cwd, env: process.env, input: call.stdin, stdio: ['pipe', 'inherit', 'inherit'] });
   if (r.error !== undefined) throw r.error;
   if (r.signal !== null) process.kill(process.pid, r.signal);
   process.exit(r.status ?? 1);
@@ -287,7 +294,7 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'exitZeroNoop':
       process.exit(0);
     case 'real':
-      runReal(call, scenarioDir);
+      runReal(call, scenarioDir, act.readOnly);
     case 'checkoutTree':
       git(call.cwd, 'read-tree', '-u', '--reset', act.sha);
       git(call.cwd, 'commit', '--quiet', '--message', act.message);
@@ -342,6 +349,19 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
         process.exit(99);
       }
       writeFileSync(join(dir, act.file), act.text);
+      return;
+    }
+    case 'fetchFromPrompt': {
+      // dev.13: a fake walkthrough uses the product: GET the URL the prompt names, the status and body into its evidence dir.
+      const url = new RegExp(act.pattern).exec(call.stdin)?.[1];
+      const dir = new RegExp(act.dirPattern).exec(call.stdin)?.[1];
+      if (url === undefined || dir === undefined) {
+        process.stderr.write(`fake ${call.as}: fetchFromPrompt ${act.pattern} / ${act.dirPattern}: no match in stdin\n`);
+        process.exit(99);
+      }
+      const script = 'fetch(process.argv[1]).then(async (r) => process.stdout.write(`${r.status} ${await r.text()}`), (e) => { process.stdout.write(`error ${e.message}`); })';
+      const r = spawnSync(process.execPath, ['-e', script, url], { encoding: 'utf8', timeout: 10_000 });
+      writeFileSync(join(dir, act.file), r.stdout);
       return;
     }
     case 'readFromPrompt': {

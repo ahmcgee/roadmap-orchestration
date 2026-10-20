@@ -4,8 +4,8 @@
 // kind; no fs or git here. A refused start persists its rejections as `status.rejection.json` in the run
 // dir (`RejectionFile`, step 13b), which `status` reads back through `rejectionFile`.
 import {
-  type ArcId, type InvocationId, type LaneId, type ResourceName, type Sha, type Sha256Hex, type UnitId, CPU_POOL, arcId, invocationIdOf, laneId,
-  resourceName, sha, sha256, unitId,
+  type ArcId, type InvocationId, type LaneId, type MilestoneId, type ResourceName, type Sha, type Sha256Hex, type UnitId, CPU_POOL, arcId, invocationIdOf, laneId,
+  milestoneId, resourceName, sha, sha256, unitId,
 } from '../core/ids.ts';
 import { type ResidueKey, residueKey } from '../core/records.ts';
 import {
@@ -98,7 +98,21 @@ export type StartupRejection =
   | Readonly<{ kind: 'vision-leak'; inForce: Sha256Hex | null; committed: Sha256Hex | null; draft: AbsPath }>
   // A start of an arc with a plan in force (a reopen) after arc `by` started on its head (src/chain.ts `successorOf`):
   // its PR's fixes are priority units of `by`, whose PR supersedes its own (`roadmap pr --supersede-previous`).
-  | Readonly<{ kind: 'arc-superseded'; by: ArcId }>;
+  | Readonly<{ kind: 'arc-superseded'; by: ArcId }>
+  // dev.13 (ruling 2): milestones on a plan without the holistic layer (their findings, repairs and polish need it).
+  | Readonly<{ kind: 'milestones-need-holistic' }>
+  // dev.13 (D1): what a milestone's walk needs that this environment lacks; the architect fixes the environment.
+  | Readonly<{ kind: 'walk-tools-missing'; milestone: MilestoneId; problem: WalkToolsProblem }>;
+
+/**
+ * dev.13, why a milestone cannot be walked here: a program its bring-up names does not resolve (`step` names the command:
+ * `setup[i]`, `serve.<name>`, `seed[i]`), a `browser` journey with no `walkthrough.mcp` in the repo config, or a configured
+ * MCP server that did not start and answer the MCP `initialize` handshake (src/preflight/walktools.ts; `detail`: why not).
+ */
+export type WalkToolsProblem =
+  | Readonly<{ type: 'program'; step: string; argv0: string }>
+  | Readonly<{ type: 'mcp-unconfigured' }>
+  | Readonly<{ type: 'mcp-unconnected'; server: string; detail: string }>;
 
 /** Why a declared command (a lane, a probe, a teardown) cannot run on this host. */
 export type CommandProblem = Readonly<{ type: 'argv0-unresolvable'; argv0: string }> | Readonly<{ type: 'env-missing'; name: string }>;
@@ -133,6 +147,8 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'plan-defect':
     case 'vision-leak':
     case 'arc-superseded':
+    case 'milestones-need-holistic':
+    case 'walk-tools-missing':
       return EXIT_REFUSED;
   }
 }
@@ -269,6 +285,16 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
     draft: f.get('draft', (v, p): AbsPath => absPath(v, p)),
   })),
   'arc-superseded': object((f): StartupRejection => ({ kind: f.get('kind', literal('arc-superseded')), by: f.get('by', (v, p): ArcId => arcId(v, p)) })),
+  'milestones-need-holistic': object((f): StartupRejection => ({ kind: f.get('kind', literal('milestones-need-holistic')) })),
+  'walk-tools-missing': object((f): StartupRejection => ({
+    kind: f.get('kind', literal('walk-tools-missing')), milestone: f.get('milestone', (v, p): MilestoneId => milestoneId(v, p)), problem: f.get('problem', walkToolsProblem),
+  })),
+});
+
+const walkToolsProblem: Read<WalkToolsProblem> = tagged('type', {
+  program: object((f): WalkToolsProblem => ({ type: f.get('type', literal('program')), step: f.get('step', str), argv0: f.get('argv0', str) })),
+  'mcp-unconfigured': object((f): WalkToolsProblem => ({ type: f.get('type', literal('mcp-unconfigured')) })),
+  'mcp-unconnected': object((f): WalkToolsProblem => ({ type: f.get('type', literal('mcp-unconnected')), server: f.get('server', str), detail: f.get('detail', str) })),
 });
 
 export const rejectionFile: Read<RejectionFile> = object((f) => {

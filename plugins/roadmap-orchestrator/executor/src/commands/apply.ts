@@ -86,6 +86,9 @@
 //   scope-decide (scope growth, 2026-10-15) `scope accept|reject <u>`: the root agent's decision on a unit held by its
 //            plan-check's verified scope-growth proposal; an accept lands the ruled growth (src/commands/scope.ts). Mutation,
 //            scope {u}.
+//   demo     (dev.13) `demo up|down|hold|release`: the owner's act on the demo, `demo-acted{command, act}` (src/demo/promote.ts
+//            `actOnDemo`): hold freezes promotion, release resumes it and promotes the latest settled milestone when newer,
+//            up and down start and stop the host's instance (the supervisor's keeper). Mutation, no scope.
 //   `resume <unit>` while `pause --all` holds is rejected: only `resume` without a unit clears it.
 //
 // Control commands wait only for an open `integration.ff` (the publication critical section); mutations
@@ -151,6 +154,7 @@ import { mergeIn } from './mergein.ts';
 import { reverse } from './reverse.ts';
 import { rule, rulingReasons } from './rule.ts';
 import { decideScope } from './scope.ts';
+import { actOnDemo } from '../demo/promote.ts';
 import { steer } from './steer.ts';
 
 /**
@@ -281,6 +285,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return requestFlow(ctx, command.id, body.reason);
     case 'scope-decide':
       return decideScope(ctx, command.id, body);
+    case 'demo':
+      return actOnDemo(ctx, command.id, body.act);
   }
 }
 
@@ -708,7 +714,7 @@ export type ApplyVerdict =
   /** `smoke`: backends the new routings seat that the routing in force did not; they must pass a smoke first. */
   /** `corpusFiles`: a corpus arc's corpus files as its pin re-derived them (kept before the commit, M4a). */
   /** `rulings`: the ids its `--ruling` records land (I2), for the commit's proposer; `numbered`: each `C-?` record's assigned id. */
-  /** `advisories` (scope growth, 2026-10-15): Phase-0 rows 10's and 13's, which never refuse (the receipt and the dry run list them). */
+  /** `advisories` (scope growth, 2026-10-15): Phase-0 rows 10's, 13's and 14's, which never refuse (the receipt and the dry run list them). */
   /** `rebuild`: the proposal built again under the fence. */
   | Readonly<{
     kind: 'accepted'; rev: PlanRev; evaluated: Extract<RevisionVerdict, { kind: 'accepted' }>; smoke: readonly Backend[]; corpusFiles: readonly SourceFile[];

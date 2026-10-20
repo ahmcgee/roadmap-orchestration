@@ -30,7 +30,7 @@ const KINDS: { readonly [K in Command['command']]: true } = {
   version: true, start: true, status: true, watch: true, stop: true, pause: true, ack: true, resume: true, sweep: true, apply: true,
   'resolve-edge': true, 'run-only': true, rule: true, reverse: true, steer: true, 'merge-in': true, audit: true, 'close-admissions': true,
   gc: true, 'phase0-check': true, 'corpus-pin': true, brief: true, pr: true, issues: true, 'chain-status': true, answer: true,
-  'witness-check': true, 'resume-arc': true, 'inputs-export': true, 'flow-decide': true, 'flow-request': true, 'flow-given': true, 'scope-decide': true,
+  'witness-check': true, 'resume-arc': true, 'inputs-export': true, 'flow-decide': true, 'flow-request': true, 'flow-given': true, 'scope-decide': true, demo: true,
 };
 
 type Node = Readonly<{ type: 'word'; text: string }> | Readonly<{ type: 'optional'; groups: readonly (readonly Node[])[] }> | Readonly<{ type: 'choice'; groups: readonly (readonly Node[])[] }>;

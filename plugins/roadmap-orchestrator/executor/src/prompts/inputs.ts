@@ -7,7 +7,11 @@
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
 import type { OutcomeStage, TestRef } from '../core/events.ts';
-import type { ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, ObligationId, RulingId, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId, WitnessItemId } from '../core/ids.ts';
+import type {
+  ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
+  WitnessItemId,
+} from '../core/ids.ts';
+import type { BringUp, Journey } from '../input/plan.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict, FailureRef, IgnoredCensus, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
@@ -129,6 +133,30 @@ export type EscalationInput =
   | Readonly<{ kind: 'route-up'; first: Readonly<{ decision: string; reasons: readonly string[] }> | null }>
   | Readonly<{ kind: 'risk-trigger' }>;
 
+/**
+ * dev.13: a milestone a unit takes part in. `member`: the milestone lists the unit in its `units`; `design`: the unit is
+ * the milestone's design unit (`design.unit`), which writes or extends the reference dirs `dirs` for the milestone's
+ * `journeys`. Contract input, not method.
+ */
+export type UnitMilestone =
+  | Readonly<{ as: 'member'; id: MilestoneId; text: string; dirs: readonly RepoPath[] }>
+  | Readonly<{ as: 'design'; id: MilestoneId; text: string; dirs: readonly RepoPath[]; journeys: readonly Journey[] }>;
+
+/**
+ * dev.13: the milestones a unit takes part in, in plan order (non-empty), and their design references at the dispatched
+ * revision: every file under any of their reference dirs, in path order, once each. `references` holds the text files in
+ * full; `binary` names the others (a wireframe image), which the session reads from its checkout. A dir that does not
+ * exist yet (its design unit has not merged, or this is the design unit) has no files. Null: the unit is in no milestone.
+ */
+export type MilestonesInput = Readonly<{ of: readonly UnitMilestone[]; references: readonly DocText[]; binary: readonly RepoPath[] }>;
+
+/**
+ * dev.13: a Claude build in a milestone (as a member or its design unit) with a `browser` journey: the `walkthrough.mcp`
+ * servers its session has (by name; `{evidence}` is the build's evidence dir), and each such milestone's bring-up, so it
+ * can bring the product up and look at its own work. Null otherwise, and always on a Codex seat (it gets no MCP config).
+ */
+export type BuildBrowser = Readonly<{ servers: readonly string[]; bringUps: readonly Readonly<{ milestone: MilestoneId; bringUp: BringUp }>[] }>;
+
 export type PlanCheckInputs = Readonly<{
   spec: RenderedSpec;
   /** The cited contracts and active rulings, in full; the rest in `index`. */
@@ -165,6 +193,8 @@ export type PlanCheckInputs = Readonly<{
   scopeGrowth: PlanCheckScopeGrowth;
   /** W3: why this check runs at the escalation seat; null below it. */
   escalation: EscalationInput | null;
+  /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
+  milestones: MilestonesInput | null;
 }>;
 
 /** What a plan-check reads for its scope-growth proposals. */
@@ -213,6 +243,10 @@ export type BuildInputs = Readonly<{
    * arc). Null: the build itself.
    */
   assess: BuildAssess | null;
+  /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
+  milestones: MilestonesInput | null;
+  /** dev.13: the browser drive and bring-ups of a build in a milestone with a `browser` journey; null otherwise. */
+  browser: BuildBrowser | null;
 }>;
 
 /** The plan-check slice an in-session assessment rules on (R55). */
@@ -281,6 +315,8 @@ export type GateInputs = Readonly<{
   escalation: EscalationInput | null;
   /** 1.0.0-dev.12: the diff over the large-diff threshold (`GateLargeDiffInput`); null under it, and the plain prompt. */
   largeDiff: GateLargeDiffInput | null;
+  /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
+  milestones: MilestonesInput | null;
 }>;
 
 /**
@@ -322,6 +358,9 @@ export type FindingView = Readonly<{
   owner: UnitId | null;
 }>;
 
+/** dev.13: an open walkthrough finding as a walk sees it: its view and its cause (null for one recorded without it). */
+export type WalkFindingView = FindingView & Readonly<{ cause: string | null }>;
+
 export type LensInputs = Readonly<{
   vision: VisionInput;
   lens: LensKind;
@@ -362,10 +401,15 @@ export type ParkCause = Readonly<{
   stage: OutcomeStage; attempt: number; outcome: string; reason: NeedsUserReason; design: boolean; detail: readonly string[];
 }>;
 
-/** A checkpoint's trigger: a completed audit, or a park with its cause (null: the unit has moved on since the capture). */
+/**
+ * A checkpoint's trigger: a completed audit, a park with its cause (null: the unit has moved on since the capture), or
+ * (dev.13) a milestone walk: its milestone and round, the findings it opened or re-reported, and its evidence dir (the
+ * screenshots, transcripts and server logs the findings cite, readable by the session).
+ */
 export type TriggerView =
   | Readonly<{ type: 'audit'; job: JobId }>
-  | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>;
+  | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>
+  | Readonly<{ type: 'walk'; job: JobId; milestone: MilestoneId; round: number; findings: readonly FindingId[]; evidenceDir: AbsPath }>;
 
 /**
  * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding why it failed): what the executor's records say
@@ -448,7 +492,15 @@ export type CheckpointInputs = Readonly<{
   issuesUnchangedSince: JobId | null;
   /** Arc feedback 2026-10-16: a park trigger's code-produced diagnosis of the parked lineage; null for an audit's trigger. */
   diagnosis: ParkDiagnosis | null;
+  /**
+   * dev.13 (the convergence tail, src/holistic/tail.ts): whether the arc is at the settled point, and each finding it is
+   * shown that is below a brake, in id order, when the inputs are rendered (code enforces them again when it decides).
+   */
+  brakes: CheckpointBrakes;
 }>;
+
+/** The brakes as a checkpoint is shown them (dev.13). */
+export type CheckpointBrakes = Readonly<{ settled: boolean; findings: readonly Readonly<{ finding: FindingId; brake: 'regress' | 'settled' }>[] }>;
 
 /** What a checkpoint manifest entry names (H4). */
 export const MANIFEST_KINDS = ['plan', 'spec', 'ledger', 'sidecar', 'obligations', 'vision', 'phase0', 'issues'] as const;
@@ -492,6 +544,52 @@ export type PreviousPackFinding = Readonly<{ job: JobId; finding: PackFinding }>
  */
 export type PackReviewDelta = Readonly<{ since: JobId; changed: readonly string[]; previous: readonly PreviousPackFinding[] }>;
 
+/**
+ * dev.13: one running instance of a milestone's product, as code brought it up: the checkout it runs from, the port code
+ * allocated to each serve entry, and the bring-up's `env` with `{port:<name>}` substituted.
+ */
+export type ProductInstance = Readonly<{ checkout: AbsPath; ports: Readonly<Record<ServeName, number>>; env: Readonly<Record<string, string>> }>;
+
+/** dev.13: a kept tweak of the milestone so far (a polish unit judged `keep` and merged): context for the walk, never enforced. */
+export type KeptTweak = Readonly<{ unit: UnitId; proposal: PolishId; text: string }>;
+
+/**
+ * dev.13: what a milestone walk reads (src/walk, agent C). `journeys`: the milestone's, each `entry` with `{port:<name>}`
+ * substituted for this instance. `references`: every file under the milestone's reference directories at the walked SHA.
+ * `findings`: the open walkthrough findings of the milestone. `units`: the specs of the milestone's merged units.
+ * `evidenceDir`: where the session keeps its evidence (screenshots, transcripts, notes); every cited path lies in it.
+ */
+export type WalkthroughInputs = Readonly<{
+  vision: VisionInput;
+  milestone: Readonly<{ id: MilestoneId; text: string }>;
+  round: number;
+  journeys: readonly Journey[];
+  references: readonly DocText[];
+  tweaks: readonly KeptTweak[];
+  findings: readonly WalkFindingView[];
+  product: ProductInstance;
+  units: readonly RenderedSpec[];
+  evidenceDir: AbsPath;
+}>;
+
+/**
+ * dev.13: what the polish judge reads at a polish unit's compare stage (agent D): the proposal and the journey it cites,
+ * the unit's diff of the milestone references, the original walk's evidence dir, and two instances side by side
+ * (`before`: the integration tip; `after`: the unit's salvage tree), each with the journey's entry substituted.
+ */
+export type PolishJudgeInputs = Readonly<{
+  vision: VisionInput;
+  milestone: Readonly<{ id: MilestoneId; text: string }>;
+  journey: Journey;
+  proposal: Readonly<{ id: PolishId; unit: UnitId; text: string; evidence: readonly string[] }>;
+  references: readonly DocText[];
+  referenceDiff: BoundedDiff;
+  walkEvidenceDir: AbsPath;
+  before: ProductInstance & Readonly<{ entry: string }>;
+  after: ProductInstance & Readonly<{ entry: string }>;
+  evidenceDir: AbsPath;
+}>;
+
 export type RoleInputs = {
   readonly planCheck: PlanCheckInputs;
   readonly build: BuildInputs;
@@ -501,25 +599,32 @@ export type RoleInputs = {
   readonly packReview: PackReviewPromptInputs;
   /** M4b: a flow run's kept inputs (src/flow/types.ts `FlowInputs`) without their envelope. */
   readonly flow: FlowPromptInputs;
+  readonly walkthrough: WalkthroughInputs;
+  readonly polishJudge: PolishJudgeInputs;
 };
 
 export const ROLE_INPUTS = {
   planCheck: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
-    'scopeGrowth', 'escalation',
+    'scopeGrowth', 'escalation', 'milestones',
   ],
-  build: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  build: [
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
+    'milestones', 'browser',
+  ],
   gate: [
     'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff',
+    'checks', 'escalation', 'largeDiff', 'milestones',
   ],
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
     'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis',
+    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis', 'brakes',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
+  walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
+  polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
 
 // Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
@@ -532,6 +637,8 @@ const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never]
   checkpoint: true,
   packReview: true,
   flow: true,
+  walkthrough: true,
+  polishJudge: true,
 };
 void ROLE_INPUTS_COMPLETE;
 
@@ -598,6 +705,44 @@ export function documentsXml(docs: readonly Readonly<{ source: string; content: 
   const body = docs.map((d, i) =>
     `<document index="${i + 1}">\n<source>${d.source}</source>\n<document_content>\n${d.content}\n</document_content>\n</document>`);
   return `<documents>\n${body.join('\n')}\n</documents>`;
+}
+
+/** dev.13: a unit's milestone design references as documents, beside its contracts (none when it is in no milestone). */
+export function milestoneDocuments(m: MilestonesInput | null): readonly Readonly<{ source: string; content: string }>[] {
+  return m === null ? [] : m.references.map((r) => ({ source: `design reference ${r.path}`, content: r.text }));
+}
+
+/** dev.13: the `<milestones>` block (empty when the unit is in no milestone): each milestone's part, text and reference dirs. */
+export function milestonesText(m: MilestonesInput | null): string {
+  if (m === null) return '';
+  const entry = (u: UnitMilestone): string => {
+    const part = u.as === 'design' ? 'this unit is its design unit: it writes or extends the reference dirs for the journeys below' : 'this unit builds part of it';
+    const head = `- ${u.id} (${part}): ${u.text}\n  Reference dirs: ${u.dirs.join(', ')}`;
+    if (u.as === 'member') return head;
+    const journeys = u.journeys.map((j) => `  - ${j.id} [${j.via}] from ${j.entry}${j.budget === null ? '' : ` (budget: ${j.budget.steps} steps, ${j.budget.seconds} s)`}: ${j.text}`);
+    return `${head}\n  Journeys:\n${journeys.join('\n')}`;
+  };
+  const binary = m.binary.length === 0 ? '' : `\nReference files that are not text, to read from the checkout:\n${bullets(m.binary, '')}`;
+  return `\n\n<milestones>\nThe milestones this unit is part of. Their design references are embedded above as documents.\n${m.of.map(entry).join('\n')}${binary}\n</milestones>`;
+}
+
+/** One bring-up as command lines: setup, serve (with its ready probe), seed, and the env they run with. */
+function bringUpText(b: BringUp): string {
+  const cmd = (argv: readonly string[]): string => argv.map(shellQuote).join(' ');
+  const env = Object.keys(b.env).sort().map((k) => `${k}=${shellQuote(b.env[k] ?? '')}`);
+  return [
+    `  env: ${env.length === 0 ? '(none)' : env.join(' ')}`,
+    ...b.setup.map((a) => `  setup: ${cmd(a)}`),
+    ...b.serve.map((s) => `  serve ${s.name}: ${cmd(s.argv)} (ready: ${'http' in s.ready ? `GET ${s.ready.http} answers below 500` : `its output contains ${JSON.stringify(s.ready.log)}`})`),
+    ...b.seed.map((a) => `  seed: ${cmd(a)}`),
+  ].join('\n');
+}
+
+/** dev.13: the `<browser>` block of a build in a milestone with a `browser` journey (empty otherwise). */
+export function buildBrowserText(b: BuildBrowser | null): string {
+  if (b === null) return '';
+  const bringUps = b.bringUps.map((x) => `${x.milestone}:\n${bringUpText(x.bringUp)}`);
+  return `\n\n<browser>\nThis session has the MCP server${b.servers.length === 1 ? '' : 's'} ${b.servers.join(', ')} (a browser drive), so you can bring the product up and look at and screenshot your own work; screenshots it saves land in the evidence directory. Each milestone's bring-up runs from the worktree root with its env, and {port:<name>} stands for a free port you choose:\n${bringUps.join('\n')}\nStop whatever you start before your final report.\n</browser>`;
 }
 
 export function rulingsText(rulings: readonly RulingText[]): string {
@@ -961,9 +1106,11 @@ export function patchText(ops: readonly SpecPatchOp[]): string {
   return ops.map((op) => `- ${JSON.stringify(op)}`).join('\n');
 }
 
+/** A gate round's findings for the next round's handoff: each with the commands of the experiments it cited (dev.13), not their output. */
 export function findingsText(findings: readonly GateFinding[]): string {
   if (findings.length === 0) return '(none)';
-  return findings.map((f) => `- [${f.severity}] ${f.path ?? '(no path)'}: ${f.text}${f.contractRef === null ? '' : ` (${f.contractRef})`}`).join('\n');
+  return findings.map((f) => `- [${f.severity}] ${f.path ?? '(no path)'}: ${f.text}${f.contractRef === null ? '' : ` (${f.contractRef})`}`
+    + f.experiments.map((e) => `\n  ran: ${e.command}`).join('')).join('\n');
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1033,6 +1180,16 @@ export function findingViewsText(findings: readonly FindingView[]): string {
   }).join('\n');
 }
 
+/** The brakes block of a checkpoint (dev.13): the settled point, then each finding below a brake. */
+export function brakesText(b: CheckpointBrakes): string {
+  return [
+    b.settled
+      ? 'The arc is at the settled point: every milestone of the plan has passed and every planned unit has merged.'
+      : 'The arc is not at the settled point.',
+    `Findings below a brake: ${b.findings.length === 0 ? 'none' : b.findings.map((f) => `${f.finding} (${f.brake})`).join(', ')}`,
+  ].join('\n');
+}
+
 export function coverageText(c: VisionCoverage): string {
   const withdrawn = c.withdrawnCited.map((w) => `${w.clause} (cited by ${w.citedBy.join(', ')})`);
   return [
@@ -1074,6 +1231,11 @@ export function refusedText(refused: CheckpointInputs['refused']): string {
 /** Why the checkpoint runs, in sentences. */
 export function triggerText(t: TriggerView): string {
   if (t.type === 'audit') return `the audit ${t.job} completed.`;
+  if (t.type === 'walk') {
+    return `the walkthrough ${t.job} of milestone ${t.milestone} (round ${t.round}) used the running product along its journeys and reported ${t.findings.join(', ')}, which no checkpoint has weighed. `
+      + `Each is a walkthrough finding on ${t.milestone}: a P1 breaks a journey or a floor and holds every unit built on the milestone until a repair lands and a later walk confirms it; a P2 departs from the design reference or the vision and is repaired alongside. `
+      + `Plan repairs from each finding's claim, cause and evidence. The evidence it cites (screenshots, shell transcripts, measurements, server logs) is under ${t.evidenceDir}, readable with Read, which renders images.`;
+  }
   const c = t.cause;
   if (c === null) return `unit ${t.unit} parked (log seq ${t.seq}); it has moved on since.`;
   const ended = `its ${c.stage} attempt ${c.attempt} ended ${c.outcome}`;

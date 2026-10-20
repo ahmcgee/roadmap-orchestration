@@ -84,10 +84,13 @@ const BUILD_REPORT: JsonValue = { summary: 'Did the work.', changedPaths: [], la
 const SMOKE_OK: JsonValue = { ok: true };
 
 /**
- * A judgment call: read-only tools, a fresh session id, never a resume or a permission mode. Its session persists (dev.12:
- * every judgment's repair turn may resume it).
+ * A judgment call: a fresh session id, never a resume. Its session persists (dev.12: every judgment's repair turn may resume
+ * it). A plan-check reads (read-only tools, no permission mode); the gate acts (dev.13: a shell and bypassPermissions in its
+ * own checkout, no MCP server).
  */
-const judgment = (_role: string): Expect => ({ argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] });
+const judgment = (role: 'planCheck' | 'gate'): Expect => (role === 'gate'
+  ? { argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'], argvLacks: ['--resume', '--mcp-config', '--no-session-persistence'] }
+  : { argv: ['-p', '--tools', 'Read,Grep,Glob,Agent', '--session-id'], argvLacks: ['--resume', '--permission-mode', '--no-session-persistence'] });
 
 /** The smoke `roadmap start` runs first: Claude, then Codex under `default` (BACKENDS order); Claude alone under `claude-only`. */
 function smokeSteps(profile: ProfileName): readonly Step[] {

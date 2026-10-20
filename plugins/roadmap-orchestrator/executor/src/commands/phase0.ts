@@ -1,11 +1,13 @@
 // `roadmap phase0 check --repo <path> (--plan <file> | --from-ref <arc>)` (M4a, OR-Q16, K20): read-only, no host lock,
 // deterministic. Exit 0 with no rows, else 78; JSON rows plus `sliceCandidates` (src/holistic/vision.ts, R15) and the
-// advisory `advisories` (row 10, `scope-references-outside`; row 13, `derived-unregenerated`: never a refusal, so never the exit code's).
+// advisory `advisories` (row 10, `scope-references-outside`; row 13, `derived-unregenerated`; row 14, `milestone-unit-before-design`:
+// never a refusal, so never the exit code's).
 //
 //   --plan      the files as a fresh start reads them: `runChecks`' pure rows (the `.roadmap/` layout, plan-invalid, the
 //               revisioned inputs, routing, lanes), `holistic-needs-corpus` (H4: a holistic plan targets a corpus), then
-//               the shared Phase-0 rows (src/phase0/rows.ts) in full: the closure rows 1-6, the forge, the chain as a
-//               fresh start's and the tree.
+//               dev.13's `walk-tools-missing` (src/preflight/walktools.ts: the milestones' bring-up programs and
+//               walkthrough MCP servers, handshaken), then the shared Phase-0 rows (src/phase0/rows.ts) in full: the
+//               closure rows 1-6, the forge, the chain as a fresh start's and the tree.
 //   --from-ref  every input by the digests the arc's verified `refs/roadmap/<arc>` recorded (the plan in force at its
 //               high-water and its revision's manifest: pin, guide, Phase-0 record, issue capture, obligations, vision,
 //               ledger), never the live files; the closure rows 1-6 only (re-derivation reads the source at the pin's
@@ -22,8 +24,10 @@ import {
 import {
   holisticNeedsCorpus, FRESH_START, FROM_REF, type Phase0Input, type Phase0Advisory, phase0InputOf, phase0Rows, visionAndObligations,
 } from '../phase0/rows.ts';
+import { milestonesNeedHolistic } from '../input/plan.ts';
 import { gitCommonDir, legacyRoadmapDir, loadPlan, planInvalidCheck, readRepoConfig, revisionInputRows, routingCheck, specLaneCheck } from '../preflight/checks.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
+import { walkToolsCheck } from '../preflight/walktools.ts';
 import { selectProfile } from '../routing/layers.ts';
 import { parseRulings } from '../spec/rulings.ts';
 import { sliceCandidates } from '../holistic/vision.ts';
@@ -31,7 +35,8 @@ import { sliceCandidates } from '../holistic/vision.ts';
 export type Phase0CheckArgs = Readonly<{ repo: AbsPath; source: Phase0Source }>;
 /**
  * The rows found (empty: green), the active world clauses whose census rules are not all held on the baseline (R15), and
- * rows 10's and 13's advisories (files outside a unit's scope naming what it removes; derived outputs no regeneration checks).
+ * rows 10's, 13's and 14's advisories (files outside a unit's scope naming what it removes; derived outputs no regeneration
+ * checks; milestone units that may build before their design).
  */
 export type Phase0CheckReport = Readonly<{ rows: readonly StartupRejection[]; sliceCandidates: readonly VisionClauseId[]; advisories: readonly Phase0Advisory[] }>;
 
@@ -64,8 +69,11 @@ async function fromPlan(repo: AbsPath, planFile: AbsPath): Promise<Checked> {
   if (input.length > 0) return { rows: input, input: null, advisories: [] };
   const p0 = phase0InputOf(files, config);
   const outcome = phase0Rows(p0, FRESH_START);
+  // Milestones outside a holistic arc (`milestones-need-holistic`, in the shared rows) have no routing to resolve.
+  const routing = milestonesNeedHolistic(plan) ? [] : await routingCheck.check(context);
   return {
-    rows: [...holisticNeedsCorpus(plan), ...(await routingCheck.check(context)), ...(await specLaneCheck(process.env).check(context)), ...outcome.rows],
+    rows: [...holisticNeedsCorpus(plan), ...routing, ...(await specLaneCheck(process.env).check(context)),
+      ...(await walkToolsCheck(process.env, config).check(context)), ...outcome.rows],
     input: p0,
     advisories: outcome.advisories,
   };

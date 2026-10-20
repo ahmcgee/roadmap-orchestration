@@ -409,7 +409,7 @@ describe('status M3', () => {
       });
       const s = statusOf(r);
       assert.deepEqual([s.holistic, s.target, s.vision, s.audit, s.convergence], [false, null, null, null, null]);
-      assert.deepEqual([s.nowTrue, s.notYetTrue, s.waived, s.deferred, s.divergences, s.decisionsSince, s.findings, s.owed], [[], [], [], [], [], [], { active: [], metrics: [] }, { audits: [] }]);
+      assert.deepEqual([s.nowTrue, s.notYetTrue, s.waived, s.deferred, s.divergences, s.decisionsSince, s.findings, s.owed], [[], [], [], [], [], [], { active: [], metrics: [], released: { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 }, refusedAdmits: { regress: 0, settled: 0 } }, { audits: [] }]);
       assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] });
       assert.deepEqual(s.spend.byModel, { models: [{ model: 'gpt-5.6-luna', calls: 1, input: 10, output: 2, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 }], unresolvedRevs: [] });
       assert.equal(s.routing?.rev, rev);

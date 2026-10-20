@@ -211,7 +211,7 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
     kind: 'dispatch',
     record: {
       unit: unitId(UNIT), specRev: specRev(1), specSha256: specSha, scope: [repoPattern('src/**')], riskFloor: 'med',
-      routingRev: resolveRouting(provenanceStack(provenance, 'none', null)).rev, implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()), transientRules: 'm3',
+      routingRev: resolveRouting(provenanceStack(provenance, 'none', null, false)).rev, implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()), transientRules: 'm3',
     },
   });
   journal.fact({ kind: 'executor-started', generation: 1 });

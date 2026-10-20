@@ -179,10 +179,76 @@ at triage stay in git history.
   3. **Background subagents:** the gate states as a fact that its answer ends the session and a subagent still running
      is lost, or code holds the answer until they finish.
   Trigger: real arcs show large-diff gate spend that matters (`status` spend by seat), or the next gate batch. Measure on
-  G2b/G3b/G3a with clean twins; pass bar: catches hold at 9/9-level, cost per planted trial roughly halves.
+  G2b/G3b/G3a with clean twins; pass bar: catches hold at 9/9-level, cost per planted trial roughly halves. **Measured
+  2026-10-18 (dev.13 gate eval, /var/tmp/roles-gate-dev13):** with the shell, the large-diff gate (Opus) caught G2a/G2b/
+  G3a/G3b 3/3 each at about $0.90 a trial (dev.12: about $8.80), reading the change with `git diff` and grep instead of
+  reader subagents. The cost lever is met without the verifier; keep this entry only for the background-subagent point.
 - **The role eval's per-trial cap undercounts.** `--trial-cap` estimates live spend from the stream, which carries only
   part of the subagents' tokens: one trial read $15 live against $33 reported, so a $25 cap never fired. `--cap` (between
   trials) works. Fix: price the per-agent token totals the monitor already traces, or call the per-trial cap approximate.
+
+### Deferred from dev.13, the gate's shell
+
+- **Cited experiments checked against the session.** A gate finding's `experiments [{command, output}]` is recorded and
+  reported, never checked. Code could match each command to a Bash call in the session's stream and its output to that
+  call's result, and refuse (repair turn) an answer citing an experiment it never ran. Trigger: a role-eval transcript or a
+  real arc shows a gate citing an experiment it did not run, or quoting output its command did not print.
+- **A shell for plan-check and the lenses.** Owner 2026-10-18: the gate first; the others by the gate eval's result.
+  Trigger: the dev set's `exec-gain` passes (the X cells beat the read-only arm) at a cost per trial the owner accepts, and
+  a plan-check or lens miss in a real arc is one an experiment would have caught.
+- **A probe row for the gate's acting argv.** `evals/probe.ts` checks the judgment and walkthrough argv against the real
+  CLI; the gate's acting call (Bash runs in its cwd, writes stay in its checkout, no MCP server listed in the init event)
+  has no row of its own, and the smoke's `CallRequest` has no acting-judge kind yet. Trigger: the next probe batch, or a
+  gate call on a real arc that fails to launch.
+- **The Fable gate row** inherits the Opus module with a review dated 2026-10-16; the dev.13 `<your_checkout>` section was
+  not reviewed against the Fable guide. Trigger: a repo rebinds a class to Fable at a gate seat.
+- **Execution-only gate cells that measure the shell (X1–X3 redesign).** Measured 2026-10-18: the read-only gate (Sonnet,
+  med) caught all 9 X plants by reading (a lexicographic sort, a lookup table, a dropped remainder are visible in the diff),
+  so `exec-gain` cannot pass on them; and every X twin shares its plant's weak tests, so a gate revising for the untested
+  spec behaviour is graded a false positive (read-only 5/9, shell 4/9 on X2c/X3c). Wanted: plants a strong reader cannot
+  see (behaviour that depends on data or environment the diff does not show) and twins whose tests do cover the behaviour
+  the plant breaks. Trigger: the next gate batch, or before a shell is given to plan-check or the lenses.
+- **Coverage on a shell gate.** `coverage` counts files a session Read, grepped or named in a Bash command; a bulk
+  `git diff` names none, so the large-diff cells read 0% while catching every plant. Trigger: coverage is used for a
+  decision (it is INFO only today).
+- **Fixture builder: an impossible 'omitted' placement takes about 9 minutes to fail.** Each placement check runs the
+  bounded diff on the full repo (about 25 s) and the builder tries 20 candidates. Trigger: another cell hits it; then
+  stop early when the sweep cannot overflow the budget.
+
+### Deferred from dev.13, milestones, walkthroughs and the demo
+
+- **Isolate role-eval trials from each other's evidence.** A walker that lost a screenshot ran `find / -name …` and saw
+  other trials' evidence under the eval's out dir; the needle guard voided it (2 of 36 dev trials). The prompt fix
+  (absolute capture paths, e9b825b) removed the cause; trial dirs could also be made unreadable to the session's peers.
+  Trigger: a needle void recurs.
+- **Walkthrough fixtures keep finding real defects in their own clean product.** Every dev and holdout round found genuine
+  defects in ledgerly's clean product (seven fixed in 1c60f0b, 2c9864c, 71d5d34, c070bd4, 388d8ef), so twin false
+  positives measured the fixture as much as the walker. A fixture change needs a fake-free walk of its clean product
+  before it counts. Trigger: the next fixture or family change.
+- **W12 (CI log text) is the one class boundary the walker still crosses** (dev-6 2/12 trials and holdout-4 1/6 classed
+  the plant breaks/journey or contract). 78f2e74 reworded J-8, which had made "find what to fix" the journey's outcome; the
+  full re-runs since (dev-7 + dev-7b 12/12 trials, holdout-5 6/6) pass every criterion with 0 false blocks. Trigger: it
+  recurs in a real arc's walk; then a sharper example in the prompt's reason.
+- **The m5 paid run has not shown a walk-to-repair loop on a real arc.** Run 2 (/var/tmp/m5-dev13-2, 2026-10-19): the
+  design unit repaired the planted 2.12:1 contrast before the first walk, the walks found one P2 the checkpoint ruled
+  accepted, so no repair or polish unit ran (the loop is covered by the fake-backend integrated tests and the role evals
+  only). The plant is now a data row only rendering reveals (an unbreakable URL in the first book's condition, so the page
+  scrolls sideways at 320 px; check.ts grades it by rendering, reflow.ts). Run 5 (/var/tmp/m5-dev13-5, 2026-10-20) ran
+  the loop on another defect: walk-1 found F-34 (the no-match heading overflows at 320 px), `headings` repaired it,
+  walk-2 passed MS-1 (check.ts `repair-loop` grades this on any milestone now). The vision audit lens named the plant
+  (F-1) before any walk and the checkpoint folded the fix into a unit's spec; plant-caught now grades the flow (any
+  judge's resolved finding naming the planted book, or the plant gone by the first walk), so run 5 passes "prevented
+  upstream". Open: no paid run has yet shown a walk itself catch the plant. Trigger: a run where the plant survives to
+  the first walk.
+- **A direct `demo down` with no live arc.** Demo acts are queued commands; with no executor running they wait for the
+  next start. Trigger: the owner wants the demo stopped between arcs.
+- **Write-deny rules cover paths existing at call start.** A directory created later beside the path to a writable
+  directory is outside the deny list, and Bash is trusted to the prompt (as for builders). Trigger: a real arc shows an
+  acting judge writing outside its checkout or evidence dir.
+- From the plan (/claude-state/plans/dev13-implementation.md §11): a reference render; visual-regression baselines;
+  checkpoint authority over milestones; a cross-model walkthrough judge; Sonnet and Haiku walkthrough variants; desktop
+  apps (Electron via Playwright, native via a virtual display); Claude Design in design units (trigger: usable from a
+  headless `claude -p`; it was not on CLI 2.1.301); an advisory for human-facing units outside every milestone.
 
 ## Convergence and integrity (unscheduled, wanted)
 
@@ -212,6 +278,12 @@ at triage stay in git history.
   capacity. Wanted: a code-computed critical-path length (units and median stage time) beside the pack review's
   notes, as an advisory the architect may act on before admission, never a refusal.
 
+- **Builder eval for test strength** (dev.13, 9279c77). The build briefs now ask that tests fail for the two or three most
+  plausible wrong versions (the vacuity lens's question). Unmeasured but for the m-fixtures' first-audit vacuity count
+  (m5 run 5 baseline: 10 P2 + 3 P3 in the first audit). Bring in a builder role eval with plants a vacuous suite passes.
+- **Gate alignment with vacuity** (dev.13, deferred). The gate has one line on vacuity and approves suites the audit
+  later finds vacuous; with its shell it could run a mutant or two of the diff against the tests. Trigger: m-fixture
+  first-audit vacuity P2s that the builder change does not remove.
 - **Builder prompt trim, after the builder eval** (W3, 2026-10-16, deferred). The build briefs restate rules code already
   backs; trim each once a builder eval shows the outcome holds without it. Candidates: the scope paragraph's "the
   executor keeps only changes to paths matching them" (salvage enforces it and the fix round names reverted paths); the
@@ -237,6 +309,24 @@ at triage stay in git history.
   checkpoint (rejected-invalid) and the pack review (its item) keep it. Record it where each job records its end.
 
 ## Watch (act only on the trigger)
+
+- **The convergence tail's edges (dev.13, src/holistic/tail.ts).** Deferred while unmeasured; act on a paid run that shows
+  the trigger. (1) An admit that addresses a finding below a brake without naming it in `repairs` is not caught (only
+  `repairs` is read); trigger: a converted-admit count of 0 while units are still admitted after the settled point.
+  (2) A braked P2 whose admit converted is released, not banked, unless the checkpoint also deferred it; trigger: an owner
+  finding a substantive defect among `release{regress | settled}` findings. (3) A finding that an obligation is broken is
+  under no brake (correctness never banks and is never released; a vacuity finding on an obligation's witness is braked
+  and banks when deferred); trigger: a tail of obligation-broken P2s. (4) The settled
+  point counts polish and checkpoint (`origin: checkpoint` without a finding repair) units as planned work, so a polish
+  round keeps the arc unsettled; trigger: a walk round's polish units holding the brake off while the audit tail grows.
+  (5) Walkthrough findings are under no brake (m5 run 6: the last walk settled the arc and the settled brake released its
+  five P2 deviations); they are bounded by the walk rounds and the walk and compare attempts only; trigger: a walk round
+  that keeps opening P2s after its milestone passed.
+- **A disposition contradicting a repair** (dev.13, m5 run 6 F-18). A finding named in the repairs of a unit the decision
+  admits or re-enters is never ruled by it: its disposition, whatever it is, is not written (src/holistic/tail.ts
+  `tailRulings`). An `accepted` beside the repair is the expected case; a `dismissed`, `deferred` or `released` beside
+  one contradicts the admit and is overridden without a reason. Trigger: a decision record showing one: make it a bundle
+  reason (the repair turn) instead.
 
 - **Regenerate checks: deferred parts** (1.0.0-dev.12, src/input/derived.ts). (a) The build prompt does not name a touched
   entry's `regenerate` command; a builder learns it from the spec, or from its first red check's evidence (which says what
@@ -469,6 +559,9 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
+  (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its
+  note banks as dev.12 banked it. With them, `debt` becomes required in `gateOutput` and narrows to `GateDebt | null`.
 - `gateDiffShownOf`'s absent arm (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a gate's
   `judgment-inputs` recorded without `diffShown` reads as nothing recorded. With it, `diffShown` becomes required on a
   gate's (src/core/events.ts).

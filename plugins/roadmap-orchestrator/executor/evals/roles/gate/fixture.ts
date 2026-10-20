@@ -7,15 +7,20 @@
 // diff inlines first what the sweep's substitutions do not explain, which a plant itself is. The trial then reads the
 // truth from what the gate recorded it was shown (its `judgment-inputs` `diffShown`, grade.ts): a trial whose plant
 // landed on the other side is void (`placement-miss`), never graded.
+//
+// An execution-only cell (dev.13, gen/exec.ts) adds its family's feature, planted or its twin, to a package of the seed's
+// base repo and regenerates the goldens; the variant and the package come from `<seed>/<family>/<trial>`. Its plant is
+// expected inlined (a two-file diff), with no prediction checked before the trial.
 import { join } from 'node:path';
 import { sha } from '../../../src/core/ids.ts';
 import { absPath, repoPattern } from '../../../src/core/values.ts';
 import { boundedDiff } from '../../../src/git/boundeddiff.ts';
 import { GATE_DIFF_BUDGET } from '../../../src/pipeline/gate.ts';
+import { execFeature, variantCount } from '../gen/exec.ts';
 import type { PlantContext, Planted } from '../gen/plant.ts';
 import { rng } from '../gen/prng.ts';
-import { type FileMap, GOLDEN_SCRIPT_PATH, REWORDED, type Repo, type Swept, finish, generate, gitOut, importCommits, initRepo, sweep } from '../gen/tsrepo.ts';
-import type { Cell, Placement } from './cells.ts';
+import { type FileMap, GOLDEN_SCRIPT_PATH, REWORDED, type Repo, SHARED, type Swept, finish, generate, gitOut, importCommits, initRepo, sorted, sweep } from '../gen/tsrepo.ts';
+import { type Cell, type ExecCell, type Placement, isExecCell } from './cells.ts';
 
 /**
  * The plan's derived files: goldens/ is regenerated from the generator and the modules, by the generator the synthetic repo
@@ -48,7 +53,10 @@ export type Clause = Readonly<{ id: string; clause: string }>;
 export type Fixture = Readonly<{
   cell: Cell;
   repo: Repo;
-  swept: Swept;
+  /** The sweep a sweep cell ran; null for an execution-only cell. */
+  swept: Swept | null;
+  /** What the spec declares removed. */
+  removes: readonly string[];
   base: FileMap;
   head: FileMap;
   acceptance: readonly Clause[];
@@ -126,12 +134,35 @@ const side = (inlined: ReadonlySet<string>, path: string): 'inlined' | 'omitted'
 /** Up to this many candidate files are tried before a cell is infeasible at this size and seed (a loud failure). */
 const CANDIDATES = 20;
 
+/** An execution-only cell's fixture: the feature (planted or its twin) and its test added to one package, goldens regenerated. */
+function buildExecFixture(cell: ExecCell, o: FixtureOptions): Fixture {
+  const repo = generate(o.seed, o.size);
+  const g = rng(`${o.seed}/${cell.family}/${o.trial}`);
+  const pkg = g.pick(repo.packages.filter((p) => p.name !== repo.deprecated && p.name !== SHARED)).name;
+  const f = execFeature(cell.family, g.int(variantCount(cell.family)), pkg, cell.exec.planted);
+  for (const path of [f.modulePath, f.testPath]) if (repo.files.has(path)) throw new Error(`cell ${cell.id}: the base repo already has ${path}`);
+  const head = finish(sorted(new Map([...repo.files, [f.modulePath, f.module], [f.testPath, f.test]])));
+  const acceptance: Clause[] = [
+    { id: 'A1', clause: `Add \`${f.name}\` to ${f.modulePath}: ${f.behaviour}` },
+    { id: 'A2', clause: `Test \`${f.name}\` in ${f.testPath}, which the unit lane runs.` },
+    { id: 'A3', clause: 'goldens/ is regenerated with `node tools/gen-goldens.ts`, never edited by hand. Nothing else changes.' },
+  ];
+  const plant: AnswerKey['plant'] = cell.exec.planted
+    ? { kind: `exec-${cell.family}`, path: f.modulePath, form: f.form, needle: f.needle, deletion: false, intended: 'inlined', predicted: null }
+    : null;
+  return {
+    cell, repo, swept: null, removes: [], base: repo.files, head, acceptance, message: `Add ${f.name}\n`,
+    key: { cell: cell.id, trial: o.trial, seed: o.seed, size: o.size, plant, removes: [], changed: changedPaths(repo.files, head) },
+  };
+}
+
 export function buildFixture(cell: Cell, o: FixtureOptions): Fixture {
+  if (isExecCell(cell)) return buildExecFixture(cell, o);
   const repo = generate(o.seed, o.size);
   const swept = sweep(repo, cell.sweep, cell.decoy, `${o.seed}/${cell.family}`);
   const acceptance = clauses(repo, swept);
   const done = (head: FileMap, plant: AnswerKey['plant']): Fixture => ({
-    cell, repo, swept, base: repo.files, head, acceptance, message: message(swept),
+    cell, repo, swept, removes: swept.removes, base: repo.files, head, acceptance, message: message(swept),
     key: { cell: cell.id, trial: o.trial, seed: o.seed, size: o.size, plant, removes: swept.removes, changed: changedPaths(repo.files, head) },
   });
   if (cell.plant === null) return done(finish(swept.files), null);

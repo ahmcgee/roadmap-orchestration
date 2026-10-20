@@ -229,12 +229,23 @@ describe('D1 witness presence', () => {
       assert.deepEqual(outcomes(a.d), [...PRE_LANES, 'lanes:green', ...MERGED]);
       const gate = gateCalls(a.d)[0]!;
       assert.match(gate.stdin, /<executable_checks>\nWitness presence: 1 required witness test on the arc lanes at this head\./);
-      assert.match(gate.cwd, /u1\.verify-[0-9]+$/, 'the gate reads the spec series\' checkout, not the witness check\'s');
+      // dev.13: the gate runs in its own checkout, made at the commit of the spec series' checkout (not the witness check's).
+      assert.match(gate.cwd, /u1\.gate-[0-9]+$/);
+      assert.deepEqual(checkoutOf(r, gate.cwd), checkoutOf(r, verifyOf(r, lanesFacts(a.d).at(-1)!.attempt)), 'at the spec series\' commit');
     } finally {
       r.journal.close();
     }
   });
 });
+
+/** The checkout a `worktree.create` of `path` made (dev.13: the gate's own is made at the verification checkout's commit). */
+function checkoutOf(r: ArcRun, path: string): unknown {
+  const created = r.journal.view.opsOf('worktree.create').find((i) => i.expect.path === path);
+  assert.ok(created !== undefined, `no worktree.create of ${path}`);
+  return created.expect.checkout;
+}
+const verifyOf = (r: ArcRun, attempt: number): string =>
+  verificationWorktree(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, unitId('u1'), attempt);
 
 describe('the build\'s witness checks (R56)', () => {
   test('build.witness-lane-files: the fast required lane\'s file is published write-once under the evidence dir and its command given to the build', T, async () => {
@@ -341,7 +352,8 @@ describe('D2 mutation smoke', () => {
       assert.deepEqual(lanesFacts(a.d).map((x) => [x.outcome, x.class]), [['smoke-survived', 'smoke'], ['smoke-survived', 'advance']]);
       assert.deepEqual(outcomes(a.d).filter((o) => o.startsWith('gate:')), ['gate:approve'], 'the gate judged once, never unverified');
       const last = lanesFacts(a.d).at(-1)!.attempt;
-      assert.ok(gateCalls(a.d)[0]!.cwd.endsWith(`/u1.verify-${last}`), `the gate reads lanes attempt ${last}'s own checkout: ${gateCalls(a.d)[0]!.cwd}`);
+      // dev.13: the gate's own checkout is made at the commit of lanes attempt `last`'s own checkout.
+      assert.deepEqual(checkoutOf(r, gateCalls(a.d)[0]!.cwd), checkoutOf(r, verifyOf(r, last)), `the gate judges lanes attempt ${last}'s checkout: ${gateCalls(a.d)[0]!.cwd}`);
       const certified = facts(a.d).filter((f) => f.kind === 'series-certified' && f.parent.type === 'stage' && f.parent.attempt === last).map((f) => f.kind === 'series-certified' && f.checkout);
       assert.ok(certified.some((c) => typeof c === 'string' && c.endsWith(`/u1.verify-${last}`)), 'the empty spec series certified its checkout');
     } finally {

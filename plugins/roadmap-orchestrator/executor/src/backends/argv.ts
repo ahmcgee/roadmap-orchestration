@@ -50,8 +50,15 @@
 //   and StructuredOutput only, no MCP server and no skill; a canary CLAUDE.md is not seen (evals/probe.ts pins
 //   both). Auto-memory is turned off by environment for every Claude call (`backendEnv`,
 //   preflight/smoke.ts). The implementer keeps `--setting-sources project` so the repo's CLAUDE.md
-//   conventions reach it (the unit policy in its prompt overrides their permissions), but gets no MCP, no
-//   skills and no memory the same way. What stays: the logged-in account's email in a user-context block,
+//   conventions reach it (the unit policy in its prompt overrides their permissions), and no memory the same
+//   way. dev.13 (owner 2026-10-18: Claude designs better with a design skill loaded): slash commands are no longer
+//   disabled for it, so the project's skills load, as for an acting judge; it gets no MCP server but, in a milestone
+//   with a `browser` journey, the walkthrough servers of its `--mcp-config`. Measured on Claude Code 2.1.301
+//   (2026-10-18, a Haiku call per variant killed after its init event, under this argv): what loads under `--setting-sources
+//   project` is a skill committed under the checkout's `.claude/skills/`, in a git worktree too. A plugin does not: one a
+//   repo's `.claude/settings.json` enables loads only where it is installed for that path (installed_plugins.json
+//   `projectPath`), so a project-scope install at the repo root reaches neither a unit worktree nor a fresh clone; a
+//   user-scope plugin and the user's own skills never load (user settings are not a source). What stays: the logged-in account's email in a user-context block,
 //   and the built-in plugins, neither of which a flag removes. Calls keep the operator's CLAUDE_CONFIG_DIR on
 //   purpose: the CLI rewrites `.credentials.json` by temp file and rename, so an arc-private dir linking the
 //   operator's file would fork it at the first OAuth refresh and leave the operator's login dead. An isolated
@@ -60,7 +67,7 @@ import { randomUUID } from 'node:crypto';
 import { type JudgmentSessionId, implementerSessionId, judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
-import type { FreshRole, Triple } from '../routing/types.ts';
+import type { ActingJudgeRole, FreshRole, Triple } from '../routing/types.ts';
 
 export type CodexTriple = Extract<Triple, { backend: 'codex' }>;
 export type ClaudeTriple = Extract<Triple, { backend: 'claude' }>;
@@ -83,10 +90,35 @@ export type ClaudeImplementerSession = Extract<ImplementerSession, { backend: 'c
  */
 export const JUDGMENT_TOOLS = 'Read,Grep,Glob,Agent';
 
+/**
+ * dev.13, the acting judge's tools: a judgment session that uses the product (a walkthrough, the polish judge, and the
+ * gate's ad hoc experiments) gets a shell and may write (its evidence, scratch scripts) besides reading and delegating.
+ * MCP tools are not restricted by `--tools`, and bypassPermissions allows them, so they need no entry here or in
+ * `--allowed-tools`: an acting judge gets exactly the servers of its `--mcp-config` (none when it passes none, under
+ * `--strict-mcp-config`). Verified against the real CLI (Claude Code 2.1.301, 2026-10-18, this argv with the Playwright
+ * MCP server): the init event lists every `mcp__playwright__browser_*` tool and `mcp_servers: [{name: playwright, status:
+ * connected}]` with this `--tools` value, and the same with `,mcp__playwright` appended.
+ */
+export const ACTING_JUDGE_TOOLS = 'Read,Grep,Glob,Bash,Write,Edit,Agent';
+
+/** The file-writing tools an acting judge's `--disallowedTools` rules name for each denied path (`writeDenyRules`). */
+export const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'] as const;
+
+/**
+ * dev.13: the `--disallowedTools` rules that keep an acting judge's file-writing tools off `paths` (each a directory or a
+ * file): `<Tool>(//<abs path>)` and `<Tool>(//<abs path>/**)`, Claude Code's permission-rule syntax for an absolute path
+ * (`//` is the filesystem root). Deny rules hold under bypassPermissions (verified on Claude Code 2.1.301, 2026-10-18: a
+ * Haiku session's Write into a denied directory was refused, "File is in a directory that is denied by your permission
+ * settings", and listed in `permission_denials`, while a Write and an Edit beside it succeeded). Bash is not restricted:
+ * it stays trusted to the prompt.
+ */
+export const writeDenyRules = (paths: readonly AbsPath[]): readonly string[] =>
+  paths.flatMap((p) => WRITE_TOOLS.flatMap((t) => [`${t}(/${p})`, `${t}(/${p}/**)`]));
+
 export type BackendCall =
   | Readonly<{
     kind: 'claude-judgment';
-    /** A unit judgment (plan-check, gate) or an arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. */
+    /** Plan-check or a judging arc role (a lens, the checkpoint; M3): a read-only session, fresh or a repair turn. The gate acts (dev.13). */
     role: FreshRole;
     triple: ClaudeTriple;
     session: JudgmentSession;
@@ -104,8 +136,40 @@ export type BackendCall =
     schemaText: string;
     /** The prompt module's standing instructions: `--append-system-prompt`. */
     system: string;
+    /**
+     * dev.13: the `--mcp-config` file of a build in a milestone with a `browser` journey (the `walkthrough.mcp` servers,
+     * src/backends/mcp.ts `walkMcpConfig` with `{evidence}` the build's evidence dir, kept under the run dir's inputs), or
+     * null for no server.
+     */
+    mcpConfig: AbsPath | null;
     /** Directories outside the worktree the implementer reads or writes: one `--add-dir` each. */
     evidenceDirs: readonly AbsPath[];
+  }>
+  | Readonly<{
+    /**
+     * dev.13: a judgment that acts (owner 2026-10-18): bypassPermissions, `ACTING_JUDGE_TOOLS`, `--setting-sources project`
+     * (project skills load: slash commands are not disabled), `--strict-mcp-config` with the given servers. Its cwd (the
+     * launch's) is the detached checkout it works in. Fresh, or resumed once for the repair turn, like a judgment.
+     */
+    kind: 'claude-acting-judge';
+    role: ActingJudgeRole;
+    triple: ClaudeTriple;
+    session: JudgmentSession;
+    schemaText: string;
+    /** The prompt module's standing instructions: `--append-system-prompt` (it does agentic work, as the implementer). */
+    system: string;
+    /**
+     * The `--mcp-config` file (src/backends/mcp.ts `walkMcpConfig`, kept under the run dir's inputs), or null for no server
+     * (the gate's).
+     */
+    mcpConfig: AbsPath | null;
+    /** Directories outside the cwd it reads or writes (its evidence dir, the walk evidence it compares): one `--add-dir` each. */
+    evidenceDirs: readonly AbsPath[];
+    /**
+     * The paths its Write, Edit and NotebookEdit may not touch (`--disallowedTools`, `writeDenyRules`): the repository and
+     * the run dir, less what it writes in (dispatch.ts `actingWriteDenials`).
+     */
+    denyWrites: readonly AbsPath[];
   }>
   | Readonly<{
     kind: 'codex-build';
@@ -122,15 +186,17 @@ export type BackendCall =
 
 export type Argv = readonly [string, ...string[]];
 
-/** Every Claude call: JSONL on stdout, no MCP server, no skill. */
-const CLAUDE_COMMON = ['--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--disable-slash-commands'] as const;
+/** Every Claude call: JSONL on stdout, and no MCP server but those of its own `--mcp-config`. */
+const CLAUDE_COMMON = ['--output-format', 'stream-json', '--verbose', '--strict-mcp-config'] as const;
+
+const mcpConfigArgs = (file: AbsPath | null): readonly string[] => (file === null ? [] : ['--mcp-config', file]);
 
 export function backendArgv(call: BackendCall): Argv {
   switch (call.kind) {
     case 'claude-judgment': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
-        'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', '', '--json-schema', call.schemaText, '--model', call.triple.model,
+        'claude', '-p', ...CLAUDE_COMMON, '--disable-slash-commands', '--setting-sources', '', '--json-schema', call.schemaText, '--model', call.triple.model,
         '--effort', call.triple.effort, '--tools', JUDGMENT_TOOLS, ...session,
         '--system-prompt', call.system, ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
@@ -138,8 +204,18 @@ export function backendArgv(call: BackendCall): Argv {
     case 'claude-build': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
-        'claude', '-p', ...CLAUDE_COMMON, '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
+        'claude', '-p', ...CLAUDE_COMMON, ...mcpConfigArgs(call.mcpConfig), '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
         '--effort', call.triple.effort, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
+        ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
+      ];
+    }
+    case 'claude-acting-judge': {
+      const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
+      return [
+        'claude', '-p', ...CLAUDE_COMMON, ...mcpConfigArgs(call.mcpConfig),
+        '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model, '--effort', call.triple.effort,
+        '--tools', ACTING_JUDGE_TOOLS, ...(call.denyWrites.length === 0 ? [] : ['--disallowedTools', ...writeDenyRules(call.denyWrites)]),
+        '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }
@@ -166,6 +242,7 @@ export function promptBytes(call: BackendCall, rendered: string): string {
   switch (call.kind) {
     case 'claude-judgment':
     case 'claude-build':
+    case 'claude-acting-judge':
       return rendered;
     case 'codex-build':
       return `${call.system}\n\n${rendered}`;

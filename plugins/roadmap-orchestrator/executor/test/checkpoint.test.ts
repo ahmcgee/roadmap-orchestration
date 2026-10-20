@@ -11,7 +11,9 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type DivergenceId, type NeedsUserId, commandId, jobIdOf, unitId } from '../src/core/ids.ts';
+import { type DivergenceId, type NeedsUserId, arcId, commandId, jobIdOf, unitId } from '../src/core/ids.ts';
+import { absPath } from '../src/core/values.ts';
+import { status } from '../src/status.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { designParkRoute, outputOf, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
@@ -941,6 +943,67 @@ describe('P1s and their repair (paid m3 run 9)', () => {
       const r1 = live.plan().units.find((u) => u.id === 'r1')!;
       assert.deepEqual(await runUnit(live, r1, admitAll), { kind: 'merged' });
       assert.equal(finding().state, 'resolved', 'its repair published: the P1 is resolved, never banked');
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('the convergence tail (dev.13, src/holistic/tail.ts)', () => {
+  test('tail.settled-brake-arc: with every planned unit merged (no milestones), a repair admitted for a P2 converts settled-brake; the P2 is released by code; the checkpoint was shown the brake; status counts both', T, async () => {
+    const p2 = { severity: 'P2' as const, obligation: null, claim: 'The mul test could also check negative zero.', cause: 'mul test: no negative zero' };
+    const d = checkpointArc([
+      { ...planCheckStep({ decision: 'approve' }), unit: 'u1' }, { ...mulBuild(), unit: 'u1' }, { ...gateStep({ decision: 'approve' }), unit: 'u1' },
+      lensStep('audit-1', 'vision', [p2]),
+    ]);
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      const plan = () => requirePlanInForce(ctx.runDir, r.journal.view).plan;
+      const live = { ...ctx, plan, ...serialRuntime({ ...ctx, plan }) };
+      assert.deepEqual(await runUnit(live, live.plan().units.find((u) => u.id === 'u1')!, admitAll), { kind: 'merged' });
+      const op = admitOp(d, 'r1') as Record<string, JsonValue>;
+      const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec: { ...(op['spec'] as Record<string, JsonValue>), repairs: ['F-1'] } };
+      appendSteps(d, [{ ...checkpointStep('ckpt-1', bundle([repair])), expect: { stdinContains: ['<brakes>\nThe arc is at the settled point', 'Findings below a brake: F-1 (settled)'] } }]);
+      await completedAudit(r, ctx);
+      const rev = r.journal.view.planApplied()!.rev;
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
+      assert.deepEqual(out.decision, { kind: 'no-op', conversions: [{ index: 0, unit: 'r1', reason: 'settled-brake', opportunity: null }] });
+      assert.equal(r.journal.view.planApplied()!.rev, rev, 'nothing applied: r1 is never admitted');
+      const f = r.journal.view.holistic().findings.find((x) => x.id === 'F-1')!;
+      assert.deepEqual([f.state, f.last], ['ruled', { state: 'ruled', disposition: 'released', by: { type: 'release', job: 'ckpt-1', reason: 'settled' } }]);
+      assert.deepEqual(factsOfKind(r, 'corpus-amendment'), [], 'a brake\'s conversion is never an amendment');
+      const s = status(absPath(d.runDir), arcId(d.arc), absPath(d.hostDir));
+      assert.deepEqual([s.findings.released.settled, s.findings.refusedAdmits], [1, { regress: 0, settled: 1 }]);
+      assert.deepEqual(await runCheckpoint(ctx), { kind: 'none' });
+    } finally {
+      r.journal.close();
+    }
+  });
+  test('tail.repaired-accepted-arc: a P2 named in an admitted repair\'s repairs and disposed accepted in the same decision is not ruled; the repair owns it and resolves it when it publishes (m5 run 6, F-18)', T, async () => {
+    const p2 = { severity: 'P2' as const, obligation: null, claim: 'The mul command prints no unit.', cause: 'mul output: no unit' };
+    const d = checkpointArc([lensStep('audit-1', 'vision', [p2])]);
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      const op = admitOp(d, 'r1') as Record<string, JsonValue>;
+      const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec: { ...(op['spec'] as Record<string, JsonValue>), repairs: ['F-1'] } };
+      appendSteps(d, [
+        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [repair], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r1 repairs it' }] })),
+        { ...planCheckStep({ decision: 'approve' }), unit: 'r1' }, { ...mulBuild(), unit: 'r1' }, { ...gateStep({ decision: 'approve' }), unit: 'r1' },
+      ]);
+      await completedAudit(r, ctx);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      const finding = () => r.journal.view.holistic().findings.find((f) => f.id === 'F-1')!;
+      assert.deepEqual([finding().state, finding().last], ['open', null], 'the accepted disposition is not written');
+      const plan = () => requirePlanInForce(ctx.runDir, r.journal.view).plan;
+      const live = { ...ctx, plan, ...serialRuntime({ ...ctx, plan }) };
+      syncRepairs(live);
+      assert.deepEqual([finding().state, finding().owner], ['owned', 'r1']);
+      assert.deepEqual(await runUnit(live, live.plan().units.find((u) => u.id === 'r1')!, admitAll), { kind: 'merged' });
+      assert.equal(finding().state, 'resolved', 'its repair published');
     } finally {
       r.journal.close();
     }

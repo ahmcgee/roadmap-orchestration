@@ -8,9 +8,10 @@ import {
   knownDefectId, opportunityId,
   type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type RulingId, type Sha, type Sha256Hex, type SpecRev,
   type ProposalId, type UnitId, type VisionClauseId, INTEGRATION_SLOT, proposalId, proposalJob, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
-  findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseOpId,
+  findingId, invocationIdOf, issueId, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseJobId, parseOpId,
   parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, rulingId, sha, sha256, specRev, unitId,
   visionClauseId, idList, type ClaudeSessionId, claudeSessionId,
+  type JourneyId, type MilestoneId, type PolishId, type ServeName, journeyId, milestoneId, polishId, serveName,
 } from './ids.ts';
 import { type BankReason, type DebtSource, BANK_REASONS, debtSource } from '../debt/types.ts';
 import {
@@ -23,7 +24,7 @@ import { type IssueIntakeOutcome, type RepoIdentity, issueIntakeOutcome, repoIde
 import { type PressureAvailability, PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
 import { canonicalJson, sha256Hex } from './json.ts';
 import {
-  COMMAND_VERDICTS, LENS_KIND_NAMES, type ApprovalFingerprint, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
+  COMMAND_VERDICTS, DEMO_ACTS, LENS_KIND_NAMES, type ApprovalFingerprint, type DemoAct, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
   type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
   type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
   dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
@@ -38,7 +39,7 @@ import {
   packDisposition, packFinding, revisionVector, type PlanDefect, planDefect,
 } from '../holistic/types.ts';
 import {
-  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
+  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, int, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
   version,
 } from './validate.ts';
 import {
@@ -180,6 +181,13 @@ export type SpawnSubject =
    * `flow-proof`.
    */
   | Readonly<{ purpose: 'proof'; job: JobId; proposal: ProposalId; lane: LaneId; side: 'old' | 'new'; at: Sha }>
+  /**
+   * dev.13: one command of milestone `milestone`'s bring-up (src/walk/bringup.ts), its owner the spawn's parent (a walk
+   * job). `step` names it as the `walk-tools-missing` row does: `setup[i]`, `serve.<name>`, `seed[i]`. A `serve` process
+   * runs until its owner stops it (`proc.kill{teardown}`); recovery cancels a live one (its owner brings the product up
+   * again).
+   */
+  | Readonly<{ purpose: 'bring-up'; milestone: MilestoneId; step: string }>
   | Readonly<{
     purpose: 'smoke';
     check: string;
@@ -289,13 +297,18 @@ export type RevisionBase = PlanRev | 0;
  * A bundle's `admits` and `conversions` (M4a rev 3, OR-A1, Q4): code's classification of its `admit` ops, persisted in
  * the decision record before any settlement and never recomputed; both present (in a corpus arc) or both absent (an
  * `architecture-doc` arc, or 1.0.0-dev.6: unclassified, never counted against a budget or a follow-up; `bundleClassesOf`).
+ * dev.13: `conversions` alone (non-empty) outside a corpus arc: the admits a brake converted (src/holistic/tail.ts).
  */
 export type RevisionSource =
   | Readonly<{ type: 'start' }>
   | Readonly<{ type: 'command'; command: CommandId }>
   | Readonly<{ type: 'bundle'; job: JobId; admits?: readonly ClassifiedAdmit[]; conversions?: readonly Conversion[] }>
   | Readonly<{ type: 'executor'; inv: InvocationId }>
-  | Readonly<{ type: 'flow'; proposal: ProposalId }>;
+  | Readonly<{ type: 'flow'; proposal: ProposalId }>
+  /** dev.13: the code-applied polish revision of walk `job`: its applied proposals admitted as polish units (src/walk/polish.ts). */
+  | Readonly<{ type: 'walk'; job: JobId }>
+  /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
+  | Readonly<{ type: 'compare'; unit: UnitId }>;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
 export type OpPost = {
@@ -731,7 +744,8 @@ export type Fact =
   | StageOutcomeFact
   | HolisticFact
   | M4aFact
-  | FlowFact;
+  | FlowFact
+  | WalkFact;
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
@@ -798,10 +812,13 @@ export type HolisticFact =
   | Readonly<{ kind: 'witnessed'; lane: LaneId; laneRev: LaneRev; envId: EnvId; treeSha: Sha; inv: InvocationId; recordsSha256: Sha256Hex; purpose: WitnessPurpose; for: WitnessFor }>
   /** A future obligation delivered and held on its publication: it is must-hold from here (after `ff{published}`, before the snapshot). */
   | Readonly<{ kind: 'obligation-latched'; obligation: ObligationId; unit: UnitId; treeSha: Sha }>
+  /** dev.13: `milestone` exactly on a `walkthrough` finding (absent on every other: none). */
   | Readonly<{
     kind: 'finding-opened'; id: FindingId; key: Sha256Hex; lens: FindingLens; severity: FindingSeverity; obligation: ObligationId | null;
     visionClauses: readonly VisionClauseId[]; claim: string; evidence: readonly FindingEvidence[]; mutant: MutantRef | null; source: FindingSource;
-    gateHadPassed: boolean;
+    gateHadPassed: boolean; milestone?: MilestoneId;
+    /** dev.13: the finding's cause (its key's input), kept only on a walkthrough finding, so a later walk re-reports it alike; absent: none. */
+    cause?: string;
   }>
   | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
   | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
@@ -939,6 +956,73 @@ export type FlowFact =
   }>;
 export type FlowFactKind = FlowFact['kind'];
 
+/** How a milestone walk ended: its report read (`reported`), its product never came up (`bring-up-failed`), or neither. */
+export const WALK_OUTCOMES = ['reported', 'bring-up-failed', 'abandoned'] as const;
+export type WalkOutcome = (typeof WALK_OUTCOMES)[number];
+export const TWEAK_DECISIONS = ['keep', 'drop'] as const;
+export type TweakDecision = (typeof TWEAK_DECISIONS)[number];
+/** `judged`: the polish judge decided; `reference-untouched`: the diff touched no milestone reference (a drop, no call). */
+/**
+ * `judged`: the polish judge's decision; `reference-untouched`: code's drop of a diff that touches no milestone reference;
+ * `bring-up-failed` (dev.13 agent D): code's drop of a tweak whose after instance did not come up while the before did;
+ * `abandoned` (lead ruling): code's drop of a tweak whose compare failed COMPARE_ATTEMPTS times (src/walk/compare.ts).
+ */
+export const TWEAK_REASONS = ['judged', 'reference-untouched', 'bring-up-failed', 'abandoned'] as const;
+export type TweakReason = (typeof TWEAK_REASONS)[number];
+/** A polish proposal's unit as the walkthrough authored it: `spec` is spec.json's canonical text (an admit's). */
+export type PolishUnitDraft = Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
+
+/**
+ * The dev.13 facts (SCHEMAS.md "dev.13: milestone walkthroughs and design units"); their behaviour is agents C, D and G's.
+ * The fold keeps them in log order (`walkFacts`) and holds their ids to order.
+ */
+export type WalkFact =
+  /** A milestone walk began (`walk-n`, round `round`, on integration SHA `sha` captured under the fence), its product up on `ports`. */
+  | Readonly<{ kind: 'walk-started'; job: JobId; milestone: MilestoneId; round: number; sha: Sha; ports: Readonly<Record<ServeName, number>> }>
+  /**
+   * A walk's end: the findings it opened (a failed bring-up's code-opened P1 included) and the polish it proposed, both in
+   * id order; `dropped` the proposals not applied (every proposal of the milestone's last round: the milestone settles).
+   */
+  | Readonly<{
+    kind: 'walk-ended'; job: JobId; outcome: WalkOutcome; findings: readonly FindingId[]; proposals: readonly PolishId[]; dropped: readonly PolishId[];
+    /** Lead ruling (agent D): present (true) only on an abandoned walk a pause, a stop or a backend park cut short; it is no try of the round's brake. */
+    interrupted?: true;
+  }>
+  /** A walk's polish proposal, written before its `walk-ended`; never a finding, never debt. */
+  | Readonly<{
+    kind: 'polish-proposed'; id: PolishId; job: JobId; milestone: MilestoneId; journey: JourneyId; evidence: readonly string[]; text: string; unit: PolishUnitDraft;
+  }>
+  /** A polish unit's compare stage decided (once per unit): `keep` goes on to candidate admission, `drop` cuts it (`polish-dropped`). */
+  | Readonly<{ kind: 'tweak-judged'; unit: UnitId; decision: TweakDecision; reason: TweakReason }>
+  /**
+   * Agent D: a polish proposal the code-applied polish revision refused (once per proposal): its scope covers no milestone
+   * reference, it is not from its milestone's latest round, or the admit path refused its unit. Settled: never applied.
+   */
+  | Readonly<{ kind: 'polish-refused'; proposal: PolishId; reasons: readonly string[] }>
+  /**
+   * Agent D: a polish unit's compare job (`compare-<n>`) began: `before` the integration tip and `after` the unit's approved
+   * commit (its salvage tree), each brought up on its own `ports`. Its `tweak-judged` (or `compare-abandoned`) ends it.
+   */
+  | Readonly<{
+    kind: 'compare-started'; job: JobId; unit: UnitId; before: Sha; after: Sha;
+    ports: Readonly<{ before: Readonly<Record<ServeName, number>>; after: Readonly<Record<ServeName, number>> }>;
+  }>
+  /**
+   * Agent D: a compare that could not judge (the before instance did not come up, the judge failed twice; `interrupted`: a
+   * pause, a stop or a backend park cut it short). A later compare runs, once: a unit's COMPARE_ATTEMPTS-th abandonment
+   * that was not interrupted is followed by `tweak-judged{drop, abandoned}` and the cut.
+   */
+  | Readonly<{ kind: 'compare-abandoned'; job: JobId; detail: string; interrupted?: true }>
+  /** The milestone node passed: walk `job` completed and the milestone has no active walkthrough P1 (once per milestone). */
+  | Readonly<{ kind: 'milestone-passed'; milestone: MilestoneId; job: JobId }>
+  /** The demo (`refs/roadmap/demo`) moved to `sha`, the settled tip of `milestone` (or the completed arc's, its last settled milestone). */
+  | Readonly<{ kind: 'demo-promoted'; milestone: MilestoneId; sha: Sha }>
+  /** The demo's bring-up of `sha` failed (the old instance keeps serving); `log` its captured output. Opens a walkthrough P1 on `milestone`. */
+  | Readonly<{ kind: 'demo-failed'; milestone: MilestoneId; sha: Sha; log: AbsPath }>
+  /** The owner's act on the demo (`roadmap demo <act>`, its command `command`): the fold reads `held` and `up` from these. */
+  | Readonly<{ kind: 'demo-acted'; command: CommandId; act: DemoAct }>;
+export type WalkFactKind = WalkFact['kind'];
+
 export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
@@ -999,7 +1083,13 @@ export type PlanChange =
   /** M4a rev 3 (E): the plan's `planCheck.shape` changed (no drain; units whose plan-check has not decided). */
   | Readonly<{ type: 'plan-check-shape' }>
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
-  | Readonly<{ type: 'derived' }>;
+  | Readonly<{ type: 'derived' }>
+  /**
+   * dev.13: the plan's `milestones` changed (an `apply` only; the checkpoint cannot edit them). Classified by src/input/classify.ts.
+   * `rewalk`: the walked milestones whose `bringUp` or `journeys` the apply edited, each a fresh start for its walk abandonment
+   * brake (src/walk/milestones.ts); absent: none (lasting).
+   */
+  | Readonly<{ type: 'milestones'; rewalk?: readonly MilestoneId[] }>;
 
 /**
  * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
@@ -1166,15 +1256,24 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   bundle: object((f): RevisionSource => {
     const admits = f.optional('admits', sortedBy(classifiedAdmit, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
     const conversions = f.optional('conversions', sortedBy(conversion, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
-    if ((admits === undefined) !== (conversions === undefined)) throw new SchemaError(`${f.path}.admits`, 'admits and conversions together (a classified bundle) or neither', { admits, conversions });
+    if (admits !== undefined && conversions === undefined) throw new SchemaError(`${f.path}.conversions`, 'conversions beside admits (a classified bundle)', { admits, conversions });
     const out = { type: f.get('type', literal('bundle')), job: f.get('job', (v, p) => jobIdOfKind('ckpt')(v, p)) };
-    if (admits === undefined || conversions === undefined) return out;
+    if (conversions === undefined) return out;
+    if (admits === undefined) {
+      // dev.13: a brake's conversions outside a corpus arc (none classified).
+      if (conversions.length === 0 || conversions.some((c) => c.reason !== 'regress-brake' && c.reason !== 'settled-brake')) {
+        throw new SchemaError(`${f.path}.conversions`, 'admits beside conversions (a classified bundle), or only a brake\'s conversions', conversions);
+      }
+      return { ...out, conversions };
+    }
     const both = [...admits.map((a) => a.index), ...conversions.map((c) => c.index)];
     if (new Set(both).size !== both.length) throw new SchemaError(`${f.path}.conversions`, 'op indices an admit class does not also name', both);
     return { ...out, admits, conversions };
   }),
   executor: object((f): RevisionSource => ({ type: f.get('type', literal('executor')), inv: f.get('inv', invR) })),
   flow: object((f): RevisionSource => ({ type: f.get('type', literal('flow')), proposal: f.get('proposal', proposalR) })),
+  walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
+  compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -1226,6 +1325,9 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   proof: object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('proof')), job: f.get('job', (v, p) => jobIdOfKind('proof')(v, p)), proposal: f.get('proposal', proposalR), lane: f.get('lane', laneR),
     side: f.get('side', oneOf(['old', 'new'] as const)), at: f.get('at', shaR),
+  })),
+  'bring-up': object((f): SpawnSubject => ({
+    purpose: f.get('purpose', literal('bring-up')), milestone: f.get('milestone', (v, p): MilestoneId => milestoneId(v, p)), step: f.get('step', str),
   })),
   smoke: object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('smoke')),
@@ -1557,6 +1659,10 @@ const planChange: Read<PlanChange> = tagged('type', {
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
   'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
   derived: object((f): PlanChange => ({ type: f.get('type', literal('derived')) })),
+  milestones: object((f): PlanChange => {
+    const rewalk = f.optional('rewalk', arrayOf(milestoneR, { nonEmpty: true }));
+    return { type: f.get('type', literal('milestones')), ...(rewalk === undefined ? {} : { rewalk }) };
+  }),
 });
 
 export const revisionPayload: Read<RevisionPayload> = object((f) => {
@@ -1823,6 +1929,71 @@ const FLOW_FACT_READERS: { readonly [K in FlowFactKind]: Read<Fact> } = {
   }),
 };
 
+const walkJobR: Read<JobId> = (v, p) => jobIdOfKind('walk')(v, p);
+const compareJobR: Read<JobId> = (v, p) => jobIdOfKind('compare')(v, p);
+const milestoneR: Read<MilestoneId> = (v, p) => milestoneId(v, p);
+const polishSet: Read<readonly PolishId[]> = idList((v, p): PolishId => polishId(v, p));
+const ports: Read<Readonly<Record<ServeName, number>>> = (value, path) => {
+  const f = new Fields(value, path);
+  const out: Record<ServeName, number> = {};
+  for (const key of Object.keys(value as object)) out[serveName(key, `${path}.${key}`)] = f.get(key, int(1, 65_535));
+  f.end();
+  return out;
+};
+
+/** The readers of the dev.13 facts, spread into `fact`. */
+const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
+  'walk-started': object((f): Fact => ({
+    kind: f.get('kind', literal('walk-started')), job: f.get('job', walkJobR), milestone: f.get('milestone', milestoneR), round: f.get('round', positive),
+    sha: f.get('sha', shaR), ports: f.get('ports', ports),
+  })),
+  'walk-ended': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('walk-ended')), job: f.get('job', walkJobR), outcome: f.get('outcome', oneOf(WALK_OUTCOMES)), findings: f.get('findings', findingSet),
+      proposals: f.get('proposals', polishSet), dropped: f.get('dropped', polishSet),
+      ...(f.optional('interrupted', literal(true)) === undefined ? {} : { interrupted: true as const }),
+    };
+    if (out.interrupted === true && out.outcome !== 'abandoned') throw new SchemaError(`${f.path}.interrupted`, 'only on an abandoned walk', out.interrupted);
+    if (out.outcome !== 'reported' && out.proposals.length > 0) throw new SchemaError(`${f.path}.proposals`, `none for a walk ${out.outcome}`, out.proposals);
+    if (out.outcome === 'abandoned' && out.findings.length > 0) throw new SchemaError(`${f.path}.findings`, 'none for an abandoned walk', out.findings);
+    if (out.outcome === 'bring-up-failed' && out.findings.length === 0) throw new SchemaError(`${f.path}.findings`, 'the P1 a failed bring-up opens', out.findings);
+    const proposed = new Set<string>(out.proposals);
+    out.dropped.forEach((id, i) => {
+      if (!proposed.has(id)) throw new SchemaError(`${f.path}.dropped[${i}]`, 'a proposal of this walk', id);
+    });
+    return out;
+  }),
+  'polish-proposed': object((f): Fact => ({
+    kind: f.get('kind', literal('polish-proposed')), id: f.get('id', (v, p): PolishId => polishId(v, p)), job: f.get('job', walkJobR), milestone: f.get('milestone', milestoneR),
+    journey: f.get('journey', (v, p): JourneyId => journeyId(v, p)), evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })), text: f.get('text', str),
+    unit: f.get('unit', object((g): PolishUnitDraft => ({
+      id: g.get('id', unitR), scope: g.get('scope', sortedBy((v, p): RepoPattern => repoPattern(v, p), (x) => x, { nonEmpty: true })), spec: g.get('spec', str),
+    }))),
+  })),
+  'tweak-judged': object((f): Fact => {
+    const out = {
+      kind: f.get('kind', literal('tweak-judged')), unit: f.get('unit', unitR), decision: f.get('decision', oneOf(TWEAK_DECISIONS)), reason: f.get('reason', oneOf(TWEAK_REASONS)),
+    };
+    if (out.reason === 'reference-untouched' && out.decision !== 'drop') throw new SchemaError(`${f.path}.decision`, 'drop for a tweak that touched no reference', out.decision);
+    return out;
+  }),
+  'polish-refused': object((f): Fact => ({
+    kind: f.get('kind', literal('polish-refused')), proposal: f.get('proposal', (v, p): PolishId => polishId(v, p)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
+  })),
+  'compare-started': object((f): Fact => ({
+    kind: f.get('kind', literal('compare-started')), job: f.get('job', compareJobR), unit: f.get('unit', unitR), before: f.get('before', shaR), after: f.get('after', shaR),
+    ports: f.get('ports', object((g) => ({ before: g.get('before', ports), after: g.get('after', ports) }))),
+  })),
+  'compare-abandoned': object((f): Fact => ({
+    kind: f.get('kind', literal('compare-abandoned')), job: f.get('job', compareJobR), detail: f.get('detail', str),
+    ...(f.optional('interrupted', literal(true)) === undefined ? {} : { interrupted: true as const }),
+  })),
+  'milestone-passed': object((f): Fact => ({ kind: f.get('kind', literal('milestone-passed')), milestone: f.get('milestone', milestoneR), job: f.get('job', walkJobR) })),
+  'demo-promoted': object((f): Fact => ({ kind: f.get('kind', literal('demo-promoted')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR) })),
+  'demo-failed': object((f): Fact => ({ kind: f.get('kind', literal('demo-failed')), milestone: f.get('milestone', milestoneR), sha: f.get('sha', shaR), log: f.get('log', absR) })),
+  'demo-acted': object((f): Fact => ({ kind: f.get('kind', literal('demo-acted')), command: f.get('command', cmdR), act: f.get('act', oneOf(DEMO_ACTS)) })),
+};
+
 /** The readers of the M3 facts, spread into `fact`. */
 const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = {
   witnessed: object((f): Fact => {
@@ -1847,6 +2018,16 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       evidence: f.get('evidence', arrayOf(findingEvidence)), mutant: f.get('mutant', nullable(mutantRef)), source: f.get('source', findingSource),
       gateHadPassed: f.get('gateHadPassed', bool),
     };
+    const milestone = f.optional('milestone', (v, p): MilestoneId => milestoneId(v, p));
+    const cause = f.optional('cause', str);
+    // dev.13: a walkthrough finding names its milestone, is a P1 (breaks) or a P2 (deviates), and comes from a walk job or
+    // the demo; no other finding names a milestone or comes from the demo.
+    const walk = out.lens === 'walkthrough';
+    if (walk !== (milestone !== undefined)) throw new SchemaError(`${f.path}.milestone`, walk ? 'the milestone of a walkthrough finding' : 'absent (only a walkthrough finding names one)', milestone);
+    if (cause !== undefined && !walk) throw new SchemaError(`${f.path}.cause`, 'absent (only a walkthrough finding keeps its cause)', cause);
+    if (walk && out.severity === 'P3') throw new SchemaError(`${f.path}.severity`, 'P1 or P2 for a walkthrough finding', out.severity);
+    if (out.source.type === 'demo' && !(walk && out.severity === 'P1')) throw new SchemaError(`${f.path}.source`, 'a walk job (only a walkthrough P1 comes from the demo)', out.source);
+    if (walk && out.source.type === 'job' && parseJobId(out.source.job).kind !== 'walk') throw new SchemaError(`${f.path}.source.job`, 'a walk-<n> job', out.source.job);
     if (out.mutant !== null && out.lens !== 'vacuity') throw new SchemaError(`${f.path}.mutant`, 'null except for a vacuity finding', out.mutant);
     // R17: plan-check opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
     if ((out.lens === 'plan-check') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'plan-check' ? 'the plan-check attempt' : 'the job that opened it', out.source);
@@ -1856,7 +2037,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
     // M4a: a checkpoint's issue intake opens P2 or P3 only.
     if (out.lens === 'issue' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for an issue finding', out.severity);
-    return out;
+    return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }) };
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
   'audit-started': object((f): Fact => {
@@ -2049,6 +2230,7 @@ export const fact: Read<Fact> = tagged('kind', {
   ...HOLISTIC_FACT_READERS,
   ...M4A_FACT_READERS,
   ...FLOW_FACT_READERS,
+  ...WALK_FACT_READERS,
   'stage-outcome': object((f): Fact => {
     const s = f.get('stage', oneOf(OUTCOME_STAGES));
     const out = {

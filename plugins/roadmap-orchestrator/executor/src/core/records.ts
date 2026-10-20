@@ -22,7 +22,7 @@ import type { SchemaVersion } from './version.ts';
 import { applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type Backend, type FreshRole, type ImplementerRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
+  type Backend, type ImplementerRole, JUDGMENT_SESSION_ROLES, type JudgmentSessionRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
   buildClass, type BuildClass, modelClass, profileName, riskTier, MODEL_CLASSES,
 } from '../routing/types.ts';
 
@@ -36,13 +36,15 @@ export const procIdentity: Read<ProcIdentity> = object((f) => ({ pid: f.get('pid
  * `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. `supersede` (paid M4b run 3):
  * a revision changed the plan or vision an in-flight checkpoint call was captured on (src/holistic/checkpoint.ts).
  * `reported`: the runner ends what a build left pending `REPORT_GRACE_MS` after its final report (src/runner/report.ts).
+ * `teardown` (dev.13): the owner of a bring-up's long-lived `serve` process stops it once it is done with the product
+ * (src/walk/bringup.ts); only a `bring-up` command is cancelled for it.
  */
-export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt', 'supersede', 'reported'] as const;
+export const KILL_REASONS = ['deadline', 'stall', 'pause', 'stop', 'recovery', 'external-unknown', 'preempt', 'supersede', 'reported', 'teardown'] as const;
 export type KillReason = (typeof KILL_REASONS)[number];
 export const killReason: Read<KillReason> = oneOf(KILL_REASONS);
 
 /** What the executor writes into cancel.json. `deadline` and `stall` are the runner's own; `external-unknown` kills are not invocation cancels. */
-export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt', 'supersede'] as const;
+export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt', 'supersede', 'teardown'] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 /** The cancel reasons that end a workload with exit cause `cancel` (the runner turns `recovery` into `recovery-kill`). */
 export const INTERRUPT_REASONS = ['pause', 'stop'] as const;
@@ -50,13 +52,17 @@ export type InterruptReason = (typeof INTERRUPT_REASONS)[number];
 /** A command (a lane) may also be cancelled by a preempting docs publication (M3, A7); a backend call never is. */
 export const LANE_INTERRUPT_REASONS = [...INTERRUPT_REASONS, 'preempt'] as const;
 export type LaneInterruptReason = (typeof LANE_INTERRUPT_REASONS)[number];
+/** dev.13: a command's cancel reasons: a lane's, and `teardown` (only a bring-up's `serve` process, which its owner stops). */
+export const COMMAND_CANCEL_REASONS = [...LANE_INTERRUPT_REASONS, 'teardown'] as const;
+export type CommandCancelReason = (typeof COMMAND_CANCEL_REASONS)[number];
 /** A backend call may also be cancelled because a revision superseded the checkpoint inputs it runs on; a lane never is. */
 export const BACKEND_CANCEL_REASONS = [...INTERRUPT_REASONS, 'supersede'] as const;
 export type BackendCancelReason = (typeof BACKEND_CANCEL_REASONS)[number];
 
 export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
 export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
-export const COMMAND_PURPOSES = ['lane', 'teardown', 'probe', 'smoke'] as const;
+/** dev.13: `bring-up`, a milestone product's setup, serve or seed command (src/walk/bringup.ts). */
+export const COMMAND_PURPOSES = ['lane', 'teardown', 'probe', 'smoke', 'bring-up'] as const;
 export type CommandPurpose = (typeof COMMAND_PURPOSES)[number];
 
 export const CONTAINMENT_MODES = ['session', 'cgroup'] as const;
@@ -107,8 +113,6 @@ export const RESOURCE_STATES = ['free', 'reserved', 'running', 'cleaning', 'clea
 export type ResourceState = (typeof RESOURCE_STATES)[number];
 
 const role: Read<Role> = oneOf(ROLES);
-/** The roles whose call runs a fresh judgment session: every role but `build`. */
-const FRESH_ROLES = ROLES.filter((r): r is FreshRole => r !== 'build');
 const opId: Read<OpId> = (v, p) => opIdOf(v, p);
 const inv: Read<InvocationId> = (v, p) => invocationIdOf(v, p);
 const arc: Read<ArcId> = (v, p) => arcId(v, p);
@@ -161,7 +165,7 @@ type BackendTerminalBase = Readonly<{
   outputPath: AbsPath;
 }>;
 export type BackendTerminal =
-  | (BackendTerminalBase & Readonly<{ role: FreshRole; session: JudgmentSession }>)
+  | (BackendTerminalBase & Readonly<{ role: JudgmentSessionRole; session: JudgmentSession }>)
   | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession }>);
 export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number }>;
 export type LaunchTerminal = BackendTerminal | CommandTerminal;
@@ -221,7 +225,7 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
       };
       return r === 'build'
         ? { ...base, role: f.get('role', literal('build')), session: f.get('session', implementerSession) }
-        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', judgmentSession) };
+        : { ...base, role: f.get('role', oneOf(JUDGMENT_SESSION_ROLES)), session: f.get('session', judgmentSession) };
     })(value, path);
   },
 });
@@ -447,7 +451,7 @@ export const isRed = (verdict: CommandVerdict): boolean => verdict === 'fail' ||
 /** How a command ended: its exit code (null when the child never exited with one) and verdict. */
 export type CommandEnd = Readonly<{ exitCode: number | null }> & (
   | Readonly<{ verdict: Exclude<CommandVerdict, 'cancelled'> }>
-  | Readonly<{ verdict: 'cancelled'; reason: LaneInterruptReason }>
+  | Readonly<{ verdict: 'cancelled'; reason: CommandCancelReason }>
 );
 
 type BackendResultBase = InvocationBinding & Readonly<{
@@ -459,7 +463,7 @@ type BackendResultBase = InvocationBinding & Readonly<{
 }>;
 /** A judgment session is assigned at launch; an implementer's may be unknown if it died before reporting one. */
 export type BackendResult =
-  | (BackendResultBase & Readonly<{ role: FreshRole; session: JudgmentSessionId }>)
+  | (BackendResultBase & Readonly<{ role: JudgmentSessionRole; session: JudgmentSessionId }>)
   | (BackendResultBase & Readonly<{ role: ImplementerRole; session: ImplementerSessionId | null }>);
 export type CommandResult = InvocationBinding & Readonly<{
   type: 'command';
@@ -498,7 +502,7 @@ export const resultFile: Read<ResultFile> = tagged('type', {
       };
       return r === 'build'
         ? { ...base, role: f.get('role', literal('build')), session: f.get('session', nullable((v, p) => implementerSessionId(v, p))) }
-        : { ...base, role: f.get('role', oneOf(FRESH_ROLES)), session: f.get('session', (v, p) => judgmentSessionId(v, p)) };
+        : { ...base, role: f.get('role', oneOf(JUDGMENT_SESSION_ROLES)), session: f.get('session', (v, p) => judgmentSessionId(v, p)) };
     })(value, path);
   },
   command: object((f): ResultFile => {
@@ -511,7 +515,7 @@ export const resultFile: Read<ResultFile> = tagged('type', {
     };
     const verdict = f.get('verdict', oneOf(COMMAND_VERDICTS));
     const out: CommandResult = verdict === 'cancelled'
-      ? { ...base, verdict, reason: f.get('reason', oneOf(LANE_INTERRUPT_REASONS)) }
+      ? { ...base, verdict, reason: f.get('reason', oneOf(COMMAND_CANCEL_REASONS)) }
       : { ...base, verdict };
     if (out.exitCode === null && (out.verdict === 'pass' || out.verdict === 'fail')) {
       throw new SchemaError(`${f.path}.verdict`, '"stall", "process-fault" or "cancelled" when exitCode is null', out.verdict);
@@ -540,8 +544,8 @@ function processFault(exit: ExitFile): string | null {
  */
 export function classifyTerminal(exit: ExitFile, cancel: CancelFile | null, output: unknown, schemaValid: boolean): TerminalOutcome {
   if (exit.cause === 'cancel') {
-    if (cancel === null || cancel.reason === 'recovery' || cancel.reason === 'preempt') {
-      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause, stop or supersede (a backend call is never preempted)`);
+    if (cancel === null || cancel.reason === 'recovery' || cancel.reason === 'preempt' || cancel.reason === 'teardown') {
+      throw new Error(`${exit.inv}: exit cause cancel with cancel.json ${JSON.stringify(cancel?.reason ?? null)}, expected pause, stop or supersede (a backend call is never preempted or torn down)`);
     }
     return { kind: 'cancelled', reason: cancel.reason };
   }
@@ -1402,7 +1406,17 @@ export type CommandBody =
    * `roadmap scope accept|reject <u> --reason <text>` (scope growth, 2026-10-15): the root agent's decision on the unit's held
    * scope-growth proposals; an accept lands them as one ruled-growth revision (src/commands/scope.ts). Scope {u}.
    */
-  | Readonly<{ type: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string }>;
+  | Readonly<{ type: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string }>
+  /**
+   * `roadmap demo up|down|hold|release` (dev.13): the owner's act on the demo (src/demo/promote.ts). `hold` freezes promotion,
+   * `release` resumes it (and promotes the latest settled milestone when it is newer); `up` and `down` start and stop the
+   * host's demo instance. Scope ∅.
+   */
+  | Readonly<{ type: 'demo'; act: DemoAct }>;
+
+/** dev.13: the owner's acts on the demo (`roadmap demo <act>`). */
+export const DEMO_ACTS = ['up', 'down', 'hold', 'release'] as const;
+export type DemoAct = (typeof DEMO_ACTS)[number];
 
 /** The lens names a command may carry; `LensKind` in src/holistic/types.ts is the same closed list. */
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
@@ -1476,6 +1490,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   'scope-decide': object((f): CommandBody => ({
     type: f.get('type', literal('scope-decide')), unit: f.get('unit', unit), decision: f.get('decision', oneOf(['accept', 'reject'] as const)), reason: f.get('reason', str),
   })),
+  demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({

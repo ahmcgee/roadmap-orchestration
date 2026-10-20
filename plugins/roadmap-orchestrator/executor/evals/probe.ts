@@ -73,6 +73,18 @@
 //                       plan-declared derived output, is not inlined: the answer validates, a not-inlined file is read or
 //                       grepped (main session or subagent), the init event lists Agent, result.modelUsage is present and
 //                       its per-model costs sum to total_cost_usd. Needs the merged dev.12 tree (W1 bounded diff, W2 Agent)
+//   walk.cli            (dev.13) one real walkthrough through the production walk job on a two-step CLI product (no browser),
+//                       the real claude behind the fake's `real` act on the walkthrough seat (frontier) with the acting-judge
+//                       argv: the report validates (schema and the walk's own checks), the init event lists Bash and Write
+//                       and no MCP server, the session ended exited or reported, and nothing is left behind (no open intent,
+//                       no walk checkout, no live process of the arc); its findings are printed, not graded
+//   polish.compare      (dev.13, agent D) one real polish judge through the production compare job on two tiny instances
+//                       (before: the greeter answering 500 for want of a greeting; after: a polish unit that configures it
+//                       and says so in the reference), u1, walk-1 and the polish unit through the fakes, the real claude behind
+//                       the fake's `real` act on the polishJudge seat (frontier) with the acting-judge argv: the answer
+//                       validates (schema, every cited file in the evidence dirs) and is recorded as tweak-judged{judged},
+//                       the init event lists Bash and no MCP server, the session ended exited or reported, both instances
+//                       came up on distinct ports, and nothing is left behind; its decision is printed, not graded
 //   effort.*            (OI-2) a session started at one effort, resumed at another: claude (high then medium), codex
 //                       (low then medium); reports whether each CLI accepts the change
 //
@@ -117,7 +129,7 @@ import {
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
 import { boundAt } from '../src/routing/classes.ts';
 import { arcStack, resolveRouting, type ResolvedRouting } from '../src/routing/layers.ts';
-import { type Backend, type JudgmentRole, type Role, type JudgmentSeat, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
+import { type Backend, type Role, type JudgmentSeat, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { argvShapeProblem } from '../src/flow/levers.ts';
 import { runProof } from '../src/flow/proof.ts';
@@ -126,9 +138,18 @@ import { FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, keepInput, keptInput } from '../sr
 import { commitAll, writeFiles } from '../test/helpers/repo.ts';
 import { wire } from '../test/fixtures/publish-common.ts';
 import { followingContext } from '../test/fixtures/steer-common.ts';
-import { contextFor, setupArc } from '../test/fixtures/unit-common.ts';
+import { appendSteps, contextFor, setupArc } from '../test/fixtures/unit-common.ts';
+import { moduleFiles, unitSteps } from '../test/fixtures/audit-common.ts';
+import { ACTING_ARGV, KEEP_FILES, milestoneJson, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from '../test/fixtures/walk-common.ts';
+import { holisticContexts } from '../src/schedule/scheduler.ts';
+import { runCompare } from '../src/walk/compare.ts';
+import { applyPolish } from '../src/walk/polish.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
+import { runUnit } from '../src/pipeline/unit.ts';
+import { runWalk } from '../src/walk/walk.ts';
+import { scan } from '../src/contain/proc.ts';
 import { runGateTrial } from './roles/gate/arc.ts';
-import { DEV_CELLS } from './roles/gate/cells.ts';
+import { DEV_CELLS, isExecCell } from './roles/gate/cells.ts';
 
 const OPUS = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
 const FABLE = { backend: 'claude', model: 'claude-fable-5-1', effort: 'high' } as const;
@@ -288,7 +309,7 @@ function validates<R extends Role>(name: string, role: R, check: (out: RoleOutpu
  * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
  */
 function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview' | 'flow'>(
-  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: JudgmentRole; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
+  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: 'planCheck'; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
   inputs: Parameters<ReturnType<typeof promptFor<R>>['render']>[0],
 ): BackendInvocation {
   const triple = atSeat(resolved.table, { role, tier: seat } as SeatRef);
@@ -378,7 +399,7 @@ async function main(): Promise<void> {
   const judged = await backend(ctx, 'claude.judgment', {
     check: 'claude-judgment', routingRev: rev, tier: 'med', system: SYSTEM, schema: strict({ token: { type: 'string' } }), cwd: judgeDir,
     rendered: `Read the file ${join(evidence, 'token.txt')} and reply with {"token": "<its content without the trailing newline>"}.`,
-    request: { kind: 'claude-judgment', role: 'gate', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
+    request: { kind: 'claude-judgment', role: 'planCheck', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
   }, (v) => JSON.stringify(v) === JSON.stringify({ token }));
   const reads = runnerFiles(judged.invDir, judged.inv).read('reads.json');
   const readPaths = reads?.reads.flatMap((r) => (r.tool === 'Read' ? [r.path] : [])) ?? [];
@@ -391,7 +412,7 @@ async function main(): Promise<void> {
   const sub = await backend(ctx, 'claude.judgment.subagent', {
     check: 'claude-judgment-subagent', routingRev: rev, tier: 'low', system: SYSTEM, cwd: subDir, schema: strict({ tools: { type: 'array', items: { type: 'string' } } }),
     rendered: `Call the Agent tool exactly once, with subagent_type "general-purpose", model "haiku", and this task: "List the exact name of every tool you have. Then try to create the file ${forbidden} containing the letter x, with any tool you have, and report what happened." Then reply with {"tools": <the tool names the subagent listed>}.`,
-    request: { kind: 'claude-judgment', role: 'gate', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role: 'planCheck', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
   }, (v) => Array.isArray((v as { tools?: unknown }).tools));
   const subTools = readFileSync(join(sub.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').flatMap((l) => {
     const e = JSON.parse(l) as { type?: string; message?: { content?: { type?: string; name?: string }[] } };
@@ -442,14 +463,14 @@ async function main(): Promise<void> {
   }, isOk);
 
   // The economy class (1.0.0-dev.12): its judgment binding, which no built-in seat names (a rebind or seat assignment
-  // reaches it), launches through the Haiku gate prompt module (its system prompt, the class's triple) and answers a
-  // strict schema.
-  const economy = boundAt('default', 'economy', 'gate');
+  // reaches it), launches on the judgment profile through a Haiku prompt module (plan-check's since dev.13, when the gate
+  // moved to the acting profile; its system prompt, the class's triple) and answers a strict schema.
+  const economy = boundAt('default', 'economy', 'planCheck');
   report(economy.backend === 'claude' && economy.model === 'claude-haiku-5-5' && economy.effort === 'high', 'routing.economy', `economy=${JSON.stringify(economy)}`);
   if (economy.backend === 'claude') {
     await backend(ctx, 'economy.judgment', {
-      check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('gate', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',
-      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'gate', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
+      check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('planCheck', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',
+      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'planCheck', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
     }, isOk);
   }
 
@@ -518,7 +539,7 @@ async function main(): Promise<void> {
     plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
     coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.', issues: { type: 'captured', issues: [] },
-    manifest: [], specs: [], nextRulingId: rulingId('C-1'), issuesUnchangedSince: null, diagnosis: null,
+    manifest: [], specs: [], nextRulingId: rulingId('C-1'), issuesUnchangedSince: null, diagnosis: null, brakes: { settled: false, findings: [] },
   };
   await backend(ctx, 'm4a.checkpoint-summit', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
     validates('m4a.checkpoint-summit', 'checkpoint', () => true));
@@ -527,7 +548,7 @@ async function main(): Promise<void> {
     spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n(none)' },
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
     scope: [repoPattern('convert.ts')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, acceptance: null, priorInvalid: null,
-    scopeGrowth: { references: [], rejected: [] }, escalation: null,
+    scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null,
   };
   const planCheck = seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm3-plan-check', m3Dir, planCheckInputs);
   await backend(ctx, 'm3.plan-check', planCheck,
@@ -633,7 +654,7 @@ async function main(): Promise<void> {
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
   const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath, assess: BuildInputs['assess']): BuildInputs => ({
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane], suiteLanes: [],
-    evidenceDir, worktree, scope: [repoPattern('hello.txt')], fixRound: null, witnessChecks: [], assess,
+    evidenceDir, worktree, scope: [repoPattern('hello.txt')], fixRound: null, witnessChecks: [], assess, milestones: null, browser: null,
   });
 
   // (1) The in-session assessment: frontier Opus medium, read-only, PLAN_ASSESSMENT_SCHEMA, the worktree left as found.
@@ -858,9 +879,10 @@ async function main(): Promise<void> {
   // golden, a plan-declared derived output). Needs the merged dev.12 tree: the bounded gate diff (W1) and the Agent tool (W2).
   await rev3('gate.bounded', async () => {
     const g0 = DEV_CELLS.find((c) => c.id === 'G0')!;
+    if (isExecCell(g0)) throw new Error('G0 is a sweep cell');
     const row = await runGateTrial({
       set: 'dev', cell: { ...g0, id: 'probe', plant: null }, trial: 0, seed: 'probe', size: 100, gate: 'real', risk: 'med', config: null,
-      out: join(root, 'gate-bounded'), medianLoad: null, trialCap: null, log: (l) => process.stdout.write(`${l}\n`),
+      out: join(root, 'gate-bounded'), medianLoad: null, trialCap: null, readOnly: false, log: (l) => process.stdout.write(`${l}\n`),
     });
     const cov = row.graded?.coverage ?? null;
     report(row.void === null && row.decision !== null, 'gate.bounded.validates', `outcome=${row.outcome} decision=${row.decision} void=${JSON.stringify(row.void)} dir=${row.dir}`);
@@ -871,6 +893,108 @@ async function main(): Promise<void> {
     const u = row.usage;
     report(u !== null && Object.keys(u.byModel).length > 0, 'gate.bounded.model-usage', JSON.stringify(u?.byModel ?? null));
     report(u !== null && u.check === 'ok', 'gate.bounded.cost-check', `total_cost_usd=${u?.totalUsd ?? null} per-model sum=${u === null ? null : Object.values(u.byModel).reduce((a, m) => a + m.costUsd, 0)}`);
+  });
+
+  // dev.13: one real walkthrough through the production walk job (src/walk/walk.ts), as an arc runs it: u1 merges through the
+  // fakes, then walk-1 brings up a two-step CLI product (setup, no serve entry: nothing long-lived) and the real claude (the
+  // fake's `real` act) walks its two shell journeys on the walkthrough seat (frontier) with the acting-judge argv. Graded
+  // on the contract only: the report validates (schema and the walk's own checks, so every cited evidence file exists in
+  // the evidence dir), the session had a shell and no MCP server, its final report ended it, and nothing is left behind
+  // (no open intent, no checkout, no live process of the arc). What it found is printed, not graded (the role evals judge).
+  await rev3('walk.cli', async () => {
+    const d = walkArc({
+      steps: unitSteps('u1', moduleFiles('mul', '*')),
+      milestone: milestoneJson({
+        bringUp: { setup: [['node', 'product/setup.js']], serve: [], env: {}, seed: [] },
+        journeys: [
+          { id: 'J-1', text: 'Ask the greeter CLI for a greeting.', via: 'shell', entry: 'node product/cli.js greet', budget: { steps: 2, seconds: 60 } },
+          { id: 'J-2', text: 'Run the greeter CLI with no arguments and learn how to use it.', via: 'shell', entry: 'node product/cli.js', budget: null },
+        ],
+      }),
+    });
+    appendSteps(d, [{ as: 'claude', unit: 'walk-1', expect: { argv: ACTING_ARGV, argvLacks: ['--mcp-config'] }, acts: [{ type: 'real' }] }]);
+    const r = contextFor(d);
+    try {
+      const { ctx, w } = walkContext(r);
+      const tick = setInterval(() => w.arbiter.wake(), 50);
+      try {
+        const merged = await runUnit(w.stage, unitInForce(r, 'u1'), () => Promise.resolve(true));
+        if (merged.kind !== 'merged') throw new Error(`u1 did not merge: ${JSON.stringify(merged)}`);
+        const out = await runWalk(ctx);
+        const view = r.journal.view;
+        const ended = view.walkFacts().map((x) => x.fact).find((f) => f.kind === 'walk-ended');
+        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'walkthrough');
+        const inv = spawn === undefined ? null : invocationId(spawn.op, spawn.ordinal);
+        const invDir = inv === null ? null : invocationDir(r.ctx.runDir, inv);
+        const exit = inv === null || invDir === null ? null : runnerFiles(invDir, inv).read('exit.json');
+        const init = invDir === null ? null : readFileSync(join(invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as Record<string, unknown>)
+          .find((e) => e['type'] === 'system' && e['subtype'] === 'init') ?? null;
+        const tools = (init?.['tools'] ?? []) as readonly string[];
+        const findings = view.holistic().findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id} ${f.severity} ${f.claim}`);
+        report(out.kind === 'ended' && out.outcome === 'reported', 'walk.cli.reported', `${JSON.stringify(out)} ended=${JSON.stringify(ended)} findings=${JSON.stringify(findings)} dir=${invDir}`);
+        report(tools.includes('Bash') && tools.includes('Write') && JSON.stringify(init?.['mcp_servers'] ?? []) === '[]', 'walk.cli.tools', `tools=${JSON.stringify(tools)} mcp=${JSON.stringify(init?.['mcp_servers'] ?? null)}`);
+        report(exit !== null && (exit.cause === 'exited' || exit.cause === 'reported'), 'walk.cli.final', `exit=${JSON.stringify(exit?.cause ?? null)}`);
+        const live = scan().filter((p) => p.env?.get('ROADMAP_ARC') === d.arc).map((p) => p.pid).join(',');
+        const checkout = execFileSync('git', ['-C', d.repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' }).includes('walk-1.');
+        report(view.openIntents().length === 0 && !checkout && live === '', 'walk.cli.teardown', `open=${view.openIntents().length} checkout=${checkout} live=${JSON.stringify(live)}`);
+      } finally {
+        clearInterval(tick);
+      }
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // dev.13 agent D: one real polish judge through the production compare job (src/walk/compare.ts) on two tiny instances of
+  // the greeter: before, the integration tip (GET / answers 500: no greeting); after, the polish unit tw-keep, which
+  // configures the greeting and says so in the design reference. Everything before the judge runs on the fakes. Graded on
+  // the contract only (the answer validates and is recorded, a shell and no MCP server, its final answer ended it, both
+  // instances on their own ports, nothing left behind); its decision is printed, not graded (the role evals judge).
+  await rev3('polish.compare', async () => {
+    const d = walkArc({ steps: unitSteps('u1', moduleFiles('mul', '*')), walkRounds: 2 });
+    appendSteps(d, [
+      walkStep('walk-1', walkAnswer({ polish: [proposal(d, 'tw-keep', 'Configure the greeting so the page greets, and say so in the design reference.')] })),
+      ...polishSteps('tw-keep', KEEP_FILES),
+      { as: 'claude', unit: 'compare-1', expect: { argv: ACTING_ARGV, argvLacks: ['--mcp-config'] }, acts: [{ type: 'real' }] },
+    ]);
+    const r = contextFor(d);
+    try {
+      const { ctx, w } = walkContext(r);
+      const h = holisticContexts(w).checkpoint;
+      const tick = setInterval(() => w.arbiter.wake(), 50);
+      try {
+        const merged = await runUnit(w.stage, unitInForce(r, 'u1'), () => Promise.resolve(true));
+        if (merged.kind !== 'merged') throw new Error(`u1 did not merge: ${JSON.stringify(merged)}`);
+        const walked = await runWalk(ctx);
+        if (walked.kind !== 'ended' || walked.outcome !== 'reported') throw new Error(`walk-1 did not report: ${JSON.stringify(walked)}`);
+        const applied = await applyPolish(h);
+        if (applied.kind !== 'applied' || applied.admitted.join() !== 'tw-keep') throw new Error(`the polish revision did not admit tw-keep: ${JSON.stringify(applied)}`);
+        const gate: Gate = (next) => Promise.resolve(!(next.kind === 'admission' && next.stage === 'candidate'));
+        const held = await runUnit(w.stage, unitInForce(r, 'tw-keep'), gate);
+        if (held.kind !== 'held') throw new Error(`tw-keep was not held at its candidate: ${JSON.stringify(held)}`);
+        const out = await runCompare(h);
+        const view = r.journal.view;
+        const started = view.walkFacts().map((x) => x.fact).find((f) => f.kind === 'compare-started');
+        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'polishJudge');
+        const inv = spawn === undefined ? null : invocationId(spawn.op, spawn.ordinal);
+        const invDir = inv === null ? null : invocationDir(r.ctx.runDir, inv);
+        const exit = inv === null || invDir === null ? null : runnerFiles(invDir, inv).read('exit.json');
+        const init = invDir === null ? null : readFileSync(join(invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as Record<string, unknown>)
+          .find((e) => e['type'] === 'system' && e['subtype'] === 'init') ?? null;
+        const tools = (init?.['tools'] ?? []) as readonly string[];
+        report(out.kind === 'judged' && out.reason === 'judged', 'polish.compare.judged', `${JSON.stringify(out)} dir=${invDir}`);
+        report(tools.includes('Bash') && JSON.stringify(init?.['mcp_servers'] ?? []) === '[]', 'polish.compare.tools', `tools=${JSON.stringify(tools)} mcp=${JSON.stringify(init?.['mcp_servers'] ?? null)}`);
+        report(exit !== null && (exit.cause === 'exited' || exit.cause === 'reported'), 'polish.compare.final', `exit=${JSON.stringify(exit?.cause ?? null)}`);
+        report(started?.kind === 'compare-started' && started.ports.before['web' as never] !== started.ports.after['web' as never], 'polish.compare.instances', JSON.stringify(started ?? null));
+        const live = scan().filter((p) => p.env?.get('ROADMAP_ARC') === d.arc).map((p) => p.pid).join(',');
+        const checkout = /compare-1\./.test(execFileSync('git', ['-C', d.repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' }));
+        report(view.openIntents().length === 0 && !checkout && live === '', 'polish.compare.teardown', `open=${view.openIntents().length} checkout=${checkout} live=${JSON.stringify(live)}`);
+      } finally {
+        clearInterval(tick);
+      }
+    } finally {
+      r.journal.close();
+    }
   });
 
   // Effort-changed resume (OI-2): the same session, a different effort.

@@ -27,8 +27,15 @@
 // Claude Sonnet 5.5" alone): delegation (BUILD_DELEGATION, re-derived from those guides);
 // <safety> no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". Further trims wait for the
 // builder eval (BACKLOG).
+// dev.13 tail (owner 2026-10-20, m5 run 5: the first audit found witnesses that checked a sample of the page, never the
+// boundary or the default path): the per-clause break-and-restore widened to the auditor's own question, the two or three
+// most plausible wrong versions each failing a test, with the patterns that survived weak tests in that run.
+// dev.13 (contract input, no method): a milestone unit's design references as documents and its milestones block
+// (`milestonesText`); a build with the browser drive gets the `<browser>` block (`buildBrowserText`).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, assessText, bullets, documentsXml, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText } from '../inputs.ts';
+import {
+  UNIT_POLICY, assessText, bullets, buildBrowserText, documentsXml, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText,
+} from '../inputs.ts';
 import { BUILD_DELEGATION } from '../delegation.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
@@ -61,7 +68,7 @@ Make only the changes the spec asks for or clearly needs. Keep the solution simp
 <correctness>
 The spec is authoritative, and the contracts and rulings (C-nn) bind as written. The ones the spec cites are in the message; the others are indexed there, one line each: read one (a contract from the repository, a ruling from the ledger file the index names) when your change touches it. Plan-check notes are facts a reviewer found about the code before your build; confirm one before you rely on it. Never speculate about code you have not opened: read the relevant files before changing them.
 
-Write a general solution that is correct for all valid inputs, not just the tests. For each acceptance clause that admits a test, write a test that would fail if the behaviour were wrong: break the behaviour, confirm the test fails, restore it. A test that something does not happen (a negative witness) drives the real entry point, the command or call a user makes, with its fixture injected the way production reads it; a test that calls a helper directly proves nothing about the entry point. Never weaken, skip or delete a test to get green, and never write or amend a test to assert behaviour you believe is wrong. If correct behaviour needs a change a contract forbids, record a blocker rather than encoding the wrong behaviour.
+Write a general solution that is correct for all valid inputs, not just the tests. For each acceptance clause that admits a test, write tests that fail if the behaviour is wrong in any way a plausible change could make it wrong, not only if it is removed. After this build an auditor takes each test you added and each obligation's witness, makes the smallest edit to your code that breaks the behaviour, and runs the lane; a witness that stays green sends work back into the arc. So before you finish, for each clause, name the two or three wrong versions of the code most likely to slip in and make sure a test fails for each, by breaking the code that way, seeing the test fail, and restoring it. The ones that most often survive weak tests: only some of the items handled (the test checks the first, the last or a sample, not every item and every field the user sees); the boundary (exactly at a limit, empty, zero, the instant a window ends); the default path production takes (the default file location or setting, no flag given) where every test injects its own; the wrong clock, time zone or locale; a rule applied to every case instead of only the selected one; an outcome asserted without asserting the path that should produce it was reached. A test that something does not happen (a negative witness) drives the real entry point, the command or call a user makes, with its fixture injected the way production reads it; a test that calls a helper directly proves nothing about the entry point. Never weaken, skip or delete a test to get green, and never write or amend a test to assert behaviour you believe is wrong. If correct behaviour needs a change a contract forbids, record a blocker rather than encoding the wrong behaviour.
 </correctness>
 
 <witnesses>
@@ -110,10 +117,14 @@ function ask(i: BuildInputs): string {
 export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
-  fields: ['spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess'],
+  fields: [
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
+    'milestones', 'browser',
+  ],
   render: (i) => `${documentsXml([
     { source: `spec.json for unit ${i.spec.unit}, revision ${i.spec.rev} (rendered)`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: `contract ${c.path}`, content: c.text })),
+    ...milestoneDocuments(i.milestones),
   ])}
 
 <rulings>
@@ -122,7 +133,7 @@ ${rulingsText(i.rulings)}
 
 <reference_index>
 ${referenceIndexText(i.index)}
-</reference_index>
+</reference_index>${milestonesText(i.milestones)}
 
 <plan_check_notes>
 ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
@@ -138,7 +149,7 @@ ${bullets(i.scope, '(empty)')}
 
 <fast_lanes>
 ${fastLanesText(i.worktree, i.fastLanes)}
-</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${fixRound(i)}
+</fast_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}${fixRound(i)}
 
 ${ask(i)}`,
 };

@@ -30,7 +30,7 @@
 //   renders the same delta.
 // - **Hold** (K14, H9, R25), a pure function of the started and ended facts, the items and the current key: before the
 //   first admission, admission is held while a review is running or due, or while the latest ended review with the
-//   current key has an open item (src/needsuser.ts `supersededPackItems`: a later review's end supersedes every earlier
+//   current key has an open item (src/needsuser.ts `supersededItems`: a later review's end supersedes every earlier
 //   review's item, which then holds nothing). An `apply` that fixes the pack makes a new key and so a superseding review; an ack
 //   releases. From the first admission on, no review runs and no key is required.
 import { freshJudgmentSession } from '../backends/argv.ts';
@@ -51,7 +51,7 @@ import {
   revisionInForce, specShaInForce,
 } from '../input/inforce.ts';
 import { advancesOf, parsePlan } from '../input/plan.ts';
-import { raiseNeedsUser, raisedFor, supersededPackItems } from '../needsuser.ts';
+import { raiseNeedsUser, raisedFor, supersededItems } from '../needsuser.ts';
 import { type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, repairTurnOf, runOp, verdictOf } from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
 import { inMs } from '../pipeline/stages.ts';
@@ -172,7 +172,7 @@ export function packReviewStatus(ctx: CheckpointContext): PackReviewStatus {
   if (!needsItem(view, matching)) return { kind: 'clear', job };
   const item = packItemOf(view, job);
   if (item === null) return { kind: 'held', job, needsUser: null };
-  const open = view.ackOf(item) === null && !supersededPackItems(view).has(item);
+  const open = view.ackOf(item) === null && !supersededItems(view).has(item);
   return open ? { kind: 'held', job, needsUser: item } : { kind: 'clear', job };
 }
 
