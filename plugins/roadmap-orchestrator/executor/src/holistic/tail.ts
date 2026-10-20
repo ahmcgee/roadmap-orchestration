@@ -20,10 +20,17 @@
 // - **The settled brake.** Once every milestone of the plan in force has passed (`milestone-passed`) and every unit
 //   that is not finding-origin is merged or cut (a plan without milestones: the second alone), a finding below P1
 //   spawns no unit unless it bears on an active non-negotiable vision clause.
-//   Neither brake touches a P1 or a finding that an obligation is broken (correctness never banks and is never released).
+//   Neither brake touches a P1, a finding that an obligation is broken (correctness never banks and is never released),
+//   or a walkthrough finding (lens `walkthrough`: a milestone walk's verdict on the user's experience, bounded by the
+//   walk rounds and the walk and compare attempts; m5 run 6's last walk passed its milestone, which settled the arc, and
+//   its five P2 deviations were all released). The P3 rule still binds every lens (a walk opens no P3).
 //   A vacuity finding on an obligation's witness is about the test's strength, not the obligation's truth: it is braked
 //   like any other, and a deferred one banks (an obligation whose witness cannot fail is substantive debt). Run 5's 13
 //   vacuity P2s all carried an obligation, so an exemption for them would have left the tail's proof units unbraked.
+// - **Repaired.** A finding named in the repairs of a unit the decision admits or re-enters follows the repairs route
+//   (owned by the unit, resolved when it publishes): the decision's disposition of it is not written, whatever it is.
+//   m5 run 6's ckpt-4 admitted a unit repairing F-18 and also accepted F-18, which ended it `ruled/accepted` before the
+//   unit published, so the record never showed whether the repair landed.
 // - **Below a brake.** An admit whose every repair is a finding below a brake is converted when the bundle is judged
 //   (`regress-brake` / `settled-brake`, recorded in the decision record like a corpus conversion, src/holistic/bundle.ts);
 //   one that mixes such a finding with other repairs makes the bundle invalid (the checkpoint's repair turn names it). When
@@ -98,9 +105,12 @@ export function introducedByFindingOrigin(w: TailWorld, f: Pick<FindingState, 'l
   return merged.length > 0 && merged.every((m) => origin(m.unit));
 }
 
-/** The brake finding `f` is below, or null: never a P1, nor a finding that an obligation is broken (a vacuity finding is about its witness). */
+/**
+ * The brake finding `f` is below, or null: never a P1, a finding that an obligation is broken (a vacuity finding is
+ * about its witness), or a walkthrough finding.
+ */
 export function brakeOf(w: TailWorld, f: Pick<FindingState, 'severity' | 'obligation' | 'visionClauses' | 'lens' | 'source' | 'evidence'>): Brake | null {
-  if (f.severity === 'P1' || (f.obligation !== null && f.lens !== 'vacuity')) return null;
+  if (f.severity === 'P1' || f.lens === 'walkthrough' || (f.obligation !== null && f.lens !== 'vacuity')) return null;
   if (introducedByFindingOrigin(w, f)) return 'regress';
   if (w.settled && !f.visionClauses.some((c) => w.floors.has(c))) return 'settled';
   return null;
@@ -137,9 +147,10 @@ export function brakeConversions(admits: readonly IndexedAdmit[], brakeOfId: (id
 export type TailRuling = Readonly<{ finding: FindingId; disposition: FindingDisposition; by: FindingRuledBy }>;
 
 /**
- * The rulings checkpoint `job`'s applied (or no-op) decision writes, in order: each disposition of an active finding
- * as the tail rules bind it, then a code release of each other active, open finding it was shown (`captured`) that
- * nothing fixes and that is a P3 or below a brake. `repaired`: the findings its effective admits repair; `brakeOfId`
+ * The rulings checkpoint `job`'s applied (or no-op) decision writes, in order: each disposition of an active finding it
+ * does not repair, as the tail rules bind it, then a code release of each other active, open finding it was shown
+ * (`captured`) that nothing fixes and that is a P3 or below a brake. `repaired`: the findings named in the repairs of
+ * the units its effective ops admit or re-enter (each follows the repairs route, its disposition unwritten); `brakeOfId`
  * as for `brakeConversions` (the caller adds the job's brake conversions). Pure.
  */
 export function tailRulings(input: Readonly<{
@@ -160,7 +171,7 @@ export function tailRulings(input: Readonly<{
   for (const d of input.dispositions) {
     disposed.add(d.finding);
     const f = byId.get(d.finding);
-    if (f === undefined || !isActive(f)) continue;
+    if (f === undefined || !isActive(f) || input.repaired.has(f.id)) continue;
     const reason = releasable(f);
     const checkpoint = { finding: f.id, disposition: d.disposition, by: { type: 'checkpoint' as const, job: input.job } };
     if (reason === null || d.disposition === 'dismissed' || d.disposition === 'released') out.push(checkpoint);

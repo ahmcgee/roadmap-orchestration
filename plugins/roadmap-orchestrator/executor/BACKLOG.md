@@ -319,6 +319,14 @@ at triage stay in git history.
   and banks when deferred); trigger: a tail of obligation-broken P2s. (4) The settled
   point counts polish and checkpoint (`origin: checkpoint` without a finding repair) units as planned work, so a polish
   round keeps the arc unsettled; trigger: a walk round's polish units holding the brake off while the audit tail grows.
+  (5) Walkthrough findings are under no brake (m5 run 6: the last walk settled the arc and the settled brake released its
+  five P2 deviations); they are bounded by the walk rounds and the walk and compare attempts only; trigger: a walk round
+  that keeps opening P2s after its milestone passed.
+- **A disposition contradicting a repair** (dev.13, m5 run 6 F-18). A finding named in the repairs of a unit the decision
+  admits or re-enters is never ruled by it: its disposition, whatever it is, is not written (src/holistic/tail.ts
+  `tailRulings`). An `accepted` beside the repair is the expected case; a `dismissed`, `deferred` or `released` beside
+  one contradicts the admit and is overridden without a reason. Trigger: a decision record showing one: make it a bundle
+  reason (the repair turn) instead.
 
 - **Regenerate checks: deferred parts** (1.0.0-dev.12, src/input/derived.ts). (a) The build prompt does not name a touched
   entry's `regenerate` command; a builder learns it from the spec, or from its first red check's evidence (which says what

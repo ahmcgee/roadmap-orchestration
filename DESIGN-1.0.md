@@ -723,13 +723,17 @@ later work, never a dumping ground for test nitpicks; a nitpick not fixed at onc
 deferred | accepted | released`; `released` is terminal, never debt, and its key never opens again (whatever its
 evidence). A P3 is never debt: when a checkpoint's decision is applied (or decided no-op), each P3 it was shown that
 nothing fixes (no effective admit repairs it, no unit owns it) is released by code (`release{job, p3}`), deferred,
-accepted or left out alike. Two brakes stop the tail: the **regress brake** (a lens finding about code that
+accepted or left out alike. A finding named in the repairs of a unit the decision admits or re-enters follows the
+repairs route (owned, resolved when that unit publishes) and its disposition is not written, so the record shows
+whether the repair landed. Two brakes stop the tail: the **regress brake** (a lens finding about code that
 finding-origin units introduced: origin `repair` or a spec repairing a finding, by lineage root; introduced when the
 finding's R46 attribution is non-empty and wholly finding-origin, or, with no attribution, when its lens's covered
 range holds merges and only finding-origin ones) and the **settled brake** (every milestone `milestone-passed` and
-every other unit merged or cut; any finding below P1 bearing on no active non-negotiable clause). Neither touches a P1
-or a finding that an obligation is broken (a vacuity finding on an obligation's witness is braked, and banks when
-deferred). A finding below a brake spawns no unit: an admit whose every repair is one converts
+every other unit merged or cut; any finding below P1 bearing on no active non-negotiable clause). Neither touches a P1,
+a finding that an obligation is broken (a vacuity finding on an obligation's witness is braked, and banks when
+deferred), or a walkthrough finding: a walk's verdict on the milestone's user experience, already bounded by the walk
+rounds and the walk and compare attempts (m5 run 6's last walk settled the arc by passing its milestone, and the brake
+released its five P2 deviations). A finding below a brake spawns no unit: an admit whose every repair is one converts
 when the bundle is judged (`regress-brake | settled-brake`, in the decision record, any arc, never an amendment), and an
 admit mixing one with other repairs makes the bundle invalid; when applied, such a P2 ruled `deferred` banks (the
 checkpoint's call that it is substantive), and otherwise, while nothing fixes it, is released (`release{job, regress |

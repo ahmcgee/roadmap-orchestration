@@ -4366,13 +4366,15 @@ at once is released; brakes on the tail are code. The record rows are in "Record
   released finding whatever its evidence (a dismissal still lifts on a changed blob). A checkpoint may dispose
   `released` (never a P1: `rulingRefusal`); code releases with `release{job, reason}` or (a P3 at the close-out)
   `code{close-out}`. `accepted` (unchanged) is terminal too: "handled by the ops or already owned", never debt, and a
-  later report of its key opens a new finding.
+  later report of its key opens a new finding; it is never written for a finding the decision repairs (below).
 - **P3 is never debt**: `mintDebt` refuses a P3 (`DebtRefusedError`), and `bankDeferred` banks only a P2.
 - **Finding-origin unit**: a plan unit whose lineage root has origin `repair` or whose spec in force repairs a finding
   (`findingOriginRoots`). **Settled point** (`settledPoint`): every milestone of the plan in force has
   `milestone-passed`, and every unit whose root is not finding-origin is cut or its lineage head `retired` or `cut`
   (a plan without milestones: the second alone).
-- **Brake of a finding** (`brakeOf`; none for a P1 or a finding that an obligation is broken; a vacuity finding on an obligation's witness is braked, and banks when deferred): `regress` when finding-origin units
+- **Brake of a finding** (`brakeOf`; none for a P1, a finding that an obligation is broken, or a walkthrough finding
+  (lens `walkthrough`: a milestone walk's verdict, bounded by the walk rounds and the walk and compare attempts; m5 run
+  6); a vacuity finding on an obligation's witness is braked, and banks when deferred): `regress` when finding-origin units
   introduced it (`introducedByFindingOrigin`: an audit lens's finding whose R46 attribution, `findingAttribution`, is
   non-empty and wholly finding-origin; with no attribution, when its lens's covered range of its audit holds at least
   one merge and only finding-origin merges); else `settled` at the settled point unless it cites an active
@@ -4385,12 +4387,14 @@ at once is released; brakes on the tail are code. The record rows are in "Record
   (`source.conversions`, beside a corpus arc's classes and conversions, merged by index; or a no-op's); a brake's
   conversion makes no amendment (`settleConversions`, `conversionAmendment` refuses one).
 - **Settling a decision** (`settleFindings`, after an applied or no-op decision, before the corpus steps): `tailRulings`
-  over the findings, the captured ids, the dispositions and the findings the effective admits repair, a finding named
-  by one of the job's brake conversions staying below that brake. Each disposition of an active finding: `dismissed`
-  and `released` as given; a P3 `deferred` → `release{p3}`; a P3 `accepted` that nothing fixes (no effective admit
-  repairs it, its state is `open`) → `release{p3}`; a P2 below a brake `deferred` → `deferred` (it banks), `accepted`
+  over the findings, the captured ids, the dispositions and the findings repaired (named in the repairs of a unit the
+  effective ops admit, or re-enter: its reentered unit's spec in force), a finding named by one of the job's brake
+  conversions staying below that brake. A repaired finding's disposition is not written, whatever it is: the repairs
+  route rules it (owned, `fixed-on-branch`, `resolved` when its unit publishes; m5 run 6's ckpt-4 accepted F-18 beside
+  the admit repairing it, which ended it `ruled/accepted` before the unit published). Each other disposition of an active finding: `dismissed`
+  and `released` as given; a P3 `deferred` → `release{p3}`; a P3 `accepted` that nothing fixes (not repaired, its state is `open`) → `release{p3}`; a P2 below a brake `deferred` → `deferred` (it banks), `accepted`
   that nothing fixes → `release{brake}`; anything else as given. Then each captured finding without a disposition,
-  active, `open` and repaired by no effective admit: a P3 → `release{p3}`, a P2 below a brake → `release{brake}`. Each
+  active, `open` and not repaired: a P3 → `release{p3}`, a P2 below a brake → `release{brake}`. Each
   ruling is one `finding-transition`; a re-settlement writes only what a crash lost.
 - **The checkpoint is told** (`<brakes>`, `brakesText`): whether the arc is at the settled point, and each shown finding
   below a brake, read when its inputs render; its system text states the rules as facts. The lens is told a released

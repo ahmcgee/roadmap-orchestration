@@ -38,7 +38,7 @@ describe('tail.rulings: what a decision\'s dispositions become, and what code re
   const findings = [
     finding(1, { severity: 'P3' }), finding(2, { severity: 'P3' }), finding(3), finding(4), finding(5), finding(6, { severity: 'P3' }),
     finding(7), finding(8, { severity: 'P3', state: 'owned', owner: unitId('r1') }), finding(9), finding(10, { severity: 'P1', obligation: obligationId('I-1') }),
-    finding(11, { severity: 'P3' }), finding(12, { severity: 'P3', state: 'ruled', last: { state: 'ruled', disposition: 'dismissed', by: { type: 'checkpoint', job: jobId('ckpt', 1) } } }),
+    finding(11, { severity: 'P3' }), finding(13), finding(14), finding(12, { severity: 'P3', state: 'ruled', last: { state: 'ruled', disposition: 'dismissed', by: { type: 'checkpoint', job: jobId('ckpt', 1) } } }),
   ];
   const out = tailRulings({
     job: CKPT, findings, captured: findings.map((f) => f.id),
@@ -49,10 +49,12 @@ describe('tail.rulings: what a decision\'s dispositions become, and what code re
       { finding: F(4), disposition: 'accepted' }, // a P2 below a brake, accepted, nothing fixes it: released (settled)
       { finding: F(5), disposition: 'deferred' }, // a P2 under no brake: as given
       { finding: F(6), disposition: 'dismissed' }, // dismissed stays dismissed
-      { finding: F(11), disposition: 'accepted' }, // a P3 accepted that an admit repairs: accepted
+      { finding: F(11), disposition: 'accepted' }, // a P3 accepted that an admit repairs: unwritten (the repairs route)
+      { finding: F(13), disposition: 'accepted' }, // a P2 accepted that an admit repairs (m5 run 6, F-18): unwritten
+      { finding: F(14), disposition: 'deferred' }, // a P2 deferred that an admit repairs: unwritten
       { finding: F(12), disposition: 'released' }, // no longer active: nothing
     ],
-    repaired: new Set([F(11)]),
+    repaired: new Set([F(11), F(13), F(14)]),
     brakeOfId: (id) => brakes.get(id) ?? null,
   });
   const by = (n: number) => out.filter((r) => r.finding === F(n)).map((r) => [r.disposition, r.by.type === 'release' ? r.by.reason : r.by.type]);
@@ -60,7 +62,11 @@ describe('tail.rulings: what a decision\'s dispositions become, and what code re
   it('a P3 the decision does not fix is released whatever its disposition; one an admit repairs keeps it', () => {
     assert.deepEqual(by(1), [['released', 'p3']]);
     assert.deepEqual(by(2), [['released', 'p3']]);
-    assert.deepEqual(by(11), [['accepted', 'checkpoint']]);
+    assert.deepEqual(by(11), [], 'its repair owns it');
+  });
+  it('tail.repaired-unruled: a finding the decision repairs is never ruled, whatever its disposition: its unit owns it and resolves it on publication', () => {
+    assert.deepEqual(by(13), []);
+    assert.deepEqual(by(14), []);
   });
   it('a P2 below a brake: deferred banks (the checkpoint\'s call), accepted while nothing fixes it is released, undisposed is released', () => {
     assert.deepEqual(by(3), [['deferred', 'checkpoint']]);
@@ -76,7 +82,7 @@ describe('tail.rulings: what a decision\'s dispositions become, and what code re
     assert.deepEqual(by(12), []);
   });
   it('the dispositions come first, in order, then the releases of the shown findings, in order', () => {
-    assert.deepEqual(out.map((r) => r.finding), [F(1), F(2), F(3), F(4), F(5), F(6), F(11), F(7), F(9)]);
+    assert.deepEqual(out.map((r) => r.finding), [F(1), F(2), F(3), F(4), F(5), F(6), F(7), F(9)]);
   });
 });
 
@@ -134,7 +140,7 @@ describe('tail.regress', () => {
     assert.equal(introducedByFindingOrigin(empty, none), false, 'an empty range introduces nothing');
     assert.equal(introducedByFindingOrigin(world(), finding(1, { lens: 'walkthrough' })), false, 'only an audit lens\'s finding');
   });
-  it('tail.exempt: no brake for a P1 or a finding with an obligation; the settled brake spares a non-negotiable clause', () => {
+  it('tail.exempt: no brake for a P1, a finding that an obligation is broken or a walkthrough finding; the settled brake spares a non-negotiable clause', () => {
     assert.equal(brakeOf(world(), finding(1)), 'regress');
     assert.equal(brakeOf(world(), finding(1, { severity: 'P1' })), null);
     assert.equal(brakeOf(world(), finding(1, { obligation: obligationId('I-1'), lens: 'invariants' })), null, 'an obligation broken');
@@ -143,7 +149,10 @@ describe('tail.regress', () => {
     assert.equal(brakeOf(world(), planned), null);
     assert.equal(brakeOf(world({ settled: true }), planned), 'settled');
     assert.equal(brakeOf(world({ settled: true }), { ...planned, visionClauses: [visionClauseId('V-9')] }), null, 'a floor');
-    assert.equal(brakeOf(world({ settled: true }), { ...planned, lens: 'walkthrough', source: { type: 'job', job: jobId('walk', 1) } }), 'settled');
+    // m5 run 6: walk-2 passed MS-2, settling the arc; its five P2 deviations are the milestone's verdict, never braked.
+    const walked = { ...planned, lens: 'walkthrough' as const, source: { type: 'job' as const, job: jobId('walk', 2) } };
+    assert.equal(brakeOf(world({ settled: true }), walked), null, 'a walkthrough finding at the settled point');
+    assert.equal(brakeOf(world({ settled: true, findingOrigin: new Set([unitId('u1'), unitId('u2'), unitId('r1')]) }), walked), null, 'nor over finding-origin code');
   });
 });
 

@@ -981,6 +981,33 @@ describe('the convergence tail (dev.13, src/holistic/tail.ts)', () => {
       r.journal.close();
     }
   });
+  test('tail.repaired-accepted-arc: a P2 named in an admitted repair\'s repairs and disposed accepted in the same decision is not ruled; the repair owns it and resolves it when it publishes (m5 run 6, F-18)', T, async () => {
+    const p2 = { severity: 'P2' as const, obligation: null, claim: 'The mul command prints no unit.', cause: 'mul output: no unit' };
+    const d = checkpointArc([lensStep('audit-1', 'vision', [p2])]);
+    const r = contextFor(d);
+    const { ctx } = checkpointContext(r);
+    try {
+      const op = admitOp(d, 'r1') as Record<string, JsonValue>;
+      const repair = { ...op, unit: { ...(op['unit'] as Record<string, JsonValue>), origin: 'repair' }, spec: { ...(op['spec'] as Record<string, JsonValue>), repairs: ['F-1'] } };
+      appendSteps(d, [
+        checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [repair], findingDispositions: [{ finding: 'F-1', disposition: 'accepted', reason: 'r1 repairs it' }] })),
+        { ...planCheckStep({ decision: 'approve' }), unit: 'r1' }, { ...mulBuild(), unit: 'r1' }, { ...gateStep({ decision: 'approve' }), unit: 'r1' },
+      ]);
+      await completedAudit(r, ctx);
+      const out = await runCheckpoint(ctx);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'applied', JSON.stringify(out));
+      const finding = () => r.journal.view.holistic().findings.find((f) => f.id === 'F-1')!;
+      assert.deepEqual([finding().state, finding().last], ['open', null], 'the accepted disposition is not written');
+      const plan = () => requirePlanInForce(ctx.runDir, r.journal.view).plan;
+      const live = { ...ctx, plan, ...serialRuntime({ ...ctx, plan }) };
+      syncRepairs(live);
+      assert.deepEqual([finding().state, finding().owner], ['owned', 'r1']);
+      assert.deepEqual(await runUnit(live, live.plan().units.find((u) => u.id === 'r1')!, admitAll), { kind: 'merged' });
+      assert.equal(finding().state, 'resolved', 'its repair published');
+    } finally {
+      r.journal.close();
+    }
+  });
 });
 
 describe('park causes (paid m3 run 7)', () => {

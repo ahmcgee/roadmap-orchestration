@@ -68,7 +68,8 @@
 // Steps 0–9 judge, writing only a decision and its items. An exception while judging is an executor fault: decided as in 2
 // (`rejected{invalid}` naming the fault, a second time a request), so a restart never judges the recorded output again.
 //
-// After an applied or no-op decision: its finding dispositions as the tail rules bind them, and code's release of each
+// After an applied or no-op decision: its finding dispositions as the tail rules bind them (none written for a finding
+// named in the repairs of a unit it admits or re-enters: the repairs route rules it), and code's release of each
 // shown finding nothing fixes that is a P3 or below a brake (`settleFindings`, src/holistic/tail.ts); in a corpus arc the
 // debt its deferrals bank, its amendments and issue outcomes, and its conversions (each an amendment `source: admit`, a
 // follow-up overrun also a debt item naming its opportunity), read from the decision record, never classified again;
@@ -1084,7 +1085,7 @@ function brakeReader(ctx: CheckpointContext): (id: FindingId) => Brake | null {
   let world: TailWorld | null = null;
   return (id) => {
     const f = ctx.journal.view.holistic().findings.find((x) => x.id === id);
-    if (f === undefined || !isActive(f) || f.severity === 'P1' || f.obligation !== null) return null;
+    if (f === undefined || !isActive(f)) return null;
     world ??= tailWorldOf(ctx);
     return brakeOf(world, f);
   };
@@ -1360,13 +1361,18 @@ export function settleDecided(ctx: CheckpointContext, job: JobId, output: Checkp
 
 /**
  * The finding rulings of `job`'s decision (src/holistic/tail.ts `tailRulings`): its dispositions still applicable, bound
- * by the tail rules, then code's release of each finding it was shown that nothing fixes and that is a P3 or below a
+ * by the tail rules (none for a finding named in the repairs of a unit its effective ops admit or re-enter: the repairs
+ * route rules it, syncRepairs), then code's release of each finding it was shown that nothing fixes and that is a P3 or below a
  * brake. A finding named by one of the job's brake conversions stays below that brake. Each ruling is written once (a
  * ruled finding is no longer active), so a re-settlement writes only what a crash lost.
  */
 function settleFindings(ctx: CheckpointContext, job: JobId, output: CheckpointOutput, captured: Captured): void {
   const effective = indexed(effectiveOps(ctx.journal.view, job, output));
-  const repaired = new Set(indexedAdmits(effective, admitSpecOf(ctx)).flatMap((x) => x.repairs.filter((r) => r.startsWith('F-')) as FindingId[]));
+  const plan = requirePlanInForce(ctx.runDir, ctx.journal.view).plan;
+  /** A re-entry's spec is its reentered unit's (its repairs too). */
+  const reentered = effective.flatMap(({ op }) => (op.op === 'reenter' ? [specRepairs(loadUnitSpec(ctx, plan.units.find((u) => u.id === op.reenters)!).spec)] : []));
+  const repairs = [...indexedAdmits(effective, admitSpecOf(ctx)).map((x) => x.repairs), ...reentered].flat();
+  const repaired = new Set(repairs.filter((r) => r.startsWith('F-')) as FindingId[]);
   const converted = new Map<FindingId, Brake>();
   for (const c of conversionsOf(ctx.journal.view, job)) {
     const op = output.ops[c.index];
