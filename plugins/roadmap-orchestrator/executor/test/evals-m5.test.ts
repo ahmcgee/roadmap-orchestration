@@ -196,23 +196,30 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     assert.equal(walkScreenshotsVerdict(SHAPE, goodLog({ walks: [{ ...goodLog().walks[0]!, outcome: 'bring-up-failed' }] }), () => ['x']).pass, false);
   });
 
-  test('evals-m5.criterion.plant-caught: an overflow finding resolved by a published unit; repaired upstream, unmeasurable, no such finding, or unresolved fails', async () => {
+  test('evals-m5.criterion.plant-caught: a resolved overflow finding of any judge, or a plant gone before the first walk, passes; a plant live at the walk that no resolved finding names, or unmeasurable, fails', async () => {
     const wide = async (): Promise<Reflow> => measured(902);
     const ok = await plantCaughtVerdict(SHAPE, goodLog(), wide);
     assert.ok(ok.pass, ok.detail);
     assert.match(ok.detail, /F-1 .* resolved at seq 82 by repair-contrast's publication at seq 80/);
-    // Measured at the first MS-1 walk's SHA.
+    // A resolved finding needs no measurement; any lens counts (run 5: the vision audit caught it before any walk).
     const asked: string[] = [];
-    await plantCaughtVerdict(SHAPE, goodLog(), async (sha) => (asked.push(sha), measured(902)));
+    const [f] = goodLog().findings;
+    const byLens = await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, lens: 'vision' }] }), async (sha) => (asked.push(sha), measured(902)));
+    assert.ok(byLens.pass, byLens.detail);
+    assert.match(byLens.detail, /vision: /);
+    assert.equal(asked.length, 0);
+    // No resolved finding: measured at the first MS-1 walk's SHA.
+    const unnamed = goodLog({ findings: [{ ...f!, claim: 'J-1: the reserve button does nothing', cause: 'dead button' }] });
+    const upstream = await plantCaughtVerdict(SHAPE, unnamed, async (sha) => (asked.push(sha), measured(320)));
+    assert.ok(upstream.pass, upstream.detail);
+    assert.match(upstream.detail, /prevented upstream: \/ lays out 320 px wide at 320 px/);
     assert.deepEqual(asked, [SHA('3')]);
-    const upstream = await plantCaughtVerdict(SHAPE, goodLog(), async () => measured(320));
-    assert.equal(upstream.pass, false);
-    assert.match(upstream.detail, /repaired upstream: \/ lays out 320 px wide at 320 px .*adjudicate/);
-    const unknown = await plantCaughtVerdict(SHAPE, goodLog(), async () => ({ kind: 'unknown', detail: 'the server did not come up' }));
+    const missed = await plantCaughtVerdict(SHAPE, unnamed, wide);
+    assert.equal(missed.pass, false);
+    assert.match(missed.detail, /live at .* no resolved finding names it/);
+    const unknown = await plantCaughtVerdict(SHAPE, unnamed, async () => ({ kind: 'unknown', detail: 'the server did not come up' }));
     assert.equal(unknown.pass, false);
     assert.match(unknown.detail, /the server did not come up/);
-    const [f] = goodLog().findings;
-    assert.equal((await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, claim: 'J-1: the reserve button does nothing', cause: 'dead button' }] }), wide)).pass, false);
     const open = await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, transitions: f!.transitions.slice(0, 2) }] }), wide);
     assert.equal(open.pass, false);
     assert.match(open.detail, /F-1 .* is fixed-on-branch \(fixed on repair-contrast's branch, published\)/);

@@ -29,11 +29,11 @@
 //                      first dispatched before it (its units that descend from no upstream unit are not held)
 //   walk-screenshots   at least one walk of the browser milestone ended `reported`, and each such walk's evidence dir
 //                      (`<runDir>/evidence/jobs/<walk-n>/`) holds a PNG file (by its signature, anywhere below it)
-//   plant-caught       the plant (layout.ts PLANT) still overflowed at the first browser walk's SHA: `/` rendered at 320
-//                      CSS px in Chromium (reflow.ts) laid out wider than the viewport (else it was repaired upstream and
-//                      the walk had nothing to catch), and a walkthrough finding on the browser milestone whose claim or
-//                      cause speaks of the overflow (PLANT_WORDS) reached `resolved` from `fixed-on-branch` of a unit whose
-//                      publication came first
+//   plant-caught       the plant (layout.ts PLANT) never shipped through a miss: a finding of any judge whose claim or cause
+//                      speaks of the overflow (PLANT_WORDS) reached `resolved` from `fixed-on-branch` of a unit whose
+//                      publication came first, or the plant was gone at the first browser walk's SHA (`/` rendered at 320
+//                      CSS px in Chromium, reflow.ts, no wider than the viewport) with no finding naming it; it fails only
+//                      when the plant was live at that walk and no resolved finding names it
 //   repair-loop        the walk → repair → re-walk loop on any milestone: a walkthrough finding reached `resolved` from
 //                      `fixed-on-branch` of a unit whose publication came first, and a walk of its milestone started after
 //                      that wrote the milestone's `milestone-passed` (the plant's loop is the case plant-caught names)
@@ -134,23 +134,27 @@ export function walkScreenshotsVerdict(shape: PlanShape, log: M5Log, pngs: (job:
 /** The words a walkthrough finding on the plant uses (claim or cause): the sideways scroll, its cause, the 320 px floor. */
 export const PLANT_WORDS = /overflow|horizontal(ly)? scroll|scrolls? (sideways|horizontally)|sideways scroll|reflow|wider than|cut off|clipped|\burl\b|\blink\b.*\b(wrap|break)|unbroken|(wrap|break)s? .*\b(url|link|address)\b|\b320 ?(css )?px\b/i;
 
-/** `reflow(sha)`: the shelf's page rendered at PLANT.viewport px at a SHA (reflow.ts). */
+/**
+ * Whoever catches the plant, the flow succeeds when it never ships: a finding of any judge (a lens, a gate, a walk) that
+ * names the overflow resolved by a unit's publication passes, and so does a plant gone before the first walk with no
+ * finding naming it (prevented by a design or build unit). Only a plant still live at the first browser walk that no
+ * resolved finding names fails: the walk was the last line. `reflow(sha)`: the shelf's page at PLANT.viewport px at a SHA.
+ */
 export async function plantCaughtVerdict(shape: PlanShape, log: M5Log, reflow: (sha: string) => Promise<Reflow>): Promise<Verdict> {
   const { browser } = needShape(shape);
-  const first = log.walks.filter((w) => w.milestone === browser.id).sort((a, b) => a.seq - b.seq)[0];
-  if (first === undefined) return { pass: false, detail: `${browser.id} was never walked` };
-  const at = await reflow(first.sha);
-  if (at.kind === 'unknown') return { pass: false, detail: `the plant at ${first.job}'s SHA ${first.sha}: ${at.detail}` };
-  if (at.scrollWidth <= at.viewport) return { pass: false, detail: `the plant was repaired upstream: / lays out ${at.scrollWidth} px wide at ${at.viewport} px at ${first.job}'s SHA ${first.sha}, so the walk had nothing to catch: adjudicate` };
-  const candidates = log.findings.filter((f) => f.lens === 'walkthrough' && f.milestone === browser.id && PLANT_WORDS.test(`${f.claim} ${f.cause ?? ''}`));
-  if (candidates.length === 0) return { pass: false, detail: `no walkthrough finding on ${browser.id} speaks of the overflow (/ ${at.scrollWidth} px wide at ${at.viewport} px; ${log.findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id}: ${f.claim}`).join(' | ') || 'no walkthrough findings'})` };
+  const candidates = log.findings.filter((f) => PLANT_WORDS.test(`${f.claim} ${f.cause ?? ''}`));
   const problems: string[] = [];
   for (const f of candidates) {
     const r = repairOf(f, log);
-    if (r.kind === 'resolved') return { pass: true, detail: `${f.id} (${f.claim}) resolved at seq ${r.seq} by ${r.unit}'s publication at seq ${r.pub}` };
+    if (r.kind === 'resolved') return { pass: true, detail: `${f.id} (${f.lens}: ${f.claim}) resolved at seq ${r.seq} by ${r.unit}'s publication at seq ${r.pub}` };
     problems.push(r.detail);
   }
-  return { pass: false, detail: problems.join('; ') };
+  const first = log.walks.filter((w) => w.milestone === browser.id).sort((a, b) => a.seq - b.seq)[0];
+  if (first === undefined) return { pass: false, detail: `${browser.id} was never walked and no resolved finding names the overflow${problems.length > 0 ? ` (${problems.join('; ')})` : ''}` };
+  const at = await reflow(first.sha);
+  if (at.kind === 'unknown') return { pass: false, detail: `the plant at ${first.job}'s SHA ${first.sha}: ${at.detail}` };
+  if (at.scrollWidth <= at.viewport) return { pass: true, detail: `prevented upstream: / lays out ${at.scrollWidth} px wide at ${at.viewport} px at ${first.job}'s SHA ${first.sha}, with no finding naming it` };
+  return { pass: false, detail: `the plant was live at ${first.job} (/ ${at.scrollWidth} px wide at ${at.viewport} px) and no resolved finding names it${problems.length > 0 ? `: ${problems.join('; ')}` : ''} (walkthrough findings: ${log.findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id}: ${f.claim}`).join(' | ') || 'none'})` };
 }
 
 type Repair = Readonly<{ kind: 'resolved'; seq: number; unit: string; pub: number }> | Readonly<{ kind: 'not'; detail: string }>;
