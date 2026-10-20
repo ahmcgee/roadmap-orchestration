@@ -16,7 +16,8 @@ export type DebtBanked = Extract<Fact, { kind: 'debt-banked' }>;
 /** What a bank request names. */
 export type DebtCandidate =
   | Readonly<{ type: 'gate-note'; unit: UnitId; attempt: number; index: number; what: string }>
-  | Readonly<{ type: 'finding-deferred'; finding: FindingId; severity: 'P1' | 'P2' | 'P3'; obligation: ObligationId | null; unit: UnitId | null; what: string }>
+  /** `witness`: a vacuity finding, about the strength of an obligation's witness, not about the obligation's truth. */
+  | Readonly<{ type: 'finding-deferred'; finding: FindingId; severity: 'P1' | 'P2' | 'P3'; obligation: ObligationId | null; witness: boolean; unit: UnitId | null; what: string }>
   /** The converted admit `index` of checkpoint `job` (its unit `unit`, never planned): opportunity `opportunity`'s second follow-up. */
   | Readonly<{ type: 'opportunity-overrun'; opportunity: OpportunityId; job: JobId; index: number; unit: UnitId; what: string }>;
 
@@ -45,7 +46,7 @@ export function mintDebt(baseline: DebtLedger, banked: readonly DebtBanked[], c:
     ? { type: 'gate', unit: c.unit, attempt: c.attempt, index: c.index }
     : c.type === 'finding-deferred' ? { type: 'finding', finding: c.finding } : { type: 'admit', job: c.job, index: c.index };
   if (c.type === 'finding-deferred') {
-    if (c.obligation !== null) throw new DebtRefusedError(`${c.finding} affects ${c.obligation}: a finding with an obligation is never debt`);
+    if (c.obligation !== null && !c.witness) throw new DebtRefusedError(`${c.finding} affects ${c.obligation}: a finding with an obligation is never debt (a vacuous witness of one may be)`);
     if (c.severity !== 'P2') throw new DebtRefusedError(`${c.finding} is ${c.severity}: only P2 findings are banked (a P3 is never debt)`);
   }
   const what = normalizeText(c.what);

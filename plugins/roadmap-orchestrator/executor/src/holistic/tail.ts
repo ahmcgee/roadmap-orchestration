@@ -20,7 +20,10 @@
 // - **The settled brake.** Once every milestone of the plan in force has passed (`milestone-passed`) and every unit
 //   that is not finding-origin is merged or cut (a plan without milestones: the second alone), a finding below P1
 //   spawns no unit unless it bears on an active non-negotiable vision clause.
-//   Neither brake touches a P1 or a finding with an obligation (correctness never banks and is never released).
+//   Neither brake touches a P1 or a finding that an obligation is broken (correctness never banks and is never released).
+//   A vacuity finding on an obligation's witness is about the test's strength, not the obligation's truth: it is braked
+//   like any other, and a deferred one banks (an obligation whose witness cannot fail is substantive debt). Run 5's 13
+//   vacuity P2s all carried an obligation, so an exemption for them would have left the tail's proof units unbraked.
 // - **Below a brake.** An admit whose every repair is a finding below a brake is converted when the bundle is judged
 //   (`regress-brake` / `settled-brake`, recorded in the decision record like a corpus conversion, src/holistic/bundle.ts);
 //   one that mixes such a finding with other repairs makes the bundle invalid (the checkpoint's repair turn names it). When
@@ -95,9 +98,9 @@ export function introducedByFindingOrigin(w: TailWorld, f: Pick<FindingState, 'l
   return merged.length > 0 && merged.every((m) => origin(m.unit));
 }
 
-/** The brake finding `f` is below, or null: never a P1 or a finding with an obligation. */
+/** The brake finding `f` is below, or null: never a P1, nor a finding that an obligation is broken (a vacuity finding is about its witness). */
 export function brakeOf(w: TailWorld, f: Pick<FindingState, 'severity' | 'obligation' | 'visionClauses' | 'lens' | 'source' | 'evidence'>): Brake | null {
-  if (f.severity === 'P1' || f.obligation !== null) return null;
+  if (f.severity === 'P1' || (f.obligation !== null && f.lens !== 'vacuity')) return null;
   if (introducedByFindingOrigin(w, f)) return 'regress';
   if (w.settled && !f.visionClauses.some((c) => w.floors.has(c))) return 'settled';
   return null;

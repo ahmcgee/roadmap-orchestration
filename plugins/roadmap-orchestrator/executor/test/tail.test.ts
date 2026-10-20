@@ -137,7 +137,8 @@ describe('tail.regress', () => {
   it('tail.exempt: no brake for a P1 or a finding with an obligation; the settled brake spares a non-negotiable clause', () => {
     assert.equal(brakeOf(world(), finding(1)), 'regress');
     assert.equal(brakeOf(world(), finding(1, { severity: 'P1' })), null);
-    assert.equal(brakeOf(world(), finding(1, { obligation: obligationId('I-1') })), null);
+    assert.equal(brakeOf(world(), finding(1, { obligation: obligationId('I-1'), lens: 'invariants' })), null, 'an obligation broken');
+    assert.equal(brakeOf(world(), finding(1, { obligation: obligationId('I-1') })), 'regress', 'a vacuous witness of an obligation');
     const planned = finding(2, { evidence: [{ path: 'src/b.ts', blob: null }] });
     assert.equal(brakeOf(world(), planned), null);
     assert.equal(brakeOf(world({ settled: true }), planned), 'settled');

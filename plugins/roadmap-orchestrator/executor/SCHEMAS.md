@@ -4372,7 +4372,7 @@ at once is released; brakes on the tail are code. The record rows are in "Record
   (`findingOriginRoots`). **Settled point** (`settledPoint`): every milestone of the plan in force has
   `milestone-passed`, and every unit whose root is not finding-origin is cut or its lineage head `retired` or `cut`
   (a plan without milestones: the second alone).
-- **Brake of a finding** (`brakeOf`; none for a P1 or a finding with an obligation): `regress` when finding-origin units
+- **Brake of a finding** (`brakeOf`; none for a P1 or a finding that an obligation is broken; a vacuity finding on an obligation's witness is braked, and banks when deferred): `regress` when finding-origin units
   introduced it (`introducedByFindingOrigin`: an audit lens's finding whose R46 attribution, `findingAttribution`, is
   non-empty and wholly finding-origin; with no attribution, when its lens's covered range of its audit holds at least
   one merge and only finding-origin merges); else `settled` at the settled point unless it cites an active

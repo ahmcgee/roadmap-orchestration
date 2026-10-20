@@ -728,7 +728,8 @@ finding-origin units introduced: origin `repair` or a spec repairing a finding, 
 finding's R46 attribution is non-empty and wholly finding-origin, or, with no attribution, when its lens's covered
 range holds merges and only finding-origin ones) and the **settled brake** (every milestone `milestone-passed` and
 every other unit merged or cut; any finding below P1 bearing on no active non-negotiable clause). Neither touches a P1
-or a finding with an obligation. A finding below a brake spawns no unit: an admit whose every repair is one converts
+or a finding that an obligation is broken (a vacuity finding on an obligation's witness is braked, and banks when
+deferred). A finding below a brake spawns no unit: an admit whose every repair is one converts
 when the bundle is judged (`regress-brake | settled-brake`, in the decision record, any arc, never an amendment), and an
 admit mixing one with other repairs makes the bundle invalid; when applied, such a P2 ruled `deferred` banks (the
 checkpoint's call that it is substantive), and otherwise, while nothing fixes it, is released (`release{job, regress |

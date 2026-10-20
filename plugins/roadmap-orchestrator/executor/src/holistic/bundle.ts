@@ -1418,13 +1418,13 @@ function bankDeferred(ctx: CheckpointContext, job: JobId, output: CheckpointOutp
     const f = fold.findings.find((x) => x.id === d.finding);
     const by = f?.last?.state === 'ruled' ? f.last : null;
     const mine = d.disposition === 'deferred' && by?.disposition === 'deferred' && by.by.type === 'checkpoint' && by.by.job === job;
-    return f !== undefined && mine && f.obligation === null && f.severity === 'P2' ? [f] : [];
+    return f !== undefined && mine && (f.obligation === null || f.lens === 'vacuity') && f.severity === 'P2' ? [f] : [];
   });
   if (deferred.length === 0) return;
   const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);
   for (const f of deferred) {
     const fact = mintDebt(baseline, ctx.journal.view.holistic().debt, {
-      type: 'finding-deferred', finding: f.id, severity: f.severity, obligation: f.obligation, unit: f.owner, what: f.claim,
+      type: 'finding-deferred', finding: f.id, severity: f.severity, obligation: f.obligation, witness: f.lens === 'vacuity', unit: f.owner, what: f.claim,
     });
     if (fact !== null) ctx.journal.fact(fact);
   }
