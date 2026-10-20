@@ -14,11 +14,18 @@ export const CORPUS_ROOT = 'docs/corpus';
 export const VISION_DOC = 'vision.md';
 
 /**
- * The planted defect (answer-key.json `plant`): each book's condition-and-arrival line on the shelf's page, the entry of
- * the reservation journey, is faint (`--ink-faint` on `--paper`, about 2.1:1) in the stylesheet the browser milestone's
- * units build on. The check computes the selector's contrast over every stylesheet the final head tracks.
+ * The planted defect (answer-key.json `plant`): a data row, not a style. The first book on the shelf's page, the entry of
+ * the reservation journey, is free and its condition (in the giver's words, data/shelf.json) ends in a long URL with no
+ * break opportunity, and no seed rule wraps it, so at 320 CSS px the page scrolls sideways (WCAG 2.x 1.4.10 Reflow, V-10).
+ * Only rendering shows it. The check renders `/` in Chromium at `viewport` px (reflow.ts) and wants the book still listed.
  */
-export const PLANT = { stylesheet: 'public/style.css', selector: '.book-meta', floor: 4.5 } as const;
+export const PLANT = {
+  data: 'data/shelf.json',
+  book: 'b1',
+  title: 'The Left Hand of Darkness',
+  url: 'https://oakstreet.example/wiki/Bookplates_of_Autumn_2019:_Le_Guin_The_Left_Hand_of_Darkness_Gollancz_1969_First_UK_Edition_Signed_Copy',
+  viewport: 320,
+} as const;
 
 /** The vendored design skill: committed as a project skill so unit worktrees load it (plan §5). */
 export const DESIGN_SKILL = { dir: '.claude/skills/frontend-design', files: ['SKILL.md', 'LICENSE.txt', 'LICENSE'] } as const;

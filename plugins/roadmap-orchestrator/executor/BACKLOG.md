@@ -232,8 +232,9 @@ at triage stay in git history.
 - **The m5 paid run has not shown a walk-to-repair loop on a real arc.** Run 2 (/var/tmp/m5-dev13-2, 2026-10-19): the
   design unit repaired the planted 2.12:1 contrast before the first walk, the walks found one P2 the checkpoint ruled
   accepted, so no repair or polish unit ran (the loop is covered by the fake-backend integrated tests and the role evals
-  only). Wanted: a plant no design or build unit's scope touches (a dead link on an MS-1 journey in a file outside every
-  unit's scope) so only a walk can catch it. Trigger: the next m5 batch.
+  only). The plant is now a data row only rendering reveals (an unbreakable URL in the first book's condition, so the page
+  scrolls sideways at 320 px; check.ts grades it by rendering, reflow.ts). Open until a paid run shows the walk catch it
+  and a repair unit fix it. Trigger: the next m5 run.
 - **A direct `demo down` with no live arc.** Demo acts are queued commands; with no executor running they wait for the
   next start. Trigger: the owner wants the demo stopped between arcs.
 - **Write-deny rules cover paths existing at call start.** A directory created later beside the path to a writable

@@ -1,6 +1,6 @@
 {
   "books": [
-    { "id": "b1", "title": "The Left Hand of Darkness", "author": "Ursula K. Le Guin", "condition": "Good, a little sun-faded", "arrived": "2026-10-03", "reservedBy": null },
+    { "id": "b1", "title": "The Left Hand of Darkness", "author": "Ursula K. Le Guin", "condition": "Signed first UK edition, a little sun-faded. Details of the signing: https://oakstreet.example/wiki/Bookplates_of_Autumn_2019:_Le_Guin_The_Left_Hand_of_Darkness_Gollancz_1969_First_UK_Edition_Signed_Copy", "arrived": "2026-10-03", "reservedBy": null },
     { "id": "b2", "title": "A Month in the Country", "author": "J. L. Carr", "condition": "Like new", "arrived": "2026-10-05", "reservedBy": "Priya" },
     { "id": "b3", "title": "The Salt Path", "author": "Raynor Winn", "condition": "Worn spine, clean pages", "arrived": "2026-10-06", "reservedBy": null },
     { "id": "b4", "title": "Small Things Like These", "author": "Claire Keegan", "condition": "Good", "arrived": "2026-10-09", "reservedBy": null },

@@ -25,12 +25,13 @@
 //                      first dispatched before it (its units that descend from no browser-milestone unit are not held)
 //   walk-screenshots   at least one walk of the browser milestone ended `reported`, and each such walk's evidence dir
 //                      (`<runDir>/evidence/jobs/<walk-n>/`) holds a PNG file (by its signature, anywhere below it)
-//   plant-caught       the plant (layout.ts PLANT) still failed at the first browser walk's SHA (else it was repaired
-//                      upstream and the walk had nothing to catch), and a walkthrough finding on the browser milestone
-//                      whose claim or cause speaks of contrast or faint text reached `resolved` from `fixed-on-branch` of
-//                      a unit whose publication came first
-//   plant-repaired     at the arc's completed head, `.book-meta`'s text over its background computes at 4.5:1 or more
-//                      across the stylesheets under `public/` (css.ts); a selector gone from them fails, for the lead to
+//   plant-caught       the plant (layout.ts PLANT) still overflowed at the first browser walk's SHA: `/` rendered at 320
+//                      CSS px in Chromium (reflow.ts) laid out wider than the viewport (else it was repaired upstream and
+//                      the walk had nothing to catch), and a walkthrough finding on the browser milestone whose claim or
+//                      cause speaks of the overflow (PLANT_WORDS) reached `resolved` from `fixed-on-branch` of a unit whose
+//                      publication came first
+//   plant-repaired     at the arc's completed head, `/` rendered at 320 CSS px lays out no wider than the viewport, and the
+//                      planted book (its title and URL) is still in the page; a book gone fails, for the lead to
 //                      adjudicate by hand
 //   polish-bounded     no milestone was walked more rounds than the final plan's `walkRounds`; no round's walk failed more
 //                      than WALK_ATTEMPTS times nor a unit compared more than COMPARE_ATTEMPTS (the brakes); every polish unit
@@ -62,9 +63,9 @@ import { WALK_ATTEMPTS } from '../../src/walk/milestones.ts';
 import { DENIED, UNSTAGED } from '../m4a/driver.ts';
 import { hostReleasedVerdict, modelIdHits, profileVerdict } from '../m4a/check.ts';
 import { scanTranscript } from '../m4a/transcript.ts';
-import { type PairResult, selectorContrast } from './css.ts';
 import { type DemoFinal, type DemoSeen, type Report, arcsStarted, demoUrl, needles } from './driver.ts';
 import { DESIGN_SKILL, type Layout, PLANT, layout } from './layout.ts';
+import { type Reflow, reflowAt } from './reflow.ts';
 import { SEED_FILE } from './setup.ts';
 import { type PlanShape, planShape } from './shape.ts';
 
@@ -214,18 +215,19 @@ export function walkScreenshotsVerdict(shape: PlanShape, log: M5Log, pngs: (job:
   return verdict(counts.filter((c) => c.n === 0).map((c) => `${c.job}'s evidence holds no PNG`), counts.map((c) => `${c.job}: ${c.n} PNG`).join(', '));
 }
 
-/** The words a walkthrough finding on the plant uses (claim or cause). */
-export const PLANT_WORDS = /contrast|faint|low[- ]?visibility|hard to read|illegible|legib/i;
+/** The words a walkthrough finding on the plant uses (claim or cause): the sideways scroll, its cause, the 320 px floor. */
+export const PLANT_WORDS = /overflow|horizontal(ly)? scroll|scrolls? (sideways|horizontally)|sideways scroll|reflow|wider than|cut off|clipped|\burl\b|\blink\b.*\b(wrap|break)|unbroken|(wrap|break)s? .*\b(url|link|address)\b|\b320 ?(css )?px\b/i;
 
-/** `contrastAt(sha)`: the plant pair at a SHA (css.ts over the stylesheets under `public/`). */
-export function plantCaughtVerdict(shape: PlanShape, log: M5Log, contrastAt: (sha: string) => PairResult): Verdict {
+/** `reflow(sha)`: the shelf's page rendered at PLANT.viewport px at a SHA (reflow.ts). */
+export async function plantCaughtVerdict(shape: PlanShape, log: M5Log, reflow: (sha: string) => Promise<Reflow>): Promise<Verdict> {
   const { browser } = needShape(shape);
   const first = log.walks.filter((w) => w.milestone === browser.id).sort((a, b) => a.seq - b.seq)[0];
   if (first === undefined) return { pass: false, detail: `${browser.id} was never walked` };
-  const at = contrastAt(first.sha);
-  if (at.kind === 'ratio' && at.ratio >= PLANT.floor) return { pass: false, detail: `the plant was repaired upstream: ${PLANT.selector} computes ${at.ratio.toFixed(2)}:1 at ${first.job}'s SHA ${first.sha}, so the walk had nothing to catch` };
+  const at = await reflow(first.sha);
+  if (at.kind === 'unknown') return { pass: false, detail: `the plant at ${first.job}'s SHA ${first.sha}: ${at.detail}` };
+  if (at.scrollWidth <= at.viewport) return { pass: false, detail: `the plant was repaired upstream: / lays out ${at.scrollWidth} px wide at ${at.viewport} px at ${first.job}'s SHA ${first.sha}, so the walk had nothing to catch: adjudicate` };
   const candidates = log.findings.filter((f) => f.lens === 'walkthrough' && f.milestone === browser.id && PLANT_WORDS.test(`${f.claim} ${f.cause ?? ''}`));
-  if (candidates.length === 0) return { pass: false, detail: `no walkthrough finding on ${browser.id} speaks of contrast (${log.findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id}: ${f.claim}`).join(' | ') || 'no walkthrough findings'})` };
+  if (candidates.length === 0) return { pass: false, detail: `no walkthrough finding on ${browser.id} speaks of the overflow (/ ${at.scrollWidth} px wide at ${at.viewport} px; ${log.findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id}: ${f.claim}`).join(' | ') || 'no walkthrough findings'})` };
   const problems: string[] = [];
   for (const f of candidates) {
     const resolved = f.transitions.findLast((t) => t.to.state === 'resolved');
@@ -238,15 +240,11 @@ export function plantCaughtVerdict(shape: PlanShape, log: M5Log, contrastAt: (sh
   return { pass: false, detail: problems.join('; ') };
 }
 
-export function plantRepairedVerdict(head: string, at: PairResult): Verdict {
-  switch (at.kind) {
-    case 'absent':
-      return { pass: false, detail: `${PLANT.selector} is gone from the stylesheets under public/ at ${head}: adjudicate by hand` };
-    case 'unknown':
-      return { pass: false, detail: `${PLANT.selector} at ${head}: ${at.detail}` };
-    case 'ratio':
-      return { pass: at.ratio >= PLANT.floor, detail: `${PLANT.selector} at ${head}: ${at.color} over ${at.background} computes ${at.ratio.toFixed(2)}:1 (floor ${PLANT.floor}:1)` };
-  }
+export function plantRepairedVerdict(head: string, at: Reflow): Verdict {
+  if (at.kind === 'unknown') return { pass: false, detail: `/ at ${head}: ${at.detail}` };
+  const gone = [PLANT.title, PLANT.url].filter((s) => !at.html.includes(s));
+  if (gone.length > 0) return { pass: false, detail: `the planted book ${PLANT.book} is no longer on / at ${head} (missing ${gone.map((g) => JSON.stringify(g)).join(', ')}): adjudicate by hand` };
+  return { pass: at.scrollWidth <= at.viewport, detail: `/ at ${head} lays out ${at.scrollWidth} px wide at ${at.viewport} px, ${PLANT.book} listed` };
 }
 
 /** `polishUnits`: the final plan's polish-origin units; `walkRounds`: its bound. */
@@ -327,13 +325,6 @@ export function isPng(path: string): boolean {
   }
 }
 
-/** The plant pair over the stylesheets under `public/` at `sha`, in path order. */
-export function plantAt(product: AbsPath, sha: string): PairResult {
-  const sheets = git(product, ['ls-tree', '-r', '--name-only', sha, '--', 'public/']).split('\n').filter((p) => p.endsWith('.css'));
-  if (sheets.length === 0) return { kind: 'absent' };
-  return selectorContrast(sheets.map((p) => git(product, ['show', `${sha}:${p}`])).join('\n'), PLANT.selector);
-}
-
 function isolation(run: Run): Verdict {
   const { l, report } = run;
   const problems: string[] = [];
@@ -394,7 +385,7 @@ function profile(run: Run): Verdict {
   return profileVerdict(run.report.profile, [{ arc: ref.arc, profile: found }]);
 }
 
-type Grade = readonly [string, (run: Run) => Verdict];
+type Grade = readonly [string, (run: Run) => Verdict | Promise<Verdict>];
 
 export const CRITERIA: readonly Grade[] = [
   ['isolation', isolation],
@@ -404,8 +395,8 @@ export const CRITERIA: readonly Grade[] = [
   ['design-first', (run) => designFirstVerdict(run.shape, needLog(run), missingRefs(run.product))],
   ['node-held', (run) => nodeHeldVerdict(run.shape, needLog(run))],
   ['walk-screenshots', (run) => walkScreenshotsVerdict(run.shape, needLog(run), (job) => filesUnder(jobEvidenceRoot(run.runDir!, job as JobId)).filter(isPng))],
-  ['plant-caught', (run) => plantCaughtVerdict(run.shape, needLog(run), (sha) => plantAt(run.product, sha))],
-  ['plant-repaired', (run) => plantRepairedVerdict(headOf(needRef(run)), plantAt(run.product, headOf(needRef(run))))],
+  ['plant-caught', (run) => plantCaughtVerdict(run.shape, needLog(run), (sha) => reflowAt(run.product, sha))],
+  ['plant-repaired', async (run) => plantRepairedVerdict(headOf(needRef(run)), await reflowAt(run.product, headOf(needRef(run))))],
   ['polish-bounded', polishBounded],
   ['demo-serving', (run) => demoServingVerdict(needLog(run), run.report.demo.seen, run.report.demo.final)],
   ['skill-vendored', skillVendored],
@@ -414,7 +405,7 @@ export const CRITERIA: readonly Grade[] = [
   ['profile', profile],
 ];
 
-export function check(dir: string): CheckResult {
+export async function check(dir: string): Promise<CheckResult> {
   const l = layout(dir);
   if (!existsSync(l.report)) throw new Error(`${l.report} is missing: run evals/m5/driver.ts first`);
   const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
@@ -428,20 +419,21 @@ export function check(dir: string): CheckResult {
   const log = dir_ === null ? null : logOf(readJournal(dir_, arc!).events);
   const shape: PlanShape = underTest === undefined ? { kind: 'off', problems: ['the arc has no plan in force'] } : underTest.shape;
   const run: Run = { l, report, product, arc, arcs: started.map((a) => a.arc), ref, runDir: dir_, log, shape };
-  const criteria = CRITERIA.map(([name, grade]): Criterion => {
+  const criteria: Criterion[] = [];
+  for (const [name, grade] of CRITERIA) {
     try {
-      return { name, ...grade(run) };
+      criteria.push({ name, ...(await grade(run)) });
     } catch (error) {
-      return { name, pass: false, detail: `threw: ${(error as Error).message}` };
+      criteria.push({ name, pass: false, detail: `threw: ${(error as Error).message}` });
     }
-  });
+  }
   return { pass: criteria.every((c) => c.pass), criteria };
 }
 
 if (import.meta.main) {
   const [dir] = process.argv.slice(2);
   if (dir === undefined) throw new Error('usage: node evals/m5/check.ts <dir>');
-  const result = check(resolve(dir));
+  const result = await check(resolve(dir));
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exitCode = result.pass ? 0 : 1;
 }

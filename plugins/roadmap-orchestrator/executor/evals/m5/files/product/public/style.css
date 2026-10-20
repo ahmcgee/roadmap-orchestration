@@ -2,7 +2,7 @@
 :root {
   --paper: #fbf7ef;
   --ink: #2b2620;
-  --ink-faint: #b5ab9c;
+  --ink-soft: #706657;
   --rule: #d9cfbf;
   --rust: #9c3d1f;
   --letter: "Bradley Hand", "Segoe Print", "Comic Neue", cursive;
@@ -61,7 +61,7 @@ h2 {
 
 .book-meta {
   margin: 0.25rem 0 0;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   font-size: 0.9rem;
 }
 

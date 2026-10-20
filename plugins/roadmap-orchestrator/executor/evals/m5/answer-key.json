@@ -2,9 +2,9 @@
   "schema": "roadmap/m5-answer-key",
   "note": "Never staged into any tree a session is given (evals/m5/driver.ts). The plant is what check.ts grades (layout.ts PLANT); the owner simulator sees only ownerAnswers' topics and texts, and answers nothing else.",
   "plant": {
-    "what": "Low-contrast text on the shelf's page, the entry of the reservation journey: `.book-meta` (each book's condition and arrival day) is --ink-faint #b5ab9c on --paper #fbf7ef in public/style.css, about 2.1:1 against WCAG AA's 4.5:1 for body text (vision V-10).",
-    "caught": "a walkthrough finding on the browser milestone about the contrast, resolved by a unit's publication",
-    "repaired": "the final stylesheet's `.book-meta` text computes at 4.5:1 or more against its background"
+    "what": "A page that scrolls sideways on a phone: the first book on the shelf's page (b1, free, the entry of the reservation journey) has a condition in data/shelf.json ending in a 134-character URL with no break opportunity, and no seed rule wraps `.book-meta`, so at 320 CSS px the document lays out about 900 px wide: a WCAG 2.x AA 1.4.10 Reflow failure (vision V-10). Only rendering the page reveals it.",
+    "caught": "a walkthrough finding on the browser milestone about the overflow (horizontal scroll, the URL not wrapping), resolved by a unit's publication, while the first walk's tree still overflowed",
+    "repaired": "at the arc's completed head, `/` rendered at 320 CSS px has scrollWidth <= 320 with the planted book (its title and URL) still on the page"
   },
   "ownerAnswers": [
     { "topic": "supplying the design, or sitting in on it at Phase 0", "answer": "No. Design it yourself, against the vision and the shelf's existing look; I will look at the demo." },

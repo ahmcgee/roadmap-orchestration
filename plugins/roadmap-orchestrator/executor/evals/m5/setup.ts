@@ -3,11 +3,12 @@
 //
 //   stage/product/    the scratch product `swapshelf` (files/product/): the page for a street's book swap shelf, a
 //                     zero-dependency Node 24 HTTP server rendering its pages on the server (src/server.js, pages.js,
-//                     store.js over data/shelf.json), its stylesheet public/style.css with the plant (layout.ts PLANT:
-//                     `.book-meta` faint on the paper colour), `node --test` tests, and its design record under
-//                     docs/corpus/: the shelf's page (reserving, the browser milestone), the keeper's tools (a CLI and a
-//                     settings file on top, the shell milestone), how it is built, and the vision document vision.md,
-//                     curated (rules blocks with T-ids) and confirmed. In-tree `.roadmap/`: the corpus guide, the
+//                     store.js over data/shelf.json, whose first book carries the plant: layout.ts PLANT, a condition
+//                     ending in an unbreakable URL), its stylesheet public/style.css, `node --test` tests, and its
+//                     design record under docs/corpus/: the shelf's page (reserving, the browser milestone), the
+//                     keeper's tools (a CLI and a settings file on top, the shell milestone), how it is built, and the
+//                     vision document vision.md, curated (rules blocks with T-ids) and confirmed. In-tree
+//                     `.roadmap/`: the corpus guide, the
 //                     confirmed `vision.json` (V-1..V-13, five of them experience standards) and `config.json` naming
 //                     the Playwright MCP server as `walkthrough.mcp` (no `chain`: K is asked at bootstrap).
 //                     `.claude/skills/frontend-design/`: Anthropic's frontend-design skill vendored with its licences,

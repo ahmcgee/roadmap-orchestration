@@ -21,8 +21,8 @@ A change is not done until the ladder passes, in order (from `executor/`):
 2. `npm test` (`node --test --test-concurrency=8 test/*.test.ts`: eight files at a time, each about one runnable
    process wide on average; then `test/serial/*.test.ts` alone, one file at a time: the files that fan out across the host (the
    crash matrices, sized by `FANOUT` in `test/helpers/fanout.ts`, and the pool, probe and resource crash files), the
-   tests needing a calm host (the upgrade test, the m4a fake sessions), the real-browser walk test (`walk-browser`, which
-   needs the devcontainer's Playwright MCP and Chromium) and `pressure`, which saturates the host on purpose). Both tiers keep runnable load within the host's cpus: a saturated host fails timing-bound tests, so a
+   tests needing a calm host (the upgrade test, the m4a fake sessions), the real-browser tests (`walk-browser`, which
+   needs the devcontainer's Playwright MCP and Chromium, and `evals-m5-reflow`, the m5 check's reflow oracle on that Chromium) and `pressure`, which saturates the host on purpose). Both tiers keep runnable load within the host's cpus: a saturated host fails timing-bound tests, so a
    file that runs eight or more cells of real processes at once goes in the serial tier, never the parallel one.
 3. `node evals/probe.ts`: real CLIs, pennies
 3.5. Role evals (`evals/roles/`, `node evals/roles/run.ts <gate|walkthrough|polishJudge> --set dev --n 3`, with `--cap`):

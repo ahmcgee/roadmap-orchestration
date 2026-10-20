@@ -1,8 +1,9 @@
 // The M5 fixture (evals/m5/), tested without paying: M5 has no scripted root agent (evals/README.md "The M5 fixture"),
 // so its free tier is the fixture's validity (setup lays out a product whose tests pass, whose plant is in play, whose
-// vision, corpus guide and walkthrough config parse, and which vendors the design skill), the contrast oracle, the plan
-// shape, and each check criterion over inputs built in place: one passing and at least one failing case per criterion.
-// Named tests: evals-m5.setup-valid, evals-m5.css-oracle, evals-m5.plan-shape, evals-m5.log-of, evals-m5.criterion.<name>,
+// vision, corpus guide and walkthrough config parse, and which vendors the design skill), the plan shape, and each check
+// criterion over inputs built in place (the reflow measurements injected): one passing and at least one failing case per
+// criterion. The real-browser reflow oracle is test/serial/evals-m5-reflow.test.ts.
+// Named tests: evals-m5.setup-valid, evals-m5.plan-shape, evals-m5.log-of, evals-m5.criterion.<name>,
 // evals-m5.owner-code-answers, evals-m5.check-without-arc, evals-m5.check-arc-under-test.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -22,12 +23,12 @@ import { type Milestone, type PlanM1, parsePlan } from '../src/input/plan.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import {
-  type M5Log, PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, logOf, milestonesPlannedVerdict, nodeHeldVerdict, plantAt,
+  type M5Log, PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, logOf, milestonesPlannedVerdict, nodeHeldVerdict,
   plantCaughtVerdict, plantRepairedVerdict, polishBoundedVerdict, walkScreenshotsVerdict,
 } from '../evals/m5/check.ts';
-import { contrastRatio, parseColor, selectorContrast } from '../evals/m5/css.ts';
 import { SKILL_SATISFIED, SLICE_ANSWER, codeAnswer } from '../evals/m5/driver.ts';
 import { CORPUS_ROOT, DESIGN_SKILL, PLANT, VISION_DOC, layout } from '../evals/m5/layout.ts';
+import type { Reflow } from '../evals/m5/reflow.ts';
 import { CLAUSES, setup } from '../evals/m5/setup.ts';
 import { planShape } from '../evals/m5/shape.ts';
 import { git, tmpDir } from './helpers/repo.ts';
@@ -37,7 +38,6 @@ const T = { timeout: 5 * 60_000 };
 describe('the fixture', () => {
   test('evals-m5.setup-valid: the product is committed and pushed, its tests pass, its inputs parse, the skill is vendored and the plant is in play', T, () => {
     const l = setup(join(tmpDir('m5-setup'), 'fx'));
-    const product = absPath(l.product);
     assert.equal(git(l.product, 'status', '--porcelain'), '');
     assert.equal(git(l.origin, 'rev-parse', 'main'), git(l.product, 'rev-parse', 'main'));
     const tests = spawnSync(process.execPath, ['--test', 'test/'], { cwd: l.product, encoding: 'utf8', timeout: 120_000 });
@@ -68,39 +68,14 @@ describe('the fixture', () => {
     assert.match(readFileSync(join(l.product, DESIGN_SKILL.dir, 'SKILL.md'), 'utf8'), /^---\nname: frontend-design\n/);
     assert.match(readFileSync(join(l.product, DESIGN_SKILL.dir, 'LICENSE'), 'utf8'), /Apache License/);
 
-    // The plant computes below the floor at the seed, through the same oracle the check uses.
-    const seed = plantAt(product, git(l.product, 'rev-parse', 'main'));
-    assert.equal(seed.kind, 'ratio');
-    assert.ok(seed.kind === 'ratio' && seed.ratio < PLANT.floor && seed.ratio > 2, JSON.stringify(seed));
+    // The plant is in play at the seed: the planted book is free, first on the shelf, its condition ending in the URL, and
+    // no stylesheet rule wraps text (the render itself is test/serial/evals-m5-reflow.test.ts).
+    const books = (JSON.parse(readFileSync(join(l.product, PLANT.data), 'utf8')) as { books: { id: string; title: string; condition: string; reservedBy: string | null }[] }).books;
+    assert.deepEqual([books[0]!.id, books[0]!.title, books[0]!.reservedBy], [PLANT.book, PLANT.title, null]);
+    assert.ok(books[0]!.condition.endsWith(PLANT.url), books[0]!.condition);
+    assert.doesNotMatch(readFileSync(join(l.product, 'public', 'style.css'), 'utf8'), /overflow-wrap|word-wrap|word-break|hyphens|white-space|overflow/);
     assert.ok(existsSync(join(l.forgeBin, 'gh')));
     assert.throws(() => setup(l.dir), /is not empty/);
-  });
-});
-
-describe('the contrast oracle (evals/m5/css.ts)', () => {
-  test('evals-m5.css-oracle: colour forms, var() with fallbacks, alpha over the background, at-rule blocks skipped, an absent selector', () => {
-    assert.deepEqual(parseColor('#fff'), { r: 255, g: 255, b: 255, a: 1 });
-    assert.deepEqual(parseColor('#00000080'), { r: 0, g: 0, b: 0, a: 128 / 255 });
-    assert.deepEqual(parseColor('rgb(10 20 30 / 50%)'), { r: 10, g: 20, b: 30, a: 0.5 });
-    assert.deepEqual(parseColor('rgba(10, 20, 30, 0.25)'), { r: 10, g: 20, b: 30, a: 0.25 });
-    assert.deepEqual(parseColor('hsl(0 100% 50%)'), { r: 255, g: 0, b: 0, a: 1 });
-    const red = parseColor('oklch(62.8% 0.2577 29.23)')!;
-    assert.ok(Math.abs(red.r - 255) < 1 && red.g < 1 && red.b < 1, JSON.stringify(red));
-    assert.equal(parseColor('color-mix(in srgb, red, blue)'), null);
-    assert.equal(Math.round(contrastRatio({ r: 0, g: 0, b: 0 }, { r: 255, g: 255, b: 255 })), 21);
-
-    const css = ':root { --a: #777; --bg: var(--missing, #ffffff); }\nbody { background: var(--bg); }\n.x { color: var(--a); }\n@media (prefers-color-scheme: dark) { .x { color: #fff; } body { background: #000; } }\n.y { color: rgb(0 0 0 / 50%); }\n.z { color: #000; background-color: #333; }';
-    const x = selectorContrast(css, '.x');
-    assert.ok(x.kind === 'ratio' && Math.abs(x.ratio - 4.48) < 0.01, JSON.stringify(x));
-    const y = selectorContrast(css, '.y');
-    assert.ok(y.kind === 'ratio' && Math.abs(y.ratio - 3.95) < 0.05, JSON.stringify(y));
-    const z = selectorContrast(css, '.z');
-    assert.ok(z.kind === 'ratio' && z.ratio < 2, JSON.stringify(z));
-    assert.deepEqual(selectorContrast(css, '.gone'), { kind: 'absent' });
-    assert.equal(selectorContrast('.q { color: var(--nope); }', '.q').kind, 'unknown');
-    // A later rule for the selector wins, and a comma list names it.
-    const later = selectorContrast(`${css}\n.w, .x { color: #000; }`, '.x');
-    assert.ok(later.kind === 'ratio' && later.ratio > 20, JSON.stringify(later));
   });
 });
 
@@ -150,6 +125,8 @@ describe('the plan shape (evals/m5/shape.ts)', () => {
 });
 
 const SHA = (c: string): string => c.repeat(40);
+/** The shelf's page at 320 px, `scrollWidth` wide, the planted book on it. */
+const measured = (scrollWidth: number): Reflow => ({ kind: 'measured', scrollWidth, viewport: 320, html: `<li>${PLANT.title} … ${PLANT.url}</li>` });
 /** A log of the story the fixture expects: design publishes, MS-1 builds, walk-1 finds the plant, a repair lands, walk-2 passes, MS-2 builds. */
 function goodLog(over: Partial<M5Log> = {}): M5Log {
   return {
@@ -165,7 +142,7 @@ function goodLog(over: Partial<M5Log> = {}): M5Log {
     ],
     passed: [{ seq: 100, milestone: 'MS-1', job: 'walk-2' }, { seq: 150, milestone: 'MS-2', job: 'walk-3' }],
     findings: [{
-      id: 'F-1', seq: 60, lens: 'walkthrough', milestone: 'MS-1', claim: 'J-1: the condition line under each book is faint and hard to read in daylight', cause: 'low contrast .book-meta',
+      id: 'F-1', seq: 60, lens: 'walkthrough', milestone: 'MS-1', claim: 'J-1: at 320 px the shelf\'s page scrolls sideways; the first book\'s condition runs off the screen', cause: 'an unbroken URL in .book-meta does not wrap',
       transitions: [{ seq: 65, to: { state: 'owned', unit: 'repair-contrast' } }, { seq: 75, to: { state: 'fixed-on-branch', unit: 'repair-contrast' } }, { seq: 82, to: { state: 'resolved' } }],
     }] as M5Log['findings'],
     tweaks: [{ seq: 95, unit: 'polish-x1', decision: 'keep', reason: 'judged' }, { seq: 96, unit: 'polish-x2', decision: 'drop', reason: 'judged' }],
@@ -207,29 +184,41 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     assert.equal(walkScreenshotsVerdict(SHAPE, goodLog({ walks: [{ job: 'walk-1', milestone: 'MS-1', round: 1, sha: SHA('3'), seq: 46, outcome: 'bring-up-failed' }] }), () => ['x']).pass, false);
   });
 
-  test('evals-m5.criterion.plant-caught: a contrast finding resolved by a published unit; repaired upstream, no such finding, or unresolved fails', () => {
-    const faint = () => ({ kind: 'ratio', ratio: 2.12, color: 'a', background: 'b', from: PLANT.selector }) as const;
-    const ok = plantCaughtVerdict(SHAPE, goodLog(), faint);
+  test('evals-m5.criterion.plant-caught: an overflow finding resolved by a published unit; repaired upstream, unmeasurable, no such finding, or unresolved fails', async () => {
+    const wide = async (): Promise<Reflow> => measured(902);
+    const ok = await plantCaughtVerdict(SHAPE, goodLog(), wide);
     assert.ok(ok.pass, ok.detail);
     assert.match(ok.detail, /F-1 .* resolved at seq 82 by repair-contrast's publication at seq 80/);
-    const upstream = plantCaughtVerdict(SHAPE, goodLog(), () => ({ kind: 'ratio', ratio: 7, color: 'a', background: 'b', from: PLANT.selector }));
+    // Measured at the first MS-1 walk's SHA.
+    const asked: string[] = [];
+    await plantCaughtVerdict(SHAPE, goodLog(), async (sha) => (asked.push(sha), measured(902)));
+    assert.deepEqual(asked, [SHA('3')]);
+    const upstream = await plantCaughtVerdict(SHAPE, goodLog(), async () => measured(320));
     assert.equal(upstream.pass, false);
-    assert.match(upstream.detail, /repaired upstream/);
+    assert.match(upstream.detail, /repaired upstream: \/ lays out 320 px wide at 320 px .*adjudicate/);
+    const unknown = await plantCaughtVerdict(SHAPE, goodLog(), async () => ({ kind: 'unknown', detail: 'the server did not come up' }));
+    assert.equal(unknown.pass, false);
+    assert.match(unknown.detail, /the server did not come up/);
     const [f] = goodLog().findings;
-    assert.equal(plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, claim: 'J-1: the reserve button does nothing', cause: 'dead button' }] }), faint).pass, false);
-    const open = plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, transitions: f!.transitions.slice(0, 2) }] }), faint);
+    assert.equal((await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, claim: 'J-1: the reserve button does nothing', cause: 'dead button' }] }), wide)).pass, false);
+    const open = await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, transitions: f!.transitions.slice(0, 2) }] }), wide);
     assert.equal(open.pass, false);
     assert.match(open.detail, /F-1 .* is fixed-on-branch \(fixed on repair-contrast's branch, published\)/);
-    const unpublished = plantCaughtVerdict(SHAPE, goodLog({ publications: goodLog().publications.filter((p) => p.unit !== 'repair-contrast') }), faint);
+    const unpublished = await plantCaughtVerdict(SHAPE, goodLog({ publications: goodLog().publications.filter((p) => p.unit !== 'repair-contrast') }), wide);
     assert.equal(unpublished.pass, false);
-    assert.ok(PLANT_WORDS.test('Low contrast on the meta line') && !PLANT_WORDS.test('the button is missing'));
+    for (const said of ['The page scrolls horizontally on a phone', 'content overflows the viewport', 'the long URL does not wrap', 'fails WCAG 1.4.10 Reflow', 'the page is wider than the screen at 320 px']) assert.ok(PLANT_WORDS.test(said), said);
+    for (const said of ['the button is missing', 'Low contrast on the meta line', 'the reservation form has no label']) assert.ok(!PLANT_WORDS.test(said), said);
   });
 
-  test('evals-m5.criterion.plant-repaired: at or above 4.5:1 passes; below it, an unknown colour or a gone selector fails', () => {
-    assert.ok(plantRepairedVerdict('h', { kind: 'ratio', ratio: 4.6, color: 'a', background: 'b', from: PLANT.selector }).pass);
-    assert.equal(plantRepairedVerdict('h', { kind: 'ratio', ratio: 4.4, color: 'a', background: 'b', from: PLANT.selector }).pass, false);
+  test('evals-m5.criterion.plant-repaired: no wider than the viewport with the planted book listed passes; overflowing, unmeasurable or the book gone fails', () => {
+    const ok = plantRepairedVerdict('h', measured(320));
+    assert.ok(ok.pass, ok.detail);
+    assert.equal(plantRepairedVerdict('h', measured(321)).pass, false);
     assert.equal(plantRepairedVerdict('h', { kind: 'unknown', detail: 'x' }).pass, false);
-    assert.match(plantRepairedVerdict('h', { kind: 'absent' }).detail, /adjudicate by hand/);
+    const gone = plantRepairedVerdict('h', { kind: 'measured', scrollWidth: 320, viewport: 320, html: '<li>The Dispossessed</li>' });
+    assert.equal(gone.pass, false);
+    assert.match(gone.detail, /adjudicate by hand/);
+    assert.match(plantRepairedVerdict('h', { kind: 'measured', scrollWidth: 320, viewport: 320, html: PLANT.title }).detail, /adjudicate by hand/);
   });
 
   test('evals-m5.criterion.polish-bounded: rounds within walkRounds and each polish unit judged once, keep before it published; otherwise fails', () => {
@@ -315,14 +304,14 @@ describe('the log and the files (evals/m5/check.ts)', () => {
     assert.equal(isPng(join(dir, 'fake.png')), false);
   });
 
-  test('evals-m5.check-without-arc: a fixture whose session never started an arc fails every arc criterion, naming why, and throws nothing', T, () => {
+  test('evals-m5.check-without-arc: a fixture whose session never started an arc fails every arc criterion, naming why, and throws nothing', T, async () => {
     const l = setup(join(tmpDir('m5-check'), 'fx'));
     writeFileSync(l.report, JSON.stringify({
       schema: 'roadmap/m5-report', profile: 'claude-only', endedBy: 'stalled', stopReason: null, failure: 'x', hostDir: join(l.dir, 'host'),
       launch: { envKeys: [], gh: join(l.forgeBin, 'gh'), ghConfigDir: l.ghConfig, xdgConfigHome: l.xdgConfig, gitConfigGlobal: l.gitConfig },
       demo: { seen: [], final: null }, released: [], leftovers: [],
     }));
-    const r = check(l.dir);
+    const r = await check(l.dir);
     assert.equal(r.pass, false);
     const by = Object.fromEntries(r.criteria.map((c) => [c.name, c]));
     assert.ok(by['isolation']!.pass, by['isolation']!.detail);
@@ -333,7 +322,7 @@ describe('the log and the files (evals/m5/check.ts)', () => {
     for (const name of ['design-first', 'node-held', 'walk-screenshots', 'plant-caught', 'plant-repaired', 'polish-bounded', 'demo-serving', 'skill-vendored', 'profile']) assert.equal(by[name]!.pass, false, name);
   });
 
-  test('evals-m5.check-arc-under-test: of two arcs, the first started whose first plan has the M5 shape is graded; a later shell-only arc (sorting first by name) is not', T, () => {
+  test('evals-m5.check-arc-under-test: of two arcs, the first started whose first plan has the M5 shape is graded; a later shell-only arc (sorting first by name) is not', T, async () => {
     const l = setup(join(tmpDir('m5-two-arcs'), 'fx'));
     writeFileSync(l.report, JSON.stringify({
       schema: 'roadmap/m5-report', profile: 'claude-only', endedBy: 'session-failed', stopReason: null, failure: 'turn 1 exited 1 (turn-1.stderr)', hostDir: join(l.dir, 'host'),
@@ -366,7 +355,7 @@ describe('the log and the files (evals/m5/check.ts)', () => {
       // Start order is the journals' first `at` (milliseconds): the later arc starts on a later one.
       for (const t = Date.now(); Date.now() <= t;);
     }
-    const by = Object.fromEntries(check(l.dir).criteria.map((c) => [c.name, c]));
+    const by = Object.fromEntries((await check(l.dir)).criteria.map((c) => [c.name, c]));
     assert.ok(by['milestones-planned']!.pass, by['milestones-planned']!.detail);
     assert.match(by['milestones-planned']!.detail, /design \{"unit":"page-design"\}/);
     assert.match(by['design-first']!.detail, /the design unit page-design never published/);

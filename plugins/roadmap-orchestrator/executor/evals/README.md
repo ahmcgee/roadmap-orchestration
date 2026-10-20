@@ -492,9 +492,11 @@ node evals/m5/check.ts /var/tmp/m5
   `walkthrough.mcp` (`playwright-mcp --headless --isolated --browser chromium --output-dir {evidence} --viewport-size
   {viewport}`); Anthropic's frontend-design skill is vendored at `.claude/skills/frontend-design/` with its licences
   (Apache-2.0; a plugin never reaches a unit worktree, a committed project skill does). The fake forge is trusted and
-  empty. **The plant** (`layout.ts` `PLANT`, answer-key.json): each book's condition-and-arrival line on the shelf's page,
-  the entry of the reservation journey, is `--ink-faint` on `--paper`, 2.12:1, in the stylesheet the browser milestone's
-  units build on.
+  empty. **The plant** (`layout.ts` `PLANT`, answer-key.json) is a data row only rendering reveals: the first book on the
+  shelf's page, the entry of the reservation journey, is free and its condition in the giver's words (`data/shelf.json`)
+  ends in a long URL with no break opportunity; no seed rule wraps it, so at 320 CSS px the page scrolls sideways (about
+  900 px wide), a WCAG 2.x 1.4.10 Reflow failure under V-10. A static stylesheet plant (faint `.book-meta`) was dropped:
+  the design unit read V-10 and fixed it before any walk, so the walk-repair-re-walk loop never ran.
 - `driver.ts <dir>` is M4a's session (it reuses `evals/m4a/driver.ts`'s staging, launch env, turns, wakes, cleanup and
   forensics) with M5's owner: code answers K (1), the slice (both world scenes, V-1 and V-2, so the one arc's plan holds
   both milestones and the corpus is one arc's worth), a brief ack (never) and the frontend-design recommendation (already
@@ -515,9 +517,10 @@ node evals/m5/check.ts /var/tmp/m5
   walkthrough role eval covers the shell drive), design-first (the design unit published, with its reference dirs,
   before any browser-milestone unit dispatched), node-held (no held unit dispatched before `milestone-passed` of the
   browser one; the dependent milestone's other units are not held), walk-screenshots (every reported browser
-  walk's evidence dir holds a PNG), plant-caught (the plant still failed at the first walk's SHA, and a walkthrough
-  contrast finding on the browser milestone was resolved by a published unit), plant-repaired (`.book-meta` computes at
-  4.5:1 or more at the completed head, `css.ts`), polish-bounded (rounds within `walkRounds`; a round's failed walks
+  walk's evidence dir holds a PNG), plant-caught (`/` rendered at 320 CSS px in the devcontainer's Playwright Chromium,
+  `reflow.ts`, still overflowed at the first walk's SHA, and a walkthrough finding on the browser milestone about the
+  overflow was resolved by a published unit), plant-repaired (at the completed head `/` lays out no wider than 320 px with
+  the planted book still listed; the book gone is for the lead to adjudicate), polish-bounded (rounds within `walkRounds`; a round's failed walks
   and a unit's compares within their brakes, two each; each polish unit not cut outside its compare judged once, `keep`
   before it published), demo-serving (the latest `demo-promoted` is what `status.demo` showed at the end, at
   an http URL that answered and never moved), skill-vendored, no-model-ids, host-released, profile.
@@ -527,14 +530,15 @@ stage) and `demo-serving`'s `demo-promoted` and `status.demo` (agent G, the demo
 "dev.13"). Until both are merged a run fails them by construction.
 
 M5 has no scripted root agent, so it has no fake end-to-end run: `test/evals-m5.test.ts` (main tier) covers setup's
-validity (the product's tests pass, the vision, guide and config parse, the skill is vendored, the plant computes below
-the floor at the seed), the contrast oracle, the plan shape, the log reader, and every criterion over inputs built in
-place, one passing and at least one failing case each; the walk, polish and demo machinery have their own integrated
+validity (the product's tests pass, the vision, guide and config parse, the skill is vendored, the planted row is first
+and free and no seed rule wraps it), the plan shape, the log reader, and every criterion over inputs built in place (the
+reflow measurements injected), one passing and at least one failing case each; `test/serial/evals-m5-reflow.test.ts`
+renders the seed in the real browser (it overflows) and again after a wrapping commit (it does not); the walk, polish and demo machinery have their own integrated
 tests. A fake story through a scripted root (as M4a's) is deferred until the polish and demo pieces are merged.
 
 Cost and time (list prices, subscription-covered; plan §8 estimates $150–220). The root session (Opus high) with its
 Phase-0 subagents over a small curated corpus, then supervision: about $30–50. Six to seven units at plan-check, build and
-gate (two design units, which are risk `high` and so Opus-built, four or five builds, one contrast repair a checkpoint
+gate (two design units, which are risk `high` and so Opus-built, four or five builds, one reflow repair a checkpoint
 admits): about $40–70. Three to four walks (Opus medium, a browser session each, up to 90 minutes: MS-1 round 1 finds
 the plant, round 2 passes it, MS-2 once or twice) at about $8–20 each, and one or two polish proposals judged with two
 instances each at $3–8: about $35–90. The audits' lenses, checkpoints (summit) and the pack review: about $25–40. Expect
