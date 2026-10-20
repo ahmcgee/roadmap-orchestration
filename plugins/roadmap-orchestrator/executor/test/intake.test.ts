@@ -10,7 +10,9 @@ import { join } from 'node:path';
 import { after, before, describe, it, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import type { NeedsUserId } from '../src/core/ids.ts';
+import { type NeedsUserId, arcId } from '../src/core/ids.ts';
+import { absPath } from '../src/core/values.ts';
+import { status } from '../src/status.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { debtKey } from '../src/debt/ledger.ts';
 import { parseIssueCapture } from '../src/forge/types.ts';
@@ -349,6 +351,42 @@ test('checkpoint.finding-deferred-banked: a deferred P2 without an obligation is
     }]);
     assert.deepEqual(await withForge(a.forge, () => runCheckpoint(ctx)), { kind: 'none' });
     assert.equal(r.journal.view.holistic().debt.length, 1, 'banked once');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('tail.p3-released-arc (dev.13): a P3 the checkpoint defers or leaves is released by code, never banked; a deferred P2 banks; status counts them', T, async () => {
+  const x = await arcWith([checkpointStep('ckpt-1', checkpointAnswer({
+    decision: 'no-op',
+    findingDispositions: [{ finding: 'F-1', disposition: 'deferred', reason: 'slows every later list view' }, { finding: 'F-2', disposition: 'deferred', reason: 'not this arc' }],
+  }))], {
+    seed: false,
+    findings: [
+      { severity: 'P2', claim: 'The berth list reads slowly.', cause: 'slow list' },
+      { severity: 'P3', claim: 'The berth test could also check an empty harbour.', cause: 'berth test: no empty case' },
+      { severity: 'P3', claim: 'The tide helper name is vague.', cause: 'tide helper: vague name' },
+    ],
+  });
+  const { a, r, ctx } = x;
+  try {
+    const out = await withForge(a.forge, () => runCheckpoint(ctx));
+    assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
+    const ruled = () => r.journal.view.holistic().findings.map((f) => [f.id, f.severity, f.last?.state === 'ruled' ? [f.last.disposition, f.last.by] : null]);
+    assert.deepEqual(ruled(), [
+      ['F-1', 'P2', ['deferred', { type: 'checkpoint', job: 'ckpt-1' }]],
+      ['F-2', 'P3', ['released', { type: 'release', job: 'ckpt-1', reason: 'p3' }]],
+      ['F-3', 'P3', ['released', { type: 'release', job: 'ckpt-1', reason: 'p3' }]],
+    ]);
+    assert.deepEqual(r.journal.view.holistic().debt.map((d) => d.source), [{ type: 'finding', finding: 'F-1' }], 'only the P2 banks');
+    const s = status(absPath(a.d.runDir), arcId(a.d.arc), absPath(a.d.hostDir));
+    assert.deepEqual([s.findings.released, s.findings.refusedAdmits], [{ checkpoint: 0, p3: 2, regress: 0, settled: 0, closeOut: 0 }, { regress: 0, settled: 0 }]);
+    assert.deepEqual(await withForge(a.forge, () => runCheckpoint(ctx)), { kind: 'none' });
+    assert.deepEqual(ruled(), [
+      ['F-1', 'P2', ['deferred', { type: 'checkpoint', job: 'ckpt-1' }]],
+      ['F-2', 'P3', ['released', { type: 'release', job: 'ckpt-1', reason: 'p3' }]],
+      ['F-3', 'P3', ['released', { type: 'release', job: 'ckpt-1', reason: 'p3' }]],
+    ], 'settled once');
   } finally {
     r.journal.close();
   }

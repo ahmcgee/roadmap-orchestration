@@ -302,6 +302,15 @@ at triage stay in git history.
 
 ## Watch (act only on the trigger)
 
+- **The convergence tail's edges (dev.13, src/holistic/tail.ts).** Deferred while unmeasured; act on a paid run that shows
+  the trigger. (1) An admit that addresses a finding below a brake without naming it in `repairs` is not caught (only
+  `repairs` is read); trigger: a converted-admit count of 0 while units are still admitted after the settled point.
+  (2) A braked P2 whose admit converted is released, not banked, unless the checkpoint also deferred it; trigger: an owner
+  finding a substantive defect among `release{regress | settled}` findings. (3) Findings with an obligation are under no
+  brake (correctness never banks and is never released); trigger: a tail of obligation-bearing P2s. (4) The settled
+  point counts polish and checkpoint (`origin: checkpoint` without a finding repair) units as planned work, so a polish
+  round keeps the arc unsettled; trigger: a walk round's polish units holding the brake off while the audit tail grows.
+
 - **Regenerate checks: deferred parts** (1.0.0-dev.12, src/input/derived.ts). (a) The build prompt does not name a touched
   entry's `regenerate` command; a builder learns it from the spec, or from its first red check's evidence (which says what
   to run). Trigger: a paid run or arc where a regenerate red costs a fix round a named command would have saved: add it
@@ -533,6 +542,9 @@ at triage stay in git history.
 
 ## Scaffolding to delete
 
+- `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
+  (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its
+  note banks as dev.12 banked it. With them, `debt` becomes required in `gateOutput` and narrows to `GateDebt | null`.
 - `gateDiffShownOf`'s absent arm (src/core/upgrade.ts), once no arc started on 1.0.0-dev.11 is in flight: a gate's
   `judgment-inputs` recorded without `diffShown` reads as nothing recorded. With it, `diffShown` becomes required on a
   gate's (src/core/events.ts).

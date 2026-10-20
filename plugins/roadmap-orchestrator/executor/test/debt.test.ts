@@ -77,7 +77,8 @@ describe('debt.obligation-refused', () => {
   const f = (over: object) => ({ type: 'finding-deferred' as const, finding: F1, severity: 'P2' as const, obligation: null, unit: null, what: 'w', ...over });
   it('refuses a finding with an obligation', () => assert.throws(() => mintDebt(EMPTY_LEDGER, [], f({ obligation: obligationId('I-1') })), DebtRefusedError));
   it('refuses a P1', () => assert.throws(() => mintDebt(EMPTY_LEDGER, [], f({ severity: 'P1' })), DebtRefusedError));
-  it('banks a P3 without an obligation', () => assert.equal(mintDebt(EMPTY_LEDGER, [], f({ severity: 'P3' }))!.bankReason, 'finding-deferred'));
+  it('refuses a P3 (dev.13: a P3 is never debt)', () => assert.throws(() => mintDebt(EMPTY_LEDGER, [], f({ severity: 'P3' })), /a P3 is never debt/));
+  it('banks a P2 without an obligation', () => assert.equal(mintDebt(EMPTY_LEDGER, [], f({}))!.bankReason, 'finding-deferred'));
 });
 
 describe('debt.render-block', () => {

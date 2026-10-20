@@ -102,7 +102,7 @@ describe('status.subset', () => {
       divergences: [],
       decisionsSince: [],
       convergence: null,
-      findings: { active: [], metrics: [] },
+      findings: { active: [], metrics: [], released: { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 }, refusedAdmits: { regress: 0, settled: 0 } },
       audit: null,
       owed: { audits: [] },
       completion: { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] },

@@ -773,10 +773,31 @@ export type FindingSource =
   | Readonly<{ type: 'demo'; sha: Sha }>;
 /** A vacuity finding's mutant: the patch (kept content-addressed) and the lane that should kill it. */
 export type MutantRef = Readonly<{ patchSha256: Sha256Hex; lane: LaneId }>;
+/**
+ * Why code released a finding when checkpoint `job`'s decision was applied (dev.13, the convergence tail, owner ruling
+ * 2026-10-20; src/holistic/tail.ts): `p3`, a P3 the decision did not fix (P3 is never debt); `regress`, a P2 or P3 below
+ * the regress brake (code a finding-origin unit introduced: only a P1 spawns a unit); `settled`, one below the settled
+ * brake (every milestone passed and every planned unit merged).
+ */
+export const RELEASE_REASONS = ['p3', 'regress', 'settled'] as const;
+export type ReleaseReason = (typeof RELEASE_REASONS)[number];
 /** Who ruled a finding: a checkpoint's `findingDispositions`, a ruling, or code (a mutant not reproduced). */
-/** `code`: a reproduce that killed the mutant dismisses its finding (`not-reproduced`); run 10 (F) the close-out defers an open P2/P3 with no obligation (`close-out`). */
-export type FindingRuledBy = Readonly<{ type: 'checkpoint'; job: JobId }> | Readonly<{ type: 'ruling'; ruling: RulingId }> | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>;
-export const FINDING_DISPOSITIONS = ['dismissed', 'deferred', 'accepted'] as const;
+/**
+ * `code`: a reproduce that killed the mutant dismisses its finding (`not-reproduced`); run 10 (F) the close-out defers an
+ * open P2 with no obligation (`close-out`; dev.13: it releases such a P3). dev.13 `release`: code released it when
+ * checkpoint `job`'s decision was applied, for `reason` (only with disposition `released`).
+ */
+export type FindingRuledBy =
+  | Readonly<{ type: 'checkpoint'; job: JobId }>
+  | Readonly<{ type: 'ruling'; ruling: RulingId }>
+  | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>
+  | Readonly<{ type: 'release'; job: JobId; reason: ReleaseReason }>;
+/**
+ * dev.13 `released` (owner ruling 2026-10-20: "if we do not fix a nitpick right away, it is released"): a finding nobody
+ * will act on, recorded but never debt, and never reopened by the same key (`admissionOf`). `accepted`: real, and handled
+ * by the decision's ops or already owned; terminal like the others, so a later report of the same key opens it again.
+ */
+export const FINDING_DISPOSITIONS = ['dismissed', 'deferred', 'accepted', 'released'] as const;
 export type FindingDisposition = (typeof FINDING_DISPOSITIONS)[number];
 /** A `finding-transition`'s target. */
 export type FindingTo =
@@ -814,15 +835,20 @@ export const findingTo: Read<FindingTo> = tagged('state', {
   owned: object((f): FindingTo => ({ state: f.get('state', literal('owned')), unit: f.get('unit', (v, p) => unitId(v, p)) })),
   'fixed-on-branch': object((f): FindingTo => ({ state: f.get('state', literal('fixed-on-branch')), unit: f.get('unit', (v, p) => unitId(v, p)) })),
   resolved: object((f): FindingTo => ({ state: f.get('state', literal('resolved')) })),
-  ruled: object((f): FindingTo => ({
-    state: f.get('state', literal('ruled')),
-    disposition: f.get('disposition', oneOf(FINDING_DISPOSITIONS)),
-    by: f.get('by', tagged<'checkpoint' | 'ruling' | 'code', FindingRuledBy>('type', {
-      checkpoint: object((g) => ({ type: g.get('type', literal('checkpoint')), job: g.get('job', jobR) })),
-      ruling: object((g) => ({ type: g.get('type', literal('ruling')), ruling: g.get('ruling', rid) })),
-      code: object((g) => ({ type: g.get('type', literal('code')), reason: g.get('reason', oneOf(['not-reproduced', 'close-out'] as const)) })),
-    })),
-  })),
+  ruled: object((f): FindingTo => {
+    const out = {
+      state: f.get('state', literal('ruled')),
+      disposition: f.get('disposition', oneOf(FINDING_DISPOSITIONS)),
+      by: f.get('by', tagged<'checkpoint' | 'ruling' | 'code' | 'release', FindingRuledBy>('type', {
+        checkpoint: object((g) => ({ type: g.get('type', literal('checkpoint')), job: g.get('job', jobR) })),
+        ruling: object((g) => ({ type: g.get('type', literal('ruling')), ruling: g.get('ruling', rid) })),
+        code: object((g) => ({ type: g.get('type', literal('code')), reason: g.get('reason', oneOf(['not-reproduced', 'close-out'] as const)) })),
+        release: object((g) => ({ type: g.get('type', literal('release')), job: g.get('job', jobR), reason: g.get('reason', oneOf(RELEASE_REASONS)) })),
+      })),
+    };
+    if (out.by.type === 'release' && out.disposition !== 'released') throw new SchemaError(`${f.path}.disposition`, 'released (a code release releases)', out.disposition);
+    return out;
+  }),
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -937,11 +963,19 @@ export type AdmitClass =
   | Readonly<{ type: 'opportunity'; id: OpportunityId; clauses: readonly VisionClauseId[] }>;
 /** An admit of a bundle as its decision record keeps it: the op's index in the checkpoint answer, its unit, its class. */
 export type ClassifiedAdmit = Readonly<{ index: number; unit: UnitId; class: AdmitClass }>;
-export const CONVERSION_REASONS = ['unrelated', 'over-budget', 'unwitnessed', 'follow-up-overrun'] as const;
+/**
+ * dev.13 (the convergence tail, src/holistic/tail.ts): `regress-brake`, `settled-brake`: an admit whose every repair is a
+ * finding below that brake (any arc, not only a corpus arc); the findings it named are released or banked when the
+ * decision is applied, never a corpus amendment.
+ */
+export const CONVERSION_REASONS = ['unrelated', 'over-budget', 'unwitnessed', 'follow-up-overrun', 'regress-brake', 'settled-brake'] as const;
 export type ConversionReason = (typeof CONVERSION_REASONS)[number];
+/** The conversions a brake makes (dev.13): no amendment, the findings settled by the tail rules. */
+export const BRAKE_CONVERSIONS = ['regress-brake', 'settled-brake'] as const satisfies readonly ConversionReason[];
+export const isBrakeConversion = (r: ConversionReason): r is (typeof BRAKE_CONVERSIONS)[number] => (BRAKE_CONVERSIONS as readonly string[]).includes(r);
 /**
  * An admit code dropped from a bundle (R35): it becomes a corpus amendment (and, for `follow-up-overrun`, a debt item
- * naming `opportunity`). `opportunity` is non-null exactly for `follow-up-overrun`.
+ * naming `opportunity`); a brake's conversion (dev.13) becomes neither. `opportunity` is non-null exactly for `follow-up-overrun`.
  */
 export type Conversion = Readonly<{ index: number; unit: UnitId; reason: ConversionReason; opportunity: OpportunityId | null }>;
 

@@ -63,7 +63,7 @@ const LANE = { id: 'unit', argv: TEST_ARGV } as const;
 // ---------------------------------------------------------------------------------------------------
 // The arc
 
-const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null, experiments: [] });
+const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null, experiments: [], debt: null });
 
 /**
  * A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). `large`: the diff is over

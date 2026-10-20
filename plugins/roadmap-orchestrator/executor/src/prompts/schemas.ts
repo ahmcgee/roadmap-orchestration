@@ -28,7 +28,7 @@ import {
 } from '../holistic/types.ts';
 import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
 import {
-  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, gateClustersDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
+  admitSpecTextDefault, admitTargetsDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault, gateNoteDebtDefault, gateUnreviewedDefault, lensPatchMutantDefault, planCheckScopeGrowthDefault,
   FIXES_UNRECORDED,
   reenterFixesDefault,
 } from '../core/upgrade.ts';
@@ -383,6 +383,11 @@ export const FINDING_SEVERITIES = ['blocking', 'note', 'pre-existing'] as const;
 
 /** dev.13: an ad hoc experiment the gate ran in its checkout, cited as a finding's evidence: the command as run and what it printed. */
 export type GateExperiment = Readonly<{ command: string; output: string }>;
+/**
+ * dev.13 (owner ruling 2026-10-20: debt is for substantive issues that drag down future work): what a note's debt slows,
+ * `drag` naming the future work and why. A note with none (null) is recorded in the gate record and never banked.
+ */
+export type GateDebt = Readonly<{ drag: string }>;
 export type GateFinding = Readonly<{
   severity: (typeof FINDING_SEVERITIES)[number];
   path: string | null;
@@ -394,6 +399,12 @@ export type GateFinding = Readonly<{
    * Required of a live answer; absent on a dev.12 answer, read as none (lasting: a dev.12 gate had no shell).
    */
   experiments: readonly GateExperiment[];
+  /**
+   * dev.13: whether a note is debt (`{drag}`) or not (null); read only on a note (a pre-existing defect always banks, a
+   * blocking finding never). Required of a live answer; absent on a dev.12 answer, read as `unrecorded`
+   * (`gateNoteDebtDefault`): banked as the dev.12 executor banked every note, so a re-read never changes what was banked.
+   */
+  debt: GateDebt | null | typeof GATE_DEBT_UNRECORDED;
 }>;
 /** A part of the change the gate says it did not review (dev.12 round 2): recorded and reported, never enforced. */
 export type GateUnreviewed = Readonly<{ path: string; reason: string }>;
@@ -429,6 +440,7 @@ export const GATE_SCHEMA: Schema = sObj({
   decision: sEnum(GATE_DECISIONS),
   findings: sArr(sObj({
     severity: sEnum(FINDING_SEVERITIES), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
+    debt: sNullable(sObj({ drag: S_STR })),
   })),
   directives: sArr(S_STR),
   reasons: sArr(S_STR),
@@ -437,6 +449,8 @@ export const GATE_SCHEMA: Schema = sObj({
   clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
 });
 
+/** Absent (a dev.12 answer): `unrecorded`, with the upgrade warning; null: not debt. */
+const readDebt = (read: GateDebt | null | undefined): GateDebt | null | typeof GATE_DEBT_UNRECORDED => (read === undefined ? gateNoteDebtDefault() : read);
 const gateExperiment: Read<GateExperiment> = object((f) => ({ command: f.get('command', str), output: f.get('output', str) }));
 const finding: Read<GateFinding> = object((f) => ({
   severity: f.get('severity', oneOf(FINDING_SEVERITIES)),
@@ -444,6 +458,7 @@ const finding: Read<GateFinding> = object((f) => ({
   text: f.get('text', str),
   contractRef: f.get('contractRef', nullable(str)),
   experiments: f.optional('experiments', arrayOf(gateExperiment)) ?? [],
+  debt: readDebt(f.optional('debt', nullable(object((g): GateDebt => ({ drag: g.get('drag', str) }))))),
 }));
 const unreviewedEntry: Read<GateUnreviewed> = object((f) => ({ path: f.get('path', str), reason: f.get('reason', str) }));
 const clusterEntry: Read<GateCluster> = object((f) => ({

@@ -297,6 +297,7 @@ export type RevisionBase = PlanRev | 0;
  * A bundle's `admits` and `conversions` (M4a rev 3, OR-A1, Q4): code's classification of its `admit` ops, persisted in
  * the decision record before any settlement and never recomputed; both present (in a corpus arc) or both absent (an
  * `architecture-doc` arc, or 1.0.0-dev.6: unclassified, never counted against a budget or a follow-up; `bundleClassesOf`).
+ * dev.13: `conversions` alone (non-empty) outside a corpus arc: the admits a brake converted (src/holistic/tail.ts).
  */
 export type RevisionSource =
   | Readonly<{ type: 'start' }>
@@ -1255,9 +1256,16 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   bundle: object((f): RevisionSource => {
     const admits = f.optional('admits', sortedBy(classifiedAdmit, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
     const conversions = f.optional('conversions', sortedBy(conversion, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
-    if ((admits === undefined) !== (conversions === undefined)) throw new SchemaError(`${f.path}.admits`, 'admits and conversions together (a classified bundle) or neither', { admits, conversions });
+    if (admits !== undefined && conversions === undefined) throw new SchemaError(`${f.path}.conversions`, 'conversions beside admits (a classified bundle)', { admits, conversions });
     const out = { type: f.get('type', literal('bundle')), job: f.get('job', (v, p) => jobIdOfKind('ckpt')(v, p)) };
-    if (admits === undefined || conversions === undefined) return out;
+    if (conversions === undefined) return out;
+    if (admits === undefined) {
+      // dev.13: a brake's conversions outside a corpus arc (none classified).
+      if (conversions.length === 0 || conversions.some((c) => c.reason !== 'regress-brake' && c.reason !== 'settled-brake')) {
+        throw new SchemaError(`${f.path}.conversions`, 'admits beside conversions (a classified bundle), or only a brake\'s conversions', conversions);
+      }
+      return { ...out, conversions };
+    }
     const both = [...admits.map((a) => a.index), ...conversions.map((c) => c.index)];
     if (new Set(both).size !== both.length) throw new SchemaError(`${f.path}.conversions`, 'op indices an admit class does not also name', both);
     return { ...out, admits, conversions };

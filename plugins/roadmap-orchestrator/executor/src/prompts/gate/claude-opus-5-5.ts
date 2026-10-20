@@ -53,6 +53,9 @@
 // suspects a bug it may write and run ad hoc experiments to confirm or rule it out, citing each one a finding rests on
 // (command and output) in the finding's `experiments`. No other method is prescribed. Code keeps the invariants: an
 // approve still stands on the spec, diff and lanes, and a finding must still localise. The Sonnet and Haiku rows derive.
+// dev.13 (the convergence tail, owner ruling 2026-10-20: debt is for substantive issues that drag down future work, never
+// test nitpicks or status remarks): each finding's `debt`, the contract only (the field, and which notes are debt); code
+// banks a note only when its drag is given (src/pipeline/gate.ts `gateDebtNotes`). The Fable, Sonnet and Haiku rows inherit it.
 import type { GateInputs, PromptModule } from '../inputs.ts';
 import {
   boundedDiffText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, findingsText, laneLedgerText, obligationsText, premisesText, referenceIndexText, rulingsText, targetDocument, gateChecksText} from '../inputs.ts';
@@ -124,6 +127,8 @@ The Direction breaks ties only where the spec, contracts and rulings are silent;
 - escalate: you are stuck; every option carries a substantive drawback; the change is foundational to the wider system; or a contract cannot be satisfied as written.
 
 directives is empty unless you revise. A directive may name the experiment that shows its defect, so the implementer can run it again. reasons gives the decision's justification, one point per entry; it is not a transcript of your reasoning. path is the repository path a finding concerns, or null. premises lists the claims about the code your decision relies on, each with the file and line you read it at, or is empty; a later round re-verifies only those whose files changed.
+
+debt says whether a note is debt: {drag}, where drag names the future work the issue will slow and why, or null. A note is debt only when it is a substantive issue in the code that will drag down the delivery of later work; the executor banks those in the arc's debt ledger and records every other note in this answer only. A nitpick about a unit test (a case it could add, an assertion it could sharpen), a status remark (a prior finding is resolved, a check now passes, a test now separates two cases) and a preference are never debt. debt is null on every blocking and pre-existing finding: a pre-existing defect is recorded as debt by the executor.
 
 unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason, or is empty. Be honest about coverage: it is compared with what you actually read. If you approve, name here what you did not look at, and do not approve on the strength of a part you did not read when that part could hold a defect.
 

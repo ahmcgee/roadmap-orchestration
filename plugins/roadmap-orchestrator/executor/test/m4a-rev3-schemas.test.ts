@@ -121,12 +121,16 @@ describe('m4a-rev3 checkpoint records', () => {
   ];
   const conversions = [{ index: 1, unit: 'u7', reason: 'follow-up-overrun', opportunity: 'O-1' }, { index: 4, unit: 'u8', reason: 'unrelated', opportunity: null }];
 
-  it('a bundle revision\'s source carries its admit classes and conversions, together or not at all', () => {
+  it('a bundle revision\'s source carries its admit classes and conversions, together or not at all (dev.13: a brake\'s conversions alone)', () => {
     const expect = (source: object) => ({ source, base: 4, rev: 5, payloadSha256: H, docs: false });
     roundTrip(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits, conversions }), null, { type: 'job', job: CKPT }));
     roundTrip(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits: [], conversions: [] }), null, { type: 'job', job: CKPT }));
     roundTrip(intent('revision.commit', expect({ type: 'bundle', job: CKPT }), null, { type: 'job', job: CKPT }));
-    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits }), null, { type: 'job', job: CKPT }), /admits$/);
+    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits }), null, { type: 'job', job: CKPT }), /conversions$/);
+    const braked = [{ index: 0, unit: 'u4', reason: 'regress-brake', opportunity: null }, { index: 1, unit: 'u5', reason: 'settled-brake', opportunity: null }];
+    roundTrip(intent('revision.commit', expect({ type: 'bundle', job: CKPT, conversions: braked }), null, { type: 'job', job: CKPT }));
+    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, conversions }), null, { type: 'job', job: CKPT }), /conversions$/);
+    refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, conversions: [] }), null, { type: 'job', job: CKPT }), /conversions$/);
     refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits, conversions: [{ ...conversions[1], index: 2 }] }), null, { type: 'job', job: CKPT }), /conversions$/);
     refuses(intent('revision.commit', expect({ type: 'bundle', job: CKPT, admits: [admits[1], admits[0]], conversions }), null, { type: 'job', job: CKPT }), /admits\[1\]$/);
   });

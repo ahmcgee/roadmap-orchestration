@@ -8,8 +8,8 @@ import {
 import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, str, tagged } from '../core/validate.ts';
 
 /**
- * Why an item was banked (R7): a gate `note` finding on an approved attempt, or a P2/P3 finding with no obligation a
- * checkpoint deferred; since M4a rev 3 (LR-k, R48) an opportunity's second follow-up repair that code converted
+ * Why an item was banked (R7): a gate `note` finding on an approved attempt (dev.13: one naming its drag on later work)
+ * or a pre-existing one, or a P2 finding with no obligation a checkpoint deferred (dev.13: a P3 is never debt); since M4a rev 3 (LR-k, R48) an opportunity's second follow-up repair that code converted
  * (`opportunity-overrun`: it names the opportunity, never a finding, so correctness never banks).
  */
 export const BANK_REASONS = ['gate-note', 'finding-deferred', 'opportunity-overrun'] as const;

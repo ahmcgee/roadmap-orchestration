@@ -492,7 +492,15 @@ export type CheckpointInputs = Readonly<{
   issuesUnchangedSince: JobId | null;
   /** Arc feedback 2026-10-16: a park trigger's code-produced diagnosis of the parked lineage; null for an audit's trigger. */
   diagnosis: ParkDiagnosis | null;
+  /**
+   * dev.13 (the convergence tail, src/holistic/tail.ts): whether the arc is at the settled point, and each finding it is
+   * shown that is below a brake, in id order, when the inputs are rendered (code enforces them again when it decides).
+   */
+  brakes: CheckpointBrakes;
 }>;
+
+/** The brakes as a checkpoint is shown them (dev.13). */
+export type CheckpointBrakes = Readonly<{ settled: boolean; findings: readonly Readonly<{ finding: FindingId; brake: 'regress' | 'settled' }>[] }>;
 
 /** What a checkpoint manifest entry names (H4). */
 export const MANIFEST_KINDS = ['plan', 'spec', 'ledger', 'sidecar', 'obligations', 'vision', 'phase0', 'issues'] as const;
@@ -611,7 +619,7 @@ export const ROLE_INPUTS = {
   lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
   checkpoint: [
     'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis',
+    'target', 'direction', 'issues', 'manifest', 'specs', 'nextRulingId', 'issuesUnchangedSince', 'diagnosis', 'brakes',
   ],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
@@ -1170,6 +1178,16 @@ export function findingViewsText(findings: readonly FindingView[]): string {
     const tags = [f.severity, f.lens, f.state, ...(f.owner === null ? [] : [`owned by ${f.owner}`])];
     return `- ${f.id} [${tags.join(', ')}]${f.obligation === null ? '' : ` ${f.obligation}`}: ${f.claim}`;
   }).join('\n');
+}
+
+/** The brakes block of a checkpoint (dev.13): the settled point, then each finding below a brake. */
+export function brakesText(b: CheckpointBrakes): string {
+  return [
+    b.settled
+      ? 'The arc is at the settled point: every milestone of the plan has passed and every planned unit has merged.'
+      : 'The arc is not at the settled point.',
+    `Findings below a brake: ${b.findings.length === 0 ? 'none' : b.findings.map((f) => `${f.finding} (${f.brake})`).join(', ')}`,
+  ].join('\n');
 }
 
 export function coverageText(c: VisionCoverage): string {

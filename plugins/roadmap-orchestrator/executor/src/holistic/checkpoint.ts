@@ -116,7 +116,8 @@ import { renderSpec } from '../spec/render.ts';
 import { nextRulingId, parseRulings } from '../spec/rulings.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, rewitnessP1s, withCpu } from './audit.ts';
-import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, type Refused, activate, effectiveOps, raiseOnce, recordedAdmits, settleDecided, vectorAt } from './bundle.ts';
+import { type Activation, type BundleDecision, type Captured, type CheckpointContext, INVALID_REQUEST_OPTIONS, type Refused, activate, effectiveOps, raiseOnce, recordedAdmits, settleDecided, tailWorldOf, vectorAt } from './bundle.ts';
+import { brakeOf } from './tail.ts';
 import { opportunityClauses } from './admits.ts';
 import { integrationHeadNow } from './cadence.ts';
 import type { AppliedBundle } from './convergence.ts';
@@ -688,6 +689,21 @@ function checkpointInputs(ctx: CheckpointContext, s: Captured, r: Recorded): Che
     nextRulingId: nextRulingId(rulings),
     issuesUnchangedSince: reuse?.since ?? null,
     diagnosis: parkDiagnosis(ctx, s.trigger),
+    brakes: brakesShown(ctx, s.findings),
+  };
+}
+
+/** The brakes as the checkpoint is shown them (dev.13, src/holistic/tail.ts): the settled point, each shown finding below a brake. */
+function brakesShown(ctx: CheckpointContext, ids: readonly Captured['findings'][number][]): CheckpointInputs['brakes'] {
+  const world = tailWorldOf(ctx);
+  const fold = ctx.journal.view.holistic().findings;
+  return {
+    settled: world.settled,
+    findings: canonicalIds(ids).flatMap((id) => {
+      const f = fold.find((x) => x.id === id);
+      const brake = f === undefined || !isActive(f) ? null : brakeOf(world, f);
+      return brake === null ? [] : [{ finding: id, brake }];
+    }),
   };
 }
 

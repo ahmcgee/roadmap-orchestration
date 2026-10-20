@@ -6,7 +6,8 @@
 //   intake (M4a, lens `issue`). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
 //   fixed-on-branch) merges into it: nothing is written. A key matching a finding ruled `dismissed` is suppressed unless
 //   a cited evidence blob changed (a path both cite, with a different blob): a dismissal lasts the arc's lifetime (the
-//   growth control is its scope: the arc's own log, never carried into the next arc). A vacuity finding's mutant patch
+//   growth control is its scope: the arc's own log, never carried into the next arc); one matching a finding ruled
+//   `released` (dev.13) is suppressed whatever its evidence. A vacuity finding's mutant patch
 //   is made at admission and kept content-addressed first (`admitMutant`: the lens's edits made a patch by git,
 //   `editsPatch`, or a recorded pre-M4b patch syntax-checked, `checkPatch`; then `keepMutantPatch`,
 //   `inputs/<sha256>.patch`), so its fact names kept bytes; a mutant that cannot be made refuses the draft (H6). Within one
@@ -16,7 +17,8 @@
 //   repairs it owns it; its gate's approval standing makes it `fixed-on-branch`; its publication resolves it. A
 //   `witness` P1 is also resolved by any unit repairing its obligation that publishes after it opened (the brake proved
 //   the obligation held with integrated evidence). Ruling a finding is `ruleFinding`: P1s never bank (a checkpoint may
-//   only dismiss one; deferring or accepting it takes a disposition ruling).
+//   only dismiss one; deferring, accepting or releasing it takes a disposition ruling). dev.13: what a checkpoint's
+//   dispositions become when applied, and which findings code releases then, is src/holistic/tail.ts.
 // - **Blocking (G10).** An active P1 over an obligation a candidate selects blocks it, unless the unit's spec repairs
 //   that obligation (`p1Blocking`): at admission (src/schedule/ready.ts), before green and before the ff
 //   (src/pipeline/integrate.ts `findingBlocking`).
@@ -101,13 +103,18 @@ export function evidenceChanged(before: readonly FindingEvidence[], after: reado
   return after.some((e) => e.blob !== null && was.has(e.path) && was.get(e.path) !== e.blob);
 }
 
-const dismissed = (f: FindingState): boolean => f.state === 'ruled' && f.last?.state === 'ruled' && f.last.disposition === 'dismissed';
+const ruledAs = (f: FindingState, d: FindingDisposition): boolean => f.state === 'ruled' && f.last?.state === 'ruled' && f.last.disposition === d;
 
-/** The dedupe decision for a draft with `key` and `evidence` against the arc's findings. Pure. */
+/**
+ * The dedupe decision for a draft with `key` and `evidence` against the arc's findings. Pure. A released key (dev.13)
+ * suppresses for the arc's lifetime, whatever its evidence: nobody will act on it, so its claim never opens again.
+ */
 export function admissionOf(findings: readonly FindingState[], key: Sha256Hex, evidence: readonly FindingEvidence[]): FindingAdmission {
   const active = findings.find((f) => f.key === key && isActive(f));
   if (active !== undefined) return { kind: 'merged', id: active.id };
-  const dismissal = findings.filter((f) => f.key === key && dismissed(f)).at(-1);
+  const release = findings.find((f) => f.key === key && ruledAs(f, 'released'));
+  if (release !== undefined) return { kind: 'suppressed', by: release.id };
+  const dismissal = findings.filter((f) => f.key === key && ruledAs(f, 'dismissed')).at(-1);
   if (dismissal !== undefined && !evidenceChanged(dismissal.evidence, evidence)) return { kind: 'suppressed', by: dismissal.id };
   return { kind: 'open', key };
 }
@@ -188,11 +195,13 @@ export function issueFindingDraft(input: Readonly<{ issue: IssueId; job: JobId; 
 
 /**
  * Why `disposition` by `by` may not rule `finding`, or null when it may. Only an active finding is ruled; P1s never bank:
- * deferring or accepting one takes a disposition ruling (a checkpoint or code may only dismiss it).
+ * deferring, accepting or releasing one takes a disposition ruling (a checkpoint or code may only dismiss it).
  */
 export function rulingRefusal(finding: FindingState, disposition: FindingDisposition, by: FindingRuledBy): string | null {
   if (!isActive(finding)) return `finding ${finding.id} is ${finding.state}`;
-  if (finding.severity === 'P1' && disposition !== 'dismissed' && by.type !== 'ruling') return `finding ${finding.id} is a P1: P1s never bank (only a disposition ruling ${disposition === 'deferred' ? 'defers' : 'accepts'} one)`;
+  if (finding.severity === 'P1' && disposition !== 'dismissed' && by.type !== 'ruling') {
+    return `finding ${finding.id} is a P1: P1s never bank (only a disposition ruling ${disposition === 'deferred' ? 'defers' : disposition === 'released' ? 'releases' : 'accepts'} one)`;
+  }
   return null;
 }
 

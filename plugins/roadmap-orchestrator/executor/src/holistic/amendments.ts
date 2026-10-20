@@ -19,7 +19,7 @@ import type { Journal, JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { CorpusPin } from '../corpus/types.ts';
 import type { BundleOp, CheckpointOutput } from '../prompts/schemas.ts';
-import type { Conversion } from './types.ts';
+import { type BRAKE_CONVERSIONS, type Conversion, isBrakeConversion } from './types.ts';
 
 /** A `corpus-amendment` fact before its id. */
 export type AmendmentDraft = Omit<Extract<Fact, { kind: 'corpus-amendment' }>, 'kind' | 'id'>;
@@ -40,7 +40,8 @@ export function checkpointAmendments(job: JobId, output: CheckpointOutput): read
   return output.corpusAmendments.map((a, index) => ({ source: { type: 'checkpoint', job, index }, rules: a.rules, proposal: a.proposal, why: a.why, evidence: [] }));
 }
 
-const CONVERSION_WHY: Readonly<Record<Conversion['reason'], string>> = {
+/** Why code converted an admit, per amendment-making reason (a brake's conversion, dev.13, makes no amendment). */
+const CONVERSION_WHY: Readonly<Record<Exclude<Conversion['reason'], (typeof BRAKE_CONVERSIONS)[number]>, string>> = {
   unrelated: 'it serves no clause the arc touches',
   'over-budget': "it advances clauses outside the owner-selected slice, and the arc's opportunity budget is spent",
   unwitnessed: "it advances clauses outside the owner-selected slice, and no obligation of its bundle, delivered by it, serves them on an arc lane in force (an arc lane is the owner's to add)",
@@ -53,11 +54,13 @@ const CONVERSION_WHY: Readonly<Record<Conversion['reason'], string>> = {
  */
 export function conversionAmendment(job: JobId, c: Conversion, op: BundleOp): AmendmentDraft {
   if (op.op !== 'admit' || op.unit.id !== c.unit) throw new Error(`${job} op ${c.index + 1} is no admit of ${c.unit}, which its decision record converts`);
+  const reason = c.reason;
+  if (isBrakeConversion(reason)) throw new Error(`${job} op ${c.index + 1}: a ${reason} conversion makes no amendment`);
   return {
     source: { type: 'admit', job, index: c.index, reason: c.reason },
     rules: [],
     proposal: admitSummary(op),
-    why: `${job} admitted ${c.unit}, which code converted: ${CONVERSION_WHY[c.reason]}${c.opportunity === null ? '' : ` (${c.opportunity})`}. It cites ${op.cites.join(', ')}.`,
+    why: `${job} admitted ${c.unit}, which code converted: ${CONVERSION_WHY[reason]}${c.opportunity === null ? '' : ` (${c.opportunity})`}. It cites ${op.cites.join(', ')}.`,
     evidence: op.evidence,
   };
 }

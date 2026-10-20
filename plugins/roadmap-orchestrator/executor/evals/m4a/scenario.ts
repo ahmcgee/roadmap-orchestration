@@ -11,7 +11,7 @@
 //           risk, frontier: no plan-check call) assesses in session, then implements in the same session; mutation
 //           smoke reverts it and its W-1 witness, the tide table's journey, still passes: one smoke fix round, which
 //           leaves the test (the behaviour predates the unit), then the gate approves with the survivor in its checks
-//           and a note (gate-note debt). audit-1's vision lens opens a P3 with no obligation; ckpt-1 defers it
+//           and a note (gate-note debt). audit-1's vision lens opens a P2 with no obligation; ckpt-1 defers it
 //           (finding-deferred debt), proposes an amendment (T-11: confirm cancellations by text) and takes in both
 //           issues (#1 none, #2 an amendment). Then the six read-outs (one module each: plan-check, build, gate), with
 //           audit-2..audit-5; audit-2..audit-4 find nothing new and have no checkpoint (checkpoint-skipped), and the
@@ -67,8 +67,10 @@ const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({
 });
 
 /** The gate note confirm's approval carries: banked as `gate-note` debt. */
+/** Why the note is debt (dev.13: only a note naming its drag on later work banks). */
+export const GATE_NOTE_DRAG = 'Every later message template copies this sign-off, so each one would need the same rename.';
 export const GATE_NOTE = 'The confirmation text signs off as "Tidewater" where the harbour\'s own name would read better to a skipper.';
-/** The lens P3 ckpt-1 defers: banked as `finding-deferred` debt, which arc 2 promotes to `notice`. */
+/** The lens P2 ckpt-1 defers (dev.13: a P3 is never debt): banked as `finding-deferred` debt, which arc 2 promotes to `notice`. */
 export const DEFERRED_CLAIM = '`cancel` leaves the skipper nothing to keep: unlike a booking, a cancellation sends no text.';
 /** ckpt-1's proposed amendment (source checkpoint), applied in arc 2 as T-24. */
 export const CHECKPOINT_AMENDMENT = { rules: ['T-11'], proposal: 'Add a rule: a cancellation is confirmed to the skipper by text message, as a booking is.', why: 'V-5 asks that a cancellation be as clear to the skipper as a booking; only bookings are confirmed today.' } as const;
@@ -100,7 +102,7 @@ const M1_READOUTS: Readonly<Record<string, readonly M1Step[]>> = Object.fromEntr
 
 const IMPLEMENTER = ['-p', '--permission-mode', 'bypassPermissions'];
 const report = (summary: string): ClaudeAct => ({ type: 'emit', value: { summary, changedPaths: [], lanesRun: [], blockers: [], experiments: [], final: true } });
-const confirmGate = fakeSteps({ steps: [gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{ severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null, experiments: [] }])] }, 'default').at(-1)!;
+const confirmGate = fakeSteps({ steps: [gate('A1, A2 and A3 hold; W-1 survives smoke because the tide table predates the unit.', [{ severity: 'note', path: 'src/confirm.js', text: GATE_NOTE, contractRef: null, experiments: [], debt: { drag: GATE_NOTE_DRAG } }])] }, 'default').at(-1)!;
 
 /**
  * confirm, high risk on the frontier class: no plan-check call; one session assesses (read-only), then implements; the
@@ -149,7 +151,7 @@ const JOBS_1: readonly Step[] = [
   packReviewStep('review-2', [{ severity: 'note', target: packTargetOf.unit('confirm'), claim: 'confirm depends on every registered vessel having a phone number; the register has one for each today.' }], [], [
     { job: 'review-1', index: 0, disposition: 'resolved' },
   ]),
-  lensStep('audit-1', 'vision', [{ severity: 'P3', obligation: null, visionClauses: ['V-5'], claim: DEFERRED_CLAIM, cause: 'no cancellation template is sent', evidence: [{ path: 'src/cli.js', line: 50 }] }]),
+  lensStep('audit-1', 'vision', [{ severity: 'P2', obligation: null, visionClauses: ['V-5'], claim: DEFERRED_CLAIM, cause: 'no cancellation template is sent', evidence: [{ path: 'src/cli.js', line: 50 }] }]),
   checkpointStep('ckpt-1', checkpointAnswer({
     decision: 'no-op',
     findingDispositions: [{ finding: 'F-1', disposition: 'deferred', reason: 'Cancellations are the next slice\'s scene (V-5), not this one\'s.' }],
