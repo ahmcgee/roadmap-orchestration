@@ -30,9 +30,10 @@
 //   walk-screenshots   at least one walk of the browser milestone ended `reported`, and each such walk's evidence dir
 //                      (`<runDir>/evidence/jobs/<walk-n>/`) holds a PNG file (by its signature, anywhere below it)
 //   plant-caught       the plant (layout.ts PLANT) never shipped through a miss: a finding of any judge whose claim or cause
-//                      speaks of the overflow (PLANT_WORDS) reached `resolved` from `fixed-on-branch` of a unit whose
+//                      speaks of the overflow (PLANT_WORDS) of the planted book (PLANT_ANCHOR) reached `resolved` from `fixed-on-branch` of a unit whose
 //                      publication came first, or the plant was gone at the first browser walk's SHA (`/` rendered at 320
-//                      CSS px in Chromium, reflow.ts, no wider than the viewport) with no finding naming it; it fails only
+//                      CSS px in Chromium, reflow.ts, no wider than the viewport), crediting any finding that named it
+//                      (run 5: the vision lens, its fix folded into an undispatched unit's spec); it fails only
 //                      when the plant was live at that walk and no resolved finding names it
 //   repair-loop        the walk → repair → re-walk loop on any milestone: a walkthrough finding reached `resolved` from
 //                      `fixed-on-branch` of a unit whose publication came first, and a walk of its milestone started after
@@ -133,6 +134,9 @@ export function walkScreenshotsVerdict(shape: PlanShape, log: M5Log, pngs: (job:
 
 /** The words a walkthrough finding on the plant uses (claim or cause): the sideways scroll, its cause, the 320 px floor. */
 export const PLANT_WORDS = /overflow|horizontal(ly)? scroll|scrolls? (sideways|horizontally)|sideways scroll|reflow|wider than|cut off|clipped|\burl\b|\blink\b.*\b(wrap|break)|unbroken|(wrap|break)s? .*\b(url|link|address)\b|\b320 ?(css )?px\b/i;
+/** What ties an overflow finding to the plant rather than another overflow (run 5's F-34 was the search heading's). */
+export const PLANT_ANCHOR = /\bb1\b|condition|book-meta|le guin|left hand of darkness|oakstreet\.example|bookplate|seeded book/i;
+const namesPlant = (f: FindingLog): boolean => PLANT_WORDS.test(`${f.claim} ${f.cause ?? ''}`) && PLANT_ANCHOR.test(`${f.claim} ${f.cause ?? ''}`);
 
 /**
  * Whoever catches the plant, the flow succeeds when it never ships: a finding of any judge (a lens, a gate, a walk) that
@@ -142,7 +146,7 @@ export const PLANT_WORDS = /overflow|horizontal(ly)? scroll|scrolls? (sideways|h
  */
 export async function plantCaughtVerdict(shape: PlanShape, log: M5Log, reflow: (sha: string) => Promise<Reflow>): Promise<Verdict> {
   const { browser } = needShape(shape);
-  const candidates = log.findings.filter((f) => PLANT_WORDS.test(`${f.claim} ${f.cause ?? ''}`));
+  const candidates = log.findings.filter(namesPlant);
   const problems: string[] = [];
   for (const f of candidates) {
     const r = repairOf(f, log);
@@ -153,7 +157,7 @@ export async function plantCaughtVerdict(shape: PlanShape, log: M5Log, reflow: (
   if (first === undefined) return { pass: false, detail: `${browser.id} was never walked and no resolved finding names the overflow${problems.length > 0 ? ` (${problems.join('; ')})` : ''}` };
   const at = await reflow(first.sha);
   if (at.kind === 'unknown') return { pass: false, detail: `the plant at ${first.job}'s SHA ${first.sha}: ${at.detail}` };
-  if (at.scrollWidth <= at.viewport) return { pass: true, detail: `prevented upstream: / lays out ${at.scrollWidth} px wide at ${at.viewport} px at ${first.job}'s SHA ${first.sha}, with no finding naming it` };
+  if (at.scrollWidth <= at.viewport) return { pass: true, detail: `prevented upstream: / lays out ${at.scrollWidth} px wide at ${at.viewport} px at ${first.job}'s SHA ${first.sha}${candidates.length > 0 ? `; named by ${candidates.map((f) => `${f.id} (${f.lens}, ${f.transitions.at(-1)?.to.state ?? 'open'})`).join(', ')}` : ', with no finding naming it'}` };
   return { pass: false, detail: `the plant was live at ${first.job} (/ ${at.scrollWidth} px wide at ${at.viewport} px) and no resolved finding names it${problems.length > 0 ? `: ${problems.join('; ')}` : ''} (walkthrough findings: ${log.findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id}: ${f.claim}`).join(' | ') || 'none'})` };
 }
 

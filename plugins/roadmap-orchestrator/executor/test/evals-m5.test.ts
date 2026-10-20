@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Event, Fact } from '../src/core/events.ts';
-import { arcId } from '../src/core/ids.ts';
+import { arcId, jobId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { gitCommonDir } from '../src/git/git.ts';
@@ -24,7 +24,7 @@ import { type Milestone, type PlanM1, parsePlan } from '../src/input/plan.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import {
-  PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, milestonesPlannedVerdict, nodeHeldVerdict,
+  PLANT_ANCHOR, PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, milestonesPlannedVerdict, nodeHeldVerdict,
   plantCaughtVerdict, plantRepairedVerdict, polishBoundedVerdict, repairLoopVerdict, walkScreenshotsVerdict,
 } from '../evals/m5/check.ts';
 import { type EvidencePlan, type M5Log, type Repairs, evidenceComplete, logOf } from '../evals/m5/log.ts';
@@ -217,6 +217,13 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     const missed = await plantCaughtVerdict(SHAPE, unnamed, wide);
     assert.equal(missed.pass, false);
     assert.match(missed.detail, /live at .* no resolved finding names it/);
+    // Another overflow, resolved, is not the plant (run 5's F-34, the search heading); a finding naming the plant that the
+    // checkpoint folded into a spec is credited when the plant is gone at the walk (run 5's F-1).
+    const other = goodLog({ findings: [{ ...f!, claim: 'J-2: a pasted link searched on a 320 px screen makes the no-match page scroll sideways', cause: 'the heading does not wrap' }] });
+    assert.equal((await plantCaughtVerdict(SHAPE, other, wide)).pass, false);
+    const folded = await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, lens: 'vision', transitions: [{ seq: 61, to: { state: 'ruled', disposition: 'accepted', by: { type: 'checkpoint', job: jobId('ckpt', 1) } } }] }] }), async () => measured(320));
+    assert.ok(folded.pass, folded.detail);
+    assert.match(folded.detail, /prevented upstream: .*named by F-1 \(vision, ruled\)/);
     const unknown = await plantCaughtVerdict(SHAPE, unnamed, async () => ({ kind: 'unknown', detail: 'the server did not come up' }));
     assert.equal(unknown.pass, false);
     assert.match(unknown.detail, /the server did not come up/);
@@ -227,6 +234,8 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     assert.equal(unpublished.pass, false);
     for (const said of ['The page scrolls horizontally on a phone', 'content overflows the viewport', 'the long URL does not wrap', 'fails WCAG 1.4.10 Reflow', 'the page is wider than the screen at 320 px']) assert.ok(PLANT_WORDS.test(said), said);
     for (const said of ['the button is missing', 'Low contrast on the meta line', 'the reservation form has no label']) assert.ok(!PLANT_WORDS.test(said), said);
+    for (const said of ['the first book\'s condition runs off the screen', 'the seeded book b1 pushes the page wide', 'the .book-meta line']) assert.ok(PLANT_ANCHOR.test(said), said);
+    assert.ok(!PLANT_ANCHOR.test('a pasted link in the search heading'));
   });
 
   test('evals-m5.criterion.plant-repaired: no wider than the viewport with the planted book listed passes; overflowing, unmeasurable or the book gone fails', () => {
