@@ -125,7 +125,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
 
 test('gate.revise: the directives go to a fix round, and the next gate rules on its prior round with the delta since', T, async () => {
   const directive = 'Export mul as the default export too.';
-  const finding = { severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md', experiments: [] };
+  const finding = { severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md', experiments: [], debt: null };
   const premises = [
     { claim: 'mul multiplies', evidence: [{ path: 'src/mul.js', line: 2 }] },
     { claim: 'add is untouched', evidence: [{ path: 'src/add.js', line: 1 }] },

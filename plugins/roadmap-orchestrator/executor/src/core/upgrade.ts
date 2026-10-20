@@ -348,6 +348,20 @@ export function gateClustersDefault(): null {
   return null;
 }
 
+/** A gate note's `debt` recorded before dev.13 asked for it (`gateNoteDebtDefault`): distinct from an explicit null. */
+export const GATE_DEBT_UNRECORDED = 'unrecorded';
+
+/**
+ * A gate finding's `debt` (dev.13, the convergence tail): absent on an answer a dev.12 gate gave, which banked every
+ * non-blank note. Read as `unrecorded`, banked as dev.12 banked it (src/pipeline/gate.ts `gateDebtNotes`), so a re-read at
+ * recovery never changes what an approval banks. Scaffolding: deleted once no arc started on 1.0.0-dev.12 is in flight
+ * (BACKLOG "Scaffolding to delete"); `debt` then becomes required in `gateOutput`.
+ */
+export function gateNoteDebtDefault(): typeof GATE_DEBT_UNRECORDED {
+  warnDefaulted('gate.debt', 'a gate finding without debt (a dev.12 gate); a note banks as dev.12 banked it');
+  return GATE_DEBT_UNRECORDED;
+}
+
 /**
  * A gate answer's `unreviewed` (1.0.0-dev.12 round 2): absent on an answer a dev.11 gate gave, which was never asked what it
  * did not read. Read as null: unknown, never "everything reviewed". Scaffolding: deleted once no arc started on

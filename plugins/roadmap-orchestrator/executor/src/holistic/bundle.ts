@@ -37,7 +37,10 @@
 //      trigger's second invalid bundle → `bundle-request`. 2026-10-15: a fresh answer's invalid bundle is not decided:
 //      `activate` returns `refused` with every reason, and the checkpoint takes its repair turn (`Activation.repairable`).
 //      A `rule` op repeated exactly is dropped (`distinctRuleOps`), as is a ruling listed twice exactly (`stampedRulings`);
-//      two that differ are a reason.
+//      two that differ are a reason. dev.13 (the convergence tail, src/holistic/tail.ts), any arc, before the classes: an
+//      admit whose every repair is a finding below the regress or settled brake converts (`regress-brake`,
+//      `settled-brake`: dropped, persisted with the decision like a corpus conversion, never an amendment); one naming
+//      such a finding beside other repairs is a reason.
 //   3. Owner-only (A16, H10). A `request` op, or an op with a nested owner-only effect (a lane whose argv[0] no lane of
 //      the plan in force runs, a lane env prerequisite no lane in force passes, a contract op outside the plan's
 //      contracts and architecture doc) → one blocking `owner-request`; nothing is applied.
@@ -57,14 +60,16 @@
 //   9. Divergences, computed by code from the ops against the revisions in force, plus one per interpretation (H13:
 //      each with its preimage and compensation hint).
 //  10. The commit: `plan-applied{source: bundle{job, admits, conversions}}` first (a corpus arc's classification persisted
-//      atomically with the revision, Q4), then the divergences from the payload. Its docs
+//      atomically with the revision, Q4; outside one, dev.13, `{job, conversions}` when a brake converted an admit), then
+//      the divergences from the payload. Its docs
 //      publication (a ruling's `constraints.md`, contract ops; `invariants.md`) runs inside it; a publication refused at
 //      the tip → `rejected{stale}`.
 //
 // Steps 0–9 judge, writing only a decision and its items. An exception while judging is an executor fault: decided as in 2
 // (`rejected{invalid}` naming the fault, a second time a request), so a restart never judges the recorded output again.
 //
-// After an applied or no-op decision: its finding dispositions (`ruleFinding`, by `checkpoint{job}`); in a corpus arc the
+// After an applied or no-op decision: its finding dispositions as the tail rules bind them, and code's release of each
+// shown finding nothing fixes that is a P3 or below a brake (`settleFindings`, src/holistic/tail.ts); in a corpus arc the
 // debt its deferrals bank, its amendments and issue outcomes, and its conversions (each an amendment `source: admit`, a
 // follow-up overrun also a debt item naming its opportunity), read from the decision record, never classified again;
 // the convergence bound when due (over the effective ops), the divergence digest when due. Each is idempotent, and
@@ -79,7 +84,7 @@ import {
   type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type PlanRev, type RoutingRev, type RuleId, type RulingId, type Sha,
   type ResourceName, type Sha256Hex, type UnitId, type VisionClauseId, parseInvocationId, specRev, canonicalIds, type NumberedId, compareIds,
 } from '../core/ids.ts';
-import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations } from '../core/records.ts';
+import { type LaneDef, type NeedsUserContent, type NeedsUserReason, type SpecM1, specObligations, specRepairs } from '../core/records.ts';
 import { type CheckpointState, openAttempt } from '../core/state.ts';
 import { FIXES_UNRECORDED, bundleClassesOf } from '../core/upgrade.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -96,6 +101,7 @@ import { mayOverlap } from '../input/classify.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { laneEnvId, observations, observedViews } from '../pipeline/lanes.ts';
 import { conversionsOf, rulingContextAt } from '../pipeline/publish.ts';
+import { loadUnitSpec } from '../pipeline/stages.ts';
 import { type BundleOp, type CheckpointOutput, splitChildAnchor } from '../prompts/schemas.ts';
 import { type DocsPublisher, commitRevision } from '../recover/revision.ts';
 import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch } from '../spec/patch.ts';
@@ -112,10 +118,11 @@ import { type AppliedBundle, brakesOf, raiseBound, secondChanges } from './conve
 import { publishedHeads } from './coverage.ts';
 import { type DivergenceBase, appendDivergences, interpretationDivergences, opDivergences, raiseDigest } from './divergence.ts';
 import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
+import { type Brake, type TailWorld, brakeConversions, brakeOf, findingOriginRoots, indexedAdmits, settledPoint, tailRulings } from './tail.ts';
 import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
 import { type Observation, keyOf, observedVerdict, reuse } from './observe.ts';
 import {
-  type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
+  type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, isBrakeConversion, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
   type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar, planDefectText,
 } from './types.ts';
 import { citeReasons } from './vision.ts';
@@ -1052,6 +1059,45 @@ export function admitWorldOf(
   };
 }
 
+/**
+ * What the brakes read now (src/holistic/tail.ts): the plan and specs in force, the log, the integration history (git)
+ * and the vision in force.
+ */
+export function tailWorldOf(ctx: CheckpointContext): TailWorld {
+  const view = ctx.journal.view;
+  const inForce = requirePlanInForce(ctx.runDir, view);
+  const rootOf = (u: UnitId): UnitId => view.unit(u).lineage?.root ?? u;
+  const units = inForce.plan.units.map((u) => ({ id: u.id, origin: u.origin, cut: u.cut !== undefined, repairs: specRepairs(loadUnitSpec(ctx, u).spec) }));
+  const findingOrigin = findingOriginRoots(units, rootOf);
+  const vision = revisionInForce(ctx.runDir, inForce).vision?.value ?? null;
+  return {
+    settled: settledPoint(view, inForce.plan, units, findingOrigin, rootOf),
+    findingOrigin,
+    rootOf,
+    history: integrationHistory(view, ctx.repo, integrationHead(ctx)),
+    floors: new Set((vision?.clauses ?? []).filter((c) => c.kind === 'non-negotiable' && c.state === 'active').map((c) => c.id)),
+  };
+}
+
+/** The brake of each active finding by id (null: none, or no such active finding), the world read once, on first need. */
+function brakeReader(ctx: CheckpointContext): (id: FindingId) => Brake | null {
+  let world: TailWorld | null = null;
+  return (id) => {
+    const f = ctx.journal.view.holistic().findings.find((x) => x.id === id);
+    if (f === undefined || !isActive(f) || f.severity === 'P1' || f.obligation !== null) return null;
+    world ??= tailWorldOf(ctx);
+    return brakeOf(world, f);
+  };
+}
+
+const admitSpecOf = (ctx: CheckpointContext) => (op: Extract<BundleOp, { op: 'admit' }>): SpecM1 =>
+  parseSpec(Buffer.from(op.spec, 'utf8'), absPath(join(ctx.planFile, '..', `${op.unit.id}.json`)));
+
+/** The brake conversions and reasons of a bundle's admits (src/holistic/tail.ts `brakeConversions`). */
+function brakesOfBundle(ctx: CheckpointContext, ops: readonly IndexedOp[]): ReturnType<typeof brakeConversions> {
+  return brakeConversions(indexedAdmits(ops, admitSpecOf(ctx)), brakeReader(ctx));
+}
+
 /** The admit ops of `ops` for classification (the specs parsed when the proposal was built; `obligations` in force). */
 function admitOps(ctx: CheckpointContext, ops: readonly IndexedOp[], obligations: Obligations | null): readonly AdmitOp[] {
   return ops.flatMap(({ op, index }) => (op.op === 'admit'
@@ -1175,22 +1221,33 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused 
     ...intakeReasons(ctx.runDir, a.captured, pin, a.output, issueReuse(view, ctx.runDir, a.captured)), ...p.reasons,
   ];
   if (reasons.length > 0) return invalid(reasons);
+  // dev.13 (the convergence tail, src/holistic/tail.ts): an admit whose every repair is a finding below a brake converts,
+  // in any arc; one mixing such a finding with other repairs is invalid. Judged once, kept in the decision record.
+  const brakes = brakesOfBundle(ctx, all);
+  if (brakes.reasons.length > 0) return invalid(brakes.reasons);
+  const braked = new Set(brakes.conversions.map((c) => c.index));
   let classes: AdmitClassification | null = null;
-  let ops = all;
+  let conversions: readonly Conversion[] = brakes.conversions;
+  let ops = all.filter((x) => !braked.has(x.index));
   if (corpus) {
-    const admits = admitOps(ctx, all, revision.obligations?.value ?? null);
+    const admits = admitOps(ctx, ops, revision.obligations?.value ?? null);
     classes = admits.length === 0 ? { classes: [], conversions: [], reasons: [] } : classifyAdmits(admitWorldOf(ctx, a, revision, inForce, p.obligations, recorded), admits);
-    const why = [...classes.reasons, ...conversionReasons(a.output, classes.conversions)];
+    conversions = [...classes.conversions, ...brakes.conversions].sort((x, y) => x.index - y.index);
+    const why = [...classes.reasons, ...conversionReasons(a.output, conversions)];
     if (why.length > 0) return invalid(why);
-    const dropped = new Set(classes.conversions.map((c) => c.index));
+    const dropped = new Set(conversions.map((c) => c.index));
     ops = all.filter((x) => !dropped.has(x.index));
     const added = opportunityClauses(classes.classes);
     if (dropped.size > 0 || added.length > 0 || ops.some(({ op }) => op.op === 'obligation-split')) {
       p = proposalOf(ctx, a, inForce, revision, current, { ops, addAdvances: added, slice: new Set([...slice!, ...added]) });
       if (p.reasons.length > 0) return invalid(p.reasons);
     }
+  } else if (braked.size > 0) {
+    const why = conversionReasons(a.output, conversions);
+    if (why.length > 0) return invalid(why);
+    p = proposalOf(ctx, a, inForce, revision, current, { ops, addAdvances: [], slice: null });
+    if (p.reasons.length > 0) return invalid(p.reasons);
   }
-  const conversions = classes?.conversions ?? [];
   const noOp = (): BundleDecision => {
     const d = decided(ctx, a.job, conversions.length === 0 ? { kind: 'no-op' } : { kind: 'no-op', conversions });
     crashPoint('bundle.after-decided');
@@ -1260,7 +1317,9 @@ function judge(ctx: CheckpointContext, a: Activation): BundleDecision | Refused 
     divergences: [...evaluated.draft.divergences, ...opDivergences(base, ops.map((x) => x.op), p.landing), ...interpretationDivergences(a.job, a.captured.vector, a.output)],
   };
 
-  const source = classes === null ? { type: 'bundle' as const, job: a.job } : { type: 'bundle' as const, job: a.job, admits: classes.classes, conversions };
+  const source = classes !== null
+    ? { type: 'bundle' as const, job: a.job, admits: classes.classes, conversions }
+    : conversions.length > 0 ? { type: 'bundle' as const, job: a.job, conversions } : { type: 'bundle' as const, job: a.job };
   return { kind: 'commit', evaluated: { ...evaluated, draft }, source };
 }
 
@@ -1284,11 +1343,7 @@ export function settleDecided(ctx: CheckpointContext, job: JobId, output: Checkp
   const c = view.holistic().checkpoints.find((x) => x.inputs.job === job);
   if (c?.decided === null || c === undefined) throw new Error(`${job} is not decided`);
   if (c.decided.kind === 'no-op') appendDivergences(ctx.journal, interpretationDivergences(job, captured.vector, output));
-  for (const d of output.findingDispositions) {
-    const f = ctx.journal.view.holistic().findings.find((x) => x.id === d.finding);
-    if (f === undefined || !isActive(f)) continue;
-    ruleFinding(ctx.journal, d.finding, d.disposition, { type: 'checkpoint', job });
-  }
+  settleFindings(ctx, job, output, captured);
   if (ctx.plan().target === 'corpus') {
     bankDeferred(ctx, job, output);
     for (const draft of checkpointAmendments(captured.job, output)) appendAmendment(ctx.journal, draft);
@@ -1303,9 +1358,35 @@ export function settleDecided(ctx: CheckpointContext, job: JobId, output: Checkp
   raiseDigest(ctx);
 }
 
-/** Each conversion of `job`'s decision record (Q4): its amendment, then (a follow-up overrun) its debt item; idempotent by source. */
+/**
+ * The finding rulings of `job`'s decision (src/holistic/tail.ts `tailRulings`): its dispositions still applicable, bound
+ * by the tail rules, then code's release of each finding it was shown that nothing fixes and that is a P3 or below a
+ * brake. A finding named by one of the job's brake conversions stays below that brake. Each ruling is written once (a
+ * ruled finding is no longer active), so a re-settlement writes only what a crash lost.
+ */
+function settleFindings(ctx: CheckpointContext, job: JobId, output: CheckpointOutput, captured: Captured): void {
+  const effective = indexed(effectiveOps(ctx.journal.view, job, output));
+  const repaired = new Set(indexedAdmits(effective, admitSpecOf(ctx)).flatMap((x) => x.repairs.filter((r) => r.startsWith('F-')) as FindingId[]));
+  const converted = new Map<FindingId, Brake>();
+  for (const c of conversionsOf(ctx.journal.view, job)) {
+    const op = output.ops[c.index];
+    if (!isBrakeConversion(c.reason) || op?.op !== 'admit') continue;
+    for (const r of specRepairs(admitSpecOf(ctx)(op))) converted.set(r as FindingId, c.reason === 'settled-brake' ? 'settled' : 'regress');
+  }
+  const reader = brakeReader(ctx);
+  const rulings = tailRulings({
+    job, findings: ctx.journal.view.holistic().findings, captured: captured.findings, dispositions: output.findingDispositions, repaired,
+    brakeOfId: (id) => reader(id) ?? converted.get(id) ?? null,
+  });
+  for (const r of rulings) ruleFinding(ctx.journal, r.finding, r.disposition, r.by);
+}
+
+/**
+ * Each conversion of `job`'s decision record (Q4): its amendment, then (a follow-up overrun) its debt item; idempotent by
+ * source. A brake's conversion (dev.13) has neither: its findings are settled by `settleFindings`.
+ */
 function settleConversions(ctx: CheckpointContext, job: JobId, output: CheckpointOutput): void {
-  const conversions = conversionsOf(ctx.journal.view, job);
+  const conversions = conversionsOf(ctx.journal.view, job).filter((c) => !isBrakeConversion(c.reason));
   if (conversions.length === 0) return;
   const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);
   for (const c of conversions) {
@@ -1326,10 +1407,10 @@ function settleConversions(ctx: CheckpointContext, job: JobId, output: Checkpoin
 }
 
 /**
- * R7: each finding the output deferred that `job` ruled deferred, a P2 or P3 with no obligation, banked as
- * `finding-deferred` debt (`mintDebt`: once per finding, deduped by key against the baseline ledger and the arc's banked
- * items), under the unit that owned it (null: none). A deferred finding with an obligation is never debt (correctness
- * never banks): it stays a finding.
+ * R7: each finding the output deferred that `job` ruled deferred, a P2 with no obligation, banked as `finding-deferred`
+ * debt (`mintDebt`: once per finding, deduped by key against the baseline ledger and the arc's banked items), under the
+ * unit that owned it (null: none). A deferred finding with an obligation is never debt (correctness never banks): it
+ * stays a finding. dev.13: a P3 is never debt (one the output deferred was released, `settleFindings`).
  */
 function bankDeferred(ctx: CheckpointContext, job: JobId, output: CheckpointOutput): void {
   const fold = ctx.journal.view.holistic();
@@ -1337,7 +1418,7 @@ function bankDeferred(ctx: CheckpointContext, job: JobId, output: CheckpointOutp
     const f = fold.findings.find((x) => x.id === d.finding);
     const by = f?.last?.state === 'ruled' ? f.last : null;
     const mine = d.disposition === 'deferred' && by?.disposition === 'deferred' && by.by.type === 'checkpoint' && by.by.job === job;
-    return f !== undefined && mine && f.obligation === null && f.severity !== 'P1' ? [f] : [];
+    return f !== undefined && mine && f.obligation === null && f.severity === 'P2' ? [f] : [];
   });
   if (deferred.length === 0) return;
   const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);

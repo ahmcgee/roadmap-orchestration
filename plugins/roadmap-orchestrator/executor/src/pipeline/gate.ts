@@ -38,9 +38,11 @@
 // M4a: a corpus arc's gate reads the rules index and the pinned corpus materialised read-only without the vision
 // document (`gateTarget`, M3 R17), its directory added to the session's readable dirs.
 //
-// Debt (M4a R7, DEBT_BANK): an approval in a corpus arc banks each `note` and (dev.12 round 2) `pre-existing` finding of
-// the approving answer as a `gate-note` debt item, keyed by its source `(unit, attempt, index)` and deduped by `debtKey` against the baseline's
-// ledger and the arc's banked items (`mintDebt`), right after the `approval` fact. A crash between the two is finished
+// Debt (M4a R7, DEBT_BANK): an approval in a corpus arc banks each `pre-existing` finding (dev.12 round 2) of the
+// approving answer, and each `note` whose `debt` names its drag on future work (dev.13, owner ruling 2026-10-20: a note
+// without one is recorded in the gate record and never debt; a dev.12 answer's note, `debt` unrecorded, banks as dev.12
+// banked it), as a `gate-note` debt item (`gateDebtNotes`), keyed by its source `(unit, attempt, index)` and deduped by
+// `debtKey` against the baseline's ledger and the arc's banked items (`mintDebt`), right after the `approval` fact. A crash between the two is finished
 // from the consumed answer at recovery: `gateRead` re-reads it, keeps the approval, and banks only what is missing.
 //
 // M3: the gate grades against the obligations its diff selects (`selectObligations`, src/holistic/impact.ts: the
@@ -71,7 +73,7 @@ import { type ObligationDef, isExempt } from '../holistic/types.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPath, absPath, matchesPattern, repoPath } from '../core/values.ts';
 import { type BoundedDiff, boundedDiff, diffPaths } from '../git/boundeddiff.ts';
-import { gateLargeDiffOf } from '../core/upgrade.ts';
+import { GATE_DEBT_UNRECORDED, gateLargeDiffOf } from '../core/upgrade.ts';
 import { git, refTarget, revParse } from '../git/git.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import { regenerateLane } from '../input/derived.ts';
@@ -544,15 +546,28 @@ export async function gateRead(
 }
 
 /**
- * Banks the approving answer's `note` and `pre-existing` findings of a corpus arc as `gate-note` debt (R7), after its
- * `approval` (a pre-existing defect is the same kind of recorded, non-blocking debt as a note; dev.12 round 2): each
+ * The findings of an approving answer that are debt, each with its place in the answer and the text banked: a
+ * pre-existing defect (its text); a note whose `debt.drag` is not blank (its text, then its drag); a dev.12 note
+ * (`debt` unrecorded: its text, as dev.12 banked it). A blank text names no debt. Pure.
+ */
+export function gateDebtNotes(findings: GateOutput['findings']): readonly Readonly<{ index: number; what: string }>[] {
+  return findings.flatMap((f, index) => {
+    if (f.severity === 'blocking' || normalizeText(f.text) === '') return [];
+    if (f.severity === 'pre-existing' || f.debt === GATE_DEBT_UNRECORDED) return [{ index, what: f.text }];
+    const drag = f.debt === null ? '' : normalizeText(f.debt.drag);
+    return drag === '' ? [] : [{ index, what: `${f.text} Drag: ${drag}` }];
+  });
+}
+
+/**
+ * Banks the approving answer's debt (`gateDebtNotes`) of a corpus arc as `gate-note` debt (R7), after its `approval`: each
  * keyed by `(unit, attempt, index)`, its index the finding's place in the answer, and minted against the baseline's
- * ledger and the arc's banked items (`mintDebt`: a source or a key already banked mints nothing). A note whose text is
- * blank names no debt and is not banked. Only a corpus arc banks: its Phase 0 dispositions the ledger it publishes.
+ * ledger and the arc's banked items (`mintDebt`: a source or a key already banked mints nothing). Only a corpus arc
+ * banks: its Phase 0 dispositions the ledger it publishes.
  */
 function bankGateNotes(ctx: StageContext, unit: UnitId, attempt: number, findings: GateOutput['findings']): void {
   if (ctx.plan().target !== 'corpus') return;
-  const notes = findings.flatMap((f, index) => (f.severity !== 'blocking' && normalizeText(f.text) !== '' ? [{ index, what: f.text }] : []));
+  const notes = gateDebtNotes(findings);
   if (notes.length === 0) return;
   crashPoint('debt.after-approval', unit);
   const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);

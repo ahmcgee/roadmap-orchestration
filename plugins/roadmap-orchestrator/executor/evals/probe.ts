@@ -539,7 +539,7 @@ async function main(): Promise<void> {
     plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
     coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.', issues: { type: 'captured', issues: [] },
-    manifest: [], specs: [], nextRulingId: rulingId('C-1'), issuesUnchangedSince: null, diagnosis: null,
+    manifest: [], specs: [], nextRulingId: rulingId('C-1'), issuesUnchangedSince: null, diagnosis: null, brakes: { settled: false, findings: [] },
   };
   await backend(ctx, 'm4a.checkpoint-summit', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
     validates('m4a.checkpoint-summit', 'checkpoint', () => true));

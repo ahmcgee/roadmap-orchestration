@@ -32,6 +32,8 @@
 // enforced it, and the checkpoint, not the lens, weighs the findings; the gate role eval measured the report-everything
 // wording, 2026-10-17);
 // delegation (withdrawn 2026-10-17: the judge keeps the Agent tool and arrives at its own method).
+// dev.13, the convergence tail (owner ruling 2026-10-20): the facts the lens needs of it, a released finding is never
+// opened again and a P3 the checkpoint does not fix at once is released (contract text; src/holistic/tail.ts).
 import type { LensInputs, PromptModule } from '../inputs.ts';
 import {
   boundedDiffText, documentsXml, findingViewsText, obligationsText, referenceIndexText, rulingsText, targetDocument, visionText, specsOnlyText} from '../inputs.ts';
@@ -71,13 +73,13 @@ Each obligation is an owner-approved claim about the product, with the witness t
 <finding_bar>
 Report a finding only when all three hold: the problem is on the audited tree; you can state the evidence in one sentence and cite the file and line you read it at; and it is what your lens looks for, as the lens brief in the message states. Nothing else qualifies: not style, naming or formatting, nothing a linter or type checker enforces, no preference without a defect behind it, never one defect twice under two headings. Under-reporting a real defect and over-reporting a non-defect are both failures here: a P1 holds every candidate that selects its obligation until a repair lands, and every finding takes the checkpoint's attention. Report every finding that clears this bar, worst first. An empty report is legitimate and better than a manufactured finding.
 
-<prior_findings> lists the findings already recorded, with their states. Do not report one again: a finding with the same obligation and cause merges into the recorded one, and a dismissed one stays dismissed unless the evidence it cited has changed. Report a recorded defect again only with evidence it did not have, under the same cause.
+<prior_findings> lists the findings already recorded, with their states. Do not report one again: a finding with the same obligation and cause merges into the recorded one, a dismissed one stays dismissed unless the evidence it cited has changed, and a released one (real, and nobody will act on it) is never opened again. Report a recorded defect again only with evidence it did not have, under the same cause.
 </finding_bar>
 
 <severity>
 - P1: an obligation or a system property the contracts or the architecture doc state is broken on the audited tree.
 - P2: a real defect that breaks no obligation today but will cost the arc if it stands: a contract contradicted, a witness that cannot fail, a product choice that works against an active vision clause.
-- P3: a gap worth the checkpoint's attention that is not a defect yet.
+- P3: a gap worth the checkpoint's attention that is not a defect yet. A P3 is never debt: one the checkpoint does not fix at once is released.
 </severity>
 
 <output>

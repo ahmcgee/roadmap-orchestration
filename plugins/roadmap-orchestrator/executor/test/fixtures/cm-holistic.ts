@@ -141,7 +141,10 @@ function ruleC2(r: ExecRun): string {
 }
 
 /** An approving gate's note: the corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
-const gateNote = (what: string) => ({ severity: 'note', path: null, text: `The ${what} helper has no overflow test.`, contractRef: null, experiments: [] }) as const;
+const gateNote = (what: string) => ({
+  severity: 'note', path: null, text: `The ${what} helper has no overflow test.`, contractRef: null, experiments: [],
+  debt: { drag: `Every caller of ${what} must guard overflow itself until it has one.` },
+}) as const;
 
 export type HolisticConcurrent = Readonly<{ peer: HolisticPeer; laid: Laid }>;
 

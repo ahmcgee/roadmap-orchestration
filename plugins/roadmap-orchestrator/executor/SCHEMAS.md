@@ -379,6 +379,11 @@ and the upgrade test also starts arcs on dev.11 (`upgrade.dev11.*`).
 | `AdmissionConstraint` (derived, sched.json) | `+ compare{decision: drop \| null}` | derived |
 | `PlanChange` `milestones` (agent J) | `+ rewalk?: MilestoneId[]` (non-empty): the walked milestones whose `bringUp` or `journeys` the apply edited | absent: none (lasting) |
 | `JournalView` (fold, not persisted) | `+ rewalkSeq(milestone)`; `supersededPackItems` is `supersededItems` (+ a reset walk's escalation) | derived |
+| `finding-transition` (the convergence tail) | `ruled.disposition + released`; `ruled.by + release{job: ckpt-n, reason: p3 \| regress \| settled}` (only with `released`; a reader refusal otherwise); `code{close-out}` may release (a P3) | none: dev.12 logs never release |
+| Bundle decision record (`revision.commit` / `plan-applied` `source: bundle`, `bundle-decided` no-op) | `Conversion.reason + regress-brake, settled-brake` (`opportunity` null); `source: bundle{job, conversions}` without `admits` is legal outside a corpus arc when every conversion is a brake's (non-empty) | none: dev.12 records name earlier reasons, and `admits` without `conversions` is still refused |
+| Gate answer (`GATE_SCHEMA`, `gateOutput`) | `findings[] + debt: {drag} \| null` (required of a live answer) | absent: `unrecorded` (`gateNoteDebtDefault`, warned once; scaffolding): the note banks as dev.12 banked it |
+| `CheckpointInputs` (not persisted) | `+ brakes: {settled, findings: [{finding, brake: regress \| settled}]}`, rendered `<brakes>` | none: rendered per call |
+| `status.findings` (derived) | `+ released: {checkpoint, p3, regress, settled, closeOut}`, `+ refusedAdmits: {regress, settled}` | derived |
 
 ## Owner rulings on model ids (DESIGN-1.0.md §4, Routing profiles)
 
@@ -1588,7 +1593,7 @@ added in step A2), `mapping`, `vision{rev}`, `limits{unit|null}`, `holistic`, `a
 | `witnessed` | `lane, laneRev, envId, treeSha, inv, recordsSha256, purpose: witness\|mutant, for: candidate{unit, attempt} \| job{job} \| mutant{finding, of}`; `purpose: mutant` exactly with `for: mutant` (G13: never certifies). Batch lanes are `job{batch-n}` (H4) |
 | `obligation-latched` | `obligation, unit, treeSha`: after `ff{published}`, before the snapshot; once per obligation |
 | `finding-opened` | `id, key (findingKey = sha256 of canonical {lens, obligation, cause}), lens: LensKind\|witness\|plan-check, severity: P1\|P2\|P3, obligation\|null, visionClauses (ascending), claim, evidence: [{path, blob\|null}], mutant: {patchSha256, lane}\|null (vacuity only), source: job{job} \| stage{unit, stage: plan-check, attempt}, gateHadPassed`. Plan-check (R17) opens only P3 findings citing clauses, from its attempt (the only `stage` source); a `witness` finding is a P1 over its obligation; a `vision` finding is P2 or P3 |
-| `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced \| close-out}}` (`close-out`: run 10, F) |
+| `finding-transition` | `id, to: open \| owned{unit} \| fixed-on-branch{unit} \| resolved \| ruled{disposition: dismissed\|deferred\|accepted, by: checkpoint{job} \| ruling{ruling} \| code{reason: not-reproduced \| close-out}}` (`close-out`: run 10, F; dev.13: `disposition + released`, `by + release{job, reason}`, "dev.13: the convergence tail") |
 | `audit-started` | `job (audit-n), triggers: [cadence \| unwitnessed{obligation} \| drift{planRev} \| wall-clock \| requested{command} \| final] (non-empty), generation, lenses (ascending, a subset of L), integrationSha, planRev, ledgerSha256\|null, obligationsSha256\|null, visionSha256, owners: [{unit, head}] (ascending), priorFindings, highWater, diffBudget?` (bytes, positive; absent on an audit a dev.10 executor started) |
 | `audit-ended` | `job, covered: [{lens, from, to}] (ascending by lens; `to` as far as the lens's reported chunks reached), findings, suppressed, outcome: completed\|abandoned, refused?: [{lens, attempt, claim, cause, reason}]` (M4b: each lens draft refused at admission, in call order; absent on an earlier executor's) |
 | `docs-covered` | `pub, from: U, to: D` (A17, H8) |
@@ -3330,7 +3335,8 @@ The record rows are in "Record evolution" (M4a rev 3 table, "run 10"). Behaviour
   choice: its reject or decline option (null when it offers none), reason}`. The fold closes the item (`ackOf` →
   `{command: null, choice}`); a later `ack` is rejected. No `.ack.json` twin.
 - **F. Findings at the close-out**: in the same settlement, a corpus arc's every active P2 or P3 finding with no obligation
-  is banked (`mintDebt` `finding-deferred`, idempotent by source), then ruled `deferred` by `code{close-out}`; the
+  is banked (`mintDebt` `finding-deferred`, idempotent by source), then ruled `deferred` by `code{close-out}` (dev.13: a P2
+  only; such a P3 is ruled `released` by `code{close-out}`, never banked); the
   close-out publication renders the ledger into `debt.md`. A finding over an obligation is untouched.
 - Crash row "close-out settlement" (test/matrix.ts): labels `closeout.after-request-amendment`,
   `closeout.after-deferred-debt`; the next settlement finds the amendment and the debt item by source.
@@ -4347,3 +4353,52 @@ A stable build for the owner to pick up (plan §4a). Walks and lanes never touch
   `failed`: the latest `demo-failed` after the promotion.
 - **The brief's twin** (`BriefArc.demo`, `BriefDemo`): `{milestone, sha, held, up, since, roughEdges} | null` at the ref,
   not a delta; `where` is status's alone (the brief reads refs only). The Markdown's Demo section.
+
+### The convergence tail (owner ruling 2026-10-20; src/holistic/tail.ts)
+
+m5 run 5 passed both milestones and promoted its demo, then spent two hours auditing the tests its own repair units had
+added; 41 debt items were banked, most of them gate notes that were no debt and test nitpicks. Ruling: debt is for
+substantive issues in the code that drag down later work, never a dumping ground for test nitpicks; a nitpick not fixed
+at once is released; brakes on the tail are code. The record rows are in "Record evolution" (1.0.0-dev.12 →
+1.0.0-dev.13, the rows marked the convergence tail, the bundle decision record, the gate answer's `debt`).
+
+- **`released`** (`FINDING_DISPOSITIONS`): terminal, never debt. `admissionOf` suppresses a draft whose key matches a
+  released finding whatever its evidence (a dismissal still lifts on a changed blob). A checkpoint may dispose
+  `released` (never a P1: `rulingRefusal`); code releases with `release{job, reason}` or (a P3 at the close-out)
+  `code{close-out}`. `accepted` (unchanged) is terminal too: "handled by the ops or already owned", never debt, and a
+  later report of its key opens a new finding.
+- **P3 is never debt**: `mintDebt` refuses a P3 (`DebtRefusedError`), and `bankDeferred` banks only a P2.
+- **Finding-origin unit**: a plan unit whose lineage root has origin `repair` or whose spec in force repairs a finding
+  (`findingOriginRoots`). **Settled point** (`settledPoint`): every milestone of the plan in force has
+  `milestone-passed`, and every unit whose root is not finding-origin is cut or its lineage head `retired` or `cut`
+  (a plan without milestones: the second alone).
+- **Brake of a finding** (`brakeOf`; none for a P1 or a finding with an obligation): `regress` when finding-origin units
+  introduced it (`introducedByFindingOrigin`: an audit lens's finding whose R46 attribution, `findingAttribution`, is
+  non-empty and wholly finding-origin; with no attribution, when its lens's covered range of its audit holds at least
+  one merge and only finding-origin merges); else `settled` at the settled point unless it cites an active
+  non-negotiable clause.
+- **Judging a bundle** (src/holistic/bundle.ts `judge`, after validation, before a corpus arc's classification, any arc):
+  `brakeConversions` over the admits' spec `repairs`: every repair a finding below a brake → a conversion
+  `{index, unit, reason: settled-brake (each below the settled brake) | regress-brake, opportunity: null}`, dropped
+  from the proposal like a corpus conversion (`conversionReasons` holds: nothing may name its unit); a finding below a
+  brake beside other repairs → an invalid reason (the repair turn). The conversions persist in the decision record
+  (`source.conversions`, beside a corpus arc's classes and conversions, merged by index; or a no-op's); a brake's
+  conversion makes no amendment (`settleConversions`, `conversionAmendment` refuses one).
+- **Settling a decision** (`settleFindings`, after an applied or no-op decision, before the corpus steps): `tailRulings`
+  over the findings, the captured ids, the dispositions and the findings the effective admits repair, a finding named
+  by one of the job's brake conversions staying below that brake. Each disposition of an active finding: `dismissed`
+  and `released` as given; a P3 `deferred` → `release{p3}`; a P3 `accepted` that nothing fixes (no effective admit
+  repairs it, its state is `open`) → `release{p3}`; a P2 below a brake `deferred` → `deferred` (it banks), `accepted`
+  that nothing fixes → `release{brake}`; anything else as given. Then each captured finding without a disposition,
+  active, `open` and repaired by no effective admit: a P3 → `release{p3}`, a P2 below a brake → `release{brake}`. Each
+  ruling is one `finding-transition`; a re-settlement writes only what a crash lost.
+- **The checkpoint is told** (`<brakes>`, `brakesText`): whether the arc is at the settled point, and each shown finding
+  below a brake, read when its inputs render; its system text states the rules as facts. The lens is told a released
+  finding never opens again and a P3 nobody fixes at once is released. The gate is told `debt`: `{drag}` only on a
+  note that is a substantive issue in the code slowing later work; null on a test nitpick, a status remark, a
+  preference, and every blocking or pre-existing finding.
+- **Gate notes** (`gateDebtNotes`): a pre-existing finding banks its text; a note banks `<text> Drag: <drag>` only
+  with a non-blank drag; a dev.12 note (`debt` unrecorded) banks its text, as dev.12 did, so a recovery re-read of a
+  consumed dev.12 answer banks exactly what that executor would have; a blocking finding or a blank text never.
+- **`status.findings`**: `released` counts the released findings by `release.reason`, `code{close-out}` (`closeOut`)
+  or a checkpoint (`checkpoint`); `refusedAdmits` counts the brake conversions of every decision record.

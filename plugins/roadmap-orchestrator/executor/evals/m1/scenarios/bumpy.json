@@ -128,7 +128,8 @@
             "path": "src/page-id.js",
             "text": "pageId('!!!', 3) returns '-3'.",
             "contractRef": ".roadmap/contracts/one.md",
-            "experiments": []
+            "experiments": [],
+            "debt": null
           }
         ],
         "directives": [

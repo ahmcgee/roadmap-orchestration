@@ -698,7 +698,8 @@ reporter-declaring suite lane, or in an unselected obligation's witness, grades 
 
 **Findings and repair.** States `open → owned → fixed-on-branch` (the owner's gate approved, R5) `→ resolved`,
 or `ruled`. Findings dedupe by `key = sha256(lens, obligation, cause)`: a key matching an open finding merges into
-it; one matching a dismissal is suppressed unless a cited evidence blob changed. Dismissals have arc lifetime.
+it; one matching a dismissal is suppressed unless a cited evidence blob changed; one matching a release (dev.13) is
+suppressed. Dismissals and releases have arc lifetime.
 Lenses open findings; code opens a P1 (`lens: witness`) when a `must-hold` obligation is not held on an audit
 snapshot; plan-check opens P3 vision-conflict findings (R17). An active P1 adds `finding-blocked` to every
 candidate selecting its obligation, at admission and before `ff`, except the declared repair (`spec.repairs`),
@@ -715,6 +716,23 @@ done: its candidate lacks that fix. On red, a fix round per attributable member,
 deadline; P1s never bank; while `draining`, a new P1 or P2 raises a blocking `new-finding-draining`. Per finding
 `{lens, severity, gateHadPassed, disposition, merged, timeToResolve}` is recorded, so arc 2 measures whether the
 checkpoint works.
+
+**The convergence tail (dev.13, owner ruling 2026-10-20).** Debt is for substantive issues in the code that drag down
+later work, never a dumping ground for test nitpicks; a nitpick not fixed at once is released. Code owns the rules
+(src/holistic/tail.ts) and the checkpoint and lens prompts are told them as facts. Dispositions are `dismissed |
+deferred | accepted | released`; `released` is terminal, never debt, and its key never opens again (whatever its
+evidence). A P3 is never debt: when a checkpoint's decision is applied (or decided no-op), each P3 it was shown that
+nothing fixes (no effective admit repairs it, no unit owns it) is released by code (`release{job, p3}`), deferred,
+accepted or left out alike. Two brakes stop the tail: the **regress brake** (a lens finding about code that
+finding-origin units introduced: origin `repair` or a spec repairing a finding, by lineage root; introduced when the
+finding's R46 attribution is non-empty and wholly finding-origin, or, with no attribution, when its lens's covered
+range holds merges and only finding-origin ones) and the **settled brake** (every milestone `milestone-passed` and
+every other unit merged or cut; any finding below P1 bearing on no active non-negotiable clause). Neither touches a P1
+or a finding with an obligation. A finding below a brake spawns no unit: an admit whose every repair is one converts
+when the bundle is judged (`regress-brake | settled-brake`, in the decision record, any arc, never an amendment), and an
+admit mixing one with other repairs makes the bundle invalid; when applied, such a P2 ruled `deferred` banks (the
+checkpoint's call that it is substantive), and otherwise, while nothing fixes it, is released (`release{job, regress |
+settled}`). `status.findings` counts the released findings by who released them and the admits a brake converted.
 
 **Checkpoint authority.** After every completed audit (§2.5) that found something new, and on every operator-design
 park, the checkpoint seat **rules**, steering toward the vision rather than the original plan: amend implementation contracts,
@@ -907,8 +925,9 @@ by tree. Being docs-only, it covers its own edge (§2.5).
 | Event-log compaction | Deferred (LR-e, §8); `status.host.log {bytes, events, foldMs}` reports the growth. |
 
 **Debt across arcs (M4a).** A corpus arc banks debt (its Phase 0 dispositions the ledger). A debt item `B-n` (global, stable) records its origin arc, a closed `bankReason`
-(`gate-note`: a gate note or pre-existing finding on an approved attempt, banked after the approval; `finding-deferred`: a P2 or P3
-finding with no obligation that a checkpoint defers), `what`, its unit, a disposition history and a state
+(`gate-note`: a pre-existing finding on an approved attempt, or (dev.13) a note whose `debt.drag` names the later work it
+slows, banked after the approval; a note without a drag stays in the gate record; `finding-deferred`: a P2 finding with
+no obligation that a checkpoint defers; a P3 is never debt, §2.8), `what`, its unit, a disposition history and a state
 `open | promoted | resolved`. One `debtKey` over `{unit, bankReason, normalizedWhat}` dedupes it. Directive
 overflow never banks: every directive reaches the fix round. Obligation-affecting items are findings, never debt.
 `debt.md` is rendered by code (a human list plus the `json roadmap-debt` block) and published with any docs
@@ -929,8 +948,8 @@ command.
   change; no own-arc residue. **Close-out settlement (A-M4-29, run 10).** When nothing but quiescence, the close-out
   and the obligations' witnesses on the head is left, the executor declines every unanswered `bundle-request` (a
   corpus arc carries its proposal to the next Phase 0 as an amendment), so a non-blocking item never holds
-  completion; and a corpus arc banks every open P2/P3 finding with no obligation as `finding-deferred` debt, ruled
-  deferred by code, so the next Phase 0 dispositions it. A finding over an obligation never banks. Then `arc-completed{planRev, head, highWater, units}` and the terminal snapshot
+  completion; and a corpus arc banks every open P2 finding with no obligation as `finding-deferred` debt, ruled
+  deferred by code, so the next Phase 0 dispositions it, and releases every such P3 (dev.13: a P3 is never debt). A finding over an obligation never banks. Then `arc-completed{planRev, head, highWater, units}` and the terminal snapshot
   (§2.9). **Completion (A20)** is **active** while the plan rev and the integration head are unchanged (used by
   resume and `status`); an admitting `apply` or a reopen invalidates it. It is **sealed** (used by `gc`) when its
   verified head is still in the integration history and its own log and queue hold no later work; head equality

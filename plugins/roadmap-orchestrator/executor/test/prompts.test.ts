@@ -256,7 +256,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
-        directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }] }],
+        directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null }],
         premises: [premise('PREMISE-B', 'src/b/x.ts')], fixPaths: [repoPath('src/b/x.ts')], changedPremiseFiles: ['src/b/x.ts'],
       },
       checks: {
@@ -294,7 +294,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], coverage: { unservedAdvanced: [], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
       contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', issues: { type: 'captured', issues: [] },
-      manifest: [], specs: [], nextRulingId: rulingId('C-2'), issuesUnchangedSince: null, diagnosis: null,
+      manifest: [], specs: [], nextRulingId: rulingId('C-2'), issuesUnchangedSince: null, diagnosis: null, brakes: { settled: false, findings: [] },
     },
     {
       vision: vision(2, 'VISION-B'), trigger: { type: 'park', unit: unitId('u-two'), seq: 40, cause: { stage: 'candidate', attempt: 9, outcome: 'red', reason: 'candidate-red', design: false, detail: ['TRIGGER-B'] } },
@@ -314,6 +314,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         }],
         reentries: [],
       },
+      brakes: { settled: true, findings: [{ finding: findingId('F-2'), brake: 'regress' }] },
     },
   ],
   packReview: [
@@ -376,7 +377,7 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }] }],
+    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null }],
     premises: [], unreviewed: [], clusters: null,
   },
   lens: {
@@ -669,7 +670,7 @@ describe('output validators', () => {
     const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
     const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
     const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
-    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [] })), 'a finding without experiments (a dev.12 answer) cites none');
+    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded' })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded');
     assert.deepEqual(out.unreviewed, unreviewed);
     const { unreviewed: _u, ...dev11 } = ok.gate;
     assert.equal(validateGateOutput(dev11).unreviewed, null);
@@ -690,6 +691,17 @@ describe('output validators', () => {
     assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [dev12] }).findings[0]!.experiments, []);
     const item = ((GATE_SCHEMA as { properties: Record<string, { items: { required: readonly string[] } }> }).properties['findings']!).items;
     assert.ok(item.required.includes('experiments'), 'a live gate answers it on every finding');
+  });
+
+  it('gate (dev.13, the convergence tail): a finding says whether it is debt, {drag} or null; a live answer gives it on every finding, a dev.12 finding without it reads as unrecorded', () => {
+    const note = { severity: 'note', path: 'src/a/parse.ts', text: 'parse re-reads the file per call.', contractRef: null, experiments: [] };
+    const debt = { drag: 'Every later reader of big inputs pays the re-read.' };
+    assert.deepEqual(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt }] }).findings[0]!.debt, debt);
+    assert.equal(validateGateOutput({ ...ok.gate, findings: [{ ...note, debt: null }] }).findings[0]!.debt, null);
+    assert.equal(validateGateOutput({ ...ok.gate, findings: [note] }).findings[0]!.debt, 'unrecorded');
+    for (const bad of [{}, { drag: 1 }, 'slow']) assert.throws(() => validateGateOutput({ ...ok.gate, findings: [{ ...note, debt: bad }] }), SchemaError, JSON.stringify(bad));
+    const item = ((GATE_SCHEMA as { properties: Record<string, { items: { required: readonly string[] } }> }).properties['findings']!).items;
+    assert.ok(item.required.includes('debt'), 'a live gate answers it on every finding');
   });
 
   it('gate (dev.12, the large-diff gate): a cluster map is ids, paths and a review depth; a dev.11 answer without clusters reads as none (null)', () => {
@@ -796,10 +808,11 @@ describe('M3 prompts: the vision and the arc roles', () => {
     assert.match(sys, /appliesTo: \{"type": "arc"\} or \{"type": "units", "units": \[unit ids, ascending\]\}/);
   });
 
-  it('the checkpoint never accepts or defers a P1: dismissed, or left to the repair that names it (paid m3 run 9)', () => {
+  it('the checkpoint never accepts, defers or releases a P1: dismissed, or left to the repair that names it (paid m3 run 9; dev.13 released)', () => {
     const sys = promptFor('checkpoint', 'claude-opus-5-5').system;
-    assert.ok(sys.includes('A P1 is never accepted or deferred by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
+    assert.ok(sys.includes('A P1 is never accepted, deferred or released by a checkpoint: dismiss it if it is not real; otherwise leave it out of findingDispositions and name it in the repairs of the unit that fixes it'));
   });
+
 
   it('the checkpoint states anchors as anchorSection reads them: #<heading-slug> or literal text on exactly one line (paid m3 run 9)', () => {
     const sys = promptFor('checkpoint', 'claude-opus-5-5').system;

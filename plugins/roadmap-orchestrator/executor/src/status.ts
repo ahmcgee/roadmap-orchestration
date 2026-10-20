@@ -67,7 +67,8 @@
 //                 before one): rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals and the audits
 //                 whose checkpoint was not run because they found nothing new (`checkpoint-skipped`)
 //   convergence   K, the applied bundles counted against it since the counter last cleared, the open brake items
-//   findings      the active findings and `findingMetrics` (B3)
+//   findings      the active findings and `findingMetrics` (B3); dev.13 the released findings by who released them and
+//                 the admits a brake converted (src/holistic/tail.ts)
 //   audit         per lens in L: its watermark and the docs edges pending a gap (B5 `coverageOf`), the uncovered
 //                 range, the generation, and the minutes of lanes run under checkpoint jobs
 //   owed          the open `audit-owed` items
@@ -140,7 +141,7 @@ import { type GateAnswerView, latestGateAnswer } from './pipeline/gate.ts';
 import { busyWaits } from './holistic/checkpoint.ts';
 import { integrationHistory, recordedAdmits } from './holistic/bundle.ts';
 import { findingAttribution, opportunityClauses } from './holistic/admits.ts';
-import { EARLIER_BUILTIN_SEATS, bundleClassesOf, gateLargeDiffOf } from './core/upgrade.ts';
+import { EARLIER_BUILTIN_SEATS, gateLargeDiffOf } from './core/upgrade.ts';
 import { type KnownDefect, type PlanM1, type PlanUnit, advancesOf, hasMilestones, knownDefectsOf, lensSetOf, milestonesOf, parsePlan } from './input/plan.ts';
 import { type MilestoneState, milestoneProgress, milestoneState, walksOf } from './walk/milestones.ts';
 import { milestoneEdges, milestonePassed, milestoneWaits } from './walk/node.ts';
@@ -440,6 +441,26 @@ export type ConvergenceView = Readonly<{
   open: readonly NeedsUserId[];
 }>;
 
+/** The released findings, by who released them (dev.13). */
+export type TailReleased = Readonly<{ checkpoint: number; p3: number; regress: number; settled: number; closeOut: number }>;
+
+/** The released findings and the admits a brake converted, counted from the fold and the decision records (dev.13). */
+function tailCounts(view: JournalView): Pick<Status['findings'], 'released' | 'refusedAdmits'> {
+  const released = { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 };
+  for (const f of view.holistic().findings) {
+    const last = f.last;
+    if (last?.state !== 'ruled' || last.disposition !== 'released') continue;
+    if (last.by.type === 'release') released[last.by.reason]++;
+    else if (last.by.type === 'code' && last.by.reason === 'close-out') released.closeOut++;
+    else released.checkpoint++;
+  }
+  const conversions = conversionsAll(view);
+  return {
+    released,
+    refusedAdmits: { regress: conversions.filter((c) => c.reason === 'regress-brake').length, settled: conversions.filter((c) => c.reason === 'settled-brake').length },
+  };
+}
+
 export type FindingLine = Readonly<{
   id: FindingId; lens: FindingLens; severity: FindingSeverity; state: FindingStateName; owner: UnitId | null; obligation: ObligationId | null; claim: string;
 }>;
@@ -523,7 +544,12 @@ export type Status = Readonly<{
   divergences: readonly DivergenceView[];
   decisionsSince: readonly Decision[];
   convergence: ConvergenceView | null;
-  findings: Readonly<{ active: readonly FindingLine[]; metrics: readonly FindingMetric[] }>;
+  /**
+   * dev.13 (the convergence tail, src/holistic/tail.ts): `released` counts the released findings by who released them (a
+   * checkpoint, or code: a P3 nobody fixed, below the regress or the settled brake, at the close-out); `refusedAdmits`
+   * counts the admits a brake converted.
+   */
+  findings: Readonly<{ active: readonly FindingLine[]; metrics: readonly FindingMetric[]; released: TailReleased; refusedAdmits: Readonly<{ regress: number; settled: number }> }>;
   audit: AuditView | null;
   owed: Readonly<{ audits: readonly NeedsUserId[] }>;
   completion: CompletionView;
@@ -1629,8 +1655,7 @@ function conversionsAll(view: JournalView): readonly (Conversion & Readonly<{ jo
   const applied = view.opsOf('revision.commit').flatMap((commit) => {
     const source = commit.expect.source;
     if (source.type !== 'bundle' || view.doneOf(commit.op) === null) return [];
-    const classes = bundleClassesOf(source);
-    return classes === 'unclassified' ? [] : classes.conversions.map((c) => ({ job: source.job, ...c }));
+    return (source.conversions ?? []).map((c) => ({ job: source.job, ...c }));
   });
   const noOps = view.holistic().checkpoints.flatMap((c) => (c.decided?.kind === 'no-op' ? (c.decided.conversions ?? []).map((x) => ({ job: c.inputs.job, ...x })) : []));
   return [...applied, ...noOps];
@@ -1759,6 +1784,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath): Status {
     findings: {
       active: fold.findings.filter(isActive).map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, owner: f.owner, obligation: f.obligation, claim: f.claim })),
       metrics: findingMetrics(events, fold.findings),
+      ...tailCounts(view),
     },
     audit,
     owed: { audits: owed },
