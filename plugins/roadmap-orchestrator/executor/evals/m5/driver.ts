@@ -25,7 +25,7 @@
 // when it is a URL (`{type: url}`, `demo.final.probe`). check.ts's `demo-serving` grades both.
 //
 // Fail-fast: once the first arc's first plan in force is in its run dir (arcs in start order), `planShape` (shape.ts) must hold: two or more
-// milestones, a browser flow with its design unit, and a dependent milestone with a unit descending from it. Otherwise
+// milestones, a browser flow with its design unit, and a milestone with a unit descending from another's. Otherwise
 // the turn is killed and the run ends `fail-fast` (it would cost hours and grade nothing of M5).
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -426,6 +426,9 @@ if (import.meta.main) {
   if (dir === undefined || !(rest.length === 0 || (rest.length === 2 && rest[0] === '--profile'))) throw new Error(usage);
   const profile = rest[1] ?? 'claude-only';
   if (!(PROFILES as readonly string[]).includes(profile)) throw new Error(`${usage}: profile ${profile}`);
+  // The session can list processes: run 4 (2026-10-20) saw this driver's argv, which names evals/m5, in `ps aux`. Launch it
+  // from a script outside this repository too, so no ancestor's argv names it either.
+  process.title = 'fixture-harness';
   const report = await drive(resolve(dir), profile as ProfileName);
   process.stdout.write(`${JSON.stringify({ report: layout(resolve(dir)).report, endedBy: report.endedBy, stopReason: report.stopReason, turns: report.turns.length, failure: report.failure })}\n`);
   process.exitCode = report.endedBy === 'stopped' ? 0 : 1;

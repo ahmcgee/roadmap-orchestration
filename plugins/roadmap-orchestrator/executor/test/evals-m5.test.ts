@@ -102,13 +102,18 @@ const SHAPE = planShape(GOOD);
 const PARTIAL = planShape(planOf([...UNITS, { id: 'lone', after: ['design'] }], [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['cli', 'lone'], 'design-keeper', 'browser')]));
 
 describe('the plan shape (evals/m5/shape.ts)', () => {
-  test('evals-m5.plan-shape: the intended plan holds, and so does a dependent milestone with one held unit; one milestone, a supplied design, a unit before its design, no milestone built on the browser one, or no browser journey is off', () => {
+  test('evals-m5.plan-shape: the intended plan holds, and so does a dependent milestone with one held unit; one milestone, a supplied design, a unit before its design, no milestone built on another, or no browser journey is off; either gating direction holds', () => {
     assert.equal(SHAPE.kind, 'ok');
     assert.ok(SHAPE.kind === 'ok' && SHAPE.browser.id === 'MS-1' && SHAPE.dependent.id === 'MS-2');
     assert.deepEqual(SHAPE.kind === 'ok' && SHAPE.held, ['cli', 'settings']);
     assert.ok(milestonesPlannedVerdict(SHAPE).pass);
     assert.ok(PARTIAL.kind === 'ok' && PARTIAL.dependent.id === 'MS-2');
     assert.deepEqual(PARTIAL.kind === 'ok' && PARTIAL.held, ['cli']);
+    // Run 4's direction: the browser milestone's page is built on the shell milestone's settings; MS-2 is upstream.
+    const reversed = planShape(planOf([{ id: 'store' }, { id: 'design' }, { id: 'design-keeper' }, { id: 'settings', after: ['store', 'design-keeper'] }, { id: 'reserve', after: ['store', 'design', 'settings'] }], [milestone('MS-1', ['reserve'], 'design', 'browser'), milestone('MS-2', ['settings'], 'design-keeper', 'shell')]));
+    assert.ok(reversed.kind === 'ok' && reversed.browser.id === 'MS-1' && reversed.upstream.id === 'MS-2' && reversed.dependent.id === 'MS-1');
+    assert.deepEqual(reversed.kind === 'ok' && reversed.held, ['reserve']);
+    assert.ok(SHAPE.kind === 'ok' && SHAPE.upstream.id === 'MS-1');
     const off = (plan: PlanM1, problem: RegExp) => {
       const s = planShape(plan);
       assert.equal(s.kind, 'off');
@@ -119,7 +124,7 @@ describe('the plan shape (evals/m5/shape.ts)', () => {
     off(planOf(UNITS, [milestone('MS-1', ['reserve', 'search'], null, 'browser'), milestone('MS-2', ['cli', 'settings'], 'design-keeper', 'shell')]), /design is supplied/);
     off(planOf([...UNITS.filter((u) => u.id !== 'search'), { id: 'search' }], [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['cli'], 'design-keeper', 'shell')]), /search do not run after its design unit/);
     // MS-2's units share MS-1's design unit but descend from none of MS-1's units.
-    off(planOf([...UNITS, { id: 'lone', after: ['design'] }, { id: 'other', after: ['lone'] }], [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['lone', 'other'], 'design', 'browser')]), /no milestone descends from MS-1/);
+    off(planOf([...UNITS, { id: 'lone', after: ['design'] }, { id: 'other', after: ['lone'] }], [milestone('MS-1', ['reserve', 'search'], 'design', 'browser'), milestone('MS-2', ['lone', 'other'], 'design', 'browser')]), /no milestone descends from another/);
     off(planOf(UNITS, [milestone('MS-1', ['reserve', 'search'], 'design', 'shell'), milestone('MS-2', ['cli', 'settings'], 'design-keeper', 'shell')]), /no milestone has a browser journey/);
   });
 });

@@ -18,11 +18,11 @@
 //   arc-complete       the arc's verified ref holds an active completion
 //   milestones-planned the arc's first plan in force has the M5 shape (shape.ts `planShape`): a browser milestone whose
 //                      units all run after its design unit, and a dependent milestone at least one of whose units
-//                      descends (through `after`) from one of the browser milestone's units (those are its held units)
+//                      descends (through `after`) from a unit of another, upstream, milestone (those are its held units)
 //   design-first       the browser milestone's design unit published before any of the milestone's units was first
 //                      dispatched, and every `references` dir of the milestone is in the tree it published
-//   node-held          `milestone-passed` names the browser milestone, and no held unit of the dependent milestone was
-//                      first dispatched before it (its units that descend from no browser-milestone unit are not held)
+//   node-held          `milestone-passed` names the upstream milestone, and no held unit of the dependent milestone was
+//                      first dispatched before it (its units that descend from no upstream unit are not held)
 //   walk-screenshots   at least one walk of the browser milestone ended `reported`, and each such walk's evidence dir
 //                      (`<runDir>/evidence/jobs/<walk-n>/`) holds a PNG file (by its signature, anywhere below it)
 //   plant-caught       the plant (layout.ts PLANT) still overflowed at the first browser walk's SHA: `/` rendered at 320
@@ -175,7 +175,7 @@ const needShape = (shape: PlanShape): Shaped => {
 
 export function milestonesPlannedVerdict(shape: PlanShape): Verdict {
   if (shape.kind === 'off') return { pass: false, detail: shape.problems.join('; ') };
-  return { pass: true, detail: `browser ${shape.browser.id} (design ${JSON.stringify(shape.browser.design)}, units ${shape.browser.units.join(', ')}); dependent ${shape.dependent.id} (units ${shape.dependent.units.join(', ')}; held ${shape.held.join(', ')})` };
+  return { pass: true, detail: `browser ${shape.browser.id} (design ${JSON.stringify(shape.browser.design)}, units ${shape.browser.units.join(', ')}); upstream ${shape.upstream.id}, dependent ${shape.dependent.id} (units ${shape.dependent.units.join(', ')}; held ${shape.held.join(', ')})` };
 }
 
 /** `missingRefs(commit, dirs)`: the dirs absent from the commit's tree. */
@@ -196,14 +196,14 @@ export function designFirstVerdict(shape: PlanShape, log: M5Log, missingRefs: (c
 }
 
 export function nodeHeldVerdict(shape: PlanShape, log: M5Log): Verdict {
-  const { browser, dependent, held } = needShape(shape);
-  const pass = log.passed.find((p) => p.milestone === browser.id);
-  if (pass === undefined) return { pass: false, detail: `no milestone-passed{${browser.id}}` };
+  const { upstream, dependent, held } = needShape(shape);
+  const pass = log.passed.find((p) => p.milestone === upstream.id);
+  if (pass === undefined) return { pass: false, detail: `no milestone-passed{${upstream.id}}` };
   const early = held.flatMap((u) => {
     const d = log.firstDispatch.get(u);
     return d !== undefined && d < pass.seq ? [`${u} dispatched at seq ${d}`] : [];
   });
-  return verdict(early.map((x) => `${x}, before milestone-passed{${browser.id}} at seq ${pass.seq}`), `${browser.id} passed at seq ${pass.seq} (${pass.job}); ${dependent.id}'s held units ${held.join(', ')} dispatched after it`);
+  return verdict(early.map((x) => `${x}, before milestone-passed{${upstream.id}} at seq ${pass.seq}`), `${upstream.id} passed at seq ${pass.seq} (${pass.job}); ${dependent.id}'s held units ${held.join(', ')} dispatched after it`);
 }
 
 /** `pngs(job)`: the PNG files under the walk's evidence dir. */

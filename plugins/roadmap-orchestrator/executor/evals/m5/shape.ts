@@ -1,15 +1,16 @@
 // The plan shape M5 needs from Phase 0 (plan §7 "Rung 4"): at least two milestones, a browser flow with its own design
-// unit and a dependent milestone built on top of it. Shared by the driver's fail-fast and check.ts's `milestones-planned`.
-// The slice and the milestone decomposition are the root agent's, so the two are found by shape, never by id or by what
-// the dependent milestone drives: `browser` is the first milestone with a browser journey (its units all run after its
-// design unit), `dependent` the first other milestone at least one of whose units descends (through `after`) from a unit
-// of `browser`. `held` lists those descending units: the milestone node holds each until `browser` passes. The dependent
-// milestone's other units are not held, by design.
+// unit, and one milestone built on top of another. Shared by the driver's fail-fast and check.ts's `milestones-planned`.
+// The slice and the milestone decomposition are the root agent's, so they are found by shape, never by id or by what
+// each milestone drives: `browser` is the first milestone with a browser journey (its units all run after its design
+// unit). The gating pair is `upstream` and `dependent`: a milestone at least one of whose units descends (through
+// `after`) from a unit of another, upstream, milestone, the browser one preferred as upstream; either direction is a
+// real gate (run 4, 2026-10-20, built the page on the keeper's settings). `held` lists those descending units: the
+// milestone node holds each until `upstream` passes. The dependent milestone's other units are not held, by design.
 import type { UnitId } from '../../src/core/ids.ts';
 import { type Milestone, type PlanM1, designUnitOf, milestonesOf } from '../../src/input/plan.ts';
 
 export type PlanShape =
-  | Readonly<{ kind: 'ok'; browser: Milestone; dependent: Milestone; held: readonly UnitId[] }>
+  | Readonly<{ kind: 'ok'; browser: Milestone; upstream: Milestone; dependent: Milestone; held: readonly UnitId[] }>
   | Readonly<{ kind: 'off'; problems: readonly string[] }>;
 
 /** Every unit `unit` runs after, directly or transitively. */
@@ -40,10 +41,11 @@ export function planShape(plan: PlanM1): PlanShape {
     const before = browser.units.filter((u) => !ancestorsOf(plan, u).has(design));
     if (before.length > 0) problems.push(`${browser.id}'s units ${before.join(', ')} do not run after its design unit ${design}`);
   }
-  const heldOf = (m: Milestone): readonly UnitId[] => m.units.filter((u) => browser.units.some((b) => ancestorsOf(plan, u).has(b)));
-  const dependent = ms.find((m) => m !== browser && heldOf(m).length > 0);
-  if (dependent === undefined) {
-    problems.push(`no milestone descends from ${browser.id} (units ${browser.units.join(', ')}; ${ms.filter((m) => m !== browser).map((m) => `${m.id}: units ${m.units.join(', ')}`).join(' | ')})`);
+  const heldOf = (up: Milestone, m: Milestone): readonly UnitId[] => m.units.filter((u) => up.units.some((b) => ancestorsOf(plan, u).has(b)));
+  const pairs = [browser, ...ms.filter((m) => m !== browser)].flatMap((up) => ms.filter((m) => m !== up && heldOf(up, m).length > 0).map((dependent) => ({ upstream: up, dependent })));
+  const pair = pairs[0];
+  if (pair === undefined) {
+    problems.push(`no milestone descends from another (${ms.map((m) => `${m.id}: units ${m.units.join(', ')}`).join(' | ')})`);
   }
-  return problems.length > 0 || dependent === undefined ? { kind: 'off', problems } : { kind: 'ok', browser, dependent, held: heldOf(dependent) };
+  return problems.length > 0 || pair === undefined ? { kind: 'off', problems } : { kind: 'ok', browser, ...pair, held: heldOf(pair.upstream, pair.dependent) };
 }
