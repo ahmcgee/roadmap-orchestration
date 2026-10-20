@@ -235,9 +235,11 @@ at triage stay in git history.
   only). The plant is now a data row only rendering reveals (an unbreakable URL in the first book's condition, so the page
   scrolls sideways at 320 px; check.ts grades it by rendering, reflow.ts). Run 5 (/var/tmp/m5-dev13-5, 2026-10-20) ran
   the loop on another defect: walk-1 found F-34 (the no-match heading overflows at 320 px), `headings` repaired it,
-  walk-2 passed MS-1 (check.ts `repair-loop` grades this on any milestone now). But the vision audit lens caught the
-  plant itself (F-1) before any walk, so plant-caught still fails "repaired upstream". Open until a paid run shows a walk
-  catch the plant. Trigger: the next m5 run.
+  walk-2 passed MS-1 (check.ts `repair-loop` grades this on any milestone now). The vision audit lens named the plant
+  (F-1) before any walk and the checkpoint folded the fix into a unit's spec; plant-caught now grades the flow (any
+  judge's resolved finding naming the planted book, or the plant gone by the first walk), so run 5 passes "prevented
+  upstream". Open: no paid run has yet shown a walk itself catch the plant. Trigger: a run where the plant survives to
+  the first walk.
 - **A direct `demo down` with no live arc.** Demo acts are queued commands; with no executor running they wait for the
   next start. Trigger: the owner wants the demo stopped between arcs.
 - **Write-deny rules cover paths existing at call start.** A directory created later beside the path to a writable
@@ -276,6 +278,12 @@ at triage stay in git history.
   capacity. Wanted: a code-computed critical-path length (units and median stage time) beside the pack review's
   notes, as an advisory the architect may act on before admission, never a refusal.
 
+- **Builder eval for test strength** (dev.13, 9279c77). The build briefs now ask that tests fail for the two or three most
+  plausible wrong versions (the vacuity lens's question). Unmeasured but for the m-fixtures' first-audit vacuity count
+  (m5 run 5 baseline: 10 P2 + 3 P3 in the first audit). Bring in a builder role eval with plants a vacuous suite passes.
+- **Gate alignment with vacuity** (dev.13, deferred). The gate has one line on vacuity and approves suites the audit
+  later finds vacuous; with its shell it could run a mutant or two of the diff against the tests. Trigger: m-fixture
+  first-audit vacuity P2s that the builder change does not remove.
 - **Builder prompt trim, after the builder eval** (W3, 2026-10-16, deferred). The build briefs restate rules code already
   backs; trim each once a builder eval shows the outcome holds without it. Candidates: the scope paragraph's "the
   executor keeps only changes to paths matching them" (salvage enforces it and the fix round names reverted paths); the
@@ -306,8 +314,9 @@ at triage stay in git history.
   the trigger. (1) An admit that addresses a finding below a brake without naming it in `repairs` is not caught (only
   `repairs` is read); trigger: a converted-admit count of 0 while units are still admitted after the settled point.
   (2) A braked P2 whose admit converted is released, not banked, unless the checkpoint also deferred it; trigger: an owner
-  finding a substantive defect among `release{regress | settled}` findings. (3) Findings with an obligation are under no
-  brake (correctness never banks and is never released); trigger: a tail of obligation-bearing P2s. (4) The settled
+  finding a substantive defect among `release{regress | settled}` findings. (3) A finding that an obligation is broken is
+  under no brake (correctness never banks and is never released; a vacuity finding on an obligation's witness is braked
+  and banks when deferred); trigger: a tail of obligation-broken P2s. (4) The settled
   point counts polish and checkpoint (`origin: checkpoint` without a finding repair) units as planned work, so a polish
   round keeps the arc unsettled; trigger: a walk round's polish units holding the brake off while the audit tail grows.
 
