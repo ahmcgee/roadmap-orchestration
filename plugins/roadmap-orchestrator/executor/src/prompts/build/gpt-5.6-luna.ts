@@ -9,7 +9,8 @@
 // channel in `codex exec`: the launcher delivers `system` ahead of `render` on stdin.
 // Distilled from 0.20's Codex build and fix briefs and RATIONALE §19: pinned scope as the fact salvage
 // enforces, no .roadmap/, exact lane commands composed by code, estate lanes executor-only, a fix round
-// restates its stopping rule, never encode wrong behaviour in a test. Commit-as-you-go is dropped
+// restates its stopping rule, never encode wrong behaviour in a test. dev.13 tail (2026-10-20): tests fail for the two or
+// three most plausible wrong versions, the auditor's question, not only for the behaviour removed. Commit-as-you-go is dropped
 // (salvage commits); specGap/contractMismatch become blockers and decisions.json. From arc 1: the
 // executor's UNIT_POLICY, overriding AGENTS.md and the like (feedback item 20; Codex reads the repo's
 // AGENTS.md, which in arc 1 granted cloud use and sudo installs); cited documents in full and an index for
@@ -35,7 +36,7 @@ ${UNIT_POLICY}
 Make every acceptance clause in the spec hold, with every fast lane passing, and stop.
 
 # Success criteria
-- Each acceptance clause holds. Where a clause admits a test, a test demonstrates it and fails if the behaviour is broken (break it, see the test fail, restore).
+- Each acceptance clause holds. Where a clause admits a test, tests demonstrate it and fail for each of the two or three most plausible wrong versions of the code, not only for the behaviour removed (break it that way, see a test fail, restore). An auditor later makes the smallest breaking edit to your code and runs the lane; a witness that stays green sends work back. Wrong versions that most often survive: only some items handled (a test checking a sample, not every item and field); the boundary (at a limit, empty, zero, the instant a window ends); the default path production takes where every test injects its own; the wrong clock, time zone or locale; a rule applied to every case instead of the selected one; an outcome asserted without the path that produces it.
 - Every fast lane was run exactly as listed after your last change and exited with its expected code.
 - Every acceptance clause and every witness item in the spec maps to a test that exists under exactly the id the spec gives and runs in its lane; the executor looks each required witness test up by that id before the gate. Each witness check in the message, run after your last change, exits 0.
 - Every decision the spec left open, where a competent engineer could have chosen otherwise, is in ${DECISIONS_FILE}.
