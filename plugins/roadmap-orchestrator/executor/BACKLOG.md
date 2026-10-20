@@ -225,9 +225,15 @@ at triage stay in git history.
   defects in ledgerly's clean product (seven fixed in 1c60f0b, 2c9864c, 71d5d34, c070bd4, 388d8ef), so twin false
   positives measured the fixture as much as the walker. A fixture change needs a fake-free walk of its clean product
   before it counts. Trigger: the next fixture or family change.
-- **W12 (CI log text) is the one class boundary the walker still crosses** (1 of 78 dev trials classed the plant's
-  'exit N' as breaks/journey after the rework rule). Trigger: it recurs in a real arc's walk; then a sharper example in the
-  prompt's reason.
+- **W12 (CI log text) is the one class boundary the walker still crosses** (dev-6 2/12 trials and holdout-4 1/6 classed
+  the plant breaks/journey or contract). 78f2e74 reworded J-8, which had made "find what to fix" the journey's outcome; the
+  first dev-7 trials since (S2, 3/3) class it deviates. Trigger: it recurs in the rest of dev-7/holdout-5 or in a real
+  arc's walk; then a sharper example in the prompt's reason.
+- **The m5 paid run has not shown a walk-to-repair loop on a real arc.** Run 2 (/var/tmp/m5-dev13-2, 2026-10-19): the
+  design unit repaired the planted 2.12:1 contrast before the first walk, the walks found one P2 the checkpoint ruled
+  accepted, so no repair or polish unit ran (the loop is covered by the fake-backend integrated tests and the role evals
+  only). Wanted: a plant no design or build unit's scope touches (a dead link on an MS-1 journey in a file outside every
+  unit's scope) so only a walk can catch it. Trigger: the next m5 batch.
 - **A direct `demo down` with no live arc.** Demo acts are queued commands; with no executor running they wait for the
   next start. Trigger: the owner wants the demo stopped between arcs.
 - **Write-deny rules cover paths existing at call start.** A directory created later beside the path to a writable
