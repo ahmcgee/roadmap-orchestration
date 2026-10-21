@@ -37,6 +37,7 @@ import { type AbsPath, absPath, isoTimeOf, repoPattern } from '../core/values.ts
 import { capturedEvidence } from '../git/evidence.ts';
 import { mutantPatchPath, patchedTree } from '../git/mutant.ts';
 import { mutantLaneDir } from '../git/snapshot.ts';
+import { removedSince } from '../git/worktree.ts';
 import { type RepairProgress, type RepairUnit, isActive, repairedObligations, ruleFinding, syncFindings } from '../holistic/findings.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { type ArcLaneDef, type MutantRef, type ObservationVerdict, type WitnessRecord, type WitnessRef, laneRevOf, witnessRecord } from '../holistic/types.ts';
@@ -131,8 +132,8 @@ export async function removeMutantWorktree(ctx: StageContext, parent: StageParen
  */
 export async function removeMutantLeftovers(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<void> {
   const view = ctx.journal.view;
-  const removed = new Set(view.opsOf('worktree.remove').filter((i) => view.doneOf(i.op) !== null).map((i) => i.expect.path));
-  const left = view.opsOf('mutant.apply').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && view.doneOf(i.op) !== null && !removed.has(i.expect.worktree));
+  const left = view.opsOf('mutant.apply').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && view.doneOf(i.op) !== null
+    && !removedSince(view, i.expect.worktree, i.op));
   for (const i of left) if (existsSync(i.expect.worktree)) await removeMutantWorktree(ctx, parent, i.expect.worktree, null);
 }
 

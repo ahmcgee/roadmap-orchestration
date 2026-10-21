@@ -6,8 +6,8 @@ import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, type OpOutcome, type WorktreeCheckout, parentUnit } from '../core/events.ts';
-import type { Sha } from '../core/ids.ts';
-import type { GitSteps, IntentBody } from '../core/interfaces.ts';
+import { type OpId, type Sha, parseOpId } from '../core/ids.ts';
+import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';
 import type { CapturedEvidence } from './evidence.ts';
 import {
@@ -51,6 +51,22 @@ export function inspectWorktree(repo: AbsPath, expect: IntentOf<'worktree.create
   if (checkout.type === 'detached' && attached !== null) return notReady(`HEAD on ${attached}, expected detached`);
   if (statusPorcelainV2Z(path, false).length > 0) return notReady('status not clean');
   return { kind: 'ready', head };
+}
+
+/**
+ * Whether a done `worktree.remove` of `path` came after `op` (the op that put a worktree there: its create, a mutant's
+ * apply). Only a later removal counts: a path is reused (a checkpoint's checkout, `<job>.checkpoint`, by each attempt), so
+ * an earlier removal of the same path says nothing of the worktree `op` made (the dev.14 arc's ckpt-14, crash-looping on
+ * `already exists`).
+ */
+export function removedSince(view: JournalView, path: AbsPath, op: OpId): boolean {
+  const after = parseOpId(op).seq;
+  return view.opsOf('worktree.remove').some((i) => i.expect.path === path && parseOpId(i.op).seq > after && view.doneOf(i.op) !== null);
+}
+
+/** Whether the journal says `created`'s worktree is still there: created (done), and not removed since. */
+export function standing(view: JournalView, created: IntentOf<'worktree.create'>): boolean {
+  return view.doneOf(created.op) !== null && !removedSince(view, created.expect.path, created.op);
 }
 
 export type WorktreeCreateRequest = Readonly<{ path: AbsPath; checkout: WorktreeCheckout }>;

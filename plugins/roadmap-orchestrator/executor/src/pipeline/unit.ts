@@ -75,6 +75,7 @@ import { type AbsPath, absPath } from '../core/values.ts';
 import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
 import { failuresText, laneFailures } from './failures.ts';
 import { capturedEvidence } from '../git/evidence.ts';
+import { standing } from '../git/worktree.ts';
 import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { type NextStage, nextStage } from '../schedule/ready.ts';
@@ -490,9 +491,8 @@ async function retire(ctx: StageContext, unit: PlanUnit): Promise<void> {
   const { spec } = loadUnitSpec(ctx, unit);
   for (const created of presentCheckouts(view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   const after = ctx.journal.view;
-  const removed = new Set(after.opsOf('worktree.remove').filter((i) => after.doneOf(i.op) !== null).map((i) => i.expect.path));
   const own = after.opsOf('worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && i.expect.checkout.type === 'branch'
-    && after.doneOf(i.op) !== null && !removed.has(i.expect.path));
+    && standing(after, i));
   for (const created of own) {
     const evidenceOp: OpId | undefined = after.opsOf('evidence.snapshot')
       .filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && (i.parent.stage === 'evidence' || i.parent.stage === 'prepare') && after.doneOf(i.op) !== null)

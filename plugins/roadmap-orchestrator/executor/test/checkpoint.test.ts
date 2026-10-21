@@ -1104,3 +1104,41 @@ for (const row of [CHECKPOINT_JOB, BUNDLE_ACTIVATE]) {
     }
   });
 }
+
+// The dev.14 arc's ckpt-14: a checkpoint whose call died twice. Its checkout path is the job's own (`<job>.checkpoint`),
+// so the second attempt removed the first's checkout and made it again at the same path; that earlier removal must not
+// hide the second checkout, or the third attempt finds the path taken (`already exists`) and every restart crashes.
+test('checkpoint.checkout-reused-after-two-crashes: a checkpoint killed in its call twice is asked a third time on a checkout made afresh', T, async () => {
+  const d = checkpointArc(visionLenses('audit-1'));
+  const setup = contextFor(d);
+  const { ctx: sctx } = checkpointContext(setup);
+  await completedAudit(setup, sctx);
+  appendSteps(d, [checkpointStep('ckpt-1', bundle([VALID_OP]))]);
+  setup.journal.close();
+  for (const n of [1, 2]) {
+    const trigger = writeTrigger(tmpDir(`checkpoint-twice-${n}`), { label: 'spawn.after-intent', occurrence: 1 });
+    const exit = await runFixture('checkpoint-child.ts', [JSON.stringify(d)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 150_000 });
+    assert.equal(exit.signal, 'SIGKILL', `crash ${n} must fire: code ${exit.code}, stdout ${exit.stdout}, stderr ${exit.stderr}`);
+    assertFired(trigger);
+    const between = contextFor(d);
+    const { ctx, w } = checkpointContext(between);
+    try {
+      await recover({ stage: ctx, commands: w.commands });
+    } finally {
+      between.journal.close();
+    }
+  }
+  const r = contextFor(d);
+  const { ctx, w } = checkpointContext(r);
+  try {
+    await recover({ stage: ctx, commands: w.commands });
+    const creates = r.journal.view.opsOf('worktree.create').filter((i) => i.expect.path.endsWith('ckpt-1.checkpoint'));
+    assert.equal(creates.length, 2, 'two attempts made the checkout at the same path');
+    const out = await runCheckpoint(ctx);
+    assert.ok(out.kind === 'decided' && out.job === 'ckpt-1' && out.decision.kind === 'applied', JSON.stringify(out));
+    assert.deepEqual(r.journal.view.openIntents(), []);
+    assert.equal(git(d.repo, 'worktree', 'list', '--porcelain').includes('ckpt-'), false, 'no checkpoint checkout left');
+  } finally {
+    r.journal.close();
+  }
+});
