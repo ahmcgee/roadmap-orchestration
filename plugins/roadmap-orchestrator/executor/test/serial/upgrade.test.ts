@@ -8,9 +8,9 @@
 // HEAD's check.ts (every criterion passes, and the upgrade forced no park and no new session), or, where the story
 // needs arc judgments the M1 scenario format cannot express, with HEAD's CLI and fakes directly.
 //
-// Which releases: HEAD (1.0.0-dev.14) adopts arcs started on 1.0.0-dev.7 to dev.13, through the defaults of
+// Which releases: HEAD (1.0.0-dev.15) adopts arcs started on 1.0.0-dev.7 to dev.14, through the defaults of
 // src/core/upgrade.ts. Three are covered here. Every unlabelled cell starts its arc on the previous release
-// (PREVIOUS_RELEASE, 1.0.0-dev.13). The cells labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
+// (PREVIOUS_RELEASE, 1.0.0-dev.14). The cells labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
 // and those labelled `upgrade.dev10.*` on 1.0.0-dev.10 (DEV10_RELEASE): an arc started on each is in flight, so the
 // dev.11 and dev.10 defaults are live code. No arc started on dev.7 to dev.9 is in flight, and no cell starts one.
 //
@@ -19,10 +19,10 @@
 // role sets and pressure records are HEAD's. HEAD's walk roles (`walkthrough`, `polishJudge`) are in force only under a
 // plan with milestones, which no arc of theirs has, so no walk seat is hashed for them.
 //
-// What dev.13 records differently from 1.0.0-dev.14: nothing (dev.14 changes no record), nor does dev.12 record
-// anything differently from dev.13 that HEAD reads with a default: dev.13's additions (plan `milestones`,
+// What dev.14 records differently from 1.0.0-dev.15: nothing (neither dev.15 nor dev.14 changes a record), nor does
+// dev.12 record anything differently from dev.13 that HEAD reads with a default: dev.13's additions (plan `milestones`,
 // `limits.walkRounds`, a unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a
-// dev.13 arc on HEAD warns no `roadmap: upgrade default` (asserted after every unlabelled cell's HEAD phase); its seat
+// dev.14 arc on HEAD warns no `roadmap: upgrade default` (asserted after every unlabelled cell's HEAD phase); its seat
 // table is HEAD's for every role in force, so its routing revs stand unchanged.
 //
 // What dev.11 and dev.10 also lack of 1.0.0-dev.12: their judgments ran without the Agent tool and, but for
@@ -229,9 +229,9 @@ type Release = Readonly<{ sha: string; version: string }>;
  * The previous release: its executor starts the arc, HEAD's finishes it, in every cell not labelled with an older
  * release. At each release, move it to the last released commit, the merge of the previous release's PR into main.
  * Merges here are merge commits, so a merged branch's shas stay reachable and `git archive` finds them. Now:
- * 1.0.0-dev.13, merged to main as PR #115 (schema version 1).
+ * 1.0.0-dev.14, merged to main as PR #117 (schema version 1).
  */
-const PREVIOUS_RELEASE: Release = { sha: '72b5d62c7d7d1ddad28cd1aad9aeec714d2d0769', version: '1.0.0-dev.13' };
+const PREVIOUS_RELEASE: Release = { sha: '843139b4b6e6ec3606bb825ac83304070778f51d', version: '1.0.0-dev.14' };
 /**
  * 1.0.0-dev.11, merged to main as PR #113: an arc started on it is in flight (adopted by dev.12, then by HEAD), so the
  * cells labelled `upgrade.dev11.*` start their arc on it and exercise the dev.11 defaults of src/core/upgrade.ts end to
@@ -528,7 +528,7 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
 }
 
 /**
- * HEAD reads an arc the previous release started with no default (dev.14 changed no record): once HEAD's phase ends, no executor of the host dir warned `roadmap: upgrade default`.
+ * HEAD reads an arc the previous release started with no default (dev.15 changed no record): once HEAD's phase ends, no executor of the host dir warned `roadmap: upgrade default`.
  * An older release's cells assert the defaults they read instead.
  */
 function assertNoDefaultRead(p: Phase1): void {
