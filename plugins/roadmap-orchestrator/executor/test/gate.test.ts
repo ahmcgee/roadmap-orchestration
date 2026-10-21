@@ -6,7 +6,7 @@
 // gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
 // voids nothing): gate.read-surface, plan-check.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
 // context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
-// gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout.
+// gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout. dev.16: gate.symlink-in-checkout.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -24,7 +24,7 @@ import { SchemaError } from '../src/core/validate.ts';
 import { absPath, repoPath } from '../src/core/values.ts';
 import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
 import { ACTING_JUDGE_TOOLS, writeDenyRules } from '../src/backends/argv.ts';
-import { FILES_DIR } from '../src/git/evidence.ts';
+import { FILES_DIR, readManifest } from '../src/git/evidence.ts';
 import { evidenceRoot, verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { clusterCoverage } from '../src/prompts/schemas.ts';
@@ -32,7 +32,7 @@ import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { runUnit, step } from '../src/pipeline/unit.ts';
-import { git } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
 import { events } from './fixtures/invoke-specs.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
@@ -249,6 +249,30 @@ test('gate.acting-checkout (dev.13): the gate is an acting judge with no MCP ser
     assert.equal(readFileSync(kept, 'utf8'), experiment['probe-mul.mjs']);
     // The transitions are unchanged: an approve, then the candidate.
     assert.deepEqual(outcomes(d).filter((o) => o.startsWith('gate:') || o.startsWith('candidate:')), ['gate:approve', 'candidate:green']);
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('gate.symlink-in-checkout (dev.16): a symlink the gate leaves in its checkout is named on the snapshot, not captured, and the checkout is still removed', T, async () => {
+  // The field case (gate-23): `node_modules -> <another checkout>/node_modules` crashed the removal's snapshot every generation.
+  const target = tmpDir('gate-link-target');
+  const experiment = { 'probe-mul.mjs': 'console.log(6);\n' };
+  const d = setupArc({
+    steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [{ type: 'dirty', files: experiment }, { type: 'symlink', path: 'node_modules', target }])],
+  });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    const gate = readCalls(d.scenarioPath).filter(isGate)[0]!;
+    const view = r.journal.view;
+    const removed = view.opsOf('worktree.remove').find((i) => i.expect.path === gate.cwd)!;
+    assert.ok(removed !== undefined && view.doneOf(removed.op) !== null && !existsSync(gate.cwd), 'the checkout is gone');
+    const snap = view.latestIntent(removed.expect.evidence);
+    assert.ok(snap.kind === 'evidence.snapshot');
+    assert.deepEqual(snap.expect.notRegular, ['node_modules']);
+    assert.deepEqual(readManifest(snap.expect.dest)?.files.map((f) => f.path), ['probe-mul.mjs'], 'the experiment kept, the link not');
+    assert.ok(existsSync(target), 'the link\'s target untouched');
   } finally {
     r.journal.close();
   }

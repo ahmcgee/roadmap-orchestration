@@ -27,11 +27,11 @@ import { canonicalJson } from '../core/json.ts';
 import type { CommandId, UnitId } from '../core/ids.ts';
 import type { CommandBody } from '../core/records.ts';
 import { absPath } from '../core/values.ts';
-import { capturedEvidence, pathPattern } from '../git/evidence.ts';
+import { capturedEvidence } from '../git/evidence.ts';
 import { inForceFiles, keepInput, planRouting, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
 import { parsePlan } from '../input/plan.ts';
 import { unitWorktree } from '../pipeline/dispatch.ts';
-import { dirtyPaths } from '../pipeline/lanes.ts';
+import { dirtySnapshot } from '../pipeline/lanes.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import { evidenceSnapshotOp } from '../recover/ops.ts';
@@ -80,7 +80,7 @@ async function savePreSteer(ctx: CommandContext, id: CommandId, unit: UnitId): P
   const dest = absPath(join(ctx.runDir, 'evidence', unit, `steer-${id}`));
   const view = ctx.journal.view;
   const done = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest && view.doneOf(i.op) !== null)
-    ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parentOf(id), { source: worktree, globs: dirtyPaths(worktree).map(pathPattern), dest });
+    ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parentOf(id), { source: worktree, ...dirtySnapshot(worktree), dest });
   return [`pre-steer state of ${unit} saved: ${done.expect.dest} (manifest ${capturedEvidence(ctx.journal.view, done.op).manifestSha256})`];
 }
 

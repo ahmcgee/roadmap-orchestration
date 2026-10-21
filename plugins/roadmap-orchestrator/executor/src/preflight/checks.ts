@@ -37,7 +37,10 @@
 // PR merges; fix units added to its plan and a start run it again): refused `arc-superseded{by}` once another arc
 // started on its head (src/chain.ts `successorOf`), whose PR then carries the fixes.
 //
-// A supervisor's respawn checks the plan in force and its kept specs, not the files (`StartInput.respawn`).
+// A supervisor's respawn checks the plan in force, its kept specs and the ledger in force, not the files
+// (`StartInput.respawn`). dev.16: a start of an arc with a plan in force checks, in groups 1 and 2, the owner's files rebased
+// onto the files in force (`startSource`), never the files as they stand: an executor act since the owner's last apply (a
+// checkpoint's ruling) is in what the rows read, as it is in what `settlePlan` puts in force.
 //
 // `runChecks` is groups 1 to 4. Group 5, `smokeCheck` (backend-smoke for the resolved profile), is last and
 // separate: its spawns are journaled, so the executor runs it only after `executor-started` and recovery,
@@ -66,7 +69,7 @@ import { advancesReasons } from '../holistic/vision.ts';
 import { rederive } from '../holistic/rederive.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
-  type InputFiles, type RoutingBase, appendRevision, arcRolesOf, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
+  type InForce, type InputFiles, type RoutingBase, appendRevision, arcRolesOf, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
   recordPlan, revisionInForce, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
 import { applyProposal } from '../input/classify.ts';
@@ -449,16 +452,25 @@ export function gitCommonDir(repo: AbsPath): AbsPath {
   return absPath(gitRun(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim());
 }
 
-/** What a start checks: the plan and a reader of each unit's spec bytes, and the files when they are the source. */
-type Source = Readonly<{ plan: PlanM1; specOf: (unit: PlanUnit) => Buffer | null; files: InputFiles | null }>;
+/**
+ * What a start checks: the plan, a reader of each unit's spec bytes and the ledger bytes (null: the file the plan names);
+ * `checked`, the files the revision and Phase-0 rows read (null: the plan in force, which asks nothing); `owner`, the owner's
+ * files `settlePlan` puts in force (null on a respawn, which runs the plan in force).
+ */
+type Source = Readonly<{
+  plan: PlanM1; specOf: (unit: PlanUnit) => Buffer | null; ledger: Buffer | null; checked: InputFiles | null; owner: InputFiles | null;
+}>;
 
 /** plan.json and its specs as the files hold them, or the schema rejection of the plan. */
-function fileSource(planFile: AbsPath, repo: AbsPath): Source | Rejection<'plan-invalid'> {
+function ownerFiles(planFile: AbsPath, repo: AbsPath): InputFiles | Rejection<'plan-invalid'> {
   const plan = loadPlan(planFile);
-  if ('kind' in plan) return plan;
-  const files = readInputFiles(planFile, repo);
-  return { plan: files.plan, specOf: (unit) => files.specs.get(unit.id)?.bytes ?? null, files };
+  return 'kind' in plan ? plan : readInputFiles(planFile, repo);
 }
+
+/** A fresh start's source: the owner's files as they are. */
+const filesSource = (files: InputFiles): Source => ({
+  plan: files.plan, specOf: (unit) => files.specs.get(unit.id)?.bytes ?? null, ledger: null, checked: files, owner: files,
+});
 
 /** The arc's role set at a start (M4b): its revisions', or `m4b` before its first plan (a corrupt log is refused in group 4). */
 function arcRolesAt(runDir: AbsPath, arc: ArcId): ArcRoleSet | null {
@@ -470,19 +482,47 @@ function arcRolesAt(runDir: AbsPath, arc: ArcId): ArcRoleSet | null {
   }
 }
 
-/** On a respawn, the plan in force and its kept specs; null when the log records none (or does not read). */
-function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
-  let view: JournalView;
+/** The arc's log read-only, or null when it does not read (group 4 refuses it as log-corrupt). */
+function readArcView(runDir: AbsPath, arc: ArcId): JournalView | null {
   try {
-    view = readJournal(runDir, arc).view;
+    return readJournal(runDir, arc).view;
   } catch (error) {
     if (error instanceof LogCorruptError) return null;
     throw error;
   }
-  const inForce = planInForce(runDir, view);
-  if (inForce === null) return null;
+}
+
+/** The plan in force, its kept specs and its ledger, with `owner` for `settlePlan`. */
+function inForceOf(runDir: AbsPath, view: JournalView, inForce: InForce, owner: InputFiles | null): Source {
   const specOf = (unit: PlanUnit): Buffer => specBytesOf(runDir, specShaInForce(view, unit.id));
-  return { plan: inForce.plan, specOf, files: null };
+  return { plan: inForce.plan, specOf, ledger: revisionInForce(runDir, inForce).ledger.bytes, checked: null, owner };
+}
+
+/** On a respawn, the plan in force; null when the log records none (or does not read). */
+function inForceSource(runDir: AbsPath, arc: ArcId): Source | null {
+  const view = readArcView(runDir, arc);
+  const inForce = view === null ? null : planInForce(runDir, view);
+  return view === null || inForce === null ? null : inForceOf(runDir, view, inForce, null);
+}
+
+/**
+ * A start of an arc with a plan in force (dev.16; field 2026-10-21) checks what it would put in force, never the owner's files
+ * as they stand: those files rebased onto the files in force (`applyProposal`), as an apply checks them, so a ruling, unit or
+ * spec an executor act landed since the owner last applied (a checkpoint's bundle) is in what the rows read. With a revision
+ * or a command a crash left open the files wait for the next start (`settlePlan`), so the start checks the plan in force. A
+ * rebase that does not hold (a conflict) refuses here, as `settlePlan` would. The files as they are (a fresh start's source) when the
+ * arc has no plan in force or its log does not read.
+ */
+function startSource(owner: InputFiles): Source | Rejection<'plan-change-refused'> {
+  const runDir = runDirOf(gitCommonDir(owner.repo), owner.plan.arc);
+  const view = readArcView(runDir, owner.plan.arc);
+  const inForce = view === null ? null : planInForce(runDir, view);
+  if (view === null || inForce === null) return filesSource(owner);
+  if (openRevision(view) !== null || committedCommand(view)) return inForceOf(runDir, view, inForce, owner);
+  const proposal = applyProposal({ runDir, view, inForce, revision: revisionInForce(runDir, inForce) }, owner, null, null, []);
+  if ('reasons' in proposal) return { kind: 'plan-change-refused', reasons: proposal.reasons };
+  const next = proposal.next;
+  return { plan: next.plan, specOf: (unit) => next.specs.get(unit.id)?.bytes ?? null, ledger: next.ledger.bytes, checked: next, owner };
 }
 
 /** The arc's routing for `plan` under the start's profile, the repo config and the arc's role set. */
@@ -586,8 +626,15 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
 
   // 1. input
   const inForce = input.respawn === null ? null : inForceSource(input.respawn.runDir, input.respawn.arc);
-  const source = inForce ?? fileSource(input.planFile, input.repo);
-  if ('kind' in source) return refused([...legacyRoadmapDir(input.repo), source]);
+  let source: Source;
+  if (inForce !== null) source = inForce;
+  else {
+    const owner = ownerFiles(input.planFile, input.repo);
+    if ('kind' in owner) return refused([...legacyRoadmapDir(input.repo), owner]);
+    const started = startSource(owner);
+    if ('kind' in started) return refused([...legacyRoadmapDir(input.repo), started]);
+    source = started;
+  }
   const { plan } = source;
   let profile: ProfileName;
   try {
@@ -598,25 +645,28 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   const runDir = runDirOf(gitCommonDir(input.repo), plan.arc);
   const context: StartupContext = {
     repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, arcRoles: arcRolesAt(runDir, plan.arc), runDir, hostDir: input.hostDir,
+    ...(source.ledger === null ? {} : { ledger: source.ledger }),
   };
-  const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context)), ...(source.files === null ? [] : revisionInputRows(source.files))];
+  const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context)), ...(source.checked === null ? [] : revisionInputRows(source.checked))];
   if (inputRows.length > 0) return refused(inputRows);
-  // The shared Phase-0 rows over the files (a respawn runs the plan in force and asks nothing); the chain's at a fresh start.
+  // The shared Phase-0 rows over the files checked (a respawn runs the plan in force and asks nothing); the chain's at a fresh start.
   let corpusFiles: readonly SourceFile[] = [];
-  if (source.files !== null) {
+  if (source.owner !== null) {
     // A brief ack a crash left pending is finished first: the chain rows read the committed acks (BRIEF_ACK).
     finishPendingAcks(input.repo);
     const log = arcLog(context);
     const fresh = log !== 'corrupt' && log.planApplied() === null;
     const by = fresh ? null : successorOf(input.repo, plan.arc);
     if (by !== null) return refused([{ kind: 'arc-superseded', by }]);
-    const p0 = phase0Rows(phase0InputOf(source.files, readRepoConfig(input.repo)), fresh ? FRESH_START : RESTART);
-    const rows = [...(fresh ? holisticNeedsCorpus(source.files.plan) : []), ...p0.rows];
-    if (rows.length > 0) return refused(rows);
-    // Rows 10's, 13's and 14's advisories never refuse a start; the executor's stderr (the supervisor's err file) keeps them, and
-    // `phase0 check` and `apply` print them where the root agent reads.
-    for (const a of p0.advisories) process.stderr.write(`roadmap: advisory ${canonicalJson(a)}\n`);
-    corpusFiles = p0.opened?.files ?? [];
+    if (source.checked !== null) {
+      const p0 = phase0Rows(phase0InputOf(source.checked, readRepoConfig(input.repo)), fresh ? FRESH_START : RESTART);
+      const rows = [...(fresh ? holisticNeedsCorpus(source.checked.plan) : []), ...p0.rows];
+      if (rows.length > 0) return refused(rows);
+      // Rows 10's, 13's and 14's advisories never refuse a start; the executor's stderr (the supervisor's err file) keeps them, and
+      // `phase0 check` and `apply` print them where the root agent reads.
+      for (const a of p0.advisories) process.stderr.write(`roadmap: advisory ${canonicalJson(a)}\n`);
+      corpusFiles = p0.opened?.files ?? [];
+    }
   }
 
   // 2. environment
@@ -647,7 +697,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if ('kind' in journal) return refused([journal], claim);
   const mode = containmentModeCheck(journal);
   if (mode.length > 0) return refused(mode, claim, journal);
-  const planRows = settlePlan(journal, context, source.files, input.env, corpusFiles);
+  const planRows = settlePlan(journal, context, source.owner, input.env, corpusFiles);
   if (planRows.length > 0) return refused(planRows, claim, journal);
 
   return { kind: 'passed', context, routing: { profile, resolved }, claim, journal, respawn: inForce !== null };

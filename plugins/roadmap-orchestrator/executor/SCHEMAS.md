@@ -491,9 +491,10 @@ means before any *pipeline* intent.
 | `containment-mode-changed` | detected mode differs from the arc's recorded `containment-mode` fact | `recorded, detected` | 78 |
 | `plan-change-refused` | a `start` whose plan.json or specs differ from the plan in force with a change the apply rules refuse ("Plan in force"); checked last in `runChecks`, once the journal is open. A respawn runs the plan in force and never asks | `reasons: string[]` (non-empty, every reason) | 78 |
 
-A start checks the files (groups 1 and 2 read plan.json and its spec files); a supervisor's `--respawn` after a
-crash, once one of its generations was ready, checks the plan in force and its kept specs instead
-(`StartupContext.specOf`). A supervisor whose generations all crashed before readiness passes no `--respawn`:
+A first start checks the files (groups 1 and 2 read plan.json and its spec files); a later start checks them rebased
+onto the files in force, the ledger in force included (2026-10-21; 1.0.0-dev.16, "Field fixes: snapshot symlinks,
+restart checks"); a supervisor's `--respawn` after a crash, once one of its generations was ready, checks the plan in
+force, its kept specs and the ledger in force instead (`StartupContext.specOf`, `StartupContext.ledger`). A supervisor whose generations all crashed before readiness passes no `--respawn`:
 its next generation is a start that reads the files, so an edit a crashed start had not put in force yet is
 classified, not dropped.
 
@@ -683,7 +684,7 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 | `resource.transition` | `holder, resources: ResourceUnit[]` (lock order), `edge` | `null` | `transitioned` |
 | `proc.spawn` | `subject: SpawnSubject, launchSha256` | `null` | `result{resultSha256, summary}` \| `lost{treeEffects}` |
 | `proc.kill` | `inv, scope: invocation\|op, reason` | `null` | `quiesced` |
-| `evidence.snapshot` | `source, globs, dest`; `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c). A snapshot of named files (dirty paths, a lane's ignored capture) passes each as its exact glob, metacharacters wrapped in one-character classes (`a[1].log` → `a[[]1[]].log`; `literalPattern`, `src/git/evidence.ts`): node's globSync has no escape character | `{manifest}` | `captured{manifestSha256, files}` |
+| `evidence.snapshot` | `source, globs, dest, notRegular?` (2026-10-21; 1.0.0-dev.16: the named paths left uncaptured as symlinks or special files, "Field fixes: snapshot symlinks, restart checks"); `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c). A snapshot of named files (dirty paths, a lane's ignored capture) passes each as its exact glob, metacharacters wrapped in one-character classes (`a[1].log` → `a[[]1[]].log`; `literalPattern`, `src/git/evidence.ts`): node's globSync has no escape character | `{manifest}` | `captured{manifestSha256, files}` |
 | `salvage.commit` | see git table | `{new}` | `committed` |
 | `mergein.prepare` | see git table | `clean-merged{new}` \| `conflicted` | `clean-merged` \| `conflicted` \| `completed{head}` |
 | `spec.patch` | `path, oldSha256, expectRev, patch: SpecPatch`; `path` is the unit's spec file, `oldSha256` its spec in force | `{newSha256, newRev = expectRev+1}` | `patched` |
@@ -4457,3 +4458,27 @@ a commit, this makes it unnecessary). No record changes; `SCHEMA_VERSION` stays 
    already (the vision is owner-only: an architect `apply`); what newly refuses is a bytes-only difference (a
    reformatted `vision.json`), which before came into force without reaching the arc branch. The owner starts on the
    vision in force, then `apply --vision-edit`. A respawn reads the plan in force and is never refused.
+
+## Field fixes: snapshot symlinks, restart checks (2026-10-21; 1.0.0-dev.16)
+
+Two defects the live dev.15 arc hit. One additive record field (`evidence.snapshot`'s `notRegular`, absent in every
+earlier record); `SCHEMA_VERSION` stays 1.
+
+1. **A symlink in a checkout no longer kills its removal.** A gate session symlinked `node_modules` to another
+   checkout's; the removal's snapshot of the dirty paths matched the link, `listEvidence` refused it, and every
+   generation crash-looped until a human deleted the link. A snapshot of named paths (a checkout's dirty paths: a
+   judgment checkout's, a verification series' `_dirty` and `_leftover`, a journey checkout's, a prepared or steered
+   unit worktree's, an audit job's) builds its globs through `namedPathGlobs` (src/git/evidence.ts; `dirtySnapshot` in
+   src/pipeline/lanes.ts): a symlink or special file gets no glob and is named in the intent's `notRegular` instead
+   (non-empty when present), as the lane census files an ignored one `not-regular`. Nothing follows the link.
+   `listEvidence` stays fail-loud: a non-regular match there now means a declared `evidenceGlobs` entry matched one.
+2. **A start of an arc in flight checks what it would put in force.** Group 1 read the owner's files as they stood, so
+   a ruling an executor revision had landed since (checkpoint ckpt-23's C-206) was unknown to a stale input-dir ledger
+   and the start was refused `plan-invalid unknown-cite`, though `settlePlan` would have rebased that ledger onto the
+   one in force. Now a start with a plan in force runs group 1 (plan-invalid, the revision rows, the Phase-0 rows) and
+   group 2 over the owner's files rebased onto the files in force (src/preflight/checks.ts `startSource`: the
+   `applyProposal` an apply checks), the merged ledger as `StartupContext.ledger`; a rebase that does not hold refuses
+   there (`plan-change-refused`). With a revision or command a crash left open the files wait for the next start, so
+   the start checks the plan in force. A respawn checks the plan in force against the ledger in force (before: the
+   owner's ledger file). The one rule: after the first start the input dir is an edit of its base, never the state; a
+   restart needs no `inputs export` sync first, and the input dir matters only as that edit (a start or an apply).

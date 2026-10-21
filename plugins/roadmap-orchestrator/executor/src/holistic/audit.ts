@@ -67,7 +67,7 @@ import { type FindingId, type JobId, type LaneId, type NeedsUserId, type Obligat
 import type { AuditState, FindingState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type RepoPattern, absPath } from '../core/values.ts';
-import { capturedEvidence, pathPattern } from '../git/evidence.ts';
+import { capturedEvidence } from '../git/evidence.ts';
 import { catFileType, refTarget, revParse } from '../git/git.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { diffBase } from '../git/transient.ts';
@@ -78,7 +78,7 @@ import { raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
 import {
   type BackendCallOutcome, type JobParent, type RepairTurn, type StageContext, arcSeat, callArcRole, isRepairTurnOf, minutesMs, recordedArcCall, repairTurnOf, runOp, unitBranch, verdictOf,
 } from '../pipeline/dispatch.ts';
-import { type JourneyEnd, arcJourneyLane, dirtyPaths, jobSeriesCheckout, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
+import { type JourneyEnd, arcJourneyLane, dirtySnapshot, jobSeriesCheckout, observedViews, removeJobCheckouts, runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture, docAt, inMs, judgmentEntry, ledgerDir, ledgerPath, targetDirs } from '../pipeline/stages.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
@@ -437,9 +437,8 @@ export async function withCpu<T>(ctx: AuditContext, job: JobId, body: () => Prom
 /** Removes a checkout the job made, citing an evidence snapshot of whatever it holds beyond its commit. */
 export async function removeCheckout(ctx: StageContext, job: JobId, path: AbsPath): Promise<void> {
   const parent = jobParent(job);
-  const dirty = dirtyPaths(path);
   const snap = await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${job}`, parent, {
-    source: path, globs: dirty.map(pathPattern), dest: absPath(join(jobEvidenceRoot(ctx.runDir, job), basename(path))),
+    source: path, ...dirtySnapshot(path), dest: absPath(join(jobEvidenceRoot(ctx.runDir, job), basename(path))),
   });
   await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${job}`, parent, { path, evidence: capturedEvidence(ctx.journal.view, snap.op) });
 }

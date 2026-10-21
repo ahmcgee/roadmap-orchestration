@@ -27,7 +27,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 `.rejected.json` (with every reason).
 
 - `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>]`: launch, or recover
-  from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. Prints `{"kind":"ready",…}` (exit 0)
+  from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a plan in force the
+  plan file is your edit: its files are rebased onto the files in force and the startup rows check the result, the
+  ledger in force included (2026-10-21; 1.0.0-dev.16). Prints `{"kind":"ready",…}` (exit 0)
   once the executor passed every startup row; the run goes on. The backend smoke runs after `ready`: a smoke refusal
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.

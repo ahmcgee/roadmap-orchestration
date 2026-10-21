@@ -606,7 +606,9 @@ classes, scope growth) and never writes into your files: the plan in force lives
 - **A conflict** (you and the executor changed one value differently) rejects the apply naming the file and the JSON
   path (`conflict: …/u1.json at $.decisions[D1].text`). Export, re-apply your edit on top of the executor's value,
   apply with `--base`.
-- `start` merges your files the same way: unchanged files restart on the plan in force.
+- `start` merges your files the same way: unchanged files restart on the plan in force. Its startup checks read the
+  merged files too (2026-10-21; 1.0.0-dev.16), so a ruling or unit the executor landed since your last apply is known
+  to them: restart with `start --plan <your plan.json>` as it stands, with no `inputs export` sync first.
 
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.

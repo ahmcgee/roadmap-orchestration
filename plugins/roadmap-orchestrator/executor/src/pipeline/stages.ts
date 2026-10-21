@@ -105,7 +105,7 @@ import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, matchesPattern, repoPath, repoPattern,
 } from '../core/values.ts';
-import { FILES_DIR, capturedEvidence, pathPattern } from '../git/evidence.ts';
+import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
 import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { mergeHead, resolvedHead } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, type SalvageRules } from '../git/salvage.ts';
@@ -157,7 +157,7 @@ import {
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, dirtyPaths, fastSuiteLanes, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
+  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, dirtyPaths, dirtySnapshot, fastSuiteLanes, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
   removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot,
 } from './lanes.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
@@ -558,7 +558,7 @@ export async function removeJudgmentCheckouts(ctx: StageContext, unit: UnitId, p
     const dest = absPath(join(evidenceRoot(ctx.runDir, created.parent), basename(path)));
     const view = ctx.journal.view;
     const snapped = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest && view.doneOf(i.op) !== null)
-      ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parent, { source: path, globs: dirtyPaths(path).map(pathPattern), dest });
+      ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parent, { source: path, ...dirtySnapshot(path), dest });
     await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${unit}:${parent.stage}`, parent, { path, evidence: capturedEvidence(ctx.journal.view, snapped.op) });
   }
 }

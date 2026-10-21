@@ -106,7 +106,27 @@ export const pathPattern = (path: RepoPath): RepoPattern => literalPattern(path)
 /** The path `pathPattern` made `pattern` from. */
 export const patternPath = (pattern: RepoPattern): RepoPath => repoPath(pattern.replace(ESCAPED_META, '$1'));
 
-/** Every regular file under `source` matching one of `globs`, sorted, with its hash and size. */
+/**
+ * A snapshot's globs for named paths (a checkout's dirty paths): each path's exact glob (`pathPattern`), except a symlink or
+ * special file, which is never captured and goes to `notRegular` instead, as the lane census files it `not-regular`
+ * (src/git/ignored.ts). A session may leave one in any checkout (a `node_modules` link, field 2026-10-21; 1.0.0-dev.16), and
+ * the snapshot its removal cites must not die on it. An absent path (a deleted tracked file) keeps its glob: it matches nothing.
+ */
+export function namedPathGlobs(source: AbsPath, paths: readonly RepoPath[]): Readonly<{ globs: readonly RepoPattern[]; notRegular: readonly RepoPath[] }> {
+  const globs: RepoPattern[] = [];
+  const notRegular: RepoPath[] = [];
+  for (const path of paths) {
+    const st = lstatSync(join(source, path), { throwIfNoEntry: false });
+    if (st === undefined || st.isFile() || st.isDirectory()) globs.push(pathPattern(path));
+    else notRegular.push(path);
+  }
+  return { globs, notRegular };
+}
+
+/**
+ * Every regular file under `source` matching one of `globs`, sorted, with its hash and size. A match that is a symlink or
+ * special file throws: a snapshot of named paths passes none (`namedPathGlobs`), so one here is a declared glob's.
+ */
 export function listEvidence(source: AbsPath, globs: readonly RepoPattern[]): readonly ManifestEntry[] {
   const out = new Map<string, ManifestEntry>();
   for (const rel of globSync([...globs], { cwd: source })) {
@@ -179,12 +199,14 @@ export function capturedEvidence(view: JournalView, op: OpId): CapturedEvidence 
   return captured;
 }
 
-export type SnapshotRequest = Readonly<{ source: AbsPath; globs: readonly RepoPattern[]; dest: AbsPath }>;
+/** `notRegular` (dev.16): the named paths `namedPathGlobs` left out, recorded on the intent; omitted when none. */
+export type SnapshotRequest = Readonly<{ source: AbsPath; globs: readonly RepoPattern[]; dest: AbsPath; notRegular?: readonly RepoPath[] }>;
 
 function prepare(request: SnapshotRequest): Promise<IntentBody<'evidence.snapshot'>> {
   if (!lstatSync(request.source).isDirectory()) throw new Error(`evidence source ${request.source} is not a directory`);
-  const { source, globs, dest } = request;
-  return Promise.resolve({ expect: { source, globs, dest }, post: { manifest: manifestPath(dest) } });
+  const { source, globs, dest, notRegular } = request;
+  const skipped = notRegular === undefined || notRegular.length === 0 ? {} : { notRegular };
+  return Promise.resolve({ expect: { source, globs, dest, ...skipped }, post: { manifest: manifestPath(dest) } });
 }
 
 function act(intent: IntentOf<'evidence.snapshot'>): Promise<void> {

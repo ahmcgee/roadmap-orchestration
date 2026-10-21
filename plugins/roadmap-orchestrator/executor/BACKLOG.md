@@ -448,6 +448,12 @@ at triage stay in git history.
   restart until the supervisor gives up. Trigger: a second crash loop of that shape; then decide on a general rule
   (a job's fault is recorded against the job before the throw escapes).
 
+- **A declared evidence glob matching a symlink** (2026-10-21; 1.0.0-dev.16). The dev.16 fix (SCHEMAS.md "Field fixes:
+  snapshot symlinks, restart checks") skips and records a symlink or special file among a checkout's dirty paths;
+  a lane's `evidenceGlobs` entry matching one still makes `listEvidence` throw in the lane's `tree` snapshot, which
+  crash-loops like the field case did. Trigger: that throw in a field run; then give declared globs the same
+  `notRegular` record (the reconciler's re-list must skip alike).
+
 - **Checkpoint reads refused** (paid M4b run 5): the checkpoint call inv 2174 was refused reads of the runtime's
   `inputs/*.plan.json` (outside its `--add-dir`s) and still answered `bundle`. The gate and plan-check void an approve
   after a refused read (`readRefused`, src/pipeline/stages.ts); the checkpoint does not yet. Trigger: a checkpoint

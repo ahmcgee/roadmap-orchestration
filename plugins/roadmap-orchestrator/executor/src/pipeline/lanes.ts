@@ -74,7 +74,7 @@ import {
   type CommandVerdict, type IgnoredCensus, isRed, type LaneDef, type RedRev, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
 } from '../core/records.ts';
 import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, isoTimeOf, repoPattern } from '../core/values.ts';
-import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, pathPattern, patternPath, readManifest } from '../git/evidence.ts';
+import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, namedPathGlobs, patternPath, readManifest } from '../git/evidence.ts';
 import { ignoredWrites, planIgnored } from '../git/ignored.ts';
 import { statusPorcelainV2Z } from '../git/git.ts';
 import { type WorktreeCreateRequest, removedSince, standing } from '../git/worktree.ts';
@@ -821,7 +821,7 @@ export async function runLaneSeries(
     // Preserve what the lanes wrote before any removal discards it. `_dirty` cannot collide with a lane
     // id, which starts with a letter.
     evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
-      source: path, globs: dirty.map(pathPattern), dest: dirtyDir(root),
+      source: path, ...namedPathGlobs(path, dirty), dest: dirtyDir(root),
     })).op;
   } else if (end.kind !== 'blocked') {
     // The census was clean: the series' passes may be reused (Q12). A blocked lane may have been lost with its runner,
@@ -839,6 +839,9 @@ export function dirtyPaths(tree: AbsPath): readonly RepoPath[] {
   return statusPorcelainV2Z(tree, false).map((s) => s.path);
 }
 
+/** A snapshot request's `globs` and `notRegular` for a checkout's dirty paths (src/git/evidence.ts `namedPathGlobs`). */
+export const dirtySnapshot = (tree: AbsPath): ReturnType<typeof namedPathGlobs> => namedPathGlobs(tree, dirtyPaths(tree));
+
 /**
  * `worktree.remove` of a verification checkout `created` made (any series, any attempt), from the stage
  * attempt `parent`. It cites the series' last done evidence snapshot; a series that captured none (a crash
@@ -855,9 +858,10 @@ export async function removeCheckout(
   const series = created.parent;
   let evidence = view.opsOf('evidence.snapshot').filter((i) => sameParent(i.parent, series) && view.doneOf(i.op) !== null).at(-1)?.op;
   if (evidence === undefined) {
-    const globs = [...new Set<RepoPattern>([...dirtyPaths(path).map(pathPattern), ...laneGlobs])].sort();
+    const dirty = dirtySnapshot(path);
+    const globs = [...new Set<RepoPattern>([...dirty.globs, ...laneGlobs])].sort();
     evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
-      source: path, globs, dest: absPath(join(evidenceRoot(ctx.runDir, series), '_leftover')),
+      source: path, globs, notRegular: dirty.notRegular, dest: absPath(join(evidenceRoot(ctx.runDir, series), '_leftover')),
     })).op;
   }
   await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, { path, evidence: capturedEvidence(ctx.journal.view, evidence) });
@@ -1355,7 +1359,7 @@ export async function runJourneySeries(
   const dirtyAt = absPath(join(seriesRoot, `_dirty-${basename(checkout.path)}`));
   let evidence: OpId = lastEvidence;
   if (dirty.length > 0) {
-    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, { source: checkout.path, globs: dirty.map(pathPattern), dest: dirtyAt })).op;
+    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, { source: checkout.path, ...namedPathGlobs(checkout.path, dirty), dest: dirtyAt })).op;
   }
   await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), worktreeKey, parent, { path: checkout.path, evidence: capturedEvidence(ctx.journal.view, evidence) });
   if (dirty.length === 0 && head === at && end.kind !== 'blocked') {
