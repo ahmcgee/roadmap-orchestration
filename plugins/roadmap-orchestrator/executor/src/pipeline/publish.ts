@@ -71,6 +71,7 @@ import { planDocsFf } from '../git/ff.ts';
 import { gitRun, refTarget } from '../git/git.ts';
 import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
 import { docsTransientViolations } from '../git/transient.ts';
+import { standing } from '../git/worktree.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { brakesOn, obligationEffects } from '../holistic/table.ts';
@@ -611,8 +612,7 @@ export async function abandonDocs(ctx: ResourceContext, pub: JobId): Promise<voi
   const spawn = spawnReconciler(ctx);
   for (const intent of ctx.journal.view.openIntents()) if (intent.kind === 'proc.spawn' && same(intent.parent)) await spawn(intent, ctx.journal.view);
   const view = ctx.journal.view;
-  const removed = new Set(view.opsOf('worktree.remove').filter((i) => view.doneOf(i.op) !== null).map((i) => i.expect.path));
-  const created = view.opsOf('worktree.create').filter((i) => same(i.parent) && view.doneOf(i.op) !== null && !removed.has(i.expect.path));
+  const created = view.opsOf('worktree.create').filter((i) => same(i.parent) && standing(view, i));
   for (const c of created) {
     let evidence = view.opsOf('evidence.snapshot').filter((i) => same(i.parent) && view.doneOf(i.op) !== null).at(-1)?.op;
     if (evidence === undefined) {

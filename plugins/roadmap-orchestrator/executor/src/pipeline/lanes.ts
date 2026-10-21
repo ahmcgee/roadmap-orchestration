@@ -77,7 +77,7 @@ import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, i
 import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, pathPattern, patternPath, readManifest } from '../git/evidence.ts';
 import { ignoredWrites, planIgnored } from '../git/ignored.ts';
 import { statusPorcelainV2Z } from '../git/git.ts';
-import type { WorktreeCreateRequest } from '../git/worktree.ts';
+import { type WorktreeCreateRequest, removedSince, standing } from '../git/worktree.ts';
 import { type HostSample, readHostSample } from '../host/sample.ts';
 import { HOST_SIGNATURES, HOST_SIGNATURES_REV, type HostSignatureId, outputSignatures, outputTail } from '../host/signatures.ts';
 import { type Argv0, resolveArgv0 } from '../preflight/argv0.ts';
@@ -865,9 +865,8 @@ export async function removeCheckout(
 
 /** The unit's verification checkouts still present: created (done) by one of its stage attempts and not removed. */
 export function presentCheckouts(view: JournalView, unit: UnitId): readonly IntentOf<'worktree.create'>[] {
-  const removed = new Set(view.opsOf('worktree.remove').filter((i) => view.doneOf(i.op) !== null).map((i) => i.expect.path));
   return view.opsOf('worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && i.expect.checkout.type === 'detached'
-    && view.doneOf(i.op) !== null && !removed.has(i.expect.path));
+    && standing(view, i));
 }
 
 /** `worktree.remove` of a series checkout, citing the series' last done evidence snapshot. */
@@ -952,7 +951,7 @@ export function seriesTree(view: JournalView, parent: StageParent, path: AbsPath
   const created = view.opsOf('worktree.create').filter((i) => of(i) && i.expect.path === path).at(-1);
   if (created === undefined) return null;
   if (created.expect.checkout.type !== 'detached') throw new Error(`series ${parent.unit} ${parent.stage}#${parent.attempt} created a branch checkout`);
-  if (view.opsOf('worktree.remove').some((i) => i.expect.path === path && view.doneOf(i.op) !== null)) return null;
+  if (removedSince(view, path, created.op)) return null;
   const evidence = view.opsOf('evidence.snapshot').filter(of).at(-1);
   if (evidence === undefined) throw new Error(`the checkout ${path} of series ${parent.unit} ${parent.stage}#${parent.attempt} has no done evidence snapshot`);
   return { path, at: created.expect.checkout.at, evidence: evidence.op };
@@ -1071,8 +1070,7 @@ export async function removeJobCheckouts(ctx: ResourceContext, job: JobId): Prom
   const view = ctx.journal.view;
   const parent: Parent = { type: 'job', job };
   const same = (p: Parent): boolean => canonicalJson(p) === canonicalJson(parent);
-  const removed = new Set(view.opsOf('worktree.remove').filter((i) => view.doneOf(i.op) !== null).map((i) => i.expect.path));
-  for (const c of view.opsOf('worktree.create').filter((i) => same(i.parent) && view.doneOf(i.op) !== null && !removed.has(i.expect.path))) {
+  for (const c of view.opsOf('worktree.create').filter((i) => same(i.parent) && standing(view, i))) {
     let evidence = view.opsOf('evidence.snapshot').filter((i) => same(i.parent) && view.doneOf(i.op) !== null).at(-1)?.op;
     if (evidence === undefined) {
       evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${job}`, parent, {
