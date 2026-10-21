@@ -25,7 +25,7 @@ import { type EnvId, type InvocationId, type LaneId, type LaneRev, type Sha, typ
 import { status } from '../src/status.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import { evidenceDiffers, numericId, numericRulingIds } from '../src/holistic/bundle.ts';
+import { evidenceDiffers, integrationHistory, numericId, numericRulingIds } from '../src/holistic/bundle.ts';
 import { CAPTURE_WAIT_MAX_MIN, publishing, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import type { Observation } from '../src/holistic/observe.ts';
@@ -802,6 +802,30 @@ describe('a unit merged around the capture (paid M4a run 10)', () => {
       const out = await run(x);
       assert.ok(out.kind === 'decided' && out.decision.kind === 'rejected' && out.decision.reason === 'invalid', JSON.stringify(out));
       assert.match(out.decision.detail, /unit u1 is merged; its spec is fixed/);
+    } finally {
+      x.r.journal.close();
+    }
+  });
+});
+
+describe('an owner commit on the integration branch (dev.13 arc, audit-24)', () => {
+  test('history.unpublished-head-resolves: an audit ending on a commit the owner put on the branch places it at its nearest published ancestor', T, async () => {
+    const x = await arc([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }), lensStep('audit-2', 'vision'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'no-op' }))]);
+    try {
+      assert.deepEqual(await runUnit(x.ctx, unitOf(x.ctx, 'u1'), admitAll), { kind: 'merged' });
+      const ref = `refs/heads/${x.ctx.plan().integrationBranch}`;
+      const published = git(x.ctx.repo, 'rev-parse', ref);
+      const owner = git(x.ctx.repo, 'commit-tree', `${published}^{tree}`, '-p', published, '-m', 'vision rev 2');
+      git(x.ctx.repo, 'update-ref', ref, owner, published);
+      await completedAudit(x.r, x.ctx);
+      const ended = factsOfKind(x.r, 'audit-ended').find((f) => f.job === 'audit-2');
+      assert.ok(ended?.covered.some((c) => c.to === owner), 'audit-2 ends on the owner commit');
+      const out = await run(x);
+      assert.ok(out.kind === 'decided' && out.decision.kind === 'no-op', JSON.stringify(out));
+      const history = integrationHistory(x.r.journal.view, x.ctx.repo, owner as Sha);
+      assert.equal(history.positions.get(published as Sha), 1, 'u1 is the first published head');
+      assert.deepEqual(history.audits.get('audit-2' as never)?.map((r) => r.to), [1], 'the owner commit sits at u1\'s position');
+      status(x.r.ctx.runDir, arcId(x.r.d.arc), x.r.ctx.hostDir);
     } finally {
       x.r.journal.close();
     }
