@@ -6,9 +6,8 @@ converges the codebase on the documented target state, unattended, for a week or
 
 ## Status
 
-**1.0 is being rebuilt on the `v1` branch.** 0.20.0 remains on `main` (tag `v0.20.0`) and is what the
-marketplace installs until 1.0 merges. On `v1` the skill is a stub; the executor is under construction,
-milestone M1 (one serial unit).
+**1.0 is in prerelease on `main`** (`1.0.0-dev.14`), and it is what the marketplace installs. Milestones M1 to M4b
+and the dev.13 milestone walkthroughs have landed. The last 0.x release is at tag `v0.20.0`.
 
 ## What 1.0 is
 
@@ -20,6 +19,8 @@ milestone M1 (one serial unit).
   head and a PR diff holds product changes only.
 - A holistic layer (obligations, cadence audits, a checkpoint that steers) that keeps the run converging on the
   target rather than on the original plan.
+- Milestones: whatever a person or client can use end to end (a web flow, an API, a CLI) is walked as its user would
+  walk it before anything is built on top, and a passing walk promotes a demo you can try.
 
 The binding design is [`DESIGN-1.0.md`](DESIGN-1.0.md). The 0.x design record is in git history at tag `v0.20.0`.
 
@@ -60,15 +61,29 @@ past your last acknowledged check-in) and pick the first slice of the vision to 
 **2. Phase 0, each arc.** The architect plans the arc in session, fanning the reading out to subagents. Every
 normative claim in the corpus becomes one rule (`T-n`); the corpus is pinned; each rule the slice needs becomes a
 testable obligation with its witness tests. Questions the vision cannot settle are ranked (`P-n`), each with the
-working assumption the arc acts on meanwhile, so nothing waits on you. Then the plan and one spec per unit,
-`roadmap phase0 check` until it is clean, and `roadmap start`. The executor refuses bad inputs, smokes each model
-backend and takes the host lock.
+working assumption the arc acts on meanwhile, so nothing waits on you. Wherever units combine into something
+someone can use end to end, the plan marks a milestone with its journeys, and a design unit writes the milestone's
+design references before its other units start. Then the plan and one spec per unit, `roadmap phase0 check` until it
+is clean, and `roadmap start`. The executor refuses bad inputs (including plan defects code can catch, such as a
+witness its lane never runs), smokes each model backend and takes the host lock.
 
 **3. The run, unattended for days.** A pack review reads the whole plan before any unit is admitted. Units then
 run in parallel across the DAG under resource locks: plan-check, a build in the unit's own git worktree, the
-lanes (tests, required witnesses, mutation smoke), a fresh-context gate, and publication to the arc branch. A red
-lane or gate sends the unit back to its build for a fix round. A crashed executor is restarted by its supervisor
-and recovers from its write-ahead log.
+lanes (the plan's fast suite lanes, required witnesses, mutation smoke), a fresh-context gate, and publication to
+the arc branch. The gate runs in its own checkout with a shell, so it can run experiments; a diff too large to read
+whole is reviewed in clusters on the strongest seat. A red lane or gate sends the unit back to its build for a fix
+round. A unit whose scope proves too narrow is held at plan-check with a proposed scope growth for the architect to
+accept or reject. A crashed executor is restarted by its supervisor and recovers from its write-ahead log.
+
+**Milestones are walked before anything builds on them.** When a milestone's units are all in, code brings the
+product up and a walker (a model with a shell, and a browser for web journeys) uses it along each journey as its user
+or client would. A finding that would force rework of what is built on top if fixed later is a break: the journey
+cannot be completed, an interface contract is wrong, or a declared floor is violated. A break holds the milestone's
+dependents until the checkpoint repairs it and a re-walk passes. Everything else (copy, visuals within the design
+tokens, docs and log text) is a deviation, repaired alongside without holding anything. Polish the walker proposes
+becomes units that code admits, and a polish judge keeps each one only if a walk of before and after shows it
+better. A passed milestone promotes the demo: a stable copy on fixed ports that is swapped for a new version only
+once that version is up, which you pick up when you choose with `roadmap demo up`.
 
 The architect waits on `roadmap watch --actionable`, which wakes it only on key events (a new needs-user item, a
 merge, a park, completion, your answer) and a 30-minute heartbeat. It never runs a backend or touches the
@@ -85,7 +100,9 @@ validates the bundle and applies it, so its acts go straight back into the run w
 departure from the target is recorded as a divergence, which the architect reviews and can `reverse`. An act only
 you may approve becomes an `owner-request`; you are always asked first about anything irreversible, anything
 costing over $10, or anything with legal ramifications. What the checkpoint learns about the corpus becomes an
-amendment for the next Phase 0.
+amendment for the next Phase 0. Findings too small to matter are released, not banked as debt: code releases any
+P3 not fixed in the same decision, and brakes stop test nitpicks from spawning unit after unit once the milestones
+have passed, so the arc's tail converges.
 
 **The flow loop tunes how the arc runs, never what it measures.** It borrows from the Theory of Constraints (where
 to act) and statistical process control (when to act). Code does the diagnosis; a model only proposes.
@@ -114,11 +131,11 @@ to act) and statistical process control (when to act). Code does the diagnosis; 
 Tests, witnesses, arc lanes, judgment seats, lenses and the vision are the ruler and are never levers. Advice only
 you can act on, like more cores, reaches you at the next check-in.
 
-**4. Completion and chaining.** An arc is complete when every unit is merged, every obligation holds on the head
-and the checkpoint has nothing left to change. `roadmap pr` pushes the arc branch and opens its PR, stacked on the
+**4. Completion and chaining.** An arc is complete when every unit is merged, every milestone has passed its walk,
+every obligation holds on the head and the checkpoint has nothing left to change. `roadmap pr` pushes the arc branch and opens its PR, stacked on the
 previous arc's. The architect checks in with `roadmap brief`, a short preface and numbered questions, each with
 the assumption it acts on if you have no view. It does not wait for your answers: it chains into the next arc's
-Phase 0 with a slice chosen from the census, up to K arcs past your last acknowledged brief. It stops at K, when
+Phase 0 with a slice chosen from the census and any notes left in `roadmap-inputs/_next/`, up to K arcs past your last acknowledged brief. It stops at K, when
 the vision has nothing left to advance, or when you tell it to. Acknowledging a brief frees the K budget; you can
 recalibrate the vision between arcs; and you merge the stacked PRs in order, first into `main`, each with a merge
 commit.
@@ -130,7 +147,7 @@ commit.
 plugins/roadmap-orchestrator/
   .claude-plugin/plugin.json
   executor/                         # the 1.0 executor (TypeScript on Node 24)
-  skills/orchestrate/               # SKILL.md (M1 stub), RATIONALE-1.0.md, templates/
+  skills/orchestrate/               # SKILL.md, reference.md (every command), RATIONALE-1.0.md, templates/
   skills/vision/                    # SKILL.md: distil and calibrate the arc's vision in dialogue
 docs/flow.svg                       # how an arc runs: who does what
 DESIGN-1.0.md                       # binding 1.0 design brief
@@ -139,4 +156,6 @@ DESIGN-1.0.md                       # binding 1.0 design brief
 ## Development
 
 From `plugins/roadmap-orchestrator/executor/`: `npm run typecheck` → `npm test` → `node evals/probe.ts` (real
-CLIs) → the paid fixture in `evals/m1/`, once per merged batch. See `CLAUDE.md`.
+CLIs) → the role evals in `evals/roles/` that the batch's changes trigger → the paid fixtures (`evals/m1/`, and
+`evals/m5/`, the UI end to end, when milestones, walks, design units or the demo changed), once per merged batch.
+See `CLAUDE.md`.
