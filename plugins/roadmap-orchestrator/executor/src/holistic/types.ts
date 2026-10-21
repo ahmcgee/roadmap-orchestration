@@ -295,7 +295,7 @@ const witnessRef: Read<WitnessRef> = object((f) => {
  *                             to create it covers: at Phase 0 the obligation's deliverers and every unit they depend on
  *                             (`units`: the deliverers), at run time the unit checked.
  *   witness-files-undeclared  (a fresh start) an active witness without `files`.
- *   lane-test-paths-undeclared (a fresh start, or an arc whose witnesses declare files) an arc lane without `testPaths`.
+ *   lane-test-paths-undeclared (a fresh start) an arc lane without `testPaths`.
  *   derived-overlaps-corpus   a derived output that may reach the corpus file set.
  *   derived-output-owned      a derived output inside the scope of a unit that covers none of its sources.
  */

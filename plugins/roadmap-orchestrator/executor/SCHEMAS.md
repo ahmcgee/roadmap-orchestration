@@ -221,13 +221,13 @@ recovery hold.
 
 **1.0.0-dev.10 → 1.0.0-dev.11 (plan defects, 2026-10-16 arc feedback).** `SCHEMA_VERSION` stays 1; every change is
 additive. The scaffolding is `laneTestPathsUndeclared` and `witnessFilesUndeclared` in `src/core/upgrade.ts` (an arc
-started on dev.10 whose obligations declare no witness files is read as undeclared: Phase 0 checks nothing of it), and
+started on dev.10 reads each lane and witness that declares nothing as undeclared: Phase 0 checks nothing of it), and
 `auditDiffBudgetOf` (the lens-range fix). An arc started on dev.10 is adopted, an audit it left running included.
 
 | Record | Change | Read-time default for dev.10 state |
 |---|---|---|
 | obligations file | `WitnessRef + files?: RepoPath[]` (ascending, non-empty; also inside `proofJudgment.witness`) | absent: undeclared (`witnessFilesUndeclared`, warned once); required at a fresh start |
-| obligations file | `ArcLaneDef.testPaths` required at a fresh start, and in any arc whose witnesses declare files | absent in an arc that declares no files: undeclared (`laneTestPathsUndeclared`, warned once) |
+| obligations file | `ArcLaneDef.testPaths` required at a fresh start | absent: undeclared (`laneTestPathsUndeclared`, warned once). Before 2026-10-21 (1.0.0-dev.16) any witness declaring files made every lane and witness required, so one checkpoint split refused every later apply of the arc; each is now judged on its own |
 | `plan.json` | `+ derived?: [{sources: RepoPattern[], outputs: RepoPattern[]}]` (each non-empty, unique) | absent: none (`derivedOf`; lasting) |
 | `DispatchRecord` | `+ derived?: RepoPattern[]` (ascending, non-empty; read through `effectiveScope`) | absent: none (lasting) |
 | `PlanChange` | `+ derived` (no drain) | none |
@@ -2825,9 +2825,12 @@ filter keys it across arcs). Crash row ANSWER_RECORD (`answer.after-publish`): a
    an `issues-captured` fact names its capture (`inputs/<sha>.issues.json`); a `pack-review-started` fact names its
    `PackReviewInputs` (`inputs/<inputsSha256>.pack-review.json`, `PACK_REVIEW_INPUT`). Verification follows the pin from
    the tree, so the rules index, the vision path and the include patterns reconstruct from the ref alone.
-8. **Exempt rule anchors** (LR-C1-2): an exempt (waived, deferred, retired) obligation's `{T-n, textSha256}` resolves to
-   an active or a retired rule of the pin (`ruleAnchorResolves`, src/holistic/obligations.ts); a binding one's to an active
-   rule. The obligations reader requires only non-exempt rule obligations in the census.
+8. **Exempt rule anchors** (LR-C1-2): a waived or deferred obligation's `{T-n, textSha256}` resolves to an active or a
+   retired rule of the pin (`ruleAnchorResolves`, src/holistic/obligations.ts); a binding one's to an active rule. A
+   retired obligation's is not asked (2026-10-21; 1.0.0-dev.16): a rule that leaves the corpus mid-arc is in neither list
+   of the pin when the baseline's registry never held it (a first corpus arc publishes none), so retiring its obligation
+   was refused `obligation-rule-unresolved`, and so was deleting it (the `retired` disposition needs the entry). The
+   obligations reader requires only non-exempt rule obligations in the census.
 9. **No spec `debt` field** (LR-C1-1): a Phase-0 `promote{unit}` is the one link between a debt item and its unit.
 
 **Readings of M4a C3** (recorded in step C4):
@@ -3781,8 +3784,10 @@ covering none of the entry's sources, and (same-repo corpus) outputs that may re
 arc's binding obligations (active, not exempt) with declared files, each file in its lane, and present at the
 integration tip (the baseline before the branch exists) or inside the effective scope of a deliverer or a unit a
 deliverer runs `after`, transitively (`units`: the deliverers; empty for a must-hold obligation, whose file must exist).
-`Phase0Mode.fresh` (a fresh start, `phase0 check --plan`) and any arc whose witnesses declare files require every lane's
-`testPaths` and every binding witness's `files`.
+`Phase0Mode.fresh` (a fresh start, `phase0 check --plan`) requires every lane's `testPaths` and every binding witness's
+`files`. Otherwise each lane and witness is judged on its own (2026-10-21; 1.0.0-dev.16): a declared one is checked, an
+undeclared one is read as undeclared with a logged warning, whatever the others declare (an arc started before
+2026-10-16 whose checkpoint declares one split child's files keeps its other witnesses unchecked, not refused).
 
 **Run time.** Before a `witnesses-missing` is charged, `missingWitnessDefects` (src/pipeline/witnesscheck.ts) diagnoses
 each missing id of an obligation's witness with declared files: a file its lane never runs, or one absent at the salvage

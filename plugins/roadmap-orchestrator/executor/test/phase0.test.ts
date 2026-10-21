@@ -1,7 +1,7 @@
 // M4a step C1: `roadmap phase0 check` and the shared Phase-0 rows (src/phase0/rows.ts) over real repos, real pins
 // (`roadmap corpus pin`), real issue captures against the fake forge and real snapshot refs for the chain (src/chain.ts).
 // The classifier's and the apply's and start's sides are test/phase0-apply.test.ts. M4a rev 3 (N5):
-// phase0.spec-census-mismatch-row. Run 10 (C): phase0.spec-census-witness-items.
+// phase0.spec-census-mismatch-row. Run 10 (C): phase0.spec-census-witness-items. 2026-10-21: phase0.retired-rule-anchor.
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -212,6 +212,17 @@ describe('exempt obligations and retired rules (LR-C1-2)', () => {
     withI2(a, { ...RETIRED, textSha256: sha256Hex('another text') }, { type: 'deferred', ruling: 'C-1' });
     assert.deepEqual(await phase0Problems(a), [{ type: 'obligation-rule-unresolved', obligation: 'I-2' }]);
     withI2(a, { id: 'T-8', textSha256: RETIRED.textSha256 }, { type: 'waived', ruling: 'C-1' });
+    assert.deepEqual(await phase0Problems(a), [{ type: 'obligation-rule-unresolved', obligation: 'I-2' }]);
+  });
+
+  it('phase0.retired-rule-anchor: a retired obligation of a rule that left the corpus mid-arc, in neither list of the pin (the baseline publishes no registry), resolves; a deferred one does not', T, async () => {
+    // The field arc (2026-10-21): an owner's answer retired a rule of a first corpus arc, so the re-pin dropped it outright.
+    const a = await corpusArc();
+    const pin = JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')) as { retired: Json[] };
+    assert.deepEqual(pin.retired, []);
+    withI2(a, RETIRED, { type: 'retired', ruling: 'C-1' });
+    await green(a);
+    withI2(a, RETIRED, { type: 'deferred', ruling: 'C-1' });
     assert.deepEqual(await phase0Problems(a), [{ type: 'obligation-rule-unresolved', obligation: 'I-2' }]);
   });
 

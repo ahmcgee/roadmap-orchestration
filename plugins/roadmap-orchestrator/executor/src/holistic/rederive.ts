@@ -28,7 +28,8 @@ export function rederive(baselineInvariants: string | null, next: Obligations | 
  * The census diff of a corpus arc (M4a, DESIGN §2.8 "Re-derivation"): every active `T-n` of the pin has its one census
  * state (`census-incomplete`), no entry names a rule the pin does not hold active (`census-dangling`), and every
  * obligation's `{T-n, textSha256}` resolves in the pin (`obligation-rule-unresolved`, `ruleAnchorResolves`): a binding
- * one's to an active rule, an exempt (waived, deferred, retired) one's to an active or a retired one (LR-C1-2). Pure.
+ * one's to an active rule, a waived or deferred one's to an active or a retired one (LR-C1-2); a retired obligation's is
+ * not asked (2026-10-21). Pure.
  */
 export function censusProblems(o: Obligations & Readonly<{ census: readonly CensusEntry[] }>, pin: CorpusPin): readonly Phase0Problem[] {
   const active = activeRules(pin);

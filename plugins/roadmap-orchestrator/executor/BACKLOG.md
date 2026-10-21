@@ -310,6 +310,13 @@ at triage stay in git history.
 
 ## Watch (act only on the trigger)
 
+- **A rule retired mid-arc leaves no trace in the pin** (2026-10-21; 1.0.0-dev.16). Every re-pin diffs the corpus against
+  the baseline's registry, never against the pin in force, so a rule the owner retires mid-arc that the baseline's
+  registry never held (every rule of a first corpus arc) is in neither list of the new pin, and the high-water may fall
+  below its number. Retiring its obligation is now representable (a retired obligation's anchor is not asked,
+  `ruleAnchorResolves`); the close-out registry still omits the rule, and a later re-pin in the same arc could reuse
+  its number unrefused. Trigger: a rule id reused within one arc, or a later arc that needs the retired id recorded.
+
 - **The convergence tail's edges (dev.13, src/holistic/tail.ts).** Deferred while unmeasured; act on a paid run that shows
   the trigger. (1) An admit that addresses a finding below a brake without naming it in `repairs` is not caught (only
   `repairs` is read); trigger: a converted-admit count of 0 while units are still admitted after the settled point.
@@ -614,7 +621,9 @@ at triage stay in git history.
   `scopeGrowth` becomes required in `planCheckOutput`.
 - `laneTestPathsUndeclared` and `witnessFilesUndeclared` (src/core/upgrade.ts) with Phase-0 row 11's undeclared arm
   (src/phase0/rows.ts `witnessDefects`), once no arc started on 1.0.0-dev.10 is in flight: obligations that declare no
-  witness files read as undeclared. With them, `testPaths` and `files` become required in the readers.
+  witness files read as undeclared. With them, `testPaths` and `files` become required in the readers. Until then the
+  arm is per lane and per witness (2026-10-21; 1.0.0-dev.16), so an apply on an arc started on dev.11 or later that adds a
+  witness without `files` is warned, not refused (no record says which release started an arc).
 - `PRE_DEV10_BUILTIN_SEATS` (src/core/upgrade.ts) and its place in `EARLIER_BUILTIN_SEATS`, once no arc started on
   1.0.0-dev.9 is in flight: the built-in seats before the efficient class took the low-risk judgments (2026-10-15), kept
   only so `status` joins an earlier executor's recorded routing revs (`earlierRevAliases`, src/status.ts).

@@ -9,8 +9,9 @@
 //                  file plus every path matching root/include, R32): `scope-overlaps-corpus`, `contract-overlaps-corpus`.
 //                  Malformed corpus text throws `CorpusFormatError` (LR-A1-2), never a row.
 //   2-3. census    one state per active pinned rule, none dangling, every obligation's rule resolved: a binding one's
-//                  active, an exempt one's active or retired (LR-C1-2; src/holistic/rederive.ts `censusProblems`). An
-//                  exempt obligation need not be in the census. A corpus arc names its obligations file (LR-0a-2).
+//                  active, a waived or deferred one's active or retired (LR-C1-2; src/holistic/rederive.ts
+//                  `censusProblems`), a retired one's not asked (2026-10-21; 1.0.0-dev.16). An exempt obligation need not
+//                  be in the census. A corpus arc names its obligations file (LR-0a-2).
 //                  Then the pack's specs against the census (M4a rev 3, H3, F07; `spec-census-mismatch`, the one
 //                  predicate src/holistic/rederive.ts `specCensusMismatches`, which the classifier also runs on every
 //                  revision: run 10, C).
@@ -43,8 +44,9 @@
 //                    tip (the baseline before the branch exists) or inside the effective scope of a deliverer or a unit
 //                    a deliverer runs after, transitively (`witness-file-unreachable`). At a fresh start every arc lane
 //                    declares `testPaths` and every binding witness `files` (`lane-test-paths-undeclared`,
-//                    `witness-files-undeclared`), and so must an arc whose witnesses declare any files; an arc started
-//                    before 2026-10-16 that declares none is read as undeclared, with a logged warning.
+//                    `witness-files-undeclared`). Otherwise each lane and witness is judged on its own (2026-10-21;
+//                    1.0.0-dev.16): a declared one is checked, an undeclared one (an arc started before 2026-10-16) is
+//                    read as undeclared with a logged warning, whatever the others declare.
 //  12. vision leak (an apply only; owner ruling 2026-10-16) the vision of the apply's files rebased onto the files in force
 //                  (src/input/rebase.ts) differs from the vision in force, so the owner's vision file changed, and the
 //                  apply does not declare a vision edit (`apply --vision-edit`): `vision-leak{inForce, committed,
@@ -407,15 +409,19 @@ function withDependencies(plan: PlanM1, units: readonly UnitId[]): readonly Plan
   return plan.units.filter((u) => seen.has(u.id));
 }
 
-/** Row 11's witness half over the obligations (binding ones: active, not exempt). */
+/**
+ * Row 11's witness half over the obligations (binding ones: active, not exempt). A fresh start requires every lane's
+ * `testPaths` and every witness's `files`; otherwise each is judged on its own (2026-10-21): what is declared is checked,
+ * what is not is the logged-warning read of an arc started before 2026-10-16, so a checkpoint that declares one witness's
+ * files never turns the arc's other witnesses into defects.
+ */
 function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boolean): readonly PlanDefect[] {
   const { plan } = input;
   const binding = obligations.obligations.filter((o) => o.state.type === 'active' && !isExempt(o) && o.witness !== null);
-  const declared = fresh || binding.some((o) => o.witness?.files !== undefined);
   const out: PlanDefect[] = [];
   for (const lane of obligations.lanes) {
     if (lane.testPaths !== undefined) continue;
-    if (declared) out.push({ type: 'lane-test-paths-undeclared', lane: lane.id });
+    if (fresh) out.push({ type: 'lane-test-paths-undeclared', lane: lane.id });
     else laneTestPathsUndeclared(lane.id);
   }
   let tip: ReadonlySet<string> | null = null;
@@ -426,7 +432,7 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boo
   for (const o of binding) {
     const w = o.witness!;
     if (w.files === undefined) {
-      if (declared) out.push({ type: 'witness-files-undeclared', obligation: o.id });
+      if (fresh) out.push({ type: 'witness-files-undeclared', obligation: o.id });
       else witnessFilesUndeclared(o.id);
       continue;
     }

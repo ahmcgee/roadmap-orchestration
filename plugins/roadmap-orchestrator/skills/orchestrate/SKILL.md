@@ -400,8 +400,9 @@ it goes into the Phase 0 under way. While an arc runs, one `roadmap apply` carri
   baseline (never the integration branch) and re-pin (`corpus pin --commit <that commit> --baseline <the plan's baseline>`).
   A change of meaning retires the old rule id and adds a new one. Update the census, and the in-slice obligations
   per "Changing the plan": re-anchoring or restating one is a weakening, so the apply carries a ruling naming it
-  `amended` (`apply --ruling <sidecar>`). When the new meaning needs code, add the unit that delivers it in the
-  same apply.
+  `amended` (`apply --ruling <sidecar>`). An obligation of a retired rule that nothing replaces is retired instead (a
+  ruling naming it `retired`), its anchor kept as written: a retired obligation's anchor is not checked against the
+  pin (2026-10-21; 1.0.0-dev.16). When the new meaning needs code, add the unit that delivers it in the same apply.
 - The next between-arc commit carries that corpus edit again: the integration branch never had it.
 
 Check in at every arc completion (the chain boundary), at every event worth a brief (a stop, a blocking item you
