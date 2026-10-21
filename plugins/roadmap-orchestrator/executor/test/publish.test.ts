@@ -4,6 +4,7 @@
 // crash cells of the matrix rows DOCS_PUBLICATION and PREEMPT (test/matrix.ts), recovered by the recovery engine.
 // Checkpoint A fixes: publish.lane-evidence-immutable, publish.checkout-integrity, rule.dispositions-applied (with
 // startup.pending-write-back).
+// dev.16: publish.vision-edit (a vision edit publishes the vision files onto integration).
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,6 +22,8 @@ import { git as rawGit } from '../src/git/git.ts';
 import { jobLaneDir, verifySnapshot } from '../src/git/snapshot.ts';
 import { isExempt } from '../src/holistic/types.ts';
 import { readInputFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
+import { corpusPin } from '../src/commands/corpus.ts';
+import { sha256Hex } from '../src/core/json.ts';
 import { settlePlan } from '../src/preflight/checks.ts';
 import { docsTransientViolations } from '../src/git/transient.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
@@ -30,7 +33,9 @@ import { resourceTable } from '../src/resources/reserve.ts';
 import { reached } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
+import { commitAll, git, tmpDir } from './helpers/repo.ts';
+import { PIN_FILE, VISION_DOC } from './helpers/corpusarc.ts';
+import { VISION_PATH, setupCorpusArc } from './fixtures/corpus-unit.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { witnessLaneArgv, writeWitnessControl } from './helpers/witness.ts';
 import { DOCS_PUBLICATION, PREEMPT, crashCells } from './matrix.ts';
@@ -38,6 +43,7 @@ import { API_OP, barrierSuite, closedAs, publishArc, ruleRecord, submitRule, wir
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import {
   type ArcDescriptor, type ArcOptions, type ArcRun, U1, appendSteps, applyBody, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, stepUntil,
+  visionApplyBody,
 } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -395,6 +401,63 @@ describe('holistic docs publications', () => {
       assert.equal(outcomes(r.d).at(-1), 'candidate:finding-blocked', 'its fresh candidate records the block');
       rule(2);
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// dev.16: a vision edit publishes the vision onto the integration branch
+
+describe('vision edits publish', () => {
+  test('publish.vision-edit: a corpus arc\'s `apply --vision-edit`, committed on the owner\'s branch, lands .roadmap/vision.json on integration through its docs publication; a same-repo re-pin of the vision document lands the document too; the owner\'s branch never moves', T, async () => {
+    const a = await setupCorpusArc([]);
+    const d = a.d;
+    const r = contextFor(d);
+    const w = wire(r);
+    try {
+      const repo = absPath(d.repo);
+      const vision = (): Json => JSON.parse(readFileSync(join(d.repo, '.roadmap/vision.json'), 'utf8')) as Json;
+      const at = (commit: string, path: string): string => rawGit(repo, ['show', `${commit}:${path}`]);
+      git(d.repo, 'checkout', '--quiet', '-b', 'owner');
+
+      // 1. A vision-only edit: the record alone (and a corpus arc's debt.md, rendered with any docs publication).
+      const tip = head(d);
+      const v1 = vision();
+      const rev2 = `${JSON.stringify({ ...v1, rev: 2, clauses: [...(v1['clauses'] as Json[]), { id: 'V-3', kind: 'good', text: 'Quiet nights.', rank: null, state: 'active' }] }, null, 2)}\n`;
+      writeFileSync(join(d.repo, '.roadmap/vision.json'), rev2);
+      const owner2 = commitAll(d.repo, 'vision rev 2');
+      const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, visionApplyBody(d));
+      const outcome = await applyCommand(w.commands, file);
+      assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+      const fact = assertPublished(r, file.id, 'docs-1', tip);
+      assert.deepEqual(fact.changes, [{ type: 'vision', rev: 2 }]);
+      assert.equal(fact.visionSha256, bytesSha256(Buffer.from(rev2, 'utf8')), 'the vision in force is the published one');
+      const head1 = fact.publication!.head;
+      assert.deepEqual(changedPaths(repo, sha(tip), sha(head1)).filter((p) => p !== '.roadmap/debt.md'), ['.roadmap/vision.json']);
+      assert.equal(at('main', '.roadmap/vision.json'), rev2, 'integration carries the new vision');
+      assert.equal(git(d.repo, 'rev-parse', 'owner'), owner2, 'the owner\'s branch is never moved');
+
+      // 2. A same-repo re-pin changing the vision document, with the record confirming it: both land.
+      const doc = `${readFileSync(join(d.repo, VISION_PATH), 'utf8')}Quiet nights in every berth.\n`;
+      writeFileSync(join(d.repo, VISION_PATH), doc);
+      const repinned = commitAll(d.repo, 'the vision document');
+      const pinned = await corpusPin({ repo, commit: repinned, baseline: sha(a.baseline), out: absPath(join(a.planDir, PIN_FILE)) });
+      assert.equal(pinned.kind, 'pinned', JSON.stringify(pinned));
+      const rev3 = `${JSON.stringify({ ...vision(), rev: 3, confirmation: { ref: `corpus:${VISION_DOC}#sha256:${sha256Hex(doc)}`, at: '2026-10-21T00:00:00.000Z' } }, null, 2)}\n`;
+      writeFileSync(join(d.repo, '.roadmap/vision.json'), rev3);
+      const owner3 = commitAll(d.repo, 'vision rev 3, confirmed against the re-pinned document');
+      const again = submitCommand(r.ctx.runDir, r.ctx.plan().arc, visionApplyBody(d));
+      const second = await applyCommand(w.commands, again);
+      assert.equal(second.kind, 'applied', JSON.stringify(second));
+      const fact2 = assertPublished(r, again.id, 'docs-2', head1);
+      assert.deepEqual(fact2.changes.map((c) => c.type).sort(), ['corpus', 'vision']);
+      assert.deepEqual(changedPaths(repo, sha(head1), sha(fact2.publication!.head)).filter((p) => p !== '.roadmap/debt.md'), ['.roadmap/vision.json', VISION_PATH]);
+      assert.equal(at('main', VISION_PATH), doc, 'integration carries the re-pinned vision document');
+      assert.equal(at('main', '.roadmap/vision.json'), rev3);
+      assert.equal(git(d.repo, 'rev-parse', 'owner'), owner3, 'the owner\'s branch is never moved');
+      assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {
       r.journal.close();
     }

@@ -49,7 +49,10 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   executor both changed is a `conflict` naming the file and JSON path). Each `--ruling` (repeatable) is a ruling sidecar
   validated as `rule` validates it and landed with the edits as one revision; an id `"C-?"` takes the ledger's next C-n.
   `--vision-edit` declares a vision edit: without it an apply whose rebased vision differs from the vision in force
-  (you changed the vision file) is refused `vision-leak` (a next-arc draft belongs in `_next/`). `--dry-run` always
+  (you changed the vision file) is refused `vision-leak` (a next-arc draft belongs in `_next/`). In a corpus arc a vision
+  edit is published onto the integration branch by the apply's docs publication: `.roadmap/vision.json`, and with a
+  `same-repo` re-pin the changed vision document, as committed on the owner's checkout (commit them there, never on the
+  integration branch, and never move the integration branch by hand). `--dry-run` always
   exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke,
   advisories, numbered}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
@@ -411,7 +414,7 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 | `plan-invalid{problem}` | schema, unknown spec path, integration branch missing or in `roadmap/<arc>/`, baseline not an ancestor, unknown resource or cite, a Phase-0 entry naming something absent | fix the input the problem names |
 | `spec-lane-unrunnable` | a lane, probe or teardown command cannot run here | fix the spec or the host |
 | `unsupported-routing` | a seat's class binds an unsupported triple | fix the routing layer it names |
-| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses; also (a fresh start, or any revision touching the unit) a lane's `evidenceGlobs` entry covering its unit's scope (named with lane and entry) | undo that edit; narrow the entry to the lane's outputs |
+| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses, or in a way that needs a docs publication (rulings, obligations, a corpus arc's vision record), which only an `apply` runs; also (a fresh start, or any revision touching the unit) a lane's `evidenceGlobs` entry covering its unit's scope (named with lane and entry) | undo that edit; start on the plan in force, then `apply` it (`--vision-edit` for the vision); narrow the entry to the lane's outputs |
 | `backend-smoke` | a backend's smoke failed | fix that backend's auth or sandbox |
 | `undispositioned-residue` | a residue from earlier work | `roadmap sweep`, or answer its needs-user |
 | `previous-arc-unreconciled`, `recovery-holder-dead`, `owner-mismatch`, `log-corrupt`, `containment-mode-changed` | host-level | read `status` and the needs-user; never clear host files by hand |

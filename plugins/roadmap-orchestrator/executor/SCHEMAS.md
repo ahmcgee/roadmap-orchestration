@@ -1838,8 +1838,9 @@ src/docs/contracts.ts, src/spec/rulings.ts, src/holistic/{obligations,impact,red
 residues, the snapshot closure):
 
 1. **The docs publication** (`src/pipeline/publish.ts`, `docsPublisher`) runs inside its revision's commit: the slot
-   under `docs{pub}` (`pub` = `nextJobId('docs')`), the files (each render's kept bytes; each document the revision's
-   new sidecars' contract ops edit at the tip T, applied in id order), `docs.commit` on `refs/roadmap-run/<arc>/docs/<pub>`
+   under `docs{pub}` (`pub` = `nextJobId('docs')`), the files (each render's kept bytes, the vision files a revision
+   changes among them since dev.16, "Vision edits publish"; each document the revision's new sidecars' contract ops edit
+   at the tip T, applied in id order), `docs.commit` on `refs/roadmap-run/<arc>/docs/<pub>`
    (parents [T]; its checkout `<worktreeRoot>/<arc>/<pub>.checkout`), the transient check, the lanes, `ff{subject:
    docs{pub}}` T → the commit. `DocsOutcome.published` gains `settle` (src/recover/revision.ts): `commitRevision` runs
    it after `plan-applied` and the commit's done, so the slot is held through the activation; `settle` is
@@ -1848,8 +1849,9 @@ residues, the snapshot closure):
    revision. The new rulings are validated again at T under the slot (`validateRuling`, `rulingContextAt`), so a
    ruling judged against inputs no longer in force at T is refused as stale (G21; the judged head is provenance
    only, "Ruling sidecars" above).
-2. **Selection (G12).** The rendered `.roadmap/` files are not changed paths of a docs candidate: they are executor
-   renderings of in-force records, and as unmapped paths they would select every must-hold obligation. A docs
+2. **Selection (G12).** The renders (the rendered `.roadmap/` files; since dev.16 the published vision files too) are
+   not changed paths of a docs candidate: they are executor renderings of in-force records or the vision in force, and as
+   unmapped paths they would select every must-hold obligation. A docs
    candidate selects through its contract ops' paths only (`changedPaths`; an unmapped contract path still selects
    every must-hold, as for a unit) plus the revision's added, split and re-witnessed obligations (`revised`), split
    closure applied, read against the revision's own obligations. Green: every suite lane passes and no selected
@@ -2659,7 +2661,7 @@ unacked} | baseline{baseline: previous-head-mismatch | merge-commit | parent-mis
 previous-incomplete{arc} | k-unset}`; `issue-policy-untrusted{visibility, policy}`; `tree-uncommitted{paths}`;
 `holistic-needs-corpus`; `vision-leak{inForce: Sha256Hex|null, committed: Sha256Hex|null, draft: AbsPath}` (an
 `apply` only, row 12 of src/phase0/rows.ts: its vision, rebased onto the files in force, differs from the vision in
-force and its body's `visionEdit` is false (a body without the field, queued by an earlier CLI, reads as true: `applyVisionEditDefault`); `draft` is `_next/vision.md` beside the arc's input dir); `arc-superseded{by: ArcId}` (a start
+force and its body's `visionEdit` is false (a body without the field, queued by an earlier CLI, reads as true: `applyVisionEditDefault`); `draft` is `_next/vision.md` beside the arc's input dir; a declared edit of a corpus arc's vision is published onto the integration branch, "Vision edits publish"); `arc-superseded{by: ArcId}` (a start
 of an arc with a plan in force, a reopen, after arc `by` started on its head: src/chain.ts `successorOf`).
 
 **Config** (`.roadmap/config.json`, `src/routing/layers.ts`): `+ chain?: {k: positive}`; nothing about issues (OR-L6).
@@ -4406,3 +4408,31 @@ at once is released; brakes on the tail are code. The record rows are in "Record
   consumed dev.12 answer banks exactly what that executor would have; a blocking finding or a blank text never.
 - **`status.findings`**: `released` counts the released findings by `release.reason`, `code{close-out}` (`closeOut`)
   or a checkpoint (`checkpoint`); `refusedAdmits` counts the brake conversions of every decision record.
+
+## Vision edits publish (2026-10-21; 1.0.0-dev.16)
+
+An `apply --vision-edit` that changes the vision publishes it onto the integration branch through the revision's docs
+publication, so the arc branch carries the vision in force and nobody moves it by hand (the dev.13 field incident: an
+architect moved the arc branch with `update-ref` to land vision rev 2; dev.14's `integrationHistory` fix tolerates such
+a commit, this makes it unnecessary). No record changes; `SCHEMA_VERSION` stays 1.
+
+1. **What publishes** (src/commands/apply.ts `visionRenders`, inside `publicationOf`): a corpus arc's
+   `.roadmap/vision.json` (`visionFile` base `repo`, R1) whenever the proposal's vision bytes differ from the vision in
+   force (`changed.vision`: bytes, as `vision-leak` and `visionSha256` are), its bytes the owner's files'; and, for a
+   `same-repo` corpus, the pinned vision document at `underRoot(source.root, pin.vision.path)` when a re-pin changes the
+   pin's `vision` entry (path or sha256), its bytes read at the pin's `source.commit` in the product repo. A blob absent
+   there or hashing otherwise than the pin says refuses the revision (the pin does not re-derive; Phase-0 row 1 refuses
+   it too, after the apply core). An `architecture-doc` arc's vision lives beside its plan, and an `other-repo` or
+   `checkout` corpus outside the product repo: nothing of theirs is published.
+2. **One way to carry the bytes: renders.** The vision files are `publication.renders` entries like `constraints.md`
+   and `invariants.md`, their bytes kept as `inputs/<sha>.render` at commit (`keepRevision`). So `docsFiles`, the
+   transient check (exactly the files written), the snapshot closure and recovery (the recorded payload and its kept
+   renders) need nothing new; the bytes are duplicated beside the kept `.vision.json` and `.corpus-file` inputs, which is
+   cheaper than a second reference kind in the payload, its read-time default and its closure. A vision-only edit now
+   has a non-null publication, so it runs the suite under the slot like any docs publication (owner ruling: no
+   special case); selection is unchanged (contract paths and revised obligations only).
+3. **A start refuses it.** A start runs no docs publication, so `settlePlan` refuses a change that needs one
+   (`plan-change-refused`), now a corpus arc's vision record among them. A semantic vision change at a start was refused
+   already (the vision is owner-only: an architect `apply`); what newly refuses is a bytes-only difference (a
+   reformatted `vision.json`), which before came into force without reaching the arc branch. The owner starts on the
+   vision in force, then `apply --vision-edit`. A respawn reads the plan in force and is never refused.

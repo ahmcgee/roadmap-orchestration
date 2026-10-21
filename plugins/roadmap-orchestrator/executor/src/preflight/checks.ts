@@ -16,9 +16,10 @@
 //                   files of the latest revision applied from them onto the files in force (src/input/rebase.ts:
 //                   files unchanged since are the plan in force) and applies a change through the apply core
 //                   (src/commands/apply.ts `evaluateRevision`, source `start`) or refuses (plan-change-refused, a
-//                   conflict included); a revision a crash left mid-commit is recovery's first, and so is a committed
-//                   command (its `command.apply` still open with its revision in force: recovery finishes it), so the
-//                   files wait for the next start.
+//                   conflict included, and a change needing a docs publication: rulings, obligations, a corpus arc's
+//                   vision, which go through an apply); a revision a crash left mid-commit is recovery's first, and so
+//                   is a committed command (its `command.apply` still open with its revision in force: recovery
+//                   finishes it), so the files wait for the next start.
 //
 // M3: group 1 also loads the ruling sidecars, the obligations and the vision the files name (`revisionInputRows`).
 //
@@ -542,10 +543,14 @@ export function settlePlan(
     case 'unchanged':
       return [];
     case 'accepted':
+      // A start runs no docs publication (it has no slot before the executor runs): a change needing one, a corpus
+      // arc's vision edit among them (dev.16: the vision files publish onto the arc), goes through an apply.
       if (verdict.draft.publication !== null) {
         return [{
           kind: 'plan-change-refused',
-          reasons: ['the changed files need a docs publication (their obligations or rulings render into .roadmap/): start on the plan in force, then `roadmap apply` them'],
+          reasons: [
+            'the changed files need a docs publication (their obligations or rulings render into .roadmap/, or their vision publishes onto the integration branch): start on the plan in force, then `roadmap apply` them (`--vision-edit` for a vision edit)',
+          ],
         }];
       }
       keepCorpusFiles(context.runDir, corpusFiles);

@@ -1107,8 +1107,9 @@ export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
 /**
  * A revision's full evaluated payload (G1), kept content-addressed as `inputs/<sha256>.revision.json` and named by
  * its `revision.commit` intent before any docs `ff`. `plan-applied` is appended from it exactly, then its
- * divergences in order; recovery never reclassifies. `publication`: the rendered `.roadmap/` files and the contract
- * ops the docs publication commits, null when the revision changes no in-tree document. `owner` (apply rebase, 2026-10-16):
+ * divergences in order; recovery never reclassifies. `publication`: the files the docs publication commits (`renders`:
+ * the rendered `.roadmap/` documents and, dev.16, the vision files the revision changes in the product repo) and its
+ * contract ops, null when the revision changes no in-tree document. `owner` (apply rebase, 2026-10-16):
  * the owner's files a start or an `apply` was rebased from, when they differ from `manifest` (a merge, or `--ruling`
  * records landed): the default base of the owner's next apply (src/input/rebase.ts `ownerBase`). Absent: the manifest is
  * the owner's (every revision of an earlier release, whose write-back kept the owner's files at the manifest).

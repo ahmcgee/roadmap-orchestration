@@ -285,7 +285,8 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
 // ---------------------------------------------------------------------------------------------------
 // 1. Corpus overlap (R32)
 
-const underRoot = (root: RepoPath, path: string): string => (root === '.' ? path : `${root}/${path}`);
+/** A corpus path under its source's `root`: its product-repo path for a `same-repo` corpus. */
+export const underRoot = (root: RepoPath, path: string): string => (root === '.' ? path : `${root}/${path}`);
 
 /** A same-repo corpus's file set: its pinned files' product paths, and its include patterns rooted. */
 export function corpusFileSet(pin: CorpusPin, guide: CorpusGuide): Readonly<{ files: readonly RepoPath[]; patterns: readonly RepoPattern[] }> {

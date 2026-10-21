@@ -45,7 +45,8 @@ a defect, a correction inside the slice) you apply or rule now. Everything else 
 there), and `notes.md`, work for later, deferred rulings and ideas (append). The executor never reads `_next/`.
 `.roadmap/vision.json` and the vision document change only between arcs: a running arc's `apply` refuses a vision
 file that differs from the vision in force (`vision-leak`). `apply --vision-edit` is only for a vision change the
-owner orders for the running arc.
+owner orders for the running arc: commit the edit on the owner's checkout (never on the arc's integration branch),
+then `apply --vision-edit`; the executor publishes it onto the arc branch. Never move the integration branch by hand.
 
 ## Bootstrap (once)
 
@@ -622,7 +623,11 @@ rejected. An edit you never apply has no effect, even after a restart.
   A re-pin re-gates every approval.
   Both change the pack, so before the first admission they trigger a new pack review.
 - **Vision**: only a change the owner ordered for this arc, by `apply --vision-edit` (a next-arc draft waits in
-  `_next/`). Never reuse a clause id; withdraw, never delete. Commit `.roadmap/vision.json` before the `apply`.
+  `_next/`). Never reuse a clause id; withdraw, never delete. Commit `.roadmap/vision.json` (and, with a re-pin, the
+  vision document) on the owner's checkout before the `apply`, never on the integration branch: the apply's docs
+  publication lands them on the arc branch, its suite run on them like any docs publication. Never move the
+  integration branch by hand (`update-ref`, a push, a merge into it). A `start` refuses an edited vision record;
+  start on the vision in force, then apply.
 - **Fixed**: `arc`, `integrationBranch`, `baseline`, `worktreeRoot`, the target kind and `chain`.
 - **Rulings ledger**: only through commands. A ruling and the edits that depend on it go in one
   `apply --ruling <sidecar>`, so no review sees half of it; `roadmap rule` is for a ruling with no dependent edit.

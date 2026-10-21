@@ -308,13 +308,6 @@ at triage stay in git history.
   (`verdictOf`'s, which names the role, the call and, for `context-exceeded`, the prompt's size) reaches no record. The
   checkpoint (rejected-invalid) and the pack review (its item) keep it. Record it where each job records its end.
 
-- **No supported path for an owner commit on the arc mid-run** (dev.13 arc, 2026-10-21). `apply --vision-edit` puts a
-  vision change in force, but its docs publication renders only executor records, so the committed `vision.json` reaches
-  the integration branch only through the between-arc commit. The architect moved the arc branch by hand (CAS
-  `update-ref`) to land it, and an audit then ended on that commit, which crashed every checkpoint and `status` until
-  dev.14 placed such a commit at its nearest published ancestor. Decide: publish the vision files in the vision edit's
-  docs publication, or have the skill say where the commit goes and that the arc branch is never moved by hand.
-
 ## Watch (act only on the trigger)
 
 - **The convergence tail's edges (dev.13, src/holistic/tail.ts).** Deferred while unmeasured; act on a paid run that shows

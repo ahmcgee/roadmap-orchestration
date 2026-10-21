@@ -57,7 +57,9 @@
 //            differ) and the revision committed (src/recover/revision.ts: payload, `revision.commit`, docs publication,
 //            `plan-applied`), the postcondition. Nothing is written into the owner's files. All or nothing: a rejection
 //            lists every reason. `reenters`, `cut`, `route`,
-//            `limits`, the obligation edits and the vision are its edit classes (D3, LR-c). M4a: so are a re-pin
+//            `limits`, the obligation edits and the vision are its edit classes (D3, LR-c); a vision edit (`--vision-edit`)
+//            of a corpus arc publishes its vision files onto the integration branch through the revision's docs
+//            publication (dev.16, `visionRenders`), the one way the arc branch takes a vision. M4a: so are a re-pin
 //            (`corpus`) and a Phase-0 record edit (`phase0`); the shared Phase-0 rows (src/phase0/rows.ts) run over
 //            every apply (`tree-uncommitted`, `vision-unconfirmed`, `corpus-invalid`, `phase0-invalid` are rejected
 //            receipt reasons, as are the classifier's `target-kind-changed` and `chain-immutable`), and the corpus
@@ -108,7 +110,8 @@ import {
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody, CommandFile, HashedFile, NeedsUserAck, ResidueKey, RevisionManifest, SpecM1, Stage } from '../core/records.ts';
-import type { PlanUnit } from '../input/plan.ts';
+import { type PlanUnit, visionFile } from '../input/plan.ts';
+import { gitRun } from '../git/git.ts';
 import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
@@ -132,7 +135,7 @@ import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { APPLY, type Phase0Advisory, phase0InputOf, phase0Rows, visionLeak } from '../phase0/rows.ts';
+import { APPLY, type Phase0Advisory, phase0InputOf, phase0Rows, underRoot, visionLeak } from '../phase0/rows.ts';
 import { type SmokeRouting, backendsOf, smokeBackends, smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext, StartupRejection } from '../preflight/startup.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
@@ -583,7 +586,10 @@ export type RevisionContext = Readonly<{
 
 /** A payload before its source: what a dry run shows and a commit completes (`payloadOf`). */
 export type RevisionDraft = Omit<RevisionPayload, 'source'>;
-/** An executor-rendered document of a revision's docs publication, with its bytes (kept at commit). */
+/**
+ * A file of a revision's docs publication, with its bytes (kept at commit as `inputs/<sha>.render`): a document code renders
+ * (`constraints.md`, `invariants.md`), or a vision file the revision publishes as the owner committed it (`visionRenders`).
+ */
 export type Render = Readonly<{ path: RepoPath; bytes: Buffer }>;
 
 export type RevisionVerdict =
@@ -593,13 +599,19 @@ export type RevisionVerdict =
     kind: 'accepted'; draft: RevisionDraft; next: InputFiles; scoped: readonly UnitId[]; routings: readonly ResolvedRouting[]; renders: readonly Render[];
   }>;
 
+type Publication = Readonly<{ renders: readonly Render[]; contractOps: readonly ContractOp[] }>;
+
 /**
  * The docs publication a revision needs (A2): `constraints.md` when its rulings change, `invariants.md` when its obligations
- * do (§2.9). The in-tree documents code renders from the inputs it changes, each only
- * when its rendering changes, and the contract ops of the sidecars it lands; null when there is nothing to publish.
+ * do (§2.9), each only when its rendering changes; the vision files it changes (`visionRenders`); and the contract ops of
+ * the sidecars it lands. Empty when there is nothing to publish; the reasons when a vision file cannot be published.
  */
-function publicationOf(view: JournalView, revision: RevisionInForce, inputs: NextInputs): Readonly<{ renders: readonly Render[]; contractOps: readonly ContractOp[] }> {
-  const renders: Render[] = [];
+function publicationOf(
+  view: JournalView, revision: RevisionInForce, inputs: NextInputs, proposal: InputFiles,
+): Publication | Readonly<{ reasons: readonly string[] }> {
+  const vision = visionRenders(revision, inputs, proposal);
+  if ('reasons' in vision) return vision;
+  const renders: Render[] = [...vision.renders];
   const latched = view.holistic().latched.map((l) => l.obligation);
   if (inputs.changed.rulings) {
     const before = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'the ledger in force'), [...revision.sidecars.values()].map((s) => s.sidecar), 'living');
@@ -614,6 +626,33 @@ function publicationOf(view: JournalView, revision: RevisionInForce, inputs: Nex
   }
   const contractOps = inputs.sidecars.filter((s) => !revision.sidecars.has(s.id)).flatMap((s) => s.contractOps);
   return { renders, contractOps };
+}
+
+/**
+ * The vision files a revision publishes (vision edits publish, dev.16): the arc branch carries the vision in force, so
+ * nobody moves it by hand to land one (the dev.13 field incident). A corpus arc's vision record (`.roadmap/vision.json`,
+ * in the product repo, R1) whenever its bytes change, as the owner's files hold them; and for a `same-repo` corpus the
+ * pinned vision document when the re-pin changes it (its path or bytes), read at the pin's commit, where the pin hashed
+ * it. An `architecture-doc` arc's vision lives beside its plan, and an other-repo or checkout corpus outside the product
+ * repo: nothing of theirs is published. The reason when the pinned vision document is not at its commit as the pin says
+ * (a pin that does not re-derive, which the Phase-0 rows refuse too).
+ */
+function visionRenders(revision: RevisionInForce, inputs: NextInputs, proposal: InputFiles): Readonly<{ renders: readonly Render[] }> | Readonly<{ reasons: readonly string[] }> {
+  const renders: Render[] = [];
+  const record = visionFile(proposal.plan);
+  const recordBytes = proposal.vision?.bytes ?? null;
+  if (inputs.changed.vision && record?.base === 'repo' && recordBytes !== null) renders.push({ path: record.path, bytes: recordBytes });
+  const pin = inputs.corpus?.pin ?? null;
+  if (inputs.changed.corpus && pin !== null && pin.source.kind === 'same-repo' && canonicalJson(pin.vision) !== canonicalJson(revision.corpus?.pin.value.vision ?? null)) {
+    const path = repoPath(underRoot(pin.source.root, pin.vision.path));
+    const blob = gitRun(proposal.repo, ['cat-file', 'blob', `${pin.source.commit}:${path}`], { okCodes: [0, 128] });
+    const bytes = blob.code === 0 ? Buffer.from(blob.stdout, 'utf8') : null;
+    if (bytes === null || bytesSha256(bytes) !== pin.vision.sha256) {
+      return { reasons: [`the pinned vision document ${path} at ${pin.source.commit} is not the pin's ${pin.vision.sha256}: the pin does not re-derive (re-pin it)`] };
+    }
+    renders.push({ path, bytes });
+  }
+  return { renders };
 }
 
 /** The rules registry the proposal's pin publishes; undefined for an `architecture-doc` arc. An accepted corpus proposal loads its pin. */
@@ -658,7 +697,8 @@ export function evaluateRevision(
   if (lanes.length > 0) return { kind: 'rejected', reasons: lanes.map(rowText) };
   const manifest = revisionManifestOf(proposal);
   if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };
-  const publication = publicationOf(ctx.view, revision, verdict.inputs);
+  const publication = publicationOf(ctx.view, revision, verdict.inputs, proposal);
+  if ('reasons' in publication) return { kind: 'rejected', reasons: publication.reasons };
   const divergences: DivergenceDraft[] = verdict.dropped.map((d) => {
     if (proposer.type !== 'bundle') throw new Error(`a split dropping text proposed by ${proposer.type}: the classifier refuses it`);
     return {
