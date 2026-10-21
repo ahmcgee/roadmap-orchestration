@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1675" viewBox="0 0 1100 1675" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1825" viewBox="0 0 1100 1825" role="img" aria-labelledby="title desc">
 <title id="title">How a roadmap-orchestrator arc runs</title>
-<desc id="desc">A swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session, running the orchestrate and vision skills) and the executor (a detached Node process that runs unattended and calls models for judgment). It runs in four phases: a one-time bootstrap where you write the target state and confirm the vision; Phase 0 each arc, where the architect plans the arc and starts the executor; the unattended run, where the executor builds, tests, reviews and merges units in parallel while the architect adjudicates what it hands over; and completion, where the architect checks in with you, opens a stacked PR and either chains into the next arc or stops.</desc>
+<desc id="desc">A swimlane flowchart in three lanes: you (the owner), the architect (Claude in your session, running the orchestrate and vision skills) and the executor (a detached Node process that runs unattended and calls models for judgment). It runs in four phases: a one-time bootstrap where you write the target state and confirm the vision; Phase 0 each arc, where the architect plans the arc and starts the executor; the unattended run, where the executor builds, tests, reviews and merges units in parallel, walks each milestone end to end and promotes a demo you can try, while the architect adjudicates what it hands over; and completion, where the architect checks in with you, opens a stacked PR and either chains into the next arc or stops.</desc>
 <style>
 svg { 
   --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --line:#8c959f;
@@ -43,7 +43,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 .bandt { font-size: 12px; font-weight: 700; fill: var(--bg); letter-spacing: 0.06em; }
 </style>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
-<rect class="bg" width="1100" height="1675"/>
+<rect class="bg" width="1100" height="1825"/>
 <text class="h1" x="24" y="40">How a roadmap-orchestrator arc runs</text>
 <text class="sub" x="24" y="64">Who does what, top to bottom. Steps 2–4 repeat for each arc.</text>
 <g class="box ow"><rect x="24" y="84" width="16" height="16" rx="4"/></g>
@@ -54,13 +54,13 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text class="lg" x="268.7" y="97">Executor (code)</text>
 <rect class="chip" x="401.2" y="83" width="58" height="18" rx="9"/><text class="chipt" x="430.2" y="96" text-anchor="middle">model</text>
 <text class="lg" x="467.2" y="97">the executor calls a model</text>
-<rect class="lane ow" x="16" y="118" width="288" height="1547" rx="12"/>
+<rect class="lane ow" x="16" y="118" width="288" height="1697" rx="12"/>
 <text class="lt ow" x="28" y="142">You</text>
 <text class="ls" x="28" y="160">the owner</text>
-<rect class="lane ar" x="332" y="118" width="356" height="1547" rx="12"/>
+<rect class="lane ar" x="332" y="118" width="356" height="1697" rx="12"/>
 <text class="lt ar" x="344" y="142">Architect</text>
 <text class="ls" x="344" y="160">Claude in your session</text>
-<rect class="lane ex" x="716" y="118" width="368" height="1547" rx="12"/>
+<rect class="lane ex" x="716" y="118" width="368" height="1697" rx="12"/>
 <text class="lt ex" x="728" y="142">Executor</text>
 <text class="ls" x="728" y="160">detached, unattended</text>
 <line class="band" x1="16" y1="186" x2="1084" y2="186"/>
@@ -101,7 +101,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <g class="box ar">
 <rect x="340" y="493" width="340" height="57" rx="8"/>
 <text class="t" x="352" y="518">Plan the arc</text>
-<text class="b" x="352" y="537">corpus → rules → obligations → specs</text>
+<text class="b" x="352" y="537">rules → obligations → milestones → specs</text>
 </g>
 <g class="box ar">
 <rect x="340" y="568" width="340" height="57" rx="8"/>
@@ -134,10 +134,10 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <rect class="chip" x="906" y="839" width="58" height="18" rx="9"/><text class="chipt" x="935" y="852" text-anchor="middle">model</text>
 <path class="arr" d="M780 821 V831" marker-end="url(#ah)"/>
 <g class="box step"><rect x="740" y="875" width="230" height="30" rx="6"/></g>
-<text class="t" x="750" y="895">Lanes: tests, witnesses</text>
+<text class="t" x="750" y="895">Lanes: suite, witnesses</text>
 <path class="arr" d="M780 863 V873" marker-end="url(#ah)"/>
 <g class="box step"><rect x="740" y="917" width="230" height="30" rx="6"/></g>
-<text class="t" x="750" y="937">Gate</text>
+<text class="t" x="750" y="937">Gate, with a shell</text>
 <rect class="chip" x="906" y="923" width="58" height="18" rx="9"/><text class="chipt" x="935" y="936" text-anchor="middle">model</text>
 <path class="arr" d="M780 905 V915" marker-end="url(#ah)"/>
 <g class="box step"><rect x="740" y="959" width="230" height="30" rx="6"/></g>
@@ -150,44 +150,60 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text class="al" x="993" y="901">round</text>
 <path class="arr" d="M764 733 V751" marker-end="url(#ah)"/>
 <g class="box ex">
-<rect x="724" y="1031" width="328" height="57" rx="8"/>
-<text class="t" x="736" y="1056">Lens audit</text>
-<rect class="chip" x="986" y="1039" width="58" height="18" rx="9"/>
-<text class="chipt" x="1015" y="1052" text-anchor="middle">model</text>
-<text class="b" x="736" y="1075">every N merges</text>
+<rect x="724" y="1181" width="328" height="57" rx="8"/>
+<text class="t" x="736" y="1206">Lens audit</text>
+<rect class="chip" x="986" y="1189" width="58" height="18" rx="9"/>
+<text class="chipt" x="1015" y="1202" text-anchor="middle">model</text>
+<text class="b" x="736" y="1225">every N merges</text>
 </g>
 <path class="arr" d="M764 1005 V1029" marker-end="url(#ah)"/>
+<text class="al" x="772" y="1021">a milestone's units are in</text>
 <g class="box ex">
-<rect x="724" y="1106" width="328" height="57" rx="8"/>
-<text class="t" x="736" y="1131">Checkpoint</text>
-<rect class="chip" x="986" y="1114" width="58" height="18" rx="9"/>
-<text class="chipt" x="1015" y="1127" text-anchor="middle">model</text>
-<text class="b" x="736" y="1150">rules toward the vision</text>
+<rect x="724" y="1031" width="328" height="57" rx="8"/>
+<text class="t" x="736" y="1056">Walk the milestone</text>
+<rect class="chip" x="986" y="1039" width="58" height="18" rx="9"/>
+<text class="chipt" x="1015" y="1052" text-anchor="middle">model</text>
+<text class="b" x="736" y="1075">breaks hold dependents; polish judged</text>
 </g>
 <path class="arr" d="M764 1088 V1104" marker-end="url(#ah)"/>
-<path class="arr" d="M1052 1134.5 H1064 V773 H1054" marker-end="url(#ah)"/>
-<text class="al" x="1068" y="953.75" text-anchor="middle" transform="rotate(-90 1068 953.75)" dy="-6">admit · respec · cut</text>
-<g class="box ex"><rect x="724" y="1189" width="328" height="252" rx="8"/></g>
-<text class="t ex" x="736" y="1213">Flow loop</text>
-<g class="box step"><rect x="740" y="1227" width="230" height="30" rx="6"/></g>
-<text class="t" x="750" y="1247">Time every station</text>
-<g class="box step"><rect x="740" y="1269" width="230" height="30" rx="6"/></g>
-<text class="t" x="750" y="1289">Chart lead time</text>
-<path class="arr" d="M780 1257 V1267" marker-end="url(#ah)"/>
-<g class="box step"><rect x="740" y="1311" width="230" height="30" rx="6"/></g>
-<text class="t" x="750" y="1331">Name the constraint</text>
-<path class="arr" d="M780 1299 V1309" marker-end="url(#ah)"/>
-<g class="box step"><rect x="740" y="1353" width="230" height="30" rx="6"/></g>
-<text class="t" x="750" y="1373">Propose one lever</text>
-<rect class="chip" x="906" y="1359" width="58" height="18" rx="9"/><text class="chipt" x="935" y="1372" text-anchor="middle">model</text>
-<path class="arr" d="M780 1341 V1351" marker-end="url(#ah)"/>
-<g class="box step"><rect x="740" y="1395" width="230" height="30" rx="6"/></g>
-<text class="t" x="750" y="1415">Prove, apply, judge</text>
-<path class="arr" d="M780 1383 V1393" marker-end="url(#ah)"/>
-<line class="arr" x1="970" y1="1410" x2="988" y2="1410"/>
-<path class="arr" d="M988 1410 V1242 H972" marker-end="url(#ah)"/>
-<text class="al" x="993" y="1323">next</text>
-<text class="al" x="993" y="1337">run</text>
+<text class="al" x="772" y="1100">passed</text>
+<g class="box ex">
+<rect x="724" y="1106" width="328" height="57" rx="8"/>
+<text class="t" x="736" y="1131">Promote the demo</text>
+<text class="b" x="736" y="1150">stable copy, swapped without breaking</text>
+</g>
+<path class="arr" d="M764 1163 V1179" marker-end="url(#ah)"/>
+<g class="box ex">
+<rect x="724" y="1256" width="328" height="57" rx="8"/>
+<text class="t" x="736" y="1281">Checkpoint</text>
+<rect class="chip" x="986" y="1264" width="58" height="18" rx="9"/>
+<text class="chipt" x="1015" y="1277" text-anchor="middle">model</text>
+<text class="b" x="736" y="1300">rules toward the vision</text>
+</g>
+<path class="arr" d="M764 1238 V1254" marker-end="url(#ah)"/>
+<path class="arr" d="M1052 1284.5 H1064 V773 H1054" marker-end="url(#ah)"/>
+<text class="al" x="1068" y="1028.75" text-anchor="middle" transform="rotate(-90 1068 1028.75)" dy="-6">admit · respec · cut</text>
+<g class="box ex"><rect x="724" y="1339" width="328" height="252" rx="8"/></g>
+<text class="t ex" x="736" y="1363">Flow loop</text>
+<g class="box step"><rect x="740" y="1377" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1397">Time every station</text>
+<g class="box step"><rect x="740" y="1419" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1439">Chart lead time</text>
+<path class="arr" d="M780 1407 V1417" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="1461" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1481">Name the constraint</text>
+<path class="arr" d="M780 1449 V1459" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="1503" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1523">Propose one lever</text>
+<rect class="chip" x="906" y="1509" width="58" height="18" rx="9"/><text class="chipt" x="935" y="1522" text-anchor="middle">model</text>
+<path class="arr" d="M780 1491 V1501" marker-end="url(#ah)"/>
+<g class="box step"><rect x="740" y="1545" width="230" height="30" rx="6"/></g>
+<text class="t" x="750" y="1565">Prove, apply, judge</text>
+<path class="arr" d="M780 1533 V1543" marker-end="url(#ah)"/>
+<line class="arr" x1="970" y1="1560" x2="988" y2="1560"/>
+<path class="arr" d="M988 1560 V1392 H972" marker-end="url(#ah)"/>
+<text class="al" x="993" y="1473">next</text>
+<text class="al" x="993" y="1487">run</text>
 <g class="box ar">
 <rect x="340" y="693" width="340" height="57" rx="8"/>
 <text class="t" x="352" y="718">Wait for a wake</text>
@@ -196,7 +212,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <g class="box ar">
 <rect x="340" y="828" width="340" height="57" rx="8"/>
 <text class="t" x="352" y="853">Handle parked units</text>
-<text class="b" x="352" y="872"><tspan class="mono">apply</tspan> · <tspan class="mono">steer</tspan> · <tspan class="mono">resume</tspan></text>
+<text class="b" x="352" y="872"><tspan class="mono">apply</tspan> · <tspan class="mono">steer</tspan> · <tspan class="mono">resume</tspan> · <tspan class="mono">scope</tspan></text>
 </g>
 <path class="arr" d="M510 750 V826" marker-end="url(#ah)"/>
 <path class="arr dash" d="M724 842 H682" marker-end="url(#ah)"/>
@@ -204,20 +220,20 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <path class="arr" d="M680 873 H722" marker-end="url(#ah)"/>
 <text class="al" x="685" y="887" text-anchor="start">apply</text>
 <g class="box ar">
-<rect x="340" y="1106" width="340" height="57" rx="8"/>
-<text class="t" x="352" y="1131">Review divergences</text>
-<text class="b" x="352" y="1150"><tspan class="mono">reverse</tspan> one it read wrong</text>
+<rect x="340" y="1256" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="1281">Review divergences</text>
+<text class="b" x="352" y="1300"><tspan class="mono">reverse</tspan> one it read wrong</text>
 </g>
-<path class="arr dash" d="M724 1134.5 H682" marker-end="url(#ah)"/>
+<path class="arr dash" d="M724 1284.5 H682" marker-end="url(#ah)"/>
 <g class="box ar">
-<rect x="340" y="1352" width="340" height="57" rx="8"/>
-<text class="t" x="352" y="1377">Decide flow proposals</text>
-<text class="b" x="352" y="1396"><tspan class="mono">flow accept</tspan> · <tspan class="mono">flow reject</tspan></text>
+<rect x="340" y="1502" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="1527">Decide flow proposals</text>
+<text class="b" x="352" y="1546"><tspan class="mono">flow accept</tspan> · <tspan class="mono">flow reject</tspan></text>
 </g>
-<path class="arr dash" d="M724 1368 H682" marker-end="url(#ah)"/>
-<text class="al" x="685" y="1363" text-anchor="start">ask</text>
-<path class="arr" d="M680 1410 H722" marker-end="url(#ah)"/>
-<text class="al" x="685" y="1424" text-anchor="start">decide</text>
+<path class="arr dash" d="M724 1518 H682" marker-end="url(#ah)"/>
+<text class="al" x="685" y="1513" text-anchor="start">ask</text>
+<path class="arr" d="M680 1560 H722" marker-end="url(#ah)"/>
+<text class="al" x="685" y="1574" text-anchor="start">decide</text>
 <g class="box note">
 <rect x="24" y="693" width="272" height="40" rx="8"/>
 <text class="t" x="36" y="718">Away</text>
@@ -230,41 +246,48 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <path class="arr dash" d="M296 856.5 H338" marker-end="url(#ah)"/>
 <g class="box ow">
 <rect x="24" y="1106" width="272" height="57" rx="8"/>
-<text class="t" x="36" y="1131">Approve</text>
-<text class="b" x="36" y="1150">owner-only acts, &gt;$10, legal</text>
+<text class="t" x="36" y="1131">Try the demo</text>
+<text class="b" x="36" y="1150"><tspan class="mono">roadmap demo up</tspan> · <tspan class="mono">hold</tspan></text>
 </g>
-<path class="arr dash" d="M340 1134.5 H298" marker-end="url(#ah)"/>
-<line class="band" x1="16" y1="1481" x2="1084" y2="1481"/>
-<rect class="bandpill" x="16" y="1469" width="352.79999999999995" height="24" rx="12"/>
-<text class="bandt" x="30" y="1485.5">4  ARC COMPLETE: CHECK IN, THEN CHAIN</text>
+<path class="arr dash" d="M724 1134.5 H298" marker-end="url(#ah)"/>
+<text class="al" x="510" y="1128.5" text-anchor="middle">when you choose</text>
+<g class="box ow">
+<rect x="24" y="1256" width="272" height="57" rx="8"/>
+<text class="t" x="36" y="1281">Approve</text>
+<text class="b" x="36" y="1300">owner-only acts, &gt;$10, legal</text>
+</g>
+<path class="arr dash" d="M340 1284.5 H298" marker-end="url(#ah)"/>
+<line class="band" x1="16" y1="1631" x2="1084" y2="1631"/>
+<rect class="bandpill" x="16" y="1619" width="352.79999999999995" height="24" rx="12"/>
+<text class="bandt" x="30" y="1635.5">4  ARC COMPLETE: CHECK IN, THEN CHAIN</text>
 <g class="box ex">
-<rect x="724" y="1509" width="352" height="57" rx="8"/>
-<text class="t" x="736" y="1534">Arc complete</text>
-<text class="b" x="736" y="1553">opens a stacked PR</text>
+<rect x="724" y="1659" width="352" height="57" rx="8"/>
+<text class="t" x="736" y="1684">Arc complete</text>
+<text class="b" x="736" y="1703">opens a stacked PR</text>
 </g>
 <g class="box ar">
-<rect x="340" y="1509" width="340" height="57" rx="8"/>
-<text class="t" x="352" y="1534">Check in</text>
-<text class="b" x="352" y="1553"><tspan class="mono">roadmap brief</tspan> + questions</text>
+<rect x="340" y="1659" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="1684">Check in</text>
+<text class="b" x="352" y="1703"><tspan class="mono">roadmap brief</tspan> + questions</text>
 </g>
-<path class="arr dash" d="M724 1537.5 H682" marker-end="url(#ah)"/>
-<text class="al" x="690" y="1531.5" text-anchor="start">wake</text>
+<path class="arr dash" d="M724 1687.5 H682" marker-end="url(#ah)"/>
+<text class="al" x="690" y="1681.5" text-anchor="start">wake</text>
 <g class="box ow">
-<rect x="24" y="1509" width="272" height="57" rx="8"/>
-<text class="t" x="36" y="1534">Read and acknowledge</text>
-<text class="b" x="36" y="1553">answer what only you can</text>
+<rect x="24" y="1659" width="272" height="57" rx="8"/>
+<text class="t" x="36" y="1684">Read and acknowledge</text>
+<text class="b" x="36" y="1703">answer what only you can</text>
 </g>
-<path class="arr dash" d="M340 1537.5 H298" marker-end="url(#ah)"/>
+<path class="arr dash" d="M340 1687.5 H298" marker-end="url(#ah)"/>
 <g class="box ar">
-<rect x="340" y="1588" width="340" height="57" rx="8"/>
-<text class="t" x="352" y="1613">Next arc, or stop</text>
-<text class="b" x="352" y="1632">↺ next arc: back to 2</text>
+<rect x="340" y="1738" width="340" height="57" rx="8"/>
+<text class="t" x="352" y="1763">Next arc, or stop</text>
+<text class="b" x="352" y="1782">↺ next arc: back to 2</text>
 </g>
-<path class="arr" d="M510 1566 V1586" marker-end="url(#ah)"/>
+<path class="arr" d="M510 1716 V1736" marker-end="url(#ah)"/>
 <g class="box ow">
-<rect x="24" y="1588" width="272" height="40" rx="8"/>
-<text class="t" x="36" y="1613">Merge the stacked PRs</text>
+<rect x="24" y="1738" width="272" height="40" rx="8"/>
+<text class="t" x="36" y="1763">Merge the stacked PRs</text>
 </g>
-<path class="arr" d="M340 1616.5 H298" marker-end="url(#ah)"/>
-<text class="al" x="332" y="1610.5" text-anchor="end">stop</text>
+<path class="arr" d="M340 1766.5 H298" marker-end="url(#ah)"/>
+<text class="al" x="332" y="1760.5" text-anchor="end">stop</text>
 </svg>

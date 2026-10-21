@@ -3,15 +3,14 @@
 This repo is the **source** of the `roadmap-orchestrator` plugin, not a consumer of it. Prohibitions written
 inside the skill address agents running an arc with it; they do not bind you here.
 
-## 1.0 rebuild (branch `v1`)
+## 1.0 (prerelease, on `main`)
 
 - The executor lives at `plugins/roadmap-orchestrator/executor/`: TypeScript run directly by Node 24 type
   stripping. `tsc --noEmit` only, no build step, no runtime dependencies. Explicit `.ts` import specifiers,
   erasable syntax only (no enums, namespaces or parameter properties).
 - The binding design brief is `DESIGN-1.0.md`. The M1 plan's frozen schemas and contracts live in
   `executor/SCHEMAS.md`.
-- The 0.x design record (`DESIGN.md`, `PROMPT.md`, `RATIONALE.md`, `reference.md`) lives only in git history at tag `v0.20.0` and does not bind. 0.20.0 remains
-  on `main` and tag `v0.20.0`.
+- The 0.x design record (`DESIGN.md`, `PROMPT.md`, `RATIONALE.md`, `reference.md`) lives only in git history at tag `v0.20.0` and does not bind.
 
 ## Eval ladder
 
@@ -54,7 +53,8 @@ fake-backend scripts behind PATH shims. Add no other test hooks to production co
 - Hard cutover applies to 0.x layouts only: a 0.x `.roadmap/` layout is refused at startup, never converted.
 - Actors are roles, never models, in every state file and record. Model ids appear only in routing
   configuration, which is revisioned; records carry `{role, routingRev}`.
-- Every PR bumps the version, in lockstep, in `plugins/roadmap-orchestrator/.claude-plugin/plugin.json`,
+- Every PR that changes the plugin (anything under `plugins/`) bumps the version, in lockstep, in `plugins/roadmap-orchestrator/.claude-plugin/plugin.json`,
   `plugins/roadmap-orchestrator/executor/package.json` and both `version` fields of `.claude-plugin/marketplace.json`.
-  Claude Code picks up a plugin update only when the version changes; a stale marketplace entry hides it.
+  Claude Code picks up a plugin update only when the version changes; a stale marketplace entry hides it. A PR
+  touching only repo docs (README, `docs/`, this file) bumps nothing.
 - No spend cap. A usage-limit error parks that backend arc-wide and waits for a manual `resume --backend`.
