@@ -50,7 +50,8 @@ import {
   type BackendCallOutcome, type RepairTurn, type StageContext, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
-import { holisticInForce, inMs, loadUnitSpec, referenceFiles } from '../pipeline/stages.ts';
+import { holisticInForce, inMs, loadUnitSpec } from '../pipeline/stages.ts';
+import { referenceFiles } from '../phase0/rows.ts';
 import { repairUnits } from '../pipeline/reproduce.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
@@ -112,7 +113,7 @@ export function walkSessionMcp(servers: WalkMcpServers | undefined, m: Milestone
   return walkMcpConfig(servers, evidenceDir);
 }
 
-/** Every text file under the milestone's reference dirs at `sha`, as documents (src/pipeline/stages.ts `referenceFiles`; a binary file is left out). */
+/** Every text file under the milestone's reference dirs at `sha`, as documents (src/phase0/rows.ts `referenceFiles`; a binary file is left out). */
 function referencesAt(ctx: StageContext, sha: Sha, m: Milestone): WalkthroughInputs['references'] {
   return referenceFiles(ctx.repo, sha, m.references).flatMap((f) => (f.text === null ? [] : [{ path: f.path, text: f.text }]));
 }

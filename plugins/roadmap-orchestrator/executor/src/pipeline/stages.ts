@@ -112,7 +112,7 @@ import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, ty
 import { readGuideBytes } from '../corpus/guide.ts';
 import { unitRegenerateLanes } from '../input/derived.ts';
 import { withinEnvelope } from '../input/envelope.ts';
-import { corpusFileSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
+import { corpusFileSet, referenceFiles, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import {
   type CorpusInForce, type InputFiles, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles,
@@ -164,7 +164,7 @@ import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
 import {
-  type DecidedRound, type RoundCall, type RoundInput, callRound, decidedRound, escalateImplementer, freshSession, invocationSession, laneFixRound, prepareRound,
+  type DecidedRound, type RoundCall, type RoundInput, callRound, cutShort, decidedRound, escalateImplementer, freshSession, invocationSession, laneFixRound, prepareRound,
   resumed,
 } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
@@ -417,19 +417,6 @@ export function unitMilestones(ctx: Pick<StageContext, 'plan' | 'repo'>, unit: U
   if (of.length === 0) return null;
   const files = referenceFiles(ctx.repo, tip, of.flatMap((m) => m.dirs));
   return { of, references: files.flatMap((f) => (f.text === null ? [] : [{ path: f.path, text: f.text }])), binary: files.flatMap((f) => (f.text === null ? [f.path] : [])) };
-}
-
-/**
- * Every file under the reference dirs `dirs` at `tip`, in path order, once each: its text, or null for a binary file (a NUL
- * in its first 8000 bytes, git's own rule). A dir absent at `tip` has none.
- */
-export function referenceFiles(repo: AbsPath, tip: Sha, dirs: readonly RepoPath[]): readonly Readonly<{ path: RepoPath; text: string | null }>[] {
-  if (dirs.length === 0) return [];
-  const paths = git(repo, ['ls-tree', '-r', '-z', '--name-only', tip, '--', ...new Set(dirs)]).split('\0').filter((f) => f !== '').sort();
-  return paths.map((p) => {
-    const text = git(repo, ['cat-file', 'blob', `${tip}:${p}`]);
-    return { path: repoPath(p), text: text.slice(0, 8000).includes('\0') ? null : text };
-  });
 }
 
 /**
@@ -1262,13 +1249,12 @@ function assesses(ctx: StageContext, unit: UnitId): boolean {
 }
 
 /**
- * The assessment a crash left unread: the build attempt just before `parent`, cut short (no outcome records it), whose
+ * The assessment a crash left unread: the build attempt just before `parent`, cut short (`cutShort`: no outcome records it), whose
  * assess call completed. Consumed against what it answered, never asked again (crash table, "Build assess").
  */
 function crashedAssessment(ctx: StageContext, parent: StageParent): IntentOf<'proc.spawn'> | null {
   const crashed = parent.attempt - 1;
-  const u = ctx.journal.view.unit(parent.unit);
-  if (u.decided?.attempt === crashed || u.interrupted?.attempt === crashed) return null;
+  if (!cutShort(ctx.journal.view.unit(parent.unit), crashed)) return null;
   const assess = attemptAssess(ctx, { type: 'stage', unit: parent.unit, stage: 'build', attempt: crashed });
   return assess !== null && ctx.journal.view.doneOf(assess.op)?.outcome.kind === 'result' ? assess : null;
 }

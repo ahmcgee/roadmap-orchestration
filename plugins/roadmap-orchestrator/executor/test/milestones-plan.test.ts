@@ -1,7 +1,8 @@
 // dev.13 (SCHEMAS.md "dev.13"): the `milestones` edit class of the classifier (src/input/classify.ts `milestoneRows`) and
-// the Phase-0 rows it shares with start and `phase0 check` (src/phase0/rows.ts): `milestones-need-holistic` and the
-// advisory `milestone-unit-before-design`; and the vision's `experience` clause, which the vision skill compiles from its
-// `## Experience standards` section. A corpus arc over unit-common's repo for the classifier; the rows are pure.
+// the Phase-0 rows it shares with start and `phase0 check` (src/phase0/rows.ts): `milestones-need-holistic`, the
+// advisory `milestone-unit-before-design` and row 11's `milestone-references-oversize` (2026-10-21); and the vision's
+// `experience` clause, which the vision skill compiles from its `## Experience standards` section. A corpus arc over
+// unit-common's repo for the classifier; the rows over a scratch repo, which row 11 reads the references in.
 // Named tests: classify.milestones-* (classify.milestones-rewalk: the walk abandonment brake's reset), phase0.milestones-*,
 // vision.experience-clause.
 import assert from 'node:assert/strict';
@@ -17,10 +18,11 @@ import { readInputFiles, recordPlan, requirePlanInForce, revisionInForce } from 
 import { milestonesOf, parsePlan } from '../src/input/plan.ts';
 import { openBlocking, raiseNeedsUser, supersededItems } from '../src/needsuser.ts';
 import { milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
-import { FROM_REF, phase0Rows } from '../src/phase0/rows.ts';
+import { FROM_REF, MILESTONE_REFERENCES_BUDGET, phase0Rows } from '../src/phase0/rows.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { setupCorpusArc } from './fixtures/corpus-unit.ts';
+import { commitAll, makeRepo, tmpDir, writeFiles } from './helpers/repo.ts';
 import { type ArcDescriptor, type ArcRun, contextFor, setupArc } from './fixtures/unit-common.ts';
 
 const T = { timeout: 60_000 };
@@ -185,8 +187,9 @@ describe('phase0.milestones: the shared rows', () => {
     units: [unit('d1'), unit('u1', ['d1']), unit('u2', ['u1']), unit('u3'), unit('u4', [], { cut: { reason: 'later' } })],
     holistic: { vision: 'vision.json', advances: ['V-1'] },
   };
-  const rowsOf = (plan: Json) => phase0Rows({
-    repo: absPath('/nonexistent'), plan: parsePlan(plan), config: null, where: 'plan.json', pin: null, guide: null, phase0: null, capture: null,
+  // The repo row 11 reads the milestones' references in (at `main`, the integration tip).
+  const rowsOf = (plan: Json, repo = makeRepo(tmpDir('phase0-milestones'), { files: { 'README.md': 'r\n' } })) => phase0Rows({
+    repo: absPath(repo), plan: parsePlan(plan), config: null, where: 'plan.json', pin: null, guide: null, phase0: null, capture: null,
     obligations: null, vision: null, specs: new Map(), ledger: [],
   }, FROM_REF);
   const milestone = { ...MILESTONE, design: { unit: 'd1' }, units: ['u1', 'u2', 'u3', 'u4'] };
@@ -196,6 +199,23 @@ describe('phase0.milestones: the shared rows', () => {
     assert.deepEqual(out.rows, []);
     assert.deepEqual(out.advisories, [{ kind: 'milestone-unit-before-design', milestone: 'MS-1', unit: 'u3', design: 'd1' }]);
     assert.deepEqual(rowsOf({ ...PLAN, milestones: [{ ...milestone, design: { supplied: true } }] }).advisories, []);
+  });
+
+  // 2026-10-21 (field, dev.15): `references: ["apps/web/src/design"]` inlined a 1.5 MB compiled bundle and 330 KB of comps
+  // into a 3.3 MB build prompt, parked context-exceeded at its paid call.
+  test('phase0.milestones-references-oversize: a milestone whose references hold more text than the budget is a plan defect naming its largest files; binaries do not count', () => {
+    const big = (n: number): string => 'x'.repeat(n);
+    const repo = makeRepo(tmpDir('phase0-references'), { files: {
+      'design/sdk/DESIGN.md': '# Design\n', 'design/sdk/logo.png': `\0${big(MILESTONE_REFERENCES_BUDGET)}`, 'design/sdk/comps.html': big(330_000),
+    } });
+    assert.deepEqual(rowsOf({ ...PLAN, milestones: [milestone] }, repo).rows, [], 'within the budget: a binary file is listed, never inlined');
+    writeFiles(repo, { 'design/sdk/bundle.js': big(MILESTONE_REFERENCES_BUDGET) });
+    commitAll(repo, 'a compiled bundle under the reference dir');
+    const bytes = MILESTONE_REFERENCES_BUDGET + 330_000 + '# Design\n'.length;
+    assert.deepEqual(rowsOf({ ...PLAN, milestones: [milestone] }, repo).rows, [{ kind: 'plan-defect', defects: [{
+      type: 'milestone-references-oversize', milestone: 'MS-1', bytes, budget: MILESTONE_REFERENCES_BUDGET,
+      largest: [{ path: 'design/sdk/bundle.js', bytes: MILESTONE_REFERENCES_BUDGET }, { path: 'design/sdk/comps.html', bytes: 330_000 }, { path: 'design/sdk/DESIGN.md', bytes: 9 }],
+    }] }]);
   });
 
   test('phase0.milestones-need-holistic: milestones without `holistic` are a row; none without milestones', () => {

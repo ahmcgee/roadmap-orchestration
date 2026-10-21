@@ -3222,7 +3222,13 @@ sections and marks converted amendments.
     `malformed` (its retry assesses again); conflicts open P3 findings `source: stage{build}`; `feasible: false` is
     `infeasible{notes}`; a higher floor raises the unit's risk, and is `risk-raised` when the new seat binds another
     model or backend; otherwise the build resumes the session (`ASSESSED_DIRECTIVE`). A crash after the assessment is
-    consumed by the next attempt (`crashedAssessment`), never asked again.
+    consumed by the next attempt (`crashedAssessment`), never asked again. An attempt reads as cut short only when no
+    outcome of it is on the unit's record as its decision, its interruption or one of its `failures` (`cutShort`,
+    src/pipeline/rounds.ts, which `crashLostDeadline` reads too): a park that `resume <unit>` or a passing probe released
+    restores the decision before it, and before 2026-10-21 (1.0.0-dev.16) the re-run then took that parked attempt for a
+    crashed one and replayed its call (the field case: an assessment's `context-exceeded` park re-parked on resume with
+    the old call's verdict and no new call; a recovered `build-lost` park inherited the lost call's spent deadline). A
+    resumed park's stage now runs afresh on the inputs in force.
 14. **Known defects (N3, F4, R49).** `knownDefectActive(view, plan, k, unit)` (src/schedule/ready.ts) is the one
     predicate: `k` in the plan in force by id and content, its fixer's lineage head not merged, `unit` outside that
     lineage. The lanes stage matches a `lane` entry before any lane runs and an `output` entry against the last
@@ -3768,7 +3774,9 @@ diagnosis instead of charging fix rounds.
 **`PlanDefect`** (src/holistic/types.ts; `planDefectText` renders each in one sentence):
 `witness-not-in-lane{obligation, lane, file, missing: test-paths | argv}`, `witness-file-unreachable{obligation, file,
 units: UnitId[]}`, `witness-files-undeclared{obligation}`, `lane-test-paths-undeclared{lane}`,
-`derived-overlaps-corpus{output}`, `derived-output-owned{output, unit}`.
+`derived-overlaps-corpus{output}`, `derived-output-owned{output, unit}`, and (2026-10-21; 1.0.0-dev.16)
+`milestone-references-oversize{milestone, bytes, budget, largest: {path, bytes}[]}` (`largest`: at most five, largest
+first). Additive: no earlier record holds it.
 
 **Witness files** (src/holistic/witnessfiles.ts `laneMisses`, the one predicate). Test ids are names (the node
 reporter's name path, go's test name, a wrapper's own), so no reporter maps one to its file: a witness declares its
@@ -3788,6 +3796,14 @@ deliverer runs `after`, transitively (`units`: the deliverers; empty for a must-
 `files`. Otherwise each lane and witness is judged on its own (2026-10-21; 1.0.0-dev.16): a declared one is checked, an
 undeclared one is read as undeclared with a logged warning, whatever the others declare (an arc started before
 2026-10-16 whose checkpoint declares one split child's files keeps its other witnesses unchecked, not refused).
+Every arc (2026-10-21; 1.0.0-dev.16): a milestone whose reference dirs hold more than `MILESTONE_REFERENCES_BUDGET` (512 KiB) of text at the integration tip (the baseline before the branch
+exists), counted as the prompts inline it (`referenceFiles`: every file under the dirs, a binary one, NUL in its first
+8000 bytes, listed and not inlined), is `milestone-references-oversize`, naming its largest text files. Every such file
+goes whole into each plan-check, build and gate prompt of the milestone's units and into its walkthrough; the field case
+(a 1.5 MB compiled bundle and 330 KB of comps under `apps/web/src/design`) parked its first build `context-exceeded` with a
+3.3 MB prompt. Code knows no model's window, so the budget is a judgement (a design reference a model reads whole is far
+smaller), not a measurement: a set under it can still outgrow a small window, which the call's `context-exceeded` park
+names. References a design unit grows at run time are not checked here.
 
 **Run time.** Before a `witnesses-missing` is charged, `missingWitnessDefects` (src/pipeline/witnesscheck.ts) diagnoses
 each missing id of an obligation's witness with declared files: a file its lane never runs, or one absent at the salvage

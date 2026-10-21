@@ -465,7 +465,7 @@ Blocking unless noted. Read the item file before acting.
   two build rounds. `scope accept` or `scope reject` (SKILL.md "Scope growth").
 - `context-exceeded` (the unit is parked at plan-check, build or gate, uncharged): the call's prompt or context outgrew
   its model's window; the item names the role, the call and the prompt's size. Shrink the stage's inputs or route the
-  seat to a larger window, then `resume` (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
+  seat to a larger window, then `resume`, which makes a new call (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
 - `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
   witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
   (SKILL.md "Handling parks").
@@ -498,7 +498,7 @@ Blocking unless noted. Read the item file before acting.
   the Phase-0 record, the issue capture, debt, the brief and the ack log.
 - "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck`, spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
-- "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row and park, plan `derived`
+- "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row (2026-10-21: milestone references over the budget) and park, plan `derived`
   and the dispatch record's `derived`, the lanes `scope-growth` hold; a derived entry's `regenerate` and its check
   ("Regenerate checks").
 - "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,

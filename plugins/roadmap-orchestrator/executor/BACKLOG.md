@@ -316,6 +316,11 @@ at triage stay in git history.
   below its number. Retiring its obligation is now representable (a retired obligation's anchor is not asked,
   `ruleAnchorResolves`); the close-out registry still omits the rule, and a later re-pin in the same arc could reuse
   its number unrefused. Trigger: a rule id reused within one arc, or a later arc that needs the retired id recorded.
+- **Milestone references a unit sums, and references grown at run time** (2026-10-21; 1.0.0-dev.16). Row 11's
+  `milestone-references-oversize` checks each milestone's reference dirs at the tip against `MILESTONE_REFERENCES_BUDGET`.
+  A unit in several milestones inlines the union of their references, which the row does not sum; and a design unit that
+  grows its references past the budget is caught only at the next call's `context-exceeded` park. Trigger: a
+  `context-exceeded` park of a milestone unit whose milestones each pass the row.
 
 - **The convergence tail's edges (dev.13, src/holistic/tail.ts).** Deferred while unmeasured; act on a paid run that shows
   the trigger. (1) An admit that addresses a finding below a brake without naming it in `repairs` is not caught (only

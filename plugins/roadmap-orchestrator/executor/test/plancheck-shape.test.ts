@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { arcId, invocationId } from '../src/core/ids.ts';
+import { arcId, commandId, invocationId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
@@ -372,6 +372,26 @@ describe('in-session assessment (R55)', () => {
       const [first, second] = readCalls(a.d.scenarioPath);
       assert.ok(isAssess(first!) && isAssess(second!));
       assert.notEqual(sessionArg(second!, '--session-id'), null, 'a fresh session');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // 2026-10-21 (field, dev.15): `resume` of an assessment's context-exceeded park replayed the parked call's outcome,
+  // read as a crashed assessment, and re-parked in seconds with no new call.
+  test('build.assess-context-exceeded-resume-relaunches: `resume` after an assessment outgrew the window assesses again, fresh, never replaying the parked call', T, async () => {
+    const a = await arc({ steps: [assessStep({}, [{ type: 'contextExceeded' }]), assessStep({}), implementStep] });
+    const r = under(a, frontierMed());
+    try {
+      const parked = await stepUntil(r, 'u1', (f) => f.stage === 'build').then(() => null, (e: Error) => e);
+      assert.ok(parked === null || /ended parked/.test(parked.message), String(parked));
+      assert.deepEqual(outcomes(a.d), ['plan-check:in-session', 'build:context-exceeded']);
+      r.journal.fact({ kind: 'unparked', unit: r.unit('u1').id, command: commandId('cmd-0123456789abcdef') });
+      await stepUntil(r, 'u1', (f) => f.stage === 'build');
+      assert.deepEqual(outcomes(a.d), ['plan-check:in-session', 'build:context-exceeded', 'build:success']);
+      const calls = readCalls(a.d.scenarioPath);
+      assert.deepEqual(calls.map(isAssess), [true, true, false], 'the resumed build asked a new assessment');
+      assert.notEqual(sessionArg(calls[1]!, '--session-id'), sessionArg(calls[0]!, '--session-id'), 'a fresh session');
     } finally {
       r.journal.close();
     }

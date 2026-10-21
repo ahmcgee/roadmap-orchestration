@@ -77,6 +77,7 @@ import type { RequiredWitness } from '../holistic/required.ts';
 import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type Sha256Hex, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
+import type { UnitState } from '../core/state.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type LogSnapshot, readJournal } from '../core/log.ts';
 import { type Bounds, type ImplementerSession, STDERR_FILE } from '../core/records.ts';
@@ -411,6 +412,17 @@ async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StagePare
 }
 
 /**
+ * Whether attempt `attempt` of the unit was cut short by a crash: no outcome of it is on the unit's record, as its decision,
+ * its interruption or one of its failures. A recovery hold is none of these, so its attempt reads as cut short. A park that
+ * `resume <unit>` or a passing probe released restores the decision before it, so its attempt is found among the failures:
+ * read as cut short, its recorded call was replayed as the re-run's outcome (2026-10-21; 1.0.0-dev.16: an assessment's
+ * `context-exceeded` park re-parked on resume with the old call's verdict, and no new call).
+ */
+export function cutShort(u: UnitState, attempt: number): boolean {
+  return u.decided?.attempt !== attempt && u.interrupted?.attempt !== attempt && !u.failures.some((f) => f.fact.attempt === attempt);
+}
+
+/**
  * The deadline of the build call a crash left lost without tree effects: the unit's build attempt just before this one,
  * cut short by the crash (no stage outcome records it), whose latest backend spawn recovery closed `lost` without tree
  * effects. The attempt that re-runs it inherits that deadline, as the live retry does; null otherwise. The new attempt
@@ -419,8 +431,7 @@ async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StagePare
 function crashLostDeadline(ctx: StageContext, parent: StageParent): IsoTime | null {
   const view = ctx.journal.view;
   const crashed = parent.attempt - 1;
-  const u = view.unit(parent.unit);
-  if (u.decided?.attempt === crashed || u.interrupted?.attempt === crashed) return null;
+  if (!cutShort(view.unit(parent.unit), crashed)) return null;
   const spawn = view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.parent.type === 'stage'
     && i.parent.unit === parent.unit && i.parent.stage === 'build' && i.parent.attempt === crashed).at(-1);
   if (spawn === undefined) return null;

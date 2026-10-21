@@ -211,6 +211,10 @@ Keep the arc's inputs in their own directory outside the product working tree, f
       a run or a plan prints, how a failure names the step, file and fix, and the dry-run-then-apply path. Config: the
       schema, defaults, validation errors that name the key and the fix, a minimal and a full example. Code checks
       only that the reference paths exist once the design unit merged; the gate judges the rest against its spec.
+      Every text file under `references` goes whole into every plan-check, build and gate prompt of the milestone's
+      units and into its walkthrough, so point `references` at the design documents only, never at a source dir holding
+      build output, bundles or comps. Phase 0 refuses a milestone whose references hold more than 512 KiB of text
+      (`plan-defect`, `milestone-references-oversize`, naming the largest files) (2026-10-21; 1.0.0-dev.16).
     - **Bring-up and journeys.** `bringUp` brings the product up from a clean checkout of the integration tip with no
       shell: `setup` commands, long-lived `serve` entries each with a readiness probe (`[]` for a CLI or an SDK),
       `env` with `{port:<name>}` for the ports code allocates, and `seed` data. Ports belong to `serve`'s env and argv:
@@ -553,8 +557,9 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes.
 - **Parked `context-exceeded`** (a plan-check, build or gate call's prompt or context outgrew its model's window;
   uncharged): the item names the role, the call and the prompt's size. Make the stage's inputs fit (split the unit or
-  narrow its spec by a spec revision and `apply`, or route that seat to a class whose model has a larger window), then
-  `roadmap resume <unit>` re-runs the stage. Resuming unchanged hits the same wall.
+  narrow its spec, or a milestone's `references`, by `apply`, or route that seat to a class whose model has a larger
+  window), then `roadmap resume <unit>` re-runs the stage: a new call with a prompt built from the inputs in force, never
+  a replay of the parked one (2026-10-21; 1.0.0-dev.16). Resuming unchanged hits the same wall.
 - **Parked `routing-changed`** (the implementer seat's backend or model moved after its build started; an
   effort-only change re-pins by itself): restore the routing of the seat the item names, or re-enter the unit
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,

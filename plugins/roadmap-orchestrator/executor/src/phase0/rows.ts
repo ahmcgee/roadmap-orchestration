@@ -47,6 +47,11 @@
 //                    `witness-files-undeclared`). Otherwise each lane and witness is judged on its own (2026-10-21;
 //                    1.0.0-dev.16): a declared one is checked, an undeclared one (an arc started before 2026-10-16) is
 //                    read as undeclared with a logged warning, whatever the others declare.
+//                  - milestone references (every arc; 2026-10-21, 1.0.0-dev.16): a milestone whose reference dirs hold more
+//                    than `MILESTONE_REFERENCES_BUDGET` bytes of text at the integration tip (the baseline before the branch
+//                    exists), naming its largest text files (`milestone-references-oversize`). Every such file is inlined
+//                    whole into each prompt that reads the milestone, so an oversize set parks its first paid call
+//                    `context-exceeded` (the field case: a 1.5 MB compiled bundle under a design dir, a 3.3 MB build prompt).
 //  12. vision leak (an apply only; owner ruling 2026-10-16) the vision of the apply's files rebased onto the files in force
 //                  (src/input/rebase.ts) differs from the vision in force, so the owner's vision file changed, and the
 //                  apply does not declare a vision edit (`apply --vision-edit`): `vision-leak{inForce, committed,
@@ -205,7 +210,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
   const advisories = [...referenceRows(input), ...derivedUnregenerated(plan), ...milestoneUnitsBeforeDesign(plan)];
-  const defects: PlanDefect[] = [...derivedOwned(plan)];
+  const defects: PlanDefect[] = [...derivedOwned(plan), ...referencesOversize(input.repo, plan)];
   if (plan.target !== 'corpus') {
     if (defects.length > 0) rows.push({ kind: 'plan-defect', defects });
     return { rows, opened: null, pin: null, advisories };
@@ -390,6 +395,48 @@ function milestoneUnitsBeforeDesign(plan: PlanM1): readonly MilestoneUnitBeforeD
     if (design === null) return [];
     return plan.units.filter((u) => m.units.includes(u.id) && isLive(plan, u) && !withDependencies(plan, u.after).some((d) => d.id === design))
       .map((u) => ({ kind: 'milestone-unit-before-design' as const, milestone: m.id, unit: u.id, design }));
+  });
+}
+
+/**
+ * The text a milestone's reference dirs may inline into a prompt (2026-10-21; 1.0.0-dev.16). Every text file under them goes
+ * whole into each plan-check, build and gate prompt of the milestone's units and into its walkthrough, beside the spec, the
+ * contracts, the architecture doc and the session's own reads. A design reference is prose, tokens and wireframes a model
+ * reads whole; 512 KiB (about 150K tokens) is far more than one needs and leaves most of a 1M-token window for the rest,
+ * so a set over it almost surely carries build output or comps (the field case's 1.5 MB bundle and 330 KB of comps).
+ * Code knows no model's window, so this is that judgement, not a measurement: a set under it can still outgrow a smaller
+ * window, which the call's `context-exceeded` park then names.
+ */
+export const MILESTONE_REFERENCES_BUDGET = 524_288;
+
+/** How many of an oversize set's largest files the defect names. */
+const LARGEST_NAMED = 5;
+
+/**
+ * Every file under the reference dirs `dirs` at `tip`, in path order, once each: its text, or null for a binary file (a NUL
+ * in its first 8000 bytes, git's own rule). A dir absent at `tip` has none. What a prompt inlines (src/pipeline/stages.ts
+ * `unitMilestones`, src/walk/walk.ts) and what row 11 measures.
+ */
+export function referenceFiles(repo: AbsPath, tip: string, dirs: readonly RepoPath[]): readonly Readonly<{ path: RepoPath; text: string | null }>[] {
+  if (dirs.length === 0) return [];
+  const paths = git(repo, ['ls-tree', '-r', '-z', '--name-only', tip, '--', ...new Set(dirs)]).split('\0').filter((f) => f !== '').sort();
+  return paths.map((p) => {
+    const text = git(repo, ['cat-file', 'blob', `${tip}:${p}`]);
+    return { path: repoPath(p), text: text.slice(0, 8000).includes('\0') ? null : text };
+  });
+}
+
+/** Row 11: each milestone whose reference dirs hold more text at the tip than `MILESTONE_REFERENCES_BUDGET`. */
+function referencesOversize(repo: AbsPath, plan: PlanM1): readonly PlanDefect[] {
+  const milestones = milestonesOf(plan);
+  if (milestones.length === 0) return [];
+  const at = referenceCommit(repo, plan);
+  return milestones.flatMap((m): PlanDefect[] => {
+    const sized = referenceFiles(repo, at, m.references).flatMap((f) => (f.text === null ? [] : [{ path: f.path, bytes: Buffer.byteLength(f.text, 'utf8') }]));
+    const bytes = sized.reduce((n, f) => n + f.bytes, 0);
+    if (bytes <= MILESTONE_REFERENCES_BUDGET) return [];
+    const largest = [...sized].sort((a, b) => b.bytes - a.bytes || a.path.localeCompare(b.path)).slice(0, LARGEST_NAMED);
+    return [{ type: 'milestone-references-oversize', milestone: m.id, bytes, budget: MILESTONE_REFERENCES_BUDGET, largest }];
   });
 }
 
