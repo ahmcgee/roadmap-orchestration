@@ -993,9 +993,11 @@ export function integrationHistory(view: JournalView, repo: AbsPath, tip: Sha): 
   heads.forEach((h, i) => {
     if (!positions.has(h.head)) positions.set(h.head, i + 1);
   });
+  // An audit reads the branch, so its range can end on a commit the owner put there by hand (a vision edit, dev.13
+  // arc): that commit merges no unit, so it sits at its nearest published first-parent ancestor's position.
   const positionOf = (sha: Sha, what: string): number => {
-    const p = positions.get(sha);
-    if (p === undefined) throw new Error(`${what} names ${sha}, no head of the integration history`);
+    const p = positions.get(sha) ?? git(repo, ['rev-list', '--first-parent', sha]).split('\n').map((x) => positions.get(x as Sha)).find((x) => x !== undefined);
+    if (p === undefined) throw new Error(`${what} names ${sha}, which descends from no head of the integration history`);
     return p;
   };
   const ffs = new Map(view.opsOf('integration.ff').map((i) => [i.op, i]));
