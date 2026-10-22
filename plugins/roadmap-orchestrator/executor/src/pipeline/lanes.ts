@@ -63,7 +63,7 @@
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
 // record is its last passing run (else its last run). Never the red-lane protocol, never flaky.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, LaneIdentity, Parent, WitnessFor } from '../core/events.ts';
 import {
@@ -638,10 +638,10 @@ export function testOnlyRun(ctx: StageContext, lane: LaneDef, at: Sha, now: Lane
   return { files: tests.filter((t) => present.has(t as string)), base: { from: { parent: e.parent, inv: record.inv, at: e.at }, record: { ...record, reused: { at: e.at, inv: record.inv } } } };
 }
 
-/** `testArgv` with its `{files}` element replaced by `files`, one argument each. */
+/** `testArgv` with its `{files}` element replaced by `files` (repo paths), one argument each, relative to the lane's cwd. */
 export const testArgvOf = (lane: LaneDef, files: readonly RepoPath[]): readonly string[] => {
   if (lane.testArgv === undefined) throw new Error(`lane ${lane.id} declares no testArgv`);
-  return lane.testArgv.flatMap((a): readonly string[] => (a === TEST_FILES_TOKEN ? files : [a]));
+  return lane.testArgv.flatMap((a): readonly string[] => (a === TEST_FILES_TOKEN ? files.map((f) => posix.relative(lane.cwd, f)) : [a]));
 };
 
 /**
@@ -1130,7 +1130,7 @@ export function seriesLedger(ctx: StageContext, parent: StageParent, lanes: read
 }
 
 /**
- * One lane's record in the series `parent` at `at` (null when it did not run there), whatever else ran beside it: a reader
+ * One lane's record in the series `parent` at `at` (null when it neither ran nor was reused there), whatever else ran beside it: a reader
  * of one lane (the gate's regenerate checks, gate.ts) is not refused for a lane a revision has since dropped from the plan.
  */
 export function laneRecordIn(ctx: StageContext, parent: StageParent, lane: LaneDef, set: LaneSet, at: Sha, root: AbsPath): LaneRecord | null {

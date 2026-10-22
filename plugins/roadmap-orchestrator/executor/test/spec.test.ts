@@ -250,10 +250,14 @@ describe('spec witnesses (M4a rev 3)', () => {
     assert.doesNotMatch(renderSpec(plain), /## Witnesses/);
   });
 
-  it('a spec lane\'s inputs render beside its evidence', () => {
-    const spec = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**', 'package.json'] }] }, 'spec');
-    assert.match(renderSpec(spec), /  - inputs: `package.json`, `src\/widget\/\*\*`/);
-    assert.doesNotMatch(renderSpec(SPEC), /inputs:/);
+  it('a spec lane\'s systems, test argv and stochastic render beside its evidence (dev.17); a dev.16 lane\'s inputs are dropped', () => {
+    const spec = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, systems: ['widget', 'api'], testArgv: ['node', '--test', '{files}'], stochastic: { runs: 3, minPasses: 2 } }] }, 'spec');
+    assert.match(renderSpec(spec), /  - systems: `api`, `widget`/);
+    assert.match(renderSpec(spec), /  - test argv: `\["node","--test","\{files\}"\]`/);
+    assert.match(renderSpec(spec), /  - stochastic: passes when 2 of up to 3 runs pass/);
+    assert.doesNotMatch(renderSpec(SPEC), /systems:|test argv:|stochastic:/);
+    const legacy = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**'] }] }, 'spec');
+    assert.doesNotMatch(renderSpec(legacy), /inputs:/);
   });
 });
 

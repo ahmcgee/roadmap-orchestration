@@ -125,7 +125,7 @@ const PASS_PATH = { set: {}, pass: ['PATH'] };
 function arcLane(l: Layout, id: string, file: string) {
   const test = [process.execPath, '--test', file];
   const argv = id === MONEY_LANE ? [process.execPath, BARRIER_SCRIPT, l.barriers, String(BARRIER_TIMEOUT_MS), '--', ...test] : test;
-  return { id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [file] };
+  return { id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [file] };
 }
 
 type ObligationSeed = Readonly<{ id: keyof typeof WITNESS_TESTS; lane: string; statement: string; rule: string; serves: readonly string[]; activation: 'future' | 'must-hold'; deliveredBy: readonly string[]; contracts: readonly string[] }>;
@@ -193,7 +193,7 @@ export function obligationsFile(l: Layout, pin: CorpusPin): unknown {
 
 const unitLane = (id: string, file: string) => commandLane(id, ['node', '--test', file]);
 const commandLane = (id: string, argv: readonly string[]) => ({
-  id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active',
+  id, argv, cwd: '.', env: PASS_PATH, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active',
 });
 const clause = (id: string, text: string) => ({ id, clause: text, failLoudIfUndelivered: true, state: 'active' });
 const fact = (id: string, text: string) => ({ id, text, state: 'active' });
@@ -347,7 +347,7 @@ export async function setup(dir: string): Promise<void> {
     suite: {
       lanes: [{
         id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: { npm_config_update_notifier: 'false' }, pass: ['PATH', 'HOME'] },
-        expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [],
+        expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [],
       }],
     },
     resources: [],

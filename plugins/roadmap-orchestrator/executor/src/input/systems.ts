@@ -39,9 +39,12 @@ export type SystemsMap = Readonly<{
 
 const patterns = arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true });
 const names = arrayOf((v, p) => systemName(v, p), { nonEmpty: true });
+// Absent and empty read alike (the map recorded on a revision writes the read form back).
+const somePatterns = arrayOf((v, p) => repoPattern(v, p));
+const someNames = arrayOf((v, p) => systemName(v, p));
 
 const systemDef = object((f): SystemDef => ({
-  paths: f.get('paths', patterns), tests: f.optional('tests', patterns) ?? [], dependsOn: f.optional('dependsOn', names) ?? [],
+  paths: f.get('paths', patterns), tests: f.optional('tests', somePatterns) ?? [], dependsOn: f.optional('dependsOn', someNames) ?? [],
 }));
 
 /** Reads `systemsMap` (see the header): every name it uses declared, `docs` never declared as a system. */
@@ -67,7 +70,7 @@ export const systemsMap: Read<SystemsMap> = object((f) => {
     g.end();
     return out;
   }) ?? {};
-  const docs = f.optional('docs', patterns) ?? [];
+  const docs = f.optional('docs', somePatterns) ?? [];
   const known = (name: SystemName, at: string): void => {
     if (!Object.hasOwn(systems, name)) throw new SchemaError(at, 'a system the map declares', name);
   };

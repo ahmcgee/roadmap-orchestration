@@ -4482,3 +4482,59 @@ earlier record); `SCHEMA_VERSION` stays 1.
    the start checks the plan in force. A respawn checks the plan in force against the ledger in force (before: the
    owner's ledger file). The one rule: after the first start the input dir is an edit of its base, never the state; a
    restart needs no `inputs export` sync first, and the input dir matters only as that edit (a start or an apply).
+
+## Lane topology (2026-10-22; 1.0.0-dev.17, experience-won item 4)
+
+Where each lane runs, what it reads, and one reuse key for every run (DESIGN-1.0.md §4 "Lane topology"). Every record
+change is additive with a read-time default (src/core/upgrade.ts, logged once, scaffolding deleted once no dev.16 arc is in
+flight); `SCHEMA_VERSION` stays 1. Lane environments and the flaky ledger are not here.
+
+| Record | Change | Read-time default |
+|---|---|---|
+| `LaneDef` (spec, suite, arc lanes) | `tier: fast\|estate` → `cadence: build\|unit\|candidate\|batch` (`LANE_CADENCES`); a spec lane `build\|unit`, an arc lane `build\|candidate`, a suite lane any, `batch` only in a holistic plan (the plan reader); `+ systems?: SystemName[]` (non-empty, unique; `docs` the docs class), `+ testArgv?: string[]` (one element exactly `{files}`; never on an arc lane), `+ stochastic?: {runs ≥ 2, minPasses ≤ runs}` (never on an arc lane); `- inputs` | `tier` (never beside `cadence`): fast → `build`; estate → `unit` (spec) or `candidate` (suite, arc) (`laneCadenceDefault`); a spec lane's `inputs` dropped (`laneInputsDropped`); a suite or arc lane's `inputs` stays refused. `laneDef`, the normalising re-read `laneRevOf` uses, takes the current form only |
+| Lane rev | hashes the normalised dev.17 form | a recorded rev of the dev.16 form (`tier` in place of `cadence`, with or without `evidenceExcludes: []`) matches through `laneRevMatches` (`tierLaneRev`, warned per lane), so a proof judgment stays fresh. Observations and reuse identities keyed by a dev.16 rev are not reused (their lanes run again) |
+| `spec.json` | `+ forces?: LaneId[]` (non-empty, unique): suite lanes its lanes stage runs at the salvage SHA (`specForces`) | none (lasting) |
+| `.roadmap/config.json` | `+ systemsMap?: {systems: {<name>: {paths, tests?, dependsOn?}}, shared?: [{paths, dependents}], contracts?: {<path>: [system]}, docs?: [glob]}` (src/input/systems.ts; every name it uses declared, `docs` never a system) | none: no map |
+| `RevisionPayload`, `plan-applied` | `+ systemsMap?: SystemsMap \| null`: the map of the repo config the executor read (`RoutingBase.config`), on every revision a start or an apply makes | absent (dev.16): no map (`systemsMapInForce` → `systemsMapDefault`, logged) |
+| `witnessed` fact | `+ inputSha?: Sha`: the lane's input on the tree (`inputShaOf`, src/git/reusekey.ts), its observation's reuse key | absent: `treeSha` (a dev.16 lane read the whole tree) |
+| `proc.spawn` subject `lane` | `identity` on a suite lane's too (was spec only); `+ files?: RepoPath[]` (ascending, non-empty): a test-only run, `testArgv` over them | absent identity: never reused; absent files: the whole lane |
+| `proc.spawn` subject `journey` | `+ identity?: LaneIdentity` on a suite lane's run (a batch point's, a publication's) | absent: never a batch point's clean pass |
+| `lane-reused` fact | `+ set?: spec\|suite`, `+ at?: Sha` (the reusing series); `from` may name any unit's series, either set; one per `(parent, set, at, lane)` | absent: a spec series at its own commit |
+| `finding-opened` | `+ lane?: LaneId`: the batch lane whose red opened it: a walkthrough P1 from a walk job, or a witness P1 over no obligation (`obligation` null exactly then) from an audit job | absent: none (lasting) |
+| `JobSeriesKind` (checkout names) | `+ batch`: `<job>.batch-<n>` | none |
+
+1. **Cadence** (src/core/records.ts). The lanes stage runs the spec lanes, then the suite lanes of cadence `build` and
+   `unit` and the lanes the unit forces (`stageSuiteLanes`; its spec's `forces` and, for a unit repairing a batch lane's
+   P1, that lane: src/pipeline/stages.ts `forcedLanes`), less one identical to an active spec lane. The builder is given
+   the `build` ones (`builderSuiteLanes`). A candidate (a unit's, a repair batch's, a docs publication's) runs the suite
+   lanes of cadence `build`, `unit` and `candidate` its diff selects (src/pipeline/integrate.ts `candidateLanes`). `@cpu`:
+   a build lane 2, any other 4 (`CPU_COST.lane`). A series runs in cadence order. Build prompt inputs keep their names
+   (`fastLanes`, `suiteLanes`), typed `BuildLane`. Plan-check and checkpoint lane items write `cadence: build|unit`.
+2. **Systems map and selection** (src/input/systems.ts). `pathClass` (memoised per map), `laneSelected` (a lane listing
+   no systems: always; an unmapped path: every lane; a docs-only diff: only a lane listing `docs`), `laneInput`, and
+   `laneTestFiles`. Phase-0 row 16 (`laneTopologyRows`, every arc, every mode): a lane naming a system the map lacks, or a
+   spec `forces` naming no suite lane, is `plan-invalid{schema}`. The map in force is the revision's, so an edit reaches
+   the arc through an apply once the executor has read the edited config (a restart).
+3. **The reuse key** (src/git/reusekey.ts) `(lane, laneRev, envId, inputSha)`. `inputShaOf(repo, tree, lane, map)`: the
+   tree id when the lane reads every path, else the sha1 of the `ls-tree -r` entries it reads (listings memoised, 32
+   kept). Series reuse (`reusablePass`): the newest execution of the lane in the run (any unit, spec or suite) with the
+   same identity whose commit gives the same `inputSha` decides; it reuses only when a clean pass (pass, not flaky, not a
+   repeat, certified series). A candidate's stand-in for an arc lane always runs. Observations are stored by the same key
+   (`observationStore`, `reuse(store, ReuseKey)`, `arcLaneKey`); an `Observation` keeps its `key` (the tree it ran on) and
+   gains `reuse`. The stores stay two, indexed alike: a series run carries an exit verdict and a ledger record, an
+   observation a per-test witness record.
+4. **Test-only runs** (src/pipeline/lanes.ts `testOnlyRun`): with no reusable pass, the newest execution with the lane's
+   identity is a clean pass, every path of its input that changed since is a leaf test file (`tests` globs of its systems
+   and their dependencies; a lane listing none, every system's), and the lane declares `testArgv` and is not stochastic:
+   it runs `testArgv` over the changed files that exist (spawn `files`); none left (deletions only) reuses that pass.
+5. **Stochastic lanes**: in a series, run `n` past the first under `<lane>.runs/<n>/`; a lane id equal to another's plus
+   `.runs` is refused like `.rerun`. The record is the last passing run once `minPasses` passed, else the last run;
+   `flaky` false, no red class, no rerun. In a journey, the same count over its runs. Never a stand-in for an arc lane.
+6. **Batch points** (src/pipeline/batchlanes.ts `runBatchPoint`): the walk (src/walk/walk.ts `runWalk`, after the
+   capture or on resume, before `reserveJob`), an audit without milestones (src/holistic/audit.ts step 3a), and the
+   close-out (src/pipeline/publish.ts: both branches run every batch lane, fresh; a red one on the head alone refuses
+   `nothing-to-change` as `refused`, base-red). `batchLanesDue`: at a walk or an audit a batch lane runs unless its newest
+   run on its input there (a series' or a journey's, `passedOnInput`) is a clean pass, or the job already opened its P1.
+   A red one opens `batchDraft` (walkthrough P1 with `milestone` and `cause: batch lane <id> red`, or witness P1 over no
+   obligation), and `walk-ended.findings` include the walk job's batch findings; the node holds through `activeWalkP1s`.
+   A lane without a verdict leaves the walk `incomplete` or the audit running.

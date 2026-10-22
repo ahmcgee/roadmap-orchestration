@@ -19,11 +19,13 @@
 // role sets and pressure records are HEAD's. HEAD's walk roles (`walkthrough`, `polishJudge`) are in force only under a
 // plan with milestones, which no arc of theirs has, so no walk seat is hashed for them.
 //
-// What dev.15 records differently from 1.0.0-dev.16: nothing (no release since dev.13 changes a record), nor does
-// dev.12 record anything differently from dev.13 that HEAD reads with a default: dev.13's additions (plan `milestones`,
-// `limits.walkRounds`, a unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a
-// dev.15 arc on HEAD warns no `roadmap: upgrade default` (asserted after every unlabelled cell's HEAD phase); its seat
-// table is HEAD's for every role in force, so its routing revs stand unchanged.
+// What dev.15 records differently from 1.0.0-dev.17: its lanes declare `tier`, read as their cadence, and its revisions
+// record no systems map, read as none (1.0.0-dev.17, lane topology; src/core/upgrade.ts `laneCadenceDefault`,
+// `systemsMapDefault`). Nothing else: no release from dev.13 to dev.16 changes a record, nor does dev.12 record anything
+// differently from dev.13 that HEAD reads with a default: dev.13's additions (plan `milestones`, `limits.walkRounds`, a
+// unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a dev.15 arc on HEAD warns
+// those lane defaults and no other `roadmap: upgrade default` (asserted after every unlabelled cell's HEAD phase); its
+// seat table is HEAD's for every role in force, so its routing revs stand unchanged.
 //
 // What dev.11 and dev.10 also lack of 1.0.0-dev.12: their judgments ran without the Agent tool and, but for
 // plan-check and the checkpoint, without session persistence (a refused answer left unread takes no repair turn on
@@ -528,12 +530,23 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
 }
 
 /**
- * HEAD reads an arc the previous release started with no default (dev.16 changed no record): once HEAD's phase ends, no executor of the host dir warned `roadmap: upgrade default`.
- * An older release's cells assert the defaults they read instead.
+ * The defaults HEAD reads an arc the previous release started with (1.0.0-dev.17, lane topology): its lanes' `tier` as a
+ * cadence (`lane.tier.<kind>`), a recorded lane rev of the tier form (`lane-rev.tier.<lane>`), and its revisions' absent
+ * systems map (`plan-applied.systemsMap`). Nothing else changed a record since the previous release.
+ */
+const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap)$/;
+
+/**
+ * HEAD reads an arc the previous release started with the dev.17 lane defaults only (`DEV17_DEFAULTS`): once HEAD's phase
+ * ends, every `roadmap: upgrade default` an executor of the host dir warned is one of them, and the spec lanes' tier and
+ * the absent systems map were read as defaults. An older release's cells assert the defaults they read instead.
  */
 function assertNoDefaultRead(p: Phase1): void {
   if (p.release !== PREVIOUS_RELEASE) return;
-  assert.doesNotMatch(hostLogs(p), /roadmap: upgrade default/, `HEAD read the ${p.release.version} arc with no default`);
+  const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
+  for (const kind of kinds) assert.match(kind, DEV17_DEFAULTS, `HEAD read the ${p.release.version} arc with the ${kind} default`);
+  assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
+  assert.ok(kinds.includes('plan-applied.systemsMap'), `HEAD read the ${p.release.version} revisions without a systems map, and warned`);
 }
 
 /** Every check.ts criterion passes, both units merged, one HEAD generation ran it, and the upgrade forced no park. */

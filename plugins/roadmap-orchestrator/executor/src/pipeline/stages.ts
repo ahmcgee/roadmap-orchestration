@@ -1712,8 +1712,8 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
 // ---------------------------------------------------------------------------------------------------
 // The fast suite at the lanes stage (the 2026-10-15 batch)
 //
-// After a green certified spec series the lanes stage runs the plan's fast suite lanes (`fastSuiteLanes`: less those
-// identical to a spec lane) at the salvage SHA, in their own detached checkout (`fastSuiteWorktree` `suite`), each under
+// After a green certified spec series the lanes stage runs the plan's build and unit suite lanes and the lanes the unit
+// forces (dev.17, `stageSuiteLanes`, `forcedLanes`: less those identical to a spec lane) at the salvage SHA, in their own detached checkout (`fastSuiteWorktree` `suite`), each under
 // its own reservation, as `lane{set: suite}` spawns of the lanes attempt with evidence under `<attempt root>/_suite`. So a
 // builder's lint or typecheck red is a fix round of its own build, not a candidate red. A failed fast suite (a red lane,
 // or a changed checkout) runs again on the unit's diff base alone (`diffBase(T, salvage)`: what the unit built on), the

@@ -385,7 +385,7 @@ export type LaneKind = 'spec' | 'suite' | 'arc';
  * `candidate` in the suite or the arc lanes (the candidate merge). Warned once per lane kind.
  */
 export function laneCadenceDefault(kind: LaneKind, tier: 'fast' | 'estate'): 'build' | 'unit' | 'candidate' {
-  warnDefaulted(`lane.tier.${kind}`, `a ${kind} lane declaring tier (written before 1.0.0-dev.17); read as its cadence`);
+  warnDefaulted(`lane.tier.${kind}`, `${kind === 'arc' ? 'an' : 'a'} ${kind} lane declaring tier (written before 1.0.0-dev.17); read as its cadence`);
   if (tier === 'fast') return 'build';
   return kind === 'spec' ? 'unit' : 'candidate';
 }

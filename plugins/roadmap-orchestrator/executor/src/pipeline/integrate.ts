@@ -15,7 +15,8 @@
 //              reserves its own resources inside the series (the one hold-and-wait, A1), and a red suite
 //              lane goes through the red-lane protocol (redlane.ts). `planCandidate` (transient check, merge-tree,
 //              prefix guard) → `candidate.merge` onto the current tip T → the candidate checkout, detached
-//              (`candidateWorktreeRequest`) → the plan's suite, serially and verbatim. Outcomes:
+//              (`candidateWorktreeRequest`) → the plan's suite lanes up to `candidate` the candidate's diff selects
+//              (dev.17, `candidateLanes`), serially and verbatim. Outcomes:
 //              - a transient violation or prefix collision: refused, a scope-growth fix round (C, trigger);
 //              - a conflict: `mergein.prepare` in the unit worktree (MERGE_HEAD = T), then the resolve
 //                round; uncharged, and the diff base is recomputed (T), so the unit is gated again;

@@ -893,7 +893,8 @@ export type LaneDef = Readonly<{
    */
   systems?: readonly SystemName[];
   /**
-   * dev.17: the lane's argv for a run of some test files only, one element exactly `{files}` (`TEST_FILES_TOKEN`). A diff
+   * dev.17: the lane's argv for a run of some test files only, one element exactly `{files}` (`TEST_FILES_TOKEN`: the files,
+   * one argument each, relative to the lane's cwd). A diff
    * since the lane's last clean pass touching only leaf test files runs those files (src/pipeline/lanes.ts `testOnlyRun`).
    */
   testArgv?: readonly string[];

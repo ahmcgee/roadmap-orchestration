@@ -177,7 +177,10 @@ registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the e
 `vision.json`, `corpus.md`, yours, committed. Anything else is a 0.x layout (`legacy-roadmap-dir`).
 
 **`.roadmap/config.json`**: `{routing?: {profile?, seats?, classes?}, chain?: {k}, flow?: {givens: [{lever, note}]},
-walkthrough?: {mcp: {<name>: {command, args?, env?}}}}`; unknown keys refused; read at `start`. `walkthrough.mcp` names
+walkthrough?: {mcp: {<name>: {command, args?, env?}}}, systemsMap?: {systems: {<name>: {paths, tests?, dependsOn?}},
+shared?: [{paths, dependents}], contracts?: {<path>: [<system>]}, docs?: [<glob>]}}`; unknown keys refused; read at
+`start`. `systemsMap` names every system a lane lists (`docs` is the docs class, never a system name); every revision
+records the map the executor read, so an edit reaches the arc at the next `apply` after a restart. `walkthrough.mcp` names
 the MCP servers a walkthrough session gets (and only those), with `{evidence}` and `{viewport}` substituted in `args` and
 `env`; absent, no browser drive, so a `browser` journey is refused `walk-tools-missing`. `flow.givens` are the owner's repo givens, never yours to add. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
 effort}` and is the only place a model is named (ids in `executor/src/routing/models.ts`). A rebind applies at every seat

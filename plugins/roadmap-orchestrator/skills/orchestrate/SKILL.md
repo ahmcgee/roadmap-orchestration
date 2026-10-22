@@ -647,7 +647,7 @@ rejected. An edit you never apply has no effect, even after a restart.
 - Declare `evidenceGlobs` for everything a lane script writes as evidence: its outputs (logs, reports, coverage),
   never the files it reads or tests. A match is never committed and refuses the candidate, so an entry covering
   the unit's own source or tests leaves it unmergeable; `start` and `apply` refuse an entry that matches a literal
-  scope path or equals a scope pattern. Paths a lane reads go in its `inputs`. Undeclared ignored output is captured
+  scope path or equals a scope pattern. What a lane reads is the systems it lists (below). Undeclared ignored output is captured
   only when the lane fails, capped. Add `evidenceExcludes` for anything that must never leave the checkout.
 - A lane asserts its required failure inside the script (or by `expectedExit`) and prints the failing step and
   reason on stderr before a non-zero exit: the fix round starts from stderr.
@@ -657,14 +657,29 @@ rejected. An edit you never apply has no effect, even after a restart.
   Copy its flags exactly as the project runs them today, even where the corpus says a faster setting is now safe:
   changing how the gate runs is the flow loop's lever, which proves the same tests still pass and measures the
   change. Retuning a flag while authoring skips that proof.
-- Every fast suite lane runs after each build too: the lanes stage runs them on the unit's commit once its spec lanes
-  pass, and the builder is told to run them first. A red one that is also red on the unit's base alone does not charge
-  the unit; otherwise it is the unit's fix round, long before the candidate. So give each cheap check its own fast suite
-  lane (lint, typecheck, format check: `["npx", "eslint", "."]`, `["npx", "tsc", "--noEmit"]`), never one lane that
-  chains them: a fix round then names the check that failed, and the run time of each is measured apart. Keep slow or
-  stateful suites `estate`: only the candidate runs those.
-- A spec lane may declare `inputs`, the repo patterns it reads: a fast lane's pass is then reused on a later commit
-  that touched none of them. Suite and arc lanes never declare it.
+- Every lane declares its `cadence`, where it runs (each runs at its point and every later one up to the candidate):
+  `build` (the builder runs it in its loop; the lanes stage runs it on the unit's commit), `unit` (the lanes stage
+  only), `candidate` (the candidate merge in the integration slot), `batch` (never in the merge path: before a
+  milestone's walk, at a cadence audit of an arc without milestones, and always at the close-out; holistic arcs only).
+  A spec lane is `build` or `unit`, an arc lane `build` (the builder checks its witnesses) or `candidate`, a suite lane
+  any. A red build or unit suite lane that is also red on the unit's base alone does not charge the unit; otherwise it
+  is the unit's fix round, long before the candidate. So give each cheap check its own `build` suite lane (lint,
+  typecheck, format check: `["npx", "eslint", "."]`, `["npx", "tsc", "--noEmit"]`), never one lane that chains them: a
+  fix round then names the check that failed, and the run time of each is measured apart. Put slow or stateful suites at
+  `candidate`, and only end-to-end runs too slow for every merge at `batch`: a red batch lane opens a P1 that holds its
+  milestone, and the repair of it runs that lane at its own lanes stage. A spec's `forces: [<suite lane id>]` runs
+  later-cadence suite lanes at its own lanes stage: force the lane whose tests prove the unit (a test in a batch lane
+  needs it).
+- Map the repo's systems once in the committed `.roadmap/config.json` `systemsMap` (`reference.md`): each system's
+  `paths`, its leaf test files (`tests`) and what it `dependsOn`; `shared` areas (lockfile, build config) with the
+  systems that depend on them; the systems consuming each contract; the `docs` class. A lane lists the `systems` it
+  tests: a candidate then runs it only when its diff touches one of them (a path mapped to no system runs every lane),
+  and its pass is reused on any commit whose paths of those systems are unchanged. A lane listing none reads the whole
+  tree but the docs class, so a docs-only change reruns nothing. A lane may declare `testArgv`, its argv with one
+  element `{files}`: when only leaf test files changed since its last clean pass, only those run. A lane that is
+  statistically noisy by nature declares `stochastic: {runs, minPasses}` (k of n); it is never treated as flaky.
+  `start`, `apply` and `phase0 check` refuse a lane naming a system the map lacks. A map edit reaches a running arc
+  through the next `apply` after a restart (`roadmap start`, as for any config edit).
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs; `start` refuses a fresh arc
   whose lane lacks it (`plan-defect`). Mutation smoke reverts a unit's production change (everything outside
   `testPaths`) and runs its witnesses again.
@@ -684,8 +699,8 @@ rejected. An edit you never apply has no effect, even after a restart.
   change makes pass: mutation smoke reports a witness that passes with the change reverted. A check that existing
   behaviour holds is a must-hold obligation's witness, never a spec witness.
 - **Clocks.** A unit whose behaviour depends on the date or time zone pins the product's own clock seam in every test
-  it touches, existing ones included, and declares a second fast lane that runs its witnesses with the seam shifted
-  far ahead (+400 days) under a non-UTC `TZ`. No real wait in a fast lane: inject the timeout, and check the production
+  it touches, existing ones included, and declares a second build lane that runs its witnesses with the seam shifted
+  far ahead (+400 days) under a non-UTC `TZ`. No real wait in a build lane: inject the timeout, and check the production
   default separately. Every negative witness drives the real entry point (the CLI command) with an injected fixture,
   never a helper.
 
