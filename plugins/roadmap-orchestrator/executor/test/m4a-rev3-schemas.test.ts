@@ -21,11 +21,10 @@ import { debtSource } from '../src/debt/types.ts';
 import { HOST_SIGNATURES } from '../src/host/signatures.ts';
 import { type ArcLaneDef, admitClass, conversion, laneRevMatches, laneRevOf, parseObligations, witnessLaneFile } from '../src/holistic/types.ts';
 import { CliError, parseCommand } from '../src/input/cli.ts';
-import { knownDefectsOf, parsePlan, planCheckShapeOf, priorityOf } from '../src/input/plan.ts';
+import { knownDefectsOf, parsePlan, priorityOf } from '../src/input/plan.ts';
 import { DETAILED_OUTCOMES, STAGE_OUTCOME_KINDS } from '../src/core/events.ts';
 import {
-  BUILD_SCHEMA, CHECKPOINT_SCHEMA, PLAN_ASSESSMENT_SCHEMA, buildOutputFor, buildSchemaFor, validateBuildOutput, validateCheckpointOutput, validatePlanAssessment,
-  validatePlanCheckAcceptanceOutput,
+  BUILD_SCHEMA, CHECKPOINT_SCHEMA, buildOutputFor, buildSchemaFor, validateBuildOutput, validateCheckpointOutput,
 } from '../src/prompts/schemas.ts';
 import { schemaViolation } from '../src/backends/adapter.ts';
 import { parseSpec, specBytes } from '../src/spec/spec.ts';
@@ -269,16 +268,16 @@ describe('m4a-rev3 plan and spec', () => {
     direction: 'd', suite: { lanes: [] }, resources: [], units: [unit, { ...unit, id: 'u2', spec: 'specs/u2.json' }], architectureDoc: 'docs/arch.md',
   };
 
-  it('plan.knowndefects-parse: known defects, unit priority and the plan-check shape; absent reads as none, normal and uniform', () => {
+  it('plan.knowndefects-parse: known defects and unit priority; absent reads as none and normal; a dev.16 plan-check shape reads and drops (dev.17)', () => {
     const p = parsePlan({
       ...plan, units: [{ ...unit, priority: 'high' }, { ...unit, id: 'u2', spec: 'specs/u2.json' }], planCheck: { shape: 'by-builder' },
       knownDefects: [{ id: 'K-1', match: { type: 'lane', lane: 'e2e' }, fixUnit: 'u2' }, { id: 'K-2', match: { type: 'output', lane: 'unit', contains: 'ETIMEDOUT' }, fixUnit: 'u2' }],
     });
     assert.deepEqual(knownDefectsOf(p).map((k) => k.id), ['K-1', 'K-2']);
-    assert.equal(planCheckShapeOf(p), 'by-builder');
+    assert.ok(!('planCheck' in p), 'dev.17: the removed field is dropped at read (planCheckShapeDefault)');
     assert.deepEqual(p.units.map(priorityOf), ['high', 'normal']);
     const bare = parsePlan(plan);
-    assert.deepEqual([knownDefectsOf(bare), planCheckShapeOf(bare), priorityOf(bare.units[0]!)], [[], 'uniform', 'normal']);
+    assert.deepEqual([knownDefectsOf(bare), priorityOf(bare.units[0]!)], [[], 'normal']);
     assert.throws(() => parsePlan({ ...plan, knownDefects: [] }), SchemaError);
     assert.throws(() => parsePlan({ ...plan, knownDefects: [{ id: 'K-1', match: { type: 'lane', lane: 'a' }, fixUnit: 'u2' }, { id: 'K-1', match: { type: 'lane', lane: 'b' }, fixUnit: 'u2' }] }), /knownDefects/);
     assert.throws(() => parsePlan({ ...plan, knownDefects: [{ id: 'K-1', match: { type: 'output', lane: 'a' }, fixUnit: 'u2' }] }), /contains/);
@@ -347,17 +346,6 @@ describe('m4a-rev3 role schemas', () => {
     assert.ok('experiments' in (BUILD_SCHEMA as { properties: object }).properties);
   });
 
-  it('the in-session assessment and the acceptance-shape plan-check', () => {
-    const a = { planAssessment: { feasible: false, riskFloor: 'high', visionConflict: [{ clauses: ['V-2'], note: 'n' }], premises: [], notes: 'the corpus forbids it' } };
-    assert.deepEqual(validatePlanAssessment(a), a);
-    assert.ok(canonicalJson(PLAN_ASSESSMENT_SCHEMA).includes('"riskFloor"'));
-    assert.throws(() => validatePlanAssessment({ planAssessment: { ...a.planAssessment, riskFloor: 'urgent' } }), SchemaError);
-    const redirect = (patch: readonly object[]) => ({ decision: 'redirect', reasons: ['r'], patch, risk: 'med', notes: '', premises: [], visionConflict: [] });
-    const witness = { op: 'add', section: 'witnesses', item: { id: 'W-1', lane: 'journey', testId: 't', clause: 'A1', skeleton: 's' } };
-    validatePlanCheckAcceptanceOutput(redirect([witness, { op: 'cite', contracts: [], rulings: ['C-1'] }, { op: 'replace', section: 'facts', item: { id: 'F1', text: 't' } }]));
-    assert.throws(() => validatePlanCheckAcceptanceOutput(redirect([{ op: 'add', section: 'acceptance', item: { id: 'A9', clause: 'c', failLoudIfUndelivered: false } }])), /acceptance shape/);
-    assert.throws(() => validatePlanCheckAcceptanceOutput(redirect([{ op: 'strike', id: 'A1' }])), /acceptance shape/);
-  });
 });
 
 describe('m4a-rev3 rank', () => {

@@ -333,10 +333,9 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
 }
 
 /**
- * The implementer's seat: the unit's build tier (`UnitState.buildTier`), which is its (possibly plan-check-raised)
- * risk floor until an `implementer-escalated` fact moves it to `high` (A11, G1: journaled by
- * `escalateImplementer` before this is called). On the floor the seat's rev is the pinned `implementerSeatRev`;
- * escalated, it is `build.high`'s under the routing in force.
+ * The implementer's seat: the unit's build tier (`UnitState.buildTier`), its (possibly plan-check-raised) risk floor, or
+ * `high` in a dev.16 arc whose unit an `implementer-escalated` fact moved there (D4, retired in dev.17). On the floor the
+ * seat's rev is the pinned `implementerSeatRev`; escalated, it is `build.high`'s under the routing in force.
  */
 export function implementerDispatch(ctx: StageContext, unit: UnitId): Pinned<ImplementerDispatch> {
   const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));

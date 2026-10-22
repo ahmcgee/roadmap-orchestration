@@ -14,9 +14,8 @@
 // generation 2 quiescent; the close-out docs publication `docs-1` (docs.commit, its lanes, the docs ff, docs-covered,
 // docs-published, its snapshot); then `arc-completed` and the terminal snapshot.
 //
-// u1 walks the M4a rev 3 corpus-arc stages (the plan's `planCheck.shape: by-builder`, u1 at risk high, so a frontier
-// builder): plan-check `in-session` (no call), the fresh build's assessment then its implementing call resuming that
-// session (its answer reporting an experiment), the witness presence check (D1: I-2's t2 on the journey lane at the
+// u1 walks the M4a rev 3 corpus-arc stages (u1 at risk high): its plan-check (one fresh call; dev.17 removed the
+// in-session assessment), the fresh build (its answer reporting an experiment), the witness presence check (D1: I-2's t2 on the journey lane at the
 // salvage SHA, after the lane files for the build) and the mutation smoke (D2: the journey lane declares `testPaths`, so
 // the reverted production diff runs it on the mutant tree, scripted to fail t2: killed, green).
 import { spawnSync } from 'node:child_process';
@@ -36,7 +35,7 @@ import { corpusTarget } from './corpus-target.ts';
 import { inRevisionAt } from './pm-trace.ts';
 import type { ExecRun } from './exec-common.ts';
 import type { Scenario } from './pm-common.ts';
-import { BUILD_REPORT } from './stage-common.ts';
+import { BUILD_REPORT, planCheckStep } from './stage-common.ts';
 import { MUL, gateStep } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
@@ -58,7 +57,7 @@ const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2
 function holistic(r: ExecRun): void {
   const control = join(tmpDir('pm-witness-control'), 'control.json');
   const obligations = obligationsJson({ obligations: OBLIGATIONS, mapping: MAPPED, laneExtra: { journey: { testPaths: ['test/**'] } } }, control);
-  corpusTarget(r, { obligations, advances: ADVANCES, audit: { lenses: ['vision'] }, planExtra: { planCheck: { shape: 'by-builder' } } });
+  corpusTarget(r, { obligations, advances: ADVANCES, audit: { lenses: ['vision'] } });
   const baseline = git(r.repo, 'rev-parse', 'main^{tree}');
   const failsT2 = { outcomes: { t1: 'pass', t2: 'fail' } } as const;
   // The smoke's mutant: u1's salvage tree (the baseline plus MUL) with its production diff reverted, so MUL's test alone.
@@ -90,14 +89,9 @@ const GATE_NOTE = {
   severity: 'note', path: null, text: 'The mul helper has no overflow test.', contractRef: null, experiments: [], debt: { drag: 'Every caller of mul must guard overflow itself until it has one.' },
 } as const;
 
-/** u1's fresh build, first call: the in-session assessment (E), feasible at the unit's own floor. */
-const ASSESS: Step = {
-  as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'], stdinContains: ['This invocation is the assessment, not the build.'] },
-  acts: [{ type: 'emit', value: { planAssessment: { feasible: true, riskFloor: 'high', visionConflict: [], premises: [], notes: 'add mul beside add' } } }],
-};
-/** Its second call: the assessment's session resumed, mul committed; the answer reports an experiment (I3). */
+/** u1's fresh build (dev.17: the efficient class at build.high, Codex under the default profile): mul committed; the answer reports an experiment (I3). */
 const IMPLEMENT: Step = {
-  as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--resume'], stdinContains: ['Your assessment is recorded. Now build the unit'] },
+  as: 'codex', expect: { argv: ['exec', '-C'] },
   acts: [
     { type: 'commit', message: 'add mul', files: MUL },
     { type: 'emit', value: { ...BUILD_REPORT, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
@@ -121,7 +115,7 @@ export const HOLISTIC: Scenario = {
   prepare: holistic,
   steps: (r) => [
     packReviewStep('review-1'),
-    ...keyed('u1', [ASSESS, IMPLEMENT, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
+    ...keyed('u1', [planCheckStep({ decision: 'approve', risk: 'high' }), IMPLEMENT, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
     lensStep('audit-1', 'vision'),
     checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
     // audit-2 notes a new gap (F-1), so its checkpoint runs (an audit that found nothing new has none: checkpoint-skipped);
@@ -137,7 +131,7 @@ export const HOLISTIC: Scenario = {
 
 export const HOLISTIC_OUTCOMES = {
   u1: [
-    'plan-check:in-session', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
+    'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
     'candidate:green', 'ff:published', 'snapshot:published',
   ],
 } as const;
@@ -210,8 +204,7 @@ export const M3_FACTS: readonly string[] = [
 /** Labels only the holistic layer reaches (the row crashes each at occurrence 1, and 2 where it repeats). */
 export const M3_ONLY = /^(audit|checkpoint|bundle|closeout|docs|latch|complete|debt)\./;
 /**
- * Labels only a corpus arc's M4a rev 3 unit stages reach (in-session plan-check, the assessment, the witness lane files and
- * presence check, the mutation smoke and its mutant.apply): crashed as the M3-only ones, at 1 and 2.
+ * Labels only a corpus arc's M4a rev 3 unit stages reach (the witness lane files and presence check, the mutation smoke and its mutant.apply): crashed as the M3-only ones, at 1 and 2.
  */
 export const REV3_ONLY = /^(plancheck|build|witnesscheck|smoke|mutant)\./;
 /** A log append's record is in flight at these labels (the crash leaves it out of the log). */

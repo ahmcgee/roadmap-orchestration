@@ -1,8 +1,8 @@
 // The targeted probe (`npm run probe`): the production argv builder, runner and adapter against the real,
 // authenticated CLIs, through src/preflight/smoke.ts. Pennies per run. Checks:
 //
-//   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it (Claude: planCheck.low, the efficient
-//                       class's judgment binding, claude-sonnet-5-5 high)
+//   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it (Claude: planCheck.low, the frontier
+//                       class's judgment binding since dev.17, claude-opus-5-5 medium)
 //   codex.fresh/resume  gpt-5.6-luna, effort low, strict schema; the resume continues the fresh thread
 //   shell.lane          a real shell command through the runner, graded on exit code and stdout
 //   claude.judgment     claude-opus-5-5 (effort high) judgment argv: --system-prompt, and --add-dir reading an evidence
@@ -19,6 +19,10 @@
 //                       report seeing neither canary, no memory and no MCP instructions
 //   claude.build.fresh/resume  claude-opus-5-5 (effort high) implementer argv: writes a file (bypassPermissions), then
 //                       the resumed session recalls it
+//   claude.build.advisor  (dev.17) claude-sonnet-5-5 (effort medium, claude-only's efficient class) implementer argv with
+//                       `--advisor claude-opus-5-5` (BUILD_ADVISOR), told to consult the advisor once: the stream must hold
+//                       a server_tool_use `advisor` block, and the adapter's usage must carry the advisor's Opus spend as
+//                       `delegated` frontier (its own modelUsage entry)
 //   fable.pin           claude-fable-5-1 resolves: one judgment call that returns {ok: true}
 //   routing.economy / economy.judgment  (1.0.0-dev.12) the economy class's judgment binding in the default profile is
 //                       claude-haiku-5-5 high (no built-in seat names it since the 2026-10-17 gate eval; kept for a retry);
@@ -37,7 +41,7 @@
 //                       does; the adapter must return success and validateLensOutput must accept it
 //   m3.checkpoint       checkpoint.arc seat (claude-fable-5-1): the real checkpoint module and its per-call closed schema (checkpointSchemaFor)
 //                       over a tiny input set; the output must validate (a no-op is expected)
-//   m3.plan-check       planCheck.med seat (efficient: claude-sonnet-5-5 high) with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
+//   m3.plan-check       planCheck.med seat (frontier since dev.17: claude-opus-5-5 medium) with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
 //                       the output must validate and carry a visionConflict array
 //   forge.*             (M4a) the executor's own src/forge functions against the real ahmcgee/roadmap-orchestration, read-only:
 //                       resolveRepo, queryPolicy + trusted, the REST issues and comments shapes (pull_request entries,
@@ -46,11 +50,6 @@
 //   m4a.pack-review     packReview.arc (frontier, corpus arc scope): the real prompt module over a tiny corpus pack; the
 //                       answer must validate against PackReviewOutput
 //   m4a.checkpoint-summit  checkpoint.arc (summit): the real checkpoint module; the output must validate
-//   m4a3.assess         (M4a rev 3, E) frontier (claude-opus-5-5 medium) in-session assessment: the real build prompt module
-//                       with `assess` set, PLAN_ASSESSMENT_SCHEMA, in a git worktree; the answer must validate
-//                       (validatePlanAssessment) and HEAD, tracked and untracked state must be unchanged
-//   m4a3.plan-check-acceptance  the acceptance-shape plan-check (planCheck.med, Sonnet high, PLAN_CHECK_ACCEPTANCE_SCHEMA, next witness id
-//                       W-1): validatePlanCheckAcceptanceOutput accepts it and its redirect adds witness items
 //   m4a3.checkpoint-targets  the checkpoint (corpus arc, summit seat) told to admit one unit: the answer validates and the
 //                       admit carries `targets`
 //   m4a3.witness-check  `roadmap witness-check` over a real `node --test` run of a 2-test file with the node-test witness
@@ -107,7 +106,7 @@ import { queryPolicy } from '../src/forge/policy.ts';
 import { trusted } from '../src/forge/trust.ts';
 import { containmentFor, detectContainmentMode } from '../src/contain/detect.ts';
 import {
-  type ImplementerSessionId, witnessItemId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, proposalId, questionId, ruleId, rulingId, sha, sha256, specRev, stationId, unitId, visionClauseId,
+  type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, proposalId, questionId, ruleId, rulingId, sha, sha256, specRev, stationId, unitId, visionClauseId,
 } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
@@ -120,7 +119,7 @@ import { parsePhase0Record } from '../src/phase0/types.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import type { ArchitectureInput, BuildInputs, CheckpointInputs, LensInputs, ObligationView, PackReviewPromptInputs, PlanCheckInputs, VisionInput } from '../src/prompts/inputs.ts';
 import {
-  PLAN_ASSESSMENT_SCHEMA, checkpointSchemaFor, PLAN_CHECK_ACCEPTANCE_SCHEMA, ROLE_VALIDATORS, type RoleOutputs, buildOutputFor, buildSchemaFor, validatePlanAssessment, validatePlanCheckAcceptanceOutput,
+  checkpointSchemaFor, ROLE_VALIDATORS, type RoleOutputs, buildOutputFor, buildSchemaFor,
 } from '../src/prompts/schemas.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import {
@@ -456,6 +455,23 @@ async function main(): Promise<void> {
     request: { kind: 'claude-build', triple: OPUS, session: { ...session, mode: 'resume' }, evidenceDirs: [] },
   }, (v) => JSON.stringify(v) === '{"file":"probe.txt"}');
 
+  // dev.17: a Sonnet build (claude-only's efficient class) launches with `--advisor` (BUILD_ADVISOR); told to consult it once,
+  // the stream holds the advisor's server_tool_use block and the adapter meters its spend as delegated to frontier (Opus).
+  const advisedDir = dir(join(root, 'advised'));
+  const advised = await backend(ctx, 'claude.build.advisor', {
+    check: 'claude-build-advisor', routingRev: rev, tier: 'med', system: SYSTEM, schema: okSchema, cwd: advisedDir,
+    rendered: 'Consult your advisor exactly once (ask it whether {"ok": true} is the right reply to this message), then reply with the JSON object {"ok": true}.',
+    request: { kind: 'claude-build', triple: SONNET, session: freshClaudeImplementerSession(), evidenceDirs: [] },
+  }, isOk);
+  const advisorCalls = readFileSync(join(advised.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').flatMap((l) => {
+    const e = JSON.parse(l) as { type?: string; message?: { content?: { type?: string; name?: string }[] } };
+    return e.type === 'assistant' ? (e.message?.content ?? []).filter((b) => b.type === 'server_tool_use' && b.name === 'advisor') : [];
+  });
+  report(advised.argv.includes('--advisor') && advisorCalls.length > 0, 'claude.build.advisor.consulted', `argv --advisor ${advised.argv[advised.argv.indexOf('--advisor') + 1]}; advisor calls=${advisorCalls.length}`);
+  const advisedUsage = advised.result.usage;
+  const advisorShare = advisedUsage.kind === 'known' ? (advisedUsage.delegated ?? []).find((d) => d.class === 'frontier') : undefined;
+  report(advisorShare !== undefined && advisorShare.inputTokens > 0 && advisorShare.costUsd > 0, 'claude.build.advisor.metered', `usage=${JSON.stringify(advisedUsage)}`);
+
   // Fable id pin: the id resolves and answers.
   await backend(ctx, 'fable.pin', {
     check: 'fable-pin', routingRev: rev, tier: 'escalation', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
@@ -547,7 +563,7 @@ async function main(): Promise<void> {
   const planCheckInputs: PlanCheckInputs = {
     spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n(none)' },
     contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
-    scope: [repoPattern('convert.ts')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, acceptance: null, priorInvalid: null,
+    scope: [repoPattern('convert.ts')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, priorInvalid: null,
     scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null,
   };
   const planCheck = seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm3-plan-check', m3Dir, planCheckInputs);
@@ -647,66 +663,12 @@ async function main(): Promise<void> {
     g('commit', '--quiet', '-m', 'fixture');
     return d;
   };
-  const treeOf = (d: string): string =>
-    `${execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d, encoding: 'utf8' })}${execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: d, encoding: 'utf8' })}`;
   const UNIT = laneId('unit');
   const buildSpec = '# Unit u-hello\n\n## Acceptance\n- A1: the file hello.txt exists in the repository root and contains the word hello.\n\n## Lanes\n- unit (fast): `sh -c "grep -q hello hello.txt"`';
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
-  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath, assess: BuildInputs['assess']): BuildInputs => ({
+  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane], suiteLanes: [],
-    evidenceDir, worktree, scope: [repoPattern('hello.txt')], fixRound: null, witnessChecks: [], assess, milestones: null, browser: null,
-  });
-
-  // (1) The in-session assessment: frontier Opus medium, read-only, PLAN_ASSESSMENT_SCHEMA, the worktree left as found.
-  await rev3('m4a3.assess', async () => {
-    const worktree = gitRepo(join(root, 'assess-repo'), { 'convert.ts': 'export const toFahrenheit = (c: number): number => Math.round(c * 9 / 5 + 32);\n' });
-    const evidenceDir = dir(join(root, 'assess-evidence'));
-    const prompt = promptFor('build', OPUS.model);
-    const before = treeOf(worktree);
-    await backend(ctx, 'm4a3.assess', {
-      check: 'm4a3-assess', routingRev: rev, tier: 'med', system: prompt.system, schema: PLAN_ASSESSMENT_SCHEMA, cwd: worktree,
-      rendered: prompt.render(buildInputs(worktree, evidenceDir, { risk: 'low', vision: MINI_VISION })),
-      request: { kind: 'claude-build', triple: { ...OPUS, effort: 'medium' }, session: freshClaudeImplementerSession(), evidenceDirs: [evidenceDir] },
-    }, (v) => {
-      try {
-        const a = validatePlanAssessment(v).planAssessment;
-        report(true, 'm4a3.assess.validate', `feasible=${a.feasible} riskFloor=${a.riskFloor} visionConflicts=${a.visionConflict.length} premises=${a.premises.length}`);
-        return true;
-      } catch (e) {
-        report(false, 'm4a3.assess.validate', e instanceof Error ? e.message : String(e));
-        return false;
-      }
-    });
-    const after = treeOf(worktree);
-    report(before === after, 'm4a3.assess.unchanged', before === after ? 'HEAD and the working tree are as the assessment found them' : `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
-  });
-
-  // (2) The acceptance-shape plan-check: PLAN_CHECK_ACCEPTANCE_SCHEMA, witness items through the patch channel.
-  await rev3('m4a3.plan-check-acceptance', async () => {
-    // The tip predates the unit (no convert.ts), so the acceptance is behaviour the change newly makes pass: witness items are owed.
-    // A unit the witnesses can land in: its scope holds a test file, the arc lane runs on node, and no clause pulls against
-    // the vision (the m3 spec's A2 is the vision-conflict plant, a reason to escalate instead).
-    const accDir = dir(join(root, 'm4a3-acceptance'));
-    const accInputs: PlanCheckInputs = {
-      ...planCheckInputs,
-      spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit(100) returns 212.\n\n## Lanes\n- unit: `node --test convert.test.ts`' },
-      scope: [repoPattern('convert.ts'), repoPattern('convert.test.ts')],
-      lanePrograms: [{ lane: laneId('unit'), argv0: 'node', resolved: { kind: 'program', realpath: absPath(process.execPath) } }],
-      checkouts: { tip: { path: accDir, at: TREE }, branch: null }, acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [laneId('unit')], delivered: [] },
-    };
-    const call = { ...seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm4a3-plan-check-acceptance', accDir, accInputs), schema: PLAN_CHECK_ACCEPTANCE_SCHEMA };
-    await backend(ctx, 'm4a3.plan-check-acceptance', call, (v) => {
-      try {
-        const out = validatePlanCheckAcceptanceOutput(v);
-        const witnesses = (out.patch ?? []).filter((op) => (op.op === 'add' || op.op === 'replace') && op.section === 'witnesses');
-        const ok = out.decision === 'redirect' && witnesses.length > 0;
-        report(ok, 'm4a3.plan-check-acceptance.witnesses', `decision=${out.decision} witnessOps=${witnesses.length} ops=${JSON.stringify(out.patch)}`);
-        return ok;
-      } catch (e) {
-        report(false, 'm4a3.plan-check-acceptance.validate', e instanceof Error ? e.message : String(e));
-        return false;
-      }
-    });
+    evidenceDir, worktree, scope: [repoPattern('hello.txt')], fixRound: null, witnessChecks: [], milestones: null, browser: null,
   });
 
   // (3) A checkpoint answer under the new schema: an admit with `targets`.
@@ -759,7 +721,7 @@ async function main(): Promise<void> {
     const lanes = [UNIT];
     await backend(ctx, 'm4a3.sonnet-build', {
       check: 'm4a3-sonnet-build', routingRev: rev, tier: 'med', system: prompt.system, schema: buildSchemaFor(lanes), cwd: worktree,
-      rendered: prompt.render(buildInputs(worktree, evidenceDir, null)),
+      rendered: prompt.render(buildInputs(worktree, evidenceDir)),
       request: { kind: 'claude-build', triple: SONNET, session: freshClaudeImplementerSession(), evidenceDirs: [evidenceDir] },
     }, (v) => {
       try {
@@ -785,7 +747,7 @@ async function main(): Promise<void> {
     const prompt = promptFor('build', SONNET.model);
     const lanes = [UNIT];
     const waitSpec = `${buildSpec}\n\n## Notes\n- Before writing hello.txt, wait for a slow dependency: start \`sh -c 'sleep 20 && echo ready > ready.txt'\` in the repository root with the Monitor tool, then end your turn without another tool call to wait for it. When it has completed and ready.txt exists, write hello.txt, run the fast lane and report.`;
-    const inputs = buildInputs(worktree, evidenceDir, null);
+    const inputs = buildInputs(worktree, evidenceDir);
     const done = await backend(ctx, 'm4b.build-wait-report', {
       check: 'm4b-build-wait-report', routingRev: rev, tier: 'low', system: prompt.system, schema: buildSchemaFor(lanes), cwd: worktree,
       rendered: prompt.render({ ...inputs, spec: { ...inputs.spec, markdown: waitSpec } }),

@@ -163,7 +163,7 @@ scenario file per unit, keyed by unit since units run in parallel) with a host d
 free (10 minute timeout). `test/evals-m2.test.ts` runs it and requires every criterion to pass. M4b: the third merge,
 with `top` still to flow, fires the flow loop's first run; its fake call (`flow-1`) answers noAction.
 
-`NOT EXERCISED: …` names what the journal shows no trace of, from: flake, host signature, D4 escalation,
+`NOT EXERCISED: …` names what the journal shows no trace of, from: flake, host signature,
 backend capacity park, backend outage park, aging promotion. The straight path takes none of them (`aging` is
 vacuous when no waiter was promoted); each has a fake integrated test in `npm test`. `CANNOT SHOW: …` is fixed:
 real cgroup containment, crash boundaries under real models, usage-limit hits under parallel burn (D4),

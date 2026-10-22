@@ -173,9 +173,10 @@ export const TABLE: Table = {
     'process-fault': park('process-fault', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
-    // M4a rev 3 (E, R55): a frontier or summit builder under `by-builder` makes no plan-check call; its fresh build
-    // assesses in session first.
-    'in-session': go(build('fresh')),
+    // M4a rev 3 (E, R55) to dev.16: a frontier or summit builder under `by-builder` made no plan-check call, and its fresh
+    // build assessed in session first. dev.17 has no in-session assessment, so a unit an older log left here runs its
+    // plan-check (uniform, one fresh call) before it builds. Scaffolding: deleted with `planCheckShapeDefault`.
+    'in-session': go(at('plan-check')),
     // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate (scaffolding: a 1.0.0-dev.11 record).
     'read-denied': retry('read-denied', 'env'),
     // Scope growth (2026-10-15): a proposal code verified holds the unit, uncharged, for the root agent's `scope accept|reject`
@@ -202,10 +203,12 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
-    // M4a rev 3 (E, R55): the in-session assessment found the spec infeasible. A build has no escalation seat to route up
-    // to (route-up is a judgment stage's), so the unit parks for a spec revision with the escalation's reason.
+    // M4a rev 3 (E, R55) to dev.16, read from an older log: the in-session assessment found the spec infeasible. A build has
+    // no escalation seat to route up to (route-up is a judgment stage's), so the unit parks for a spec revision with the
+    // escalation's reason.
     infeasible: park('escalation', 'design'),
-    // The assessment raised the risk floor onto another implementer seat: a fresh build there, uncharged.
+    // To dev.16, read from an older log: the assessment raised the risk floor onto another implementer seat: a fresh build
+    // there, uncharged.
     'risk-raised': go(build('fresh')),
     // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
     // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.

@@ -776,7 +776,7 @@ export type FindingStateName = (typeof FINDING_STATES)[number];
 /** A cited evidence item: a path (repo or evidence dir) and its blob when it names one; a changed blob lifts a dismissal. */
 export type FindingEvidence = Readonly<{ path: string; blob: Sha | null }>;
 /**
- * `stage`: a plan-check's vision conflict (R17), or (M4a rev 3, E) the in-session assessment's at the unit's build attempt;
+ * `stage`: a plan-check's vision conflict (R17), or (M4a rev 3, E; recorded before dev.17) the in-session assessment's at the unit's build attempt;
  * both open P3 `plan-check`-lens findings.
  */
 /** dev.13: `demo`, the demo's bring-up of `sha` failed (`demo-failed`): a walkthrough P1 with no job. */

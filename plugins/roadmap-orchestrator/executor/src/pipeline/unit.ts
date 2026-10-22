@@ -46,7 +46,7 @@
 // M4a rev 3: a lanes `known-defect` (F4) sends the unit to `prepare` (prepare.ts), held by admission until the defect's
 // fixer merges. A lanes fix round is rebuilt from the recorded outcome (`lanesFixRound`): a red or dirty series, missing
 // witnesses (D1), smoke survivors (D2), or a witness check whose own checkout was left dirty. A resume round quotes why
-// the answer it follows was malformed (I3); the retry of a malformed in-session assessment assesses again, fresh (E).
+// the answer it follows was malformed (I3).
 //
 // Scope growth (2026-10-15): a fix round after a salvage that reverted the build's out-of-scope edits carries the executor's
 // directive naming them (`withReverted`).
@@ -95,7 +95,7 @@ import {
   witnessCheckoutFixRound, witnessFixRound,
 } from './rounds.ts';
 import {
-  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, isAssessCall, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
+  type BuildRun, type StageDone, at, build, buildLaneIds, buildRead, evidence, failedFacts, fastSuiteRoot, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
   nowInside, planCheck, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
 } from './stages.ts';
 import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
@@ -351,13 +351,8 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
 
 /** The build round `round` after the decision `f`, with the inputs its kind needs. */
 function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): DecidedRound {
-  // E (R55): the retry of a malformed in-session assessment assesses again, fresh; any other malformed answer's resume
-  // round quotes why it was malformed (I3).
-  if (round === 'resume') {
-    const last = recordedCall(ctx, stageParent(f));
-    if (last !== null && isAssessCall(ctx, last.inv)) return { kind: 'fresh' };
-    return { kind: 'resume', error: malformedError(ctx, unit, f) };
-  }
+  // A malformed answer's resume round quotes why it was malformed (I3).
+  if (round === 'resume') return { kind: 'resume', error: malformedError(ctx, unit, f) };
   if (round !== 'fix') return { kind: round };
   const view = ctx.journal.view;
   const { spec } = loadUnitSpec(ctx, unit);
@@ -557,9 +552,6 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
       // Against the attempt's recorded inputs (F1): a gate at the tip and head it judged, not the current ones.
       return consumeJudgment(ctx, unit, parent, called);
     case 'build': {
-      // E (R55): a crash after the in-session assessment, before the implementing call: the build runs again as a new
-      // attempt, which reads the completed assessment instead of asking again (stages.ts `crashedAssessment`).
-      if (isAssessCall(ctx, called.inv)) return null;
       const holder: StageHolder = { type: 'stage', unit: unit.id, stage: 'build', attempt: open.attempt };
       // Recovery cleaned the dead attempt's reservation; a teardown that failed there is this attempt's outcome.
       const failed = [...resourceTable(ctx.journal.view)].flatMap(([r, e]) => (e.status.state === 'cleanup-failed' && sameHolder(e.status.holder, holder) ? [r as ResourceInstance] : []));
@@ -582,11 +574,11 @@ export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step |
 }
 
 /**
- * Closes the unit's admission-stage attempt a crash cut short that `consume` did not record (no call yet, a lost call, an
- * in-session assessment, a stage without a call) with an uncharged `interrupted` hold, `cause: recovery`: the unit is
+ * Closes the unit's admission-stage attempt a crash cut short that `consume` did not record (no call yet, a lost call, a
+ * stage without a call) with an uncharged `interrupted` hold, `cause: recovery`: the unit is
  * held while a pause covers it, else stays active, and its next attempt re-runs the stage from the decision before (the
  * fold leaves `decided` and `interrupted` alone, so the crash readers still find the abandoned attempt by number:
- * stages.ts `crashedAssessment`, rounds.ts `crashLostDeadline`). The executor calls it for every unit at startup, after
+ * rounds.ts `crashLostDeadline`). The executor calls it for every unit at startup, after
  * `consume` (arc feedback 2026-10-15); no-op when nothing is open or the open attempt is a chain stage's (it runs again at
  * the start, whatever pause says). A running attempt here is a bug: nothing runs before the scheduler.
  */

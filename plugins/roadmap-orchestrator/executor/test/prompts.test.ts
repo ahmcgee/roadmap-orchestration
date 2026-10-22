@@ -20,8 +20,8 @@ import { PROMPTS, SONNET_THINK_FIRST, UnsupportedPromptError, promptFor, support
 import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type RoleInputs, ROLE_INPUTS, UNIT_POLICY, laneCommand, obligationsText, pasted, pastedAs, targetDocument } from '../src/prompts/inputs.ts';
 import {
-  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_ASSESSMENT_SCHEMA, PLAN_CHECK_ACCEPTANCE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
-  validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
+  CHECKPOINT_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, PLAN_CHECK_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, type RoleOutputs, buildSchemaFor,
+  validateBuildOutput, validateCheckpointOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput, validatePlanCheckOutput,
 } from '../src/prompts/schemas.ts';
 import { repeatRedDirective, smokeFixDirectives, witnessFixDirectives } from '../src/prompts/directives.ts';
 import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts';
@@ -198,7 +198,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A', scope: [repoPattern('src/a/**')], risk: 'low',
       checkouts: { tip: { path: absPath('/wt/u.plan-check-1'), at: SHA_A }, branch: null },
       lanePrograms: [{ lane: laneId('unit'), argv0: 'npm', resolved: { kind: 'program', realpath: absPath('/usr/lib/node/npm') } }],
-      priorRound: null, vision: null, acceptance: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null,
+      priorRound: null, vision: null, priorInvalid: null, scopeGrowth: { references: [], rejected: [] }, escalation: null, milestones: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -211,10 +211,6 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         patchedRev: specRev(2), changedPremiseFiles: ['src/b/x.ts'],
       },
       vision: vision(2, 'VISION-B'),
-      acceptance: {
-        nextWitnessId: witnessItemId('W-3'), arcLanes: [laneId('journey'), laneId('e2e')],
-        delivered: [{ obligation: obligationId('I-7'), statement: 'A cancelled booking frees its berth.', lane: laneId('journey'), testIds: ['cancel > frees the berth'] }],
-      },
       priorInvalid: 'PRIOR-INVALID-B',
       scopeGrowth: {
         references: [{ removed: 'REMOVED-B', referrers: [repoPath('test/b/old.test.ts')] }],
@@ -227,14 +223,14 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], assess: null, milestones: null, browser: null,
+      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], milestones: null, browser: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
-      assess: { risk: 'high', vision: vision(2, 'VISION-B') }, milestones: milestonesSample(), browser: browserSample(),
+      milestones: milestonesSample(), browser: browserSample(),
     },
   ],
   gate: [
@@ -926,7 +922,6 @@ describe('M3 prompts: the vision and the arc roles', () => {
       assert.match(gate.render(SAMPLES.gate[0]), /<scope_reverted>\n\(none: the build edited nothing outside the envelope\)\n<\/scope_reverted>/, model);
     }
     assert.ok((PLAN_CHECK_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
-    assert.ok((PLAN_CHECK_ACCEPTANCE_SCHEMA as { required: string[] }).required.includes('scopeGrowth'));
     const ok = OUTPUTS.planCheck as Record<string, unknown>;
     assert.deepEqual(validatePlanCheckOutput(ok).scopeGrowth, [{ patterns: ['test/legacy/shell.test.ts'], reason: 'it tests the shell page A1 removes' }]);
     for (const bad of [[{ patterns: [], reason: 'r' }], [{ patterns: ['a'] }], [{ patterns: [''], reason: 'r' }]]) {
@@ -1097,7 +1092,7 @@ const namesEvery = (text: string, keys: readonly string[], what: string): void =
   for (const k of keys) assert.match(text, new RegExp(`\\b${k}\\b`), `${what}: names ${k}`);
 };
 
-describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-session assessment, the checkpoint admits', () => {
+describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
   const BUILDERS = ['claude-opus-5-5', 'gpt-5.6-luna'] as const;
   const JUDGES = ['claude-opus-5-5', 'claude-fable-5-1'] as const;
 
@@ -1106,7 +1101,7 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
       const mod = promptFor('build', model);
       const plain = mod.render({ ...SAMPLES.build[0] });
       assert.doesNotMatch(plain, /witness-check/, `${model}: no witness checks without required witnesses`);
-      const text = mod.render({ ...SAMPLES.build[1], assess: null, fixRound: null });
+      const text = mod.render({ ...SAMPLES.build[1], fixRound: null });
       assert.match(text, /- journey:\n {2}roadmap witness-check --lane-file \/run\/ev\/b\/witness\/journey\.json/, `${model}: the exact command per lane`);
       assert.match(text, /every fast lane and witness check passes/, `${model}: the ask names the witness checks`);
       for (const needle of [/after your last change/, /exactly the id the spec gives/, /witness item/, /missing or failing id is a blocker/,
@@ -1122,66 +1117,12 @@ describe('M4a rev 3 prompts: executable checks, the plan-check shape, the in-ses
     for (const model of BUILDERS) {
       const mod = promptFor('build', model);
       assert.doesNotMatch(mod.render(SAMPLES.build[0]), /[Ss]uite lanes?/, `${model}: no suite section without suite lanes`);
-      const text = mod.render({ ...SAMPLES.build[1], assess: null, fixRound: null });
+      const text = mod.render({ ...SAMPLES.build[1], fixRound: null });
       assert.match(text, /- eslint \(expects exit 0\):\n {2}cd \/wt\/b && env CI=1 npx eslint \./, `${model}: the exact command`);
       for (const needle of [/after your fast lanes/, /fix round/, /after your last change/, /experiments/, /suite:<id>/, /never in lanesRun/]) {
         assert.match(text, needle, `build/${model}: ${needle}`);
       }
     }
-  });
-
-  it('prompts.build-assess-directive:a read-only first invocation answered as planAssessment, the pinned floor, the vision as context', () => {
-    for (const model of BUILDERS) {
-      const mod = promptFor('build', model);
-      assert.doesNotMatch(mod.render(SAMPLES.build[0]), /planAssessment|assessment/, `${model}: no assessment in a build`);
-      const text = mod.render(SAMPLES.build[1]);
-      for (const needle of [/This invocation is the assessment, not the build/, /Change nothing now/, /makes the assessment malformed/, /The pinned floor is high; never answer below it/,
-        /the build resumes this session afterwards/, /as read-only context/, /V-1 \(world\): VISION-B/, /return planAssessment|only the planAssessment object/]) {
-        assert.match(text, needle, `build/${model}: ${needle}`);
-      }
-      assert.doesNotMatch(text.slice(text.lastIndexOf('\n\n')), /Implement unit/, `${model}: the ask is the assessment`);
-      namesEvery(text, requiredKeys(PLAN_ASSESSMENT_SCHEMA, [], ['planAssessment']), `assess/${model}`);
-      const noVision = mod.render({ ...SAMPLES.build[1], assess: { risk: 'low', vision: null } });
-      assert.match(noVision, /This arc has no vision, so visionConflict is empty\./);
-      assert.match(noVision, /The pinned floor is low/);
-    }
-  });
-
-  it('prompts.plancheck-acceptance-shape: witness items through the patch channel only, ids from the next free W-n, the arc lanes named', () => {
-    for (const model of JUDGES) {
-      const mod = promptFor('planCheck', model);
-      assert.doesNotMatch(mod.render(SAMPLES.planCheck[0]), /acceptance_shape|W-\d/, `${model}: the uniform check has no acceptance shape`);
-      const text = mod.render(SAMPLES.planCheck[1]);
-      for (const needle of [/<acceptance_shape>/, /may only add or replace items in witnesses and facts, and cite; no other patch operation is accepted/,
-        /a new item takes the next free id, W-3, and further new items the ids after it in order, written without leading zeros/,
-        /lane: one of the arc lanes: journey, e2e/, /testId: the test's exact id/, /" > "/, /skeleton/, /real entry point/,
-        /sends the unit back while one is missing or failing/, /Name only a test the change newly makes pass/, /belongs to a must-hold obligation's witness/,
-        // Paid M4b run 6: the delivered obligations' witness ids, which an item restating one reuses exactly.
-        /- I-7: A cancelled booking frees its berth\.\n  lane journey, test "cancel > frees the berth"/,
-        /sets obligation to that obligation's id and copies its lane and one of its test ids exactly; the executor refuses an item whose lane or test id differs/,
-        /Never name a new test for behaviour one of these tests already proves/, /or a witness test of an obligation above/]) {
-        assert.match(text, needle, `planCheck/${model}: ${needle}`);
-      }
-      namesEvery(mod.system + text, requiredKeys(PLAN_CHECK_ACCEPTANCE_SCHEMA, [], ['patch'], ['patch', 'item']), `planCheck acceptance/${model}`);
-      const noLanes = mod.render({ ...SAMPLES.planCheck[1], acceptance: { nextWitnessId: witnessItemId('W-1'), arcLanes: [], delivered: [] } });
-      assert.match(noLanes, /this arc declares no arc lanes/);
-      assert.match(noLanes, /This unit delivers no obligation with a witness, so obligation is null on every item\./);
-    }
-    const answer = {
-      ...(OUTPUTS.planCheck as Record<string, unknown>),
-      patch: [
-        { op: 'add', section: 'witnesses', item: { id: 'W-3', lane: 'journey', testId: 'export > writes the header', clause: 'A1', skeleton: 'Runs the export command on a fixture register and asserts the header row.', obligation: null } },
-        { op: 'add', section: 'witnesses', item: { id: 'W-4', lane: 'journey', testId: 'cancel > frees the berth', clause: 'A2', skeleton: 'Cancels a booking and books its berth again.', obligation: 'I-7' } },
-      ],
-    };
-    assert.ok(conforms(PLAN_CHECK_ACCEPTANCE_SCHEMA, answer));
-    // The wire's null obligation is spec.json's absent; a named one is kept.
-    const ops = validatePlanCheckAcceptanceOutput(answer).patch ?? [];
-    assert.deepEqual(ops.map((op) => (op.op === 'add' && op.section === 'witnesses' ? op.item.obligation ?? null : 'other')), [null, 'I-7']);
-    assert.ok(ops[0]!.op === 'add' && !('obligation' in ops[0]!.item));
-    // An answer recorded before the field reads as one naming no obligation.
-    const { obligation: _, ...older } = answer.patch[0]!.item;
-    assert.ok(validatePlanCheckAcceptanceOutput({ ...answer, patch: [{ ...answer.patch[0]!, item: older }] }).patch !== null);
   });
 
   it('plan-check: the failure matrix before a transaction ordering, earlier repairs carried in; clock and entry-point defects (F03, D3)', () => {

@@ -432,8 +432,8 @@ export const STAGE_OUTCOME_KINDS = {
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
   // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed'],
-  // M4a rev 3 (E): `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check call, the
-  // build assesses in session).
+  // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check
+  // call, the build assessed in session). dev.17 records none; read from an older log.
   // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
   // Scope growth (2026-10-15): `scope-growth` (the answer proposed scope growth code verified: a hold until the root agent's
   // `scope accept|reject <unit>`, src/commands/scope.ts).
@@ -443,8 +443,8 @@ export const STAGE_OUTCOME_KINDS = {
     'approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed',
     'in-session', 'read-denied', 'scope-growth', 'context-exceeded',
   ],
-  // M4a rev 3 (E, R55): the in-session assessment found the spec `infeasible`, or raised the risk floor onto another
-  // implementer seat (`risk-raised`).
+  // M4a rev 3 (E, R55) to dev.16: the in-session assessment found the spec `infeasible`, or raised the risk floor onto
+  // another implementer seat (`risk-raised`). dev.17 records neither; read from an older log.
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
   build: [
     'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible',
@@ -724,9 +724,9 @@ export type Fact =
   /** `run-only` (M2): admission is limited to `units` (sorted), or unlimited again (null). */
   | Readonly<{ kind: 'run-only'; command: CommandId; units: readonly UnitId[] | null }>
   /**
-   * A fix round after a stalled one runs cold on the `build.high` seat (A11, G1): written before that round's
-   * implementer seat is chosen. `attempt` is the escalated build attempt, `stalled` the build attempt whose
-   * round stalled, `from` the unit's build tier until now.
+   * Legacy (D4, retired in dev.17; written by dev.16 and earlier): a fix round after a stalled one ran cold on the
+   * `build.high` seat (A11, G1). `attempt` is the escalated build attempt, `stalled` the build attempt whose round stalled,
+   * `from` the unit's build tier until then. No longer written; a dev.16 log's still folds (state.ts `buildTier`).
    */
   | Readonly<{ kind: 'implementer-escalated'; unit: UnitId; attempt: number; from: RiskTier; to: 'high'; stalled: number }>
   /**
@@ -1084,7 +1084,7 @@ export type PlanChange =
   | Readonly<{ type: 'unit-priority'; unit: UnitId }>
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
   | Readonly<{ type: 'known-defects' }>
-  /** M4a rev 3 (E): the plan's `planCheck.shape` changed (no drain; units whose plan-check has not decided). */
+  /** M4a rev 3 (E) to dev.16: the plan's `planCheck.shape` changed (no drain). Read from older logs; dev.17 writes none. */
   | Readonly<{ type: 'plan-check-shape' }>
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
   | Readonly<{ type: 'derived' }>

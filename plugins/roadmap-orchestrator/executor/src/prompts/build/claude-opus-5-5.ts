@@ -22,7 +22,7 @@
 // witness item to the test that shows it, by its exact id (retro F05: correct code returned for missing witness tests);
 // the per-lane witness check commands, run after the last change beside the fast lanes, a missing id a blocker (D1, R56);
 // a negative witness drives the real entry point with an injected fixture, never a helper (F20); `experiments` for every
-// other command run; and the in-session assessment, a read-only first invocation answered as planAssessment (E, R55).
+// other command run. (The in-session assessment, E/R55, went with `planCheck.shape: by-builder` in dev.17.)
 // W3 (2026-10-16; re-reviewed 2026-10-17 against "Prompting best practices", "Prompting Claude Opus 5.5" and "Prompting
 // Claude Sonnet 5.5" alone): delegation (BUILD_DELEGATION, re-derived from those guides);
 // <safety> no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". Further trims wait for the
@@ -34,7 +34,7 @@
 // (`milestonesText`); a build with the browser drive gets the `<browser>` block (`buildBrowserText`).
 import type { BuildInputs, PromptModule } from '../inputs.ts';
 import {
-  UNIT_POLICY, assessText, bullets, buildBrowserText, documentsXml, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText,
+  UNIT_POLICY, bullets, buildBrowserText, documentsXml, milestoneDocuments, milestonesText, fastLanesText, referenceIndexText, rulingsText, suiteLanesText, witnessChecksText,
 } from '../inputs.ts';
 import { BUILD_DELEGATION } from '../delegation.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
@@ -106,9 +106,8 @@ Fix exactly what failed and what the directives name, nothing adjacent. Do not r
 </fix_round>`;
 }
 
-/** The ask: the assessment (read-only, its own answer), a fresh build, or a fix round. */
+/** The ask: a fresh build or a fix round. */
 function ask(i: BuildInputs): string {
-  if (i.assess !== null) return `<assessment>\n${assessText(i.assess)}\n</assessment>\n\nAssess unit ${i.spec.unit} (spec revision ${i.spec.rev}) in ${i.worktree} without changing anything, then return planAssessment.`;
   return i.fixRound === null
     ? `Implement unit ${i.spec.unit} (spec revision ${i.spec.rev}) in ${i.worktree} until every acceptance clause holds and every fast lane${i.witnessChecks.length === 0 ? '' : ' and witness check'} passes, then return your report.`
     : `Carry out this fix round for unit ${i.spec.unit} in ${i.worktree}, run the fast lanes${i.witnessChecks.length === 0 ? '' : ' and the witness checks'}, then return your report.`;
@@ -118,7 +117,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser',
   ],
   render: (i) => `${documentsXml([

@@ -66,7 +66,8 @@
 //                               combined graph (the effective `after` edges, plus a hold edge from every unmerged
 //                               unit declaring an entry's lane, outside the fixer's lineage, to the fixer's head)
 //                               is acyclic (`known-defect-cycle`, the cycle named)
-//   plan-check shape (E)        `plan-check-shape` (no drain)
+//   plan-check shape (E)        `plan-check-shape` (no drain): dev.16 and earlier; removed in dev.17 (the plan reader drops
+//                               the field, warned), so no apply classifies it now
 //   derived files (2026-10-16)  `derived` (no drain; the dispatch check re-pins each unit's widening, src/input/derived.ts)
 //
 // dev.13 (SCHEMAS.md "dev.13"):
@@ -165,7 +166,7 @@ import {
 import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
-  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, hasMilestones, knownDefectsOf, milestonesNeedHolistic, milestonesOf, parsePlan, planCheckShapeOf,
+  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, hasMilestones, knownDefectsOf, milestonesNeedHolistic, milestonesOf, parsePlan,
   planFieldValue, priorityOf, reservedUnitIdReason,
 } from './plan.ts';
 
@@ -777,8 +778,6 @@ export function classify(input: ClassifyInput): Classified {
     if (cycle !== null) reasons.push(`the unit graph has a cycle once each re-entered unit stands for its lineage's head: ${cycle.join(' → ')}`);
     else knownDefectRows(view, cur, plan, specs, cutNow, changes, reasons);
   }
-  // M4a rev 3 (E): the plan-check shape.
-  if (planCheckShapeOf(cur) !== planCheckShapeOf(plan)) changes.push({ type: 'plan-check-shape' });
   if (!same(derivedOf(cur), derivedOf(plan))) changes.push({ type: 'derived' });
 
   // dev.13: the milestones (an architect `apply` only), and the holistic layer they need before any routing resolves
@@ -1371,7 +1370,7 @@ export function changesScope(changes: readonly PlanChange[], cur: PlanM1, next: 
       case 'corpus':
         break;
       // A Phase-0 record edit changes only the required-review key: nothing running is touched. M4a rev 3: a priority,
-      // known-defect or plan-check-shape edit drains nothing either (admission and rank read the plan in force).
+      // known-defect or (dev.16 and earlier) plan-check-shape edit drains nothing either (admission and rank read the plan in force).
       case 'phase0':
       case 'unit-priority':
       case 'known-defects':

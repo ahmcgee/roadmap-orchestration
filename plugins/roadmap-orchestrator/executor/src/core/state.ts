@@ -162,8 +162,9 @@ export type UnitState = Readonly<{
   /** The latest retryable park recovery (M2): when, and the targets that passed; null before one. */
   lastRecovery: Readonly<{ at: IsoTime; targets: readonly ProbeTarget[] }> | null;
   /**
-   * The implementer's seat tier (A11): `max(risk, escalated)`, `high` once an `implementer-escalated` fact
-   * moved it; null before the first dispatch. The routing-changed check compares against `build.<buildTier>`.
+   * The implementer's seat tier (A11): the risk floor, or `high` once a dev.16 `implementer-escalated` fact moved it (D4,
+   * retired in dev.17: none is written now); null before the first dispatch. The routing-changed check compares against
+   * `build.<buildTier>`.
    */
   buildTier: RiskTier | null;
   /** Set on a unit that re-enters another (M2); null otherwise. */

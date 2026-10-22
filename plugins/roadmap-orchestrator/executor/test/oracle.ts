@@ -20,7 +20,6 @@ import type { AbsPath } from '../src/core/values.ts';
 import { git, refTarget, revParse } from '../src/git/git.ts';
 import { snapshotRef, verifySnapshot } from '../src/git/snapshot.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { isAssessCall } from '../src/pipeline/stages.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
 import { ADMISSION_STAGES } from '../src/schedule/types.ts';
@@ -229,8 +228,8 @@ export function recoveryHoldsOf(run: OracleRun): readonly string[] {
  * The recovery holds a run with exactly one executor crash must show, derived from its own log, and `outcomes` (the
  * uncrashed run's, per unit) with each inserted where it falls. At the crash (the log before the restart's
  * `executor-started`, the last) each unit's open attempt at an admission stage is either consumed by the restart from its backend
- * call (the attempt's latest backend spawn closed with a result, or a build's lost with tree effects, and not an
- * in-session assessment: src/pipeline/unit.ts `consumeRecorded`) or closed by one `interrupted` hold, cause recovery,
+ * call (the attempt's latest backend spawn closed with a result, or a build's lost with tree effects:
+ * src/pipeline/unit.ts `consumeRecorded`) or closed by one `interrupted` hold, cause recovery,
  * which follows the unit's outcomes at the crash. Pair with `recoveryHoldsOf(run)`, which must equal `holds`.
  */
 export function withRecoveryHolds(
@@ -269,7 +268,7 @@ function consumable(run: OracleRun, unit: string, stage: string, attempt: number
   const done = run.view.doneOf(spawn.op);
   if (done === null || done.kind !== 'proc.spawn') throw new Error(`${unit} ${stage}#${attempt}: its backend call ${spawn.op} was never closed`);
   if (done.outcome.kind === 'lost') return stage === 'build' && done.outcome.treeEffects;
-  return !(stage === 'build' && isAssessCall({ runDir: run.runDir }, invocationId(spawn.op, spawn.ordinal)));
+  return true;
 }
 
 /** Every needs-user raised (journal and file items), by reason, is exactly `expected` (a multiset): no duplicates. */
