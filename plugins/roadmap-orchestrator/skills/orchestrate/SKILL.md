@@ -165,10 +165,9 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     `V-n` any unit delivers, including one it delivers without being the reason for the slice. `why` says why
     this slice now.
 12. **Plan and specs.** SCHEMAS.md "Input contract" and "`spec.json` M1 subset". A corpus arc's plan names
-    `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`), and writes
-    `"planCheck": {"shape": "by-builder"}`: a frontier builder assesses the spec in its own session instead of a
-    plan-check call, and an efficient builder gets a plan-check that may add witness items. Plan contracts and unit
-    scopes never overlap the corpus files. Write lanes and witnesses per "Lanes, witnesses and clocks".
+    `corpus` and `phase0`, and `holistic` without `vision` (the record is `.roadmap/vision.json`). Write no
+    `planCheck` field: every unit's plan-check is one call (an older plan's `planCheck.shape` is read as uniform).
+    Plan contracts and unit scopes never overlap the corpus files. Write lanes and witnesses per "Lanes, witnesses and clocks".
     **Scope for what a unit removes.** A unit that removes or renames a file, route, symbol or command lists each
     in its spec's `removes` (the literal text other code names it by: `"src/shell/page.go"`, `"/shell"`,
     `"renderShell"`). Its scope must also cover every test and caller outside its package that still uses one:
@@ -191,7 +190,7 @@ Keep the arc's inputs in their own directory outside the product working tree, f
     (`milestones-need-holistic`).
     - **Its design unit comes first.** Each milestone names a planned design unit (`design.unit`, outside its
       `units`), and every milestone unit runs `after` it, directly or transitively (`phase0 check` advises
-      `milestone-unit-before-design` otherwise). Risk `high`, so the `frontier` class builds it. It designs
+      `milestone-unit-before-design` otherwise). Risk `high`, so the strongest judgments check and gate it. It designs
       what the milestone exposes into the reference directories `references` names. The first milestone that exposes
       a surface writes its reference; a later milestone's design unit extends that reference rather than starting
       another, so names, voice, tokens and the error model stay one language across milestones.
@@ -576,9 +575,9 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
 - **Parked `witness-lane-missing`** (an arc started on 1.0.0-dev.9: the unit's spec names a witness lane that is no
   arc lane): add that lane to the obligations with `roadmap apply`, then `roadmap resume <unit>`; or re-enter the unit
   with a spec whose witness items name arc lanes. An apply can no longer create this state.
-- **Parked `escalation` after an assessment found the spec infeasible** (the build's `infeasible` notes are in the
-  evidence): a design park, so the checkpoint sees it first; otherwise apply a feasible spec revision (it reopens
-  the unit) or re-enter.
+- **Parked `escalation` after an assessment found the spec infeasible** (an arc started on 1.0.0-dev.16 or earlier: the
+  build's `infeasible` notes are in the evidence): a design park, so the checkpoint sees it first; otherwise apply a
+  feasible spec revision (it reopens the unit) or re-enter.
 - **A lane red for a cause another unit fixes**: a known defect (above), not a re-entry.
 - **Repairs held by each other's findings** (each approved repair waits at its candidate behind a P1 the other
   fixes): the executor publishes them as one batch. Do not cut them or hand-build a combined unit.

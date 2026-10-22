@@ -579,7 +579,7 @@ in the line belongs to `arc`.
 | `judgment-inputs` (M2) | `unit, stage: plan-check\|gate, attempt, tip: Sha, head: Sha\|null (the unit commit; null exactly for a plan-check), specRev, specSha256, planRev, routingRev, fingerprint?: ApprovalFingerprint` (M3 Checkpoint A: a gate's captured approval fingerprint, `unitCommit` = `head`; required on a gate's, never on a plan-check's), `diffShown?: {inlined, notInlined}` (1.0.0-dev.12: the paths the gate's bounded diff inlined and did not, ascending; a gate's only, absent on a dev.11 one), `largeDiff?: {overflow} | null` (1.0.0-dev.12: the large-diff threshold, null under it; a gate's only, absent on a dev.11 one): written before its spawn (F1); since M3 Checkpoint A under the fence BEFORE the attempt's entry reservation. One per started `(unit, stage, attempt)`: a later one replaces it only while no op or outcome started that attempt (its `@cpu` wait was cancelled). A recovered call is consumed against it (`gateRead` with `fingerprint`; a recovered gate call without its inputs fails loud) |
 | `edge-resolved` (M2) | `edge: EdgeId, command, evidence` (non-empty text): `resolve-edge`; once per edge |
 | `run-only` (M2) | `command, units: UnitId[] (ascending, non-empty)\|null`: the admission allowlist; null clears it |
-| `implementer-escalated` (M2) | `unit, attempt, from: RiskTier (below high), to: high, stalled`: the fix round at build `attempt` runs cold on `build.high` because the round at build attempt `stalled` (< `attempt`) stalled (A11, G1); journaled before that round's implementer seat is chosen, only while `chargeableFailures < CHARGEABLE_BOUND` |
+| `implementer-escalated` (M2; no longer written since dev.17, read from older logs) | `unit, attempt, from: RiskTier (below high), to: high, stalled`: the fix round at build `attempt` runs cold on `build.high` because the round at build attempt `stalled` (< `attempt`) stalled (A11, G1); journaled before that round's implementer seat is chosen, only while `chargeableFailures < CHARGEABLE_BOUND` |
 
 **`stage-outcome`** records one stage attempt's outcome as the transition table
 (`src/pipeline/transitions.ts`, `outcomeFact`) decided it. `outcome` is one of `STAGE_OUTCOME_KINDS[stage]`
@@ -2921,7 +2921,7 @@ next free `W-n` is the next one).
 
 **Plan** (`src/input/plan.ts`). `knownDefects?: KnownDefect[]` (non-empty, ids unique): `{id: K-n, match: {type: lane,
 lane} | {type: output, lane, contains: string (a substring, never a regex)}, fixUnit}`; unit `priority?: normal | high`;
-`planCheck?: {shape: uniform | by-builder}`. Read through `knownDefectsOf`, `priorityOf`, `planCheckShapeOf`. Suite lanes
+`planCheck?: {shape: uniform | by-builder}` (removed in dev.17: read and dropped, warned; see "Experience-won routing"). Read through `knownDefectsOf`, `priorityOf`. Suite lanes
 may not declare `inputs` (a schema error at `plan.suite.lanes[i].inputs`). Which `fixUnit` and `lane` a known defect may
 name, and the combined dependency and hold graph's cycle check, are classifier rows (N3: `known-defect-fix-unit`,
 `known-defect-lane`, `known-defect-cycle`; `src/input/classify.ts` `knownDefectRows`).
@@ -3208,7 +3208,7 @@ sections and marks converted amendments.
     diff holds a binary path or a rename (keyed by the diff itself, nothing made), or the patch is corrupt or does not
     apply. A target is `killed` on a non-malformed record with `selected > 0` and `fail`, `survived` on `pass`, else
     inconclusive; any survivor is `smoke-survived`, otherwise (inconclusive ones included) the stage goes on green.
-13. **Plan-check shape and the in-session assessment (N3, E, R40, R55, R59; src/pipeline/stages.ts).** `planCheckShape`:
+13. **Plan-check shape and the in-session assessment (N3, E, R40, R55, R59; src/pipeline/stages.ts; removed in dev.17, kept as the record of what dev.16 logs hold).** `planCheckShape`:
     `uniform` unless `by-builder` in a corpus arc with arc lanes; then `build.<floor>`'s class decides (`efficient` →
     `acceptance`, else `in-session`, recorded without a call). An acceptance call writes
     `planCheckAcceptanceSchemaFor(<arc lanes in force>)` (2026-10-15: a witness item's lane an enum of them); its witness
@@ -4482,3 +4482,32 @@ earlier record); `SCHEMA_VERSION` stays 1.
    the start checks the plan in force. A respawn checks the plan in force against the ledger in force (before: the
    owner's ledger file). The one rule: after the first start the input dir is an edit of its base, never the state; a
    restart needs no `inputs export` sync first, and the input dir matters only as that edit (a start or an apply).
+
+## Experience-won routing (2026-10-22; 1.0.0-dev.17)
+
+**Seats** (`src/routing/profiles.ts`). `planCheck` and `gate`: `frontier` at `low`, `med`, `high`, `summit` at
+`escalation`. `build`: `efficient` at `low`, `med`, `high`. The arc seats are unchanged. An arc started on dev.12 to dev.16
+hashed `PRE_DEV17_BUILTIN_SEATS` (`src/core/upgrade.ts`, appended to `EARLIER_BUILTIN_SEATS`): under OR-L3 its units re-pin
+under HEAD's rev without a park while their implementer seat is unchanged (a high unit that already built on frontier
+parks `routing-changed`), and `status` aliases its recorded revs. Scaffolding: deleted once no arc started on dev.16 or
+earlier is in flight.
+
+**Build advisor** (`src/routing/classes.ts` `BUILD_ADVISOR = 'claude-opus-5-5'`, `src/backends/argv.ts`). Every
+`claude-build` argv carries `--advisor claude-opus-5-5` after `--effort <level>`, fresh and resumed alike. No record
+changes: the advisor's spend is its own `modelUsage` entry (verified on Claude Code 2.1.301, capture
+`test/fixtures/backend-output/claude-build-advisor`), so the adapter reads it as `delegated` to its family's class
+(`DELEGATE_CLASSES`: Opus → `frontier`) on the build's meter fact. The fake backend's `advised` act emits the same shape.
+
+**Fix rounds** (`src/pipeline/rounds.ts`). D4 is retired: `stalledRounds`, `escalation` and `escalateImplementer` are
+gone, and no `implementer-escalated` is written. The fact's reader and its fold (`buildTier` → `high`) stay for dev.16
+logs.
+
+**Plan-check shape** (`src/input/plan.ts`, `src/pipeline/stages.ts`). `PlanM1.planCheck`, `PLAN_CHECK_SHAPES`,
+`planCheckShapeOf`, `planCheckShape`, the acceptance shape (`PLAN_CHECK_ACCEPTANCE_SCHEMA`, `planCheckAcceptanceSchemaFor`,
+`isAcceptanceSchema`, `validatePlanCheckAcceptanceOutput`, `PlanCheckInputs.acceptance`) and the in-session assessment
+(`PLAN_ASSESSMENT_SCHEMA`, `validatePlanAssessment`, `BuildInputs.assess`, `ASSESSED_DIRECTIVE`, `isAssessCall`) are
+removed, with the crash labels `plancheck.after-pin-in-session`, `plancheck.after-witness-patch` and `build.after-assess`.
+Read-time default: a plan carrying `planCheck: {shape}` parses, drops the field and warns once
+(`planCheckShapeDefault`, kind `plan.planCheck.shape`). The closed enums keep their dev.16 members for older logs:
+plan-check `in-session` (its transition row is now `go(plan-check)`: such a unit runs its plan-check before it builds),
+build `infeasible` and `risk-raised` (rows unchanged), and `PlanChange` `plan-check-shape` (no apply classifies it now).

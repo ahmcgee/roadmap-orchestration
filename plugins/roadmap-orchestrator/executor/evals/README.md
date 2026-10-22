@@ -34,11 +34,12 @@ Runs the production argv builder, runner and adapter against the real `claude` a
 PATH and logged in): the backend smoke, Codex fresh and resume, a real shell lane, the Claude judgment and
 implementer argvs, the Fable id pin, the economy class (dev.12: its judgment binding, Haiku 5.5 high, which no built-in seat names since the 2026-10-17
 gate eval, one call under the Haiku gate prompt module's system prompt), and (M3) one real call each of the lens, checkpoint and vision-aware plan-check
-prompt modules over tiny fixtures on their own seats (since 1.0.0-dev.10 the lens and med plan-check seats are the efficient
-class, Sonnet 5.5 high, as is the Claude smoke on planCheck.low); (M4a) the forge functions read-only against the real repository
+prompt modules over tiny fixtures on their own seats (the lens seat is the efficient class, Sonnet 5.5 high; since
+1.0.0-dev.17 the plan-check seats and the Claude smoke on planCheck.low are frontier, Opus 5.5 medium); (dev.17) a Sonnet
+build launched with `--advisor claude-opus-5-5`, told to consult it once: the advisor call is in the stream and its Opus
+spend is metered as delegated frontier; (M4a) the forge functions read-only against the real repository
 (identity, policy and trust, issues and comments shapes), a real pack-review call (frontier Opus medium) and checkpoint
-call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) the in-session assessment (frontier Opus medium,
-read-only, the worktree unchanged), the acceptance-shape plan-check (witness items through the patch channel), a checkpoint admit
+call (summit Opus xhigh), and an effort-changed resume on both CLIs (OI-2); (M4a rev 3) a checkpoint admit
 carrying `targets`, `roadmap witness-check` over a real `node --test` run (exit 0, and 78 naming the missing id), and a Sonnet 5.5
 medium build under the per-call build schema (`experiments`); (M4b) a real flow call on the flow seat (efficient, Sonnet 5.5 high, the m4b role
 set) over a small synthetic `FlowInputs`, validated by the flow role's reader, and a real suite-lane proof (`runProof`) on a tiny
@@ -380,10 +381,10 @@ the vision lens of each audit and its checkpoint (summit; arc 1 about 5 of each)
 agent (`fake-root.ts`), which follows the skill and replays the golden Phase-0 outputs (`golden.ts`: the curated
 corpus as exact edits of the raw one, the obligations, census, records and plans) through the staged plugin's real
 CLI, against the fake backends (`scenario.ts`, one scenario per arc) and a host dir in the fixture; 30 minute
-timeout. Every plan is `planCheck.shape: by-builder` and every arc lane declares `testPaths`. `story`: arc 1's pack
+timeout. Every arc lane declares `testPaths`. `story`: arc 1's pack
 review holds a blocking finding the root agent fixes by `apply` (the superseding review); guard's first build fails
-its berths witness, so witness presence sends it back before any gate; confirm (high risk, the frontier builder) makes
-no plan-check call, assesses in session and implements in the same session, and mutation smoke finds its W-1 witness
+its berths witness, so witness presence sends it back before any gate; confirm (high risk) is plan-checked and built, and
+mutation smoke finds its W-1 witness
 surviving (one smoke fix round, then the gate decides); a gate note and a deferred lens finding bank debt, a checkpoint
 and an issue derive amendments; after arc 1 `chain status` answers `nextStart` within K = 1 (the bootstrap start
 counts as acked) and the check-in, one final message, asks the cutoff question and ends with the action taken on
