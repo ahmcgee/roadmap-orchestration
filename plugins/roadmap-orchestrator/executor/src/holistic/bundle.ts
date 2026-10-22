@@ -100,7 +100,7 @@ import type { RiskTier } from '../routing/types.ts';
 import { type RevisionContext, evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
 import { mayOverlap } from '../input/classify.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
-import { laneEnvId, observations, observedViews } from '../pipeline/lanes.ts';
+import { arcLaneKey, laneEnvId, mapInForce, observations, observedViews } from '../pipeline/lanes.ts';
 import { conversionsOf, rulingContextAt } from '../pipeline/publish.ts';
 import { loadUnitSpec } from '../pipeline/stages.ts';
 import { type BundleOp, type CheckpointOutput, splitChildAnchor } from '../prompts/schemas.ts';
@@ -121,7 +121,8 @@ import { type DivergenceBase, appendDivergences, interpretationDivergences, opDi
 import { isActive, ruleFinding, rulingRefusal } from './findings.ts';
 import { type Brake, type TailWorld, brakeConversions, brakeOf, findingOriginRoots, indexedAdmits, settledPoint, tailRulings } from './tail.ts';
 import { intakeReasons, issueReuse, settleIntake } from './intake.ts';
-import { type Observation, keyOf, observedVerdict, reuse } from './observe.ts';
+import { type Observation, observedVerdict, reuse } from './observe.ts';
+import { inputShaOf } from '../git/reusekey.ts';
 import {
   type BundleRejection, type BusyAttempt, type ClassifiedAdmit, type Conversion, type ObligationAnchor, isBrakeConversion, type ObligationDef, type Obligations, type OwnerOnlyClass, type RevisionVector,
   type RulingSidecar, isExempt, isMustHold, laneRevOf, observationKeyText, parseObligations, parseRulingSidecar, planDefectText,
@@ -939,8 +940,9 @@ function evidenceBase(ctx: CheckpointContext, a: Activation, revision: RevisionI
       reasons.push(`the cited observation ${observationKeyText(k)} names lane ${k.lane}, no arc lane in force`);
       continue;
     }
-    const cited = reuse(store, k);
-    const now = reuse(store, keyOf(tree, lane, laneEnvId(ctx, lane)));
+    // The cited observation by its reuse key (dev.17): its lane's input on the tree it names.
+    const cited = reuse(store, { lane: k.lane, laneRev: k.laneRev, envId: k.envId, inputSha: inputShaOf(ctx.repo, k.treeSha, lane, mapInForce(ctx.journal.view)) });
+    const now = reuse(store, arcLaneKey(ctx, tree, lane, laneEnvId(ctx, lane)));
     const why = now === null ? `has none on the head ${head}` : cited === null ? 'is not in the observation store' : evidenceDiffers(cited, now);
     if (why === null) continue;
     reasons.push(`the cited observation of lane ${k.lane} ${now === null ? why : `differs on the head ${head}: ${why}`}`);
@@ -1043,7 +1045,7 @@ export function admitWorldOf(
     const holding = !isMustHold(o, latched) || held;
     const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
     const history = lane === undefined || o.witness === null ? [] : trees.flatMap(({ position, tree }) => {
-      const verdict = observedVerdict(store, keyOf(tree, lane, laneEnvId(ctx, lane)), o.witness!);
+      const verdict = observedVerdict(store, arcLaneKey(ctx, tree, lane, laneEnvId(ctx, lane)), o.witness!);
       return verdict === 'held' || verdict === 'not-held' ? [{ position, held: verdict === 'held' }] : [];
     });
     return [o.id, { def: o, holding, history }] as const;

@@ -1057,8 +1057,10 @@ export class Fold implements JournalView {
       }
       // M4a rev 3: lane reuse and series certificates (N1), smoke runs (N3), cross-lens corroboration (N5).
       case 'lane-reused': {
-        const key = canonicalJson({ parent: f.parent, lane: f.lane });
-        if (this.#laneReuses.some((r) => canonicalJson({ parent: r.parent, lane: r.lane }) === key)) fail(`a second lane-reused of ${f.lane} under ${canonicalJson(f.parent)}`);
+        // dev.17: one per series (parent, set, commit) and lane; a fact before dev.17 names a spec series.
+        const keyOf = (r: Readonly<{ parent: unknown; lane: string; set?: string; at?: string }>): string => canonicalJson({ parent: r.parent, lane: r.lane, set: r.set ?? 'spec', at: r.at ?? null });
+        const key = keyOf(f);
+        if (this.#laneReuses.some((r) => keyOf(r) === key)) fail(`a second lane-reused of ${f.lane} under ${canonicalJson(f.parent)}`);
         const { op, ordinal } = parseInvocationId(f.from.inv);
         const entry = this.#ops.get(op);
         if (entry === undefined || ordinal > entry.latest.ordinal) fail(`lane-reused from ${f.from.inv}, which no intent opened`);

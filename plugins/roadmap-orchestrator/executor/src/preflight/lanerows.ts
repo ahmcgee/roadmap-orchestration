@@ -10,7 +10,7 @@
 import type { UnitId } from '../core/ids.ts';
 import type { LaneDef, LaneEnv, SpecM1 } from '../core/records.ts';
 import { type PlanM1, type PlanUnit, derivedOf, regenerateLaneId } from '../input/plan.ts';
-import { checkLaneTiers } from '../resources/reserve.ts';
+import { checkBuildLanes } from '../resources/reserve.ts';
 import { resolveArgv0 } from './argv0.ts';
 import type { CommandProblem, StartupRejection } from './startup.ts';
 
@@ -49,7 +49,7 @@ export function laneRows(plan: PlanM1, units: readonly UnitId[], specOf: (unit: 
     if (!units.includes(unit.id) || !isLive(plan, unit)) continue;
     const spec = specOf(unit);
     for (const lane of spec.lanes) if (lane.state === 'active') out.push(...laneProblems(unit.id, lane, env));
-    out.push(...checkLaneTiers(spec, unit));
+    out.push(...checkBuildLanes(spec, unit));
   }
   for (const r of plan.resources) {
     for (const command of ['probe', 'teardown'] as const) {

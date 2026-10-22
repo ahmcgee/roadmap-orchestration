@@ -10,7 +10,7 @@ import {
   InvalidIdError, arcId, commandId, jobId, knownDefectId, laneId, opId, opKey, opportunityId, sha, sha256, unitId, witnessItemId,
 } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, dispatchRecord, laneDef, redFile, specM1, specPatchOp } from '../src/core/records.ts';
+import { DEFAULT_BOUNDS, boundsOfRecord, commandBody, dispatchRecord, laneDef, laneDefOf, redFile, specM1, specPatchOp } from '../src/core/records.ts';
 import { Fold, openAttempt } from '../src/core/state.ts';
 import {
   HOST_SIGNATURES_DEV6, buildExperimentsDefault, bundleClassesOf, dev6SmokeBounds, mutantSubjectDefault,
@@ -286,12 +286,12 @@ describe('m4a-rev3 plan and spec', () => {
     assert.throws(() => parsePlan({ ...plan, units: [{ ...unit, priority: 'urgent' }] }), /priority/);
   });
 
-  it('spec.inputs-only-spec-lanes: a spec lane may declare inputs; a suite or arc lane may not', () => {
+  it('spec.inputs-dropped (dev.17): a dev.16 spec lane\'s inputs read as dropped; a suite or arc lane declaring them is refused', () => {
     const withInputs = { ...LANE, inputs: ['src/**', 'package.json'] };
-    assert.deepEqual(laneDef(withInputs, 'l').inputs, ['src/**', 'package.json']);
-    assert.throws(() => laneDef({ ...LANE, inputs: [] }, 'l'), SchemaError);
-    assert.throws(() => parsePlan({ ...plan, suite: { lanes: [withInputs] } }), (e: unknown) => e instanceof SchemaError && e.field === 'plan.suite.lanes[0].inputs');
-    assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, inputs: ['src/**'] })), /an arc lane/);
+    assert.equal('inputs' in laneDefOf('spec')(withInputs, 'l'), false);
+    assert.throws(() => laneDef({ ...laneDefOf('spec')(LANE, 'l'), inputs: ['src/**'] }, 'l'), SchemaError);
+    assert.throws(() => parsePlan({ ...plan, suite: { lanes: [withInputs] } }), SchemaError);
+    assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, inputs: ['src/**'] })), SchemaError);
     // An arc lane's testPaths (D2): non-empty when present.
     assert.deepEqual(parseObligations(obligationsWith({ ...ARC_LANE, testPaths: ['test/**'] })).lanes[0]!.testPaths, ['test/**']);
     assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, testPaths: [] })), SchemaError);
@@ -376,8 +376,9 @@ describe('types.lane-rev-normalised', () => {
     // The executor's dev.6 revs are this form already: the hash of the parsed lane's canonical JSON.
     assert.equal(laneRevOf(parsed), sha256Hex(cj(parsed)).slice(0, 16));
     // A spec lane item's state is the item's, not the definition's.
-    assert.equal(laneRevOf({ ...laneDef(LANE, 'l'), state: 'active' } as never), laneRevOf(laneDef(LANE, 'l')));
-    assert.notEqual(laneRevOf(laneDef({ ...LANE, inputs: ['src/**'] }, 'l')), laneRevOf(laneDef(LANE, 'l')), 'inputs are part of the definition');
+    const spec = laneDefOf('spec');
+    assert.equal(laneRevOf({ ...spec(LANE, 'l'), state: 'active' } as never), laneRevOf(spec(LANE, 'l')));
+    assert.notEqual(laneRevOf(spec({ ...LANE, systems: ['api'] }, 'l')), laneRevOf(spec(LANE, 'l')), 'systems are part of the definition');
   });
 });
 

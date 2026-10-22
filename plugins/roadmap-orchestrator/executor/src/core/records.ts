@@ -4,10 +4,10 @@
 import {
   type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
   type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type ProposalId, type ResourceInstance,
-  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, type WitnessItemId, arcId, clauseId,
+  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type SystemName, type UnitId, type WitnessItemId, arcId, clauseId,
   commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
   obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
-  witnessItemId, proposalId,
+  witnessItemId, proposalId, systemName,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
@@ -19,7 +19,7 @@ import {
   positive, sortedBy, str, stringMap, tagged, text, version,
 } from './validate.ts';
 import type { SchemaVersion } from './version.ts';
-import { applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds } from './upgrade.ts';
+import { type LaneKind, applyExpectRevDefault, applyVisionEditDefault, dev6SmokeBounds, laneCadenceDefault, laneInputsDropped } from './upgrade.ts';
 import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
 import {
   type Backend, type ImplementerRole, JUDGMENT_SESSION_ROLES, type JudgmentSessionRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
@@ -846,7 +846,27 @@ export function boundsOfRecord(record: DispatchRecord | null): Bounds {
 
 /** `set`: literal values. `pass`: names copied from the executor's environment; absent → spec-lane-unrunnable. */
 export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }>;
-export type LaneTier = 'fast' | 'estate';
+/**
+ * Where a lane runs (dev.17, DESIGN-1.0.md §4 "Lane topology"), a ladder: `build` in the builder's own loop and at the
+ * lanes stage; `unit` at the lanes stage; `candidate` on the candidate merge in the integration slot (and, a suite lane of
+ * a lower cadence, there too); `batch` never in the merge path: at the publication retiring a milestone's last unit,
+ * before its walk, at a no-milestone holistic arc's cadence audits, and always at the close-out. A spec lane is `build` or
+ * `unit`; an arc lane `build` (the builder runs it as its witness check) or `candidate`; a suite lane any (`batch` only in
+ * a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
+ */
+export type { LaneKind } from './upgrade.ts';
+export const LANE_CADENCES = ['build', 'unit', 'candidate', 'batch'] as const;
+export type LaneCadence = (typeof LANE_CADENCES)[number];
+/** The cadences each kind of lane may declare. */
+export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit'], suite: LANE_CADENCES, arc: ['build', 'candidate'] };
+/** Whether a lane of cadence `c` runs at or before the point of cadence `at` (the ladder). */
+export const cadenceAtOrBefore = (c: LaneCadence, at: LaneCadence): boolean => LANE_CADENCES.indexOf(c) <= LANE_CADENCES.indexOf(at);
+
+/** The `{files}` element of a lane's `testArgv`: the changed leaf test files, one argument each. */
+export const TEST_FILES_TOKEN = '{files}';
+
+/** A stochastic lane (dev.17): run up to `runs` times, it passes once `minPasses` runs passed; never flaky, never deflaked. */
+export type Stochastic = Readonly<{ runs: number; minPasses: number }>;
 
 export type LaneDef = Readonly<{
   id: LaneId;
@@ -856,7 +876,7 @@ export type LaneDef = Readonly<{
   cwd: RepoPath;
   env: LaneEnv;
   expectedExit: number;
-  tier: LaneTier;
+  cadence: LaneCadence;
   resources: readonly ResourceName[];
   evidenceGlobs: readonly RepoPattern[];
   /**
@@ -864,14 +884,21 @@ export type LaneDef = Readonly<{
    * excludes; declared `evidenceGlobs` are never filtered. Optional in spec.json, read as [] when absent.
    */
   evidenceExcludes: readonly RepoPattern[];
-  /** `@cpu` tokens the lane takes (M2); absent: its tier's default (fast 2, estate 4). Absent stays absent. */
+  /** `@cpu` tokens the lane takes (M2); absent: its cadence's default (build 2, else 4). Absent stays absent. */
   cpu?: number;
   /**
-   * M4a rev 3 (F1a, R52): the repo paths a passing run of this lane depends on, non-empty when present. A fast spec
-   * lane that declares them may reuse a pass on another SHA whose diff touches none of them; absent: no cross-SHA reuse.
-   * Spec lanes only: a suite or arc lane declaring them is refused (`refuseLaneInputs`).
+   * dev.17: the systems of the repo's systems map the lane tests (non-empty, unique when present; `docs` names the docs
+   * class). Its reuse key reads their paths (with what they depend on and the shared areas), and a candidate or batch lane
+   * listing them runs only when a diff touches one (src/input/systems.ts). Absent: the whole tree, selected always.
    */
-  inputs?: readonly RepoPattern[];
+  systems?: readonly SystemName[];
+  /**
+   * dev.17: the lane's argv for a run of some test files only, one element exactly `{files}` (`TEST_FILES_TOKEN`). A diff
+   * since the lane's last clean pass touching only leaf test files runs those files (src/pipeline/lanes.ts `testOnlyRun`).
+   */
+  testArgv?: readonly string[];
+  /** dev.17: run k-of-n (`Stochastic`); absent: one run under the red-lane protocol. */
+  stochastic?: Stochastic;
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -883,30 +910,57 @@ export const laneEnv: Read<LaneEnv> = object((f) => {
   return out;
 });
 
-function laneFields(f: Fields): LaneDef {
+const stochastic: Read<Stochastic> = object((f) => {
+  const out = { runs: f.get('runs', positive), minPasses: f.get('minPasses', positive) };
+  if (out.runs < 2) throw new SchemaError(`${f.path}.runs`, 'at least 2 (one run is not stochastic)', out.runs);
+  if (out.minPasses > out.runs) throw new SchemaError(`${f.path}.minPasses`, `at most runs (${out.runs})`, out.minPasses);
+  return out;
+});
+
+/**
+ * A lane of `kind` (null: the normalising re-read, `laneRevOf`, which takes any cadence and the current form only). A
+ * dev.16 lane's `tier` reads as its kind's cadence and a dev.16 spec lane's `inputs` are dropped (src/core/upgrade.ts).
+ */
+function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
+  const id = f.get('id', (v, p) => laneId(v, p));
+  const tier = kind === null ? undefined : f.optional('tier', oneOf(['fast', 'estate'] as const));
+  const declared = f.optional('cadence', oneOf(LANE_CADENCES));
+  if (tier !== undefined && declared !== undefined) throw new SchemaError(`${f.path}.tier`, 'absent beside cadence (tier is the dev.16 form)', tier);
+  const cadence = declared ?? (tier === undefined || kind === null ? f.get('cadence', oneOf(LANE_CADENCES)) : laneCadenceDefault(kind, tier));
+  if (kind !== null && !KIND_CADENCES[kind].includes(cadence)) throw new SchemaError(`${f.path}.cadence`, `${KIND_CADENCES[kind].join(' or ')} on ${kind === 'arc' ? 'an' : 'a'} ${kind} lane`, cadence);
   const out = {
-    id: f.get('id', (v, p) => laneId(v, p)),
+    id,
     argv: f.get('argv', argv),
     cwd: f.get('cwd', (v, p) => repoPath(v, p)),
     env: f.get('env', laneEnv),
     expectedExit: f.get('expectedExit', exitCode),
-    tier: f.get('tier', oneOf(['fast', 'estate'] as const)),
+    cadence,
     resources: f.get('resources', arrayOf(resource)),
     evidenceGlobs: f.get('evidenceGlobs', arrayOf((v, p) => repoPattern(v, p))),
     evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
   const cpu = f.optional('cpu', positive);
-  const inputs = f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true }));
+  if (kind === 'spec' && f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })) !== undefined) laneInputsDropped(id);
+  const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
+  const testArgv = f.optional('testArgv', argv);
+  const stoch = f.optional('stochastic', stochastic);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
-  if (inputs !== undefined) assertUnique(inputs, (i) => i, `${f.path}.inputs`);
-  return { ...out, ...(cpu === undefined ? {} : { cpu }), ...(inputs === undefined ? {} : { inputs }) };
+  if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
+  if (testArgv !== undefined && testArgv.filter((a) => a === TEST_FILES_TOKEN).length !== 1) {
+    throw new SchemaError(`${f.path}.testArgv`, `one element exactly ${TEST_FILES_TOKEN}`, testArgv);
+  }
+  if (kind === 'arc' && (testArgv !== undefined || stoch !== undefined)) {
+    throw new SchemaError(`${f.path}`, 'no testArgv or stochastic on an arc lane (its runs are witnesses)', { testArgv, stochastic: stoch });
+  }
+  return {
+    ...out, ...(cpu === undefined ? {} : { cpu }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
+    ...(stoch === undefined ? {} : { stochastic: stoch }),
+  };
 }
-export const laneDef: Read<LaneDef> = object(laneFields);
-
-/** M4a rev 3 (F1a): `inputs` belongs to a spec lane; a suite lane (plan.json) or an arc lane (obligations) declaring it is refused. */
-export function refuseLaneInputs(lane: LaneDef, path: string, what: 'suite' | 'arc'): void {
-  if (lane.inputs !== undefined) throw new SchemaError(`${path}.inputs`, `absent on ${what === 'suite' ? 'a suite' : 'an arc'} lane (inputs are a spec lane's)`, lane.inputs);
-}
+/** A lane declared as `kind` (see `laneFields`). */
+export const laneDefOf = (kind: LaneKind): Read<LaneDef> => object((f) => laneFields(f, kind));
+/** A lane in its normalised form (any cadence, no dev.16 fields): what `laneRevOf` re-reads. */
+export const laneDef: Read<LaneDef> = object((f) => laneFields(f, null));
 
 /** Items keep their id forever; strike and defer change state, never delete, so ids are never reused. */
 export type ItemState = 'active' | 'struck' | 'deferred';
@@ -959,6 +1013,12 @@ export type SpecM1 = Readonly<{
    * unit's scope that still names one (non-empty when present, unique; absent: none, lasting, `specRemoves`).
    */
   removes?: readonly string[];
+  /**
+   * dev.17: suite lanes of a later cadence (candidate, batch) the unit's own lanes stage runs at the salvage SHA, after its
+   * spec lanes (non-empty, unique when present; absent: none, lasting, `specForces`). A repair of a batch lane's P1 forces
+   * that lane besides (src/pipeline/stages.ts `forcedLanes`).
+   */
+  forces?: readonly LaneId[];
 }>;
 
 /**
@@ -981,6 +1041,8 @@ export const specRepairs = (spec: SpecM1): readonly RepairRef[] => spec.repairs 
 export const specWitnesses = (spec: SpecM1): readonly Stated<WitnessItemDef>[] => spec.witnesses ?? [];
 /** What a spec says its unit removes or renames (scope growth, 2026-10-15); none when absent. */
 export const specRemoves = (spec: SpecM1): readonly string[] => spec.removes ?? [];
+/** The suite lanes a spec forces at its lanes stage (dev.17); none when absent. */
+export const specForces = (spec: SpecM1): readonly LaneId[] => spec.forces ?? [];
 
 const itemState: Read<ItemState> = oneOf(['active', 'struck', 'deferred'] as const);
 const cid: Read<ClauseId> = (v, p) => clauseId(v, p);
@@ -1024,11 +1086,12 @@ export const specM1: Read<SpecM1> = object((f) => {
   const repairs = f.optional('repairs', arrayOf(repairRef, { nonEmpty: true }));
   const witnesses = f.optional('witnesses', arrayOf(stated(witnessItemFields), { nonEmpty: true }));
   const removes = f.optional('removes', arrayOf(removed, { nonEmpty: true }));
+  const forces = f.optional('forces', arrayOf((v, p) => laneId(v, p), { nonEmpty: true }));
   const out: SpecM1 = {
     schema: f.get('schema', literal(SPEC_SCHEMA)),
     unit: f.get('unit', unit),
     rev: f.get('rev', (v, p) => specRev(v, p)),
-    lanes: f.get('lanes', arrayOf(stated(laneFields))),
+    lanes: f.get('lanes', arrayOf(stated((g) => laneFields(g, 'spec')))),
     acceptance: f.get('acceptance', arrayOf(stated(acceptanceFields), { nonEmpty: true })),
     scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
     resources: f.get('resources', arrayOf(resource)),
@@ -1039,8 +1102,10 @@ export const specM1: Read<SpecM1> = object((f) => {
     ...(repairs === undefined ? {} : { repairs }),
     ...(witnesses === undefined ? {} : { witnesses }),
     ...(removes === undefined ? {} : { removes }),
+    ...(forces === undefined ? {} : { forces }),
   };
   assertUnique(specRemoves(out), (r) => r, `${f.path}.removes`);
+  assertUnique(specForces(out), (l) => l, `${f.path}.forces`);
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts, ...specWitnesses(out)], (i) => i.id, `${f.path}.<item ids>`);
   assertUnique(specObligations(out), (o) => o, `${f.path}.obligations`);
   assertUnique(specRepairs(out), (r) => r, `${f.path}.repairs`);
@@ -1079,7 +1144,7 @@ export type SpecPatch = Readonly<{
 }>;
 
 const sectionItem: { readonly [S in SpecSection]: Read<SectionItem[S]> } = {
-  lanes: laneDef,
+  lanes: laneDefOf('spec'),
   acceptance: object(acceptanceFields),
   decisions: object(noteFields),
   facts: object(noteFields),

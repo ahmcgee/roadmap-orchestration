@@ -123,6 +123,14 @@ export const edgeId: IdReader<EdgeId> = textual('EdgeId', new RegExp(`^${SLUG}$`
 export type LaneId = Brand<string, 'LaneId'>;
 export const laneId: IdReader<LaneId> = textual('LaneId', /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/, 'a letter then letters, digits, _ . -, 1-64 chars');
 
+/**
+ * A system of the repo's systems map (`.roadmap/config.json` `systemsMap`, src/input/systems.ts). `docs` names the map's
+ * docs class (never a declared system): a lane listing it reads the docs paths.
+ */
+export type SystemName = Brand<string, 'SystemName'>;
+export const systemName: IdReader<SystemName> = textual('SystemName', new RegExp(`^${SLUG}$`), SLUG_FORM);
+export const DOCS_SYSTEM = systemName('docs');
+
 /** Acceptance clauses, decisions and facts in a spec. */
 export type ClauseId = Brand<string, 'ClauseId'>;
 export const clauseId: IdReader<ClauseId> = textual('ClauseId', /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/, 'a letter then letters, digits, _ . -, 1-64 chars');

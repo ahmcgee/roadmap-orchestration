@@ -385,6 +385,7 @@ export function planAppliedOf(payload: RevisionPayload, payloadSha256: Sha256Hex
     source: payload.source, payloadSha256, rulingsSha256: m.rulings.ledgerSha256,
     ...(m.obligations === null ? {} : { obligationsSha256: m.obligations }), ...(m.vision === null ? {} : { visionSha256: m.vision }),
     ...(publication === null ? {} : { publication }), routingProvenance: payload.routingProvenance,
+    ...(payload.systemsMap === undefined ? {} : { systemsMap: payload.systemsMap }),
   };
 }
 
@@ -458,6 +459,7 @@ export function recordPlan(journal: Journal, runDir: AbsPath, files: InputFiles,
   const payload: RevisionPayload = {
     v: SCHEMA_VERSION, source: { type: 'start' }, base, rev: planRev(base + 1), manifest: keepRevisionFiles(runDir, files), changes,
     dispositions: [], divergences: [], publication: null, routingProvenance: routingProvenanceOf(routing, files.plan),
+    systemsMap: routing.config?.systemsMap ?? null,
   };
   return commitRevisionNow(journal, runDir, payload, { type: 'arc' });
 }

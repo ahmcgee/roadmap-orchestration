@@ -36,8 +36,8 @@ export function cpuCapacity(plan: PlanM1, host: number = availableParallelism())
 /** `@cpu` tokens a build of `unit` takes. */
 export const buildCpu = (unit: PlanUnit): number => unit.cpu ?? CPU_COST.build;
 
-/** `@cpu` tokens a lane takes: its own `cpu`, else its tier's default. */
-export const laneCpu = (lane: LaneDef): number => lane.cpu ?? CPU_COST.lane[lane.tier];
+/** `@cpu` tokens a lane takes: its own `cpu`, else its cadence's default. */
+export const laneCpu = (lane: LaneDef): number => lane.cpu ?? CPU_COST.lane[lane.cadence];
 
 /** The declaration a named resource or a pool is declared by; the slot has none, so it is a bug here. */
 export function declOf(plan: PlanM1, name: ResourceName): ResourceDecl {

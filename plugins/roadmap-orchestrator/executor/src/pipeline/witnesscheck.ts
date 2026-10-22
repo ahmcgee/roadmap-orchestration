@@ -85,12 +85,12 @@ const testIdsOf = (required: readonly RequiredWitness[], lane: LaneId): readonly
 // The implementer's lane files (WITNESS_FILES)
 
 /**
- * Publishes, write-once, the lane file of each fast lane `required` names under `<evidenceDir>/witness/<lane>.json`, and
+ * Publishes, write-once, the lane file of each build-cadence arc lane `required` names under `<evidenceDir>/witness/<lane>.json`, and
  * returns the command per lane the build is given. A file already there must hold the same bytes (a retry of the same
  * attempt); anything else fails loud.
  */
 export function publishWitnessLaneFiles(ctx: StageContext, unit: PlanUnit, evidenceDir: AbsPath, required: readonly RequiredWitness[]): readonly WitnessCheckCommand[] {
-  const fast = requiredLanes(ctx, required).filter((l) => l.tier === 'fast');
+  const fast = requiredLanes(ctx, required).filter((l) => l.cadence === 'build');
   if (fast.length === 0) return [];
   const dir = absPath(join(evidenceDir, WITNESS_LANE_DIR));
   durableMkdir(dir);

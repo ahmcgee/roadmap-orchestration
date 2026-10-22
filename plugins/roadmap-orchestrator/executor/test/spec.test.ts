@@ -135,17 +135,17 @@ describe('spec rendering', () => {
 
   it('spec.render-fast-lanes-only', () => {
     const full = renderSpec(SPEC);
-    const fast = renderSpec(SPEC, { fastLanesOnly: true });
-    const estateTokens = ['estateJourney', 'estate-runner', '--estate-flag', 'estate-dir', 'ESTATE_SECRET', 'estate-value', 'ESTATE_PASS', 'estate-evidence', 'tier estate'];
+    const fast = renderSpec(SPEC, { buildLanesOnly: true });
+    const estateTokens = ['estateJourney', 'estate-runner', '--estate-flag', 'estate-dir', 'ESTATE_SECRET', 'estate-value', 'ESTATE_PASS', 'estate-evidence', 'cadence unit'];
     for (const token of estateTokens) {
       assert.ok(full.includes(token), `full render shows ${token}`);
       assert.ok(!fast.includes(token), `fast-lanes render leaks ${token}`);
     }
-    assert.ok(fast.includes('`unit-tests` [active] tier fast'));
+    assert.ok(fast.includes('`unit-tests` [active] cadence build'));
     // A struck estate lane is still an estate lane: omitted too.
     const struck = applySpecPatch(SPEC, patch([{ op: 'strike', id: 'estateJourney' }]));
-    assert.ok(!renderSpec(struck, { fastLanesOnly: true }).includes('estateJourney'));
-    assert.ok(renderSpec(struck).includes('`estateJourney` [struck] tier estate'));
+    assert.ok(!renderSpec(struck, { buildLanesOnly: true }).includes('estateJourney'));
+    assert.ok(renderSpec(struck).includes('`estateJourney` [struck] cadence unit'));
   });
 
   it('spec.redirect-renders', () => {
@@ -158,7 +158,7 @@ describe('spec rendering', () => {
     assert.ok(text.includes('- `D1` [deferred]: Use the canvas API.'), 'deferred items stay visible');
     assert.ok(text.includes('- `D2` [active]: Use SVG instead.'));
     assert.ok(text.includes('- `F2` [active]: SVG is available.'));
-    assert.ok(text.includes('`lint` [active] tier fast'));
+    assert.ok(text.includes('`lint` [active] cadence build'));
   });
 });
 

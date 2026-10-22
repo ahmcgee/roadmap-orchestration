@@ -146,7 +146,7 @@ import { comparePending, runCompare } from '../walk/compare.ts';
 import { walksPending } from '../walk/milestones.ts';
 import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
-import { type Observation, type ObservationStore, keyOf, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
+import { type Observation, type ObservationStore, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import type { RoutingBase } from '../input/inforce.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { commandScope } from '../input/classify.ts';
@@ -158,7 +158,7 @@ import { baselineDue, runBaseline } from '../pipeline/baseline.ts';
 import { type StageContext, runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome, batchRepairs, finishBatch, findingBlocking, heldBatch, publishBatch } from '../pipeline/integrate.ts';
 import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
-import { laneEnvId, observations } from '../pipeline/lanes.ts';
+import { arcLaneKey, laneEnvId, observations } from '../pipeline/lanes.ts';
 import { type DocsContext, closeOutFiles, endDetail, publishCloseOut } from '../pipeline/publish.ts';
 import { repairUnits, specFacts } from '../pipeline/reproduce.ts';
 import { at, executorIdentity, holisticInForce, record, start } from '../pipeline/stages.ts';
@@ -467,12 +467,15 @@ export function baselineOwed(ctx: StageContext): JobId | null {
 const integrationTree = (ctx: StageContext): Sha => revParse(ctx.repo, `${integrationHeadNow(ctx)}^{tree}`);
 
 /**
- * The observation that witnesses `lane` on `tree` under §2.8's strict reuse rule: the lane's observation on the tree at
- * its revision in the executor's environment (`laneEnv`), or null. Completion and `status` both read it (one rule).
+ * The observation that witnesses `lane` on `tree` under §2.8's strict reuse rule: the lane's observation on the tree's input
+ * for it (its reuse key, dev.17) at its revision in the executor's environment (`laneEnv`), or null. Completion and `status`
+ * both read it (one rule).
  */
-export function dischargingObservation(store: ObservationStore, tree: Sha, lane: ArcLaneDef, laneEnv: (lane: ArcLaneDef) => EnvId | null): Observation | null {
+export function dischargingObservation(
+  ctx: Readonly<{ repo: AbsPath; journal: Readonly<{ view: JournalView }> }>, store: ObservationStore, tree: Sha, lane: ArcLaneDef, laneEnv: (lane: ArcLaneDef) => EnvId | null,
+): Observation | null {
   const env = laneEnv(lane);
-  return env === null ? null : reuse(store, keyOf(tree, lane, env));
+  return env === null ? null : reuse(store, arcLaneKey(ctx, tree, lane, env));
 }
 
 /**
@@ -494,7 +497,7 @@ export function obligationsOn(
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const found = dischargingObservation(store, tree, lane, laneEnv);
+    const found = dischargingObservation(ctx, store, tree, lane, laneEnv);
     if (found === null) unobserved = true;
     else if (witnessVerdict(found.record, o.witness) !== 'held') return 'not-held';
   }

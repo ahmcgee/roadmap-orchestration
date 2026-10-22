@@ -98,8 +98,8 @@ import {
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, specRemoves,
-  specWitnesses,
+  type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, specForces,
+  specRemoves, specRepairs, specWitnesses,
 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
@@ -126,7 +126,7 @@ import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, BuildAssess, BuildBrowser, Checkout, CorpusInput, DeliveredWitness, DocText, EscalationInput, FastLane, GateTargetInput, MilestonesInput, PlanCheckAcceptance,
+  ArchitectureInput, BuildAssess, BuildBrowser, Checkout, CorpusInput, DeliveredWitness, DocText, EscalationInput, BuildLane, GateTargetInput, MilestonesInput, PlanCheckAcceptance,
   PlanCheckCheckouts, PlanCheckPriorRound, PlanCheckScopeGrowth, ReferenceIndex, RulingText, TargetInput, UnitMilestone, VisionInput,
 } from '../prompts/inputs.ts';
 import { visionInputOf } from '../prompts/inputs.ts';
@@ -140,7 +140,7 @@ import { resolveArgv0 } from '../preflight/argv0.ts';
 import type { JudgmentRole, JudgmentSeat, Triple } from '../routing/types.ts';
 import { buildCpu, requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
-import { type Reservation, type StageHolder, cleanup, fastLanes, heldReservation, holderUnits, run } from '../resources/reserve.ts';
+import { type Reservation, type StageHolder, cleanup, buildLanes, heldReservation, holderUnits, run } from '../resources/reserve.ts';
 import { knownDefectActive } from '../schedule/ready.ts';
 import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 import { renderSpec } from '../spec/render.ts';
@@ -157,8 +157,8 @@ import {
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, dirtyPaths, dirtySnapshot, fastSuiteLanes, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
-  removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot,
+  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
+  removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
 } from './lanes.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
@@ -1207,12 +1207,12 @@ export type BuildRun = Readonly<{
 
 export type BuildDone = StageDone<'build'> & Readonly<{ run: BuildRun | null }>;
 
-const activeFastLanes = (spec: SpecM1): readonly FastLane[] =>
-  fastLanes(spec).filter((l) => l.state === 'active') as readonly (FastLane & Readonly<{ state: 'active' }>)[];
+const activeBuildLanes = (spec: SpecM1): readonly BuildLane[] =>
+  buildLanes(spec).filter((l): l is SpecM1['lanes'][number] & BuildLane => l.state === 'active' && l.cadence === 'build');
 
 /** The fast lane ids a build call's answer may name (I3): its schema's enum, and its reader's (null: none declared). */
 export const buildLaneIds = (spec: SpecM1): readonly LaneId[] | null => {
-  const ids = activeFastLanes(spec).map((l) => l.id);
+  const ids = activeBuildLanes(spec).map((l) => l.id);
   return ids.length === 0 ? null : ids;
 };
 
@@ -1365,9 +1365,9 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const witnessChecks = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
   const lanes = buildLaneIds(spec);
   const render = (fixRound: RoundCall['fixRound'], assess: BuildAssess | null): string => prompt.render({
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...lib,
+    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
-    fastLanes: activeFastLanes(spec), suiteLanes: fastSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
+    fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
     fixRound, witnessChecks, assess, milestones, browser: browser?.input ?? null,
   });
   const callFor = (call: RoundCall): BackendCallSpec => ({
@@ -1487,7 +1487,7 @@ export async function evidence(ctx: StageContext, unit: PlanUnit, run: BuildRun)
   await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit.id}`, parent, {
     source: ctx.runDir, globs: [`${inv}/stdout`, `${inv}/stderr`, `${work}/**`].map((g) => repoPattern(g)), dest: dirs[0]!,
   });
-  const globs = unique(activeFastLanes(spec).flatMap((l) => l.evidenceGlobs));
+  const globs = unique(activeBuildLanes(spec).flatMap((l) => l.evidenceGlobs));
   if (globs.length > 0) {
     dirs.push(absPath(join(root, 'tree')));
     await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit.id}`, parent, { source: run.worktree, globs, dest: dirs[1]! });
@@ -1797,13 +1797,23 @@ async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lane
   return check;
 }
 
+/**
+ * The suite lanes a unit forces at its lanes stage (dev.17): its spec's `forces`, and the batch lane of each finding it
+ * repairs that a batch lane's red opened (a repair of a batch P1 proves itself on that lane before it merges).
+ */
+export function forcedLanes(view: JournalView, spec: SpecM1): ReadonlySet<LaneId> {
+  const repairs = new Set<string>(specRepairs(spec));
+  const batch = view.holistic().findings.flatMap((f) => (f.lane !== undefined && repairs.has(f.id) ? [f.lane] : []));
+  return new Set([...specForces(spec), ...batch]);
+}
+
 /** The fast suite after a green spec series: its verdict, and its series at the salvage SHA (null when it has no lane). */
 async function fastSuite(
   ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime,
 ): Promise<Readonly<{ verdict: LanesVerdict; series: Series | null }>> {
   // dev.12: the regenerate checks of the derived entries the unit's diff touches go first (src/input/derived.ts).
   const regenerate = unitRegenerateLanes(ctx.plan(), unitDiffPaths(ctx.repo, integrationTip(ctx), salvaged));
-  const lanes = [...regenerate, ...fastSuiteLanes(ctx.plan().suite.lanes, spec)];
+  const lanes = [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
   if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
   const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt);
   const fault = suiteFault(ctx, unit.id, series);

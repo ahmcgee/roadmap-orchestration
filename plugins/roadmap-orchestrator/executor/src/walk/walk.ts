@@ -50,6 +50,8 @@ import {
   type BackendCallOutcome, type RepairTurn, type StageContext, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf,
 } from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
+import { batchFindingsOf, runBatchPoint } from '../pipeline/batchlanes.ts';
+import { endDetail } from '../pipeline/publish.ts';
 import { holisticInForce, inMs, loadUnitSpec } from '../pipeline/stages.ts';
 import { referenceFiles } from '../phase0/rows.ts';
 import { repairUnits } from '../pipeline/reproduce.ts';
@@ -253,7 +255,9 @@ function end(
 ): WalkRunOutcome {
   const last = w.round >= walkRoundsOf(plan);
   crashPoint('walk.before-ended');
-  ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: canonicalIds(findings), proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
+  // dev.17: the walk's findings include its batch point's (src/pipeline/batchlanes.ts).
+  const all = canonicalIds([...new Set([...findings, ...batchFindingsOf(ctx, w.job)])]);
+  ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: all, proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
   crashPoint('walk.after-ended');
   const passes = outcome === 'reported' && !milestonePassed(ctx.journal.view, m.id) && activeWalkP1s(ctx.journal.view, m.id).length === 0;
   if (passes) {
@@ -279,6 +283,9 @@ export async function runWalk(ctx: WalkContext): Promise<WalkRunOutcome> {
     crashPoint('walk.after-started');
   }
   const walk = w;
+  // dev.17: the milestone's batch point on the walked SHA, before the walk's reservation (src/pipeline/batchlanes.ts).
+  const batch = await runBatchPoint(ctx, walk.job, walk.sha, milestoneOf(ctx.plan(), walk.milestone), (d) => void openFinding(ctx.journal, d));
+  if (batch.kind === 'no-verdict') return { kind: 'incomplete', job: walk.job, detail: endDetail(batch.end) };
   const r = await reserveJob(ctx, walk.job, milestoneOf(ctx.plan(), walk.milestone));
   if (r === 'occupied' || r === 'cleanup-failed') return { kind: 'incomplete', job: walk.job, detail: r };
   try {

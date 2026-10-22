@@ -114,7 +114,7 @@ const LANE_ITEM_FIELDS = {
   cwd: S_STR,
   env: sObj({ set: sArr(sObj({ name: S_STR, value: S_STR })), pass: sArr(S_STR) }),
   expectedExit: S_INT,
-  tier: sEnum(['fast', 'estate']),
+  cadence: sEnum(['build', 'unit']),
   resources: sArr(S_STR),
   evidenceGlobs: sArr(S_STR),
   evidenceExcludes: sArr(S_STR),
@@ -691,8 +691,8 @@ const sSplitChild = (arcLanes: Schema): Schema => sObj({
  * An admit's spec (run 10, D): the new unit's spec.json as an object, structurally (the spec-m1 fields, each item with
  * its state; a lane's env.set as [{name, value}], as a patch writes it; `obligations` and `repairs` [] for none), so a
  * malformed one is a schema violation the adapter catches before the bundle is decided. No witness items: they enter a
- * spec only through a patch (R59). A lane's optional `cpu` and `inputs` are not offered: an admitted lane takes its
- * tier's defaults.
+ * spec only through a patch (R59). A lane's optional `cpu`, `systems`, `testArgv` and `stochastic` are not offered: an
+ * admitted lane takes its cadence's `@cpu` and reads the whole tree.
  */
 const S_ADMIT_SPEC = sObj({
   schema: sEnum([SPEC_SCHEMA]),

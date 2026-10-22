@@ -51,6 +51,7 @@ import {
   type ArcSeatRef, type Backend, type RiskTier, type RoutingProvenance, type SeatRef, type UnitSeatRef, arcSeatFields, backend, riskTier,
   routingProvenance, seatFields, unitSeatFields,
 } from '../routing/types.ts';
+import { type SystemsMap, systemsMap } from '../input/systems.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -150,9 +151,11 @@ export type LaneOwner = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ ty
 export type MutantOf = Readonly<{ type: 'finding'; finding: FindingId }> | Readonly<{ type: 'smoke'; unit: UnitId; attempt: number }>;
 
 /**
- * A lane execution's reuse identity (M4a rev 3, F1a, R52), stamped on a spec lane's spawn: the lane's normalised rev
- * (`laneRevOf`), its environment's id (`envIdOf`), and argv[0] resolved to a path with its content's sha256 (null when it
- * does not resolve: never reused). Absent: a 1.0.0-dev.6 execution, never reused.
+ * A lane execution's reuse identity (M4a rev 3, F1a, R52), stamped on a spec lane's spawn and (dev.17) on a suite lane's,
+ * in a series or a journey: the lane's normalised rev (`laneRevOf`), its environment's id (`envIdOf`), and argv[0] resolved
+ * to a path with its content's sha256 (null when it does not resolve: never reused). With the lane's input on the run's
+ * commit (src/git/reusekey.ts) it is the run's reuse key. Absent: never reused (a 1.0.0-dev.6 execution, a suite lane's
+ * before dev.17).
  */
 export type LaneIdentity = Readonly<{ laneRev: LaneRev; envId: EnvId; argv0: Readonly<{ path: AbsPath; sha256: Sha256Hex }> | null }>;
 
@@ -170,10 +173,15 @@ export type Dev6MutantSubject = Readonly<{ purpose: 'mutant'; finding: FindingId
 export type SpawnSubject =
   | (Readonly<{ purpose: 'backend'; routingRev: RoutingRev; unit: UnitId; attempt: number }> & UnitSeatRef)
   | (Readonly<{ purpose: 'arc-backend'; routingRev: RoutingRev; job: JobId; attempt: number }> & ArcSeatRef)
-  | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner; redRev?: RedRev }>
+  /** dev.17: `identity` on a suite lane's journey (a batch point's, a publication's), so a batch point finds its clean passes. */
+  | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner; redRev?: RedRev; identity?: LaneIdentity }>
   | MutantSubject
   | Dev6MutantSubject
-  | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity }>
+  /**
+   * dev.17: `files`, a test-only run (src/pipeline/lanes.ts `testOnlyRun`): the lane's `testArgv` over these leaf test files,
+   * the rest carried over from the clean pass the run builds on (non-empty when present; absent: the whole lane).
+   */
+  | Readonly<{ purpose: 'lane'; unit: UnitId; lane: LaneId; set: 'spec' | 'suite'; at: Sha; redRev?: RedRev; identity?: LaneIdentity; files?: readonly RepoPath[] }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   /**
    * M4b: one side of a suite-lane proof (RC-4): proof job `job` runs lane `lane` with its `old` or `new` argv at the
@@ -765,6 +773,8 @@ export type PlanAppliedM3 = Readonly<{
   visionSha256?: Sha256Hex;
   publication?: Readonly<{ pub: JobId; head: Sha }>;
   routingProvenance: RoutingProvenance;
+  /** dev.17: the repo config's systems map the revision was applied under (null: none); absent before dev.17 (`systemsMapInForce`). */
+  systemsMap?: SystemsMap | null;
 }>;
 
 /**
@@ -813,7 +823,11 @@ export type LensRefusal = Readonly<{ lens: LensKindName; attempt: number; claim:
 /** The M3 facts (SCHEMAS.md "M3: the holistic layer"). */
 export type HolisticFact =
   /** A witness run's records (`witness.json`, hashed): the observation key and whom it ran for. */
-  | Readonly<{ kind: 'witnessed'; lane: LaneId; laneRev: LaneRev; envId: EnvId; treeSha: Sha; inv: InvocationId; recordsSha256: Sha256Hex; purpose: WitnessPurpose; for: WitnessFor }>
+  /** dev.17: `inputSha`, the lane's input on the tree (src/git/reusekey.ts); absent before dev.17: `treeSha`. */
+  | Readonly<{
+    kind: 'witnessed'; lane: LaneId; laneRev: LaneRev; envId: EnvId; treeSha: Sha; inv: InvocationId; recordsSha256: Sha256Hex; purpose: WitnessPurpose; for: WitnessFor;
+    inputSha?: Sha;
+  }>
   /** A future obligation delivered and held on its publication: it is must-hold from here (after `ff{published}`, before the snapshot). */
   | Readonly<{ kind: 'obligation-latched'; obligation: ObligationId; unit: UnitId; treeSha: Sha }>
   /** dev.13: `milestone` exactly on a `walkthrough` finding (absent on every other: none). */
@@ -823,6 +837,11 @@ export type HolisticFact =
     gateHadPassed: boolean; milestone?: MilestoneId;
     /** dev.13: the finding's cause (its key's input), kept only on a walkthrough finding, so a later walk re-reports it alike; absent: none. */
     cause?: string;
+    /**
+     * dev.17: the batch lane whose red opened it (code's batch P1): a walkthrough P1 from a walk job (the milestone's batch
+     * point) or a witness P1 over no obligation from an audit job (a no-milestone arc's). A repair of it forces the lane.
+     */
+    lane?: LaneId;
   }>
   | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
   | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
@@ -892,7 +911,11 @@ export type M4aFact =
    * A series reused a lane's earlier pass instead of running it (F1a, R52), written before the lane would have run;
    * keyed `(parent, lane)`. `from`: the reused execution's series parent, invocation and SHA.
    */
-  | Readonly<{ kind: 'lane-reused'; parent: Parent; lane: LaneId; from: Readonly<{ parent: Parent; inv: InvocationId; at: Sha }> }>
+  /**
+   * dev.17: `set` and `at`, the series that reused it (absent: a spec series, at its commit); `from` may name any unit's
+   * series, a suite lane's included, whose run has the same reuse key (src/git/reusekey.ts).
+   */
+  | Readonly<{ kind: 'lane-reused'; parent: Parent; lane: LaneId; from: Readonly<{ parent: Parent; inv: InvocationId; at: Sha }>; set?: 'spec' | 'suite'; at?: Sha }>
   /**
    * A series' completed clean certificate (Q12, R51): its lanes ran, its checkout's census was clean and its checkout was
    * removed. Absence is unknown, never clean: an uncertified series is never reused. One per `(parent, checkout)`.
@@ -1129,6 +1152,8 @@ export type RevisionPayload = Readonly<{
   divergences: readonly DivergenceDraft[];
   publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
   routingProvenance: RoutingProvenance;
+  /** dev.17: the repo config's systems map (src/input/systems.ts; null: none); absent on a payload a dev.16 executor kept. */
+  systemsMap?: SystemsMap | null;
   owner?: RevisionManifest;
 }>;
 
@@ -1304,9 +1329,10 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   })),
   journey: object((f): SpawnSubject => {
     const redRev = f.optional('redRev', positive);
+    const identity = f.optional('identity', laneIdentity);
     return {
       purpose: f.get('purpose', literal('journey')), lane: f.get('lane', laneR), laneRev: f.get('laneRev', laneRevR), at: f.get('at', shaR),
-      owner: f.get('owner', laneOwner), ...(redRev === undefined ? {} : { redRev }),
+      owner: f.get('owner', laneOwner), ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }),
     };
   }),
   // M4a rev 3: `of`; a 1.0.0-dev.6 subject's `finding` reads as written (`mutantSubjectDefault`).
@@ -1317,13 +1343,12 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   lane: object((f): SpawnSubject => {
     const redRev = f.optional('redRev', positive);
     const identity = f.optional('identity', laneIdentity);
-    const out = {
+    const files = f.optional('files', sortedBy((v, p) => repoPath(v, p), (s) => s, { nonEmpty: true }));
+    return {
       purpose: f.get('purpose', literal('lane')), unit: f.get('unit', unitR), lane: f.get('lane', (v, p): LaneId => laneId(v, p)),
       set: f.get('set', oneOf(['spec', 'suite'] as const)), at: f.get('at', shaR),
-      ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }),
+      ...(redRev === undefined ? {} : { redRev }), ...(identity === undefined ? {} : { identity }), ...(files === undefined ? {} : { files }),
     };
-    if (identity !== undefined && out.set !== 'spec') throw new SchemaError(`${f.path}.identity`, 'absent on a suite lane (only a spec lane is reused)', identity);
-    return out;
   }),
   teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
   probe: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('probe')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
@@ -1694,9 +1719,10 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     })))),
     routingProvenance: f.get('routingProvenance', routingProvenance),
   };
+  const systems = f.optional('systemsMap', nullable(systemsMap));
   const owner = f.optional('owner', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) })));
   if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
-  return owner === undefined ? out : { ...out, owner };
+  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(owner === undefined ? {} : { owner }) };
 });
 
 export function parseRevisionPayload(value: unknown): RevisionPayload {
@@ -1835,10 +1861,15 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     if ((out.bankReason === 'opportunity-overrun') !== (out.source.type === 'admit')) throw new SchemaError(`${f.path}.source`, out.bankReason === 'opportunity-overrun' ? 'the admit that overran' : 'a gate or finding source', out.source);
     return opportunity === undefined ? out : { ...out, opportunity };
   }),
-  'lane-reused': object((f): Fact => ({
-    kind: f.get('kind', literal('lane-reused')), parent: f.get('parent', parent), lane: f.get('lane', laneR),
-    from: f.get('from', object((g) => ({ parent: g.get('parent', parent), inv: g.get('inv', invR), at: g.get('at', shaR) }))),
-  })),
+  'lane-reused': object((f): Fact => {
+    const set = f.optional('set', oneOf(['spec', 'suite'] as const));
+    const at = f.optional('at', shaR);
+    return {
+      kind: f.get('kind', literal('lane-reused')), parent: f.get('parent', parent), lane: f.get('lane', laneR),
+      from: f.get('from', object((g) => ({ parent: g.get('parent', parent), inv: g.get('inv', invR), at: g.get('at', shaR) }))),
+      ...(set === undefined ? {} : { set }), ...(at === undefined ? {} : { at }),
+    };
+  }),
   'series-certified': object((f): Fact => ({ kind: f.get('kind', literal('series-certified')), parent: f.get('parent', parent), checkout: f.get('checkout', absR), at: f.get('at', shaR) })),
   'smoke-ran': object((f): Fact => ({
     kind: f.get('kind', literal('smoke-ran')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), key: f.get('key', sha256R), verdict: f.get('verdict', smokeVerdict),
@@ -2013,10 +2044,11 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       treeSha: f.get('treeSha', shaR), inv: f.get('inv', invR), recordsSha256: f.get('recordsSha256', sha256R), purpose: f.get('purpose', oneOf(WITNESS_PURPOSES)),
       for: f.get('for', witnessFor),
     };
+    const inputSha = f.optional('inputSha', shaR);
     // G13: a mutant run (a finding's, or M4a rev 3's mutation smoke) is recorded as such and never certifies.
     const mutant = out.for.type === 'mutant' || out.for.type === 'smoke';
     if ((out.purpose === 'mutant') !== mutant) throw new SchemaError(`${f.path}.for`, out.purpose === 'mutant' ? 'mutant{finding, of} or smoke{unit, attempt, of}' : 'a candidate or a job', out.for);
-    return out;
+    return inputSha === undefined ? out : { ...out, inputSha };
   }),
   'obligation-latched': object((f): Fact => ({
     kind: f.get('kind', literal('obligation-latched')), obligation: f.get('obligation', obligationR), unit: f.get('unit', unitR), treeSha: f.get('treeSha', shaR),
@@ -2031,6 +2063,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     };
     const milestone = f.optional('milestone', (v, p): MilestoneId => milestoneId(v, p));
     const cause = f.optional('cause', str);
+    const lane = f.optional('lane', laneR);
     // dev.13: a walkthrough finding names its milestone, is a P1 (breaks) or a P2 (deviates), and comes from a walk job or
     // the demo; no other finding names a milestone or comes from the demo.
     const walk = out.lens === 'walkthrough';
@@ -2043,12 +2076,17 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     // R17: plan-check opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
     if ((out.lens === 'plan-check') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'plan-check' ? 'the plan-check attempt' : 'the job that opened it', out.source);
     if (out.lens === 'plan-check' && (out.severity !== 'P3' || out.visionClauses.length === 0)) throw new SchemaError(`${f.path}.severity`, 'P3 citing vision clauses for a plan-check vision conflict', out.severity);
-    // A must-hold not held on an audit snapshot opens a P1 over its obligation.
-    if (out.lens === 'witness' && (out.severity !== 'P1' || out.obligation === null)) throw new SchemaError(`${f.path}.severity`, 'P1 over its obligation for a witness finding', out.severity);
+    // A must-hold not held on an audit snapshot opens a P1 over its obligation; dev.17: a batch lane red at an audit, a P1 over none.
+    if (out.lens === 'witness' && (out.severity !== 'P1' || (out.obligation === null) !== (lane !== undefined))) {
+      throw new SchemaError(`${f.path}.severity`, 'P1 over its obligation (or, a batch lane red, over none) for a witness finding', out.severity);
+    }
+    if (lane !== undefined && !((walk && out.severity === 'P1' && out.source.type === 'job') || (out.lens === 'witness' && out.source.type === 'job' && parseJobId(out.source.job).kind === 'audit'))) {
+      throw new SchemaError(`${f.path}.lane`, 'absent (only a batch lane red names one: a walk job\'s walkthrough P1, an audit job\'s witness P1)', lane);
+    }
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
     // M4a: a checkpoint's issue intake opens P2 or P3 only.
     if (out.lens === 'issue' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for an issue finding', out.severity);
-    return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }) };
+    return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }), ...(lane === undefined ? {} : { lane }) };
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
   'audit-started': object((f): Fact => {
@@ -2209,7 +2247,10 @@ export const fact: Read<Fact> = tagged('kind', {
   'plan-applied': object((f): Fact => {
     const scheduling = f.optional('scheduling', literal('dag'));
     const opt: Record<string, unknown> = {};
-    for (const [key, read] of [['obligationsSha256', sha256R], ['visionSha256', sha256R], ['publication', object((g) => ({ pub: g.get('pub', docsJobR), head: g.get('head', shaR) }))]] as const) {
+    for (const [key, read] of [
+      ['obligationsSha256', sha256R], ['visionSha256', sha256R], ['publication', object((g) => ({ pub: g.get('pub', docsJobR), head: g.get('head', shaR) }))],
+      ['systemsMap', nullable(systemsMap)],
+    ] as const) {
       const v = f.optional(key, read as Read<unknown>);
       if (v !== undefined) opt[key] = v;
     }

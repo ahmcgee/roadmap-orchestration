@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { canonicalJson } from '../core/json.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath } from '../core/values.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
-import type { FastLane } from '../prompts/inputs.ts';
+import type { BuildLane } from '../prompts/inputs.ts';
 import { mayOverlap } from './classify.ts';
 import { type DerivedFiles, type PlanM1, derivedOf, regenerateLaneId } from './plan.ts';
 
@@ -45,26 +45,26 @@ function executorGit(): string {
 /**
  * An entry's regenerate check as a fast lane (null when it declares no `regenerate`): the executor's node running the
  * check from the checkout's root with the executor's git, under the generator's declared env, expecting exit 0. No
- * resources, the fast tier's `@cpu`, no evidence globs (the check's stdout names each differing output and its
- * difference), no `inputs` (a suite lane).
+ * resources, the build cadence's `@cpu`, no evidence globs (the check's stdout names each differing output and its
+ * difference), no systems (it reads the whole tree).
  */
-export function regenerateLane(entry: DerivedFiles): FastLane | null {
+export function regenerateLane(entry: DerivedFiles): BuildLane | null {
   const r = entry.regenerate;
   if (r === undefined) return null;
   const request: RegenerateRequest = { argv: r.argv, cwd: r.cwd, outputs: entry.outputs };
   return {
     id: regenerateLaneId(entry), argv: [process.execPath, REGENERATE_ENTRY, executorGit(), canonicalJson(request)], cwd: repoPath('.'), env: r.env, expectedExit: 0,
-    tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [],
+    cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [],
   };
 }
 
 /** Every regenerate lane of the plan, in entry order: what a series' ledger is read back with. */
-export const regenerateLanes = (plan: PlanM1): readonly FastLane[] => derivedOf(plan).flatMap((d) => regenerateLane(d) ?? []);
+export const regenerateLanes = (plan: PlanM1): readonly BuildLane[] => derivedOf(plan).flatMap((d) => regenerateLane(d) ?? []);
 
 /** Whether a diff of `paths` touches one of the entry's sources or outputs. */
 export const touchesEntry = (paths: readonly RepoPath[], entry: DerivedFiles): boolean =>
   paths.some((p) => [...entry.sources, ...entry.outputs].some((pattern) => matchesPattern(p, pattern)));
 
 /** The regenerate lanes a unit diff of `paths` runs: the entries it touches that declare `regenerate`, in entry order. */
-export const unitRegenerateLanes = (plan: PlanM1, paths: readonly RepoPath[]): readonly FastLane[] =>
+export const unitRegenerateLanes = (plan: PlanM1, paths: readonly RepoPath[]): readonly BuildLane[] =>
   derivedOf(plan).filter((d) => touchesEntry(paths, d)).flatMap((d) => regenerateLane(d) ?? []);
