@@ -161,9 +161,9 @@ describe('status.subset', () => {
     assert.equal(s.rejection, null);
     // The routing view: classes per seat, the layer that chose each and where each class is bound; no model.
     assert.equal(s.routing?.profile, 'default');
-    assert.deepEqual(s.routing?.seats.gate, { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' });
-    assert.deepEqual(s.routing?.seats.planCheck, { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' });
-    assert.deepEqual(s.routing?.seats.build, { low: 'efficient', med: 'efficient', high: 'frontier' });
+    assert.deepEqual(s.routing?.seats.gate, { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' });
+    assert.deepEqual(s.routing?.seats.planCheck, { low: 'frontier', med: 'frontier', high: 'frontier', escalation: 'summit' });
+    assert.deepEqual(s.routing?.seats.build, { low: 'efficient', med: 'efficient', high: 'efficient' });
     assert.equal(s.routing?.sources.planCheck.escalation, 'builtin');
     assert.deepEqual(s.routing?.bindings, { efficient: 'builtin', frontier: 'builtin', summit: 'builtin', economy: 'builtin' });
     for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.routing), new RegExp(m.replace('.', '\\.')));
