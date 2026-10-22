@@ -17,13 +17,13 @@
 // the rest (items 6, 12); the plan-check's notes as facts about existing code (item 26).
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): a success criterion that every acceptance clause and witness
 // item maps to a test by its exact id (retro F05); the per-lane witness check commands (D1, R56); negative witnesses
-// through the real entry point (F20); `experiments` in the output; the read-only in-session assessment (E, R55).
+// through the real entry point (F20); `experiments` in the output. (The in-session assessment, E/R55, went in dev.17.)
 // W3 (2026-10-16): Host no longer repeats UNIT_POLICY's "do not kill a process this unit did not start". No delegation
 // text: the Claude role prompts' guidance names the Agent tool, which `codex exec` does not have.
 // dev.13: a milestone unit's design references and milestones, as the Claude module's; `browser` is always null on this
 // seat (Codex gets no MCP config), rendered by the shared helper all the same.
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, assessText, bullets, buildBrowserText, fastLanesText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
+import { UNIT_POLICY, bullets, buildBrowserText, fastLanesText, milestonesText, referenceIndexText, rulingsText } from '../inputs.ts';
 import { BUILD_SCHEMA, DECISIONS_FILE } from '../schemas.ts';
 
 const system = `# Role
@@ -107,9 +107,8 @@ Run each after your last change, beside the fast lanes, until it exits 0:
 ${i.witnessChecks.map((w) => `- ${w.lane}:\n  ${w.command}`).join('\n')}`;
 }
 
-/** The assessment (read-only, its own answer), a fresh build, or a fix round. */
+/** A fresh build or a fix round. */
 function task(i: BuildInputs): string {
-  if (i.assess !== null) return `${assessText(i.assess)}\n\nAssess unit ${i.spec.unit} in ${i.worktree} without changing anything; your final message is only the planAssessment object.`;
   return i.fixRound === null
     ? `Implement unit ${i.spec.unit} in ${i.worktree} until every acceptance clause holds and every fast lane${i.witnessChecks.length === 0 ? '' : ' and witness check'} passes.`
     : `Complete the fix round for unit ${i.spec.unit} in ${i.worktree}.`;
@@ -119,7 +118,7 @@ export const PROMPT: PromptModule<'build'> = {
   system,
   schema: BUILD_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks', 'assess',
+    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
     'milestones', 'browser',
   ],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})

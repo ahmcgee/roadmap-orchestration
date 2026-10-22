@@ -8,7 +8,6 @@
 //   RESPEC_DIRECTIVE      the spec was amended after the earlier work
 //   CONTINUE_DIRECTIVE    the continue of an interrupted build
 //   STEER_DIRECTIVE       the architect's steer brief follows
-//   ASSESSED_DIRECTIVE    the implementing invocation after an in-session assessment (E)
 //   judgmentRepairDirective  every judgment role's one repair turn: the refused answer's reasons (2026-10-15; all roles dev.12)
 //   stalledLaneDirective, flakyLaneDirective, dirtyLanesDirective, movedHeadDirective   a failing or uncertified series
 //   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series, then every required id
@@ -29,12 +28,6 @@ export const RESPEC_DIRECTIVE = 'The architect amended this unit\'s spec after y
 export const CONTINUE_DIRECTIVE = `You were paused partway through this task and are now resumed. The worktree holds your work so far, including uncommitted changes. Continue from where you stopped; do not restart. The evidence directory named in this message is new: rewrite ${DECISIONS_FILE} there, complete, with every decision so far.`;
 /** A steer round's directive (R11): the architect's brief follows it verbatim. */
 export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief within the unit\'s scope, run the fast lanes and return your report. The brief:';
-
-/**
- * M4a rev 3 (E, R55): the implementing invocation after an in-session assessment, in the same session: the build's own ask
- * applies from here.
- */
-export const ASSESSED_DIRECTIVE = `Your assessment is recorded. Now build the unit: everything the first message of this session says about the build applies from here (the spec, the scope, the fast lanes, the witness checks, ${DECISIONS_FILE}). Record in ${DECISIONS_FILE} each decision your assessment's premises led you to, then return the build report.`;
 
 /**
  * Scope growth (2026-10-15): what a builder does with an out-of-scope path the work needs. It never keeps one: it names it in

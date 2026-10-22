@@ -113,7 +113,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
-    assert.ok(planCall!.argv.includes('claude-sonnet-5-5'), 'plan-check sat on the unit\'s med seat (efficient: Sonnet)');
+    assert.ok(planCall!.argv.includes('claude-opus-5-5') && planCall!.argv.includes('medium'), 'plan-check sat on the unit\'s med seat (frontier: Opus medium, dev.17)');
     assert.ok(gateCall!.argv.includes('xhigh'), 'the gate sat on the escalation seat');
     assert.ok(!planCall!.stdin.includes('<escalation>'), 'no preface below the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
@@ -496,9 +496,9 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
     // A dev.11 executor's gate recorded none: read as nothing recorded (scaffolding).
     const { diffShown: _, ...dev11 } = inputs;
     assert.deepEqual(gateDiffShownOf(dev11), { inlined: [], notInlined: [] });
-    // Under the large-diff threshold: the unit's own seat (med: efficient), the plain prompt, no map.
+    // Under the large-diff threshold: the unit's own seat (med: frontier, Opus medium since dev.17), the plain prompt, no map.
     assert.equal(inputs.largeDiff, null);
-    assert.ok(g!.argv.includes('claude-sonnet-5-5'), 'a small diff keeps the unit\'s seat');
+    assert.ok(g!.argv.includes('claude-opus-5-5') && g!.argv.includes('medium'), 'a small diff keeps the unit\'s seat');
     assert.ok(!g!.stdin.includes('<large_diff>'), 'and the plain prompt');
   } finally {
     r.journal.close();

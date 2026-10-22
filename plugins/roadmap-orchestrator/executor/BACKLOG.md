@@ -435,14 +435,12 @@ at triage stay in git history.
   startup's recovery hold closes its attempt, and a resumed held unit re-runs from its decision as an abandoned
   attempt always did. Trigger: a resume of a recovery-held unit that still throws (since 1.0.0-dev.17 an `executor-fault`
   park, unless it held shared state); read the throw site from its stack.
-- **Scope growth beyond the uniform plan-check** (2026-10-15). Deferred: (a) the in-session assessment of a frontier or
-  summit builder under `planCheck.shape: by-builder` proposes no `scopeGrowth` (it makes no plan-check call); (b) a
-  builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own,
+- **Scope growth beyond the plan-check** (2026-10-15; (a), the by-builder in-session assessment, went with it in
+  dev.17). Deferred: (b) a builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own,
   unless salvage reverted that path on its last two build rounds (plan defects, 2026-10-16: then the unit holds at lanes
   with that path as the proposal); a blocker naming a path the builder never edited still waits for the gate;
   (c) `start` writes Phase-0 row 10's advisories to the executor's stderr only (`phase0 check` and `apply` print them).
-  Trigger: a unit under `by-builder` needs growth its assessment cannot propose, or a gate escalation that a held
-  proposal would have saved.
+  Trigger: a gate escalation that a held proposal would have saved.
 - **Plan defects beyond Phase 0** (2026-10-16). (a) A checkpoint's split child is checked against its lane (its
   declared files, required when the parent declared them), not for reach: a child whose file no deliverer can create is
   caught by the next `apply`'s row 11 or by the run-time `plan-defect` park. (b) A flow lever that rewrites an arc
@@ -555,8 +553,8 @@ at triage stay in git history.
   activation. Trigger: a real-arc drift finding on generated records.
 - **Stable defect lineage across audits and lenses** beyond equal causes (F24 remainder; within one audit, equal causes
   merge). Trigger: the run-10 analysis shows ≥3 same-defect findings across audits.
-- **Deterministic safety fixtures for the plan-check shape** (understated risk, infeasible specs) beyond unit tests
-  (Q27 remainder). Trigger: `by-builder` reverted after run 10, or a missed-risk term fires.
+- **Deterministic safety fixtures for plan-check** (understated risk, infeasible specs) beyond unit tests (Q27
+  remainder; the by-builder shape they were for went in dev.17). Trigger: a missed-risk term fires.
 
 - **Builder role eval: the gate's marginal value** (2026-10-17; research notes outside the repo,
   review-pass-research.md). About 30 to 40 trap units on the role-eval harness (an untested spec clause, an
@@ -581,6 +579,12 @@ at triage stay in git history.
   vacuous witness test passed the vacuity lens.
 
 ## Scaffolding to delete
+
+- dev.17 routing adoption (src/core/upgrade.ts), once no arc started on 1.0.0-dev.16 or earlier is in flight:
+  `planCheckShapeDefault` with the plan reader's legacy `planCheck` arm (src/input/plan.ts; the reader then refuses the
+  field), `PRE_DEV17_BUILTIN_SEATS` in `EARLIER_BUILTIN_SEATS`, the plan-check `in-session` and build `infeasible` and
+  `risk-raised` outcomes with their transition rows, `PlanChange` `plan-check-shape`, and the `implementer-escalated`
+  fact with its fold (src/core/events.ts, src/core/state.ts).
 
 - `gateNoteDebtDefault` and `GATE_DEBT_UNRECORDED` (src/core/upgrade.ts), with `gateDebtNotes`' unrecorded arm
   (src/pipeline/gate.ts), once no arc started on 1.0.0-dev.12 is in flight: a dev.12 gate finding has no `debt` and its

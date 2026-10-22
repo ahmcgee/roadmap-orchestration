@@ -72,11 +72,8 @@
 // the one proposal: the builder keeps needing a path its scope lacks, so the root agent decides instead of another fix
 // round. Every bound of what a unit may change reads its dispatch record's `effectiveScope` (scope + derived outputs).
 //
-// M4a rev 3 (E, R55): under `planCheck.shape: by-builder` in a corpus arc with arc lanes (`planCheckShape`), a frontier or
-// summit builder's plan-check records `in-session` without a call, and its fresh build makes two invocations in one
-// attempt: the assessment (a fresh read-only session answering PLAN_ASSESSMENT_SCHEMA: vision conflicts open findings, a
-// raised floor raises the risk or reseats the build, `infeasible` parks) and the build resuming that session; an
-// efficient builder's plan-check gets the acceptance shape (witness items through the patch channel, R59). Every build
+// Every unit's plan-check is one fresh call (dev.17 removed `planCheck.shape: by-builder`, M4a rev 3's in-session
+// assessment and acceptance shape; a plan in force carrying the field reads as uniform, warned). Every build
 // call writes its own answer schema (`buildSchemaFor` of the spec's fast lanes, I3) and, in a corpus arc, publishes the
 // lane files its witness-check commands read (witnesscheck.ts, R56).
 //
@@ -89,17 +86,15 @@ import { walkMcpConfig } from '../backends/mcp.ts';
 import {
   BACKEND_PARK_CLASSES, type DiffShown, type GateLargeDiff, type HoldCause, type IntentOf, type JudgmentStage, type OpKind, type OutcomeStage, type ScopeGrowthProposal, type StageOutcomeDetail, type StageOutcomeKind,
 } from '../core/events.ts';
-import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence, holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type ImplementerSessionId, type InvocationId, type ObligationId, compareIds, witnessItemIdOf, witnessItemSeq, type JudgmentSessionId, type LaneId, type ResourceInstance, type ResourceName, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
+  type InvocationId, type JudgmentSessionId, type LaneId, type ResourceInstance, type ResourceName, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
   type ApprovalFingerprint, type JudgmentSession, type LaneDef, type SpecM1, type SpecPatchOp, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, effectiveScope, specRemoves,
-  specWitnesses,
 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import {
@@ -119,22 +114,21 @@ import {
   inputPath, keptInput, keptPayload, parseUnitSpec, requirePlanInForce, revisionInForce, specBytesOf, specShaInForce,
 } from '../input/inforce.ts';
 import {
-  type KnownDefect, type PlanUnit, advancesOf, designUnitOf, knownDefectsOf, milestonesOf, parsePlan, planCheckShapeOf, targetDocumentPaths, targetDocuments,
+  type KnownDefect, type PlanUnit, advancesOf, designUnitOf, knownDefectsOf, milestonesOf, parsePlan, targetDocumentPaths, targetDocuments,
 } from '../input/plan.ts';
 import { type CorpusView, materialiseCorpus } from '../corpus/materialise.ts';
 import { openFinding, visionConflictDraft } from '../holistic/findings.ts';
 import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
 import { promptFor } from '../prompts/index.ts';
 import type {
-  ArchitectureInput, BuildAssess, BuildBrowser, Checkout, CorpusInput, DeliveredWitness, DocText, EscalationInput, FastLane, GateTargetInput, MilestonesInput, PlanCheckAcceptance,
+  ArchitectureInput, BuildBrowser, Checkout, CorpusInput, DocText, EscalationInput, FastLane, GateTargetInput, MilestonesInput,
   PlanCheckCheckouts, PlanCheckPriorRound, PlanCheckScopeGrowth, ReferenceIndex, RulingText, TargetInput, UnitMilestone, VisionInput,
 } from '../prompts/inputs.ts';
 import { visionInputOf } from '../prompts/inputs.ts';
 import {
-  DECISIONS_FILE, type DecisionsFile, PLAN_ASSESSMENT_SCHEMA, type PlanAssessmentOutput, type PlanCheckOutput, type Premise, buildOutputFor,
-  buildSchemaFor, isAcceptanceSchema, planCheckAcceptanceSchemaFor, validateDecisionsFile, validatePlanAssessment, validatePlanCheckAcceptanceOutput, validatePlanCheckOutput,
+  DECISIONS_FILE, type DecisionsFile, type PlanCheckOutput, type Premise, buildOutputFor, buildSchemaFor, validateDecisionsFile, validatePlanCheckOutput,
 } from '../prompts/schemas.ts';
-import { ASSESSED_DIRECTIVE, judgmentRepairDirective } from '../prompts/directives.ts';
+import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { type ParkFacts, NO_PARK_FACTS, repeatNeedsUser, stageOutcomeFact } from '../park/table.ts';
 import { resolveArgv0 } from '../preflight/argv0.ts';
 import type { JudgmentRole, JudgmentSeat, Triple } from '../routing/types.ts';
@@ -144,7 +138,7 @@ import { type Reservation, type StageHolder, cleanup, fastLanes, heldReservation
 import { knownDefectActive } from '../schedule/ready.ts';
 import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 import { renderSpec } from '../spec/render.ts';
-import { bytesSha256, evidenceScopeConflicts, specBytes } from '../spec/spec.ts';
+import { evidenceScopeConflicts, specBytes } from '../spec/spec.ts';
 import { evaluateRevision } from '../commands/apply.ts';
 import { witnessLaneReasons } from '../input/classify.ts';
 import { type Ruling, parseRulings } from '../spec/rulings.ts';
@@ -153,18 +147,18 @@ import { runnerFiles } from '../runner/files.ts';
 import {
   type BackendCallOutcome, type BackendCallSpec, type BackendVerdict, type Cancelled, type ImplementerDispatch, type Pinned, type StageContext, type StageParent,
   backendOf, callBackend, cancelledNow, dispatchOf, enter, evidenceRoot, implementerDispatch, isCancelled, judgmentDeadlineMs, judgmentDispatch, nonEmpty, pinDispatch,
-  fastSuiteWorktree, raiseRisk, riskAbove, runOp, runPrepared, sameSession, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
+  fastSuiteWorktree, raiseRisk, riskAbove, runOp, runPrepared, steerDispatch, unitBranch, unitWorktree, verdictOf, verificationWorktree, workDir,
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, dirtyPaths, dirtySnapshot, fastSuiteLanes, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
+  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, dirtySnapshot, fastSuiteLanes, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
   removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot,
 } from './lanes.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
 import {
-  type DecidedRound, type RoundCall, type RoundInput, callRound, cutShort, decidedRound, escalateImplementer, freshSession, invocationSession, laneFixRound, prepareRound,
+  type DecidedRound, type RoundCall, type RoundInput, callRound, decidedRound, laneFixRound, prepareRound,
   resumed,
 } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
@@ -681,22 +675,6 @@ export function planCheckNotes(ctx: StageContext, unit: UnitId): string {
   return '';
 }
 
-// ---------------------------------------------------------------------------------------------------
-// Plan-check shape by builder class (M4a rev 3, E, R40, R55, R59)
-
-/**
- * How a unit's plan-check runs: `uniform` (the plan's default, every non-corpus arc, and a corpus arc without arc lanes,
- * R40); under `planCheck.shape: by-builder` the class `build.<risk floor>` resolves to under the unit's routing decides:
- * `frontier` or `summit` assesses in session (no plan-check call), `efficient` gets the acceptance shape.
- */
-export type PlanCheckShape = 'uniform' | 'in-session' | 'acceptance';
-export function planCheckShape(ctx: StageContext, unit: UnitId): PlanCheckShape {
-  if (planCheckShapeOf(ctx.plan()) !== 'by-builder' || !checksApply(ctx)) return 'uniform';
-  if ((holisticInForce(ctx).obligations?.lanes.length ?? 0) === 0) return 'uniform';
-  const builder = ctx.routing(unit).classes.build[dispatchOf(ctx.journal.view, unit).riskFloor];
-  return builder === 'efficient' ? 'acceptance' : 'in-session';
-}
-
 /**
  * 2026-10-15 (arc feedback #3): the park of a unit whose spec holds an active witness item on a lane that is no arc lane in
  * force, at build (its lane file cannot be published) or lanes (its witness cannot run), in a corpus arc where the checks
@@ -718,45 +696,6 @@ function witnessLanePark(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Needs
   };
 }
 
-/** The arc lanes in force, ascending: the lanes a witness item may name. */
-const arcLanesOf = (ctx: StageContext): readonly LaneId[] => [...(holisticInForce(ctx).obligations?.lanes.map((l) => l.id) ?? [])].sort();
-
-/**
- * Paid M4b run 6: the witnesses of the obligations `unit` delivers or repairs at `tip` (`requiredAt`'s target obligation
- * rows), one entry per obligation, ascending by id. Each test id is already required of the unit by its exact id.
- */
-function deliveredWitnesses(ctx: StageContext, unit: PlanUnit, tip: Sha): readonly DeliveredWitness[] {
-  const byId = new Map((holisticInForce(ctx).obligations?.obligations ?? []).map((o) => [o.id, o]));
-  const out = new Map<ObligationId, DeliveredWitness>();
-  for (const r of requiredAt(ctx, unit, tip)) {
-    if (r.role !== 'target' || r.source.type !== 'obligation') continue;
-    const o = byId.get(r.source.id);
-    if (o === undefined) throw new Error(`unit ${unit.id}: a required witness names ${r.source.id}, which the obligations in force do not hold`);
-    out.set(o.id, { obligation: o.id, statement: o.statement, lane: r.lane, testIds: [...(out.get(o.id)?.testIds ?? []), r.testId] });
-  }
-  return [...out.values()].sort((a, b) => compareIds(a.obligation, b.obligation));
-}
-
-/**
- * The acceptance shape's inputs (R59): the spec's next free witness item id, the arc lanes an item may name, and the
- * witnesses of the obligations the unit delivers at `tip`.
- */
-function acceptanceOf(ctx: StageContext, unit: PlanUnit, spec: SpecM1, tip: Sha): PlanCheckAcceptance {
-  const seqs = specWitnesses(spec).map((w) => witnessItemSeq(w.id));
-  return { nextWitnessId: witnessItemIdOf(Math.max(0, ...seqs) + 1), arcLanes: arcLanesOf(ctx), delivered: deliveredWitnesses(ctx, unit, tip) };
-}
-
-/** A plan-check invocation's backend terminal, from its launch.json. */
-function planCheckTerminal(ctx: StageContext, inv: InvocationId) {
-  const launch = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('launch.json');
-  if (launch === null || launch.terminal.type !== 'backend') throw new Error(`${inv}: a plan-check invocation without its backend launch.json`);
-  return launch.terminal;
-}
-
-/** Whether plan-check invocation `inv` asked the acceptance shape: the schema its launch names is that shape's (`isAcceptanceSchema`). */
-function isAcceptanceCall(ctx: StageContext, inv: InvocationId): boolean {
-  return isAcceptanceSchema(JSON.parse(readFileSync(planCheckTerminal(ctx, inv).schemaPath, 'utf8')));
-}
 
 export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<PlanCheckDone | Cancelled> {
   const { spec, sha256 } = loadUnitSpec(ctx, unit);
@@ -765,12 +704,6 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   const cancelled = cancelledNow(ctx);
   if (cancelled !== null) return cancelled;
   const pin = pinDispatch(ctx, unit, { rev: spec.rev, sha256 });
-  // E (R55): a frontier or summit builder under `by-builder` makes no plan-check call; its fresh build assesses first.
-  const shape = pin.kind === 'pinned' ? planCheckShape(ctx, unit.id) : 'uniform';
-  if (shape === 'in-session') {
-    crashPoint('plancheck.after-pin-in-session', unit.id);
-    return { ...record(ctx, parent, 'in-session'), session: null, specRev: spec.rev };
-  }
   const judged = pin.kind === 'pinned' ? judgmentDispatch(ctx, unit.id, 'plan-check') : pin;
   if (pin.kind !== 'pinned' || judged.kind !== 'pinned') {
     return { ...record(ctx, parent, 'routing-changed', judged.kind === 'pinned' ? null : judged.needsUser), session: null, specRev: spec.rev };
@@ -793,8 +726,6 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
       priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
       // R17: the vision in force, read-only context (the module marks it non-directive).
       vision: visionInput(ctx),
-      // E (R59): an efficient builder's check under `by-builder` maps acceptance clauses to witness items.
-      acceptance: shape === 'acceptance' ? acceptanceOf(ctx, unit, now.spec, checkouts.tip.at) : null,
       priorInvalid: planCheckPriorInvalid(ctx, unit, now.spec),
       scopeGrowth: planCheckScopeGrowth(ctx, unit.id, effectiveScope(pinned), now.spec, checkouts.tip.at),
       escalation: escalationOf(ctx, unit.id, 'plan-check', seat.tier, validatePlanCheckOutput),
@@ -810,8 +741,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
   await removeJudgmentCheckouts(ctx, unit.id, parent);
   await createPlanCheckCheckouts(ctx, unit.id, parent, checkouts);
   const dirs = [...(checkouts.branch === null ? [] : [checkouts.branch.path]), ledgerDir(ctx), ...targetDirs(target)];
-  // 2026-10-15 (arc feedback #3): the acceptance shape's witness lanes are an enum of the arc lanes in force.
-  const schema = shape === 'acceptance' ? planCheckAcceptanceSchemaFor(arcLanesOf(ctx)) : prompt.schema;
+  const schema = prompt.schema;
   const call = (s: JudgmentSession, text: string): Promise<BackendCallOutcome> => callBackend(ctx, {
     unit: unit.id, parent, request: { kind: 'judgment', dispatch: seat, session: s, evidenceDirs: dirs },
     system: prompt.system, rendered: text, schema, cwd: checkouts.tip.path, deadlineAt: inMs(judgmentDeadlineMs(pinned)),
@@ -827,7 +757,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
  * the answer is unusable, together (its schema, then the vision clauses its conflicts cite, the contracts and rulings its
  * patch cites, and its patch: applied to the spec it judged and validated through the apply core). `answered`: usable.
  */
-type PlanCheckJudged = Exclude<Judged<PlanCheckOutput>, Readonly<{ kind: 'answered' }>> | Readonly<{ kind: 'answered'; out: PlanCheckOutput; acceptance: boolean }>;
+type PlanCheckJudged = Judged<PlanCheckOutput>;
 
 /**
  * A judgment call's answer against its schema, the first check of every role's repair turn (`repairTurnOf`, dispatch.ts).
@@ -861,9 +791,7 @@ export function judgedAnswer<T>(called: BackendCallOutcome, validate: (value: un
  * proposing growth code verifies is a hold, nothing else of it applied, so its patch (and the patch's cites) is not judged.
  */
 function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOutcome, judged: Readonly<{ spec: SpecM1; tip: Sha }> | null): PlanCheckJudged {
-  // E (R59): the acceptance shape's answer may only add or replace witness items and facts, and cite.
-  const acceptance = called.kind === 'result' && called.result.outcome.kind === 'success' && isAcceptanceCall(ctx, called.inv);
-  const answer = judgedAnswer(called, acceptance ? validatePlanCheckAcceptanceOutput : validatePlanCheckOutput);
+  const answer = judgedAnswer(called, validatePlanCheckOutput);
   if (answer.kind !== 'answered') return answer;
   const out: PlanCheckOutput = answer.out;
   const reasons = [...visionCiteReasons(ctx, out)];
@@ -874,7 +802,7 @@ function judgePlanCheck(ctx: StageContext, unit: PlanUnit, called: BackendCallOu
     const by = { role: 'planCheck', routingRev: pinned.routingRev, inv: called.inv } as const;
     reasons.push(...patchReasons(ctx, unit, judged.spec, { expectRev: judged.spec.rev, by, ops: out.patch }));
   }
-  return reasons.length === 0 ? { kind: 'answered', out, acceptance } : { kind: 'refused', reasons };
+  return reasons.length === 0 ? { kind: 'answered', out } : { kind: 'refused', reasons };
 }
 
 /** R17: each vision conflict cites only active clauses of the vision in force (and there is one). */
@@ -987,7 +915,7 @@ export async function planCheckRead(
   const judged = judgePlanCheck(ctx, unit, called, applied === null ? { spec, tip: captured.tip } : null);
   if (judged.kind === 'refused') return done(record(ctx, parent, 'malformed'));
   if (judged.kind === 'unanswered') throw new Error(`${called.inv}: a successful plan-check call without an answer to judge`);
-  const { out, acceptance } = judged;
+  const { out } = judged;
   // R17: each vision conflict opens a P3 finding for the checkpoint (a re-read merges into it), whatever the decision; it
   // is never a redirect by itself.
   for (const c of out.visionConflict) openFinding(ctx.journal, visionConflictDraft({ unit: unit.id, attempt: parent.attempt, clauses: c.clauses, note: c.note }));
@@ -1005,10 +933,7 @@ export async function planCheckRead(
   if (riskAbove(out.risk, pinned.riskFloor)) raiseRisk(ctx, pinned, out.risk, { rev: specRev, sha256: seenSha256 });
   // A redirect beyond its bound escalates instead; only a redirect the table takes patches the spec.
   const redirects = outcomeFact(ctx.journal.view.unit(unit.id), { stage: 'plan-check', kind: 'redirect' }, parent.attempt).class === 'redirect';
-  if (patch !== null && applied === null && redirects) {
-    await machinePatch(ctx, unit.id, parent, { path, oldSha256: sha256, patch });
-    if (acceptance) crashPoint('plancheck.after-witness-patch', unit.id);
-  }
+  if (patch !== null && applied === null && redirects) await machinePatch(ctx, unit.id, parent, { path, oldSha256: sha256, patch });
   return done(record(ctx, parent, out.decision));
 }
 
@@ -1218,111 +1143,6 @@ export const buildLaneIds = (spec: SpecM1): readonly LaneId[] | null => {
   return ids.length === 0 ? null : ids;
 };
 
-// ---------------------------------------------------------------------------------------------------
-// In-session assessment (M4a rev 3, E, Q18, R55)
-
-/** The schema file an assess call's launch names (`inputFile` keeps every call's schema content-addressed). */
-const assessSchemaPath = (runDir: AbsPath): AbsPath =>
-  inputPath(runDir, bytesSha256(Buffer.from(`${canonicalJson(PLAN_ASSESSMENT_SCHEMA)}\n`, 'utf8')), 'schema.json');
-
-/** Whether build invocation `inv` was an in-session assessment: its launch names the assessment's schema. */
-export function isAssessCall(ctx: Readonly<{ runDir: AbsPath }>, inv: InvocationId): boolean {
-  const launch = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('launch.json');
-  if (launch === null) throw new Error(`${inv}: a build invocation without its launch.json`);
-  return launch.terminal.type === 'backend' && launch.terminal.schemaPath === assessSchemaPath(ctx.runDir);
-}
-
-/** The latest backend spawn of a build attempt that was an assessment, or null. */
-function attemptAssess(ctx: StageContext, parent: StageParent): IntentOf<'proc.spawn'> | null {
-  return attemptOps(ctx, parent, 'proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && isAssessCall(ctx, invocationId(i.op, i.ordinal))).at(-1) ?? null;
-}
-
-/**
- * Whether the fresh build the decision `u.decided` asks for assesses in session first (R55): the unit's plan-check
- * decided `in-session`, or its last build attempt's malformed answer was the assessment (its retry assesses again).
- */
-function assesses(ctx: StageContext, unit: UnitId): boolean {
-  const d = ctx.journal.view.unit(unit).decided;
-  if (d === null) return false;
-  if (d.stage === 'plan-check') return d.outcome === 'in-session';
-  if (d.stage !== 'build' || d.outcome !== 'malformed') return false;
-  const last = recordedCall(ctx, { type: 'stage', unit, stage: 'build', attempt: d.attempt });
-  return last !== null && isAssessCall(ctx, last.inv);
-}
-
-/**
- * The assessment a crash left unread: the build attempt just before `parent`, cut short (`cutShort`: no outcome records it), whose
- * assess call completed. Consumed against what it answered, never asked again (crash table, "Build assess").
- */
-function crashedAssessment(ctx: StageContext, parent: StageParent): IntentOf<'proc.spawn'> | null {
-  const crashed = parent.attempt - 1;
-  if (!cutShort(ctx.journal.view.unit(parent.unit), crashed)) return null;
-  const assess = attemptAssess(ctx, { type: 'stage', unit: parent.unit, stage: 'build', attempt: crashed });
-  return assess !== null && ctx.journal.view.doneOf(assess.op)?.outcome.kind === 'result' ? assess : null;
-}
-
-/** A tree's state an assessment must leave as it found it: HEAD and every tracked or unignored change. */
-const treeState = (worktree: AbsPath): string => `${revParse(worktree, 'HEAD')}\n${dirtyPaths(worktree).join('\n')}`;
-
-/** What an assessment decided: go on to implement in its session, or the attempt's outcome. */
-type Assessed = Readonly<{ kind: 'implement'; session: ImplementerSessionId }> | Readonly<{ kind: 'done'; done: BuildDone }>;
-
-/**
- * Reads an assessment (R55): a vision conflict opens a P3 finding (`source: stage{build}`), a risk floor below the pin is
- * malformed and one above raises the unit's risk (onto another implementer seat: `risk-raised`), `feasible: false` is
- * `infeasible{notes}`. Re-entrant: a raise or a finding a crashed attempt already made is not made twice.
- */
-async function readAssessment(
-  ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'build' }>, called: BackendCallOutcome, before: string | null,
-  dispatch: ImplementerDispatch, held: Reservation<'running', StageHolder> | null,
-): Promise<Assessed> {
-  const fail = async (kind: StageOutcomeKind<'build'> | null, detail?: StageOutcomeDetail): Promise<Assessed> => {
-    const cleaned = held === null ? null : await cleanup(ctx, held, parent);
-    if (cleaned?.kind === 'cleanup-failed') return { kind: 'done', done: { ...record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed)), run: null } };
-    if (kind !== null) return { kind: 'done', done: { ...record(ctx, parent, kind, null, NO_PARK_FACTS, undefined, detail), run: null } };
-    if (called.kind === 'lost') return { kind: 'done', done: { ...record(ctx, parent, 'lost', null, { backend: backendOf(called), failed: [], environment: null }), run: null } };
-    const v = verdictOf(ctx, parent, called);
-    if (v.kind === 'success') throw new Error(`${parent.unit} build#${parent.attempt}: an assessment's success read as a failure`);
-    return { kind: 'done', done: { ...verdictKind(ctx, parent, v, called), run: null } };
-  };
-  // An assessment that never got as far as an answer (lost, a fault, a refusal) is the attempt's outcome as a build's would be.
-  if (called.kind === 'lost') return fail(null);
-  const v = verdictOf(ctx, parent, called);
-  if (v.kind !== 'success') return fail(null);
-  let out: PlanAssessmentOutput;
-  try {
-    out = validatePlanAssessment(v.value);
-  } catch (error) {
-    if (error instanceof SchemaError) return fail('malformed');
-    throw error;
-  }
-  const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id);
-  if (before !== null && treeState(worktree) !== before) return fail('malformed');
-  const a = out.planAssessment;
-  if (a.visionConflict.length > 0) {
-    const active = new Set((holisticInForce(ctx).vision?.clauses ?? []).filter((c) => c.state === 'active').map((c) => c.id));
-    if (a.visionConflict.some((c) => c.clauses.some((id) => !active.has(id)))) return fail('malformed');
-    for (const c of a.visionConflict) {
-      const draft = visionConflictDraft({ unit: unit.id, attempt: parent.attempt, clauses: c.clauses, note: c.note });
-      openFinding(ctx.journal, { ...draft, source: { type: 'stage', unit: unit.id, stage: 'build', attempt: parent.attempt } });
-    }
-  }
-  const pinned = dispatchOf(ctx.journal.view, unit.id);
-  if (riskAbove(pinned.riskFloor, a.riskFloor)) return fail('malformed');
-  if (!a.feasible) return fail('infeasible', { kind: 'infeasible', notes: a.notes });
-  if (riskAbove(a.riskFloor, pinned.riskFloor)) {
-    const { spec, sha256 } = loadUnitSpec(ctx, unit);
-    raiseRisk(ctx, pinned, a.riskFloor, { rev: spec.rev, sha256 });
-  }
-  crashPoint('build.after-assess', unit.id);
-  // A raised floor whose implementer seat binds another model or backend: a fresh build there (a session cannot move).
-  const reseated = implementerDispatch(ctx, unit.id);
-  if (reseated.kind !== 'pinned' || !sameSession(reseated.dispatch.triple, dispatch.triple)) return fail('risk-raised');
-  const session = invocationSession(ctx, called.inv);
-  if (session === null) return fail('malformed');
-  return { kind: 'implement', session };
-}
-
 export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<BuildDone | Cancelled> {
   const parent = at(start(ctx, unit.id, 'build'), 'build');
   const entered = await enter(ctx, stageHolder(parent), buildEntry(ctx, unit));
@@ -1331,8 +1151,6 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const held = await holdEntry(ctx, parent);
   if (held.kind === 'occupied') return failed(record(ctx, parent, 'occupied', held.needsUser));
   if (held.kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed', null, failedFacts(held.failed)));
-  // G1: a stalled fix round moves the seat to build.high before the seat is chosen.
-  escalateImplementer(ctx, unit.id, parent.attempt, input);
   // A steer round's session is fresh, so its seat re-pins whatever moved (R11, `steer --class`).
   const seated: Pinned<ImplementerDispatch> = input.kind === 'steer' ? { kind: 'pinned', dispatch: steerDispatch(ctx, unit.id) } : implementerDispatch(ctx, unit.id);
   if (seated.kind !== 'pinned') {
@@ -1350,10 +1168,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   }
   const dispatch = seated.dispatch;
   const pinned = dispatchOf(ctx.journal.view, unit.id);
-  // E (R55): a fresh build after an `in-session` plan-check assesses first. An assessment a pause interrupted is asked
-  // again from the start (its continue would resume a read-only session as the build).
-  const assessing = decidedRound(input) === 'fresh' && assesses(ctx, unit.id) && (input.kind !== 'continue' || isAssessCall(ctx, input.interrupted));
-  const round = await prepareRound(ctx, dispatch, assessing && input.kind === 'continue' ? input.of : input, parent);
+  const round = await prepareRound(ctx, dispatch, input, parent);
 
   const work = workDir(ctx.runDir, parent);
   durableMkdir(work);
@@ -1366,42 +1181,18 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   // D1 (R56): the lane files of the fast required witness lanes, published before the call, and their commands.
   const witnessChecks = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
   const lanes = buildLaneIds(spec);
-  const render = (fixRound: RoundCall['fixRound'], assess: BuildAssess | null): string => prompt.render({
+  const render = (fixRound: RoundCall['fixRound']): string => prompt.render({
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { fastLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeFastLanes(spec), suiteLanes: fastSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
-    fixRound, witnessChecks, assess, milestones, browser: browser?.input ?? null,
+    fixRound, witnessChecks, milestones, browser: browser?.input ?? null,
   });
   const callFor = (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
     request: { kind: 'implementer', dispatch, session: call.session, evidenceDirs: [work, ...call.evidenceDirs, ledgerDir(ctx)], mcpConfig: browser?.mcpConfig ?? null },
-    system: prompt.system, rendered: render(call.fixRound, null), schema: buildSchemaFor(lanes), cwd: round.worktree, deadlineAt: round.deadlineAt,
+    system: prompt.system, rendered: render(call.fixRound), schema: buildSchemaFor(lanes), cwd: round.worktree, deadlineAt: round.deadlineAt,
   });
-  if (!assessing) return buildRead(ctx, unit, parent, decidedRound(input), await callRound(ctx, round, callFor), held.reservation);
-
-  // 1. assess: a fresh, read-only session answering PLAN_ASSESSMENT_SCHEMA (or the one a crash left unread).
-  const crashed = crashedAssessment(ctx, parent);
-  let assessed: Assessed;
-  if (crashed !== null) {
-    // The assessment's own call (a later implementing call of that attempt may have been lost).
-    const called = spawnCall(ctx, crashed);
-    if (called === null) throw new Error(`${unit.id} build#${parent.attempt}: the crashed assessment ${crashed.op} is still open`);
-    assessed = await readAssessment(ctx, unit, parent, called, null, dispatch, held.reservation);
-  } else {
-    const before = treeState(round.worktree);
-    const called = await callBackend(ctx, {
-      unit: unit.id, parent,
-      request: { kind: 'implementer', dispatch, session: freshSession(dispatch), evidenceDirs: [work, ledgerDir(ctx)], mcpConfig: browser?.mcpConfig ?? null },
-      system: prompt.system, rendered: render(null, { risk: pinned.riskFloor, vision: visionInput(ctx) }), schema: PLAN_ASSESSMENT_SCHEMA,
-      cwd: round.worktree, deadlineAt: round.deadlineAt,
-    });
-    assessed = await readAssessment(ctx, unit, parent, called, before, dispatch, held.reservation);
-  }
-  if (assessed.kind === 'done') return assessed.done;
-  // 2. implement: the same session resumed with the build's own ask (a reopen's respec directive after it).
-  const fix = { failingEvidenceDirs: [], directives: [ASSESSED_DIRECTIVE, ...(round.fixRound?.directives ?? [])] };
-  const implement = await callRound(ctx, { ...round, ...resumed(dispatch, assessed.session, fix, []) }, callFor);
-  return buildRead(ctx, unit, parent, 'fresh', implement, held.reservation);
+  return buildRead(ctx, unit, parent, decidedRound(input), await callRound(ctx, round, callFor), held.reservation);
 }
 
 /**

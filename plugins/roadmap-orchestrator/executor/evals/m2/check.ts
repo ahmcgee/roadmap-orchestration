@@ -30,8 +30,8 @@
 //   run-ended, units-settled (every unit merged, or superseded by a merged unit), head-is-candidate,
 //   diff-product-only, snapshot-verifies, judgment-fresh, meter-covers-calls, no-model-ids
 //
-// The non-exercised list names what this run's journal shows no trace of, from: flake, host signature, D4
-// escalation, backend capacity park, backend outage park, aging promotion. Each has a fake integrated test in
+// The non-exercised list names what this run's journal shows no trace of, from: flake, host signature, backend
+// capacity park, backend outage park, aging promotion. Each has a fake integrated test in
 // `npm test`; this run is evidence only for what it took.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
@@ -68,7 +68,7 @@ export type Criterion = Readonly<{ name: string }> & Verdict;
 export type CheckResult = Readonly<{ pass: boolean; criteria: readonly Criterion[]; notExercised: readonly Branch[]; cannotShow: readonly string[] }>;
 
 /** What a real run may leave untaken, in the order the report lists them. */
-export const BRANCHES = ['flake', 'host signature', 'D4 escalation', 'backend capacity park', 'backend outage park', 'aging promotion'] as const;
+export const BRANCHES = ['flake', 'host signature', 'backend capacity park', 'backend outage park', 'aging promotion'] as const;
 export type Branch = (typeof BRANCHES)[number];
 
 export const CANNOT_SHOW = ['real cgroup containment', 'crash boundaries under real models', 'usage-limit hits under parallel burn', 'week-long reliability'] as const;
@@ -598,7 +598,6 @@ function exercised(run: Run, promoted: number): ReadonlySet<Branch> {
     const dir = invocationDir(run.runDir, invocationId(first.op, first.ordinal));
     out.add(outputSignatures([join(dir, 'stdout'), join(dir, 'stderr')]).length > 0 ? 'host signature' : 'flake');
   }
-  if (facts(run).some((f) => f.kind === 'implementer-escalated')) out.add('D4 escalation');
   for (const f of factsOf(run, 'backend-park')) {
     if (f.class === 'capacity') out.add('backend capacity park');
     if (f.class === 'outage') out.add('backend outage park');

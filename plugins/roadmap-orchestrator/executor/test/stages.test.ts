@@ -455,7 +455,9 @@ test('stages.counters-from-fold: attempts and counters are the log\'s, identical
 });
 
 test('stages.no-model-ids: events, the state cache, dispatch facts and needs-user content never name a model; launch.json argv does', T, async () => {
+  // claude-only: the build is Claude's (Sonnet, the efficient class at every risk since dev.17).
   const run = setupUnit({
+    profile: 'claude-only',
     resources: [DB],
     steps: [
       planCheckStep({ decision: 'approve', risk: 'high' }),

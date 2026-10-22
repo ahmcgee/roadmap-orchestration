@@ -4,7 +4,8 @@
 // since 2026-09-26): the builder's argv less that pair must equal the capture, and the pair follows
 // `--model`. The 2.1.283 judgment capture predates the Agent tool (2026-10-16): its `--tools` value lacks `,Agent`; the
 // 2.1.301 capture claude-judgment-subagents is the whole argv, token for token. The implementer captures predate dev.13,
-// which dropped `--disable-slash-commands` from the build argv: the builder's argv equals the capture less that flag. `npm run probe` runs the full argv against
+// which dropped `--disable-slash-commands` from the build argv, and dev.17, which added `--advisor <id>`: the builder's argv
+// less the advisor pair equals the capture less that flag; the 2.1.301 capture claude-build-advisor is the whole build argv. `npm run probe` runs the full argv against
 // the real CLIs.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -77,18 +78,24 @@ describe('argv', () => {
   it('claude implementer, fresh and resumed', () => {
     // Captured before dev.13 stopped disabling slash commands for builds (project skills load).
     const withoutSlash = (argv: readonly string[]): readonly string[] => argv.filter((t) => t !== '--disable-slash-commands');
+    // Captured before dev.17 added `--advisor <id>` after the effort pair: the builder's argv less that pair.
+    const withoutAdvisor = (argv: readonly string[]): readonly string[] => {
+      const i = argv.indexOf('--advisor');
+      assert.equal(argv[i + 1], 'claude-opus-5-5');
+      return [...argv.slice(0, i), ...argv.slice(i + 2)];
+    };
     const fresh = withoutSlash(capturedArgv('claude-implementer'));
     const resumed = withoutSlash(capturedArgv('claude-implementer-resume'));
     const id = implementerSessionId(value(fresh, '--session-id'));
     const schemaText = value(fresh, '--json-schema');
     const system = CAPTURED_SYSTEM;
     const build = { kind: 'claude-build', triple: CLAUDE, schemaText, system, mcpConfig: null, evidenceDirs: [] } as const;
-    assert.deepEqual(capturedShape(backendArgv({ ...build, session: { backend: 'claude', mode: 'fresh', id } })), fresh);
-    assert.deepEqual(capturedShape(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id } })), resumed);
+    assert.deepEqual(capturedShape(withoutAdvisor(backendArgv({ ...build, session: { backend: 'claude', mode: 'fresh', id } }))), fresh);
+    assert.deepEqual(capturedShape(withoutAdvisor(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id } }))), resumed);
     assert.equal(value(fresh, '--append-system-prompt'), system);
     const dirs = [absPath('/run/work/u1'), absPath('/run/evidence/u1/lane')];
     assert.deepEqual(
-      capturedShape(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: dirs })),
+      capturedShape(withoutAdvisor(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: dirs }))),
       [...resumed, '--add-dir', dirs[0], '--add-dir', dirs[1]],
     );
     assert.equal(exitCode('claude-implementer-resume'), '0');
@@ -96,9 +103,21 @@ describe('argv', () => {
     const mcp = absPath('/run/inputs/0f.mcp.json');
     const strict = fresh.indexOf('--strict-mcp-config');
     assert.deepEqual(
-      capturedShape(backendArgv({ ...build, mcpConfig: mcp, session: { backend: 'claude', mode: 'fresh', id } })),
+      capturedShape(withoutAdvisor(backendArgv({ ...build, mcpConfig: mcp, session: { backend: 'claude', mode: 'fresh', id } }))),
       [...fresh.slice(0, strict + 1), '--mcp-config', mcp, ...fresh.slice(strict + 1)],
     );
+  });
+  it('claude build with the advisor (2.1.301, dev.17), token for token', () => {
+    const c = capturedArgv('claude-build-advisor');
+    const call = {
+      kind: 'claude-build', triple: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' }, schemaText: value(c, '--json-schema'),
+      session: { backend: 'claude', mode: 'fresh', id: implementerSessionId(value(c, '--session-id')) }, system: CAPTURED_SYSTEM, mcpConfig: null, evidenceDirs: [],
+    } as const;
+    assert.deepEqual(backendArgv(call), c);
+    assert.equal(value(c, '--advisor'), 'claude-opus-5-5');
+    assert.equal(exitCode('claude-build-advisor'), '0');
+    // A resume passes the advisor again: the flag holds for one process's session.
+    assert.equal(value(backendArgv({ ...call, session: { ...call.session, mode: 'resume' } }), '--advisor'), 'claude-opus-5-5');
   });
   it('claude acting judge, fresh with MCP servers and resumed without (dev.13)', () => {
     // No capture: verified by hand against Claude Code 2.1.301 (argv.ts ACTING_JUDGE_TOOLS); the probe runs it for real.

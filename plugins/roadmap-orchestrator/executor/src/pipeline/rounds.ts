@@ -48,13 +48,10 @@
 // same attempt, fresh on the kept worktree with the round's inputs and NO_SESSION_NOTE (`PreparedRound.fresh`,
 // `callRound`).
 //
-// Stalled rounds and escalation (A11, D4, G1). A fix round is stalled when the failure that asks for the next
-// fix round fails a lane that also failed in the failure that asked for it, or the gate revised both times
-// (`stalledRounds`). With N = 1, the fix round after the first stalled round runs cold on the arc's
-// `build.high` seat, provided `chargeableFailures` is below the unit's chargeable bound and `build.<buildTier>` does
-// not already bind `build.high`'s triple: `escalateImplementer` journals `implementer-escalated` before the round's
-// implementer seat is chosen, and the fold's `buildTier` becomes `high`. The seat moves, so its session is
-// fresh (NO_SESSION_NOTE).
+// No escalation (dev.17): a stalled build stays on its seat and runs out its chargeable bound, then parks. The D4 escalation
+// (a cold fix round on `build.high` after a stalled round, `implementer-escalated`) is retired: every build seat binds the
+// efficient class, whose builds consult an Opus advisor at their own decision points (backends/argv.ts). A dev.16 log's
+// `implementer-escalated` facts still fold (core/state.ts `buildTier`).
 //
 // Deadlines (M3: the unit's pinned bounds, `limits`). A fix round's window is the measured lane series plus the
 // unit's edit allowance (`editAllowanceMin`), a fresh build's its `freshBuildMin`; the built-in values are
@@ -76,13 +73,8 @@ import type { IntentOf, TestRef } from '../core/events.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type Sha256Hex, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
-import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { UnitState } from '../core/state.ts';
-import { canonicalJson } from '../core/json.ts';
-import { type LogSnapshot, readJournal } from '../core/log.ts';
 import { type Bounds, type ImplementerSession, STDERR_FILE } from '../core/records.ts';
-import type { ResolvedRouting } from '../routing/layers.ts';
-import type { RiskTier } from '../routing/types.ts';
 import { type AbsPath, type IsoTime, type RefName, type RepoPath, branchRef, isoTimeOf } from '../core/values.ts';
 import { refTarget, revParse } from '../git/git.ts';
 import { type FixRound, ignoredText } from '../prompts/inputs.ts';
@@ -97,7 +89,7 @@ import {
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
-import { type BuildRound, decidedBy } from './transitions.ts';
+import type { BuildRound } from './transitions.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 
 
@@ -490,104 +482,4 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       };
     }
   }
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Stalled rounds and escalation (A11, D4, G1)
-
-/**
- * The lanes each of the unit's stage attempts failed, as `<set>:<lane>` (a lane whose run was red, a flaky
- * one included; a red a host signature voided on a busy host counts too, as the log cannot tell it apart).
- */
-function failedLanes(view: JournalView, unit: UnitId): ReadonlyMap<number, ReadonlySet<string>> {
-  const failed = new Map<number, Set<string>>();
-  for (const intent of view.opsOf('proc.spawn')) {
-    const s = intent.expect.subject;
-    if (s.purpose !== 'lane' || s.unit !== unit || intent.parent.type !== 'stage') continue;
-    const done = view.doneOf(intent.op);
-    if (done?.kind !== 'proc.spawn' || done.outcome.kind !== 'result' || done.outcome.summary.type !== 'command') continue;
-    const { verdict } = done.outcome.summary;
-    if (verdict !== 'fail' && verdict !== 'stall') continue;
-    const keys = failed.get(intent.parent.attempt) ?? new Set<string>();
-    keys.add(`${s.set}:${s.lane}`);
-    failed.set(intent.parent.attempt, keys);
-  }
-  return failed;
-}
-
-/** What a gate's revise failed, beside lanes. */
-const GATE_REVISED = 'gate';
-
-/**
- * The unit's stalled fix rounds, ascending by build attempt. A fix round (the first build attempt after a
- * failure whose decision is a fix round) is stalled when the next such failure fails a lane that also failed
- * in the one before it, or the gate revised both times. A reopen (a new spec revision) starts over. Pure over
- * the log: the stage-outcome and reopened facts of `log.events`, the lane verdicts of `log.view`.
- */
-export function stalledRounds(log: LogSnapshot, unit: UnitId): readonly number[] {
-  const failed = failedLanes(log.view, unit);
-  const stalled: number[] = [];
-  let before: ReadonlySet<string> | null = null;
-  let fix: number | null = null;
-  for (const e of log.events) {
-    if (e.type !== 'fact') continue;
-    const f = e.fact;
-    if (f.kind === 'reopened' && f.unit === unit) {
-      before = null;
-      fix = null;
-    }
-    if (f.kind !== 'stage-outcome' || f.unit !== unit || f.class === 'hold') continue;
-    if (f.stage === 'build') {
-      if (before !== null && fix === null) fix = f.attempt;
-      continue;
-    }
-    const decided = decidedBy(f);
-    if (decided.kind !== 'stage' || decided.target.stage !== 'build' || decided.target.round !== 'fix') continue;
-    const keys: ReadonlySet<string> = f.stage === 'gate' ? new Set([GATE_REVISED]) : failed.get(f.attempt) ?? new Set();
-    const earlier = before;
-    if (fix !== null && earlier !== null && [...keys].some((k) => earlier.has(k))) stalled.push(fix);
-    before = keys;
-    fix = null;
-  }
-  return stalled;
-}
-
-/** Whether a round escalates the implementer to `build.high`, and if not, why. */
-export type Escalation =
-  | Readonly<{ kind: 'escalate'; from: Exclude<RiskTier, 'high'>; stalled: number }>
-  | Readonly<{ kind: 'none'; why: 'not-a-fix-round' | 'no-stalled-round' | 'already-high' | 'same-triple' | 'at-bound' }>;
-
-/**
- * The escalation decision for build round `input` of `unit` (N = 1): a fix round after the unit's first
- * stalled round moves to `build.high`, while `chargeableFailures` is below the unit's chargeable bound and unless its
- * build tier's seat already binds `build.high`'s triple under the unit's routing. A continue keeps the seat its
- * interrupted attempt ran on.
- */
-export function escalation(log: LogSnapshot, routing: ResolvedRouting, unit: UnitId, input: RoundInput): Escalation {
-  if (input.kind !== 'fix') return { kind: 'none', why: 'not-a-fix-round' };
-  const u = log.view.unit(unit);
-  if (u.buildTier === null) throw new Error(`a fix round of ${unit}, which was never dispatched`);
-  if (u.buildTier === 'high') return { kind: 'none', why: 'already-high' };
-  const [stalled] = stalledRounds(log, unit);
-  if (stalled === undefined) return { kind: 'none', why: 'no-stalled-round' };
-  if (u.counters.chargeableFailures >= u.bounds.chargeable) return { kind: 'none', why: 'at-bound' };
-  if (canonicalJson(routing.table.build[u.buildTier]) === canonicalJson(routing.table.build.high)) return { kind: 'none', why: 'same-triple' };
-  return { kind: 'escalate', from: u.buildTier, stalled };
-}
-
-/**
- * Decides and journals the escalation of build attempt `attempt` of `unit` (`implementer-escalated`), and
- * returns the unit's build tier after it: the tier whose implementer seat the round is dispatched on. Called
- * before the round's implementer seat is selected (G1). Reads the arc's log from `runDir` for its history.
- */
-export function escalateImplementer(
-  ctx: Readonly<{ journal: Journal; runDir: AbsPath; routing: (unit: UnitId | null) => ResolvedRouting }>, unit: UnitId, attempt: number, input: RoundInput,
-): RiskTier {
-  const decided = escalation(readJournal(ctx.runDir, ctx.journal.view.arc), ctx.routing(unit), unit, input);
-  if (decided.kind === 'escalate') {
-    ctx.journal.fact({ kind: 'implementer-escalated', unit, attempt, from: decided.from, to: 'high', stalled: decided.stalled });
-  }
-  const tier = ctx.journal.view.unit(unit).buildTier;
-  if (tier === null) throw new Error(`${unit} has no build tier after its escalation decision`);
-  return tier;
 }

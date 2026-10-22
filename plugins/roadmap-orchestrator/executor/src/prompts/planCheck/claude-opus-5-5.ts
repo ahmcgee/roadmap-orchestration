@@ -16,18 +16,13 @@
 // M4a (reviewed 2026-10-03 against the same guides): the `target` input, the architecture doc or, in a corpus arc,
 // the corpus rules index (T-n) with the pinned files read on demand; the doc's role carries over to the rules.
 // M4a rev 3 (reviewed 2026-10-06 against the same guides): a failure matrix before approving a transaction ordering, the
-// earlier repairs of the same transaction carried in (retro F03, H1); the clock and entry-point defect classes (D3); and
-// the acceptance shape of an efficient builder's check: witness items through the patch channel only, ids from the next
-// free W-n (E, R59).
+// earlier repairs of the same transaction carried in (retro F03, H1); the clock and entry-point defect classes (D3). (The
+// acceptance shape of an efficient builder's check, E/R59, went with `planCheck.shape: by-builder` in dev.17.)
 // Run 10 (C, 2026-10-06): <prior_attempt> after the ask's inputs carries why the executor refused the previous answer's
 // patch (an acceptance clause or witness item citing an out-of-slice rule), for the retry to correct.
-// M4b (2026-10-09, paid run): the acceptance shape names only a test the change newly makes pass; a preservation check
-// passes with the change reverted, so mutation smoke flags it by construction: it is a must-hold's witness.
 // Paid M4b run 5: a plan-check Grepped the directory above its checkouts and was refused; the readable dirs are named
 // exactly and a refused read voided an approve. 2026-10-16: the read surface is the repository and the run dir besides the
 // named dirs (dispatch.ts `judgmentReadDirs`), and a refused read voids nothing.
-// Paid M4b run 6: the acceptance shape lists the delivered obligations' witness test ids; an item restating one names it
-// as its obligation and reuses its exact id (refused otherwise), so the build never holds two names for one test.
 // Scope growth (2026-10-15; same guides): units started with scopes too narrow (a removed shell page's tests lived outside
 // its package), and each fix cost a build, a park and a re-entry. The check now sweeps for references to what the spec
 // removes or renames, starting from <scope_references>, and proposes the paths outside the envelope in scopeGrowth; the root
@@ -41,7 +36,7 @@
 // dev.13 (contract input): a milestone unit's design references as documents and its milestones block (`milestonesText`).
 import type { PlanCheckInputs, PromptModule } from '../inputs.ts';
 import {
-  acceptanceShapeText, bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, scopeGrowthText,
+  bullets, milestoneDocuments, milestonesText, documentsXml, escalationText, laneProgramsText, patchText, planCheckPriorInvalidText, premisesText, referenceIndexText, rulingsText, scopeGrowthText,
   targetDocument, visionText,
 } from '../inputs.ts';
 import { PLAN_CHECK_SCHEMA } from '../schemas.ts';
@@ -139,7 +134,7 @@ export const PROMPT: PromptModule<'planCheck'> = {
   system,
   schema: PLAN_CHECK_SCHEMA,
   fields: [
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'acceptance', 'priorInvalid',
+    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
     'scopeGrowth', 'escalation', 'milestones',
   ],
   render: (i) => `${documentsXml([
@@ -173,7 +168,7 @@ ${checkouts(i)}
 
 <lane_programs>
 ${laneProgramsText(i.lanePrograms)}
-</lane_programs>${priorRound(i)}${visionContext(i)}${acceptanceShapeText(i.acceptance)}${planCheckPriorInvalidText(i.priorInvalid)}${escalationText(i.escalation, 'plan-check')}
+</lane_programs>${priorRound(i)}${visionContext(i)}${planCheckPriorInvalidText(i.priorInvalid)}${escalationText(i.escalation, 'plan-check')}
 
 Check the spec of unit ${i.spec.unit}, revision ${i.spec.rev}, against the documents above and the checkouts, then return your decision.`,
 };

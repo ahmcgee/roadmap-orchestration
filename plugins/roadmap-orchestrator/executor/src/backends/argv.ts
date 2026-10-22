@@ -35,6 +35,12 @@
 // lanes' evidence dirs: the same `--add-dir` pairs, last. Codex runs with danger-full-access, so nothing is
 // needed on the Codex side.
 //
+// Advisor (dev.17), verified against the real CLI (Claude Code 2.1.301, 2026-10-22): every Claude build, fresh or resumed,
+// passes `--advisor <BUILD_ADVISOR>` (classes.ts). The flag is not in `claude --help` but documented
+// (https://code.claude.com/docs/en/advisor) and takes a pinned id; it applies to the one session, so a resume passes it
+// again. The CLI exits at launch on a pairing it refuses outright (an advisor that cannot advise, an allowlist excluding it)
+// and drops an advisor that ranks below the main model. The advisor's spend is its own `modelUsage` entry (backends/claude.ts).
+//
 // Output and context, verified against the real CLI (Claude Code 2.1.283, 2026-09-26; captures in
 // test/fixtures/backend-output/claude-*):
 // - Every Claude call runs `--output-format stream-json --verbose`: stdout is JSONL, a `system/init` event
@@ -67,6 +73,7 @@ import { randomUUID } from 'node:crypto';
 import { type JudgmentSessionId, implementerSessionId, judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
+import { BUILD_ADVISOR } from '../routing/classes.ts';
 import type { ActingJudgeRole, FreshRole, Triple } from '../routing/types.ts';
 
 export type CodexTriple = Extract<Triple, { backend: 'codex' }>;
@@ -205,7 +212,7 @@ export function backendArgv(call: BackendCall): Argv {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
         'claude', '-p', ...CLAUDE_COMMON, ...mcpConfigArgs(call.mcpConfig), '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
-        '--effort', call.triple.effort, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
+        '--effort', call.triple.effort, '--advisor', BUILD_ADVISOR, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }

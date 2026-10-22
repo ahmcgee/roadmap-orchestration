@@ -83,7 +83,15 @@ export type SetupOptions = Readonly<{
   derived?: readonly JsonValue[];
   /** dev.17: the plan's `environments` as plan.json writes them (default none). */
   environments?: Readonly<Record<string, JsonValue>>;
+  /** The plan's routing layer as plan.json writes it (default none): e.g. `HIGH_BUILDS_ON_FRONTIER`. */
+  routing?: JsonValue;
 }>;
+
+/**
+ * A plan routing layer seating build.high on frontier (Opus, Claude), as the built-in seats did before dev.17 (every build
+ * seat efficient since): for tests of a risk raise that moves the implementer onto another binding.
+ */
+export const HIGH_BUILDS_ON_FRONTIER: JsonValue = { build: { high: 'frontier' } };
 
 export type StageRun = Readonly<{
   ctx: StageContext;
@@ -201,6 +209,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [] }],
     ...(opts.derived === undefined ? {} : { derived: opts.derived }),
     ...(opts.environments === undefined ? {} : { environments: opts.environments }),
+    ...(opts.routing === undefined ? {} : { routing: opts.routing }),
   }));
   const plan: PlanM1 = parsePlan(JSON.parse(readFileSync(planPath, 'utf8')));
   const unit = plan.units[0]!;
@@ -210,7 +219,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   // As a first start does: the files become the plan in force (rev 1), whose spec the stages load.
   recordFirstPlan(journal, absPath(runDir), planPath, absPath(repo), opts.profile);
   const scenario = writeScenario(tmpDir('stage-scenario'), opts.steps);
-  const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: null, unit: null });
+  const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null });
   const resources = {
     journal, containment: sessionContainment, runDir: absPath(runDir), plan: () => plan, repo: absPath(repo),
     hostDir: openHostDir(absPath(join(tmpDir('stage-host'), 'roadmap'))),

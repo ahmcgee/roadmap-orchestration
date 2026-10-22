@@ -20,7 +20,7 @@ import { PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS } from '../src/core/up
 import {
   CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, CODEX_MODELS, JUDGMENT_SEATS, type JudgmentSeat, MODEL_IDS, RISK_TIERS, type RoutingLayer, type Triple, routingLayer,
 } from '../src/routing/types.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit, started } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, HIGH_BUILDS_ON_FRONTIER, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, planCheckStep, seated, setupUnit, started } from './fixtures/stage-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** The unit's spec in force at rev 1: the kept spec its first start recorded. */
@@ -53,7 +53,8 @@ test('dispatch.pinned-once: the first dispatch pins scope, risk floor, routingRe
 });
 
 test('dispatch.risk-raise: a plan-check that raises the risk records a new dispatch fact; every later seat follows it', T, async () => {
-  const run = setupUnit({ steps: [planCheckStep({ decision: 'approve', risk: 'high' })], risk: 'low' });
+  // A plan seats build.high on frontier, so the raise moves the implementer (every built-in build seat is efficient since dev.17).
+  const run = setupUnit({ steps: [planCheckStep({ decision: 'approve', risk: 'high' })], risk: 'low', routing: HIGH_BUILDS_ON_FRONTIER });
   const done = started(await planCheck(run.ctx, run.unit));
   assert.equal(done.outcome.kind, 'approve');
   assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.seat === 'high', 'the build sits on the raised seat');
@@ -64,7 +65,7 @@ test('dispatch.risk-raise: a plan-check that raises the risk records a new dispa
   assert.notEqual(high!.implementerSeatRev, low!.implementerSeatRev, 'the raised floor pins the high implementer seat');
   assert.equal(run.journal.view.unit(U1).risk, 'high');
   assert.equal(seated(implementerDispatch(run.ctx, U1)).tier, 'high');
-  assert.equal(seated(implementerDispatch(run.ctx, U1)).triple.backend, 'claude', 'default profile: the frontier class builds high');
+  assert.equal(seated(implementerDispatch(run.ctx, U1)).triple.backend, 'claude', 'the plan\'s frontier class builds high');
   assert.equal(seated(judgmentDispatch(run.ctx, U1, 'gate')).tier, 'high');
 });
 
@@ -206,7 +207,8 @@ async function dev6Built(extra: Steps): Promise<StageRun> {
     risk: 'high',
     steps: [planCheckStep({ decision: 'approve', risk: 'high' }), { as: 'claude', expect: { argv: ['--effort', 'high', '--session-id'] }, acts: [MALFORMED] }, ...extra],
   });
-  const dev6 = under(run, { ...rebound(DEV6), arcScope: 'architecture-doc' });
+  // dev.6's built-in seats built high on frontier (a plan layer stands for them: HEAD's built-ins build every tier efficient).
+  const dev6 = under(run, { ...rebound(DEV6, { build: { high: 'frontier' } }), arcScope: 'architecture-doc' });
   started(await planCheck(dev6, run.unit));
   const malformed = started(await build(dev6, run.unit, { kind: 'fresh' }));
   assert.equal(malformed.outcome.kind, 'malformed');
@@ -218,8 +220,8 @@ test('dispatch.dev6-decoder: a dev.6-shaped record reads back its triple; fronti
   // seat resolves but is not in force, LR-0a-1).
   const run = await dev6Built([{ as: 'claude', expect: { argv: ['--effort', 'medium', '--resume'], argvLacks: ['--session-id'] }, acts: [{ type: 'emit', value: BUILD_REPORT }] }]);
   assert.deepEqual(seatTripleOf(dispatches(run)[0]!.implementerSeatRev), DEV6.frontier);
-  const head = under(run, { ...arcStack('default', null, null), arcScope: 'architecture-doc' });
-  const packMoved = resolveRouting({ ...rebound({}, { packReview: { arc: 'summit' } }), arcScope: 'architecture-doc' });
+  const head = under(run, { ...rebound({}, { build: { high: 'frontier' } }), arcScope: 'architecture-doc' });
+  const packMoved = resolveRouting({ ...rebound({}, { build: { high: 'frontier' }, packReview: { arc: 'summit' } }), arcScope: 'architecture-doc' });
   assert.equal(packMoved.rev, head.routing(null).rev, 'the packReview seat is not hashed in an architecture-doc scope');
   const s = await step(head, run.unit);
   assert.equal(s.kind, 'continue', 'the session resumed with --effort medium');
@@ -236,7 +238,7 @@ test('dispatch.dev6-decoder: a dev.6-shaped record reads back its triple; fronti
 // Efficient judgment (owner ruling 2026-10-15, 1.0.0-dev.10): the built-in seats moved the low-risk judgments, the lenses
 // and flow to the efficient class; the builds did not move.
 
-test('dispatch.dev9-adopted: a unit dispatched and built under the built-in seats before 1.0.0-dev.10 re-pins under HEAD\'s, its build resumes, and its plan-check moves to Sonnet high', T, async () => {
+test('dispatch.dev9-adopted: a unit dispatched and built under the built-in seats before 1.0.0-dev.10 re-pins under HEAD\'s, its med build resumes, and its judgments sit on Opus medium', T, async () => {
   const run = setupUnit({
     steps: [
       planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [MALFORMED] },
@@ -246,7 +248,8 @@ test('dispatch.dev9-adopted: a unit dispatched and built under the built-in seat
   for (const profile of ['default', 'claude-only'] as const) {
     const before = resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, arcStack(profile, null, null));
     assert.notEqual(before.rev, resolveRouting(arcStack(profile, null, null)).rev, `${profile}: the seat table moved the rev`);
-    assert.deepEqual(before.table.build, resolveRouting(arcStack(profile, null, null)).table.build, `${profile}: no build seat moved`);
+    const now = resolveRouting(arcStack(profile, null, null)).table.build;
+    assert.deepEqual([before.table.build.low, before.table.build.med], [now.low, now.med], `${profile}: no low or med build seat moved (dev.17 moved build.high)`);
   }
   const dev9Routing = resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, arcStack('default', null, null));
   const dev9: StageContext = { ...run.ctx, routing: () => dev9Routing };
@@ -262,14 +265,14 @@ test('dispatch.dev9-adopted: a unit dispatched and built under the built-in seat
   assert.equal(repinned?.routingRev, head.routing(null).rev);
   assert.equal(repinned?.implementerSeatRev, first?.implementerSeatRev, 'the implementer seat is unchanged');
   assert.notEqual(run.journal.view.unit(U1).decided?.outcome, 'routing-changed');
-  assert.deepEqual(seated(judgmentDispatch(head, U1, 'plan-check')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' });
-  assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' }, 'gate.med moves to efficient (the 1.0.0-dev.12 gate ladder)');
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'plan-check')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'frontier plan-checks every tier (dev.17)');
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'frontier gates every tier (dev.17)');
 });
 
 // The gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): gate.med moved to efficient; gate.low stays efficient
 // (it moved to economy, then reverted after the paid gate role eval).
 
-test('dispatch.dev11-adopted: a unit dispatched and built under the seats 1.0.0-dev.10 and dev.11 hashed re-pins under HEAD\'s without a park, its build resumes, and its med gate moves from Opus medium to Sonnet high', T, async () => {
+test('dispatch.dev11-adopted: a unit dispatched and built under the seats 1.0.0-dev.10 and dev.11 hashed re-pins under HEAD\'s without a park, its build resumes, and its med plan-check moves from Sonnet high to Opus medium', T, async () => {
   const run = setupUnit({
     steps: [
       planCheckStep({ decision: 'approve' }), { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [MALFORMED] },
@@ -290,6 +293,6 @@ test('dispatch.dev11-adopted: a unit dispatched and built under the seats 1.0.0-
   assert.equal(repinned?.routingRev, head.routing(null).rev);
   assert.equal(repinned?.implementerSeatRev, first?.implementerSeatRev, 'the implementer seat is unchanged');
   assert.notEqual(run.journal.view.unit(U1).decided?.outcome, 'routing-changed');
-  assert.deepEqual(seated(judgmentDispatch(head, U1, 'plan-check')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' }, 'plan-check did not move');
-  assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' }, 'gate.med moves to efficient');
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'plan-check')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'plan-check.med moves to frontier (dev.17)');
+  assert.deepEqual(seated(judgmentDispatch(head, U1, 'gate')).triple, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, 'gate.med stays on Opus medium');
 });

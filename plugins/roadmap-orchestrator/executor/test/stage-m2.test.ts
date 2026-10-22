@@ -1,11 +1,11 @@
 // M2 step 7a: the stage functions on the M2 primitives, integrated over real processes and real git. Entry
 // reservations before a stage's first journaled op and cancelled waits that journal nothing (A1, F6), durable
 // judgment inputs and a recovered gate read against them (F1), the publication holder from candidate to
-// snapshot (A2, F3), park outcomes with their targets (A7, G6) and the D4 escalation through the build stage
-// (A11, G1). M3 Checkpoint A: a judgment captures its inputs under the fence before its entry reservation.
+// snapshot (A2, F3), park outcomes with their targets (A7, G6) and a stalled fix round that stays on its seat (dev.17
+// retired the D4 escalation). M3 Checkpoint A: a judgment captures its inputs under the fence before its entry reservation.
 // Named tests: stage.entry-before-first-op, stage.cancel-wait-journals-nothing, gate.judgment-inputs, gate.cancel-wait-recaptures,
 // gate.recovered-recorded-tip, publication.ownership (live, pause before and after green, a crash at each
-// boundary), park.salvage-and-teardown-fail-restart, rounds.d4-through-driver; also stage.repeat-park.
+// boundary), park.salvage-and-teardown-fail-restart, rounds.no-escalation; also stage.repeat-park.
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,7 +21,6 @@ import { type StageContext, type StageParent, isCancelled, unitBranch } from '..
 import { consumeJudgment, fingerprintAt, gate } from '../src/pipeline/gate.ts';
 import { candidate, ff, snapshot } from '../src/pipeline/integrate.ts';
 import { reserveNow } from '../src/pipeline/lanes.ts';
-import { NO_SESSION_NOTE } from '../src/prompts/directives.ts';
 import {
   type BuildRun, type LanesDone, at, build, evidence, lanes, planCheck, quiesce, record, recordedCall, salvage, start, teardown,
 } from '../src/pipeline/stages.ts';
@@ -544,19 +543,15 @@ test('stage.repeat-park: a retryable park on a target the unit recovered on with
 });
 
 // ---------------------------------------------------------------------------------------------------
-// D4 through the build stage
+// No escalation through the build stage (dev.17 retired D4)
 
-test('rounds.d4-through-driver: red, a stalled fix round, then the next build launches on build.high with a fresh session', T, async () => {
+test('rounds.no-escalation: red, a stalled fix round, then the next fix round resumes its session on the same seat; nothing escalates', T, async () => {
   const run = setupUnit({
     steps: [
       planCheckStep({ decision: 'approve' }),
       codexBuild([], { argv: ['exec', '-C'] }),
       codexBuild([{ type: 'commit', message: 'not the fix', files: { 'src/notes.md': 'Tried.\n' } }], { argv: ['exec', 'resume'] }),
-      {
-        as: 'claude',
-        expect: { argv: ['-p', '--session-id'], argvLacks: ['--resume'], stdinContains: [NO_SESSION_NOTE] },
-        acts: [{ type: 'commit', message: 'fix add', files: ADD_FIX }, { type: 'emit', value: BUILD_REPORT }],
-      },
+      codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', 'resume'] }),
     ],
   });
   started(await planCheck(run.ctx, run.unit));
@@ -573,19 +568,14 @@ test('rounds.d4-through-driver: red, a stalled fix round, then the next build la
   assert.equal(green.outcome.kind, 'green');
   const builds = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
   assert.equal(builds.length, 3);
-  const escalated = builds[2]!;
-  assert.ok(escalated.parent.type === 'stage');
-  const s = escalated.expect.subject;
+  const third = builds[2]!;
+  const s = third.expect.subject;
   assert.ok(s.purpose === 'backend' && s.role === 'build');
-  assert.equal(s.tier, 'high', 'the round sits on build.high');
-  const launch = launchOf(run, escalated);
-  assert.equal(launch.argv[0], 'claude');
-  assert.ok(launch.argv.includes(run.ctx.routing(null).table.build.high.model), 'build.high\'s model');
-  assert.ok(launch.terminal.type === 'backend' && 'session' in launch.terminal && launch.terminal.session.mode === 'fresh', 'a fresh session: the seat moved');
-  const fact = runEvents(run).find((e) => e.type === 'fact' && e.fact.kind === 'implementer-escalated');
-  assert.ok(fact !== undefined && fact.type === 'fact' && fact.fact.kind === 'implementer-escalated');
-  assert.equal(fact.fact.attempt, escalated.parent.attempt);
-  assert.ok(fact.seq < (escalated as Event).seq, 'journaled before the round\'s seat was chosen and spawned');
-  assert.equal(run.journal.view.unit(U1).buildTier, 'high');
+  assert.equal(s.tier, 'med', 'the round stays on the unit\'s own seat');
+  const launch = launchOf(run, third);
+  assert.equal(launch.argv[0], 'codex');
+  assert.ok(launch.terminal.type === 'backend' && 'session' in launch.terminal && launch.terminal.session.mode === 'resume', 'the session resumes');
+  assert.equal(runEvents(run).some((e) => e.type === 'fact' && e.fact.kind === 'implementer-escalated'), false);
+  assert.equal(run.journal.view.unit(U1).buildTier, 'med');
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null));
 });

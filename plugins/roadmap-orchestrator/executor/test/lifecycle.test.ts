@@ -20,7 +20,7 @@ import { keptSpecPath } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
 import { absPath } from '../src/core/values.ts';
 import { DOCS_NOT_YET } from '../src/recover/revision.ts';
-import { arcStack, resolveRouting } from '../src/routing/layers.ts';
+import { arcStack, parseRepoConfig, resolveRouting } from '../src/routing/layers.ts';
 import { type RoutingLayer, routingLayer } from '../src/routing/types.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep, testProbes } from './fixtures/stage-common.ts';
@@ -42,7 +42,7 @@ function raiseParked(r: ArcRun, unit: typeof U1, content: NeedsUserContent): Nee
 async function command(r: ArcRun, body: CommandBody, stage: StageContext = r.ctx): Promise<Readonly<{ id: string; outcome: CommandOutcome }>> {
   const ctx: CommandContext = {
     ...stage, hostEnv: {}, laneEnv: stage.hostEnv, planFile: absPath(r.d.planPath), routing: () => ({ profile: 'default', resolved: stage.routing(null) }),
-    routingBase: { profile: 'default', config: null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET,
+    routingBase: { profile: 'default', config: r.d.config ?? null, arcRoles: 'm4b' }, docs: DOCS_NOT_YET,
     probes: testProbes(stage),
   };
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);
@@ -229,7 +229,8 @@ test('reopen.risk-raise-moves-seat: a re-opened unit whose plan-check raises the
       gateStep({ decision: 'approve' }),
     ],
   });
-  const r = contextFor(d);
+  // The repo seats build.high on frontier, so the raise moves the implementer (every built-in build seat is efficient since dev.17).
+  const r = contextFor({ ...d, config: parseRepoConfig({ routing: { seats: { build: { high: 'frontier' } } } }) });
   try {
     const parked = await runUnit(r.ctx, r.unit('u1'), live());
     assert.ok(parked.kind === 'parked');

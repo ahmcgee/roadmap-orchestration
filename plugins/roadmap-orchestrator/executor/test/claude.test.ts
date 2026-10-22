@@ -56,6 +56,15 @@ describe('claude', () => {
       assert.deepEqual([charged.tokens.inputTokens, charged.tokens.outputTokens, charged.tokens.cacheReadTokens, charged.tokens.cacheWriteTokens, charged.tokens.turns], [2, 52, 18474, 112, 2]);
       assert.ok(Math.abs((charged.tokens.costUsd ?? 0) - (0.1544788 - 0.14884)) < 1e-12);
     });
+    it('a build\'s advisor spend (dev.17) is its own modelUsage entry: delegated to Opus\'s class, frontier', () => {
+      // The 2.1.301 capture: a Sonnet build with `--advisor claude-opus-5-5` that consulted the advisor once.
+      const r = readClaude(stdoutOf('claude-build-advisor'));
+      assert.deepEqual(r.output, { kind: 'present', value: { ok: true } });
+      assert.ok(r.usage.kind === 'known');
+      assert.equal(initOf('claude-build-advisor')['model'], 'claude-sonnet-5-5');
+      assert.deepEqual(r.usage.delegated, [{ class: 'frontier', inputTokens: 19316, outputTokens: 189, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.081044 }]);
+      assert.equal(r.usage.tokens.costUsd, 0.15488390000000002);
+    });
     it('per-model costs that do not sum to total_cost_usd fail loud', () => {
       const invDir = editClaudeResult(fixtureInvocation('claude-judgment-subagents', EXIT0), (o) => ({ ...o, total_cost_usd: 0.05 }));
       assert.throws(() => adapt(invDir), /usage does not add up: result_index 1: modelUsage costUSD sums to 0\.032\d*, total_cost_usd is 0\.05/);

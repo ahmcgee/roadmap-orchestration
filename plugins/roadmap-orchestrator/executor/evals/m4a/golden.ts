@@ -24,9 +24,8 @@
 // admits `fits` (files/units/fits/, the opportunity, V-7) with its witness, a split of I-4 whose child I-14 (T-4) fits
 // delivers on the berths journey (fits adds the test there), and a day view the budget converts (`OPPORTUNITY`).
 //
-// The M4a rev 3 checks the fake exercises through these inputs: every plan writes `planCheck.shape: by-builder`, so the
-// low-risk units take the efficient acceptance-shape plan-check and `confirm` (high risk, the frontier builder)
-// assesses in session; every arc lane declares `testPaths`, so mutation smoke runs for `confirm`, whose spec names the
+// The M4a rev 3 checks the fake exercises through these inputs: every arc lane declares `testPaths`, so mutation smoke
+// runs for `confirm` (high risk), whose spec names the
 // tide-table journey as witness item W-1, a test the change never needed (a smoke survivor); `notice` declares a
 // second spec lane, `slow` (`SLOW_LANE`), that hangs on its first run so the scripted root agent can pause notice there
 // and see the resumed attempt reuse the first lane's pass.

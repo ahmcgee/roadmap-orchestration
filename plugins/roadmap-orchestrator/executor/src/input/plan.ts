@@ -23,6 +23,7 @@ import {
 import {
   BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDef, laneEnv, refuseLaneInputs,
 } from '../core/records.ts';
+import { planCheckShapeDefault } from '../core/upgrade.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { type Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
 import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
@@ -168,9 +169,11 @@ export const priorityOf = (unit: PlanUnit): UnitPriority => unit.priority ?? 'no
  */
 export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId }>;
 
-/** M4a rev 3 (E, R40): how plan-check runs, per builder class (`by-builder`) or for every unit alike (`uniform`, the default). */
-export const PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
-export type PlanCheckShape = (typeof PLAN_CHECK_SHAPES)[number];
+/**
+ * M4a rev 3 (E, R40) to dev.16: how plan-check ran, per builder class (`by-builder`) or for every unit alike (`uniform`).
+ * Removed in dev.17 (every plan-check is one fresh call); a plan in force carrying it reads as uniform (`planCheckShapeDefault`).
+ */
+const LEGACY_PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
 
 /**
  * Plan defects (2026-10-16): files the build derives from others (a bundle from its sources). A unit whose scope covers a
@@ -270,8 +273,6 @@ export function portNames(text: string): readonly string[] {
 
 /** The plan's known defects; none when absent. */
 export const knownDefectsOf = (plan: PlanM1): readonly KnownDefect[] => plan.knownDefects ?? [];
-/** The plan's plan-check shape (R40: a non-holistic arc always runs `uniform`, the caller's rule); `uniform` when absent. */
-export const planCheckShapeOf = (plan: PlanM1): PlanCheckShape => plan.planCheck?.shape ?? 'uniform';
 
 /** A chained start's previous arc and its completed head (H12), fixed at revision 1 (`chain-immutable`). */
 export type PlanChain = Readonly<{ previousArc: ArcId; previousHead: Sha }>;
@@ -319,8 +320,6 @@ type PlanBase = Readonly<{
   chain?: PlanChain;
   /** M4a rev 3 (F4): known defects, ids unique (absent: none, lasting; `knownDefectsOf`). */
   knownDefects?: readonly KnownDefect[];
-  /** M4a rev 3 (E): the plan-check shape (absent: `uniform`, lasting; `planCheckShapeOf`). */
-  planCheck?: Readonly<{ shape: PlanCheckShape }>;
   /** Plan defects (2026-10-16): derived files (absent: none, lasting; `derivedOf`). */
   derived?: readonly DerivedFiles[];
   /** dev.13: the milestones, ids unique (absent: none, lasting; `milestonesOf`). Changed only by `apply`. */
@@ -693,7 +692,9 @@ export function parsePlan(value: unknown): PlanM1 {
     const limits = f.optional('limits', arcLimits);
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
-    const planCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(PLAN_CHECK_SHAPES)) })));
+    // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every plan-check is uniform now), warned.
+    const legacyPlanCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(LEGACY_PLAN_CHECK_SHAPES)) })));
+    if (legacyPlanCheck !== undefined) planCheckShapeDefault(legacyPlanCheck.shape);
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));
     const environments = f.optional('environments', environmentsR);
@@ -714,7 +715,6 @@ export function parsePlan(value: unknown): PlanM1 {
       ...(limits === undefined ? {} : { limits }),
       ...(chain === undefined ? {} : { chain }),
       ...(knownDefects === undefined ? {} : { knownDefects }),
-      ...(planCheck === undefined ? {} : { planCheck }),
       ...(derived === undefined ? {} : { derived }),
       ...(milestones === undefined ? {} : { milestones }),
       ...(environments === undefined ? {} : { environments }),

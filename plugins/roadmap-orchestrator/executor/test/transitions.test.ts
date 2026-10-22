@@ -113,8 +113,9 @@ const ROWS: readonly Row[] = [
   ['plan-check', 'process-fault', {}, 'park:process-fault', 'park', {}],
   // A routing change that moved a started implementer's seat (dispatch.ts): park, uncharged, at any dispatching stage.
   ['plan-check', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
-  // M4a rev 3 (E): a frontier builder under by-builder makes no plan-check call; its fresh build assesses in session.
-  ['plan-check', 'in-session', {}, 'build/fresh@med', 'advance', {}],
+  // M4a rev 3 (E) to dev.16: a by-builder frontier unit's plan-check recorded in-session (no call). dev.17 has no in-session
+  // assessment: a unit an older log left there runs its plan-check before it builds.
+  ['plan-check', 'in-session', {}, 'plan-check@med', 'advance', {}],
   // Scope growth (2026-10-15): a verified proposal holds the unit for the root agent, uncharged.
   ['plan-check', 'scope-growth', {}, 'hold', 'hold', {}],
   // 2026-10-16: the prompt or context outgrew the model's window: an uncharged env park, never the retryable process-fault
@@ -139,7 +140,7 @@ const ROWS: readonly Row[] = [
   ['build', 'interrupted', {}, 'hold', 'hold', {}],
   ['build', 'interrupted', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'hold', 'hold', {}],
   ['build', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
-  // M4a rev 3 (E, R55): the in-session assessment's outcomes. Infeasible parks design with the escalation's reason (a
+  // M4a rev 3 (E, R55) to dev.16, read from an older log: the in-session assessment's outcomes. Infeasible parks design with the escalation's reason (a
   // build has no escalation seat to route up to); a raised floor on another seat builds fresh there, uncharged.
   ['build', 'infeasible', {}, 'park:escalation', 'park', {}],
   ['build', 'risk-raised', {}, 'build/fresh@med', 'advance', {}],

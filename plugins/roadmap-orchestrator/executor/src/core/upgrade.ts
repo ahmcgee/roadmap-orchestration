@@ -260,8 +260,33 @@ export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {
   polishJudge: { arc: 'frontier' },
 };
 
+// Experience-won routing (owner 2026-10-22, 1.0.0-dev.17): plan-check and the gate moved to frontier at every risk tier, and
+// build.high to efficient (its builds consult an Opus advisor). As above, OR-L3 binds every revision through HEAD's seats:
+// an arc started on 1.0.0-dev.12 to dev.16 re-pins its units under the new rev without a park while their implementer seat
+// is unchanged (a unit at risk high that already built on frontier parks `routing-changed`: its session cannot move), and
+// status aliases the revs it recorded. Delete (with `PRE_DEV17_BUILTIN_SEATS`'s place in `EARLIER_BUILTIN_SEATS`) once no
+// arc started on 1.0.0-dev.16 or earlier is in flight.
+
+/**
+ * The built-in seats 1.0.0-dev.12 to dev.16 hashed: efficient plan-checked and gated low and med, frontier high; frontier
+ * built high. Kept only so `status` can join such a meter row's recorded `routingRev` to its revision's current table;
+ * nothing routes under it. These seats name only classes whose bindings HEAD's catalogue keeps, so HEAD resolves them to
+ * the triples dev.16 hashed.
+ */
+export const PRE_DEV17_BUILTIN_SEATS: ClassTable = {
+  planCheck: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
+  build: { low: 'efficient', med: 'efficient', high: 'frontier' },
+  gate: { low: 'efficient', med: 'efficient', high: 'frontier', escalation: 'summit' },
+  lens: { arc: 'efficient' },
+  checkpoint: { arc: 'summit' },
+  packReview: { arc: 'frontier' },
+  flow: { arc: 'efficient' },
+  walkthrough: { arc: 'frontier' },
+  polishJudge: { arc: 'frontier' },
+};
+
 /** Every built-in seat table an earlier adopted release hashed, oldest first: what status aliases recorded revs under. */
-export const EARLIER_BUILTIN_SEATS: readonly ClassTable[] = [PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS];
+export const EARLIER_BUILTIN_SEATS: readonly ClassTable[] = [PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS];
 
 // Plan defects (2026-10-16, 1.0.0-dev.11): a fresh arc's arc lanes declare `testPaths` and its witnesses `files`, and
 // Phase 0 checks every witness file against its lane and its deliverers (src/phase0/rows.ts). Obligations an arc started
@@ -370,4 +395,14 @@ export function gateNoteDebtDefault(): typeof GATE_DEBT_UNRECORDED {
 export function gateUnreviewedDefault(): null {
   warnDefaulted('gate.unreviewed', 'a gate answer without unreviewed (a dev.11 gate); read as unknown');
   return null;
+}
+
+/**
+ * A plan's `planCheck.shape` (M4a rev 3 to dev.16): removed in dev.17, where every unit's plan-check is one fresh call. A plan
+ * in force carrying it (an arc started on dev.16 or earlier) reads as `uniform`: the field is dropped at parse, and a
+ * `by-builder` arc's units plan-check as any other's from here. Scaffolding: deleted once no arc started on 1.0.0-dev.16 is in
+ * flight (BACKLOG "Scaffolding to delete"); the plan reader then refuses the field.
+ */
+export function planCheckShapeDefault(shape: 'uniform' | 'by-builder'): void {
+  warnDefaulted('plan.planCheck.shape', `a plan with planCheck.shape ${shape} (removed in dev.17); read as uniform: every plan-check is one fresh call`);
 }

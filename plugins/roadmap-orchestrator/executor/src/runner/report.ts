@@ -12,7 +12,7 @@
 // Codex's `-o` file (written once, at the end of the turn). Once the latest report is schema-valid and final, and the
 // workload is still running `REPORT_GRACE_MS` later (the CLI exiting, or descendants outliving it), the runner ends
 // it with cause `reported`. Before a final report, waiting is unrestricted; the deadline stays the backstop. A schema
-// without `final` (every judgment, the assessment, the smoke) is never watched.
+// without `final` (every judgment, the smoke) is never watched.
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { schemaViolation } from '../backends/adapter.ts';
 import type { BackendTerminal, LaunchTerminal } from '../core/records.ts';

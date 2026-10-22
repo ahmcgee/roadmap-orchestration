@@ -183,8 +183,9 @@ the MCP servers a walkthrough session gets (and only those), with `{evidence}` a
 effort}` and is the only place a model is named (ids in `executor/src/routing/models.ts`). A rebind applies at every seat
 that names the class, judgment seats included: a Codex triple there is refused `unsupported-routing{codex-judgment}`, so
 move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `efficient`
-builds low and med, plan-checks low and med, gates low and med, and runs the lenses and flow; `frontier` builds high, plan-checks
-high, gates high, and runs the pack review; `summit` holds both escalation seats and the checkpoint. A class binds a build
+builds at every risk and runs the lenses and flow; `frontier` plan-checks and gates at every risk and runs the pack review;
+`summit` holds both escalation seats and the checkpoint. A Claude build consults the frontier model as its advisor (`--advisor`) at its
+own decision points; that spend shows under `frontier` in `spend.byClass`. A class binds a build
 model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
 `economy` is judgment-only and no built-in seat names it (reach it through `routing.seats`, a plan or `route`): no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`.
 
@@ -501,7 +502,7 @@ Blocking unless noted. Read the item file before acting.
   checkpoint.
 - "M4a: corpus, debt, forge, brief, chaining": the corpus guide, the pin, rules registry, obligations with census,
   the Phase-0 record, the issue capture, debt, the brief and the ack log.
-- "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck`, spec `witnesses` and lane `inputs`, arc
+- "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck` (removed in dev.17), spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
 - "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row (2026-10-21: milestone references over the budget) and park, plan `derived`
   and the dispatch record's `derived`, the lanes `scope-growth` hold; a derived entry's `regenerate` and its check

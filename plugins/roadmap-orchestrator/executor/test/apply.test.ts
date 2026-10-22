@@ -3,7 +3,7 @@
 // the log, with and without a fact; an apply's rejections (files changed since they were hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
 // apply.crash-cells, apply.recovered-after-start; M4a rev 3 (N3): classify.priority-edit-no-drain,
-// classify.plan-check-shape-edit, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
+// classify.plan-check-shape-dropped, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
 // classify.knowndefect-cut-fixer-refused, classify.reentry-widen-with-ruling, classify.reentry-widen-without-ruling-refused; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
 // apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
 // apply.stale-after-evidence-revision, classify.evidence-covers-scope (M4b run 3).
@@ -836,11 +836,10 @@ describe('M4a rev 3 edits that drain nothing', () => {
     });
   });
 
-  test('classify.plan-check-shape-edit: `plan-check-shape`, scope none; absent and `uniform` are the same shape', T, () => {
-    assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape: 'by-builder' }))), {
-      changes: [{ type: 'plan-check-shape' }], scope: { type: 'none' },
-    });
-    assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape: 'uniform' }))), { changes: [], scope: { type: 'none' } });
+  test('classify.plan-check-shape-dropped (dev.17): the removed `planCheck.shape` is read and dropped, so adding it changes nothing', T, () => {
+    for (const shape of ['by-builder', 'uniform']) {
+      assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape }))), { changes: [], scope: { type: 'none' } }, shape);
+    }
   });
 
   test('classify.knowndefect-refusals: a valid known-defects edit drains nothing', T, () => {
@@ -1063,7 +1062,7 @@ test('apply.smoke-new-backend: a routing apply that seats a backend the plan in 
     ],
   });
   // In force: every build seat on the frontier class (Claude), so no seat runs on Codex.
-  const allClaude = { build: { low: 'frontier', med: 'frontier' } };
+  const allClaude = { build: { low: 'frontier', med: 'frontier', high: 'frontier' } };
   editPlan(d, (p) => void (p['routing'] = allClaude));
   const r = contextFor(d);
   try {
@@ -1088,7 +1087,7 @@ test('apply.revalidate-after-smoke: the log moving while the smoke runs is caugh
     steps: [{ as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'barrier', name: 'smoke', timeoutMs: 30_000 }, { type: 'emit', value: { ok: true } }] }],
     units: [{ id: 'u1' }, { id: 'u2' }],
   });
-  editPlan(d, (p) => void (p['routing'] = { build: { low: 'frontier', med: 'frontier' } }));
+  editPlan(d, (p) => void (p['routing'] = { build: { low: 'frontier', med: 'frontier', high: 'frontier' } }));
   const r = contextFor(d);
   try {
     // Seats Codex again (smoked first) and edits u2's spec while u2 is undispatched.

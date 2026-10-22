@@ -18,6 +18,7 @@ import { killWorkload } from '../src/pipeline/invoke.ts';
 import { CONTINUE_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type Gate, type UnitResult, runUnit } from '../src/pipeline/unit.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
 import { reached, release } from './helpers/barrier.ts';
 import { writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
@@ -358,7 +359,8 @@ test('continue.claude-session: a pause mid fresh build holds it; resume continue
       gateStep({ decision: 'approve' }),
     ],
   });
-  const r = contextFor(d);
+  // The repo seats build.high on frontier: a Claude build (every built-in build seat is efficient, Codex under default, since dev.17).
+  const r = contextFor({ ...d, config: parseRepoConfig({ routing: { seats: { build: { high: 'frontier' } } } }) });
   try {
     await pauseAt(r, 'b1');
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });

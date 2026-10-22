@@ -18,7 +18,7 @@ import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
 import { type JsonValue, canonicalJson } from '../core/json.ts';
 import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
 import {
-  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
+  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
 } from '../core/validate.ts';
 import { type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
 import {
@@ -201,79 +201,6 @@ export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutpu
 
 export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
   return planCheckOutput(value, 'planCheck');
-}
-
-// M4a rev 3 (E, R59): the acceptance-shape plan-check of an efficient builder under `by-builder`. Its redirect may only add
-// or replace witness items and facts, and cite; witness items enter the spec through this one patch channel, their ids
-// the next free `W-n` the prompt states (the patch engine refuses a reused id: `id-reused`). `obligation` (paid M4b run 6):
-// the delivered obligation whose witness the item restates, or null; a recorded answer without it reads as null.
-// 2026-10-15 (arc feedback #3): each call writes its own schema, `planCheckAcceptanceSchemaFor(<the arc lanes in force>)`, so
-// a witness item's lane is an enum of the arc lanes, as a checkpoint split child's is (`checkpointSchemaFor`).
-const sWitnessItem = (arcLanes: readonly LaneId[] | null): Schema =>
-  sObj({ id: S_STR, lane: arcLanes === null || arcLanes.length === 0 ? S_STR : sEnum(arcLanes), testId: S_STR, clause: S_STR, skeleton: S_STR, obligation: sNullable(S_STR) });
-export function planCheckAcceptanceSchemaFor(arcLanes: readonly LaneId[] | null): Schema {
-  return sObj({
-    decision: sEnum(PLAN_CHECK_DECISIONS),
-    reasons: sArr(S_STR),
-    patch: sNullable(sArr({
-      anyOf: [...itemOps('witnesses', sWitnessItem(arcLanes)), ...itemOps('facts', S_NOTE_ITEM), sObj({ op: sEnum(['cite']), contracts: sArr(S_STR), rulings: sArr(S_STR) })],
-    })),
-    risk: sEnum(RISK_TIERS),
-    notes: S_STR,
-    premises: S_PREMISES,
-    visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
-    scopeGrowth: S_SCOPE_GROWTH,
-  });
-}
-/** The acceptance schema the prompt modules and the probe carry: any lane id. */
-export const PLAN_CHECK_ACCEPTANCE_SCHEMA: Schema = planCheckAcceptanceSchemaFor(null);
-
-/**
- * Whether a plan-check call's schema (its launch's, as kept) is the acceptance shape's: its patch ops include a witness
- * item's. Read from the schema itself, so a call made under other arc lanes, or an earlier release's, is still told apart.
- */
-export function isAcceptanceSchema(schema: unknown): boolean {
-  const patch = (schema as { properties?: { patch?: { anyOf?: readonly { items?: { anyOf?: readonly { properties?: { section?: { enum?: readonly string[] } } }[] } }[] } } })
-    .properties?.patch?.anyOf?.[0]?.items?.anyOf ?? [];
-  return patch.some((op) => op.properties?.section?.enum?.includes('witnesses') === true);
-}
-
-/** The acceptance shape's answer: a plan-check answer whose redirect ops are witness or fact adds and replaces, or cites. */
-export function validatePlanCheckAcceptanceOutput(value: unknown): PlanCheckOutput {
-  const out = planCheckOutput(value, 'planCheck');
-  (out.patch ?? []).forEach((op, i) => {
-    const ok = op.op === 'cite' || ((op.op === 'add' || op.op === 'replace') && (op.section === 'witnesses' || op.section === 'facts'));
-    if (!ok) throw new SchemaError(`planCheck.patch[${i}]`, 'an add or replace of a witnesses or facts item, or a cite (the acceptance shape)', op);
-  });
-  return out;
-}
-
-// M4a rev 3 (E, Q18, R55): the in-session assessment, the first of a frontier build's two invocations: plan-check's slice.
-export type PlanAssessment = Readonly<{
-  feasible: boolean;
-  /** The risk floor the assessor judges; below the pin is malformed, above it raises the unit's risk. */
-  riskFloor: RiskTier;
-  visionConflict: readonly VisionConflict[];
-  premises: readonly Premise[];
-  notes: string;
-}>;
-export type PlanAssessmentOutput = Readonly<{ planAssessment: PlanAssessment }>;
-export const PLAN_ASSESSMENT_SCHEMA: Schema = sObj({
-  planAssessment: sObj({
-    feasible: S_BOOL, riskFloor: sEnum(RISK_TIERS), visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })), premises: S_PREMISES, notes: S_STR,
-  }),
-});
-export const planAssessmentOutput: Read<PlanAssessmentOutput> = object((f) => ({
-  planAssessment: f.get('planAssessment', object((g) => ({
-    feasible: g.get('feasible', bool),
-    riskFloor: g.get('riskFloor', oneOf(RISK_TIERS)),
-    visionConflict: g.get('visionConflict', arrayOf(visionConflict)),
-    premises: g.get('premises', arrayOf(premise)),
-    notes: g.get('notes', text),
-  }))),
-}));
-export function validatePlanAssessment(value: unknown): PlanAssessmentOutput {
-  return planAssessmentOutput(value, 'build');
 }
 
 // ---------------------------------------------------------------------------------------------------

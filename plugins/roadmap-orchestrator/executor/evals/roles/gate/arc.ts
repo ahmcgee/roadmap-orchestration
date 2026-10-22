@@ -110,7 +110,7 @@ function overThreshold(repo: string, base: string, head: string, removes: readon
 /**
  * The arm a run measures: the gate seat its risk picks, the class there and the triple that class binds under the run's
  * repo config (the production routing stack: built-in seats, the `default` profile's catalogue, `routing.classes`
- * rebinds), e.g. `gate.low efficient claude-sonnet-5-5:high`.
+ * rebinds), e.g. `gate.low frontier claude-opus-5-5:medium`.
  */
 export function gateArm(risk: RiskTier, config: RepoConfig | null, readOnly = false): string {
   const r = resolveRouting(arcStack('default', config, null));
@@ -333,7 +333,7 @@ export type TrialOptions = Readonly<{
   seed: string;
   size: number;
   gate: GateKind;
-  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (built-in: low and med efficient, high frontier). */
+  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (built-in since dev.17: frontier at every tier). */
   risk: RiskTier;
   /** The repo config whose `routing.classes` rebinds classes for the trial (run.ts `--rebind`), or null: the built-in bindings. */
   config: RepoConfig | null;

@@ -3,7 +3,7 @@
 // scripted root agent (evals/m4a/fake-root.ts) replaying the golden Phase-0 outputs through the staged plugin's real
 // CLI, against the fake backends (evals/m4a/scenario.ts) and the fake gh over a local bare origin; real processes,
 // real git, the real supervisor, real node-test witness lanes over the product's journeys. Two scripts run side by
-// side: `story` (bootstrap, arc 1 with the pack-review hold, a witness fix round, an in-session assessment and a smoke
+// side: `story` (bootstrap, arc 1 with the pack-review hold, a witness fix round, a smoke
 // survivor, the cutoff question, arc 2 with the mid-arc policy flip, an opportunity admit and a converted one, a pause in
 // a hung lane and the lane reuse after it, arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice
 // candidate, stop vision-silent). The story synchronises on events, never on time, so its turns are the same every run.
@@ -13,7 +13,7 @@
 // Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.intake-filtering, evals-m4a.pack-review-hold,
 // evals-m4a.amendments-debt, evals-m4a.policy-flip, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
 // evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.witness-missing,
-// evals-m4a.in-session-smoke, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause, evals-m4a.untrusted-start,
+// evals-m4a.smoke-survivor, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause, evals-m4a.untrusted-start,
 // evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.owner-reads-brief, evals-m4a.wake-key, skill.operator-log-format,
 // evals-m4a.flow-loop, evals-m4a.flow-criteria, evals-m4a.plant-lane.
 import assert from 'node:assert/strict';
@@ -129,7 +129,6 @@ const stageOf = (p: Parent): Extract<Parent, { type: 'stage' }> => {
   if (p.type !== 'stage') throw new Error(`not a stage parent: ${JSON.stringify(p)}`);
   return p;
 };
-const argAfter = (argv: readonly string[], flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
 
 /** Every step of each arc's fake scenario was played once, by a call that matched it. */
 function assertEveryStepPlayed(dir: string, arcs: readonly number[]): void {
@@ -569,17 +568,14 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.match(calls[2]!.stdin, /witness-check --lane-file/, 'the fix round names the witness check command');
   });
 
-  test('evals-m4a.in-session-smoke: confirm (frontier) makes no plan-check call, assesses and implements in one session; smoke finds W-1 surviving, one fix round, then the gate', () => {
+  test('evals-m4a.smoke-survivor: confirm (high risk) is plan-checked and built; smoke finds W-1 surviving, one fix round, then the gate', () => {
     const confirm = outcomesOf(arc1, 'confirm');
     assert.deepEqual(named(confirm).filter((o) => /^(lanes|gate|build|plan-check):/.test(o)), [
-      'plan-check:in-session', 'build:success', 'lanes:smoke-survived', 'build:success', 'lanes:smoke-survived', 'gate:approve',
+      'plan-check:approve', 'build:success', 'lanes:smoke-survived', 'build:success', 'lanes:smoke-survived', 'gate:approve',
     ]);
     const calls = callsOf(story.dir, 1).filter((c) => c.unit === 'confirm');
-    assert.equal(calls.length, 4, 'assess, implement, the smoke fix round, gate: no plan-check call');
-    const session = argAfter(calls[0]!.argv, '--session-id');
-    assert.ok(session !== undefined && !calls[0]!.argv.includes('--tools'));
-    assert.deepEqual([argAfter(calls[1]!.argv, '--resume'), argAfter(calls[2]!.argv, '--resume')], [session, session], 'one session: implement and the fix round resume the assessment');
-    assert.ok(calls[3]!.argv.includes('--tools'), 'the gate still runs');
+    assert.equal(calls.length, 4, 'plan-check, build, the smoke fix round, gate');
+    assert.ok(calls[0]!.argv.includes('--tools') && calls[3]!.argv.includes('--tools'), 'plan-check and the gate judge');
     const tides = { lane: 'tides', testId: LANES.find((x) => x.id === 'tides')!.test };
     const ran = factsOf(arc1, 'smoke-ran').filter((f) => f.unit === 'confirm');
     assert.equal(ran.length, 2);
