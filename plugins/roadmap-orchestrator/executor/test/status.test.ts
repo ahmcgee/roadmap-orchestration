@@ -153,8 +153,8 @@ describe('status.subset', () => {
     assert.deepEqual(s.spend.bySmoke.map((t) => [t.backend, t.calls]), [['claude', 1], ['codex', 1]], 'each start-up smoke apart, by backend');
     assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
     // The one permitted derivation: models named by looking seats up in the routing table at render time.
-    // A med unit: plan-check and gate on efficient (Sonnet high; the gate since 1.0.0-dev.12), build on efficient (Luna).
-    assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-sonnet-5-5', 2], ['gpt-5.6-luna', 1]]);
+    // A med unit: plan-check and gate on frontier (Opus medium, since dev.17), build on efficient (Luna).
+    assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls]), [['claude-opus-5-5', 2], ['gpt-5.6-luna', 1]]);
     assert.deepEqual(s.host.containment, { mode: 'session', guarantee: SESSION_GUARANTEE });
     assert.match(s.host.containment.guarantee, /setsid\(\) and execs with a cleared environment/);
     assert.deepEqual(s.parkedBackends, []);

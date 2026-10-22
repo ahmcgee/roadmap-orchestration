@@ -173,9 +173,9 @@ export function proposal(d: Readonly<{ planPath: string }>, id: string, text: st
   return { journey: 'J-1', text, unit: { id, scope: SCOPE, spec: admitSpecWire({ ...u1, unit: id, rev: 1, scope: SCOPE, ...extra }) } };
 }
 
-/** A Claude build of polish unit `unit` (frontier builds high risk): it commits `files`. */
+/** The build of polish unit `unit` (risk high: the efficient class since dev.17, Codex under the default profile): it commits `files`. */
 export const polishBuild = (unit: string, files: Readonly<Record<string, string>>): Step => ({
-  as: 'claude', unit, expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] },
+  as: 'codex', unit, expect: { argv: ['exec', '-C'] },
   acts: [{ type: 'commit', message: `polish ${unit}`, files }, { type: 'emit', value: BUILD_REPORT }],
 });
 export const polishSteps = (unit: string, files: Readonly<Record<string, string>>): readonly Step[] => [

@@ -184,8 +184,8 @@ effort}` and is the only place a model is named (ids in `executor/src/routing/mo
 that names the class, judgment seats included: a Codex triple there is refused `unsupported-routing{codex-judgment}`, so
 move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `efficient`
 builds at every risk and runs the lenses and flow; `frontier` plan-checks and gates at every risk and runs the pack review;
-`summit` holds both escalation seats and the checkpoint. A Claude build consults an Opus advisor (`--advisor`) at its own
-decision points; its spend shows under `frontier` in `spend.byClass`. A class binds a build
+`summit` holds both escalation seats and the checkpoint. A Claude build consults the frontier model as its advisor (`--advisor`) at its
+own decision points; that spend shows under `frontier` in `spend.byClass`. A class binds a build
 model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
 `economy` is judgment-only and no built-in seat names it (reach it through `routing.seats`, a plan or `route`): no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`.
 

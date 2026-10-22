@@ -126,8 +126,9 @@ describe('meter', () => {
   });
 
   it('meter.subagents-by-class: a call\'s totals include its subagents\'; byClass puts each seat\'s own share on its class and the delegated share on its own', () => {
-    // A repo seats gate.low on economy (Haiku 5.5): no built-in seat names it since the 2026-10-17 gate eval.
-    const def = resolveRouting({ profile: 'default', classes: null, repoConfig: { gate: { low: 'economy' } }, plan: null, unit: null });
+    // A repo seats gate.low on economy (Haiku 5.5; no built-in seat names it since the 2026-10-17 gate eval) and gate.med on
+    // efficient (Sonnet 5.5; the built-in gate is frontier at every tier since dev.17).
+    const def = resolveRouting({ profile: 'default', classes: null, repoConfig: { gate: { low: 'economy', med: 'efficient' } }, plan: null, unit: null });
     const rev = def.rev;
     const S1 = claudeSessionId('11111111-1111-4111-8111-111111111111');
     const S2 = claudeSessionId('22222222-2222-4222-8222-222222222222');
@@ -193,10 +194,11 @@ describe('meter', () => {
       ({ ...unitSeatRef(role, tier), routingRev: rev, calls: 1, input, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 });
     const seats = [t('build', 'med', claudeOnly.rev, 10), t('build', 'med', def.rev, 5), t('build', 'high', def.rev, 7), t('gate', 'high', def.rev, 2), t('gate', 'escalation', def.rev, 3)];
     assert.deepEqual(byModel(seats, tables), [
-      // build.high (frontier), gate.high (frontier) and gate.escalation (summit): Opus 5.5 at medium and xhigh (OR-Q17).
-      { model: 'claude-opus-5-5', calls: 3, input: 12, output: 3, cacheRead: 0, cacheWrite: 0, turns: 3, costUsd: 1.5, unavailable: 0 },
+      // gate.high (frontier) and gate.escalation (summit): Opus 5.5 at medium and xhigh (OR-Q17); build.high is efficient
+      // (Luna under default) since dev.17.
+      { model: 'claude-opus-5-5', calls: 2, input: 5, output: 2, cacheRead: 0, cacheWrite: 0, turns: 2, costUsd: 1, unavailable: 0 },
       { model: 'claude-sonnet-5-5', calls: 1, input: 10, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
-      { model: 'gpt-5.6-luna', calls: 1, input: 5, output: 1, cacheRead: 0, cacheWrite: 0, turns: 1, costUsd: 0.5, unavailable: 0 },
+      { model: 'gpt-5.6-luna', calls: 2, input: 12, output: 2, cacheRead: 0, cacheWrite: 0, turns: 2, costUsd: 1, unavailable: 0 },
     ]);
     assert.throws(() => byModel([t('gate', 'low', REV_A, 1)], tables), /no routing table for revision aaaaaaaaaaaaaaaa/);
   });

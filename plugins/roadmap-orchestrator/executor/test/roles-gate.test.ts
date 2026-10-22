@@ -37,7 +37,7 @@ async function fakeRun(gate: GateKind, cells: readonly string[], caps: Caps = {}
   const summary = await run({
     set: 'dev', n: caps.n ?? 1, cells, parallel: 1, size: 150, seed: 'harness', risk: 'med', config: null, out, compare: null, gate, cap: caps.cap ?? null, trialCap: caps.trialCap ?? null, readOnly: false, baseline: null,
   }, (l) => lines.push(l));
-  assert.ok(lines.includes('ARM gate.med efficient claude-sonnet-5-5:high'), 'the report names the arm: the med seat, Sonnet 5.5 high');
+  assert.ok(lines.includes('ARM gate.med frontier claude-opus-5-5:medium'), 'the report names the arm: the med seat, Opus 5.5 medium (dev.17)');
   const rows = readFileSync(join(out, 'trials.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l) as TrialRow);
   assert.ok(lines.some((l) => l.startsWith('PASS ') || l.startsWith('FAIL ')), lines.join('\n'));
   return { summary, rows, out, lines };
@@ -190,31 +190,31 @@ test('roles.transcript-cost: a captured subagent run: subagent calls by parent_t
   assert.equal(usageOf({ ...result, total_cost_usd: 0.5 })!.check, 'mismatch');
 });
 
-test('roles.arm: --risk picks the built-in gate seat (Sonnet, Sonnet, Opus); --rebind rebinds a class through the repo config, which the trial arc routes under; a bad rebind is refused', () => {
-  assert.equal(gateArm('low', null), 'gate.low efficient claude-sonnet-5-5:high');
-  assert.equal(gateArm('med', null), 'gate.med efficient claude-sonnet-5-5:high');
+test('roles.arm: --risk picks the built-in gate seat (Opus at every tier since dev.17); --rebind rebinds a class through the repo config, which the trial arc routes under; a bad rebind is refused', () => {
+  assert.equal(gateArm('low', null), 'gate.low frontier claude-opus-5-5:medium');
+  assert.equal(gateArm('med', null), 'gate.med frontier claude-opus-5-5:medium');
   assert.equal(gateArm('high', null), 'gate.high frontier claude-opus-5-5:medium');
-  const config = rebindConfig(['efficient=claude-opus-5-5:medium']);
-  assert.deepEqual(config, { routing: { classes: { efficient: { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' } } } });
-  assert.equal(gateArm('low', config), 'gate.low efficient (rebound) claude-opus-5-5:medium');
-  assert.equal(gateArm('high', config), 'gate.high frontier claude-opus-5-5:medium', 'a rebind moves only its class');
+  const config = rebindConfig(['frontier=claude-sonnet-5-5:high']);
+  assert.deepEqual(config, { routing: { classes: { frontier: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' } } } });
+  assert.equal(gateArm('low', config), 'gate.low frontier (rebound) claude-sonnet-5-5:high');
+  assert.equal(gateArm('low', rebindConfig(['efficient=claude-opus-5-5:high'])), 'gate.low frontier claude-opus-5-5:medium', 'a rebind moves only its class');
   // economy (Haiku 5.5) is named by no built-in seat since the 2026-10-17 gate eval; a rebind of it is still accepted,
   // and moves no built-in gate seat.
   const economy = rebindConfig(['economy=claude-haiku-5-5:medium']);
   assert.deepEqual(economy, { routing: { classes: { economy: { backend: 'claude', model: 'claude-haiku-5-5', effort: 'medium' } } } });
-  assert.equal(gateArm('low', economy), 'gate.low efficient claude-sonnet-5-5:high');
+  assert.equal(gateArm('low', economy), 'gate.low frontier claude-opus-5-5:medium');
   assert.equal(rebindConfig([]), null);
   assert.throws(() => rebindConfig(['economy=claude-opus-5-5']), /<class>=<model>:<effort>/);
   assert.throws(() => rebindConfig(['economy=claude-opus-9:high']), /model one of/);
   assert.throws(() => rebindConfig(['cheap=claude-opus-5-5:high']), /cheap/);
   assert.throws(() => rebindConfig(['economy=claude-haiku-5-5:huge']), /effort/);
   assert.throws(() => rebindConfig(['economy=claude-opus-5-5:high', 'economy=claude-haiku-5-5:low']), /rebound twice/);
-  assert.throws(() => gateArm('low', rebindConfig(['efficient=gpt-5.6-luna:low'])), /no prompt for gate on gpt-5.6-luna/);
+  assert.throws(() => gateArm('low', rebindConfig(['frontier=gpt-5.6-luna:low'])), /no prompt for gate on gpt-5.6-luna/);
   // The trial arc (test/fixtures/unit-common.ts contextFor) resolves its routing under the descriptor's config.
   const d = setupArc({ steps: [] });
   const r = contextFor({ ...d, config: config! });
   try {
-    assert.deepEqual(r.ctx.routing(null).table.gate.low, { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' });
+    assert.deepEqual(r.ctx.routing(null).table.gate.low, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' });
     assert.deepEqual(r.ctx.routingBase.config, config);
   } finally {
     r.journal.close();

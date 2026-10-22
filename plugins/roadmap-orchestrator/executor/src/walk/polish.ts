@@ -11,7 +11,7 @@
 //   - its scope covers none of the milestone's references (src/walk/report.ts `coversReference`);
 //   - the admit path or the classifier refuses its unit admitted alone.
 // The rest are admitted together: each a unit with origin `polish`, `polish{milestone, proposal}`, risk `high` (Opus
-// builds design tweaks), `after: []`, the milestone's resources, the proposal's scope and spec. The whole revision refused
+// judges design tweaks; dev.17: an efficient builder), `after: []`, the milestone's resources, the proposal's scope and spec. The whole revision refused
 // (the units refused together, each accepted alone) refuses each of them with its reasons. The commit is
 // `plan-applied{source: walk{job}}` with proposer `walk{job}` (src/input/classify.ts `polishRows`); a commit the arc moved
 // under is retried at the next run. The rounds brake treats a refused proposal as settled (src/walk/milestones.ts).

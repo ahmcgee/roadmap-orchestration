@@ -46,7 +46,7 @@ const CONTEXT: ProposalContext = {
   levers: [
     { lever: 'build-class', tier: 'low', class: 'efficient', builtin: 'efficient' },
     { lever: 'build-class', tier: 'med', class: 'frontier', builtin: 'efficient' },
-    { lever: 'build-class', tier: 'high', class: 'frontier', builtin: 'frontier' },
+    { lever: 'build-class', tier: 'high', class: 'frontier', builtin: 'efficient' },
   ],
   givens: [], window: null, rejections: [], repairWaiting: false, flowHigh: [],
 };
@@ -204,7 +204,8 @@ describe('checkProposal: each drop reason', () => {
     const build = (tier: 'low' | 'med' | 'high', cls: 'efficient' | 'frontier' | 'summit') => proposal({ lever: 'build-class', tier, class: cls }, stationId('stage:build'));
     assert.equal(reason(build('low', 'summit')), 'build-class-step', 'two steps');
     assert.equal(reason(build('low', 'frontier')), null);
-    assert.equal(reason(build('high', 'efficient')), 'build-class-step', 'below the built-in frontier');
+    // dev.17: every built-in build seat is efficient, the lowest build class, so no step goes below a built-in now.
+    assert.equal(reason(build('high', 'efficient')), null, 'back down to the built-in efficient');
     assert.equal(reason(build('med', 'efficient'), { levers: CONTEXT.levers }), null, 'back down to the built-in');
   });
 });

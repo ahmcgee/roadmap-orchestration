@@ -1062,7 +1062,7 @@ test('apply.smoke-new-backend: a routing apply that seats a backend the plan in 
     ],
   });
   // In force: every build seat on the frontier class (Claude), so no seat runs on Codex.
-  const allClaude = { build: { low: 'frontier', med: 'frontier' } };
+  const allClaude = { build: { low: 'frontier', med: 'frontier', high: 'frontier' } };
   editPlan(d, (p) => void (p['routing'] = allClaude));
   const r = contextFor(d);
   try {
@@ -1087,7 +1087,7 @@ test('apply.revalidate-after-smoke: the log moving while the smoke runs is caugh
     steps: [{ as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'barrier', name: 'smoke', timeoutMs: 30_000 }, { type: 'emit', value: { ok: true } }] }],
     units: [{ id: 'u1' }, { id: 'u2' }],
   });
-  editPlan(d, (p) => void (p['routing'] = { build: { low: 'frontier', med: 'frontier' } }));
+  editPlan(d, (p) => void (p['routing'] = { build: { low: 'frontier', med: 'frontier', high: 'frontier' } }));
   const r = contextFor(d);
   try {
     // Seats Codex again (smoked first) and edits u2's spec while u2 is undispatched.

@@ -26,7 +26,7 @@ import { raiseNeedsUser } from '../src/needsuser.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
 import { resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
-import { PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS } from '../src/core/upgrade.ts';
+import { PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS } from '../src/core/upgrade.ts';
 import { MODEL_IDS, unitSeatRef } from '../src/routing/types.ts';
 import { type Status, status } from '../src/status.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
@@ -418,6 +418,28 @@ describe('status M3', () => {
       r.journal.close();
     }
   });
+
+  it('status.dev16-alias: meter rows under the rev 1.0.0-dev.12 to dev.16 recorded (Sonnet judged low and med, Opus built high) join today\'s table: nothing unresolved', T, () => {
+    const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
+    const r = contextFor(d);
+    try {
+      const stack = { profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' } as const;
+      const now = resolveRouting(stack).rev;
+      const dev16 = resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack);
+      assert.notEqual(dev16.rev, now, 'dev.17\'s seats moved the rev');
+      assert.deepEqual([dev16.table.planCheck.low.model, dev16.table.gate.med.model, dev16.table.build.high.model], ['claude-sonnet-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']);
+      const meter = seatMeter(r);
+      meter(dev16.rev, 'planCheck', 'low', 3);
+      meter(dev16.rev, 'build', 'med', 20);
+      meter(now, 'gate', 'med', 4);
+      const s = statusOf(r);
+      assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
+      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-opus-5-5', 2, 7], ['gpt-5.6-luna', 1, 20]]);
+      noModelIds(s);
+    } finally {
+      r.journal.close();
+    }
+  });
 });
 
 /** A meter row for u1's seat `role.tier` under `rev`, as an earlier executor recorded it (its spawn, then its usage). */
@@ -454,16 +476,16 @@ describe('status: routing revs recorded before 1.0.0-dev.10 (efficient judgment)
       const s = statusOf(r);
       assert.deepEqual(s.spend.byModel.unresolvedRevs, [], 'the earlier rev resolves through its alias');
       assert.equal(s.spend.byModel.models.reduce((x, m) => x + m.input, 0), s.spend.byRole.reduce((x, t) => x + t.input, 0), 'byModel totals equal the meter\'s');
-      // dev.9 judged plan-check med and gate low on Opus; OR-L3 attributes them to today's bindings: plan-check on efficient
-      // (Sonnet), gate low on efficient (Sonnet).
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-sonnet-5-5', 3, 107], ['gpt-5.6-luna', 1, 20]]);
+      // dev.9 judged plan-check med and gate low on Opus; OR-L3 attributes them to today's bindings, frontier (Opus) again
+      // since dev.17.
+      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-opus-5-5', 3, 107], ['gpt-5.6-luna', 1, 20]]);
       noModelIds(s);
     } finally {
       r.journal.close();
     }
   });
 
-  it('status.dev11-alias: meter rows under the rev 1.0.0-dev.10 and dev.11 recorded (gate low efficient, med frontier) join today\'s table: nothing unresolved; byModel and byClass render the ladder (every gate row on efficient)', T, () => {
+  it('status.dev11-alias: meter rows under the rev 1.0.0-dev.10 and dev.11 recorded (gate low efficient, med frontier) join today\'s table: nothing unresolved; byModel and byClass render today\'s seats (every gate row on frontier since dev.17)', T, () => {
     const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
     const r = contextFor(d);
     try {
@@ -482,9 +504,9 @@ describe('status: routing revs recorded before 1.0.0-dev.10 (efficient judgment)
       const s = statusOf(r);
       assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
       assert.deepEqual(s.spend.byClass.unresolvedRevs, []);
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-sonnet-5-5', 3, 57], ['gpt-5.6-luna', 1, 20]]);
-      assert.deepEqual(s.spend.byClass.classes.map((c) => [c.class, c.input]), [['efficient', 77]]);
-      assert.equal(s.routing?.seats.gate.low, 'efficient');
+      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-opus-5-5', 3, 57], ['gpt-5.6-luna', 1, 20]]);
+      assert.deepEqual(s.spend.byClass.classes.map((c) => [c.class, c.input]), [['efficient', 20], ['frontier', 57]]);
+      assert.equal(s.routing?.seats.gate.low, 'frontier');
       assert.equal(s.routing?.bindings.economy, 'builtin');
       noModelIds(s);
     } finally {
