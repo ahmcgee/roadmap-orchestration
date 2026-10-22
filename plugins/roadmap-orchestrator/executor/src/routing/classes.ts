@@ -32,7 +32,7 @@
 // Fable 5.1 keeps its model entry and prompt modules and is reached only by a repo rebind. GPT-5.6 Sol has no class of
 // its own: it stays in the model catalogue (models.ts) and is reached by rebinding a class.
 import type { ClaudeTriple } from '../backends/argv.ts';
-import type { BuildClass, ModelClass, ProfileName, Role, Triple } from './types.ts';
+import type { BuildClass, ClaudeModelId, ModelClass, ProfileName, Role, Triple } from './types.ts';
 
 /** What a build class binds: the triple at its build seats and the Claude triple at its judgment seats. */
 export type BuildClassBinding = Readonly<{ build: Triple; judgment: ClaudeTriple }>;
@@ -63,6 +63,18 @@ export const CLASS_CATALOGUE: ClassCatalogue = {
     economy: ECONOMY,
   },
 };
+
+/**
+ * dev.17 (owner 2026-10-22): the advisor every Claude build consults (`claude --advisor <model>`, backends/argv.ts), Opus 5.5.
+ * The builder (Sonnet 5.5 under `claude-only`) decides when to call it: before committing to an approach, on a recurring
+ * error, before declaring done (https://code.claude.com/docs/en/advisor). The pinned id, not the `opus` alias, so a CLI
+ * release cannot move it. Not a class binding: it rides on whatever Claude triple a build seat binds (a Fable or weaker-ranked
+ * main model runs without it, the CLI's own pairing rule). Its spend appears in the call's `modelUsage` under its own id, so
+ * the meter counts it as delegated to the model's family class (`DELEGATE_CLASSES`: frontier), never to the seat's class
+ * (verified on Claude Code 2.1.301, 2026-10-22, test/fixtures/backend-output/claude-build-advisor). The advisor is off when
+ * feature-flag fetching is (DISABLE_TELEMETRY); evals/probe.ts `claude.build.advisor` checks it is consulted.
+ */
+export const BUILD_ADVISOR: ClaudeModelId = 'claude-opus-5-5';
 
 /**
  * The triple `profile` binds `c` to at a seat of `role`: its build triple at a build seat, its judgment triple at any other.

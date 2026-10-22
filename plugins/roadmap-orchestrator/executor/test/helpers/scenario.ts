@@ -98,11 +98,18 @@ export type WorldAct =
  * Nothing after it runs. The production prompt, capture, tools and add-dirs reach the real model byte for byte, with no
  * test seam in production code. `readOnly` (the gate eval's comparison arm, dev.13): the acting gate call's argv is first
  * rewritten into the dev.12 gate's judgment profile (evals/roles/gate/readonly.ts `readOnlyArgs`); all else is the call's.
+ * `advised`: see its member.
  * `stream` (the role evals' spend brake): print `events` to stdout as stream-json lines, as a running session prints its
  * messages before any result.
  */
 export type ClaudeOnlyAct =
-  | Readonly<{ type: 'refusal' }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real'; readOnly?: Readonly<{ repo: string; runDir: string }> }>
+  | Readonly<{ type: 'refusal' }>
+  /**
+   * dev.17: `emit`, from a build that consulted its advisor once: the init event and the result name the call's `--model` as
+   * the session's own, and the result's `modelUsage` carries the call's `--advisor` model beside it with the captured
+   * claude-build-advisor advisor spend (its cost added to `total_cost_usd`), as the real CLI reports it.
+   */
+  | Readonly<{ type: 'advised'; value: JsonValue }> | Readonly<{ type: 'globAboveAddDir' }> | Readonly<{ type: 'real'; readOnly?: Readonly<{ repo: string; runDir: string }> }>
   | Readonly<{ type: 'stream'; events: readonly JsonValue[] }>;
 /**
  * `resumeCollision`: `codex exec resume` onto a thread another live session holds (CODEX_RESUME_COLLISION on

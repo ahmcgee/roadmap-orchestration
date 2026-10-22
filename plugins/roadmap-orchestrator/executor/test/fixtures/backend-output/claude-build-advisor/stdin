@@ -1,0 +1,1 @@
+Consult your advisor exactly once (ask it whether {"ok": true} is the right reply to this message), then reply with the JSON object {"ok": true}.
