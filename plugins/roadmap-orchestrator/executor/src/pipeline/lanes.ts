@@ -1287,16 +1287,32 @@ export async function runJourneySeries(
         const cleaned = await cleanup(ctx, reserved, parent);
         return { kind: 'ended', end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'occupied', needsUser: occupancy.needsUser }, ran: null };
       }
+      // dev.17: a suite lane's environment (an arc lane names none). One that does not come up gives no verdict: the
+      // series is blocked, and its job retries on the no-verdict backoff.
+      if (lane.def.environment !== undefined) {
+        const env = await useEnvironment(ctx, lane.def.environment, parent);
+        if (env.kind === 'unavailable') {
+          const cleaned = await cleanup(ctx, reserved, parent);
+          return {
+            kind: 'ended', ran: null,
+            end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'blocked', lane: lane.def.id, detail: `environment ${env.environment}: ${env.detail}` },
+          };
+        }
+      }
       held = run(ctx, reserved, parent);
     }
-    if (lastEvidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), worktreeKey, parent, checkout);
-    const ran = await runOne(lane, held?.resources ?? []);
-    lastEvidence = ran.evidenceOp;
-    if (held !== null) {
-      const cleaned = await cleanup(ctx, held, parent);
-      if (cleaned.kind === 'cleanup-failed') return { kind: 'ended', end: { kind: 'cleanup-failed', failed: cleaned.failed }, ran };
+    try {
+      if (lastEvidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), worktreeKey, parent, checkout);
+      const ran = await runOne(lane, held?.resources ?? []);
+      lastEvidence = ran.evidenceOp;
+      if (held !== null) {
+        const cleaned = await cleanup(ctx, held, parent);
+        if (cleaned.kind === 'cleanup-failed') return { kind: 'ended', end: { kind: 'cleanup-failed', failed: cleaned.failed }, ran };
+      }
+      return { kind: 'ran', ran };
+    } finally {
+      if (lane.def.environment !== undefined) releaseEnvironment(ctx.journal, lane.def.environment);
     }
-    return { kind: 'ran', ran };
   };
 
   /** A run's own end without a verdict (cancelled, blocked), or null. */

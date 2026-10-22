@@ -4515,8 +4515,10 @@ stays 1.
    and its last use (the idle clock; a restart starts it from the scheduler's start).
 5. **Use.** After a lane's reservation and occupancy probe, before `run`: unsettled → down; not up → up; then the probe.
    A failed up or probe brings a managed environment down and ends the series `env-unavailable{environment, detail}`
-   (its reservation cleaned) with no verdict. The lane's end of use (after its cleanup) restarts the idle clock. A flow
-   proof's side whose environment does not come up has no verdict (`passed: null`, as a lost run).
+   (its reservation cleaned) with no verdict. The lane's end of use (after its cleanup) restarts the idle clock. A suite
+   lane in a job's journey series (a repair batch, a docs publication) whose environment does not come up ends the
+   series `blocked` (no verdict: the job's no-verdict backoff), and a flow proof's side has no verdict (`passed: null`,
+   as a lost run).
 6. **Outcome and park.** `STAGE_OUTCOME_KINDS.lanes` and `.candidate` gain `env-unavailable`: `park('env-unavailable',
    'retryable')`, uncharged (`NEEDS_USER_REASONS` gains `env-unavailable`). `ParkFacts.environment` names the target;
    `PARK_TARGETS` lanes and candidate `env-unavailable: 'environment'`; `ProbeTarget` gains `{type: 'environment',

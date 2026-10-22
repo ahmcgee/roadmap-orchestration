@@ -1,20 +1,21 @@
 // dev.17 plan environments (src/resources/environments.ts), integrated over real processes and real git: env-tool.ts
 // stands in for an environment's up, down and probe, logging every call. Named tests: env.lazy-up-reuse,
-// env.idle-teardown, env.start-waits-for-stop, env.probe-fails-parks, env.up-fails-parks, env.plain-no-lifecycle,
+// env.idle-teardown, env.start-waits-for-stop, env.probe-fails-parks, env.up-fails-parks, env.job-suite-lane, env.plain-no-lifecycle,
 // env.crash-before-up-runs, env.crash-after-up-ran, env.pause-brings-down, env.schema.
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, it, test } from 'node:test';
-import { arcId, resourceName } from '../src/core/ids.ts';
+import { arcId, jobId, resourceName } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { arcLaneDef } from '../src/holistic/types.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LaneRuntime, laneOrder, reserveNow, runLaneSeries, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { type LaneRuntime, laneOrder, reserveNow, runJourneySeries, runLaneSeries, specSeriesRoot, suiteJourneyLane } from '../src/pipeline/lanes.ts';
+import { createArbiter } from '../src/schedule/arbiter.ts';
 import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { laneRows } from '../src/preflight/lanerows.ts';
 import { spawnReconciler } from '../src/recover/spawn.ts';
@@ -158,6 +159,26 @@ test('env.up-fails-parks: a failed up parks the lanes stage on the environment, 
   assert.deepEqual(startedCalls(state), ['up stack', 'down stack'], 'no probe after a failed up; a down for whatever it left');
   assert.equal(environmentState(run.journal.view, STACK), 'down');
   assert.equal(laneSpawns(run).length, 0);
+});
+
+test('env.job-suite-lane: a suite lane in a job\'s journey series uses its environment; one that does not come up gives no verdict (blocked), never red', T, async () => {
+  const state = tmpDir('env-state');
+  const run = setupUnit({ steps: [], suite: [envLane('suite-env')], environments: { stack: managedEnv(state, 'stack', 60) as never } });
+  const ctx = { ...run.ctx, acquireFirst: createArbiter(run.ctx).acquireFirst };
+  const lane = suiteJourneyLane(run.ctx.plan().suite.lanes[0]!);
+  const go = (n: number) => runJourneySeries(ctx, { type: 'job', job: jobId('audit', n), acquireFirst: ctx.acquireFirst }, [lane], {
+    path: absPath(join(tmpDir('env-journey'), 'checkout')), checkout: { type: 'detached', at: run.base },
+  }, { reuse: false, stop: () => false });
+  writeFileSync(join(state, 'stack.probe-fails'), '');
+  const blocked = await go(1);
+  assert.equal(blocked.end.kind, 'blocked');
+  assert.match(blocked.end.kind === 'blocked' ? blocked.end.detail : '', /^environment stack: probe .* exited 1; brought down again/);
+  assert.deepEqual(startedCalls(state), ['up stack', 'probe stack', 'down stack']);
+  rmSync(join(state, 'stack.probe-fails'));
+  const ran = await go(2);
+  assert.equal(ran.end.kind, 'ran');
+  assert.equal(ran.runs[0]?.verdict, 'pass');
+  assert.deepEqual(startedCalls(state), ['up stack', 'probe stack', 'down stack', 'up stack', 'probe stack']);
 });
 
 test('env.plain-no-lifecycle: an environment without up and down is reserved and probed, never started or stopped', T, async () => {

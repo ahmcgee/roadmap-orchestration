@@ -246,7 +246,8 @@ that fails partway leaves one residue per failed resource. `start` for any arc r
   journaled `proc.spawn` intents keyed per environment, so the log is the state machine and a start queued behind an
   in-flight stop waits for it; recovery closes an interrupted up or down like any spawn, then the scheduler's start
   brings an unsettled environment down, while one found up resumes its idle clock. A failed up or probe brings it down
-  and parks the lane's stage `env-unavailable`, a retryable park on `environment{e}`, never a red lane; a failed down
+  and parks the lane's stage `env-unavailable`, a retryable park on `environment{e}`, never a red lane (a job's suite
+  lane, in a repair batch or a docs publication, gives no verdict and the job retries on its backoff); a failed down
   raises a non-blocking `env-blocked` item. Without `up`/`down` it is a plain resource: reserved and probed, never
   started or stopped. A fast lane (run inside the build) and an arc lane never name one. SCHEMAS.md "dev.17:
   environments".
