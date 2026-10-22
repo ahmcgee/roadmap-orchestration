@@ -69,7 +69,10 @@ export const PACK_REVIEW_INPUT = 'pack-review.json';
 export const FLOW_INPUTS_INPUT = 'flow-inputs.json';
 export const FLOW_SERIES_INPUT = 'flow-series.json';
 export const FLOW_PROOF_INPUT = 'flow-proof.json';
-/** An executor-rendered `.roadmap/` document a revision's docs publication commits (`RevisionPayload.publication.renders`). */
+/**
+ * A file a revision's docs publication commits (`RevisionPayload.publication.renders`): an executor-rendered `.roadmap/`
+ * document, or (dev.16) a vision file the revision publishes (src/commands/apply.ts `visionRenders`).
+ */
 export const RENDER_INPUT = 'render';
 
 /** Where the run dir keeps the input whose bytes hash to `sha256`. */

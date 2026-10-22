@@ -27,7 +27,9 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
 `.rejected.json` (with every reason).
 
 - `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>]`: launch, or recover
-  from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. Prints `{"kind":"ready",…}` (exit 0)
+  from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a plan in force the
+  plan file is your edit: its files are rebased onto the files in force and the startup rows check the result, the
+  ledger in force included (2026-10-21; 1.0.0-dev.16). Prints `{"kind":"ready",…}` (exit 0)
   once the executor passed every startup row; the run goes on. The backend smoke runs after `ready`: a smoke refusal
   shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
   `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
@@ -49,7 +51,10 @@ done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly o
   executor both changed is a `conflict` naming the file and JSON path). Each `--ruling` (repeatable) is a ruling sidecar
   validated as `rule` validates it and landed with the edits as one revision; an id `"C-?"` takes the ledger's next C-n.
   `--vision-edit` declares a vision edit: without it an apply whose rebased vision differs from the vision in force
-  (you changed the vision file) is refused `vision-leak` (a next-arc draft belongs in `_next/`). `--dry-run` always
+  (you changed the vision file) is refused `vision-leak` (a next-arc draft belongs in `_next/`). In a corpus arc a vision
+  edit is published onto the integration branch by the apply's docs publication: `.roadmap/vision.json`, and with a
+  `same-repo` re-pin the changed vision document, as committed on the owner's checkout (commit them there, never on the
+  integration branch, and never move the integration branch by hand). `--dry-run` always
   exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke,
   advisories, numbered}`; it queues nothing.
   `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
@@ -411,7 +416,7 @@ item and an unapplied answer are printed again. A seq past the log's end is refu
 | `plan-invalid{problem}` | schema, unknown spec path, integration branch missing or in `roadmap/<arc>/`, baseline not an ancestor, unknown resource or cite, a Phase-0 entry naming something absent | fix the input the problem names |
 | `spec-lane-unrunnable` | a lane, probe or teardown command cannot run here | fix the spec or the host |
 | `unsupported-routing` | a seat's class binds an unsupported triple | fix the routing layer it names |
-| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses; also (a fresh start, or any revision touching the unit) a lane's `evidenceGlobs` entry covering its unit's scope (named with lane and entry) | undo that edit; narrow the entry to the lane's outputs |
+| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses, or in a way that needs a docs publication (rulings, obligations, a corpus arc's vision record), which only an `apply` runs; also (a fresh start, or any revision touching the unit) a lane's `evidenceGlobs` entry covering its unit's scope (named with lane and entry) | undo that edit; start on the plan in force, then `apply` it (`--vision-edit` for the vision); narrow the entry to the lane's outputs |
 | `backend-smoke` | a backend's smoke failed | fix that backend's auth or sandbox |
 | `undispositioned-residue` | a residue from earlier work | `roadmap sweep`, or answer its needs-user |
 | `previous-arc-unreconciled`, `recovery-holder-dead`, `owner-mismatch`, `log-corrupt`, `containment-mode-changed` | host-level | read `status` and the needs-user; never clear host files by hand |
@@ -462,7 +467,7 @@ Blocking unless noted. Read the item file before acting.
   two build rounds. `scope accept` or `scope reject` (SKILL.md "Scope growth").
 - `context-exceeded` (the unit is parked at plan-check, build or gate, uncharged): the call's prompt or context outgrew
   its model's window; the item names the role, the call and the prompt's size. Shrink the stage's inputs or route the
-  seat to a larger window, then `resume` (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
+  seat to a larger window, then `resume`, which makes a new call (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
 - `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
   witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
   (SKILL.md "Handling parks").
@@ -495,7 +500,7 @@ Blocking unless noted. Read the item file before acting.
   the Phase-0 record, the issue capture, debt, the brief and the ack log.
 - "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck`, spec `witnesses` and lane `inputs`, arc
   lane `testPaths`, admit classes and conversions, the witness lane file.
-- "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row and park, plan `derived`
+- "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row (2026-10-21: milestone references over the budget) and park, plan `derived`
   and the dispatch record's `derived`, the lanes `scope-growth` hold; a derived entry's `regenerate` and its check
   ("Regenerate checks").
 - "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,

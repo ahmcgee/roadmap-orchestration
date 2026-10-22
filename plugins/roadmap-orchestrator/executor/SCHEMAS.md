@@ -221,13 +221,13 @@ recovery hold.
 
 **1.0.0-dev.10 → 1.0.0-dev.11 (plan defects, 2026-10-16 arc feedback).** `SCHEMA_VERSION` stays 1; every change is
 additive. The scaffolding is `laneTestPathsUndeclared` and `witnessFilesUndeclared` in `src/core/upgrade.ts` (an arc
-started on dev.10 whose obligations declare no witness files is read as undeclared: Phase 0 checks nothing of it), and
+started on dev.10 reads each lane and witness that declares nothing as undeclared: Phase 0 checks nothing of it), and
 `auditDiffBudgetOf` (the lens-range fix). An arc started on dev.10 is adopted, an audit it left running included.
 
 | Record | Change | Read-time default for dev.10 state |
 |---|---|---|
 | obligations file | `WitnessRef + files?: RepoPath[]` (ascending, non-empty; also inside `proofJudgment.witness`) | absent: undeclared (`witnessFilesUndeclared`, warned once); required at a fresh start |
-| obligations file | `ArcLaneDef.testPaths` required at a fresh start, and in any arc whose witnesses declare files | absent in an arc that declares no files: undeclared (`laneTestPathsUndeclared`, warned once) |
+| obligations file | `ArcLaneDef.testPaths` required at a fresh start | absent: undeclared (`laneTestPathsUndeclared`, warned once). Before 2026-10-21 (1.0.0-dev.16) any witness declaring files made every lane and witness required, so one checkpoint split refused every later apply of the arc; each is now judged on its own |
 | `plan.json` | `+ derived?: [{sources: RepoPattern[], outputs: RepoPattern[]}]` (each non-empty, unique) | absent: none (`derivedOf`; lasting) |
 | `DispatchRecord` | `+ derived?: RepoPattern[]` (ascending, non-empty; read through `effectiveScope`) | absent: none (lasting) |
 | `PlanChange` | `+ derived` (no drain) | none |
@@ -491,9 +491,10 @@ means before any *pipeline* intent.
 | `containment-mode-changed` | detected mode differs from the arc's recorded `containment-mode` fact | `recorded, detected` | 78 |
 | `plan-change-refused` | a `start` whose plan.json or specs differ from the plan in force with a change the apply rules refuse ("Plan in force"); checked last in `runChecks`, once the journal is open. A respawn runs the plan in force and never asks | `reasons: string[]` (non-empty, every reason) | 78 |
 
-A start checks the files (groups 1 and 2 read plan.json and its spec files); a supervisor's `--respawn` after a
-crash, once one of its generations was ready, checks the plan in force and its kept specs instead
-(`StartupContext.specOf`). A supervisor whose generations all crashed before readiness passes no `--respawn`:
+A first start checks the files (groups 1 and 2 read plan.json and its spec files); a later start checks them rebased
+onto the files in force, the ledger in force included (2026-10-21; 1.0.0-dev.16, "Field fixes: snapshot symlinks,
+restart checks"); a supervisor's `--respawn` after a crash, once one of its generations was ready, checks the plan in
+force, its kept specs and the ledger in force instead (`StartupContext.specOf`, `StartupContext.ledger`). A supervisor whose generations all crashed before readiness passes no `--respawn`:
 its next generation is a start that reads the files, so an edit a crashed start had not put in force yet is
 classified, not dropped.
 
@@ -683,7 +684,7 @@ fragment with no matching fact is re-recorded at the next start. Any invalid com
 | `resource.transition` | `holder, resources: ResourceUnit[]` (lock order), `edge` | `null` | `transitioned` |
 | `proc.spawn` | `subject: SpawnSubject, launchSha256` | `null` | `result{resultSha256, summary}` \| `lost{treeEffects}` |
 | `proc.kill` | `inv, scope: invocation\|op, reason` | `null` | `quiesced` |
-| `evidence.snapshot` | `source, globs, dest`; `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c). A snapshot of named files (dirty paths, a lane's ignored capture) passes each as its exact glob, metacharacters wrapped in one-character classes (`a[1].log` → `a[[]1[]].log`; `literalPattern`, `src/git/evidence.ts`): node's globSync has no escape character | `{manifest}` | `captured{manifestSha256, files}` |
+| `evidence.snapshot` | `source, globs, dest, notRegular?` (2026-10-21; 1.0.0-dev.16: the named paths left uncaptured as symlinks or special files, "Field fixes: snapshot symlinks, restart checks"); `globs` may be empty: a verification checkout whose series never ran is removed citing a complete manifest of zero files (lead ruling 14c). A snapshot of named files (dirty paths, a lane's ignored capture) passes each as its exact glob, metacharacters wrapped in one-character classes (`a[1].log` → `a[[]1[]].log`; `literalPattern`, `src/git/evidence.ts`): node's globSync has no escape character | `{manifest}` | `captured{manifestSha256, files}` |
 | `salvage.commit` | see git table | `{new}` | `committed` |
 | `mergein.prepare` | see git table | `clean-merged{new}` \| `conflicted` | `clean-merged` \| `conflicted` \| `completed{head}` |
 | `spec.patch` | `path, oldSha256, expectRev, patch: SpecPatch`; `path` is the unit's spec file, `oldSha256` its spec in force | `{newSha256, newRev = expectRev+1}` | `patched` |
@@ -1838,8 +1839,9 @@ src/docs/contracts.ts, src/spec/rulings.ts, src/holistic/{obligations,impact,red
 residues, the snapshot closure):
 
 1. **The docs publication** (`src/pipeline/publish.ts`, `docsPublisher`) runs inside its revision's commit: the slot
-   under `docs{pub}` (`pub` = `nextJobId('docs')`), the files (each render's kept bytes; each document the revision's
-   new sidecars' contract ops edit at the tip T, applied in id order), `docs.commit` on `refs/roadmap-run/<arc>/docs/<pub>`
+   under `docs{pub}` (`pub` = `nextJobId('docs')`), the files (each render's kept bytes, the vision files a revision
+   changes among them since dev.16, "Vision edits publish"; each document the revision's new sidecars' contract ops edit
+   at the tip T, applied in id order), `docs.commit` on `refs/roadmap-run/<arc>/docs/<pub>`
    (parents [T]; its checkout `<worktreeRoot>/<arc>/<pub>.checkout`), the transient check, the lanes, `ff{subject:
    docs{pub}}` T → the commit. `DocsOutcome.published` gains `settle` (src/recover/revision.ts): `commitRevision` runs
    it after `plan-applied` and the commit's done, so the slot is held through the activation; `settle` is
@@ -1848,8 +1850,9 @@ residues, the snapshot closure):
    revision. The new rulings are validated again at T under the slot (`validateRuling`, `rulingContextAt`), so a
    ruling judged against inputs no longer in force at T is refused as stale (G21; the judged head is provenance
    only, "Ruling sidecars" above).
-2. **Selection (G12).** The rendered `.roadmap/` files are not changed paths of a docs candidate: they are executor
-   renderings of in-force records, and as unmapped paths they would select every must-hold obligation. A docs
+2. **Selection (G12).** The renders (the rendered `.roadmap/` files; since dev.16 the published vision files too) are
+   not changed paths of a docs candidate: they are executor renderings of in-force records or the vision in force, and as
+   unmapped paths they would select every must-hold obligation. A docs
    candidate selects through its contract ops' paths only (`changedPaths`; an unmapped contract path still selects
    every must-hold, as for a unit) plus the revision's added, split and re-witnessed obligations (`revised`), split
    closure applied, read against the revision's own obligations. Green: every suite lane passes and no selected
@@ -2659,7 +2662,7 @@ unacked} | baseline{baseline: previous-head-mismatch | merge-commit | parent-mis
 previous-incomplete{arc} | k-unset}`; `issue-policy-untrusted{visibility, policy}`; `tree-uncommitted{paths}`;
 `holistic-needs-corpus`; `vision-leak{inForce: Sha256Hex|null, committed: Sha256Hex|null, draft: AbsPath}` (an
 `apply` only, row 12 of src/phase0/rows.ts: its vision, rebased onto the files in force, differs from the vision in
-force and its body's `visionEdit` is false (a body without the field, queued by an earlier CLI, reads as true: `applyVisionEditDefault`); `draft` is `_next/vision.md` beside the arc's input dir); `arc-superseded{by: ArcId}` (a start
+force and its body's `visionEdit` is false (a body without the field, queued by an earlier CLI, reads as true: `applyVisionEditDefault`); `draft` is `_next/vision.md` beside the arc's input dir; a declared edit of a corpus arc's vision is published onto the integration branch, "Vision edits publish"); `arc-superseded{by: ArcId}` (a start
 of an arc with a plan in force, a reopen, after arc `by` started on its head: src/chain.ts `successorOf`).
 
 **Config** (`.roadmap/config.json`, `src/routing/layers.ts`): `+ chain?: {k: positive}`; nothing about issues (OR-L6).
@@ -2823,9 +2826,12 @@ filter keys it across arcs). Crash row ANSWER_RECORD (`answer.after-publish`): a
    an `issues-captured` fact names its capture (`inputs/<sha>.issues.json`); a `pack-review-started` fact names its
    `PackReviewInputs` (`inputs/<inputsSha256>.pack-review.json`, `PACK_REVIEW_INPUT`). Verification follows the pin from
    the tree, so the rules index, the vision path and the include patterns reconstruct from the ref alone.
-8. **Exempt rule anchors** (LR-C1-2): an exempt (waived, deferred, retired) obligation's `{T-n, textSha256}` resolves to
-   an active or a retired rule of the pin (`ruleAnchorResolves`, src/holistic/obligations.ts); a binding one's to an active
-   rule. The obligations reader requires only non-exempt rule obligations in the census.
+8. **Exempt rule anchors** (LR-C1-2): a waived or deferred obligation's `{T-n, textSha256}` resolves to an active or a
+   retired rule of the pin (`ruleAnchorResolves`, src/holistic/obligations.ts); a binding one's to an active rule. A
+   retired obligation's is not asked (2026-10-21; 1.0.0-dev.16): a rule that leaves the corpus mid-arc is in neither list
+   of the pin when the baseline's registry never held it (a first corpus arc publishes none), so retiring its obligation
+   was refused `obligation-rule-unresolved`, and so was deleting it (the `retired` disposition needs the entry). The
+   obligations reader requires only non-exempt rule obligations in the census.
 9. **No spec `debt` field** (LR-C1-1): a Phase-0 `promote{unit}` is the one link between a debt item and its unit.
 
 **Readings of M4a C3** (recorded in step C4):
@@ -3217,7 +3223,13 @@ sections and marks converted amendments.
     `malformed` (its retry assesses again); conflicts open P3 findings `source: stage{build}`; `feasible: false` is
     `infeasible{notes}`; a higher floor raises the unit's risk, and is `risk-raised` when the new seat binds another
     model or backend; otherwise the build resumes the session (`ASSESSED_DIRECTIVE`). A crash after the assessment is
-    consumed by the next attempt (`crashedAssessment`), never asked again.
+    consumed by the next attempt (`crashedAssessment`), never asked again. An attempt reads as cut short only when no
+    outcome of it is on the unit's record as its decision, its interruption or one of its `failures` (`cutShort`,
+    src/pipeline/rounds.ts, which `crashLostDeadline` reads too): a park that `resume <unit>` or a passing probe released
+    restores the decision before it, and before 2026-10-21 (1.0.0-dev.16) the re-run then took that parked attempt for a
+    crashed one and replayed its call (the field case: an assessment's `context-exceeded` park re-parked on resume with
+    the old call's verdict and no new call; a recovered `build-lost` park inherited the lost call's spent deadline). A
+    resumed park's stage now runs afresh on the inputs in force.
 14. **Known defects (N3, F4, R49).** `knownDefectActive(view, plan, k, unit)` (src/schedule/ready.ts) is the one
     predicate: `k` in the plan in force by id and content, its fixer's lineage head not merged, `unit` outside that
     lineage. The lanes stage matches a `lane` entry before any lane runs and an `output` entry against the last
@@ -3763,7 +3775,9 @@ diagnosis instead of charging fix rounds.
 **`PlanDefect`** (src/holistic/types.ts; `planDefectText` renders each in one sentence):
 `witness-not-in-lane{obligation, lane, file, missing: test-paths | argv}`, `witness-file-unreachable{obligation, file,
 units: UnitId[]}`, `witness-files-undeclared{obligation}`, `lane-test-paths-undeclared{lane}`,
-`derived-overlaps-corpus{output}`, `derived-output-owned{output, unit}`.
+`derived-overlaps-corpus{output}`, `derived-output-owned{output, unit}`, and (2026-10-21; 1.0.0-dev.16)
+`milestone-references-oversize{milestone, bytes, budget, largest: {path, bytes}[]}` (`largest`: at most five, largest
+first). Additive: no earlier record holds it.
 
 **Witness files** (src/holistic/witnessfiles.ts `laneMisses`, the one predicate). Test ids are names (the node
 reporter's name path, go's test name, a wrapper's own), so no reporter maps one to its file: a witness declares its
@@ -3779,8 +3793,18 @@ covering none of the entry's sources, and (same-repo corpus) outputs that may re
 arc's binding obligations (active, not exempt) with declared files, each file in its lane, and present at the
 integration tip (the baseline before the branch exists) or inside the effective scope of a deliverer or a unit a
 deliverer runs `after`, transitively (`units`: the deliverers; empty for a must-hold obligation, whose file must exist).
-`Phase0Mode.fresh` (a fresh start, `phase0 check --plan`) and any arc whose witnesses declare files require every lane's
-`testPaths` and every binding witness's `files`.
+`Phase0Mode.fresh` (a fresh start, `phase0 check --plan`) requires every lane's `testPaths` and every binding witness's
+`files`. Otherwise each lane and witness is judged on its own (2026-10-21; 1.0.0-dev.16): a declared one is checked, an
+undeclared one is read as undeclared with a logged warning, whatever the others declare (an arc started before
+2026-10-16 whose checkpoint declares one split child's files keeps its other witnesses unchecked, not refused).
+Every arc (2026-10-21; 1.0.0-dev.16): a milestone whose reference dirs hold more than `MILESTONE_REFERENCES_BUDGET` (512 KiB) of text at the integration tip (the baseline before the branch
+exists), counted as the prompts inline it (`referenceFiles`: every file under the dirs, a binary one, NUL in its first
+8000 bytes, listed and not inlined), is `milestone-references-oversize`, naming its largest text files. Every such file
+goes whole into each plan-check, build and gate prompt of the milestone's units and into its walkthrough; the field case
+(a 1.5 MB compiled bundle and 330 KB of comps under `apps/web/src/design`) parked its first build `context-exceeded` with a
+3.3 MB prompt. Code knows no model's window, so the budget is a judgement (a design reference a model reads whole is far
+smaller), not a measurement: a set under it can still outgrow a small window, which the call's `context-exceeded` park
+names. References a design unit grows at run time are not checked here.
 
 **Run time.** Before a `witnesses-missing` is charged, `missingWitnessDefects` (src/pipeline/witnesscheck.ts) diagnoses
 each missing id of an obligation's witness with declared files: a file its lane never runs, or one absent at the salvage
@@ -4406,3 +4430,55 @@ at once is released; brakes on the tail are code. The record rows are in "Record
   consumed dev.12 answer banks exactly what that executor would have; a blocking finding or a blank text never.
 - **`status.findings`**: `released` counts the released findings by `release.reason`, `code{close-out}` (`closeOut`)
   or a checkpoint (`checkpoint`); `refusedAdmits` counts the brake conversions of every decision record.
+
+## Vision edits publish (2026-10-21; 1.0.0-dev.16)
+
+An `apply --vision-edit` that changes the vision publishes it onto the integration branch through the revision's docs
+publication, so the arc branch carries the vision in force and nobody moves it by hand (the dev.13 field incident: an
+architect moved the arc branch with `update-ref` to land vision rev 2; dev.14's `integrationHistory` fix tolerates such
+a commit, this makes it unnecessary). No record changes; `SCHEMA_VERSION` stays 1.
+
+1. **What publishes** (src/commands/apply.ts `visionRenders`, inside `publicationOf`): a corpus arc's
+   `.roadmap/vision.json` (`visionFile` base `repo`, R1) whenever the proposal's vision bytes differ from the vision in
+   force (`changed.vision`: bytes, as `vision-leak` and `visionSha256` are), its bytes the owner's files'; and, for a
+   `same-repo` corpus, the pinned vision document at `underRoot(source.root, pin.vision.path)` when a re-pin changes the
+   pin's `vision` entry (path or sha256), its bytes read at the pin's `source.commit` in the product repo. A blob absent
+   there or hashing otherwise than the pin says refuses the revision (the pin does not re-derive; Phase-0 row 1 refuses
+   it too, after the apply core). An `architecture-doc` arc's vision lives beside its plan, and an `other-repo` or
+   `checkout` corpus outside the product repo: nothing of theirs is published.
+2. **One way to carry the bytes: renders.** The vision files are `publication.renders` entries like `constraints.md`
+   and `invariants.md`, their bytes kept as `inputs/<sha>.render` at commit (`keepRevision`). So `docsFiles`, the
+   transient check (exactly the files written), the snapshot closure and recovery (the recorded payload and its kept
+   renders) need nothing new; the bytes are duplicated beside the kept `.vision.json` and `.corpus-file` inputs, which is
+   cheaper than a second reference kind in the payload, its read-time default and its closure. A vision-only edit now
+   has a non-null publication, so it runs the suite under the slot like any docs publication (owner ruling: no
+   special case); selection is unchanged (contract paths and revised obligations only).
+3. **A start refuses it.** A start runs no docs publication, so `settlePlan` refuses a change that needs one
+   (`plan-change-refused`), now a corpus arc's vision record among them. A semantic vision change at a start was refused
+   already (the vision is owner-only: an architect `apply`); what newly refuses is a bytes-only difference (a
+   reformatted `vision.json`), which before came into force without reaching the arc branch. The owner starts on the
+   vision in force, then `apply --vision-edit`. A respawn reads the plan in force and is never refused.
+
+## Field fixes: snapshot symlinks, restart checks (2026-10-21; 1.0.0-dev.16)
+
+Two defects the live dev.15 arc hit. One additive record field (`evidence.snapshot`'s `notRegular`, absent in every
+earlier record); `SCHEMA_VERSION` stays 1.
+
+1. **A symlink in a checkout no longer kills its removal.** A gate session symlinked `node_modules` to another
+   checkout's; the removal's snapshot of the dirty paths matched the link, `listEvidence` refused it, and every
+   generation crash-looped until a human deleted the link. A snapshot of named paths (a checkout's dirty paths: a
+   judgment checkout's, a verification series' `_dirty` and `_leftover`, a journey checkout's, a prepared or steered
+   unit worktree's, an audit job's) builds its globs through `namedPathGlobs` (src/git/evidence.ts; `dirtySnapshot` in
+   src/pipeline/lanes.ts): a symlink or special file gets no glob and is named in the intent's `notRegular` instead
+   (non-empty when present), as the lane census files an ignored one `not-regular`. Nothing follows the link.
+   `listEvidence` stays fail-loud: a non-regular match there now means a declared `evidenceGlobs` entry matched one.
+2. **A start of an arc in flight checks what it would put in force.** Group 1 read the owner's files as they stood, so
+   a ruling an executor revision had landed since (checkpoint ckpt-23's C-206) was unknown to a stale input-dir ledger
+   and the start was refused `plan-invalid unknown-cite`, though `settlePlan` would have rebased that ledger onto the
+   one in force. Now a start with a plan in force runs group 1 (plan-invalid, the revision rows, the Phase-0 rows) and
+   group 2 over the owner's files rebased onto the files in force (src/preflight/checks.ts `startSource`: the
+   `applyProposal` an apply checks), the merged ledger as `StartupContext.ledger`; a rebase that does not hold refuses
+   there (`plan-change-refused`). With a revision or command a crash left open the files wait for the next start, so
+   the start checks the plan in force. A respawn checks the plan in force against the ledger in force (before: the
+   owner's ledger file). The one rule: after the first start the input dir is an edit of its base, never the state; a
+   restart needs no `inputs export` sync first, and the input dir matters only as that edit (a start or an apply).

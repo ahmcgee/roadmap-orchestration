@@ -40,14 +40,13 @@ import type { JournalView } from '../core/interfaces.ts';
 import type { DispatchRecord } from '../core/records.ts';
 import { type Lineage, maxTier } from '../core/state.ts';
 import { type AbsPath, type RefName, type RepoPattern, absPath, branchRef } from '../core/values.ts';
-import { pathPattern } from '../git/evidence.ts';
 import { isAncestor } from '../git/ff.ts';
 import { refTarget, revParse } from '../git/git.ts';
 import { lineageEnvelope, withinEnvelope } from '../input/envelope.ts';
 import type { PlanUnit, ReentryPoint } from '../input/plan.ts';
 import { evidenceSnapshotOp, mergeinOp, worktreeCreateOp } from '../recover/ops.ts';
 import { type StageContext, evidenceRoot, firstPin, runOp, unitBranch, unitWorktree } from './dispatch.ts';
-import { dirtyPaths } from './lanes.ts';
+import { dirtySnapshot } from './lanes.ts';
 import { type StageDone, at, executorIdentity, integrationTip, loadUnitSpec, record, start } from './stages.ts';
 
 /** A preparation, recorded: where the prepared worktree is and what `retire` cites. */
@@ -144,7 +143,7 @@ export async function prepare(ctx: StageContext, unit: PlanUnit): Promise<Prepar
   // 4. The snapshot of the prepared worktree.
   const snapped = preparedOps(view, unit.id, 'evidence.snapshot').at(-1)
     ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit.id}`, parent, {
-      source: worktree, globs: dirtyPaths(worktree).map(pathPattern), dest: absPath(join(evidenceRoot(ctx.runDir, parent), 'prepared')),
+      source: worktree, ...dirtySnapshot(worktree), dest: absPath(join(evidenceRoot(ctx.runDir, parent), 'prepared')),
     });
 
   const kind = conflicted ? 'conflicted' : CLEAN[unit.reenters.enterAt ?? 'plan-check'];
@@ -173,7 +172,7 @@ async function prepareKnownDefect(ctx: StageContext, unit: PlanUnit, since: numb
   }
   const snapped = preparedOps(view, unit.id, 'evidence.snapshot', since).at(-1)
     ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit.id}`, parent, {
-      source: worktree, globs: dirtyPaths(worktree).map(pathPattern), dest: absPath(join(evidenceRoot(ctx.runDir, parent), 'prepared')),
+      source: worktree, ...dirtySnapshot(worktree), dest: absPath(join(evidenceRoot(ctx.runDir, parent), 'prepared')),
     });
   const kind = merged?.post.type === 'conflicted' ? 'conflicted' : 'clean-verify';
   return { ...record(ctx, parent, kind), worktree, branch, head: revParse(worktree, 'HEAD'), evidence: snapped.op };

@@ -5,15 +5,20 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { identityOf, readBootId } from '../src/contain/proc.ts';
 import { atomicJson } from '../src/core/fsx.ts';
-import { arcId, invocationId, opId, opKey, resourceName, unitId } from '../src/core/ids.ts';
+import { arcId, invocationId, invocationIdOf, opId, opKey, resourceName, unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import type { ProcIdentity, RecoveryLockClaim } from '../src/core/records.ts';
-import { type AbsPath, absPath, isoTimeOf, nonce } from '../src/core/values.ts';
+import { type AbsPath, absPath, branchName, isoTimeOf, nonce } from '../src/core/values.ts';
+import { evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
+import { readInputFiles } from '../src/input/inforce.ts';
+import { commitRevision } from '../src/recover/revision.ts';
+import { profileName } from '../src/routing/types.ts';
+import { fakeDocs } from './fixtures/docs-fake.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { HOST_LOCK, RECOVERY_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
@@ -447,6 +452,37 @@ describe('startup.plan-in-force', () => {
     assert.ok(respawn.kind === 'passed', JSON.stringify(respawn));
     assert.deepEqual(respawn.context.plan.units.map((u) => u.id), ['u1', 'u2'], 'the respawn checked the plan in force');
     assert.equal(appliedFacts(s).rev, 2, 'and applied nothing');
+  });
+
+  it('restart.in-force-ledger (dev.16): a start of an arc in flight checks the owner\'s files rebased onto the files in force, so a ruling an executor revision landed counts though the owner\'s ledger predates it', T, async () => {
+    const s = setup();
+    assert.equal((await start(input(s))).kind, 'passed');
+    // An executor revision (in the field, checkpoint ckpt-23's bundle) lands C-3 and a unit u2 citing it. It is built from the
+    // owner's dir, whose ledger is then put back: the input dir synced but for its ledger (generation 15, field 2026-10-21).
+    const ledger = join(s.planDir, 'rulings.md');
+    const stale = readFileSync(ledger, 'utf8');
+    writeFileSync(ledger, `${stale}C-3 — Probes live beside the code they probe.\n`);
+    writeFileSync(join(s.planDir, 'u2.json'), JSON.stringify({ ...s.spec, unit: 'u2', cites: { contracts: [], rulings: ['C-3'] } }));
+    writeFileSync(s.planFile, JSON.stringify({ ...s.plan, units: [...(s.plan['units'] as Raw[]), { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: ['db'] }] }));
+    const j = openJournal(runDirOf(s), arcId(s.arc));
+    try {
+      const rctx = { runDir: runDirOf(s), view: j.view, hostDir: s.hostDir, planFile: s.planFile, routingBase: { profile: profileName('default', 'p'), config: null, arcRoles: 'm4b' as const }, laneEnv: process.env };
+      const v = evaluateRevision(rctx, readInputFiles(s.planFile, s.repo), { type: 'rule' });
+      assert.ok(v.kind === 'accepted', JSON.stringify(v));
+      keepRevision(runDirOf(s), v);
+      const source = { type: 'executor', inv: invocationIdOf(`${s.arc}/9#1`) } as const;
+      const committed = await commitRevision({ journal: j, runDir: runDirOf(s), docs: fakeDocs(j, s.repo, branchName('main')) }, payloadOf(v.draft, source), { type: 'arc' });
+      assert.equal(committed.kind, 'applied');
+    } finally {
+      j.close();
+    }
+    writeFileSync(ledger, stale);
+    const restarted = await start(input(s));
+    assert.equal(restarted.kind, 'passed', JSON.stringify(restarted));
+    assert.equal(appliedFacts(s).rev, 2, 'nothing new to put in force');
+    // A supervisor's respawn checks the plan in force against the ledger in force too, never the owner's file.
+    const respawn = await start({ ...input(s), respawn: { runDir: runDirOf(s), arc: arcId(s.arc) } });
+    assert.equal(respawn.kind, 'passed', JSON.stringify(respawn));
   });
 
   it('plan-change-refused: a fresh arc\'s unit with a reserved id (batch-<n>, jobs, mutants) is refused, and so is a start whose files add one', T, async () => {

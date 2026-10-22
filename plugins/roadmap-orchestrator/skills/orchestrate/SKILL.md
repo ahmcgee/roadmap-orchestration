@@ -45,7 +45,8 @@ a defect, a correction inside the slice) you apply or rule now. Everything else 
 there), and `notes.md`, work for later, deferred rulings and ideas (append). The executor never reads `_next/`.
 `.roadmap/vision.json` and the vision document change only between arcs: a running arc's `apply` refuses a vision
 file that differs from the vision in force (`vision-leak`). `apply --vision-edit` is only for a vision change the
-owner orders for the running arc.
+owner orders for the running arc: commit the edit on the owner's checkout (never on the arc's integration branch),
+then `apply --vision-edit`; the executor publishes it onto the arc branch. Never move the integration branch by hand.
 
 ## Bootstrap (once)
 
@@ -210,6 +211,10 @@ Keep the arc's inputs in their own directory outside the product working tree, f
       a run or a plan prints, how a failure names the step, file and fix, and the dry-run-then-apply path. Config: the
       schema, defaults, validation errors that name the key and the fix, a minimal and a full example. Code checks
       only that the reference paths exist once the design unit merged; the gate judges the rest against its spec.
+      Every text file under `references` goes whole into every plan-check, build and gate prompt of the milestone's
+      units and into its walkthrough, so point `references` at the design documents only, never at a source dir holding
+      build output, bundles or comps. Phase 0 refuses a milestone whose references hold more than 512 KiB of text
+      (`plan-defect`, `milestone-references-oversize`, naming the largest files) (2026-10-21; 1.0.0-dev.16).
     - **Bring-up and journeys.** `bringUp` brings the product up from a clean checkout of the integration tip with no
       shell: `setup` commands, long-lived `serve` entries each with a readiness probe (`[]` for a CLI or an SDK),
       `env` with `{port:<name>}` for the ports code allocates, and `seed` data. Ports belong to `serve`'s env and argv:
@@ -399,8 +404,9 @@ it goes into the Phase 0 under way. While an arc runs, one `roadmap apply` carri
   baseline (never the integration branch) and re-pin (`corpus pin --commit <that commit> --baseline <the plan's baseline>`).
   A change of meaning retires the old rule id and adds a new one. Update the census, and the in-slice obligations
   per "Changing the plan": re-anchoring or restating one is a weakening, so the apply carries a ruling naming it
-  `amended` (`apply --ruling <sidecar>`). When the new meaning needs code, add the unit that delivers it in the
-  same apply.
+  `amended` (`apply --ruling <sidecar>`). An obligation of a retired rule that nothing replaces is retired instead (a
+  ruling naming it `retired`), its anchor kept as written: a retired obligation's anchor is not checked against the
+  pin (2026-10-21; 1.0.0-dev.16). When the new meaning needs code, add the unit that delivers it in the same apply.
 - The next between-arc commit carries that corpus edit again: the integration branch never had it.
 
 Check in at every arc completion (the chain boundary), at every event worth a brief (a stop, a blocking item you
@@ -551,8 +557,9 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   `files` or lane, the obligation's `deliveredBy`), then `roadmap resume <unit>` re-runs its lanes.
 - **Parked `context-exceeded`** (a plan-check, build or gate call's prompt or context outgrew its model's window;
   uncharged): the item names the role, the call and the prompt's size. Make the stage's inputs fit (split the unit or
-  narrow its spec by a spec revision and `apply`, or route that seat to a class whose model has a larger window), then
-  `roadmap resume <unit>` re-runs the stage. Resuming unchanged hits the same wall.
+  narrow its spec, or a milestone's `references`, by `apply`, or route that seat to a class whose model has a larger
+  window), then `roadmap resume <unit>` re-runs the stage: a new call with a prompt built from the inputs in force, never
+  a replay of the parked one (2026-10-21; 1.0.0-dev.16). Resuming unchanged hits the same wall.
 - **Parked `routing-changed`** (the implementer seat's backend or model moved after its build started; an
   effort-only change re-pins by itself): restore the routing of the seat the item names, or re-enter the unit
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,
@@ -599,7 +606,9 @@ classes, scope growth) and never writes into your files: the plan in force lives
 - **A conflict** (you and the executor changed one value differently) rejects the apply naming the file and the JSON
   path (`conflict: …/u1.json at $.decisions[D1].text`). Export, re-apply your edit on top of the executor's value,
   apply with `--base`.
-- `start` merges your files the same way: unchanged files restart on the plan in force.
+- `start` merges your files the same way: unchanged files restart on the plan in force. Its startup checks read the
+  merged files too (2026-10-21; 1.0.0-dev.16), so a ruling or unit the executor landed since your last apply is known
+  to them: restart with `start --plan <your plan.json>` as it stands, with no `inputs export` sync first.
 
 The executor applies at the next stage boundary and kills nothing; the receipt says applied or every reason it was
 rejected. An edit you never apply has no effect, even after a restart.
@@ -622,7 +631,11 @@ rejected. An edit you never apply has no effect, even after a restart.
   A re-pin re-gates every approval.
   Both change the pack, so before the first admission they trigger a new pack review.
 - **Vision**: only a change the owner ordered for this arc, by `apply --vision-edit` (a next-arc draft waits in
-  `_next/`). Never reuse a clause id; withdraw, never delete. Commit `.roadmap/vision.json` before the `apply`.
+  `_next/`). Never reuse a clause id; withdraw, never delete. Commit `.roadmap/vision.json` (and, with a re-pin, the
+  vision document) on the owner's checkout before the `apply`, never on the integration branch: the apply's docs
+  publication lands them on the arc branch, its suite run on them like any docs publication. Never move the
+  integration branch by hand (`update-ref`, a push, a merge into it). A `start` refuses an edited vision record;
+  start on the vision in force, then apply.
 - **Fixed**: `arc`, `integrationBranch`, `baseline`, `worktreeRoot`, the target kind and `chain`.
 - **Rulings ledger**: only through commands. A ruling and the edits that depend on it go in one
   `apply --ruling <sidecar>`, so no review sees half of it; `roadmap rule` is for a ruling with no dependent edit.

@@ -51,6 +51,8 @@ export type WorldAct =
   | Readonly<{ type: 'commit'; message: string; files: FileSet }>
   | Readonly<{ type: 'stage'; files: FileSet }>
   | Readonly<{ type: 'dirty'; files: FileSet }>
+  /** dev.16: a symlink at `path` (relative to the cwd) to `target`, left uncommitted (a session's `node_modules` link). */
+  | Readonly<{ type: 'symlink'; path: string; target: string }>
   | Readonly<{ type: 'exit'; code: number }>
   | Readonly<{ type: 'hang'; ms: number }>
   /** A busy loop for `ms`: a cpu-bound hang (M4b rev 3: a call that waits for a cpu, unlike `hang`, which sleeps). */

@@ -1,14 +1,15 @@
 // The docs publication (M3 step A4; DESIGN-1.0.md §2.9, §9; plan "Commands", Docs publication; A7, A17, G12): a
-// revision's rendered `.roadmap/` documents and its contract ops, published through the integration slot like a unit,
-// so the tested head is the published head. It runs inside its revision's commit (src/recover/revision.ts
-// `commitRevision`, under the revision fence), reached through `DocsPublisher`:
+// revision's rendered `.roadmap/` documents, the vision files it changes (dev.16) and its contract ops, published through
+// the integration slot like a unit, so the tested head is the published head. It runs inside its revision's commit
+// (src/recover/revision.ts `commitRevision`, under the revision fence), reached through `DocsPublisher`:
 //
 //   slot       `integration-slot` under `docs{pub}` (pub = the next `docs-<n>`), taken first of every waiter
 //              (`acquireFirst`, src/schedule/arbiter.ts). A unit candidate holding it before green is preempted
 //              (src/pipeline/integrate.ts `preemptCandidate`: `preempted`, uncharged); a green one's ff → snapshot
 //              chain completes first.
-//   files      each rendered document (kept bytes) and each document the revision's new rulings' contract ops edit
-//              at the tip T, those rulings validated again at T (`validateRuling`, G21: their consistency is fresh).
+//   files      each of the payload's renders (kept bytes: a rendered document, or a vision file) and each document the
+//              revision's new rulings' contract ops edit at the tip T, those rulings validated again at T (`validateRuling`,
+//              G21: their consistency is fresh).
 //   docs.commit on `refs/roadmap-run/<arc>/docs/<pub>`, parents [T] (src/git/docs.ts).
 //   transient  the commit's diff holds only those files (`docsTransientViolations`).
 //   lanes      in a detached checkout of the commit, under `job{pub}` (`runJourneySeries`, lanes.ts): the plan's suite, then the arc
@@ -20,11 +21,11 @@
 //              publication's `docs-covered{pub, T → D}` (A17), the snapshot, the slot released.
 // A refusal before the ff releases the slot and aborts the revision (nothing is in force); the command reports why.
 //
-// Selection (G12; SCHEMAS "Choices made in M3 A4"): the rendered `.roadmap/` files are not changed paths: the executor
-// renders them from in-force records, and as unmapped paths they would select every must-hold obligation. A docs
-// candidate selects the obligations its contract ops' paths touch (contracts, docRefs, witness files, mapping; an
-// unmapped contract path selects every must-hold, as for a unit), plus the obligations the revision adds, splits or
-// re-witnesses, with the split closure. Witnesses are read against the revision's own obligations.
+// Selection (G12; SCHEMAS "Choices made in M3 A4"): the renders are not changed paths: the executor renders them from
+// in-force records or publishes the vision in force, and as unmapped paths they would select every must-hold
+// obligation. A docs candidate selects the obligations its contract ops' paths touch (contracts, docRefs, witness files,
+// mapping; an unmapped contract path selects every must-hold, as for a unit), plus the obligations the revision adds,
+// splits or re-witnesses, with the split closure. Witnesses are read against the revision's own obligations.
 //
 // Crash safety: recovery finds the publication a revision carried as the docs ff begun after its `revision.commit`
 // (src/recover/revision.ts `docsStateOf`). The slot left held is the docs holder's (src/recover/resource.ts):
@@ -46,6 +47,12 @@
 // with any docs publication (a revision's or the close-out) whose tip holds another rendering. It is never a
 // publication's reason: a change of the ledger alone waits for the next docs publication, and always reaches the
 // close-out. Its bytes live in the docs commit (git history), not in the revision's kept renders.
+//
+// The vision (dev.16; src/commands/apply.ts `visionRenders`): a revision that changes the vision in force publishes it, so
+// the integration branch carries the vision in force and nobody moves it by hand. A corpus arc's `.roadmap/vision.json`
+// whenever its bytes change, and a `same-repo` corpus's pinned vision document when a re-pin changes it, are renders like
+// the rendered documents (their bytes kept as `inputs/<sha>.render`): the same files step, transient check, snapshot
+// closure and recovery. An `architecture-doc` arc's vision lives beside its plan, outside the product repo: never published.
 //
 // The lanes run as a journey series under `job{pub}` (src/pipeline/lanes.ts `runJourneySeries`): reserved first of every
 // unit, the red-lane protocol, evidence per lane execution in its own immutable dir (`jobLaneDir`), a witness record per
@@ -278,7 +285,7 @@ export function debtFile(ctx: Reader, commit: Sha): DocsFile | null {
 type Files = Readonly<{ kind: 'files'; files: readonly DocsFile[]; contractPaths: readonly RepoPath[] }> | Readonly<{ kind: 'refused'; reasons: readonly string[] }>;
 
 /**
- * The docs commit's files at `tip`: every rendered document (its kept bytes), a corpus arc's `debt.md` where `tip` holds
+ * The docs commit's files at `tip`: every render (its kept bytes), a corpus arc's `debt.md` where `tip` holds
  * another rendering (`debtFile`), then every document the new rulings' contract ops edit, each ruling validated again at
  * `tip` first (its identity against the ledger with the earlier ones landed; its consistency against the revisions in
  * force).
@@ -328,7 +335,7 @@ function revisionObligations(runDir: AbsPath, payload: RevisionPayload): Obligat
 export const revisedObligations = (changes: readonly PlanChange[]): readonly ObligationId[] =>
   changes.flatMap((c) => (c.type === 'obligation' && (c.edit === 'added' || c.edit === 'split' || c.edit === 'witness') ? [c.id] : []));
 
-/** The docs candidate's selection: its contract ops' paths (never the rendered `.roadmap/` files) and the revised obligations. */
+/** The docs candidate's selection: its contract ops' paths (never the renders) and the revised obligations. */
 export function docsSelection(
   obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>,
 ): readonly ObligationId[] {

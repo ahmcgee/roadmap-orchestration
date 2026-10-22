@@ -1,19 +1,19 @@
 // Plan defects (2026-10-16): a plan defect code can check is refused at Phase 0 (`plan-defect`, src/phase0/rows.ts row
 // 11), over a corpus arc's real files and git (test/helpers/corpusarc.ts). Named tests: plan-defect.witness-in-lane,
-// plan-defect.argv-forms, plan-defect.witness-reachable, plan-defect.undeclared, plan-defect.derived,
-// plan-defect.regenerate.
+// plan-defect.argv-forms, plan-defect.witness-reachable, plan-defect.undeclared, plan-defect.undeclared-per-witness,
+// plan-defect.derived, plan-defect.regenerate.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { laneId, unitId } from '../src/core/ids.ts';
+import { obligationId, unitId } from '../src/core/ids.ts';
 import { repoPath, repoPattern } from '../src/core/values.ts';
 import { type ArcLaneDef, type PlanDefect, laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { laneMisses } from '../src/holistic/witnessfiles.ts';
 import { derivedWidening } from '../src/input/derived.ts';
 import { parsePlan, regenerateLaneId } from '../src/input/plan.ts';
 import { APPLY, phase0InputOf, phase0Rows } from '../src/phase0/rows.ts';
-import { type CorpusArc, WITNESS_FILE, check, corpusArc, editJsonFile, editPlan, filesOf, kinds, rowOf } from './helpers/corpusarc.ts';
+import { type CorpusArc, PIN_FILE, WITNESS_FILE, check, corpusArc, editJsonFile, editPlan, filesOf, kinds, rowOf } from './helpers/corpusarc.ts';
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;
@@ -108,9 +108,25 @@ describe('declared test paths and witness files', () => {
     assert.deepEqual(await defects(a), [{ type: 'lane-test-paths-undeclared', lane: 'journey' }, { type: 'witness-files-undeclared', obligation: 'I-1' }]);
     // An apply (or a restart) of an arc started before: nothing declared anywhere, so nothing to check.
     assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null), APPLY).rows, []);
-    // Once any witness declares files, every lane declares testPaths.
-    editWitness(a, { witness: (w) => ({ ...w, files: [WITNESS_FILE] }) });
-    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null), APPLY).rows, [{ kind: 'plan-defect', defects: [{ type: 'lane-test-paths-undeclared', lane: laneId('journey') }] }]);
+  });
+
+  it('plan-defect.undeclared-per-witness: on an arc started before, one witness declaring files is checked alone; the others stay undeclared, not refused', T, async () => {
+    // The field arc (2026-10-21): a checkpoint split gave two children files on an arc whose witnesses declared none.
+    const a = await corpusArc();
+    editWitness(a, { lane: ({ testPaths: _t, ...l }) => l, witness: ({ files: _f, ...w }) => w });
+    const t2 = (JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')) as { rules: Json[] }).rules.find((r) => r['id'] === 'T-2')!;
+    const withI2 = (files: readonly string[]): void => editJsonFile(obligationsPath(a), (o) => {
+      const i1 = (o['obligations'] as Json[])[0]!;
+      const witness = { ...(i1['witness'] as Json), files };
+      const i2 = { ...i1, id: 'I-2', rule: { id: 'T-2', textSha256: t2['textSha256'] }, witness, proofJudgment: { ...(i1['proofJudgment'] as Json), witness } };
+      const census = (o['census'] as Json[]).map((e) => (e['rule'] === 'T-2' ? { rule: 'T-2', state: { type: 'obligation', id: 'I-2' } } : e));
+      return { ...o, obligations: [i1, i2], census };
+    });
+    withI2([WITNESS_FILE]);
+    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null), APPLY).rows, []);
+    // I-2's declared file is still checked.
+    withI2(['test/new.test.ts']);
+    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), null), APPLY).rows, [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: obligationId('I-2'), file: repoPath('test/new.test.ts'), units: [] }] }]);
   });
 });
 

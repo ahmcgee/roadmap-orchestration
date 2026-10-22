@@ -209,7 +209,11 @@ export type OpExpect = {
   'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex }>;
   /** `op` scope also kills stray earlier ordinals of the same op. */
   'proc.kill': Readonly<{ inv: InvocationId; scope: 'invocation' | 'op'; reason: KillReason }>;
-  'evidence.snapshot': Readonly<{ source: AbsPath; globs: readonly RepoPattern[]; dest: AbsPath }>;
+  /**
+   * `notRegular` (dev.16): the named paths (a checkout's dirty paths) left uncaptured as symlinks or special files
+   * (src/git/evidence.ts `namedPathGlobs`); absent when none, as in every record before dev.16.
+   */
+  'evidence.snapshot': Readonly<{ source: AbsPath; globs: readonly RepoPattern[]; dest: AbsPath; notRegular?: readonly RepoPath[] }>;
   'salvage.commit': Readonly<{
     worktree: AbsPath;
     branch: RefName;
@@ -1107,8 +1111,9 @@ export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
 /**
  * A revision's full evaluated payload (G1), kept content-addressed as `inputs/<sha256>.revision.json` and named by
  * its `revision.commit` intent before any docs `ff`. `plan-applied` is appended from it exactly, then its
- * divergences in order; recovery never reclassifies. `publication`: the rendered `.roadmap/` files and the contract
- * ops the docs publication commits, null when the revision changes no in-tree document. `owner` (apply rebase, 2026-10-16):
+ * divergences in order; recovery never reclassifies. `publication`: the files the docs publication commits (`renders`:
+ * the rendered `.roadmap/` documents and, dev.16, the vision files the revision changes in the product repo) and its
+ * contract ops, null when the revision changes no in-tree document. `owner` (apply rebase, 2026-10-16):
  * the owner's files a start or an `apply` was rebased from, when they differ from `manifest` (a merge, or `--ruling`
  * records landed): the default base of the owner's next apply (src/input/rebase.ts `ownerBase`). Absent: the manifest is
  * the owner's (every revision of an earlier release, whose write-back kept the owner's files at the manifest).
@@ -1420,7 +1425,13 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     outcome: kindOnly('quiesced'),
   },
   'evidence.snapshot': {
-    expect: object((f) => ({ source: f.get('source', absR), globs: f.get('globs', arrayOf((v, p) => repoPattern(v, p))), dest: f.get('dest', absR) })),
+    expect: object((f) => {
+      const notRegular = f.optional('notRegular', arrayOf((v, p) => repoPath(v, p), { nonEmpty: true }));
+      return {
+        source: f.get('source', absR), globs: f.get('globs', arrayOf((v, p) => repoPattern(v, p))), dest: f.get('dest', absR),
+        ...(notRegular === undefined ? {} : { notRegular }),
+      };
+    }),
     post: object((f) => ({ manifest: f.get('manifest', absR) })),
     outcome: object((f) => ({ kind: f.get('kind', literal('captured')), manifestSha256: f.get('manifestSha256', sha256R), files: f.get('files', nat) })),
   },

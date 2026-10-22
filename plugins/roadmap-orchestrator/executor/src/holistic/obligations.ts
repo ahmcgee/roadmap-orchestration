@@ -96,13 +96,16 @@ function ruleRefreshed(prev: ObligationDef, next: ObligationDef): boolean {
 
 /**
  * Whether a rule-anchored obligation's `{T-n, textSha256}` resolves in `pin` (M4a; LR-C1-2): a binding obligation's to an
- * active rule with that text hash; an exempt one's (waived, deferred, retired: it binds nothing) also to a rule the pin
- * retired with that hash, so retiring a rule does not force an edit of an obligation already exempted from it. A
- * docRef obligation is not asked (it has no rule).
+ * active rule with that text hash; a waived or deferred one's (it binds nothing) also to a rule the pin retired with that
+ * hash, so retiring a rule does not force an edit of an obligation already exempted from it. A retired obligation's
+ * always resolves (2026-10-21; 1.0.0-dev.16): its anchor is history, and a rule that leaves the corpus mid-arc is in no
+ * list of the pin when the baseline publishes no registry that held it, so its obligation could otherwise never be
+ * retired (restoring one asks again: it is then binding). A docRef obligation is not asked (it has no rule).
  */
 export function ruleAnchorResolves(o: ObligationDef, pin: CorpusPin): boolean {
   const src = obligationSource(o);
   if (src.kind !== 'rule') throw new Error(`${o.id} is docRef-anchored: only a rule anchor resolves in a pin`);
+  if (o.state.type === 'retired') return true;
   if (activeRules(pin).get(src.rule.id)?.textSha256 === src.rule.textSha256) return true;
   return isExempt(o) && pin.retired.some((r) => r.id === src.rule.id && r.textSha256 === src.rule.textSha256);
 }

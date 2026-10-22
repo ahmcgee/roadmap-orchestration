@@ -106,8 +106,9 @@ export function transientViolations(rules: TransientRules, paths: readonly RepoP
 }
 
 /**
- * The docs check (G17): a docs publication's diff paths may be only `allowed`, the `.roadmap/` files it
- * renders plus its contract ops' paths. Every other path is a `not-docs` violation, sorted by path.
+ * The docs check (G17): a docs publication's diff paths may be only `allowed`, the files it publishes (its
+ * renders, the vision files among them, and a corpus arc's `debt.md`) plus its contract ops' paths. Every other path
+ * is a `not-docs` violation, sorted by path.
  */
 export function docsTransientViolations(paths: readonly RepoPath[], allowed: readonly RepoPath[]): readonly TransientViolation[] {
   const ok = new Set<string>(allowed);

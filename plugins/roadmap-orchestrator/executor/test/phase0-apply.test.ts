@@ -1,6 +1,7 @@
 // M4a step C1: the corpus arc's revisions and starts. The classifier's corpus and Phase-0 edit classes, the target kind
 // and the chain fixed, the shared Phase-0 rows on every apply (re-derivation, census, rules resolved, the vision
 // confirmed, the tree), and a start's rows (`runChecks`): the vision, the tree, the issue policy, the kept corpus inputs.
+// dev.16: a vision edit's docs publication carries the vision files it changes; a start never runs one, so refuses it.
 // Real repos, real pins (`roadmap corpus pin`), real issue captures against the fake forge.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -400,6 +401,75 @@ describe('the vision leak (row 12)', () => {
     } finally {
       j.close();
     }
+  });
+});
+
+describe('vision edits publish (dev.16)', () => {
+  const V3 = { id: 'V-3', kind: 'good', text: 'Quiet nights.', rank: null, state: 'active' };
+  const renderMap = (v: Extract<ApplyVerdict, { kind: 'accepted' }>): ReadonlyMap<string, string> =>
+    new Map(v.evaluated.renders.map((r) => [r.path as string, r.bytes.toString('utf8')]));
+
+  it('vision.edit-publishes-record: a vision-only `--vision-edit` apply\'s docs publication carries .roadmap/vision.json with the new bytes, and nothing else of the vision', T, async () => {
+    const { a, j } = await arcInForce();
+    try {
+      const v = readJsonFile(join(a.repo, '.roadmap/vision.json'));
+      const next = `${JSON.stringify({ ...v, rev: 2, clauses: [...(v['clauses'] as Json[]), V3] })}\n`;
+      writeFiles(a.repo, { '.roadmap/vision.json': next });
+      commitAll(a.repo, 'vision rev 2');
+      const out = accepted(await apply(a, j, true));
+      assert.deepEqual([...renderMap(out)], [['.roadmap/vision.json', next]]);
+      assert.deepEqual(out.evaluated.draft.publication, { renders: [{ path: '.roadmap/vision.json', sha256: sha256Hex(next) }], contractOps: [] });
+    } finally {
+      j.close();
+    }
+  });
+
+  it('vision.repin-publishes-doc: a same-repo re-pin that changes the vision document publishes it (its bytes at the pin\'s commit) with the vision record that confirms it', T, async () => {
+    const { a, j } = await arcInForce();
+    try {
+      const commit = commitCorpus(a, '0005_Vision.md', (t) => `${t}Quiet nights in every berth.\n`);
+      await repin(a, commit);
+      const doc = readFileSync(join(a.repo, VISION_PATH), 'utf8');
+      const v = readJsonFile(join(a.repo, '.roadmap/vision.json'));
+      const next = `${JSON.stringify({ ...visionRecord(doc), rev: 2, clauses: [...(v['clauses'] as Json[]), V3] })}\n`;
+      writeFiles(a.repo, { '.roadmap/vision.json': next });
+      commitAll(a.repo, 'vision rev 2, confirmed against the re-pinned document');
+      const out = accepted(await apply(a, j, true));
+      assert.deepEqual([...renderMap(out)].sort(), [['.roadmap/vision.json', next], [VISION_PATH, doc]], 'the registry is unchanged: no invariants.md');
+      assert.ok(out.evaluated.draft.changes.some((c) => c.type === 'corpus') && out.evaluated.draft.changes.some((c) => c.type === 'vision'), JSON.stringify(out.evaluated.draft.changes));
+    } finally {
+      j.close();
+    }
+  });
+
+  it('vision.no-edit-publishes-none: an apply that leaves the vision record and document as they are publishes no vision file (a re-pin of another document; a Phase-0 record edit publishes nothing)', T, async () => {
+    const { a, j } = await arcInForce();
+    try {
+      const commit = commitCorpus(a, '0020_Berths.md', (t) => t.replace('A booking names one berth and one tide window.', 'A booking names exactly one berth and one tide window.'));
+      await repin(a, commit);
+      assert.deepEqual([...renderMap(accepted(await apply(a, j))).keys()], [INVARIANTS_DOC], 'the registry alone');
+    } finally {
+      j.close();
+    }
+    const b = await arcInForce();
+    try {
+      editPhase0(b.a, (r) => ({ ...r, curation: [{ tier: 'structural', what: 'merged two restatements', files: ['0010_Overview.md'], rules: ['T-1'] }] }));
+      assert.equal(accepted(await apply(b.a, b.j)).evaluated.draft.publication, null);
+    } finally {
+      b.j.close();
+    }
+  });
+
+  it('vision.edit-start-refused: a start whose vision record differs in bytes from the vision in force is refused (it needs the docs publication; a start runs none): it goes through `apply --vision-edit`', T, async () => {
+    const a = await corpusArc();
+    inForce(a).close();
+    // The same vision, reformatted: no vision change the classifier names (a changed vision is owner-only, by apply, already).
+    writeFiles(a.repo, { '.roadmap/vision.json': `${JSON.stringify(readJsonFile(join(a.repo, '.roadmap/vision.json')))}\n` });
+    commitAll(a.repo, 'the vision reformatted');
+    const rows = refusedRows(await start(a));
+    assert.equal(rows.length, 1, JSON.stringify(rows));
+    const row = rows[0]!;
+    assert.ok(row.kind === 'plan-change-refused' && row.reasons.length === 1 && /needs? a docs publication.*vision publishes.*--vision-edit/.test(row.reasons[0]!), JSON.stringify(row));
   });
 });
 

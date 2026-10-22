@@ -7,7 +7,7 @@
 // Codex's event stream follows the captured event vocabulary, so what the fake emits is what the adapter
 // was pinned against.
 import { spawn, spawnSync } from 'node:child_process';
-import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -310,6 +310,9 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
       return;
     case 'dirty':
       writeFiles(call.cwd, act.files);
+      return;
+    case 'symlink':
+      symlinkSync(act.target, join(call.cwd, act.path));
       return;
     case 'exit':
       process.exit(act.code);

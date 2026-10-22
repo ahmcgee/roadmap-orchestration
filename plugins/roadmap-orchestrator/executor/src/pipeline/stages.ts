@@ -105,14 +105,14 @@ import { SchemaError } from '../core/validate.ts';
 import {
   type AbsPath, type RefName, type RepoPath, type RepoPattern, absPath, branchRef, gitDate, isoTimeOf, matchesPattern, repoPath, repoPattern,
 } from '../core/values.ts';
-import { FILES_DIR, capturedEvidence, pathPattern } from '../git/evidence.ts';
+import { FILES_DIR, capturedEvidence } from '../git/evidence.ts';
 import { GitError, type Identity, git, gitRun, refTarget, revParse } from '../git/git.ts';
 import { mergeHead, resolvedHead } from '../git/mergein.ts';
 import { SalvageStateError, SalvageUnmergedError, checkRejected, planSalvage, type SalvageRules } from '../git/salvage.ts';
 import { readGuideBytes } from '../corpus/guide.ts';
 import { unitRegenerateLanes } from '../input/derived.ts';
 import { withinEnvelope } from '../input/envelope.ts';
-import { corpusFileSet, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
+import { corpusFileSet, referenceFiles, scopeOverlapsCorpus, scopeReferences } from '../phase0/rows.ts';
 import { diffBase, unitDiffPaths } from '../git/transient.ts';
 import {
   type CorpusInForce, type InputFiles, type LoadedSpec, CORPUS_FILE_INPUT, OBLIGATIONS_INPUT, PLAN_INPUT, RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inForceFiles,
@@ -157,14 +157,14 @@ import {
 } from './dispatch.ts';
 import { invocationDir, quiescent } from './invoke.ts';
 import {
-  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, dirtyPaths, fastSuiteLanes, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
+  type LaneRecord, type LaneRuntime, type Series, type VerificationTree, dirtyPaths, dirtySnapshot, fastSuiteLanes, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
   removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot,
 } from './lanes.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
 import {
-  type DecidedRound, type RoundCall, type RoundInput, callRound, decidedRound, escalateImplementer, freshSession, invocationSession, laneFixRound, prepareRound,
+  type DecidedRound, type RoundCall, type RoundInput, callRound, cutShort, decidedRound, escalateImplementer, freshSession, invocationSession, laneFixRound, prepareRound,
   resumed,
 } from './rounds.ts';
 import { type BuildRound, type Next, type StageOutcome, outcomeFact, transition } from './transitions.ts';
@@ -420,19 +420,6 @@ export function unitMilestones(ctx: Pick<StageContext, 'plan' | 'repo'>, unit: U
 }
 
 /**
- * Every file under the reference dirs `dirs` at `tip`, in path order, once each: its text, or null for a binary file (a NUL
- * in its first 8000 bytes, git's own rule). A dir absent at `tip` has none.
- */
-export function referenceFiles(repo: AbsPath, tip: Sha, dirs: readonly RepoPath[]): readonly Readonly<{ path: RepoPath; text: string | null }>[] {
-  if (dirs.length === 0) return [];
-  const paths = git(repo, ['ls-tree', '-r', '-z', '--name-only', tip, '--', ...new Set(dirs)]).split('\0').filter((f) => f !== '').sort();
-  return paths.map((p) => {
-    const text = git(repo, ['cat-file', 'blob', `${tip}:${p}`]);
-    return { path: repoPath(p), text: text.slice(0, 8000).includes('\0') ? null : text };
-  });
-}
-
-/**
  * dev.13: the browser drive of a Claude build of `unit` in a milestone (a member or its design unit) with a `browser` journey:
  * the `walkthrough.mcp` servers (the repo config the arc started under; bootstrap refuses a `browser` journey without
  * them) and the `--mcp-config` text with `{evidence}` the build's evidence dir `evidenceDir`. Null on a Codex seat, or
@@ -571,7 +558,7 @@ export async function removeJudgmentCheckouts(ctx: StageContext, unit: UnitId, p
     const dest = absPath(join(evidenceRoot(ctx.runDir, created.parent), basename(path)));
     const view = ctx.journal.view;
     const snapped = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest && view.doneOf(i.op) !== null)
-      ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parent, { source: path, globs: dirtyPaths(path).map(pathPattern), dest });
+      ?? await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${unit}`, parent, { source: path, ...dirtySnapshot(path), dest });
     await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${unit}:${parent.stage}`, parent, { path, evidence: capturedEvidence(ctx.journal.view, snapped.op) });
   }
 }
@@ -1262,13 +1249,12 @@ function assesses(ctx: StageContext, unit: UnitId): boolean {
 }
 
 /**
- * The assessment a crash left unread: the build attempt just before `parent`, cut short (no outcome records it), whose
+ * The assessment a crash left unread: the build attempt just before `parent`, cut short (`cutShort`: no outcome records it), whose
  * assess call completed. Consumed against what it answered, never asked again (crash table, "Build assess").
  */
 function crashedAssessment(ctx: StageContext, parent: StageParent): IntentOf<'proc.spawn'> | null {
   const crashed = parent.attempt - 1;
-  const u = ctx.journal.view.unit(parent.unit);
-  if (u.decided?.attempt === crashed || u.interrupted?.attempt === crashed) return null;
+  if (!cutShort(ctx.journal.view.unit(parent.unit), crashed)) return null;
   const assess = attemptAssess(ctx, { type: 'stage', unit: parent.unit, stage: 'build', attempt: crashed });
   return assess !== null && ctx.journal.view.doneOf(assess.op)?.outcome.kind === 'result' ? assess : null;
 }
