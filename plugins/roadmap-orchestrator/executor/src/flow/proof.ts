@@ -29,6 +29,7 @@ import { FLOW_PROOF_INPUT, keepInput, requirePlanInForce, revisionInForce } from
 import { runOp } from '../pipeline/dispatch.ts';
 import { invocationDir, invoke } from '../pipeline/invoke.ts';
 import { LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, laneRequest, removeJobCheckouts, suiteStandIns } from '../pipeline/lanes.ts';
+import { releaseEnvironment, useEnvironment } from '../resources/environments.ts';
 import { probe } from '../resources/probe.ts';
 import { instanceEnv } from '../resources/pool.ts';
 import { type JobHolder, type Reservation, type ResourceContext, cleanup, heldReservation, jobOwnerLabel, run } from '../resources/reserve.ts';
@@ -108,8 +109,26 @@ async function runSide(ctx: ProofContext, job: JobId, proposal: FlowProposal, la
     if (grant.kind === 'cancelled') throw new Error(`${job}: its lane wait was cancelled, and nothing cancels it`);
     const reserved = heldReservation(ctx, holder, 'reserved');
     if ((await probe(ctx, reserved, parent)).kind === 'parked') throw new Error(`${job}: suite lane ${lane.id}'s resources are occupied; a proof waits on a free reservation only`);
+    // dev.17: the lane's environment; one that does not come up gives this side no verdict (unprovable), as a lost run does.
+    if (lane.environment !== undefined && (await useEnvironment(ctx, lane.environment, parent)).kind === 'unavailable') {
+      const cleaned = await cleanup(ctx, reserved, parent);
+      if (cleaned.kind !== 'released') throw new Error(`${job}: suite lane ${lane.id}'s reservation was not released: ${cleaned.kind}`);
+      return { passed: null, tests: null, minutes: 0 };
+    }
     held = run(ctx, reserved, parent);
   }
+  try {
+    return await runHeld(ctx, job, proposal, lane, side, head, reporter, parent, held);
+  } finally {
+    if (lane.environment !== undefined) releaseEnvironment(ctx.journal, lane.environment);
+  }
+}
+
+/** The side's run under its held reservation (null: the lane asks for nothing). */
+async function runHeld(
+  ctx: ProofContext, job: JobId, proposal: FlowProposal, lane: LaneDef, side: 'old' | 'new', head: Sha, reporter: FlowReporter, parent: Parent,
+  held: Reservation<'running', JobHolder> | null,
+): Promise<Side> {
   const checkout = absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${job}.${side}`));
   await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${job}`, parent, { path: checkout, checkout: { type: 'detached', at: head } });
   const dirOf = (invDir: string): AbsPath => absPath(join(jobEvidenceRoot(ctx.runDir, job), `proof-${side}-${basename(invDir)}`));

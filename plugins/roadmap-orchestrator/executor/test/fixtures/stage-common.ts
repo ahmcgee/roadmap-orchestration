@@ -59,6 +59,8 @@ export type LaneJson = Readonly<{
   evidenceExcludes?: readonly string[];
   /** M4a rev 3 (F1a): a spec lane's inputs. */
   inputs?: readonly string[];
+  /** dev.17: the plan environment the lane runs against. */
+  environment?: string;
 }>;
 
 /** The fixture's own test lane: fails until `add` is fixed, printing ADD-MARKER. */
@@ -79,6 +81,8 @@ export type SetupOptions = Readonly<{
   files?: Readonly<Record<string, string>>;
   /** The plan's `derived` entries as plan.json writes them (default none). */
   derived?: readonly JsonValue[];
+  /** dev.17: the plan's `environments` as plan.json writes them (default none). */
+  environments?: Readonly<Record<string, JsonValue>>;
 }>;
 
 export type StageRun = Readonly<{
@@ -100,7 +104,8 @@ function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
-    ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }), state: 'active',
+    ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
+    ...(l.environment === undefined ? {} : { environment: l.environment }), state: 'active',
   };
 }
 
@@ -195,6 +200,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [] }],
     ...(opts.derived === undefined ? {} : { derived: opts.derived }),
+    ...(opts.environments === undefined ? {} : { environments: opts.environments }),
   }));
   const plan: PlanM1 = parsePlan(JSON.parse(readFileSync(planPath, 'utf8')));
   const unit = plan.units[0]!;

@@ -99,8 +99,8 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
 
 /**
  * Whether a tripped breaker on `target` blocks `stage`: `host` blocks builds and lanes (a reproduce runs a lane), a
- * backend the stages that call it. A resource instance's breaker blocks no admission: the arbiter sets aside the
- * waiters of a dirty instance (F8).
+ * backend the stages that call it, an environment (dev.17) the stages that run its lanes. A resource instance's breaker
+ * blocks no admission: the arbiter sets aside the waiters of a dirty instance (F8).
  */
 function breakerBlocks(target: ProbeTarget, stage: AdmissionStage, backend: Backend | null): boolean {
   switch (target.type) {
@@ -110,6 +110,8 @@ function breakerBlocks(target: ProbeTarget, stage: AdmissionStage, backend: Back
       return target.backend === backend;
     case 'resource':
       return false;
+    case 'environment':
+      return stage === 'lanes' || stage === 'candidate';
   }
 }
 

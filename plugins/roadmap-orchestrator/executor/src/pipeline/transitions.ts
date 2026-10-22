@@ -251,6 +251,9 @@ export const TABLE: Table = {
     // Plan defects (2026-10-16): salvage reverted the same out-of-scope path on two build rounds running: the scope-growth
     // hold, uncharged, until the root agent's `scope accept|reject`.
     'scope-growth': hold,
+    // dev.17: a lane's environment did not come up or failed its probe: no verdict on the tree, uncharged; the executor
+    // probes the environment (up, then its probe) and re-runs the lanes once it passes.
+    'env-unavailable': park('env-unavailable', 'retryable'),
   },
   gate: {
     approve: go(at('candidate')),
@@ -291,6 +294,8 @@ export const TABLE: Table = {
     preempted: go(at('candidate')),
     // M3 (G10): an active P1 blocks a selected obligation; admission holds the next candidate until it lifts.
     'finding-blocked': go(at('candidate')),
+    // dev.17: as at lanes.
+    'env-unavailable': park('env-unavailable', 'retryable'),
   },
   ff: {
     published: go(at('snapshot')),

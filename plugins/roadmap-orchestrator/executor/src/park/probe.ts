@@ -14,6 +14,8 @@
 //                teardown → the residue's `cleaned` disposition → release — then the fact; a pass is written only
 //                once the instance is free and its residue disposed. The same whether a unit park names the
 //                instance, a residue alone does (a failed cleanup no stage outcome parked), or both.
+//   environment{e}  (dev.17) e's up when it is not up, then its probe (`probeEnvironment`): a pass leaves it up for the
+//                parked lane's re-run; a failure brings it down again.
 // A job cancelled by its signal records nothing: its target is probed again when next due.
 //
 // `resumeBackend` is `resume --backend b` through the prober: b's smoke under the same one-job-per-target
@@ -28,6 +30,7 @@ import { gitRun } from '../git/git.ts';
 import { type HostSample, isClear } from '../host/sample.ts';
 import { type StageContext, unitWorktree } from '../pipeline/dispatch.ts';
 import { backendEnv, invokeCommand, probeSmoke, smokeDir, smokePassed, smokeRejections, type InvocationContext } from '../preflight/smoke.ts';
+import { probeEnvironment } from '../resources/environments.ts';
 import { type RetryHolder, retryReclaim } from '../resources/reserve.ts';
 import type { Backend, ProfileName } from '../routing/types.ts';
 import type { ProbeJob, Prober } from '../schedule/types.ts';
@@ -120,6 +123,8 @@ async function check(ctx: ProberContext, job: ProbeJob): Promise<boolean> {
       return hostCheck(ctx, job.covers);
     case 'resource':
       return resourceCheck(ctx, job.target);
+    case 'environment':
+      return probeEnvironment(ctx, job.target.environment, { type: 'arc' });
   }
 }
 

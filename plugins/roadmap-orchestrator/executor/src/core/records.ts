@@ -61,8 +61,11 @@ export type BackendCancelReason = (typeof BACKEND_CANCEL_REASONS)[number];
 
 export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
 export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
-/** dev.13: `bring-up`, a milestone product's setup, serve or seed command (src/walk/bringup.ts). */
-export const COMMAND_PURPOSES = ['lane', 'teardown', 'probe', 'smoke', 'bring-up'] as const;
+/**
+ * dev.13: `bring-up`, a milestone product's setup, serve or seed command (src/walk/bringup.ts). dev.17: `environment`, a plan
+ * environment's up, down or probe (src/resources/environments.ts).
+ */
+export const COMMAND_PURPOSES = ['lane', 'teardown', 'probe', 'smoke', 'bring-up', 'environment'] as const;
 export type CommandPurpose = (typeof COMMAND_PURPOSES)[number];
 
 export const CONTAINMENT_MODES = ['session', 'cgroup'] as const;
@@ -872,6 +875,12 @@ export type LaneDef = Readonly<{
    * Spec lanes only: a suite or arc lane declaring them is refused (`refuseLaneInputs`).
    */
   inputs?: readonly RepoPattern[];
+  /**
+   * dev.17: the plan environment the lane runs against (plan `environments`), reserved with its resources and brought up
+   * before it runs (src/resources/environments.ts); absent: none. An arc lane never names one (`refuseLaneEnvironment`),
+   * and a lane the implementer runs (fast) never does (`estate-lane-for-implementer`).
+   */
+  environment?: ResourceName;
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -897,15 +906,21 @@ function laneFields(f: Fields): LaneDef {
   };
   const cpu = f.optional('cpu', positive);
   const inputs = f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true }));
+  const environment = f.optional('environment', resource);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   if (inputs !== undefined) assertUnique(inputs, (i) => i, `${f.path}.inputs`);
-  return { ...out, ...(cpu === undefined ? {} : { cpu }), ...(inputs === undefined ? {} : { inputs }) };
+  return { ...out, ...(cpu === undefined ? {} : { cpu }), ...(inputs === undefined ? {} : { inputs }), ...(environment === undefined ? {} : { environment }) };
 }
 export const laneDef: Read<LaneDef> = object(laneFields);
 
 /** M4a rev 3 (F1a): `inputs` belongs to a spec lane; a suite lane (plan.json) or an arc lane (obligations) declaring it is refused. */
 export function refuseLaneInputs(lane: LaneDef, path: string, what: 'suite' | 'arc'): void {
   if (lane.inputs !== undefined) throw new SchemaError(`${path}.inputs`, `absent on ${what === 'suite' ? 'a suite' : 'an arc'} lane (inputs are a spec lane's)`, lane.inputs);
+}
+
+/** dev.17: an arc lane (obligations) runs outside the reservation sites that bring an environment up, so it names none. */
+export function refuseLaneEnvironment(lane: LaneDef, path: string): void {
+  if (lane.environment !== undefined) throw new SchemaError(`${path}.environment`, 'absent on an arc lane (environments are a spec or suite lane\'s)', lane.environment);
 }
 
 /** Items keep their id forever; strike and defer change state, never delete, so ids are never reused. */
@@ -1556,6 +1571,9 @@ export const NEEDS_USER_REASONS = [
   'plan-defect',
   // 2026-10-16, blocking: a plan-check, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
   'context-exceeded',
+  // dev.17: a lane's environment did not come up or failed its probe (lanes or candidate `env-unavailable`: a retryable park
+  // on the environment, probed until it comes up).
+  'env-unavailable',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

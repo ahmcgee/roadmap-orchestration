@@ -43,6 +43,8 @@
 //                               (the name, or any instance of the pool) is held or a residue names it. A
 //                               waiter is in a stage, so the arc-wide drain of a resource edit (A12) already
 //                               excludes one
+//   environments (dev.17)       as resources (a `resource` change under the environment's name): add now; change or remove
+//                               refused while its unit is held or it is not down (src/resources/environments.ts)
 //   capacity                    over capacity (an `@cpu` request above the pool's size): refused
 //   suite lanes                 now (the next candidate runs them); refused while a unit is at a candidate, or while a
 //                               lanes attempt runs its fast suite or its red (not-certified) outcome awaits its fix round
@@ -150,6 +152,7 @@ import { advancesReasons, visionEditReasons } from '../holistic/vision.ts';
 import { citedFailure, laneFailures, outcomeRef } from '../pipeline/failures.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { cpuCapacity, overCapacity } from '../resources/pool.ts';
+import { environmentState } from '../resources/environments.ts';
 import { resourceTable } from '../resources/reserve.ts';
 import { type ResolvedRouting, unsupportedSeats } from '../routing/layers.ts';
 import { RISK_TIERS, type RiskTier, UNIT_ROLES } from '../routing/types.ts';
@@ -165,7 +168,7 @@ import {
 import { baseFiles, ownerBase, rebaseInputs } from './rebase.ts';
 import { lineageEnvelope, rulingNaming, withinEnvelope } from './envelope.ts';
 import {
-  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, hasMilestones, knownDefectsOf, milestonesNeedHolistic, milestonesOf, parsePlan, planCheckShapeOf,
+  type KnownDefect, type PlanM1, type PlanUnit, boundsOf, derivedOf, environmentOf, environmentsOf, hasMilestones, knownDefectsOf, milestonesNeedHolistic, milestonesOf, parsePlan, planCheckShapeOf,
   planFieldValue, priorityOf, reservedUnitIdReason,
 } from './plan.ts';
 
@@ -837,6 +840,26 @@ export function classify(input: ClassifyInput): Classified {
       reasons.push(`resource ${name} is ${held.length > 0 ? `held (${detail})` : 'named by an undisposed residue'}; its declaration may not change until it is free and swept`);
     } else {
       changes.push({ type: 'resource', resource: name, edit: now === undefined ? 'removed' : 'changed' });
+    }
+  }
+  // dev.17: environments, as resources (their unit is a named resource), and while not down never changed or removed: the
+  // declaration in force is what brings it down.
+  const envNames = new Set<ResourceName>([...environmentsOf(cur), ...environmentsOf(plan)].map((e) => e.name));
+  for (const name of [...envNames].sort()) {
+    const was = environmentOf(cur, name);
+    const now = environmentOf(plan, name);
+    if (was !== null && now !== null && same(was, now)) continue;
+    if (was === null) {
+      changes.push({ type: 'resource', resource: name, edit: 'added' });
+      continue;
+    }
+    const entry = table.get(name);
+    const held = entry !== undefined && (entry.pending !== null || entry.status.state !== 'free');
+    const state = environmentState(view, name);
+    if (held || state !== 'down') {
+      reasons.push(`environment ${name} is ${held ? `held (${entry.status.state})` : state}; its declaration may not change until it is free and down`);
+    } else {
+      changes.push({ type: 'resource', resource: name, edit: now === null ? 'removed' : 'changed' });
     }
   }
   if (changes.some((c) => c.type === 'resource' && c.edit !== 'added')) for (const u of plan.units) scoped.add(u.id);

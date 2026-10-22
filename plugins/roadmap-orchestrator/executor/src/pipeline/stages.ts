@@ -93,7 +93,7 @@ import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence, holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
 import {
-  type ImplementerSessionId, type InvocationId, type ObligationId, compareIds, witnessItemIdOf, witnessItemSeq, type JudgmentSessionId, type LaneId, type ResourceInstance, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
+  type ImplementerSessionId, type InvocationId, type ObligationId, compareIds, witnessItemIdOf, witnessItemSeq, type JudgmentSessionId, type LaneId, type ResourceInstance, type ResourceName, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId, invocationId,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -208,7 +208,9 @@ export function record<S extends OutcomeStage>(
 }
 
 /** The park facts of a cleanup: the instances it failed. */
-export const failedFacts = (failed: readonly ResourceInstance[]): ParkFacts => ({ backend: null, failed });
+export const failedFacts = (failed: readonly ResourceInstance[]): ParkFacts => ({ backend: null, failed, environment: null });
+/** dev.17: an `env-unavailable` park's facts: the environment that did not come up. */
+export const environmentFacts = (environment: ResourceName): ParkFacts => ({ backend: null, failed: [], environment });
 
 // ---------------------------------------------------------------------------------------------------
 // Entry reservations (A1, F6)
@@ -504,7 +506,7 @@ export function verdictKind<S extends JudgmentOrBuild>(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: S }>, v: Exclude<BackendVerdict, Readonly<{ kind: 'success' }>>, called: BackendCallOutcome,
 ): StageDone<S> {
   if (v.kind === 'interrupted') return record(ctx, parent, 'interrupted' as StageOutcomeKind<S>, v.needsUser, NO_PARK_FACTS, v.cause ?? undefined);
-  if (v.kind === 'process-fault') return record(ctx, parent, 'process-fault' as StageOutcomeKind<S>, null, { backend: backendOf(called), failed: [] });
+  if (v.kind === 'process-fault') return record(ctx, parent, 'process-fault' as StageOutcomeKind<S>, null, { backend: backendOf(called), failed: [], environment: null });
   if (v.kind === 'context-exceeded') {
     const detail = { kind: 'context-exceeded', inv: v.inv, promptBytes: v.promptBytes } as const;
     return record(ctx, parent, 'context-exceeded' as StageOutcomeKind<S>, null, NO_PARK_FACTS, undefined, detail);
@@ -1278,7 +1280,7 @@ async function readAssessment(
     const cleaned = held === null ? null : await cleanup(ctx, held, parent);
     if (cleaned?.kind === 'cleanup-failed') return { kind: 'done', done: { ...record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed)), run: null } };
     if (kind !== null) return { kind: 'done', done: { ...record(ctx, parent, kind, null, NO_PARK_FACTS, undefined, detail), run: null } };
-    if (called.kind === 'lost') return { kind: 'done', done: { ...record(ctx, parent, 'lost', null, { backend: backendOf(called), failed: [] }), run: null } };
+    if (called.kind === 'lost') return { kind: 'done', done: { ...record(ctx, parent, 'lost', null, { backend: backendOf(called), failed: [], environment: null }), run: null } };
     const v = verdictOf(ctx, parent, called);
     if (v.kind === 'success') throw new Error(`${parent.unit} build#${parent.attempt}: an assessment's success read as a failure`);
     return { kind: 'done', done: { ...verdictKind(ctx, parent, v, called), run: null } };
@@ -1444,7 +1446,7 @@ export async function buildRead(
   const cleaned = held === null ? null : await cleanup(ctx, held, parent);
   if (cleaned?.kind === 'cleanup-failed') return failed(record(ctx, parent, 'cleanup-failed', null, failedFacts(cleaned.failed)));
   // Lost again after its retry, with no effect on the tree.
-  if (called.kind === 'lost') return failed(record(ctx, parent, 'lost', null, { backend: backendOf(called), failed: [] }));
+  if (called.kind === 'lost') return failed(record(ctx, parent, 'lost', null, { backend: backendOf(called), failed: [], environment: null }));
   return failed(v.kind === 'success' ? record(ctx, parent, 'malformed') : verdictKind(ctx, parent, v, called));
 }
 
@@ -1665,6 +1667,8 @@ function knownDefectHit(ctx: StageContext, unit: PlanUnit, spec: SpecM1, ledger:
 /** What a lanes attempt records beyond the series' own outcome: the D1 and D2 checks', or a known defect's. */
 type LanesVerdict = Readonly<{
   kind: StageOutcomeKind<'lanes'>; detail?: StageOutcomeDetail; needsUser?: NeedsUserContent; failed?: readonly ResourceInstance[]; cause?: HoldCause;
+  /** dev.17: the environment an `env-unavailable` lane could not bring up (the park's target). */
+  environment?: ResourceName;
 }>;
 
 /**
@@ -1759,6 +1763,8 @@ function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdi
       return { kind: 'occupied', needsUser: end.needsUser };
     case 'cleanup-failed':
       return { kind: 'cleanup-failed', failed: end.failed };
+    case 'env-unavailable':
+      return { kind: 'env-unavailable', environment: end.environment };
     case 'blocked':
     case 'interrupted':
       return { kind: end.kind };
@@ -1853,6 +1859,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   let verdict: LanesVerdict = end.kind === 'green' ? { kind: series.dirty.length > 0 ? 'not-certified' : 'green' }
     : end.kind === 'occupied' ? { kind: 'occupied', needsUser: end.needsUser }
     : end.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: end.failed }
+    : end.kind === 'env-unavailable' ? { kind: 'env-unavailable', environment: end.environment }
     : { kind: end.kind };
   // M4b rev 3 (RC-11): a lane its watchdog ended under host pressure is starved, and a red one under it reruns once: a
   // hold with cause `host-pressure`, uncharged (starved.ts), before any other reading of the red.
@@ -1880,6 +1887,6 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
   const fix = kind === 'red' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
-  const facts = failedFacts(verdict.failed ?? []);
+  const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

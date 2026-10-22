@@ -188,11 +188,20 @@ export type SpawnSubject =
    * again).
    */
   | Readonly<{ purpose: 'bring-up'; milestone: MilestoneId; step: string }>
+  /**
+   * dev.17: one lifecycle command of plan environment `environment` (src/resources/environments.ts): `up` and `down` are
+   * its lifecycle transitions (keyed `env:<name>`, so at most one is open: the journal is the state machine), `probe` its
+   * health check before a lane uses it (keyed `env-probe:<name>`).
+   */
+  | Readonly<{ purpose: 'environment'; environment: ResourceName; action: EnvironmentAction }>
   | Readonly<{
     purpose: 'smoke';
     check: string;
     target: (Readonly<{ type: 'backend'; backend: Backend; routingRev: RoutingRev }> & SeatRef) | Readonly<{ type: 'command' }>;
   }>;
+
+export const ENVIRONMENT_ACTIONS = ['up', 'down', 'probe'] as const;
+export type EnvironmentAction = (typeof ENVIRONMENT_ACTIONS)[number];
 
 export type WorktreeCheckout =
   | Readonly<{ type: 'branch'; branch: RefName; at: Sha; createBranch: boolean }>
@@ -462,9 +471,11 @@ export const STAGE_OUTCOME_KINDS = {
   // ran, or that no build of the unit could create: an uncharged park naming the defects, src/pipeline/witnesscheck.ts);
   // `scope-growth` (salvage reverted the same out-of-scope path on the unit's last two build rounds: the hold of a
   // plan-check's proposal, with that path as the proposal, until `scope accept|reject`).
+  // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
+  // environment, never a red lane), here and at the candidate.
   lanes: [
     'green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
-    'witness-lane-missing', 'plan-defect', 'scope-growth',
+    'witness-lane-missing', 'plan-defect', 'scope-growth', 'env-unavailable',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
@@ -474,7 +485,10 @@ export const STAGE_OUTCOME_KINDS = {
   gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded'],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
-  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked'],
+  candidate: [
+    'green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked',
+    'env-unavailable',
+  ],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
@@ -510,7 +524,9 @@ export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 export type ProbeTarget =
   | Readonly<{ type: 'backend'; backend: Backend }>
   | Readonly<{ type: 'host' }>
-  | Readonly<{ type: 'resource'; instance: ResourceInstance }>;
+  | Readonly<{ type: 'resource'; instance: ResourceInstance }>
+  /** dev.17: a plan environment a lane could not bring up or probe: its lifecycle up (when down) and its probe. */
+  | Readonly<{ type: 'environment'; environment: ResourceName }>;
 
 /** A total order key over probe targets: target sets are written sorted and unique by it. */
 export function probeTargetKey(t: ProbeTarget): string {
@@ -518,6 +534,7 @@ export function probeTargetKey(t: ProbeTarget): string {
     case 'backend': return `backend:${t.backend}`;
     case 'host': return 'host';
     case 'resource': return `resource:${t.instance}`;
+    case 'environment': return `environment:${t.environment}`;
   }
 }
 
@@ -1334,6 +1351,9 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   'bring-up': object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('bring-up')), milestone: f.get('milestone', (v, p): MilestoneId => milestoneId(v, p)), step: f.get('step', str),
   })),
+  environment: object((f): SpawnSubject => ({
+    purpose: f.get('purpose', literal('environment')), environment: f.get('environment', resR), action: f.get('action', oneOf(ENVIRONMENT_ACTIONS)),
+  })),
   smoke: object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('smoke')),
     check: f.get('check', str),
@@ -1707,6 +1727,7 @@ const probeTarget: Read<ProbeTarget> = tagged('type', {
   backend: object((f): ProbeTarget => ({ type: f.get('type', literal('backend')), backend: f.get('backend', backend) })),
   host: object((f): ProbeTarget => ({ type: f.get('type', literal('host')) })),
   resource: object((f): ProbeTarget => ({ type: f.get('type', literal('resource')), instance: f.get('instance', instR) })),
+  environment: object((f): ProbeTarget => ({ type: f.get('type', literal('environment')), environment: f.get('environment', resR) })),
 });
 
 const parkRecord: Read<ParkRecord> = tagged('class', {

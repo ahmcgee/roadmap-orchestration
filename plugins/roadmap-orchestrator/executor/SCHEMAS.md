@@ -4482,3 +4482,52 @@ earlier record); `SCHEMA_VERSION` stays 1.
    the start checks the plan in force. A respawn checks the plan in force against the ledger in force (before: the
    owner's ledger file). The one rule: after the first start the input dir is an edit of its base, never the state; a
    restart needs no `inputs export` sync first, and the input dir matters only as that edit (a start or an apply).
+
+## dev.17: environments (2026-10-22; 1.0.0-dev.17)
+
+A costed thing a lane runs against, declared once and brought up and down by the executor (src/resources/environments.ts;
+DESIGN-1.0.md §2.2 Environments). Every change is additive: a dev.16 plan, spec, log or launch file has none of these
+fields, kinds or values and reads unchanged (absent `environments`: none, lasting, not scaffolding); `SCHEMA_VERSION`
+stays 1.
+
+1. **Plan** (`plan.json`, `src/input/plan.ts`): `environments?: {<name>: {probe, up?, down?, idleMinutes?}}`, each a
+   `ToolCommand` (as a resource's probe), `idleMinutes` a positive number (fractions allowed). `up`, `down` and
+   `idleMinutes` come together (a managed environment) or not at all (a plain one); anything else is a schema error.
+   Parsed to `PlanM1.environments: EnvironmentDecl[]` ascending by name, `{name, probe, lifecycle: {up, down,
+   idleMinutes} | null}` (`environmentsOf`, `environmentOf`). The name is a `ResourceName` in the resource namespace:
+   never `integration-slot`, never a declared resource's name.
+2. **Lane** (`LaneDef.environment?: ResourceName`, spec and suite lanes): absent, none. `laneRequest` adds it to the
+   lane's named resources, so the reservation (and `resource.transition`) carries the environment's name as a plain
+   named unit; it has no probe or teardown recipe there (`instancesOf(plan, …)` leaves it out). Refused: on an arc lane
+   (`refuseLaneEnvironment`, at the obligations read); on a fast lane, spec or suite (`spec-lane-unrunnable`
+   `estate-lane-for-implementer`: the implementer runs those, and never brings an environment up); naming an
+   undeclared environment (`spec-lane-unrunnable` problem `{type: 'unknown-environment', environment}`). The resource
+   variant of `spec-lane-unrunnable` gains `command: 'up' | 'down'` beside `probe | teardown`: an environment's
+   commands are checked as a resource's (argv[0], declared host variables).
+3. **Spawns.** `SpawnSubject` `{purpose: 'environment', environment, action: 'up' | 'down' | 'probe'}` (`ENVIRONMENT_ACTIONS`),
+   launched with a command terminal of purpose `environment` (`COMMAND_PURPOSES`), cwd under the repo root, env the
+   declared `set`/`pass` plus `RESOURCE_OWNER=<arc>/env/<name>`. Keys: `env:<name>` for up and down (so at most one is
+   open), `env-probe:<name>` for the probe. Deadlines: 30 min for up and down, 2 min for the probe. No usage is charged.
+4. **State** (`environmentState`, from the log): the latest up or down spawn of the environment: none → `down`; open →
+   `starting` (up) or `stopping` (down); done with a passing command → `up` or `down`; failed, lost or aborted →
+   `unsettled` (perhaps partly up: the next transition is a down). In process, per journal: a promise chain serialising
+   the environment's transitions (a use queued behind an in-flight down waits for it), the count of lanes using it,
+   and its last use (the idle clock; a restart starts it from the scheduler's start).
+5. **Use.** After a lane's reservation and occupancy probe, before `run`: unsettled → down; not up → up; then the probe.
+   A failed up or probe brings a managed environment down and ends the series `env-unavailable{environment, detail}`
+   (its reservation cleaned) with no verdict. The lane's end of use (after its cleanup) restarts the idle clock. A flow
+   proof's side whose environment does not come up has no verdict (`passed: null`, as a lost run).
+6. **Outcome and park.** `STAGE_OUTCOME_KINDS.lanes` and `.candidate` gain `env-unavailable`: `park('env-unavailable',
+   'retryable')`, uncharged (`NEEDS_USER_REASONS` gains `env-unavailable`). `ParkFacts.environment` names the target;
+   `PARK_TARGETS` lanes and candidate `env-unavailable: 'environment'`; `ProbeTarget` gains `{type: 'environment',
+   environment}` (key `environment:<name>`), whose probe job is the environment's up (when not up) and probe
+   (`probeEnvironment`), parent `arc`. A tripped breaker on an environment blocks lanes and candidate admission.
+7. **Idle, ends, recovery** (src/schedule/scheduler.ts). Each iteration, after control: every managed environment `up`,
+   unused, with no lane holding its unit or waiting for it in the arbiter, idle for `idleMinutes` (at once under
+   `pause --all` or a stop) is brought down as tracked job `env-down:<name>`. A stop's end (after `recoverReservations`)
+   and a completion bring every environment not down down (`downEnvironments`). Before the loop, `settleEnvironments`
+   brings each `unsettled` environment down (recovery closed its open up or down first, as any spawn). Every scheduler
+   down, the settle's and a park probe's are parented `arc` (not work: they never reopen a completion). A failed down
+   leaves it `unsettled` and raises one non-blocking `env-blocked` item parented by the down's op.
+8. **Apply** (src/input/classify.ts): an environment added is `{type: 'resource', resource: <name>, edit: 'added'}`;
+   changed or removed, `'changed' | 'removed'`, refused while its unit is held or it is not `down`.

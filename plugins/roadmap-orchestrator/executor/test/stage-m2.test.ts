@@ -530,13 +530,13 @@ test('park.salvage-and-teardown-fail-restart: a failed salvage whose teardown fa
 test('stage.repeat-park: a retryable park on a target the unit recovered on within 6 h is written operator, and its item is env-blocked', () => {
   const run = setupUnit({ steps: [] });
   const parent = at(start(run.ctx, U1, 'plan-check'), 'plan-check');
-  const first = record(run.ctx, parent, 'process-fault', null, { backend: 'claude', failed: [] });
+  const first = record(run.ctx, parent, 'process-fault', null, { backend: 'claude', failed: [], environment: null });
   assert.equal(first.next.kind, 'park');
   const park = runEvents(run).map(outcomeOf).findLast((o) => o !== null)!;
   assert.deepEqual(park.park, { class: 'retryable', targets: [{ type: 'backend', backend: 'claude' }] });
   run.journal.fact({ kind: 'probe', target: { type: 'backend', backend: 'claude' }, covers: [runEvents(run).findLast((e) => outcomeOf(e) !== null)!.seq], result: 'pass', nextProbeAt: null } as Fact);
   assert.equal(run.journal.view.unit(U1).status, 'active', 'recovered');
-  const again = record(run.ctx, at(start(run.ctx, U1, 'plan-check'), 'plan-check'), 'process-fault', null, { backend: 'claude', failed: [] });
+  const again = record(run.ctx, at(start(run.ctx, U1, 'plan-check'), 'plan-check'), 'process-fault', null, { backend: 'claude', failed: [], environment: null });
   assert.ok(again.next.kind === 'park');
   assert.equal(again.next.needsUser.reason, 'env-blocked');
   assert.deepEqual(runEvents(run).map(outcomeOf).findLast((o) => o !== null)!.park, { class: 'operator', kind: 'env' });

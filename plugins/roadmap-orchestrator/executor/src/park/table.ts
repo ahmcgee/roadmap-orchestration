@@ -10,16 +10,17 @@
 // | lanes `blocked` (after its retry), candidate `blocked` | `host`                                    |
 // | build, teardown, lanes, candidate `cleanup-failed`    | one `resource{i}` per failed instance     |
 // | salvage `commit-failed`                               | `host`, plus the failed teardown's instances (G6) |
+// | lanes, candidate `env-unavailable` (dev.17)           | `environment{e}`: the lane's environment  |
 import type { OutcomeStage, ProbeTarget, StageOutcomeFact, StageOutcomeKind } from '../core/events.ts';
 import { probeTargetKey } from '../core/events.ts';
-import type { ResourceInstance } from '../core/ids.ts';
+import type { ResourceInstance, ResourceName } from '../core/ids.ts';
 import type { UnitState } from '../core/state.ts';
 import { type NeedsUserContent, type OutcomeContext, type StageOutcome, outcomeFact, parkClassOf } from '../pipeline/transitions.ts';
 import type { Backend } from '../routing/types.ts';
 import { PARK_REPEAT_MS } from '../schedule/types.ts';
 
 /** How a retryable row names its targets from what the stage knows. */
-export type TargetRule = 'backend' | 'host' | 'resources' | 'host+resources';
+export type TargetRule = 'backend' | 'host' | 'resources' | 'host+resources' | 'environment';
 
 /** Every retryable park row and its targets; a row absent here decides no retryable park. */
 export const PARK_TARGETS: { readonly [S in OutcomeStage]?: { readonly [K in StageOutcomeKind<S>]?: TargetRule } } = {
@@ -28,16 +29,19 @@ export const PARK_TARGETS: { readonly [S in OutcomeStage]?: { readonly [K in Sta
   gate: { 'process-fault': 'backend' },
   salvage: { 'commit-failed': 'host+resources' },
   teardown: { 'cleanup-failed': 'resources' },
-  lanes: { blocked: 'host', 'cleanup-failed': 'resources' },
-  candidate: { blocked: 'host', 'cleanup-failed': 'resources' },
+  lanes: { blocked: 'host', 'cleanup-failed': 'resources', 'env-unavailable': 'environment' },
+  candidate: { blocked: 'host', 'cleanup-failed': 'resources', 'env-unavailable': 'environment' },
   // M3: a vacuity repair's mutant lane parks as a lane does.
   reproduce: { blocked: 'host', 'cleanup-failed': 'resources' },
 };
 
-/** What only the stage knows: the backend its call ran on, and the instances its cleanup failed (G6: a salvage passes its teardown's). */
-export type ParkFacts = Readonly<{ backend: Backend | null; failed: readonly ResourceInstance[] }>;
+/**
+ * What only the stage knows: the backend its call ran on, the instances its cleanup failed (G6: a salvage passes its
+ * teardown's), and (dev.17) the environment that did not come up.
+ */
+export type ParkFacts = Readonly<{ backend: Backend | null; failed: readonly ResourceInstance[]; environment: ResourceName | null }>;
 
-export const NO_PARK_FACTS: ParkFacts = { backend: null, failed: [] };
+export const NO_PARK_FACTS: ParkFacts = { backend: null, failed: [], environment: null };
 
 /** The rule of a parked `(stage, outcome)`, or null when the row decides no retryable park. */
 export function targetRule(outcome: StageOutcome): TargetRule | null {
@@ -65,6 +69,10 @@ export function parkTargets(outcome: StageOutcome, facts: ParkFacts): readonly P
       break;
     case 'host+resources':
       targets = [{ type: 'host' }, ...resources()];
+      break;
+    case 'environment':
+      if (facts.environment === null) throw new Error(`parkTargets: a ${outcome.stage} ${outcome.kind} park needs its environment`);
+      targets = [{ type: 'environment', environment: facts.environment }];
       break;
   }
   return [...new Map(targets.map((t) => [probeTargetKey(t), t])).entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([, t]) => t);

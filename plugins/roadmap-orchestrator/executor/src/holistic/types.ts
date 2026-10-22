@@ -13,7 +13,7 @@ import {
 } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import {
-  LENS_KIND_NAMES, type LaneDef, type LensKindName, type RepairRef, type Stage, laneDef, laneEnv, refuseLaneInputs, repairRef,
+  LENS_KIND_NAMES, type LaneDef, type LensKindName, type RepairRef, type Stage, laneDef, laneEnv, refuseLaneEnvironment, refuseLaneInputs, repairRef,
 } from '../core/records.ts';
 import { minimalLaneRev } from '../core/upgrade.ts';
 import {
@@ -260,6 +260,7 @@ export const arcLaneDef: Read<ArcLaneDef> = (value, path) => {
   const { reporter: _reporter, testPaths: _testPaths, ...rest } = value as Record<string, unknown>;
   const lane = laneDef(rest, path);
   refuseLaneInputs(lane, path, 'arc');
+  refuseLaneEnvironment(lane, path);
   // The node-test reporter is loaded through NODE_OPTIONS (B1): a lane that sets its own is refused.
   if (reporter === 'node-test' && (Object.hasOwn(lane.env.set, 'NODE_OPTIONS') || lane.env.pass.includes('NODE_OPTIONS'))) {
     throw new SchemaError(`${path}.env`, 'no NODE_OPTIONS on a node-test lane (the witness reporter is loaded through it)', lane.env);
