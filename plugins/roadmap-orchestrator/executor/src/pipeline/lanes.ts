@@ -1095,7 +1095,7 @@ export function latestSpecSeries(ctx: Readonly<{ journal: Readonly<{ view: Journ
     latest.parent = parent;
   };
   for (const { op, expect: { subject: s }, parent } of view.opsOf('proc.spawn')) if (s.purpose === 'lane' && s.set === 'spec') see(parseOpId(op).seq, parent);
-  for (const r of view.holistic().laneReuses) see(r.seq, r.parent);
+  for (const r of view.holistic().laneReuses) if ((r.set ?? 'spec') === 'spec') see(r.seq, r.parent);
   for (const i of view.opsOf('worktree.create')) {
     const p = i.parent;
     if (p.type === 'stage' && p.stage === 'lanes' && i.expect.path === verificationWorktree(worktreeRoot, arc, p.unit, p.attempt)) see(parseOpId(i.op).seq, p);
