@@ -538,15 +538,16 @@ const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-a
 
 /**
  * HEAD reads an arc the previous release started with the dev.17 lane defaults only (`DEV17_DEFAULTS`): once HEAD's phase
- * ends, every `roadmap: upgrade default` an executor of the host dir warned is one of them, and the spec lanes' tier and
- * the absent systems map were read as defaults. An older release's cells assert the defaults they read instead.
+ * ends, every `roadmap: upgrade default` an executor of the host dir warned is one of them, and the spec lanes' tier was
+ * read as their cadence (the absent systems map is warned only where HEAD reads the map in force: a lane's selection or
+ * reuse; asserted in the cells that run lanes on HEAD, `upgrade.stop-mid-build`). An older release's cells assert the
+ * defaults they read instead.
  */
 function assertNoDefaultRead(p: Phase1): void {
   if (p.release !== PREVIOUS_RELEASE) return;
   const kinds = [...hostLogs(p).matchAll(/roadmap: upgrade default \(([^)]+)\)/g)].map((m) => m[1]!);
   for (const kind of kinds) assert.match(kind, DEV17_DEFAULTS, `HEAD read the ${p.release.version} arc with the ${kind} default`);
   assert.ok(kinds.includes('lane.tier.spec'), `HEAD read the ${p.release.version} spec lanes' tier as their cadence, and warned`);
-  assert.ok(kinds.includes('plan-applied.systemsMap'), `HEAD read the ${p.release.version} revisions without a systems map, and warned`);
 }
 
 /** Every check.ts criterion passes, both units merged, one HEAD generation ran it, and the upgrade forced no park. */
@@ -651,6 +652,8 @@ test('upgrade.stop-mid-build: HEAD continues the Codex thread the previous relea
   const gated = factsOf(f.after, 'judgment-inputs').filter((i) => i.stage === 'gate');
   assert.ok(gated.length === 1 && gated[0]!.diffShown !== undefined && gated[0]!.diffShown.inlined.length > 0, 'HEAD\'s gate records what its bounded diff showed');
   assert.equal(gated[0]!.largeDiff, null, 'HEAD\'s gate records its diff under the large-diff threshold');
+  // dev.17: HEAD ran page-id's lanes on the arc's revisions, which record no systems map: read as none, and warned.
+  assert.match(hostLogs(p), /roadmap: upgrade default \(plan-applied\.systemsMap\)/, 'HEAD read the revisions without a systems map, and warned');
 });
 
 test('upgrade.reopen-mid-plan-check: a unit the previous release parked, re-opened and stopped mid-judgment finishes on HEAD', T, async () => {
