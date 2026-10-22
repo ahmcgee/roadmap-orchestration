@@ -4516,7 +4516,7 @@ flight); `SCHEMA_VERSION` stays 1. Lane environments and the flaky ledger are no
    spec `forces` naming no suite lane, is `plan-invalid{schema}`. The map in force is the revision's, so an edit reaches
    the arc through an apply once the executor has read the edited config (a restart).
 3. **The reuse key** (src/git/reusekey.ts) `(lane, laneRev, envId, inputSha)`. `inputShaOf(repo, tree, lane, map)`: the
-   tree id when the lane reads every path, else the sha1 of the `ls-tree -r` entries it reads (listings memoised, 32
+   tree id with no map (a dev.16 key), else always the sha1 of the `ls-tree -r` entries it reads (listings memoised, 32
    kept). Series reuse (`reusablePass`): the newest execution of the lane in the run (any unit, spec or suite) with the
    same identity whose commit gives the same `inputSha` decides; it reuses only when a clean pass (pass, not flaky, not a
    repeat, certified series). A candidate's stand-in for an arc lane always runs. Observations are stored by the same key

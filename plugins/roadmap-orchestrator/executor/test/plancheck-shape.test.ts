@@ -276,7 +276,7 @@ describe('plan-check shape (E)', () => {
   // M4b run 3: the same gate holds a patch to the lane-evidence rule (`evidenceScopeConflicts`).
   test('plancheck.evidence-covers-scope-refused: a redirect adding a lane whose evidenceGlobs cover the unit\'s scope is malformed, not applied; the retry is told why', T, async () => {
     const reason = 'unit u1 lane logs: evidenceGlobs entry `test/**` covers `test/**` of the unit\'s scope';
-    const lane = { id: 'logs', argv: ['node', '-e', '0'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: ['test/**'], evidenceExcludes: [] };
+    const lane = { id: 'logs', argv: ['node', '-e', '0'], cwd: '.', env: { set: [], pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: ['test/**'], evidenceExcludes: [] };
     const a = await checksArc({
       steps: [
         planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'lanes', item: lane }] }),

@@ -188,7 +188,7 @@ describe('records', () => {
   });
 
   it('spec.json M1 subset parses and rejects duplicate item ids', () => {
-    const lane = { id: 'L1', argv: ['npm', 'test'], cwd: '.', env: { set: { CI: '1' }, pass: ['HOME'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: ['coverage/**'], state: 'active' };
+    const lane = { id: 'L1', argv: ['npm', 'test'], cwd: '.', env: { set: { CI: '1' }, pass: ['HOME'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: ['coverage/**'], state: 'active' };
     const spec = {
       schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [lane],
       acceptance: [{ id: 'A1', clause: 'x works', failLoudIfUndelivered: true, state: 'active' }],
@@ -200,7 +200,9 @@ describe('records', () => {
     assert.deepEqual(specM1(excluding, 'spec'), excluding);
     assert.throws(() => specM1({ ...spec, lanes: [{ ...lane, evidenceExcludes: ['/abs'] }] }, 'spec'), /spec\.lanes\[0\]\.evidenceExcludes\[0\]/);
     assert.throws(() => specM1({ ...spec, facts: [{ id: 'A1', text: 'dup', state: 'active' }] }, 'spec'), /spec\.<item ids>/);
-    assert.throws(() => specM1({ ...spec, lanes: [{ ...lane, tier: 'slow' }] }, 'spec'), /spec\.lanes\[0\]\.tier/);
+    assert.throws(() => specM1({ ...spec, lanes: [{ ...lane, cadence: 'slow' }] }, 'spec'), /spec\.lanes\[0\]\.cadence/);
+    const { cadence: _c, ...dev16 } = lane;
+    assert.throws(() => specM1({ ...spec, lanes: [{ ...dev16, tier: 'slow' }] }, 'spec'), /spec\.lanes\[0\]\.tier/);
   });
 
   it('SpecPatch reads each op form and refuses an empty patch', () => {

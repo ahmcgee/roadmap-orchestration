@@ -42,7 +42,7 @@ import {
   admitAll, testProbes,
   BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, planCheckStep, serialRuntime, setupUnit, spawnIntents, started, worktreeOf,
 } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcDescriptor, type ArcOptions, SUITE_LANE, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { CLEAR } from './fixtures/probe-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -302,8 +302,8 @@ test('gate.cancel-wait-recaptures: a gate paused while waiting for its @cpu leav
 // ---------------------------------------------------------------------------------------------------
 // The publication holder
 
-async function readyForCandidate(): Promise<ArcDescriptor> {
-  const d = setupArc({ steps: STRAIGHT });
+async function readyForCandidate(suite?: ArcOptions['suite']): Promise<ArcDescriptor> {
+  const d = setupArc({ steps: STRAIGHT, ...(suite === undefined ? {} : { suite }) });
   const r = contextFor(d);
   try {
     await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
@@ -339,7 +339,9 @@ test('publication.ownership: the candidate\'s publication holds the slot through
 });
 
 test('publication.ownership: a pause before green abandons the candidate (its suite wait cancelled) and releases the slot; resumed, it publishes', T, async () => {
-  const d = await readyForCandidate();
+  // A candidate-cadence suite lane: the lanes stage never ran it, so the candidate must (dev.17: a unit-cadence one would
+  // be reused from the lanes stage on the same tree, with no wait for the pause to cancel).
+  const d = await readyForCandidate([{ ...SUITE_LANE, cadence: 'candidate' }]);
   const r = contextFor(d);
   try {
     const u1 = r.unit('u1');

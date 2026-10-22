@@ -77,13 +77,13 @@ describe('m4a-rev3 ids', () => {
 });
 
 describe('m4a-rev3 spawn subjects and mutant records', () => {
-  it('a lane spawn carries redRev and a reuse identity (spec lanes only); a journey spawn redRev', () => {
+  it('a lane spawn carries redRev and a reuse identity (spec and, since dev.17, suite lanes); a journey spawn redRev', () => {
     const identity = { laneRev: '0123456789abcdef', envId: 'fedcba9876543210', argv0: { path: '/usr/bin/node', sha256: H } };
     const lane = { purpose: 'lane', unit: 'u1', lane: 'unit', set: 'spec', at: A, redRev: 2, identity };
     roundTrip(intent('proc.spawn', { subject: lane, launchSha256: H }));
     roundTrip(intent('proc.spawn', { subject: { ...lane, identity: { ...identity, argv0: null } }, launchSha256: H }));
     roundTrip(intent('proc.spawn', { subject: { purpose: 'lane', unit: 'u1', lane: 'unit', set: 'suite', at: A }, launchSha256: H }));
-    refuses(intent('proc.spawn', { subject: { ...lane, set: 'suite' }, launchSha256: H }), /identity$/);
+    roundTrip(intent('proc.spawn', { subject: { ...lane, set: 'suite' }, launchSha256: H }));
     refuses(intent('proc.spawn', { subject: { ...lane, redRev: 0 }, launchSha256: H }), /redRev$/);
     roundTrip(intent('proc.spawn', { subject: { purpose: 'journey', lane: 'journey', laneRev: '0123456789abcdef', at: A, owner: { type: 'unit', unit: 'u1' }, redRev: 1 }, launchSha256: H }));
   });
@@ -477,7 +477,7 @@ describe('run 10 (D): a checkpoint admit\'s spec is constrained by the schema', 
   const wire = {
     schema: 'roadmap/spec-m1', unit: 'gap', rev: 1, scope: ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     lanes: [{
-      id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: [{ name: 'TZ', value: 'UTC' }], pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
+      id: 'unit', argv: ['node', '--test'], cwd: '.', env: { set: [{ name: 'TZ', value: 'UTC' }], pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
       evidenceGlobs: [], evidenceExcludes: [], state: 'active',
     }],
     acceptance: [{ id: 'A1', clause: 'A booking names one berth.', failLoudIfUndelivered: true, state: 'active' }],

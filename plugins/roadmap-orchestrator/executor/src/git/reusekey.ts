@@ -4,9 +4,10 @@
 //
 //   laneRev   the lane's normalised definition (src/holistic/types.ts `laneRevOf`);
 //   envId     the host and the values of the variables it passes through (src/holistic/witness.ts `envIdOf`);
-//   inputSha  the content of the paths the lane reads on the tree (src/input/systems.ts `laneInput`): the tree id itself
-//             when that is every path (no systems map, or nothing of the tree left out), so a key written before dev.17
-//             (a `witnessed` fact's `treeSha`) is the same key; else the sha1 of the `git ls-tree -r` entries kept.
+//   inputSha  the content of the paths the lane reads on the tree (src/input/systems.ts `laneInput`): with no systems map
+//             the tree id itself (every path), so a key written before dev.17 (a `witnessed` fact's `treeSha`, an arc with
+//             no map) is the same key; with a map, always the sha1 of the `git ls-tree -r` entries kept (one encoding: two
+//             trees with the same input get the same key, whatever else they hold).
 //
 // A spec or suite lane's key also binds argv[0]'s resolved program and its content (the lane spawn's `identity`): a tool
 // upgraded under the same path is another environment. An arc lane's witness record names its reporter's output instead.
@@ -56,8 +57,7 @@ export function inputShaOf(repo: AbsPath, tree: Sha, lane: Pick<LaneDef, 'system
   if (map !== null) {
     const entries = listing(repo, tree);
     const keep = laneInput(map, lane);
-    const kept = entries.filter((e) => keep(e.path));
-    if (kept.length < entries.length) out = sha(createHash('sha1').update(kept.map((e) => `${e.line}\0`).join('')).digest('hex'));
+    out = sha(createHash('sha1').update(entries.filter((e) => keep(e.path)).map((e) => `${e.line}\0`).join('')).digest('hex'));
   }
   memo.set(at, out);
   return out;

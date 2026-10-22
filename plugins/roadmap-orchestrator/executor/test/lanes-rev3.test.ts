@@ -411,7 +411,9 @@ describe('certified-only journey reuse (R51)', () => {
 // ---------------------------------------------------------------------------------------------------
 // Crash rows (identical replay: no duplicate spawn, the same outcomes as an uncrashed run)
 
-const STABLE: LaneJson = { id: 'stable', argv: ['node', '--test', 'test/add.test.js'], inputs: ['src/add.js', 'test/add.test.js'] };
+const STABLE: LaneJson = { id: 'stable', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] };
+/** The fix commit touches only `mul`'s system, so the stable lane (system `add`) reads the same input across it. */
+const CRASH_MAP: JsonValue = { systems: { add: { paths: ['src/add.js', 'test/add.test.js'] }, mul: { paths: ['src/mul.js', 'test/mul.test.js'] } } };
 const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'] };
 const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  return a + b;\n}\n' };
 
@@ -419,7 +421,7 @@ const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  retur
 const labelOf = (row: string): string => crashCells(row).map((c) => c.label).join();
 
 async function crashThenResume(steps: Parameters<typeof setupArc>[0]['steps'], label: string): Promise<Readonly<{ d: ReturnType<typeof setupArc> }>> {
-  const d = setupArc({ steps, units: [{ id: 'u1', lanes: [STABLE, MUL_LANE] }] });
+  const d = setupArc({ steps, units: [{ id: 'u1', lanes: [STABLE, MUL_LANE] }], systemsMap: CRASH_MAP });
   const trigger = writeTrigger(tmpDir('rev3-crash'), { label, occurrence: 1, unit: 'u1' });
   const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
   const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
@@ -451,7 +453,7 @@ describe('crash rows', () => {
     const { d } = await crashThenResume(FIX_STEPS, labelOf(LANE_REUSE));
     assert.deepEqual(outcomes(d), FIX_OUTCOMES, 'the same outcomes as an uncrashed run');
     assert.equal(arcSpawns(d, 'stable').length, 1, 'the stable lane ran once: reused after the fix, and again after the crash');
-    const reused = factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused');
+    const reused = factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused' && f.lane === 'stable');
     assert.equal(reused.length, 2, 'the crashed attempt\'s reuse and the restart\'s');
     const ran = arcSpawns(d, 'stable')[0]!;
     assert.ok(reused.every((f) => f.kind === 'lane-reused' && JSON.stringify(f.from.parent) === JSON.stringify(ran.parent)), 'both from the one execution');
@@ -466,7 +468,11 @@ describe('crash rows', () => {
     ]);
     assert.equal(arcSpawns(d, 'stable').length, 2, 'uncertified: run again');
     assert.equal(arcSpawns(d, 'mul').length, 2);
-    assert.deepEqual(factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused'), []);
+    const reused = factsOf(d.runDir, d.arc).filter((f) => f.kind === 'lane-reused');
+    assert.deepEqual(reused.filter((f) => f.kind === 'lane-reused' && f.set !== 'suite'), [], 'no spec lane reused from the uncertified series');
+    // dev.17: one reuse key for every series lane: the candidate's suite lane reuses the certified lanes-stage run on its input.
+    assert.deepEqual(reused.map((f) => f.kind === 'lane-reused' && [f.lane, f.set, f.parent.type === 'stage' && f.parent.stage, f.from.parent.type === 'stage' && f.from.parent.stage]),
+      [['suite', 'suite', 'candidate', 'lanes']], 'the candidate\'s suite lane reused the lanes stage\'s');
   });
 
   test('crash RED_CLASS (redlane.after-class): killed after the class is persisted, before the rerun; the restart reruns the series, the class kept', T, async () => {

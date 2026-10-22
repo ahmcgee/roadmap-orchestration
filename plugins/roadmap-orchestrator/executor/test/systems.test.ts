@@ -135,9 +135,11 @@ describe('reusekey.input-sha', () => {
     assert.notEqual(inputShaOf(repo, t4, api, MAP), inputShaOf(repo, t3, api, MAP), 'an unmapped path is every lane\'s input');
     const t5 = at({ 'package-lock.json': '{"a":1}\n' });
     assert.notEqual(inputShaOf(repo, t5, api, MAP), inputShaOf(repo, t4, api, MAP), 'a shared area its system depends on');
-    // A map that leaves nothing of a lane's tree out keys it by the tree id, as a dev.16 observation was.
+    // With a map, one encoding whatever is left out: two trees with the same input get the same key.
     const whole = systemsMap({ systems: { all: { paths: ['**'] } } }, 'm');
-    assert.equal(inputShaOf(repo, t5, open, whole), t5);
+    assert.notEqual(inputShaOf(repo, t5, open, whole), t5);
+    const t6 = at({ 'src/web/new.js': 'n\n' });
+    assert.equal(inputShaOf(repo, t6, api, MAP), inputShaOf(repo, t5, api, MAP), 'a path added elsewhere keeps the key');
     assert.equal(reuseKeyText({ lane: 'l' as LaneId, laneRev: 'r' as never, envId: 'e' as never, inputSha: t5 }), `${t5}/l/r/e`);
     assert.equal(laneInput(MAP, api)(p('src/web/c.js')), false);
   });
