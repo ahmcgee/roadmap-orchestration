@@ -226,6 +226,81 @@ function step(ctx: RecoveryContext, intent: IntentRecord): Promise<DispositionKi
 }
 
 // ---------------------------------------------------------------------------------------------------
+// A faulted task's own ops (1.0.0-dev.17, src/schedule/fault.ts)
+
+/** The ops a unit's or a job's own work runs on its own checkouts, branch and evidence: what a contained fault settles. */
+export const OWN_KINDS = ['worktree.create', 'worktree.remove', 'evidence.snapshot', 'salvage.commit', 'mergein.prepare', 'mutant.apply'] as const satisfies readonly OpKind[];
+export type OwnKind = (typeof OWN_KINDS)[number];
+
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+async function settleOwn<K extends OwnKind>(ctx: StageContext, record: IntentRecord, op: Redoable<K>, fault: string): Promise<void> {
+  const { journal } = ctx;
+  const intent = record as IntentOf<K>;
+  const abort = (why: string): void => {
+    journal.abort(intent.op, 'fault', `${fault}; ${why}`);
+  };
+  let d: Disposition<K>;
+  try {
+    d = await op.reconcile(intent, journal.view);
+  } catch (error) {
+    abort(`its reconciler threw: ${errorText(error)}`);
+    return;
+  }
+  switch (d.kind) {
+    case 'done':
+      journal.done(intent.op, intent.kind, d.outcome, 'reconciled');
+      return;
+    case 'redo': {
+      let outcome: OpOutcome[K];
+      try {
+        await op.act(intent);
+        outcome = await op.verify(intent);
+      } catch (error) {
+        abort(`its redo threw: ${errorText(error)}`);
+        return;
+      }
+      journal.done(intent.op, intent.kind, outcome, 'redone');
+      return;
+    }
+    case 'abort':
+      abort(d.detail);
+      return;
+    case 'park':
+    case 'recovery-required':
+    case 'adopt':
+    case 'lost':
+      throw new Error(`${intent.kind} ${intent.op} of a faulted task reconciles to ${d.kind}: recovery leaves that to the architect, so the fault is not contained`);
+  }
+}
+
+/**
+ * Closes one open intent of a faulted task's own work (`OWN_KINDS`) the way recovery would, except that a faulted act is
+ * never trusted to finish: its reconciler decides; `done` closes it; `redo` runs its act and verify once, and a throw there
+ * (or in the reconciler) aborts it `fault` with `fault` and the throw as detail, so nothing replays it at the next start;
+ * `abort` aborts it the same way. A disposition recovery leaves to the architect (`park`) throws: no contained fault.
+ */
+export async function settleFaultedOp(ctx: StageContext, intent: IntentRecord, fault: string): Promise<void> {
+  const s = ctx;
+  switch (intent.kind) {
+    case 'worktree.create':
+      return settleOwn(s, intent, worktreeCreateOp(s.repo), fault);
+    case 'worktree.remove':
+      return settleOwn(s, intent, worktreeRemoveOp(s.repo), fault);
+    case 'evidence.snapshot':
+      return settleOwn(s, intent, evidenceSnapshotOp, fault);
+    case 'salvage.commit':
+      return settleOwn(s, intent, salvageCommitOp(salvageRules(s, unitOf(s, intent))), fault);
+    case 'mergein.prepare':
+      return settleOwn(s, intent, mergeinOp(s.repo), fault);
+    case 'mutant.apply':
+      return settleOwn(s, intent, mutantApplyOp(s.repo, s.runDir), fault);
+    default:
+      throw new Error(`${intent.kind} ${intent.op} is no op of a task's own work`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------
 // The passes
 
 const openOf = (journal: Journal, kinds: readonly OpKind[]): readonly IntentRecord[] =>

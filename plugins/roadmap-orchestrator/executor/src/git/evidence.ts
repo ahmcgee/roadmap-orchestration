@@ -123,21 +123,33 @@ export function namedPathGlobs(source: AbsPath, paths: readonly RepoPath[]): Rea
   return { globs, notRegular };
 }
 
+/** What `globs` match under `source`, directories aside: the regular files (with their sizes), and the symlinks and special files. */
+function evidenceMatches(source: AbsPath, globs: readonly RepoPattern[]): Readonly<{ regular: ReadonlyMap<string, number>; notRegular: readonly RepoPath[] }> {
+  const regular = new Map<string, number>();
+  const notRegular = new Set<string>();
+  for (const rel of globSync([...globs], { cwd: source })) {
+    const st = lstatSync(join(source, rel));
+    if (st.isDirectory()) continue;
+    if (st.isFile()) regular.set(rel, st.size);
+    else notRegular.add(rel);
+  }
+  return { regular, notRegular: [...notRegular].sort().map((p) => repoPath(p)) };
+}
+
 /**
- * Every regular file under `source` matching one of `globs`, sorted, with its hash and size. A match that is a symlink or
- * special file throws: a snapshot of named paths passes none (`namedPathGlobs`), so one here is a declared glob's.
+ * Every regular file under `source` matching one of `globs`, sorted, with its hash and size. A symlink or special file is
+ * never captured: a named path's glob never matches one (`namedPathGlobs`), and one a declared glob matches (a lane's
+ * `evidenceGlobs`, 1.0.0-dev.17) is skipped here and named on the snapshot's intent (`notRegularMatches`), as the lane
+ * census files it `not-regular` (src/git/ignored.ts). The reconciler's re-list skips alike.
  */
 export function listEvidence(source: AbsPath, globs: readonly RepoPattern[]): readonly ManifestEntry[] {
-  const out = new Map<string, ManifestEntry>();
-  for (const rel of globSync([...globs], { cwd: source })) {
-    const full = join(source, rel);
-    const st = lstatSync(full);
-    if (st.isDirectory()) continue;
-    if (!st.isFile()) throw new Error(`evidence ${full}: not a regular file (symlinks and special files are not captured)`);
-    out.set(rel, { path: repoPath(rel), sha256: hashFile(full), size: st.size });
-  }
-  return [...out.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const out: ManifestEntry[] = [];
+  for (const [rel, size] of evidenceMatches(source, globs).regular) out.push({ path: repoPath(rel), sha256: hashFile(join(source, rel)), size });
+  return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
+
+/** The symlinks and special files `globs` match under `source` (a declared glob's), sorted: never captured. */
+export const notRegularMatches = (source: AbsPath, globs: readonly RepoPattern[]): readonly RepoPath[] => evidenceMatches(source, globs).notRegular;
 
 export type SnapshotCheck =
   | Readonly<{ kind: 'verified'; manifest: VerifiedManifest; manifestSha256: Sha256Hex }>
@@ -199,13 +211,17 @@ export function capturedEvidence(view: JournalView, op: OpId): CapturedEvidence 
   return captured;
 }
 
-/** `notRegular` (dev.16): the named paths `namedPathGlobs` left out, recorded on the intent; omitted when none. */
+/**
+ * `notRegular` (dev.16): the named paths `namedPathGlobs` left out, recorded on the intent; omitted when none. The prepare
+ * adds (1.0.0-dev.17) the symlinks and special files the globs themselves match (`notRegularMatches`).
+ */
 export type SnapshotRequest = Readonly<{ source: AbsPath; globs: readonly RepoPattern[]; dest: AbsPath; notRegular?: readonly RepoPath[] }>;
 
 function prepare(request: SnapshotRequest): Promise<IntentBody<'evidence.snapshot'>> {
   if (!lstatSync(request.source).isDirectory()) throw new Error(`evidence source ${request.source} is not a directory`);
-  const { source, globs, dest, notRegular } = request;
-  const skipped = notRegular === undefined || notRegular.length === 0 ? {} : { notRegular };
+  const { source, globs, dest } = request;
+  const notRegular = [...new Set([...(request.notRegular ?? []), ...notRegularMatches(source, globs)])].sort().map((p) => repoPath(p));
+  const skipped = notRegular.length === 0 ? {} : { notRegular };
   return Promise.resolve({ expect: { source, globs, dest, ...skipped }, post: { manifest: manifestPath(dest) } });
 }
 

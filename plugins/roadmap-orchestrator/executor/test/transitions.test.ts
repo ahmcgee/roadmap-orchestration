@@ -220,6 +220,19 @@ const ROWS: readonly Row[] = [
   // M3: a preempting docs publication (A7) and a blocking P1 (G10) send the unit back to its candidate, uncharged
   ['candidate', 'preempted', {}, 'candidate', 'advance', {}],
   ['candidate', 'finding-blocked', {}, 'candidate', 'advance', {}],
+  // 1.0.0-dev.17: the executor threw inside the unit's task holding only its own state: an uncharged env park at every stage
+  // but ff and snapshot (src/schedule/fault.ts).
+  ['prepare', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['reproduce', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['plan-check', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['build', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['quiesce', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['evidence', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['salvage', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['teardown', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['lanes', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['gate', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['candidate', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   // ff
   ['ff', 'published', {}, 'snapshot', 'advance', {}],
   ['ff', 'cas-stale', {}, 'candidate', 'advance', {}],
@@ -262,6 +275,7 @@ describe('transitions', () => {
       'plan-check context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
+      ...Object.fromEntries(['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate'].map((st) => [`${st} executor-fault`, 'env'])),
     };
     const targets = [{ type: 'resource', instance: resourceInstance('estate#2') }, { type: 'host' }, { type: 'host' }] as const;
     let parks = 0;

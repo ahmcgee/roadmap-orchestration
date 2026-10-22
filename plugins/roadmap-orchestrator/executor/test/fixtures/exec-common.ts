@@ -71,11 +71,11 @@ export type Running = Readonly<{ child: ChildProcess; exit: Promise<Exit> }>;
 /**
  * `roadmap start` and the supervised run it launches, in the background (sup-run.ts): `exit` settles when
  * the supervisor has exited, with the last executor's exit line as stdout, or with start's own line when
- * it did not get ready (rejects if it outlives the child timeout).
+ * it did not get ready (rejects if it outlives the child timeout). `env` adds to the CLI's (a crash trigger).
  */
-export function startExec(r: ExecRun, extra: readonly string[] = []): Running {
+export function startExec(r: ExecRun, extra: readonly string[] = [], env: NodeJS.ProcessEnv = {}): Running {
   const child = spawn(process.execPath, [fixture('sup-run.ts'), r.hostDir, 'start', '--repo', r.repo, '--plan', r.planPath, ...extra], {
-    env: execEnv(r), stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...execEnv(r), ...env }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
   let stderr = '';

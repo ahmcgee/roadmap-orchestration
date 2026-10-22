@@ -422,8 +422,8 @@ at triage stay in git history.
   every blocker's owner is approved; then follow every blocker and batch the closure.
 - **The dev.9 resume crash** (arc feedback 2026-10-15). The stuck unit's crash on `resume` was not reproduced: the
   startup's recovery hold closes its attempt, and a resumed held unit re-runs from its decision as an abandoned
-  attempt always did. Trigger: a resume of a recovery-held unit that still throws; read the throw site from its
-  stderr.
+  attempt always did. Trigger: a resume of a recovery-held unit that still throws (since 1.0.0-dev.17 an `executor-fault`
+  park, unless it held shared state); read the throw site from its stack.
 - **Scope growth beyond the uniform plan-check** (2026-10-15). Deferred: (a) the in-session assessment of a frontier or
   summit builder under `planCheck.shape: by-builder` proposes no `scopeGrowth` (it makes no plan-check call); (b) a
   builder's `scope growth: <path>` blocker reaches only the gate (it reads the build report), never a hold of its own,
@@ -441,18 +441,12 @@ at triage stay in git history.
   `plan-defect` park whose cause one of these would have refused earlier; a flow proposal that moves a witness out of
   its lane; a spec witness item that is never run; a `derived` edit that hands a unit someone else's file.
 
-- **Executor faults outside bundle judging** (real arc 2026-10-12: a `reenter` + `patch-spec` of the re-entered unit
-  threw in the divergence step and crash-looped the executor to sup-4-4). The fix contains only `decide`'s judging
-  (steps 0–9): it decides the bundle invalid and records it, so a restart never replays it. A deterministic throw in
-  `settleDecided`, the scheduler or any other job resumed from a recorded model output would still replay on every
-  restart until the supervisor gives up. Trigger: a second crash loop of that shape; then decide on a general rule
-  (a job's fault is recorded against the job before the throw escapes).
-
-- **A declared evidence glob matching a symlink** (2026-10-21; 1.0.0-dev.16). The dev.16 fix (SCHEMAS.md "Field fixes:
-  snapshot symlinks, restart checks") skips and records a symlink or special file among a checkout's dirty paths;
-  a lane's `evidenceGlobs` entry matching one still makes `listEvidence` throw in the lane's `tree` snapshot, which
-  crash-loops like the field case did. Trigger: that throw in a field run; then give declared globs the same
-  `notRegular` record (the reconciler's re-list must skip alike).
+- **Faults beyond the contained tracks** (1.0.0-dev.17, fault isolation). A throw is contained only in a unit's task and the
+  audit, walk, checkpoint and baseline jobs, and only while they hold no shared state (src/schedule/fault.ts). A
+  deterministic throw while holding the integration slot (candidate, ff, snapshot), in a pack review, polish, compare,
+  flow, repair batch, close-out or command job, or in the scheduler loop still crashes and replays on every restart until
+  the supervisor gives up (3 an hour). Trigger: a crash loop of one of those shapes in a field run; then record that
+  job's fault against it the same way, or give the slot holder a recorded abandon before the throw escapes.
 
 - **Checkpoint reads refused** (paid M4b run 5): the checkpoint call inv 2174 was refused reads of the runtime's
   `inputs/*.plan.json` (outside its `--add-dir`s) and still answered `bundle`. The gate and plan-check void an approve

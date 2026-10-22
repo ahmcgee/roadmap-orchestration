@@ -1556,11 +1556,14 @@ export const NEEDS_USER_REASONS = [
   'plan-defect',
   // 2026-10-16, blocking: a plan-check, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
   'context-exceeded',
+  // 1.0.0-dev.17, non-blocking: the executor threw inside a unit's task or an arc job while it held only that unit's or job's
+  // own state (src/schedule/fault.ts): the unit parked `executor-fault`, or the job ended faulted; the item cites the stack.
+  'executor-fault',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed',
+  'ruler-changed', 'executor-fault',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

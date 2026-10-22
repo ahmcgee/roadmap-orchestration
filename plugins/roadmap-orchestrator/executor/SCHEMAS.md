@@ -4471,7 +4471,7 @@ earlier record); `SCHEMA_VERSION` stays 1.
    unit worktree's, an audit job's) builds its globs through `namedPathGlobs` (src/git/evidence.ts; `dirtySnapshot` in
    src/pipeline/lanes.ts): a symlink or special file gets no glob and is named in the intent's `notRegular` instead
    (non-empty when present), as the lane census files an ignored one `not-regular`. Nothing follows the link.
-   `listEvidence` stays fail-loud: a non-regular match there now means a declared `evidenceGlobs` entry matched one.
+   `listEvidence` stayed fail-loud on a declared `evidenceGlobs` match until 1.0.0-dev.17 ("Fault isolation" below).
 2. **A start of an arc in flight checks what it would put in force.** Group 1 read the owner's files as they stood, so
    a ruling an executor revision had landed since (checkpoint ckpt-23's C-206) was unknown to a stale input-dir ledger
    and the start was refused `plan-invalid unknown-cite`, though `settlePlan` would have rebased that ledger onto the
@@ -4482,3 +4482,37 @@ earlier record); `SCHEMA_VERSION` stays 1.
    the start checks the plan in force. A respawn checks the plan in force against the ledger in force (before: the
    owner's ledger file). The one rule: after the first start the input dir is an edit of its base, never the state; a
    restart needs no `inputs export` sync first, and the input dir matters only as that edit (a start or an apply).
+
+## Fault isolation (2026-10-22; 1.0.0-dev.17)
+
+An exception inside a unit's task or an arc job no longer always crashes the executor (the BACKLOG items "Executor faults
+outside bundle judging" and "A declared evidence glob matching a symlink"; src/schedule/fault.ts). Additive vocabulary
+only, no read-time defaults: `SCHEMA_VERSION` stays 1, and a dev.16 log has none of the new values.
+
+- **Stage outcome `executor-fault`** at `prepare`, `reproduce`, `plan-check`, `build`, `quiesce`, `evidence`, `salvage`,
+  `teardown`, `lanes`, `gate` and `candidate` (never `ff` or `snapshot`: they always hold the integration slot). Class
+  `park`, uncharged, `park: operator{env}`; its detail (`DETAILED_OUTCOMES`) is `{kind: 'executor-fault', stack}`, the
+  thrown error's stack (its message when it has none). Recorded at the unit's open attempt, or, when none is open, at a
+  new attempt of the stage it was about to start (`upcoming`). `resume <unit>` (`unparked`) restores the decision before
+  it, so the stage runs again.
+- **Needs-user reason `executor-fault`**, non-blocking (`NON_BLOCKING_M3_REASONS`). A unit's: parent its parking attempt,
+  subject the unit, the stack in the summary, the evidence the attempt's evidence root and the kept spec. An arc job's:
+  parent `arc`, subject the arc; while one is unacknowledged the holistic track starts no job (`jobFaultOpen`), so its
+  acknowledgement makes the job due again.
+- **Abort code `fault`**: an own op of a faulted task closed by its settlement (below), its detail the fault and why.
+- **Classification** (the scheduler's task wrapper, from the log at the throw): shared state, so the executor crashes as
+  before, when the unit's publication holds the integration slot; an open op of the task (by its parent's root, a
+  reservation's by its holder) is of a shared kind (`spec.patch`, `candidate.merge`, `integration.ff`, `snapshot.publish`,
+  `needsuser.raise`, `command.apply`, `docs.commit`, `revision.commit`); or, for the checkpoint, a docs publication or
+  batch holds the slot. A unit with no fault stage to park at (retired, or at `ff`/`snapshot`) crashes too. Contained
+  jobs: the tracks `holistic:audit`, `holistic:walk`, `holistic:checkpoint` and `holistic:baseline` (job kinds `audit`,
+  `walk`, `ckpt`, `baseline`); any other job's throw crashes.
+- **Settlement** of a contained fault, as recovery settles a dead holder's: open `proc.kill`s through their reconciler;
+  each open `proc.spawn` killed (`recovery`) when live, then closed by the spawn reconciler; each open own op
+  (`worktree.create|remove`, `evidence.snapshot`, `salvage.commit`, `mergein.prepare`, `mutant.apply`) by its reconciler,
+  a `redo` run once and aborted `fault` if it (or the reconciler) throws, a `park` disposition crashing; then the task's
+  stage or job holders through `settleHolders` (src/recover/resource.ts). Nothing of the task stays open. A settlement
+  that throws crashes with both errors. Then the park (crash point `fault.after-park`) or the job's item.
+- **Declared evidence globs**: `listEvidence` captures regular files only; the `evidence.snapshot` prepare adds every
+  symlink or special file its globs match (`notRegularMatches`) to `notRegular`, beside the named paths'; the
+  reconciler's re-list skips them alike.

@@ -217,6 +217,19 @@ and census.
   (`quiesce → evidence → salvage → teardown` after a build; `ff → snapshot` in a publication) run to completion
   regardless of pause or drain, so a paused unit holds nothing but a residue of its own failed cleanup. On
   restart, recovery rebuilds pending chains from the fold and the scheduler runs them first.
+- **Fault isolation** (1.0.0-dev.17). An exception inside a unit's task or an arc job is classified at the scheduler's
+  task wrapper by what the task holds, read back from the log, never at the throw site. Holding shared state (the unit's
+  publication on the integration slot, candidate through ff and snapshot; an open op of its own on shared state: a spec
+  patch, the revision fence's durable half, a candidate merge, an ff, a snapshot, a docs commit, a revision, a needs-user
+  raise, a command; a checkpoint with a docs publication or batch on the slot), the executor crashes as before and the
+  supervisor's 3 per hour stays; so does a throw in the scheduler loop or a broken journal writer. Otherwise the fault is
+  the unit's: what it left is settled as recovery settles a dead holder's (live invocations killed and closed, each own op
+  closed by its reconciler, a faulted act never re-run blindly: a redo that throws again is aborted `fault`; reservations
+  cleaned), and the unit parks `executor-fault` at the stage it was in: uncharged, operator env, the stack in the fact
+  and in a non-blocking needs-user. The arc goes on; a restart replays the park, never the throw; `resume <unit>`
+  re-enters the stage. An arc job (audit, walk, checkpoint, baseline) ends faulted the same way, with a non-blocking item;
+  the holistic track waits until that item is acknowledged, then the job is due again. A declared evidence glob matching
+  a symlink or special file skips it and names it on the snapshot (`notRegular`), as a checkout's dirty paths do.
 - **Locks.** The reservation unit is a build, a judgment call, a lane or a publication, each taking its whole
   set all-or-none in one global order (named and pool instances ascending, `@cpu#*`, then the integration slot).
   A stage takes its entry reservation before its first journaled op; a wait cancelled by pause or stop journals
