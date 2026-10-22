@@ -70,7 +70,9 @@ function journalFacts(r: ArcRun): readonly Fact[] {
 
 test('fault.unit-confined: a throw inside u1\'s lanes parks it executor-fault (uncharged, its stack on a non-blocking item, nothing left open or held) while u2 merges; resume u1 re-enters lanes', T, async () => {
   const marker = armedMarker();
-  const u2Build = codexStep([{ type: 'commit', message: 'add mul', files: MUL }, { type: 'barrier', name: 'u2build', timeoutMs: 120_000 }], { argv: ['exec', '-C'] });
+  // u2's commit message is its own: u1's build commits the same files on the same base, so commits within one second
+  // would be the same commit, u1's merge would carry u2's branch and u2's gate would park `empty-diff`.
+  const u2Build = codexStep([{ type: 'commit', message: 'add mul (u2)', files: MUL },{ type: 'barrier', name: 'u2build', timeoutMs: 120_000 }], { argv: ['exec', '-C'] });
   const d = setupArc({
     units: [{ id: 'u1', lanes: [faultLane(marker)] }, { id: 'u2' }],
     steps: [...straight('u1'), ...of('u2', [planCheckStep({ decision: 'approve' }), u2Build, gateStep({ decision: 'approve' })])],
