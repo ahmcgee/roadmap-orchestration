@@ -468,6 +468,9 @@ Blocking unless noted. Read the item file before acting.
 - `context-exceeded` (the unit is parked at plan-check, build or gate, uncharged): the call's prompt or context outgrew
   its model's window; the item names the role, the call and the prompt's size. Shrink the stage's inputs or route the
   seat to a larger window, then `resume`, which makes a new call (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
+- `executor-fault`, non-blocking (1.0.0-dev.17): the executor threw inside a unit's task (the unit is parked at the stage
+  it was in, uncharged) or an arc job (audit, walk, checkpoint, baseline: the job ended faulted) while it held only that
+  unit's or job's own state; the arc went on. The item carries the stack (SKILL.md "Handling parks").
 - `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
   witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
   (SKILL.md "Handling parks").

@@ -89,6 +89,7 @@ export const COMPARE_JOB = 'polish compare job (dev.13 agent D: compare-started 
 export const DEMO_PROMOTE = 'demo promotion (dev.13 agent G: demo-promoted, then refs/roadmap/demo moved to it; the ref follows the facts)';
 export const BUNDLE_ACTIVATE = 'bundle activation (M3 B6: bundle-decided or plan-applied{source: bundle}, divergences, finding dispositions, digest)';
 export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
+export const EXECUTOR_FAULT = 'contained executor fault (1.0.0-dev.17: the task\'s leftovers settled, then the executor-fault park and its item)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
 export const ADVERSARIAL_LIVE_RUNNER = 'adversarial: crash during recovery with a live runner';
@@ -2112,6 +2113,23 @@ export const MATRIX: readonly Row[] = [
   { row: FIXTURE_ASSESS_RISK_RAISED, test: 'test/plancheck-shape.test.ts', cells: fixtureCells('build.assess-risk-raised-reseats', BUILD_ASSESS) },
   { row: FIXTURE_CHECKPOINT_BUSY, test: 'test/status-rev3.test.ts', cells: fixtureCells('status.checkpoint-busy-wait', BUNDLE_ACTIVATE) },
   { row: FIXTURE_CONVERTED_NO_OP, test: 'test/checkpoint-rev3.test.ts', cells: fixtureCells('bundle.all-converted-no-op', ADMIT_CONVERSIONS) },
+  {
+    // A unit's lanes throw inside their evidence snapshot under a supervised start (test/fault.test.ts
+    // fault.replay-after-crash); the executor is killed once, after the park.
+    row: EXECUTOR_FAULT,
+    test: 'test/fault.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: 'the settlement closes ops through their own reconcilers, kills and transitions: their rows\' crash points; a crash before the park leaves the task as any crash does, recovered as one' },
+      B3: { status: 'excluded', why: 'the park is one stage-outcome append: journal.append covers it torn' },
+      B4: { status: 'excluded', why: 'the park and its item are separate records: B5 is the state between them' },
+      B5: {
+        status: 'crash',
+        labels: ['fault.after-park'],
+        recovery: 'the executor-fault park durable, its item not raised: the restart replays the park (the stage never runs again), raises its non-blocking item once, and the other unit merges',
+      },
+    },
+  },
 ];
 
 /** Justified exclusions, listed beside the table (plan "Tests"). */

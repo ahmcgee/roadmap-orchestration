@@ -386,7 +386,8 @@ export type Parent =
 /** null: closed on the normal path. Otherwise the reconciler disposition that closed it during recovery. */
 export type RecoveredBy = null | 'reconciled' | 'redone' | 'adopted';
 
-export type AbortCode = 'precondition' | 'recovery' | 'cancelled';
+/** `fault` (1.0.0-dev.17): an op of a task the executor faulted in, closed by the fault's settlement (src/schedule/fault.ts). */
+export type AbortCode = 'precondition' | 'recovery' | 'cancelled' | 'fault';
 
 export type IntentOf<K extends OpKind> = Readonly<{
   type: 'intent';
@@ -423,15 +424,20 @@ export type MeterSubject =
 // Stage outcomes: the vocabulary of the `stage-outcome` fact. The transition table itself (what each
 // outcome leads to) is `src/pipeline/transitions.ts`; its `StageOutcome` union is derived from this list.
 
-/** Every outcome a stage can report, per stage. `retire` is terminal and reports none. */
+/**
+ * Every outcome a stage can report, per stage. `retire` is terminal and reports none. 1.0.0-dev.17 (fault isolation):
+ * `executor-fault` at every stage but `ff` and `snapshot` (which always hold the integration slot, so a throw there crashes):
+ * the executor threw inside the unit's task while it held only the unit's own state (src/schedule/fault.ts); an uncharged
+ * operator env park whose detail carries the stack, so `resume <unit>` re-enters the stage.
+ */
 export const STAGE_OUTCOME_KINDS = {
   // A re-entered unit's preparation (M2): where the prepared worktree enters. `conflicted` keeps MERGE_HEAD and
   // enters a `resolve` round (A6). `interrupted` (arc feedback 2026-10-15): only ever the recovery hold of a preparation
   // a crash cut short (`cause: recovery`); the stage itself is never cancelled.
-  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted'],
+  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
   // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
-  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed'],
+  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault'],
   // M4a rev 3 (E): `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check call, the
   // build assesses in session).
   // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
@@ -441,19 +447,19 @@ export const STAGE_OUTCOME_KINDS = {
   // plan-check, build and gate.
   'plan-check': [
     'approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed',
-    'in-session', 'read-denied', 'scope-growth', 'context-exceeded',
+    'in-session', 'read-denied', 'scope-growth', 'context-exceeded', 'executor-fault',
   ],
   // M4a rev 3 (E, R55): the in-session assessment found the spec `infeasible`, or raised the risk floor onto another
   // implementer seat (`risk-raised`).
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
   build: [
     'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible',
-    'risk-raised', 'witness-lane-missing', 'context-exceeded',
+    'risk-raised', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
   ],
-  quiesce: ['empty'],
-  evidence: ['captured'],
-  salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed'],
-  teardown: ['released', 'cleanup-failed'],
+  quiesce: ['empty', 'executor-fault'],
+  evidence: ['captured', 'executor-fault'],
+  salvage: ['committed', 'committed-contract-touched', 'unmerged', 'commit-failed', 'executor-fault'],
+  teardown: ['released', 'cleanup-failed', 'executor-fault'],
   // M4a rev 3 (corpus arcs, LR-h): `witnesses-missing` (D1: a required witness id absent or failing after a green certified
   // series); `smoke-survived` (D2: a mutation-smoke target survived); `known-defect` (F4: the unit hit a plan known
   // defect, uncharged, back to prepare). `base-red` (the 2026-10-15 batch): a fast suite lane red at the salvage SHA is red on
@@ -464,17 +470,17 @@ export const STAGE_OUTCOME_KINDS = {
   // plan-check's proposal, with that path as the proposal, until `scope accept|reject`).
   lanes: [
     'green', 'red', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
-    'witness-lane-missing', 'plan-defect', 'scope-growth',
+    'witness-lane-missing', 'plan-defect', 'scope-growth', 'executor-fault',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
   // TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): no longer recorded since 2026-10-16, when the judge's read
   // surface widened to the repository and the run dir and a refused read stopped voiding an approval; kept, with its
   // transition row, so a 1.0.0-dev.11 log whose latest gate or plan-check outcome is one still folds and retries.
-  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded'],
+  gate: ['approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded', 'executor-fault'],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
-  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked'],
+  candidate: ['green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked', 'executor-fault'],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
@@ -578,7 +584,9 @@ export type StageOutcomeDetail =
    * 2026-10-16: plan-check, build or gate `context-exceeded`, the call whose prompt or context outgrew the model's window and
    * its prompt's size in bytes (stdin and the system prompt; dispatch.ts `verdictOf`).
    */
-  | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>;
+  | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>
+  /** 1.0.0-dev.17: `executor-fault` at any stage that has it, the thrown error's stack (its message when it has none). */
+  | Readonly<{ kind: 'executor-fault'; stack: string }>;
 /**
  * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
  * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
@@ -591,6 +599,10 @@ export const DETAILED_OUTCOMES = {
   'lanes/base-red': 'base-red',
   'plan-check/scope-growth': 'scope-growth', 'lanes/scope-growth': 'scope-growth', 'lanes/plan-defect': 'plan-defect',
   'plan-check/context-exceeded': 'context-exceeded', 'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
+  'prepare/executor-fault': 'executor-fault', 'reproduce/executor-fault': 'executor-fault', 'plan-check/executor-fault': 'executor-fault',
+  'build/executor-fault': 'executor-fault', 'quiesce/executor-fault': 'executor-fault', 'evidence/executor-fault': 'executor-fault',
+  'salvage/executor-fault': 'executor-fault', 'teardown/executor-fault': 'executor-fault', 'lanes/executor-fault': 'executor-fault',
+  'gate/executor-fault': 'executor-fault', 'candidate/executor-fault': 'executor-fault',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -1745,6 +1757,7 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   'context-exceeded': object((f): StageOutcomeDetail => ({
     kind: f.get('kind', literal('context-exceeded')), inv: f.get('inv', invR), promptBytes: f.get('promptBytes', nat),
   })),
+  'executor-fault': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('executor-fault')), stack: f.get('stack', str) })),
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {
@@ -2307,7 +2320,7 @@ function abortRecord(f: Fields): AbortRecord {
   return {
     type: 'abort',
     op: f.get('op', opR),
-    reason: f.get('reason', object((g) => ({ code: g.get('code', oneOf(['precondition', 'recovery', 'cancelled'] as const)), detail: g.get('detail', str) }))),
+    reason: f.get('reason', object((g) => ({ code: g.get('code', oneOf(['precondition', 'recovery', 'cancelled', 'fault'] as const)), detail: g.get('detail', str) }))),
   };
 }
 

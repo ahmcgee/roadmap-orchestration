@@ -133,6 +133,9 @@ const ARC_REASONS: ReadonlySet<NeedsUserReason> = new Set(['base-red', 'foreign-
  */
 function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): readonly AbsPath[] {
   const parent = stageParent(f);
+  // 1.0.0-dev.17: an executor fault cut the attempt short, so only what surely stands is cited (its stack is the summary's):
+  // reading the attempt's call or series back could meet what the fault left half-written.
+  if (f.detail?.kind === 'executor-fault') return [evidenceRoot(ctx.runDir, parent), keptSpecPath(ctx, unit)].filter((p) => existsSync(p));
   const out: AbsPath[] = [];
   const called = CALL_STAGES.includes(f.stage) ? recordedCall(ctx, parent) : null;
   if (called?.kind === 'result') out.push(absPath(join(called.invDir, 'result.json')), absPath(join(called.invDir, STDOUT_FILE)));
@@ -164,8 +167,13 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   const { path, spec } = loadUnitSpec(ctx, unit);
   const exceeded = f.detail?.kind === 'context-exceeded' ? f.detail : null;
   if (reason === 'context-exceeded' && exceeded === null) throw new Error(`unit ${unit.id}: ${f.stage}#${f.attempt} context-exceeded without its detail`);
+  const faulted = f.detail?.kind === 'executor-fault' ? f.detail : null;
+  if (reason === 'executor-fault' && faulted === null) throw new Error(`unit ${unit.id}: ${f.stage}#${f.attempt} executor-fault without its stack`);
   const recommendation = kind === 'stop'
     ? 'Read the evidence and the log, find and fix the cause, then acknowledge this item and start the arc again.'
+    : faulted !== null
+      ? `The executor threw inside ${unit.id}'s ${f.stage} while the unit held only its own state (stack above); the arc went on without it. `
+        + `Fix the cause (an executor defect, or what the unit left in its checkout), then \`roadmap resume ${unit.id}\` re-enters ${f.stage}, uncharged.`
     : exceeded !== null
       ? `Make the ${f.stage} inputs fit: split the unit or narrow its spec through a spec revision, or route ${STAGE_ROLE[f.stage as CallStage]}'s seat `
         + `to a class whose model has a larger context window. Then \`roadmap resume ${unit.id}\` re-runs ${f.stage}, uncharged.`
@@ -178,14 +186,16 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
         ? reopenRecommendation(unit.id, path, spec.rev)
         : reentryRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id));
   return {
-    blocking: true,
+    // 1.0.0-dev.17: an executor fault is non-blocking (the arc goes on without the unit; src/schedule/fault.ts).
+    blocking: faulted === null,
     subject: ARC_REASONS.has(reason) ? { type: 'arc' } : { type: 'unit', unit: unit.id },
     reason,
     // F3: a lanes park lists the unit's lane failures, host-suspected ones marked, so a reset re-entry can cite them.
     summary: [
       `Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`,
       ...(exceeded === null ? [] : [`The ${STAGE_ROLE[f.stage as CallStage]} call ${exceeded.inv} outgrew the model's context window: its prompt was ${exceeded.promptBytes} bytes.`]),
-      ...(f.stage === 'lanes' ? [failuresText(laneFailures(ctx, unit))] : []),
+      ...(faulted === null ? [] : [`The executor threw: ${faulted.stack}`]),
+      ...(f.stage === 'lanes' && faulted === null ? [failuresText(laneFailures(ctx, unit))] : []),
     ]
       .filter((x) => x !== '').join(' '),
     recommendation,

@@ -560,6 +560,11 @@ second design park of one lineage (`respec-second`). `roadmap steer <unit>` is a
   narrow its spec, or a milestone's `references`, by `apply`, or route that seat to a class whose model has a larger
   window), then `roadmap resume <unit>` re-runs the stage: a new call with a prompt built from the inputs in force, never
   a replay of the parked one (2026-10-21; 1.0.0-dev.16). Resuming unchanged hits the same wall.
+- **Parked `executor-fault`** (1.0.0-dev.17; non-blocking, uncharged): the executor threw inside the unit's stage; the
+  item's summary carries the stack, and the arc went on without the unit. Read the throw site: an executor defect is the
+  owner's to report (the run's feedback notes); something the unit left in its checkout (an unreadable file, an odd
+  path) is fixed there or by a spec revision. Then `roadmap resume <unit>` re-enters the stage it parked at. An arc job's
+  `executor-fault` item (subject the arc) holds that job until you acknowledge it: `roadmap ack <id>` makes it due again.
 - **Parked `routing-changed`** (the implementer seat's backend or model moved after its build started; an
   effort-only change re-pins by itself): restore the routing of the seat the item names, or re-enter the unit
   under a new id. Once the seat resolves to the same backend and model the unit was dispatched on,

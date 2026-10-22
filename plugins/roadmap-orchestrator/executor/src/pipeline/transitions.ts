@@ -136,6 +136,12 @@ const park = (reason: NeedsUserReason, cls: ParkClass): Park => ({ do: 'park', r
 const retry = (reason: NeedsUserReason, cls: ParkClass): Retry => ({ do: 'retry', reason, park: cls });
 const routeUp = (reason: RouteUp['reason']): RouteUp => ({ do: 'route-up', reason });
 const hold: Hold = { do: 'hold' };
+/**
+ * 1.0.0-dev.17: the executor threw inside the unit's task while it held only the unit's own state (src/schedule/fault.ts):
+ * uncharged, operator env, so `resume <unit>` re-enters the stage once the fault is fixed. Never a crash loop: the park is
+ * replayed, not the throw.
+ */
+const fault: Park = park('executor-fault', 'env');
 
 /** The plan's table, one rule per (stage, outcome); the type requires every row and admits no other. */
 export const TABLE: Table = {
@@ -148,6 +154,7 @@ export const TABLE: Table = {
     conflicted: go(build('resolve')),
     // Arc feedback 2026-10-15: a preparation a crash cut short, held by recovery (`cause: recovery`); it prepares again.
     interrupted: hold,
+    'executor-fault': fault,
   },
   // M3 (B3): a vacuity repair reproduces its finding's mutant before anything is graded.
   reproduce: {
@@ -159,6 +166,7 @@ export const TABLE: Table = {
     blocked: park('lane-blocked', 'retryable'),
     interrupted: hold,
     'cleanup-failed': park('residue', 'retryable'),
+    'executor-fault': fault,
   },
   'plan-check': {
     approve: go(build('fresh')),
@@ -185,6 +193,7 @@ export const TABLE: Table = {
     // probe, no repeat rule, no backend park): uncharged, operator env, the needs-user naming the role, the call and the
     // prompt's size; `resume` re-runs the stage once its inputs fit (a smaller unit, or a seat with a larger window).
     'context-exceeded': park('context-exceeded', 'env'),
+    'executor-fault': fault,
   },
   build: {
     success: go(at('quiesce')),
@@ -212,17 +221,19 @@ export const TABLE: Table = {
     'witness-lane-missing': park('witness-lane-missing', 'env'),
     // 2026-10-16: as at plan-check.
     'context-exceeded': park('context-exceeded', 'env'),
+    'executor-fault': fault,
   },
-  quiesce: { empty: go(at('evidence')) },
-  evidence: { captured: go(at('salvage')) },
+  quiesce: { empty: go(at('evidence')), 'executor-fault': fault },
+  evidence: { captured: go(at('salvage')), 'executor-fault': fault },
   salvage: {
     committed: go(at('teardown')),
     'committed-contract-touched': { do: 'go', to: at('teardown'), chargeable: false, trigger: true },
     unmerged: park('salvage-failed', 'env'),
     'commit-failed': park('salvage-failed', 'retryable'),
+    'executor-fault': fault,
   },
   // Failed cleanup leaves a residue and never releases its resources.
-  teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue', 'retryable') },
+  teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue', 'retryable'), 'executor-fault': fault },
   lanes: {
     green: go(at('gate')),
     red: charge(build('fix')),
@@ -251,6 +262,7 @@ export const TABLE: Table = {
     // Plan defects (2026-10-16): salvage reverted the same out-of-scope path on two build rounds running: the scope-growth
     // hold, uncharged, until the root agent's `scope accept|reject`.
     'scope-growth': hold,
+    'executor-fault': fault,
   },
   gate: {
     approve: go(at('candidate')),
@@ -270,6 +282,7 @@ export const TABLE: Table = {
     'read-denied': retry('read-denied', 'env'),
     // 2026-10-16: as at plan-check (the dev.11 consumer arc's 2.37 MB unit diff).
     'context-exceeded': park('context-exceeded', 'env'),
+    'executor-fault': fault,
   },
   candidate: {
     green: go(at('ff')),
@@ -291,6 +304,7 @@ export const TABLE: Table = {
     preempted: go(at('candidate')),
     // M3 (G10): an active P1 blocks a selected obligation; admission holds the next candidate until it lifts.
     'finding-blocked': go(at('candidate')),
+    'executor-fault': fault,
   },
   ff: {
     published: go(at('snapshot')),

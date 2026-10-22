@@ -31,6 +31,12 @@
 // keeps it waiting. Chain stages (quiesce → evidence → salvage → teardown; ff → snapshot) are never gated: they run
 // to completion under pause, drain and stop (F5).
 //
+// Faults (1.0.0-dev.17, src/schedule/fault.ts): a task's throw is classified by what the task holds, read from the log.
+// Confined to the unit's own state, it parks the unit `executor-fault` at its stage (`faultUnit`) and the arc goes on; an
+// audit, walk, checkpoint or baseline job's ends the job faulted (`faultJob`), and the holistic track waits until its
+// item is acknowledged (`jobFaultOpen`). Holding shared state (the integration slot, an open shared op), any other job's,
+// or the loop's own throw crashes the run.
+//
 // Start and restart (G2): before the loop's first iteration a checkpoint's decision and a pack review's end a crash cut
 // short are settled (`settleLatest`, `settlePackReviews`), a published repair batch a crash cut short is finished
 // (`finishBatch`: recovery leaves its slot held), a terminal snapshot the ref lacks is published (G8), and a task is
@@ -169,6 +175,7 @@ import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Arbiter, FirstHolder } from './arbiter.ts';
 import { holdCycle } from './graph.ts';
+import { faultJob, faultUnit, jobFaultOpen } from './fault.ts';
 import { admitter, findingBlock, nextStage, rankOf, ready } from './ready.ts';
 import { type AdmissionStage, type CommandScope, PARK_ESCALATE_MS, PROBE_BACKOFF_MIN, type ResourceRequest, type TaskState } from './types.ts';
 
@@ -766,12 +773,15 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** A stop's abort surfaces as its reason: the expected end of a job the stop cut short. */
   const cutByStop = (error: unknown): boolean => stopping !== null && error === 'stop';
 
-  /** Tracks one job under `key`: it never blocks the loop; its end wakes it, a failure crashes the run. */
+  /**
+   * Tracks one job under `key`: it never blocks the loop; its end wakes it, a failure crashes the run, unless it is an arc
+   * job's fault confined to its own state (1.0.0-dev.17, src/schedule/fault.ts `faultJob`): the job ends faulted instead.
+   */
   const track = (key: string, work: () => Promise<unknown>): void => {
     if (jobs.has(key)) throw new Error(`job ${key} is already running`);
-    const job = work().then(() => undefined, (error: unknown) => {
-      if (!cutByStop(error)) fail(error);
-    }).finally(() => {
+    const job = work().then(() => undefined, async (error: unknown) => {
+      if (!cutByStop(error) && !(await faultJob(x.stage, key, error))) fail(error);
+    }).catch(fail).finally(() => {
       jobs.delete(key);
       settled();
     });
@@ -832,7 +842,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         task.waiting = { stage: next.stage, resolve };
       });
     };
-    runUnit(ctx, unit, gate).then((result) => raiseResult(x.stage, unit.id, result, route)).catch(fail).finally(() => {
+    // 1.0.0-dev.17: a throw confined to the unit's own state parks it `executor-fault` (src/schedule/fault.ts); any other crashes.
+    const contained = async (error: unknown): Promise<UnitResult> => {
+      const parked = await faultUnit(x.stage, unit, error);
+      if (parked === null) throw error;
+      return parked;
+    };
+    runUnit(ctx, unit, gate).catch(contained).then((result) => raiseResult(x.stage, unit.id, result, route)).catch(fail).finally(() => {
       tasks.delete(unit.id);
       settled();
     });
@@ -1093,7 +1109,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** The one holistic job (baseline, checkpoint, audit), the batch and the close-out, each started when due. */
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
     if (!holistic()) return;
-    if (due('holistic') && !flowJudging) {
+    // 1.0.0-dev.17: an arc job that faulted waits for its item's acknowledgement (src/schedule/fault.ts `jobFaultOpen`).
+    if (due('holistic') && !flowJudging && !jobFaultOpen(view(), runDir)) {
       const job = baselineOwed(x.stage);
       if (packReviewPending(h.checkpoint)) {
         trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.checkpoint)).kind === 'ended' ? PROGRESS : WAIT));
