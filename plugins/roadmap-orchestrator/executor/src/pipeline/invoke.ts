@@ -205,6 +205,7 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
     case 'mutant':
     case 'proof':
     case 'bring-up':
+    case 'environment':
       return null;
   }
 }
@@ -244,6 +245,7 @@ function assertPairing(subject: SpawnSubject, terminal: LaunchTerminal): void {
     case 'teardown':
     case 'probe':
     case 'bring-up':
+    case 'environment':
       if (terminal.type !== 'command' || terminal.purpose !== subject.purpose) fail();
   }
 }

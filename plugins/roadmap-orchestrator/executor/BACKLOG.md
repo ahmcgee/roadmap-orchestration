@@ -250,6 +250,17 @@ at triage stay in git history.
   apps (Electron via Playwright, native via a virtual display); Claude Design in design units (trigger: usable from a
   headless `claude -p`; it was not on CLI 2.1.301); an advisory for human-facing units outside every milestone.
 
+### Deferred from dev.17, environments (src/resources/environments.ts)
+
+- **Environments on arc lanes.** An arc lane never names an environment (refused at the obligations read): its other
+  reservation sites (the reproduce stage's mutant, mutation smoke, witness presence, the audit) do not bring one up.
+  Trigger: a real arc whose witness needs a costed environment.
+- **A single-unit pause brings nothing down.** Only `pause --all` and a stop idle environments at once; a paused unit's
+  environment goes down by its idle clock. Trigger: a real arc paying for an environment across a long single pause.
+- **Declared lifecycle timeouts.** Up and down get 30 min, the probe 2 min, fixed. Trigger: an environment whose up
+  outlives 30 min.
+- **Measured `idleMinutes` defaults** (the plan's backlog): re-derive after an arc that ran environments.
+
 ## Convergence and integrity (unscheduled, wanted)
 
 - **A `respec` gate outcome** (arc-1 item 27b). A gate that finds the spec wrong can only escalate to the

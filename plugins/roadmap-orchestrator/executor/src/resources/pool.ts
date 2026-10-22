@@ -5,6 +5,8 @@
 //   estate pool          `{name, pool:{size}, ...}`        instances `<name>#1..size`; a request takes one
 //   `@cpu`               `plan.capacity.cpu`               tokens `@cpu#1..N`, N default availableParallelism()
 //   `integration-slot`   built in                          a publication's
+//   environment (dev.17) plan `environments.<name>`        its own single instance, the name; no probe or teardown
+//                                                          in this cycle (src/resources/environments.ts runs its own)
 //
 // Allocation is pure over the fold's resource table: named resources and the slot must be free, each pool gives
 // its lowest free instance, `@cpu` its lowest free tokens. A unit is *dirty* while a residue keeps it out of use:
@@ -22,7 +24,7 @@ import {
 } from '../core/ids.ts';
 import type { LaneDef, SpecM1 } from '../core/records.ts';
 import { type ResourceEntry, FREE_RESOURCE } from '../core/state.ts';
-import type { PlanM1, PlanUnit, ResourceDecl } from '../input/plan.ts';
+import { type PlanM1, type PlanUnit, type ResourceDecl, environmentOf } from '../input/plan.ts';
 import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -46,16 +48,19 @@ export function declOf(plan: PlanM1, name: ResourceName): ResourceDecl {
   return decl;
 }
 
+/** Whether `name` is a declared pool; an environment never is (dev.17), and an undeclared name is a bug (`declOf`). */
+const isPool = (plan: PlanM1, name: ResourceName): boolean => environmentOf(plan, name) === null && declOf(plan, name).pool !== undefined;
+
 /**
- * A request from declared names: pools (declared with `pool`) take one instance each, the rest are named, and
- * `integration-slot` makes it a publication. `cpu` tokens are the caller's.
+ * A request from declared names: pools (declared with `pool`) take one instance each, the rest (environments included)
+ * are named, and `integration-slot` makes it a publication. `cpu` tokens are the caller's.
  */
 export function requestOf(plan: PlanM1, names: readonly ResourceName[], cpu: number): ResourceRequest {
   if (new Set(names).size !== names.length) throw new Error(`duplicate resources in ${JSON.stringify(names)}`);
   const declared = names.filter((n) => n !== INTEGRATION_SLOT);
   return {
-    named: declared.filter((n) => declOf(plan, n).pool === undefined).sort(),
-    pools: declared.filter((n) => declOf(plan, n).pool !== undefined).sort(),
+    named: declared.filter((n) => !isPool(plan, n)).sort(),
+    pools: declared.filter((n) => isPool(plan, n)).sort(),
     cpu,
     publication: names.includes(INTEGRATION_SLOT),
   };
@@ -115,7 +120,7 @@ export function allocate(table: ReadonlyMap<ResourceUnit, ResourceEntry>, plan: 
   const busy: ResourceUnit[] = [];
   const single = (u: ResourceUnit): void => void (free(entryOf(table, u)) ? units.push(u) : busy.push(u));
   for (const name of request.named) {
-    if (declOf(plan, name).pool !== undefined) throw new Error(`resource ${name} is a pool; a request takes one of its instances, not the name`);
+    if (isPool(plan, name)) throw new Error(`resource ${name} is a pool; a request takes one of its instances, not the name`);
     single(name);
   }
   for (const pool of request.pools) {

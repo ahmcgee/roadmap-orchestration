@@ -248,6 +248,22 @@ that fails partway leaves one residue per failed resource. `start` for any arc r
   when the arc's log proves ownership (a `resource.transition{fail}` intent, open or done, naming the key), and
   the owned dirty instances are withheld from dispatch until a retry reclaims them (reclaim → teardown →
   `cleaned` disposition → release).
+- **Environments (1.0.0-dev.17).** A costed thing a lane runs against (a database, a cluster, a cloud stack) is
+  declared once in plan.json `environments: {<name>: {up?, down?, probe, idleMinutes?}}` and named by a spec or suite
+  lane's `environment`. Its name shares the resource namespace: the lane reserves it as a named resource with its
+  other resources, so use is serialised by the reservation cycle (it has no teardown in that cycle: tests own reset,
+  and start/stop is purely cost). With `up`, `down` and `idleMinutes` the executor owns its lifecycle, `down →
+  starting → up → stopping`, one transition at a time: up lazily at a lane's first use (after the occupancy probe,
+  before the run), its probe before every use, kept alive by use and brought down once `idleMinutes` pass with no lane
+  holding or waiting for it, at once under `pause --all` or a stop, and at every end of the run. Up and down are
+  journaled `proc.spawn` intents keyed per environment, so the log is the state machine and a start queued behind an
+  in-flight stop waits for it; recovery closes an interrupted up or down like any spawn, then the scheduler's start
+  brings an unsettled environment down, while one found up resumes its idle clock. A failed up or probe brings it down
+  and parks the lane's stage `env-unavailable`, a retryable park on `environment{e}`, never a red lane (a job's suite
+  lane, in a repair batch or a docs publication, gives no verdict and the job retries on its backoff); a failed down
+  raises a non-blocking `env-blocked` item. Without `up`/`down` it is a plain resource: reserved and probed, never
+  started or stopped. A fast lane (run inside the build) and an arc lane never name one. SCHEMAS.md "dev.17:
+  environments".
 - **Integration slot.** Serial; all else runs in parallel. Each attempt ends `published | abandoned |
   recovery-required`. A publication needing the slot abandons the current candidate (cleaned, released) first,
   waiting only for a critical section under way. A unit's publication is a durable holder
@@ -263,8 +279,9 @@ that fails partway leaves one residue per failed resource. `start` for any arc r
   postcondition.
 - **Parks.** Classed by `(stage, outcome)`; the class and its targets are written inside the `stage-outcome`
   fact that parks. `retryable` (backend `process-fault`, `capacity` or `outage`; a lane or candidate `blocked`;
-  `cleanup-failed`; salvage `commit-failed`) names probe targets `backend{b} | host | resource{instance}`, one
-  per failed instance; when salvage fails, the teardown's failed instances join its targets. Probes run at once,
+  `cleanup-failed`; salvage `commit-failed`; dev.17: a lane or candidate `env-unavailable`) names probe targets
+  `backend{b} | host | resource{instance} | environment{e}`, one per failed instance; when salvage fails, the teardown's
+  failed instances join its targets. An environment's probe brings it up when it is down, then runs its probe. Probes run at once,
   then with exponential backoff (cap 30 min). Recovery is established by probes, never by a second unit, and is
   derived, never fanned out: a park recovers when every target has a passing probe after it (a resource target
   also disposed `cleaned`); a host probe records the parks it `covers`, and only those recover. At 6 h a

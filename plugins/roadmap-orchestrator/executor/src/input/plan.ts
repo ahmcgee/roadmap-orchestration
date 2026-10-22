@@ -50,6 +50,18 @@ export const PROBE_EXIT = { free: 0, ownLabel: 10, foreign: 11 } as const;
 export type ResourceDecl = Readonly<{ name: ResourceName; probe: ToolCommand; teardown: ToolCommand; pool?: Readonly<{ size: number }> }>;
 
 /**
+ * dev.17 (SCHEMAS.md "dev.17: environments"): a costed environment a lane runs against (`LaneDef.environment`). On disk
+ * `environments: {<name>: {up?, down?, probe, idleMinutes?}}`; `up`, `down` and `idleMinutes` come together or not at all.
+ * With them the executor owns its lifecycle (src/resources/environments.ts): brought up lazily at a lane's first use, kept
+ * up while lanes keep using it, brought down `idleMinutes` (a positive number, fractions allowed) after its last use.
+ * Without them it is a plain resource: reserved and probed, never started or stopped by the executor. The name shares the
+ * resource namespace (a lane reserves it as a named resource unit, which serialises its use), so it is never also a
+ * declared resource. The probe answers exit 0 when the environment is up and usable; anything else is a failed probe.
+ */
+export type EnvironmentLifecycle = Readonly<{ up: ToolCommand; down: ToolCommand; idleMinutes: number }>;
+export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand; lifecycle: EnvironmentLifecycle | null }>;
+
+/**
  * Where a unit came from (M2): `checkpoint` units rank before `planned` ones among unpromoted waiters; M3's
  * `repair` units (R6) rank first, and need a spec with non-empty `repairs` (a startup and apply row). dev.13: `polish`, a
  * unit a milestone walkthrough proposed and code admitted (it carries `polish`), ranks between checkpoint and planned
@@ -313,6 +325,8 @@ type PlanBase = Readonly<{
   derived?: readonly DerivedFiles[];
   /** dev.13: the milestones, ids unique (absent: none, lasting; `milestonesOf`). Changed only by `apply`. */
   milestones?: readonly Milestone[];
+  /** dev.17: the environments, ascending by name (absent: none, lasting; `environmentsOf`). */
+  environments?: readonly EnvironmentDecl[];
 }>;
 export type PlanM1 = PlanBase & PlanTarget;
 
@@ -427,6 +441,41 @@ const resourceDecl: Read<ResourceDecl> = object((f) => {
   const pool = f.optional('pool', object((g) => ({ size: g.get('size', positive) })));
   return { name, probe: f.get('probe', toolCommand), teardown: f.get('teardown', toolCommand), ...(pool === undefined ? {} : { pool }) };
 });
+
+/** A positive number of minutes; fractions allowed (an idle timeout of seconds is a fraction of a minute). */
+const positiveMinutes: Read<number> = (value, path) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) throw new SchemaError(path, 'a positive number of minutes', value);
+  return value;
+};
+
+const environmentDecl = (name: ResourceName): Read<EnvironmentDecl> => object((f) => {
+  const probe = f.get('probe', toolCommand);
+  const up = f.optional('up', toolCommand);
+  const down = f.optional('down', toolCommand);
+  const idleMinutes = f.optional('idleMinutes', positiveMinutes);
+  if (up === undefined && down === undefined && idleMinutes === undefined) return { name, probe, lifecycle: null };
+  if (up === undefined || down === undefined || idleMinutes === undefined) {
+    throw new SchemaError(f.path, 'up, down and idleMinutes together (a managed environment), or none of them (a plain one)', { up, down, idleMinutes });
+  }
+  return { name, probe, lifecycle: { up, down, idleMinutes } };
+});
+
+/** `environments`: an object keyed by environment name, read ascending by name. */
+const environmentsR: Read<readonly EnvironmentDecl[]> = (value, path) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'an object of environments by name', value);
+  return Object.keys(value).sort().map((key) => {
+    const name = resourceName(key, `${path}.${key}`);
+    if (name === INTEGRATION_SLOT) throw new SchemaError(`${path}.${key}`, 'a name other than the built-in integration-slot', name);
+    return environmentDecl(name)((value as Readonly<Record<string, unknown>>)[key], `${path}.${key}`);
+  });
+};
+
+/** dev.17: the plan's environments (none when it declares none). */
+export const environmentsOf = (plan: Pick<PlanM1, 'environments'>): readonly EnvironmentDecl[] => plan.environments ?? [];
+
+/** The environment `name` declares, or null when `name` is not an environment (a resource, the slot, or nothing). */
+export const environmentOf = (plan: Pick<PlanM1, 'environments'>, name: ResourceName): EnvironmentDecl | null =>
+  environmentsOf(plan).find((e) => e.name === name) ?? null;
 
 const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
 
@@ -647,6 +696,7 @@ export function parsePlan(value: unknown): PlanM1 {
     const planCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(PLAN_CHECK_SHAPES)) })));
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));
+    const environments = f.optional('environments', environmentsR);
     const out: PlanM1 = {
       schema: f.get('schema', literal(PLAN_SCHEMA)),
       arc: f.get('arc', planArc),
@@ -667,6 +717,7 @@ export function parsePlan(value: unknown): PlanM1 {
       ...(planCheck === undefined ? {} : { planCheck }),
       ...(derived === undefined ? {} : { derived }),
       ...(milestones === undefined ? {} : { milestones }),
+      ...(environments === undefined ? {} : { environments }),
       ...target,
     };
     out.suite.lanes.forEach((l, i) => refuseLaneInputs(l, `plan.suite.lanes[${i}]`, 'suite'));
@@ -674,6 +725,9 @@ export function parsePlan(value: unknown): PlanM1 {
     assertUnique(out.contracts, (c) => c, 'plan.contracts');
     assertUnique([...out.suite.lanes.map((l) => l.id), ...derivedOf(out).filter((d) => d.regenerate !== undefined).map(regenerateLaneId)], (id) => id, 'plan.suite.lanes');
     assertUnique(out.resources, (r) => r.name, 'plan.resources');
+    for (const e of environmentsOf(out)) {
+      if (out.resources.some((r) => r.name === e.name)) throw new SchemaError(`plan.environments.${e.name}`, 'a name no declared resource has (environments share the resource namespace)', e.name);
+    }
     assertUnique(out.units, (u) => u.id, 'plan.units');
     assertUnique(out.units, (u) => u.spec, 'plan.units');
     assertUnique(out.units.flatMap((u) => u.contingent), (e) => e.id, 'plan.units[].contingent');

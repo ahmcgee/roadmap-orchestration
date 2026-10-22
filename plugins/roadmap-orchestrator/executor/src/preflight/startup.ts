@@ -11,7 +11,7 @@ import { type ResidueKey, residueKey } from '../core/records.ts';
 import {
   type ChainProblem, type CorpusProblem, type Phase0Problem, type UntrustedPolicy, chainProblem, corpusProblem, phase0Problem, untrustedPolicyFields,
 } from '../phase0/types.ts';
-import { type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, version } from '../core/validate.ts';
+import { Fields, type Read, SchemaError, arrayOf, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, version } from '../core/validate.ts';
 import { type AbsPath, type IsoTime, type PlanPath, type RefName, type RepoPath, absPath, isoTime, planPath, refName, repoPath } from '../core/values.ts';
 import type { SchemaVersion } from '../core/version.ts';
 import { type PlanDefect, planDefect } from '../holistic/types.ts';
@@ -36,11 +36,13 @@ export type StartupRejection =
     kind: 'spec-lane-unrunnable';
     unit: UnitId | null;
     lane: LaneId;
-    problem: CommandProblem | Readonly<{ type: 'estate-lane-for-implementer' }>;
+    /** dev.17: `unknown-environment`, a lane naming an environment the plan does not declare. */
+    problem: CommandProblem | Readonly<{ type: 'estate-lane-for-implementer' }> | Readonly<{ type: 'unknown-environment'; environment: ResourceName }>;
   }>
   // Row: spec-lane-unrunnable, resource variant (lead ruling, 13b): a declared resource's probe or teardown
-  // command cannot run. Told apart from the lane form by `resource` in place of `lane`.
-  | Readonly<{ kind: 'spec-lane-unrunnable'; resource: ResourceName; command: 'probe' | 'teardown'; problem: CommandProblem }>
+  // command cannot run. Told apart from the lane form by `resource` in place of `lane`. dev.17: an environment's probe,
+  // up or down, under its name.
+  | Readonly<{ kind: 'spec-lane-unrunnable'; resource: ResourceName; command: 'probe' | 'teardown' | 'up' | 'down'; problem: CommandProblem }>
   // Row: a seat resolving to an unsupported triple (including every Codex judgment triple). Names the seat,
   // the layer that chose its class and the class, never the model.
   | (Readonly<{ kind: 'unsupported-routing'; layer: RoutingLayerName; class: ModelClass; unit: UnitId | null; why: 'codex-judgment' | 'no-prompt' }> & SeatRef)
@@ -191,8 +193,11 @@ const commandProblem: Read<CommandProblem> = tagged('type', {
 
 type LaneProblem = Extract<StartupRejection, { lane: LaneId }>['problem'];
 const laneProblem: Read<LaneProblem> = (value, path) => {
-  const probe = object((f) => f.get('type', str))(value, path);
+  const probe = new Fields(value, path).get('type', str);
   if (probe === 'estate-lane-for-implementer') return object((f): LaneProblem => ({ type: f.get('type', literal('estate-lane-for-implementer')) }))(value, path);
+  if (probe === 'unknown-environment') {
+    return object((f): LaneProblem => ({ type: f.get('type', literal('unknown-environment')), environment: f.get('environment', resourceName) }))(value, path);
+  }
   return commandProblem(value, path);
 };
 
@@ -205,7 +210,7 @@ const specLaneUnrunnable: Read<Row<'spec-lane-unrunnable'>> = (value, path) => {
   if (typeof value === 'object' && value !== null && Object.hasOwn(value, 'resource')) {
     return object((f): Row<'spec-lane-unrunnable'> => ({
       kind: f.get('kind', literal('spec-lane-unrunnable')), resource: f.get('resource', resourceName),
-      command: f.get('command', oneOf(['probe', 'teardown'] as const)), problem: f.get('problem', commandProblem),
+      command: f.get('command', oneOf(['probe', 'teardown', 'up', 'down'] as const)), problem: f.get('problem', commandProblem),
     }))(value, path);
   }
   return object((f): Row<'spec-lane-unrunnable'> => ({

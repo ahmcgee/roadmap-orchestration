@@ -64,7 +64,7 @@ import { crashPoint } from '../core/crash.ts';
 import type { HoldCause, IntentOf, OpOutcome, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
-import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type Sha, type UnitId, invocationId, canonicalIds } from '../core/ids.ts';
+import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type ResourceName, type Sha, type UnitId, invocationId, canonicalIds } from '../core/ids.ts';
 import { type ApprovalFingerprint, type NeedsUserContent, obligationRevsOf, specRepairs } from '../core/records.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planBatchCandidate, planCandidate } from '../git/candidate.ts';
@@ -99,7 +99,7 @@ import {
 } from './lanes.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
-import { type StageDone, at, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
+import { type StageDone, at, environmentFacts, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 import { SCOPE_GROWTH_BLOCKER } from '../prompts/directives.ts';
 
@@ -143,10 +143,13 @@ async function releasePublication(ctx: StageContext, held: Reservation<'running'
 // candidate
 
 type CandidateEnd = Readonly<{
-  kind: 'green' | 'transient-violation' | 'conflict' | 'red' | 'base-red' | 'blocked' | 'occupied' | 'cleanup-failed' | 'interrupted' | 'preempted' | 'finding-blocked';
+  kind: 'green' | 'transient-violation' | 'conflict' | 'red' | 'base-red' | 'blocked' | 'occupied' | 'cleanup-failed' | 'interrupted' | 'preempted' | 'finding-blocked'
+    | 'env-unavailable';
   needsUser: NeedsUserContent | null;
   /** The instances a suite lane's cleanup failed (`cleanup-failed`): the park's targets. */
   failed: readonly ResourceInstance[];
+  /** dev.17: the environment a suite lane could not bring up (`env-unavailable`): the park's target. */
+  environment?: ResourceName;
   /** M4b rev 3 (RC-11): an `interrupted` suite under host pressure, starved or red with its rerun pending (starved.ts). */
   cause?: HoldCause;
 }>;
@@ -178,6 +181,8 @@ function seriesFault(series: Series): CandidateEnd | null {
       return { kind: 'cleanup-failed', needsUser: null, failed: series.end.failed };
     case 'occupied':
       return ended('occupied', series.end.needsUser);
+    case 'env-unavailable':
+      return { kind: 'env-unavailable', needsUser: null, failed: [], environment: series.end.environment };
   }
 }
 
@@ -309,7 +314,7 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
   } finally {
     await preempt.close();
   }
-  const done = record(ctx, parent, end.kind, end.needsUser, failedFacts(end.failed), end.cause);
+  const done = record(ctx, parent, end.kind, end.needsUser, end.environment === undefined ? failedFacts(end.failed) : environmentFacts(end.environment), end.cause);
   if (end.kind !== 'green') await releasePublication(ctx, held, parent);
   return done;
 }

@@ -6,8 +6,9 @@
 // merge and on the integration tip alone (set `suite`, the candidate stage). Arc lanes (M3) run as a journey series
 // (`runJourneySeries`, at the end of this file) under the same rules.
 //
-// Per lane: acquire its reservation (its declared resources and its `@cpu` tokens,
-// `laneCpu`) through the stage's `acquire` (`LaneRuntime`) → occupancy probe → run (step 10's cycle) → `invoke`
+// Per lane: acquire its reservation (its declared resources, its environment's unit and its `@cpu` tokens,
+// `laneCpu`) through the stage's `acquire` (`LaneRuntime`) → occupancy probe → its environment up and probed (dev.17,
+// src/resources/environments.ts; a failure ends the series `env-unavailable`, no verdict) → run (step 10's cycle) → `invoke`
 // purpose `lane` with the exact argv, cwd and env (plus the unit's owner label and the holder's pool instance
 // binding, `instanceEnv`, F7) → evidence snapshots → cleanup. The host is sampled at the lane's start and end
 // into `<lane>/host.json`. The series stops at the first lane that does not pass: one failure is what a fix
@@ -57,7 +58,7 @@ import { basename, join, matchesGlob } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, LaneIdentity, Parent, WitnessFor } from '../core/events.ts';
 import {
-  type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceUnit, type Sha, type UnitId,
+  type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type UnitId,
   invocationDirName, invocationId, laneRev, opKey, parseInvocationId, parseOpId, sha256,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
@@ -83,6 +84,7 @@ import { HOST_SIGNATURES, HOST_SIGNATURES_REV, type HostSignatureId, outputSigna
 import { type Argv0, resolveArgv0 } from '../preflight/argv0.ts';
 import type { FastLane, LaneLedgerEntry, ObligationView } from '../prompts/inputs.ts';
 import { instanceEnv, laneCpu, requestOf } from '../resources/pool.ts';
+import { releaseEnvironment, useEnvironment } from '../resources/environments.ts';
 import { probe } from '../resources/probe.ts';
 import {
   type JobHolder, type Reservation, type ResourceContext, type SpecLane, type StageHolder, cleanup, heldReservation, jobOwnerLabel, reserve, run,
@@ -147,7 +149,9 @@ export type SeriesEnd =
   /** `preempt` only in a candidate's suite (M3, A7). */
   | Readonly<{ kind: 'interrupted'; reason: LaneCancel }>
   | Readonly<{ kind: 'occupied'; needsUser: NeedsUserContent }>
-  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>;
+  | Readonly<{ kind: 'cleanup-failed'; failed: readonly ResourceInstance[] }>
+  /** dev.17: a lane's environment did not come up or failed its probe (src/resources/environments.ts); no verdict. */
+  | Readonly<{ kind: 'env-unavailable'; environment: ResourceName; detail: string }>;
 
 export type Series = Readonly<{
   end: SeriesEnd;
@@ -227,10 +231,11 @@ export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: re
   return env;
 }
 
-/** What a lane reserves: its declared resources and its `@cpu` tokens; null when nothing. */
+/** What a lane reserves: its declared resources, its environment's unit (dev.17) and its `@cpu` tokens; null when nothing. */
 export function laneRequest(ctx: ResourceContext, lane: LaneDef): ResourceRequest | null {
   const cpu = laneCpu(lane);
-  return lane.resources.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), lane.resources, cpu);
+  const names = lane.environment === undefined ? lane.resources : [...lane.resources, lane.environment];
+  return names.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), names, cpu);
 }
 
 /**
@@ -718,16 +723,31 @@ export async function runLaneSeries(
         const cleaned = await cleanup(ctx, reserved, parent);
         return { kind: 'ended', end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'occupied', needsUser: occupancy.needsUser }, ran: null };
       }
+      // dev.17: the lane's environment, its unit reserved above: up when it is not, then its probe.
+      if (lane.environment !== undefined) {
+        const env = await useEnvironment(ctx, lane.environment, parent);
+        if (env.kind === 'unavailable') {
+          const cleaned = await cleanup(ctx, reserved, parent);
+          return {
+            kind: 'ended', ran: null,
+            end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'env-unavailable', environment: env.environment, detail: env.detail },
+          };
+        }
+      }
       held = run(ctx, reserved, parent);
     }
-    if (last.evidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, checkout);
-    const ran = await runLane(ctx, parent, lane, set, path, at, laneDir(root, lane, which), held?.resources ?? [], rt.sampleHost, identity, witnesses.get(lane.id) ?? null);
-    last.evidence = ran.evidence;
-    if (held !== null) {
-      const cleaned = await cleanup(ctx, held, parent);
-      if (cleaned.kind === 'cleanup-failed') return { kind: 'ended', end: { kind: 'cleanup-failed', failed: cleaned.failed }, ran };
+    try {
+      if (last.evidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, checkout);
+      const ran = await runLane(ctx, parent, lane, set, path, at, laneDir(root, lane, which), held?.resources ?? [], rt.sampleHost, identity, witnesses.get(lane.id) ?? null);
+      last.evidence = ran.evidence;
+      if (held !== null) {
+        const cleaned = await cleanup(ctx, held, parent);
+        if (cleaned.kind === 'cleanup-failed') return { kind: 'ended', end: { kind: 'cleanup-failed', failed: cleaned.failed }, ran };
+      }
+      return { kind: 'ran', ran };
+    } finally {
+      if (lane.environment !== undefined) releaseEnvironment(ctx.journal, lane.environment);
     }
-    return { kind: 'ran', ran };
   };
 
   for (const lane of lanes) {
@@ -1267,16 +1287,32 @@ export async function runJourneySeries(
         const cleaned = await cleanup(ctx, reserved, parent);
         return { kind: 'ended', end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'occupied', needsUser: occupancy.needsUser }, ran: null };
       }
+      // dev.17: a suite lane's environment (an arc lane names none). One that does not come up gives no verdict: the
+      // series is blocked, and its job retries on the no-verdict backoff.
+      if (lane.def.environment !== undefined) {
+        const env = await useEnvironment(ctx, lane.def.environment, parent);
+        if (env.kind === 'unavailable') {
+          const cleaned = await cleanup(ctx, reserved, parent);
+          return {
+            kind: 'ended', ran: null,
+            end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'blocked', lane: lane.def.id, detail: `environment ${env.environment}: ${env.detail}` },
+          };
+        }
+      }
       held = run(ctx, reserved, parent);
     }
-    if (lastEvidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), worktreeKey, parent, checkout);
-    const ran = await runOne(lane, held?.resources ?? []);
-    lastEvidence = ran.evidenceOp;
-    if (held !== null) {
-      const cleaned = await cleanup(ctx, held, parent);
-      if (cleaned.kind === 'cleanup-failed') return { kind: 'ended', end: { kind: 'cleanup-failed', failed: cleaned.failed }, ran };
+    try {
+      if (lastEvidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), worktreeKey, parent, checkout);
+      const ran = await runOne(lane, held?.resources ?? []);
+      lastEvidence = ran.evidenceOp;
+      if (held !== null) {
+        const cleaned = await cleanup(ctx, held, parent);
+        if (cleaned.kind === 'cleanup-failed') return { kind: 'ended', end: { kind: 'cleanup-failed', failed: cleaned.failed }, ran };
+      }
+      return { kind: 'ran', ran };
+    } finally {
+      if (lane.def.environment !== undefined) releaseEnvironment(ctx.journal, lane.def.environment);
     }
-    return { kind: 'ran', ran };
   };
 
   /** A run's own end without a verdict (cancelled, blocked), or null. */

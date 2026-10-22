@@ -53,6 +53,11 @@
 // section like a publication chain). Control commands keep applying meanwhile. Once every task and job has settled, `recoverReservations` cleans what a stage still holds, and the
 // run ends `stop`.
 //
+// Environments (dev.17, src/resources/environments.ts): before the loop, an environment an interrupted up or down left
+// unsettled is brought down (`settleEnvironments`). Each iteration, after control, every managed environment up, unused,
+// with no lane holding or waiting for its unit, and idle `idleMinutes` (at once under `pause --all` or a stop) is brought
+// down as a tracked job (`env-down:<name>`), so a stop waits for it. Every end (stop, complete) brings the rest down.
+//
 // The holistic layer (M3; only while the plan in force names a vision, A5). One holistic job runs at a time, in
 // this order of preference: in a corpus arc before its first admission, the pack review (`runPackReview`, M4a OR-Q16,
 // R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
@@ -127,7 +132,7 @@ import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, JUDGMENT_STAGES, type Parent, probeTargetKey } from '../core/events.ts';
 import { atomicJson, canonicalJson } from '../core/fsx.ts';
 import {
-  type ArcId, type CommandId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type UnitId, arcId, commandId, findingId,
+  type ArcId, type CommandId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type ResourceName, type Sha, type UnitId, arcId, commandId, findingId,
   invocationId, jobIdOf, jobIdOfKind, parseJobId, resourceName, unitId,
 } from '../core/ids.ts';
 import type { Containment, Journal, JournalView } from '../core/interfaces.ts';
@@ -171,6 +176,7 @@ import { at, executorIdentity, holisticInForce, record, start } from '../pipelin
 import { type Gate, type UnitResult, haltResult, runUnit, upcoming } from '../pipeline/unit.ts';
 import { snapshotPublishOp } from '../recover/ops.ts';
 import { recoverReservations } from '../recover/resource.ts';
+import { bringDown, downEnvironments, idleEnvironments, settleEnvironments } from '../resources/environments.ts';
 import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { Arbiter, FirstHolder } from './arbiter.ts';
@@ -1260,6 +1266,27 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The loop
 
+  // -------------------------------------------------------------------------------------------------
+  // Environments (dev.17, src/resources/environments.ts)
+
+  /** Whether a lane holds or waits for environment `name`'s unit: it is not idle then, whatever its clock says. */
+  const environmentBusy = (name: ResourceName): boolean => {
+    const entry = view().resources().get(name);
+    if (entry !== undefined && (entry.pending !== null || entry.status.state !== 'free')) return true;
+    return [...arbiter.waiting(), ...arbiter.waitingFirst()].some((w) => w.request.named.includes(name));
+  };
+
+  /** Brings down each managed environment idle long enough (at once under a pause of every unit or a stop), as a tracked job. */
+  const startEnvironmentDowns = (): void => {
+    const immediate = stopping !== null || view().control().pausedAll;
+    for (const name of idleEnvironments(x.stage, Date.now(), environmentBusy, immediate)) {
+      const key = `env-down:${name}`;
+      if (!jobs.has(key)) track(key, () => bringDown(x.stage, name, { type: 'arc' }));
+    }
+  };
+
+  // An environment an interrupted up or down left unsettled is brought down; one up resumes its idle clock.
+  await settleEnvironments(x.stage);
   // A published batch a crash cut short (recovery left its slot held) is finished first; a terminal snapshot the ref
   // lacks is published (G8).
   if (heldBatch(view()) !== null) await finishBatch(x.stage);
@@ -1284,14 +1311,16 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       if (stopping !== null) x.stop.abort('stop');
     }
     interrupt();
+    startEnvironmentDowns();
 
     if (stopping !== null) {
       // Stopping: nothing new starts; the halted units' items are raised (a unit's stop names its own), and the
-      // run ends once every task and job has settled.
+      // run ends once every task and job has settled, every environment down.
       raiseHalted();
       for (const task of tasks.values()) endTask(task);
       if (tasks.size === 0 && jobs.size === 0) {
         await recoverReservations(x.stage);
+        await downEnvironments(x.stage);
         const needsUser = stopping.unit === null ? null : raisedFor(view(), decidedParent(view(), stopping.unit));
         return { kind: 'stop', cause: stopping.cause, needsUser };
       }
@@ -1313,7 +1342,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       startFlow();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {
         const end = await ended(blocking);
-        if (end !== null) return end;
+        if (end !== null) {
+          await downEnvironments(x.stage);
+          return end;
+        }
       }
       // 5. Chains a recovered park returned a unit to, waiting tasks admitted, then tasks for ready units (each
       //    reaches its first gate at once).

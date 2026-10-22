@@ -178,6 +178,8 @@ const ROWS: readonly Row[] = [
   // A fast suite lane red on the unit's diff base alone too: the base's red, uncharged, on to the gate.
   ['lanes', 'base-red', {}, 'gate@med', 'advance', {}],
   ['lanes', 'base-red', { promotion: true }, 'gate@escalation', 'advance', {}],
+  // dev.17: a lane's environment did not come up: a retryable park on it, uncharged, never red.
+  ['lanes', 'env-unavailable', {}, 'park:env-unavailable', 'park', {}],
   ['lanes', 'witness-lane-missing', {}, 'park:witness-lane-missing', 'park', {}],
   // Plan defects (2026-10-16): a missing witness no build could fix parks uncharged, even at the bound's edge; salvage's
   // repeated reverts hold the unit for the root agent.
@@ -233,6 +235,7 @@ const ROWS: readonly Row[] = [
   ['lanes', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   ['gate', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   ['candidate', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['candidate', 'env-unavailable', {}, 'park:env-unavailable', 'park', {}],
   // ff
   ['ff', 'published', {}, 'snapshot', 'advance', {}],
   ['ff', 'cas-stale', {}, 'candidate', 'advance', {}],
@@ -274,6 +277,7 @@ describe('transitions', () => {
       'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',
       'plan-check context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
+      'lanes env-unavailable': 'retryable', 'candidate env-unavailable': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce cleanup-failed': 'retryable',
       ...Object.fromEntries(['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate'].map((st) => [`${st} executor-fault`, 'env'])),
     };
