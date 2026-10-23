@@ -205,6 +205,8 @@ const ROWS: readonly Row[] = [
   ['gate', 'interrupted', {}, 'hold', 'hold', {}],
   // Run 11 round 3: no green verification checkout of the head: the lanes run again, uncharged.
   ['gate', 'unverified', {}, 'lanes', 'advance', {}],
+  // dev.17 (proportional review): nothing changed since the approval and nothing it bound moved: on to a new candidate, uncharged.
+  ['gate', 'delta-empty', {}, 'candidate', 'advance', {}],
   // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park.
   ['gate', 'read-denied', {}, 'gate@med', 'retry', { 'retries.gate': 1 }],
   ['gate', 'read-denied', { counters: { 'retries.gate': 1 } }, 'park:read-denied', 'park', {}],
