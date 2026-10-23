@@ -721,7 +721,8 @@ test('upgrade.reopen-mid-plan-check: a unit the previous release parked, re-open
   }
   assertFinished(f);
   const u = f.view.unit(unitId('page-id'));
-  assert.deepEqual([u.reopened?.specRev, u.spec?.rev], [2, 2], 'page-id merged on the spec rev the previous release re-opened it on');
+  // Re-opened on rev 2; HEAD's approving plan-check lands its design record as the spec's next revision (dev.17, the design pass).
+  assert.deepEqual([u.reopened?.specRev, u.spec?.rev], [2, 3], 'page-id re-opened on the previous release\'s rev 2, merged on its designed rev 3');
   await assertAcceptsApply(p, f);
 });
 
