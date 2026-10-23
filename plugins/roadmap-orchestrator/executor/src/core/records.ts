@@ -911,6 +911,11 @@ export type LaneDef = Readonly<{
    * `build`-cadence lane (the implementer runs it) never does (`estate-lane-for-implementer`).
    */
   environment?: ResourceName;
+  /**
+   * dev.17 (proportional review): the lane reads comments (a linter, a doc checker, a doctest runner), so a build's verified
+   * docs-only change never carries its earlier pass over: it runs again (src/pipeline/docsonly.ts). Absent: it does not.
+   */
+  readsComments?: true;
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -957,6 +962,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   const testArgv = f.optional('testArgv', argv);
   const stoch = f.optional('stochastic', stochastic);
   const environment = f.optional('environment', resource);
+  const readsComments = f.optional('readsComments', literal(true));
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
   if (testArgv !== undefined && testArgv.filter((a) => a === TEST_FILES_TOKEN).length !== 1) {
@@ -972,6 +978,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   return {
     ...out, ...(cpu === undefined ? {} : { cpu }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
     ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
+    ...(readsComments === undefined ? {} : { readsComments }),
   };
 }
 /** A lane declared as `kind` (see `laneFields`). */

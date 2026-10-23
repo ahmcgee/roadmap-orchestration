@@ -119,7 +119,10 @@ const KEY: AnswerKey = {
 };
 const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/rough-edge.ts\n+x\n<not_inlined>\npackages/fern/src/early-index.ts\npackages/fern/src/late-gate.ts\n</not_inlined>\n';
 const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
-const CITE: GateOutput = { decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null }], directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null };
+const CITE: GateOutput = {
+  decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null }],
+  directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null, rulings: [],
+};
 
 const tool = (id: string, name: string, input: Record<string, unknown>, result: string, parent: string | null = null): readonly Record<string, unknown>[] => [
   { type: 'assistant', parent_tool_use_id: parent, message: { id: `m-${id}`, content: [{ type: 'tool_use', id, name, input }] } },
@@ -326,9 +329,9 @@ test('roles.checkout-tree-act: checkoutTree commits exactly the given commit\'s 
   assert.equal(existsSync(join(repo, 'a.txt')), false);
 });
 
-test('roles.triggers: gate paths trigger the gate eval; shared paths (routing) the walkthrough and polish-judge evals too; unrelated paths none', () => {
+test('roles.triggers: gate paths trigger the gate eval; shared paths (routing) the walkthrough, polish-judge and verifier evals too; unrelated paths none', () => {
   assert.deepEqual(triggeredRoles(['src/prompts/gate/claude-opus-5-5.ts']), ['gate']);
   assert.deepEqual(triggeredRoles(['src/git/boundeddiff.ts', 'README.md']), ['gate']);
-  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge']);
+  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge', 'verifier']);
   assert.deepEqual(triggeredRoles(['src/holistic/audit.ts', 'test/gate.test.ts']), []);
 });

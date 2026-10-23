@@ -41,3 +41,15 @@ export const filePin: Read<FilePin> = object((f) => ({
 
 export const specPin: Read<SpecPin> = tagged<SpecPin['type'], SpecPin>('type', { requirement: requirementPin, contract: contractPin });
 export const pin: Read<Pin> = tagged<Pin['type'], Pin>('type', { requirement: requirementPin, contract: contractPin, 'vision-clause': visionClausePin, file: filePin });
+
+/**
+ * The pins of `after` whose target `before` pinned at another revision or not at all, and the pins of `before` whose target
+ * `after` dropped: what moved between two snapshots of the same links (dev.17, the delta re-gate: src/core/review.ts
+ * `movedTargets`).
+ */
+export function movedPins(before: readonly Pin[], after: readonly Pin[]): readonly Pin[] {
+  const key = (p: Pin): string => `${pinTarget(p)}@${p.type === 'requirement' ? p.rev : p.type === 'vision-clause' ? p.visionRev : p.blob}`;
+  const was = new Map(before.map((p) => [pinTarget(p), key(p)]));
+  const now = new Set(after.map(pinTarget));
+  return [...after.filter((p) => was.get(pinTarget(p)) !== key(p)), ...before.filter((p) => !now.has(pinTarget(p)))];
+}

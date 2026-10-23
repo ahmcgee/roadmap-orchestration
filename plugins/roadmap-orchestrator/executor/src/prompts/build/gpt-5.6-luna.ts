@@ -52,7 +52,7 @@ Make every acceptance clause in the spec hold, with every fast lane passing, and
 - Tests: never weaken, skip or delete a test to get green; never write a test asserting behaviour you believe is wrong; no hard-coded answers shaped to the tests.
 - Git: do not push, rebase, reset --hard, checkout --, switch or delete branches, or amend and rewrite commits. Never revert changes you did not make. Committing is optional; the executor commits in-scope work after you exit. If you commit, commit on the current branch.
 - Host: sibling units and the orchestrator run here. Do not run estate lanes or start the clusters, containers or services they use. Work only in the worktree and the evidence directory.
-- ${DECISIONS_FILE}: a JSON object {"decisions": [{"id": "...", "text": "..."}]} at the root of the evidence directory, rewritten complete each time. id starts with a letter, uses letters, digits, _ . or -, and is new to the spec and the file. text states the choice and the alternative not taken.
+- ${DECISIONS_FILE}: a JSON object {"decisions": [{"id": "...", "text": "..."}]} at the root of the evidence directory, rewritten complete each time. id starts with a letter, uses letters, digits, _ . or -, and is new to the spec and the file. text states the choice and the alternative not taken. To dispute a gate finding (R-n) a fix round names instead of fixing it, add {"finding": "R-n", "reason": "..."} to a "disputes" list in the same object, with your evidence, and leave that code; the next gate rules once, final.
 
 # Tools
 Use the shell with an explicit working directory for every command, rg for search, and apply_patch for edits. Read independent files in parallel. Run lanes with the exact commands listed.
@@ -65,7 +65,7 @@ Use the shell with an explicit working directory for every command, rg for searc
 - A witness check that still reports a missing or failing id is a blocker.
 
 # Output
-Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete; empty when complete. final: true. Decisions go in ${DECISIONS_FILE}, not in this object.`;
+Your final message is only the JSON object the output schema defines. summary: two or three plain sentences on what changed and why. changedPaths: the paths you changed or created, from git status and git log. lanesRun: each fast lane run, by its id, with its exit code. experiments: every other command you ran to check your work (a single test, a witness check, a script), each with a short name, its argv and its exit code; never a fast lane. blockers: what keeps the unit from being complete; empty when complete. docsOnlySince: the certified tree's SHA from the Environment section when everything you changed since it is comments or documentation, else null; the executor checks it and reuses that tree's lane results. final: true. Decisions go in ${DECISIONS_FILE}, not in this object.`;
 
 function fixRound(i: BuildInputs): string {
   if (i.fixRound === null) return '';
@@ -119,7 +119,7 @@ export const PROMPT: PromptModule<'build'> = {
   schema: BUILD_SCHEMA,
   fields: [
     'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
-    'milestones', 'browser',
+    'milestones', 'browser', 'certifiedAt',
   ],
   render: (i) => `# Spec (unit ${i.spec.unit}, revision ${i.spec.rev})
 ${i.spec.markdown}
@@ -139,6 +139,7 @@ ${i.planCheckNotes === '' ? '(none)' : i.planCheckNotes}
 # Environment
 - Worktree: ${i.worktree}
 - Evidence directory: ${i.evidenceDir}
+- Certified tree: ${i.certifiedAt ?? '(none yet: docsOnlySince is null)'}
 - Scope patterns:
 ${bullets(i.scope, '(empty)')}
 

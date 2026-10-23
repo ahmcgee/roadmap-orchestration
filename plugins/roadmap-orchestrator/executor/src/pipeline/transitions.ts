@@ -289,6 +289,9 @@ export const TABLE: Table = {
     // 2026-10-16: as at plan-check (the dev.11 consumer arc's 2.37 MB unit diff).
     'context-exceeded': park('context-exceeded', 'env'),
     'executor-fault': fault,
+    // dev.17 (proportional review): nothing changed since the unit's approval and nothing it bound moved: code approved again
+    // without a call (src/pipeline/review.ts `gateDelta`), on to a new candidate, uncharged.
+    'delta-empty': go(at('candidate')),
   },
   candidate: {
     green: go(at('ff')),

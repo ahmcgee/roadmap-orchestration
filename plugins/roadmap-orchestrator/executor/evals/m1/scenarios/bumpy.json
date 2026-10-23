@@ -88,7 +88,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -132,7 +133,10 @@
             "text": "pageId('!!!', 3) returns '-3'.",
             "contractRef": ".roadmap/contracts/one.md",
             "experiments": [],
-            "debt": null
+            "debt": null,
+            "defect": "requirement-unmet",
+            "reraises": null,
+            "hunk": null
           }
         ],
         "directives": [
@@ -143,7 +147,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -174,7 +179,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       },
       "stdinContains": [
         "Deliver B2: when slugify(title) is empty, pageId must use 'page' as the slug part (pageId('!!!', 3) is 'page-3'), and test it."

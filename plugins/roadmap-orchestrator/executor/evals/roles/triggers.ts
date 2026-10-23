@@ -11,6 +11,9 @@
 //   (src/walk/bringup.ts), the polish revision that admits the units it judges (src/walk/polish.ts), its MCP config, the
 //   prompt inputs and schemas, routing, the acting-judge argv and reader, and its eval (which runs on the walkthrough
 //   eval's product, so that product triggers it too).
+// - Verifier (dev.17, the docs-only claim): its prompt modules, the docs-only check that reads the diff, calls it and
+//   accepts or refuses (src/pipeline/docsonly.ts), the prompt inputs and schemas, routing, the judgment argv and the
+//   reader of its session, and its eval.
 // The shared harness (evals/roles/*.ts) triggers every role.
 //
 //   node evals/roles/triggers.ts [<base ref>]   prints the triggered roles, one per line (base: origin/main), from
@@ -18,7 +21,7 @@
 import { spawnSync } from 'node:child_process';
 import { matchesGlob } from 'node:path';
 
-export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge';
+export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge' | 'verifier';
 
 const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/**', 'src/backends/argv.ts', 'src/backends/claude.ts', 'evals/roles/*.ts'] as const;
 /** The polish judge's modules under src/walk/: they trigger it alone. */
@@ -31,6 +34,7 @@ export const TRIGGERS: Readonly<Record<EvalRole, readonly string[]>> = {
     'src/prompts/polishJudge/**', ...POLISH_MODULES, 'src/walk/bringup.ts', 'src/backends/mcp.ts', ...SHARED,
     'evals/roles/polish/**', 'evals/roles/walkthrough/**',
   ],
+  verifier: ['src/prompts/verifier/**', 'src/pipeline/docsonly.ts', ...SHARED, 'evals/roles/verifier/**'],
 };
 
 /** Paths a role's globs match that do not trigger it. */

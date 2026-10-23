@@ -27,7 +27,7 @@ const LINGER_MS = 120_000;
 const INTERIM_WAIT_MS = REPORT_GRACE_MS + 5_000;
 const T = { timeout: REPORT_GRACE_MS + 60_000 };
 
-const report = (summary: string, final: boolean) => ({ summary, changedPaths: [], lanesRun: [], blockers: [], experiments: [], final });
+const report = (summary: string, final: boolean) => ({ summary, changedPaths: [], lanesRun: [], blockers: [], experiments: [], docsOnlySince: null, final });
 
 type Run = Readonly<{ exit: ExitFile; result: BackendResult; wallMs: number }>;
 

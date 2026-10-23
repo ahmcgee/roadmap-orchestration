@@ -16,9 +16,11 @@ import {
   type AmendmentId, type ArcId, type ClaudeSessionId, type CommandId, type DivergenceId, type EdgeId, type FindingId, type InvocationId, type JobId, type JobKind, type NeedsUserId, type ObligationId,
   type MilestoneId, type OpId, type OpKey, type PlanRev, type PolishId, type ResourceInstance, type ResourceUnit, type RoutingRev, type Sha, type Sha256Hex, type SpecRev, type UnitId,
   JOB_KINDS, amendmentIdOf, compareResourceUnits, divergenceIdOf, findingIdOf, jobId, parseInvocationId, parseJobId, parseOpId, polishIdOf,
+  type ReviewFindingId, reviewFindingIdOf,
 } from './ids.ts';
 import type { ControlState, FlowFactAt, JournalView, NeedsUserAckState, NeedsUserState, PropagationFactAt, WalkFactAt, FlakeAt } from './interfaces.ts';
 import { causeKey } from './stale.ts';
+import type { ApprovalBlobs, FindingsLedgerEntry } from './review.ts';
 import { canonicalJson } from './json.ts';
 import { type SessionCharge, addCharged } from './usage.ts';
 import { type ApprovalFingerprint, type Bounds, type ContainmentMode, type DispatchRecord, type ResidueKey, type Stage, DEFAULT_BOUNDS, boundsOfRecord } from './records.ts';
@@ -199,6 +201,26 @@ export type UnitState = Readonly<{
    * classifier resolves (src/input/classify.ts `reentryRow`). Derived from the log alone.
    */
   failures: readonly FailedOutcome[];
+}>;
+
+/**
+ * A unit's latest approval as the review fold keeps it (never cleared by a park or re-entry): its blobs, null on a dev.16
+ * one, and its log position (`seq`: the stale sets recorded after it changed what it bound, src/pipeline/review.ts).
+ */
+export type ReviewApproval = Readonly<{ seq: number; attempt: number; fingerprint: ApprovalFingerprint; blobs: ApprovalBlobs | null }>;
+type DocsOnlyFact = Extract<Fact, Readonly<{ kind: 'docs-only' }>>;
+
+/** dev.17 proportional review (SCHEMAS.md "Proportional review"): what `JournalView.review()` folds. */
+export type ReviewFold = Readonly<{
+  /** Every ledger finding in id order, at its current outcome. */
+  ledger: readonly FindingsLedgerEntry[];
+  nextFindingId: ReviewFindingId;
+  /** The findings gate attempt `attempt` of `unit` minted, by their place in its answer; null before its `review-ledger`. */
+  ledgered: (unit: UnitId, attempt: number) => readonly Readonly<{ index: number; id: ReviewFindingId }>[] | null;
+  approval: (unit: UnitId) => ReviewApproval | null;
+  /** The unit's latest lanes attempt that ended green (its salvage SHA is that attempt's spec series' commit); null before one. */
+  greenLanes: (unit: UnitId) => number | null;
+  docsOnly: readonly (DocsOnlyFact & Readonly<{ seq: number }>)[];
 }>;
 
 /** One failure outcome of a unit (`UnitState.failures`): the fact, its seq and the park it recorded. */
@@ -626,6 +648,12 @@ export class Fold implements JournalView {
   readonly #certificates: CertificateState[] = [];
   readonly #smokeRuns: SmokeRunState[] = [];
   readonly #corroborations: CorroborationState[] = [];
+  // dev.17 proportional review (`review()`)
+  readonly #ledger = new Map<ReviewFindingId, FindingsLedgerEntry>();
+  readonly #ledgered = new Map<string, readonly Readonly<{ index: number; id: ReviewFindingId }>[]>();
+  readonly #approvals = new Map<UnitId, ReviewApproval>();
+  readonly #greenLanes = new Map<UnitId, number>();
+  readonly #docsOnly: (DocsOnlyFact & Seq)[] = [];
 
   constructor(arc: ArcId) {
     this.arc = arc;
@@ -905,6 +933,7 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
+        if (f.stage === 'lanes' && f.outcome === 'green') this.#greenLanes.set(f.unit, f.attempt);
         // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
         // ends where it parks, stops or retires the unit, or where its gate advances it.
         const entry = u.state.entry;
@@ -977,8 +1006,32 @@ export class Fold implements JournalView {
       case 'approval': {
         const u = this.#unit(f.unit, 'gate');
         u.state = { ...u.state, approval: { attempt: f.attempt, fingerprint: f.fingerprint } };
+        this.#approvals.set(f.unit, { seq: at.seq, attempt: f.attempt, fingerprint: f.fingerprint, blobs: f.blobs ?? null });
         return;
       }
+      // dev.17 proportional review: minted ids follow on, one ledger fact per gate attempt, and only an open entry of the unit settles.
+      case 'review-ledger': {
+        const key = `${f.unit} gate#${f.attempt}`;
+        if (this.#ledgered.has(key)) fail(`a second review-ledger for ${key}`);
+        for (const s of f.settled) {
+          const e = this.#ledger.get(s.id);
+          if (e === undefined || e.unit !== f.unit) fail(`review-ledger ${key} settles ${s.id}, which is no ledger finding of ${f.unit}`);
+          else if (e.outcome !== null) fail(`review-ledger ${key} settles ${s.id}, already ${e.outcome}`);
+          else this.#ledger.set(s.id, { ...e, outcome: s.outcome });
+        }
+        for (const m of f.minted) {
+          const next = reviewFindingIdOf(this.#ledger.size + 1);
+          if (m.entry.id !== next) fail(`review-ledger ${key} mints ${m.entry.id}; the next ledger id is ${next}`);
+          this.#ledger.set(m.entry.id, m.entry);
+        }
+        this.#ledgered.set(key, f.minted.map((m) => ({ index: m.index, id: m.entry.id })));
+        return;
+      }
+      case 'docs-only':
+        this.#docsOnly.push({ ...f, seq: at.seq });
+        return;
+      case 'docs-only-miss':
+        return;
       case 'backend-park': {
         const cur = this.#backendParks.get(f.backend);
         const cls = cur?.class === 'usage-limit' ? 'usage-limit' : f.class;
@@ -1972,6 +2025,18 @@ export class Fold implements JournalView {
       certificates: this.#certificates,
       smokeRuns: this.#smokeRuns,
       corroborations: this.#corroborations,
+    };
+  }
+
+  /** dev.17 proportional review: the findings ledger, the latest approval of each unit, and the docs-only checks. */
+  review(): ReviewFold {
+    return {
+      ledger: [...this.#ledger.values()],
+      nextFindingId: reviewFindingIdOf(this.#ledger.size + 1),
+      ledgered: (unit, attempt) => this.#ledgered.get(`${unit} gate#${attempt}`) ?? null,
+      approval: (unit) => this.#approvals.get(unit) ?? null,
+      greenLanes: (unit) => this.#greenLanes.get(unit) ?? null,
+      docsOnly: this.#docsOnly,
     };
   }
 

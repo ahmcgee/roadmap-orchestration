@@ -14,7 +14,7 @@ import type {
   CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
   RunnerFileName,
 } from './records.ts';
-import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, UnitState } from './state.ts';
+import type { BackendParkState, EdgeResolvedState, HolisticFold, ProbeState, ResidueState, ResourceEntry, ReviewFold, UnitState } from './state.ts';
 import type { Backend } from '../routing/types.ts';
 import type { AbsPath, IsoTime } from './values.ts';
 
@@ -124,6 +124,8 @@ export interface JournalView {
   lastExecutorStarted(): number;
   /** M3: the holistic layer's fold (findings, audits, checkpoints, divergences, completion, …). */
   holistic(): HolisticFold;
+  /** dev.17 proportional review: the findings ledger, approvals with their blobs, docs-only checks. */
+  review(): ReviewFold;
   /** M4b: every flow fact, in log order, with its seq and time (src/flow/apply.ts derives the decisions' phases from them). */
   flowFacts(): readonly FlowFactAt[];
   /** dev.13: every walk fact (walks, polish, tweaks, milestone passes, the demo), in log order, with its seq and time. */

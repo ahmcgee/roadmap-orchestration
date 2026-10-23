@@ -504,7 +504,7 @@ export function laneRevMatches(recorded: LaneRev, lane: LaneDef | ArcLaneDef): b
   if (evidenceExcludes.length === 0 && recorded === revOf(minimal)) return minimalLaneRev(lane.id);
   const { cadence, ...rest } = normalisedLane(lane);
   const tier = legacyTierOf(cadence);
-  if (tier === null || rest.systems !== undefined || rest.testArgv !== undefined || rest.stochastic !== undefined) return false;
+  if (tier === null || rest.systems !== undefined || rest.testArgv !== undefined || rest.stochastic !== undefined || rest.readsComments !== undefined) return false;
   const { evidenceExcludes: excludes, ...restMinimal } = rest;
   const forms = [{ ...rest, tier }, ...(excludes.length === 0 ? [{ ...restMinimal, tier }] : [])];
   return forms.some((f) => recorded === revOf(f)) && tierLaneRev(lane.id);

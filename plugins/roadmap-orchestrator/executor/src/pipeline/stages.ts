@@ -157,8 +157,10 @@ import {
 import { invocationDir, quiescent } from './invoke.ts';
 import {
   type LaneRecord, type LaneRuntime, type Series, type VerificationTree, builderSuiteLanes, dirtyPaths, dirtySnapshot, laneOrder, laneRuntime, presentCheckouts, removeCheckout,
-  LANE_DEADLINE_MS, removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
+  LANE_DEADLINE_MS, type Reusable, removeVerificationTree, runLaneSeries, seriesEntry, specSeriesRoot, stageSuiteLanes,
 } from './lanes.ts';
+import { certifiedTree, docsOnlyCarry } from './docsonly.ts';
+import type { GateReview } from '../core/review.ts';
 import { mutationSmoke, survivingObligations } from './smoke.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { checksApply, publishWitnessLaneFiles, requiredAt, witnessPresence } from './witnesscheck.ts';
@@ -283,7 +285,7 @@ export async function releaseJudgment(ctx: StageContext, parent: StageParent): P
  */
 export function writeJudgmentInputs(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: 'plan-check' | 'gate' }>,
-  inputs: Readonly<{ tip: Sha; head: Sha | null; specRev: SpecRev; specSha256: Sha256Hex; routingRev: RoutingRev; fingerprint?: ApprovalFingerprint; diffShown?: DiffShown; largeDiff?: GateLargeDiff | null }>,
+  inputs: Readonly<{ tip: Sha; head: Sha | null; specRev: SpecRev; specSha256: Sha256Hex; routingRev: RoutingRev; fingerprint?: ApprovalFingerprint; diffShown?: DiffShown; largeDiff?: GateLargeDiff | null; review?: GateReview }>,
 ): void {
   const applied = ctx.journal.view.planApplied();
   if (applied === null) throw new Error(`${parent.unit} ${parent.stage}#${parent.attempt}: a judgment before any plan revision`);
@@ -1252,7 +1254,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, ...lib,
     planCheckNotes: planCheckNotes(ctx, unit.id),
     fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, scope: effectiveScope(pinned),
-    fixRound, witnessChecks, milestones, browser: browser?.input ?? null,
+    fixRound, witnessChecks, milestones, browser: browser?.input ?? null, certifiedAt: certifiedTree(ctx, unit.id),
   });
   const callFor = (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
@@ -1629,13 +1631,17 @@ function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdi
   }
 }
 
-/** `lanes` at `at` in their own checkout, removed afterwards (citing the series' evidence). `verify`: a deflake unit's verification runs. */
+/**
+ * `lanes` at `at` in their own checkout, removed afterwards (citing the series' evidence). `verify`: a deflake unit's
+ * verification runs; `carry`: passes a docs-only change carries over.
+ */
 async function fastSuiteSeries(
-  ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime, verify: ReadonlyMap<LaneId, number> = new Map(),
+  ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime,
+  verify: ReadonlyMap<LaneId, number> = new Map(), carry: ReadonlyMap<LaneId, Reusable> = new Map(),
 ): Promise<Series> {
   const { worktreeRoot, arc } = ctx.plan();
   const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
-  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify);
+  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify, carry);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
@@ -1673,15 +1679,20 @@ export function forcedLanes(view: JournalView, spec: SpecM1): ReadonlySet<LaneId
   return new Set([...specForces(spec), ...batch]);
 }
 
-/** The fast suite after a green spec series: its verdict, and its series at the salvage SHA (null when it has no lane). */
-async function fastSuite(
-  ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime,
-): Promise<Readonly<{ verdict: LanesVerdict; series: Series | null }>> {
+/** The lanes of a lanes attempt's fast suite at `salvaged`: the regenerate checks the unit's diff calls for, then the stage's suite lanes. */
+function fastSuiteLanes(ctx: StageContext, spec: SpecM1, salvaged: Sha): readonly LaneDef[] {
   // dev.12: the regenerate checks of the derived entries the unit's diff touches go first (src/input/derived.ts).
   const regenerate = unitRegenerateLanes(ctx.plan(), unitDiffPaths(ctx.repo, integrationTip(ctx), salvaged));
-  const lanes = [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
+  return [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
+}
+
+/** The fast suite after a green spec series: its verdict, and its series at the salvage SHA (null when it has no lane). */
+async function fastSuite(
+  ctx: StageContext, unit: PlanUnit, spec: SpecM1, parent: StageParent, salvaged: Sha, rt: LaneRuntime, carry: ReadonlyMap<LaneId, Reusable>,
+): Promise<Readonly<{ verdict: LanesVerdict; series: Series | null }>> {
+  const lanes = fastSuiteLanes(ctx, spec, salvaged);
   if (lanes.length === 0) return { verdict: { kind: 'green' }, series: null };
-  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt, verifyRunsOf(unit, approvedVerification(ctx, unit.id)));
+  const series = await fastSuiteSeries(ctx, parent, lanes, salvaged, 'suite', rt, verifyRunsOf(unit, approvedVerification(ctx, unit.id)), carry);
   const fault = suiteFault(ctx, unit.id, series);
   if (fault !== null) return { verdict: fault, series };
   const { end, dirty } = series;
@@ -1717,6 +1728,8 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (reverted !== null) {
     return { ...record(ctx, parent, 'scope-growth', reverted.needsUser, NO_PARK_FACTS, undefined, { kind: 'scope-growth', proposals: [reverted.proposal] }), at: salvaged, ledger: [], verification: null, fix: null };
   }
+  // dev.17 (proportional review): a build's docs-only claim, verified before any lane runs (src/pipeline/docsonly.ts).
+  const carry = await docsOnlyCarry(ctx, unit, parent, salvaged, [...order, ...fastSuiteLanes(ctx, spec, salvaged)]);
   const entry = seriesEntry(ctx, order);
   const entered = await enter(ctx, stageHolder(parent), entry);
   if (isCancelled(entered)) return entered;
@@ -1724,7 +1737,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   for (const created of presentCheckouts(ctx.journal.view, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const rt = laneRuntime(ctx, unit.id);
-  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null, new Map(), verifyRunsOf(unit, approvedVerification(ctx, unit.id)));
+  const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null, new Map(), verifyRunsOf(unit, approvedVerification(ctx, unit.id)), carry);
   const { end } = series;
   let verdict: LanesVerdict = end.kind === 'green' ? { kind: series.dirty.length > 0 ? 'not-certified' : 'green' }
     : end.kind === 'occupied' ? { kind: 'occupied', needsUser: end.needsUser }
@@ -1741,7 +1754,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     if (hit !== null) verdict = { kind: 'known-defect', detail: { kind: 'known-defect', id: hit.id, match: hit.match } };
   }
   // The fast suite lanes (the 2026-10-15 batch): only after a green certified spec series.
-  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt) : null;
+  const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, carry) : null;
   if (suite !== null) verdict = suite.verdict;
   // D1, D2 (corpus arcs): only after a green certified spec series and a fast suite that passed or was the base's red.
   if ((verdict.kind === 'green' || verdict.kind === 'base-red') && checksApply(ctx)) {

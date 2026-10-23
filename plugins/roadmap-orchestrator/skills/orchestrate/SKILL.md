@@ -542,6 +542,23 @@ the proposal: `scope accept` re-opens it at plan-check and its builder is told t
 `scope reject` lets the lanes run. A gate that escalates
 over one comes to you as a park: grow the scope then by `apply --ruling` with the spec's next rev, or re-enter.
 
+## Proportional review
+
+The gate blocks only on a defect it names (`incorrect-behaviour`, `contract-violation`, `security`,
+`requirement-unmet`, `test-inadequate`, `data-loss`); a finding about comments or docs rides along and never costs a
+fix round. Code keeps the gate proportional, and none of it needs you:
+
+- Every gate finding enters the arc's findings ledger (`R-n`). A settled finding (fixed, released, banked, or a
+  dispute ruled) is never raised to block again unless its file changed. The builder may dispute a finding in
+  decisions.json instead of fixing it; the next gate rules once, and the ruling is final.
+- A re-gate after an approval (a moved contract, a candidate fix round) reviews only what changed since the approval
+  and what names a moved contract or requirement; a blocking finding on an unchanged file is recorded as a note.
+  Nothing changed and nothing moved: the gate is skipped (`gate:delta-empty`), no call.
+- A fix that changes only comments and docs says so (`docsOnlySince`); code checks the diff, a cheap verifier seat
+  reads what code cannot clear, and the lanes' earlier passes carry over (a `docs-only` fact; refused, the lanes just
+  run). A later candidate red on a carried lane is recorded as calibration (`docs-only-miss`): tell the owner if one
+  appears.
+
 ## Handling parks
 
 Read the item's `evidence` first: the deciding call's `result.json`, its `stdout`, the spec, the lane evidence.
@@ -699,6 +716,8 @@ rejected. An edit you never apply has no effect, even after a restart.
   element `{files}`: when only leaf test files changed since its last clean pass, only those run. A lane that is
   statistically noisy by nature declares `stochastic: {runs, minPasses}` (k of n); it is never treated as flaky. What a
   deflake unit's verification may cost is `limits.verification` (`reference.md`): 30 lane-minutes per lane by default.
+  A lane that reads comments (a linter, a doc checker, a doctest runner) declares `readsComments: true`: a fix that
+  changes only comments and docs carries every other lane's pass over, never that lane's (see "Proportional review").
   `start`, `apply` and `phase0 check` refuse a lane naming a system the map lacks. A map edit reaches a running arc
   through the next `apply` after a restart (`roadmap start`, as for any config edit).
 - Every arc lane in the obligations file declares `testPaths`, every test path it runs; `start` refuses a fresh arc

@@ -8,6 +8,7 @@ import {
   type Sha, visionClauseId, invocationId, opIdOf, witnessItemId, arcId, givenId, proposalId, stationId, journeyId, milestoneId, polishId, serveName,
 } from '../src/core/ids.ts';
 import { isoTime } from '../src/core/values.ts';
+import { reviewFindingId } from '../src/core/ids.ts';
 import { failureRef } from '../src/core/records.ts';
 import {
   DOC_RELATIONS, LENS_KINDS, OBLIGATION_DISPOSITIONS, type ObligationDef, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA,
@@ -28,7 +29,8 @@ import { arcStack, resolveRouting, seatsInForce } from '../src/routing/layers.ts
 import { FRESH_ROLES, MODEL_IDS, PROFILES, ROLES, type Role, WALK_ROLES, atSeat } from '../src/routing/types.ts';
 
 /** The judging roles with a written Opus module and derived Sonnet and Haiku rows: the read-only ones and the gate (dev.13, an acting judge). */
-const JUDGING = [...FRESH_ROLES, 'gate'] as const;
+/** The judgment roles written as Opus modules; the verifier (dev.17) has a Haiku module only. */
+const JUDGING = [...FRESH_ROLES.filter((r) => r !== 'verifier'), 'gate'] as const;
 
 // Two complete input sets per role that differ in every field, so swapping one field shows whether a
 // module's rendering depends on it.
@@ -224,14 +226,14 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
     {
       spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       planCheckNotes: '', fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], milestones: null, browser: null,
+      scope: [repoPattern('src/a/**')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null,
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       planCheckNotes: 'NOTES-B', fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       scope: [repoPattern('src/b/**')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
-      milestones: milestonesSample(), browser: browserSample(),
+      milestones: milestonesSample(), browser: browserSample(), certifiedAt: SHA_B,
     },
   ],
   gate: [
@@ -241,7 +243,7 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
       evidence: [absPath('/run/ev/a')], scope: { patterns: [repoPattern('src/a/**')], growth: [], rejected: [] }, priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
-      escalation: null, largeDiff: null, milestones: null,
+      escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null },
     },
     {
       spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], rulings: [ruling('C-2', 'RULE-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
@@ -253,7 +255,10 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
         reused: { at: SHA_A, inv: invocationId(opIdOf('arc-1/4'), 1) } }],
       evidence: [absPath('/run/ev/b')], scope: { patterns: [repoPattern('src/b/**')], growth: [repoPath('README.md')], rejected: [repoPath('test/b/REVERTED-B.test.ts')] },
       priorRound: {
-        directives: ['DIRECTIVE-B'], findings: [{ severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null }],
+        directives: ['DIRECTIVE-B'], findings: [{
+          severity: 'blocking', path: 'src/b/x.ts', text: 'FINDING-B', contractRef: null, experiments: [{ command: 'node EXPERIMENT-B.mjs', output: 'OUTPUT-B' }], debt: null,
+          defect: 'incorrect-behaviour', reraises: null, hunk: null,
+        }],
         premises: [premise('PREMISE-B', 'src/b/x.ts')], fixPaths: [repoPath('src/b/x.ts')], changedPremiseFiles: ['src/b/x.ts'],
       },
       checks: {
@@ -266,6 +271,11 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
       },
       escalation: { kind: 'risk-trigger' },
       largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') }, milestones: milestonesSample(),
+      review: {
+        ledger: [{ id: reviewFindingId('R-1'), path: repoPath('src/b/x.ts'), outcome: null, anchorChanged: true, text: 'LEDGER-B' }],
+        disputes: [{ finding: reviewFindingId('R-1'), reason: 'DISPUTE-B', text: 'LEDGER-B' }],
+        delta: { approved: { attempt: 2, head: SHA_A }, review: [repoPath('src/b/x.ts')], unchanged: [repoPath('src/b/UNCHANGED-B.ts')], moved: ['docs/b.md'] },
+      },
     },
   ],
   lens: [
@@ -331,6 +341,10 @@ const SAMPLES: { readonly [R in Role]: readonly [RoleInputs[R], RoleInputs[R]] }
   flow: [flowSample('A'), flowSample('B')],
   walkthrough: [walkSample('A'), walkSample('B')],
   polishJudge: [polishSample('A'), polishSample('B')],
+  verifier: [
+    { unit: unitId('u-one'), since: SHA_A, at: SHA_B, hunks: [{ id: 'h1', path: repoPath('src/a.ts'), language: 'TypeScript', text: '@@ -1 +1 @@\n-/** HUNK-A */\n+/** HUNK-A2 */' }] },
+    { unit: unitId('u-two'), since: SHA_B, at: SHA_A, hunks: [{ id: 'h2', path: repoPath('lib/b.py'), language: null, text: '@@ -3 +3 @@\n-# HUNK-B\n+# HUNK-B2' }] },
+  ],
 };
 
 const OUTPUTS: { readonly [R in Role]: unknown } = {
@@ -371,13 +385,17 @@ const OUTPUTS: { readonly [R in Role]: unknown } = {
     ],
   },
   build: {
-    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [], final: true,
+    summary: 'Added the parser.', changedPaths: ['src/a/parse.ts'], lanesRun: [{ lane: 'unit', exit: 0 }], blockers: [], experiments: [], docsOnlySince: null, final: true,
   },
   gate: {
     decision: 'revise', reasons: ['A2 untested'], directives: ['Add a test for A2.'],
-    findings: [{ severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null }],
-    premises: [], unreviewed: [], clusters: null,
+    findings: [{
+      severity: 'blocking', path: 'src/a/parse.ts', text: 'A2 has no test.', contractRef: null, experiments: [{ command: 'node -e "parse(\'\')"', output: 'TypeError' }], debt: null,
+      defect: 'test-inadequate', reraises: null, hunk: null,
+    }],
+    premises: [], unreviewed: [], clusters: null, rulings: [],
   },
+  verifier: { hunks: [{ id: 'h1', kind: 'comment', executable: false, toolDirective: false, behaviourChange: false }] },
   lens: {
     findings: [{ severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is not held.', cause: 'rounding', evidence: [{ path: 'src/a.ts', line: 3 }], mutant: null }],
     reasons: ['I-1 fails on the audited tree'], premises: [],
@@ -668,7 +686,7 @@ describe('output validators', () => {
     const pre = [{ severity: 'pre-existing', path: 'src/old.ts', text: 'Off by one since before the unit: the base has it.', contractRef: null }];
     const unreviewed = [{ path: 'packages/*/golden/**', reason: 'regenerated goldens, judged through the generator' }];
     const out = validateGateOutput({ ...ok.gate, decision: 'approve', directives: [], findings: pre, unreviewed });
-    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded' })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded');
+    assert.deepEqual(out.findings, pre.map((f) => ({ ...f, experiments: [], debt: 'unrecorded', defect: null, reraises: null, hunk: null })), 'a finding without experiments (a dev.12 answer) cites none; its debt is unrecorded; dev.17 fields read null');
     assert.deepEqual(out.unreviewed, unreviewed);
     const { unreviewed: _u, ...dev11 } = ok.gate;
     assert.equal(validateGateOutput(dev11).unreviewed, null);
@@ -1284,7 +1302,7 @@ describe('W3 seat prompts (2026-10-16)', () => {
     for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] as const) {
       const sys = promptFor('gate', model).system;
       for (const needle of [
-        /classify each as blocking, note or pre-existing/, /Notes and pre-existing findings are recorded, and never a fix round/,
+        /classify it as blocking, note, pre-existing or ride-along/, /Notes, ride-along and pre-existing findings are recorded and never a fix round/,
         /unreviewed lists the parts of the change you did not review, each a repository path or path pattern with the reason/,
       ]) assert.match(sys, needle, `${model}: ${needle}`);
     }

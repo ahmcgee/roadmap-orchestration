@@ -75,6 +75,7 @@ export function laneJson(l: LaneJson): Record<string, unknown> {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
+    ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),
   };
 }
 
@@ -193,6 +194,8 @@ export type GateAnswer = Readonly<{
   premises?: readonly JsonValue[];
   unreviewed?: readonly JsonValue[];
   clusters?: readonly JsonValue[] | null;
+  /** dev.17: the rulings on the disputes the gate was given; default none. */
+  rulings?: readonly JsonValue[];
 }>;
 
 /** A gate the fake Claude answers after `before`: a fresh acting-judge call. `expect` adds to the gate argv check. */
@@ -204,9 +207,18 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
   };
 }
 
+/**
+ * dev.17: a finding as a live gate writes it: `defect` (a blocking one's `incorrect-behaviour` unless the test names one, else
+ * null), `reraises` and `hunk` (null) where the test leaves them out. A test of the defect refusal passes `defect: null`.
+ */
+const dev17Finding = (f: JsonValue): JsonValue => {
+  const o = f as Readonly<Record<string, JsonValue>>;
+  return { defect: o['severity'] === 'blocking' ? 'incorrect-behaviour' : null, reraises: null, hunk: null, ...o };
+};
+
 const gateAnswer = (a: GateAnswer): JsonValue => ({
-  decision: a.decision, findings: [...(a.findings ?? [])], directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null,
+  decision: a.decision, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
+  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, rulings: [...(a.rulings ?? [])],
 }) as JsonValue;
 
 /**

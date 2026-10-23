@@ -9,6 +9,7 @@
 // `supervisor.<token>.err` in the host dir).
 import type { CensusEntry, ClassifiedAdmit, Conversion, Obligations } from '../holistic/types.ts';
 import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf, RevisionSource } from './events.ts';
+import type { ApprovalBlobs, GateReview } from './review.ts';
 import type { FindingId, LaneId, ObligationId } from './ids.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { LaunchCpu } from './records.ts';
@@ -234,6 +235,7 @@ export const PRE_DEV10_BUILTIN_SEATS: ClassTable = {
   flow: { arc: 'frontier' },  // The walk roles (dev.13) are in force only under a plan with milestones, which no earlier release's arc has: never hashed here.
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
+  verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
 };
 
 // Gate risk ladder (owner direction 2026-10-17, 1.0.0-dev.12): the built-in seats moved gate.med to efficient (Sonnet
@@ -258,6 +260,7 @@ export const PRE_DEV12_BUILTIN_SEATS: ClassTable = {
   flow: { arc: 'efficient' },  // The walk roles (dev.13) are in force only under a plan with milestones, which no earlier release's arc has: never hashed here.
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
+  verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
 };
 
 // Experience-won routing (owner 2026-10-22, 1.0.0-dev.17): plan-check and the gate moved to frontier at every risk tier, and
@@ -284,6 +287,7 @@ export const PRE_DEV17_BUILTIN_SEATS: ClassTable = {
   flow: { arc: 'efficient' },
   walkthrough: { arc: 'frontier' },
   polishJudge: { arc: 'frontier' },
+  verifier: { low: 'economy', med: 'economy', high: 'economy' },  // dev.17: never hashed under an earlier table (`DEV17_ROLES`).
 };
 
 /** Every built-in seat table an earlier adopted release hashed, oldest first: what status aliases recorded revs under. */
@@ -495,4 +499,49 @@ export function planCheckStaleLinksDefault(): readonly never[] {
  */
 export function flakyLedgerDefault(): void {
   warnDefaulted('flaky.ledger', 'an arc whose revision in force was applied before 1.0.0-dev.17 has no flaky ledger; it starts empty at the upgrade');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Proportional review (dev.17; SCHEMAS.md "Proportional review"). A dev.16 arc is adopted: its gate answers, build answers,
+// approvals and judgment inputs predate the ledger, the delta and the docs-only claim. Delete once no arc started on
+// 1.0.0-dev.16 is in flight.
+
+/**
+ * A gate finding's `defect`, `reraises` and `hunk` (dev.17): absent on an answer a dev.16 gate gave, read as null. Such an
+ * answer is never held to the dev.17 rules: its attempt's `judgment-inputs` carry no `review` (`gateReviewOf`).
+ */
+export function gateFindingReviewDefault(): null {
+  warnDefaulted('gate.finding.review', 'a gate finding without defect, reraises or hunk (an answer written before 1.0.0-dev.17); read as null');
+  return null;
+}
+
+/** A gate answer's `rulings` (dev.17): absent on a dev.16 answer, which was given no disputes; read as none. */
+export function gateRulingsDefault(): readonly never[] {
+  warnDefaulted('gate.rulings', 'a gate answer without rulings (written before 1.0.0-dev.17); read as none');
+  return [];
+}
+
+/** A build answer's `docsOnlySince` (dev.17): absent on a dev.16 answer, read as null (no claim: the lanes run as normal). */
+export function buildDocsOnlySinceDefault(): null {
+  warnDefaulted('build.docsOnlySince', 'a build answer without docsOnlySince (written before 1.0.0-dev.17); read as null');
+  return null;
+}
+
+/**
+ * The review a gate attempt was given (dev.17): absent on a gate attempt a dev.16 executor captured, whose answer is read
+ * without the ledger, dispute and delta rules (null), and on a plan-check's.
+ */
+export function gateReviewOf(inputs: JudgmentInputs): GateReview | null {
+  if (inputs.stage !== 'gate' || inputs.review !== undefined) return inputs.review ?? null;
+  warnDefaulted('judgment-inputs.review', `gate ${inputs.unit}#${inputs.attempt}: judgment inputs without a review (captured before 1.0.0-dev.17); its answer is read without the ledger rules`);
+  return null;
+}
+
+/**
+ * What an approval approved by blob (dev.17): absent on a dev.16 approval, so the unit's next gate reviews in full and starts
+ * its findings ledger empty (no finding of a dev.16 gate is ledgered).
+ */
+export function approvalBlobsOf(approval: Readonly<{ unit: string; blobs: ApprovalBlobs | null }>): ApprovalBlobs | null {
+  if (approval.blobs === null) warnDefaulted(`approval.blobs.${approval.unit}`, `unit ${approval.unit}: an approval without blobs (recorded before 1.0.0-dev.17); its next gate reviews in full`);
+  return approval.blobs;
 }

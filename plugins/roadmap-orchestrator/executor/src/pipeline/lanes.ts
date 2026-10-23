@@ -865,11 +865,13 @@ export function seriesEntry(ctx: ResourceContext, lanes: readonly LaneDef[]): Re
  * first lane is reused). `witnesses`: a candidate's suite lanes that also run as an identical arc lane (F6), by id.
  * `verify` (dev.17): a deflake unit's verification runs per lane (src/pipeline/deflake.ts `verifyRunsOf`): that lane runs
  * fresh, that many times, every run passing. A flaky lane (red, then green on its diagnostic rerun) is recorded in the
- * flaky ledger (`observeFlake`) and passes when the ledger forgives it.
+ * flaky ledger (`observeFlake`) and passes when the ledger forgives it. `carry` (dev.17, a verified docs-only change:
+ * src/pipeline/docsonly.ts): passes reused in place of `reusablePass`, by lane id.
  */
 export async function runLaneSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, checkout: WorktreeCreateRequest, root: AbsPath,
   rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(), verify: ReadonlyMap<LaneId, number> = new Map(),
+  carry: ReadonlyMap<LaneId, Reusable> = new Map(),
 ): Promise<Series> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a lane series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const ids = new Set<string>(lanes.map((l) => l.id));
@@ -974,7 +976,7 @@ export async function runLaneSeries(
       continue;
     }
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
-    const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
+    const reusable = witnesses.has(lane.id) ? null : carry.get(lane.id) ?? reusablePass(ctx, parent, lane, at, now);
     const partial = reusable !== null || witnesses.has(lane.id) ? null : testOnlyRun(ctx, lane, at, now);
     const carried = reusable ?? (partial !== null && partial.files.length === 0 ? partial.base : null);
     if (carried !== null) {

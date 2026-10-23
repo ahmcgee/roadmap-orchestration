@@ -65,6 +65,7 @@ describe('routing', () => {
       flow: { arc: 'efficient' },
       walkthrough: { arc: 'frontier' },
       polishJudge: { arc: 'frontier' },
+      verifier: { low: 'economy', med: 'economy', high: 'economy' },
     });
   });
 
@@ -88,6 +89,7 @@ describe('routing', () => {
       planCheck: { low: 'efficient', med: 'efficient', high: 'efficient', escalation: 'efficient' },
       gate: { low: 'efficient', med: 'efficient', high: 'efficient', escalation: 'efficient' },
       lens: { arc: 'efficient' }, checkpoint: { arc: 'efficient' }, packReview: { arc: 'efficient' }, flow: { arc: 'efficient' },
+      verifier: { low: 'efficient', med: 'efficient', high: 'efficient' },
     });
     for (const p of PROFILES) {
       assert.deepEqual(CLASS_CATALOGUE[p].efficient.judgment, SONNET_HIGH, p);
@@ -105,6 +107,7 @@ describe('routing', () => {
       planCheck: { low: 'economy', med: 'economy', high: 'economy', escalation: 'economy' },
       gate: { low: 'economy', med: 'economy', high: 'economy', escalation: 'economy' },
       lens: { arc: 'economy' }, checkpoint: { arc: 'economy' }, packReview: { arc: 'economy' }, flow: { arc: 'economy' },
+      verifier: { low: 'economy', med: 'economy', high: 'economy' },
     });
     for (const p of PROFILES) {
       assert.deepEqual(CLASS_CATALOGUE[p].economy, { judgment: HAIKU_HIGH }, `${p}: no build triple`);
@@ -116,22 +119,28 @@ describe('routing', () => {
     assert.throws(() => parseRepoConfig({ routing: { seats: { build: { low: 'economy' } } } }), (e: unknown) => e instanceof SchemaError && e.field === 'config.routing.seats.build.low');
     assert.throws(() => layer({ build: { high: 'economy' } }), (e: unknown) => e instanceof SchemaError && e.field === 'layer.build.high');
     assert.throws(() => boundAt('default', 'economy', 'build'), /binds no build triple/);
-    // No built-in seat names economy (the 2026-10-17 gate eval reverted gate.low): with the built-in seats nothing resolves
-    // to Haiku, and even a Codex rebind of economy refuses nothing.
+    // Only the docs-only verifier's built-in seats name economy (dev.17; the 2026-10-17 gate eval reverted gate.low): with the
+    // built-in seats nothing else resolves to Haiku.
     for (const p of PROFILES) {
       const r = resolveRouting({ ...arcStack(p, null, null), arcScope: 'corpus', arcRoles: 'm4b' });
-      assert.doesNotMatch(JSON.stringify(r.classes), /economy/, p);
-      assert.doesNotMatch(JSON.stringify(r.table), /claude-haiku/, p);
+      const { verifier: classes, ...otherClasses } = r.classes;
+      const { verifier: triples, ...otherTriples } = r.table;
+      assert.deepEqual(classes, { low: 'economy', med: 'economy', high: 'economy' }, p);
+      assert.deepEqual(triples, { low: HAIKU_HIGH, med: HAIKU_HIGH, high: HAIKU_HIGH }, p);
+      assert.doesNotMatch(JSON.stringify(otherClasses), /economy/, p);
+      assert.doesNotMatch(JSON.stringify(otherTriples), /claude-haiku/, p);
     }
+    // A Codex rebind of economy refuses the verifier's seats (a Codex judgment), and nothing else.
     const lunaEconomy = { economy: { backend: 'codex', model: 'gpt-5.6-luna', effort: 'low' } } as const;
-    assert.deepEqual(unsupportedSeats(resolveRouting(arcStack('default', parseRepoConfig({ routing: { classes: lunaEconomy } }), null)), null), []);
+    const verifierOnLuna = (['low', 'med', 'high'] as const).map((tier) => ({ kind: 'unsupported-routing', role: 'verifier', tier, layer: 'builtin', class: 'economy', unit: null, why: 'codex-judgment' }));
+    assert.deepEqual(unsupportedSeats(resolveRouting(arcStack('default', parseRepoConfig({ routing: { classes: lunaEconomy } }), null)), null), verifierOnLuna);
     // A repo rebind binds it at every judgment seat naming it (here the repo seats gate.low on it); a Codex rebind refuses
     // them; Haiku has no build prompt.
     const lowOnEconomy = { gate: { low: 'economy' } } as const;
     const onOpus = resolveRouting(arcStack('default', parseRepoConfig({ routing: { seats: lowOnEconomy, classes: { economy: OPUS } } }), null));
     assert.deepEqual([onOpus.table.gate.low, onOpus.bindings.economy], [OPUS, 'repo-config']);
     const onLuna = unsupportedSeats(resolveRouting(arcStack('default', parseRepoConfig({ routing: { seats: lowOnEconomy, classes: lunaEconomy } }), null)), null);
-    assert.deepEqual(onLuna, [{ kind: 'unsupported-routing', role: 'gate', tier: 'low', layer: 'repo-config', class: 'economy', unit: null, why: 'codex-judgment' }]);
+    assert.deepEqual(onLuna, [{ kind: 'unsupported-routing', role: 'gate', tier: 'low', layer: 'repo-config', class: 'economy', unit: null, why: 'codex-judgment' }, ...verifierOnLuna]);
     const efficientOnHaiku = unsupportedSeats(resolveRouting(arcStack('claude-only', parseRepoConfig({ routing: { classes: { efficient: HAIKU_HIGH } } }), null)), null);
     assert.deepEqual(efficientOnHaiku.map((x) => x.kind === 'unsupported-routing' ? [x.role, x.tier, x.why] : null), [['build', 'low', 'no-prompt'], ['build', 'med', 'no-prompt'], ['build', 'high', 'no-prompt']]);
   });
@@ -303,7 +312,8 @@ describe('routing: the arc seats (M3)', () => {
       assert.equal(r.arcScope, 'none');
       assert.deepEqual(seatsInForce(r).map((s) => s.role).filter((role) => role === 'lens' || role === 'checkpoint' || role === 'packReview' || role === 'flow'), []);
       assert.deepEqual(unsupportedSeats(r, null), [], p);
-      const m2Table = { planCheck: r.table.planCheck, build: r.table.build, gate: r.table.gate };
+      // dev.17: the unit roles include the docs-only verifier.
+      const m2Table = { planCheck: r.table.planCheck, build: r.table.build, gate: r.table.gate, verifier: r.table.verifier };
       assert.equal(r.rev, createHash('sha256').update(canonicalJson(m2Table)).digest('hex').slice(0, 16), `${p}: the M2 rev`);
       // An arc seat rebound in a plan layer changes nothing while the arc is not holistic.
       assert.equal(resolveRouting(arcStack(p, null, layer({ lens: { arc: 'summit' } }))).rev, r.rev);

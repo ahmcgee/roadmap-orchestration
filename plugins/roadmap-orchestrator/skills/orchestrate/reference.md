@@ -520,6 +520,8 @@ Blocking unless noted. Read the item file before acting.
   ("Regenerate checks").
 - "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,
   proofs, verdicts, givens and the flow facts.
+- "Proportional review" (dev.17): the gate's defect classes and ride-along findings, the findings ledger and disputes,
+  the delta re-gate and `delta-empty`, the build's `docsOnlySince` and the verifier, lane `readsComments`.
 - "dev.13: milestone walkthroughs and design units": `milestones` (design, references, bring-up, journeys),
   `limits.walkRounds`, polish units, the `experience` vision clause, the walk facts and findings, the walkthrough MCP
   config, the Phase-0 rows and advisories, the demo.

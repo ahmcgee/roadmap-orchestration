@@ -61,7 +61,11 @@ const planCheck = (reason: string): M1Step => ({
 });
 const build = (message: string, unit: string): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files: filesOf(join(FILES, 'units', unit)) }] });
 const gate = (reason: string, findings: readonly JsonValue[] = []): M1Step => ({
-  role: 'gate', answer: { decision: 'approve', findings: [...findings], directives: [], reasons: [reason], premises: [], unreviewed: [], clusters: null },
+  role: 'gate',
+  answer: {
+    decision: 'approve', findings: findings.map((f) => ({ ...(f as object), defect: null, reraises: null, hunk: null })), directives: [], reasons: [reason], premises: [], unreviewed: [],
+    clusters: null, rulings: [],
+  },
 });
 
 /** The gate note confirm's approval carries: banked as `gate-note` debt. */

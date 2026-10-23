@@ -23,7 +23,9 @@
 // record no systems map, read as none (1.0.0-dev.17, lane topology; src/core/upgrade.ts `laneCadenceDefault`,
 // `systemsMapDefault`); its specs carry no design record (kind `module`, `designKindDefault`) and no revision pins (links
 // `unpinned`: a lasting state, no default); its plan-check answers carry no `staleLinks` (none answered,
-// `planCheckStaleLinksDefault`, propagation). Nothing else: no release from dev.13 to dev.16 changes a record, nor does dev.12 record anything
+// `planCheckStaleLinksDefault`, propagation); and (proportional review) its gate answers, gate inputs, build answers and
+// approvals predate the findings ledger, the delta and the docs-only claim (`gateFindingReviewDefault`, `gateRulingsDefault`,
+// `gateReviewOf`, `buildDocsOnlySinceDefault`, `approvalBlobsOf`). Nothing else: no release from dev.13 to dev.16 changes a record, nor does dev.12 record anything
 // differently from dev.13 that HEAD reads with a default (dev.17's flaky ledger aside: a dev.15 arc has none, read as empty
 // at the upgrade, `flakyLedgerDefault`): dev.13's additions (plan `milestones`, `limits.walkRounds`, a
 // unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a dev.15 arc on HEAD warns
@@ -93,6 +95,9 @@
 //                              lane, L = {invariants}), then `resume page-id`: the baseline job, the drift audit and
 //                              a no-op checkpoint, the brake on `page-id`'s candidate, the final audit and a no-op
 //                              checkpoint, the close-out, `arc-completed`.
+//   upgrade.review-unledgered  `page-id`'s gate revised and its fix round stopped mid-call; HEAD's gate rules on a prior
+//                              round no findings ledger recorded (dev.17 proportional review: the answer and inputs read
+//                              with their defaults, warned; an empty ledger, no disputes, a full review).
 //   upgrade.fingerprint-open-ff
 //                              `page-id` approved, the ff open at a crash; HEAD compares the fingerprint byte for byte.
 //                              The previous release's gate recorded `diffShown` and `largeDiff`, read as recorded.
@@ -396,18 +401,24 @@ type Phase1 = Readonly<{
 }>;
 
 /**
- * A step as `release` gives it: a gate answer before 1.0.0-dev.12 without `unreviewed` (round 2) or `clusters` (the
- * large-diff gate), and (every release here predates 1.0.0-dev.17) a plan-check answer without `staleLinks`, which their
- * strict schemas refuse (HEAD's scenarios carry them for HEAD's judgments). Every other step is unchanged.
+ * A step as `release` gives it: every release here predates 1.0.0-dev.17, so a plan-check answer without `staleLinks`
+ * (propagation) and a gate answer without `rulings` and its findings' `defect`, `reraises` and `hunk` (proportional review);
+ * before 1.0.0-dev.12, a gate answer also without `unreviewed` (round 2) or `clusters` (the large-diff gate). Each release's
+ * strict schemas refuse the fields they do not know (HEAD's scenarios carry them for HEAD's judgments). Every other step is
+ * unchanged.
  */
 function asReleaseGate(release: Release, step: M1Step): M1Step {
   if (step.role === 'planCheck') {
     const { staleLinks: _s, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
     return { ...step, answer };
   }
-  if (step.role !== 'gate' || !BEFORE_DEV12.has(release)) return step;
-  const { unreviewed: _u, clusters: _c, ...answer } = step.answer as Readonly<Record<string, JsonValue>>;
-  return { ...step, answer };
+  if (step.role !== 'gate') return step;
+  const { rulings: _r, findings, ...rest } = step.answer as Readonly<Record<string, JsonValue>>;
+  const dev16 = (findings as readonly Readonly<Record<string, JsonValue>>[]).map(({ defect: _d, reraises: _x, hunk: _h, ...f }) => f);
+  const answer: Readonly<Record<string, JsonValue>> = { ...rest, findings: dev16 };
+  if (!BEFORE_DEV12.has(release)) return { ...step, answer };
+  const { unreviewed: _u, clusters: _c, ...dev11 } = answer;
+  return { ...step, answer: dev11 };
 }
 
 /**
@@ -553,11 +564,14 @@ async function finishOnHead(p: Phase1, m1: readonly M1Step[], during: () => Prom
  * The defaults HEAD reads an arc the previous release started with (1.0.0-dev.17, lane topology): its lanes' `tier` as a
  * cadence (`lane.tier.<kind>`), a recorded lane rev of the tier form (`lane-rev.tier.<lane>`), its revisions' absent
  * systems map (`plan-applied.systemsMap`), its specs' absent design record (`spec.design.kind`), (propagation) its
- * plan-check answers' absent `staleLinks` (`plan-check.staleLinks`), and its absent flaky ledger (`flaky.ledger`: empty at
- * the upgrade). A spec's absent pins are no default (a lasting state: every link unpinned). Nothing else changed a record
- * since the previous release.
+ * plan-check answers' absent `staleLinks` (`plan-check.staleLinks`), its absent flaky ledger (`flaky.ledger`: empty at
+ * the upgrade); and (proportional review) its gate answers without `defect`, `reraises`, `hunk` and `rulings`
+ * (`gate.finding.review`, `gate.rulings`), its gate inputs without a review (`judgment-inputs.review`), its build answers
+ * without `docsOnlySince` (`build.docsOnlySince`) and its approvals without blobs (`approval.blobs.<unit>`). A spec's
+ * absent pins are no default (a lasting state: every link unpinned). Nothing else changed a record since the previous
+ * release.
  */
-const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|plan-check\.staleLinks|flaky\.ledger)$/;
+const DEV17_DEFAULTS = /^(lane\.tier\.(spec|suite|arc)|lane-rev\.tier\..+|plan-applied\.systemsMap|spec\.design\.kind|plan-check\.staleLinks|flaky\.ledger|gate\.finding\.review|gate\.rulings|judgment-inputs\.review|build\.docsOnlySince|approval\.blobs\..+)$/;
 
 /**
  * HEAD reads an arc the previous release started with the dev.17 lane defaults only (`DEV17_DEFAULTS`), but for the kinds
@@ -1241,6 +1255,59 @@ async function fingerprintOpenFf(release: Release, gate: (inputs: Extract<Fact, 
   assert.ok(done !== null && done.kind === 'integration.ff');
   assert.equal(canonicalJson(f.view.unit(unitId('page-id')).approval?.fingerprint), canonicalJson(approval.fingerprint), 'the approval is read as the starting release wrote it');
 }
+
+/**
+ * Proportional review (dev.17): page-id's gate revised on the previous release and its fix round was stopped mid-call, so
+ * HEAD's gate rules on a prior round no findings ledger recorded. The revising answer has no defect, reraises, hunk or
+ * rulings and its inputs no review (each read with its default, warned); none of its findings is ledgered, so HEAD's gate is
+ * given an empty ledger, no disputes and a full review, and nothing is refused for the ledger's sake.
+ */
+test('upgrade.review-unledgered: a gate revise the previous release recorded, its fix round stopped mid-call, finishes on HEAD: no ledger, the dev.16 answer read with the review defaults, warned', T, async () => {
+  const c = clean();
+  const files = pageIdFiles(c);
+  const revise: M1Step = {
+    role: 'gate',
+    answer: {
+      decision: 'revise', directives: ['Test pageId with a negative n.'], reasons: ['B3 is under-tested.'], premises: [], unreviewed: [], clusters: null, rulings: [],
+      findings: [{ severity: 'blocking', path: 'test/page-id.test.js', text: 'No negative n case.', contractRef: null, experiments: [], debt: null, defect: 'test-inadequate', reraises: null, hunk: null }],
+    },
+  };
+  const midFix: Step = { as: 'codex', expect: { argv: ['exec', 'resume'] }, acts: [{ type: 'barrier', name: MID_CALL, timeoutMs: PHASE_MS }] };
+  const p = await preparePrevious([...c.slug, c.pageId.planCheck, c.pageId.build, revise], [midFix]);
+  const scope = scopeOf(p);
+  track(scope);
+  try {
+    const supervisor = await startPrevious(p);
+    await midCall(p);
+    await stopPrevious(p, supervisor);
+  } finally {
+    await teardown(scope);
+  }
+  const mid = journalOf(p).view;
+  assert.deepEqual(outcomesOf(journalOf(p).events, 'page-id').filter((o) => o.startsWith('gate:')), ['gate:revise'], 'the previous release revised page-id');
+  assert.deepEqual([mid.unit(unitId('page-id')).stage, mid.unit(unitId('page-id')).status], ['build', 'held']);
+  const resume = await p.cli(['resume', ...p.run]);
+  assert.equal(resume.code, 0, resume.stderr);
+
+  const negative = `${files['test/page-id.test.js']}\ntest('pageId refuses a negative n (B3)', () => {\n  assert.throws(() => pageId('x', -1), RangeError);\n});\n`;
+  const fix: M1Step = { ...c.pageId.build, round: 'resume', stdinContains: [CONTINUE_DIRECTIVE], acts: [{ type: 'commit', message: 'negative n', files: { 'test/page-id.test.js': negative } }] };
+  let f: Finished;
+  track(scope);
+  try {
+    f = await finishOnHead(p, [fix, c.pageId.gate]);
+  } finally {
+    await teardown(scope);
+  }
+  assertFinished(f);
+  const gated = factsOf(f.after, 'judgment-inputs').filter((i) => i.stage === 'gate' && i.unit === 'page-id');
+  assert.equal(gated.length, 1);
+  assert.deepEqual(gated[0]!.review, { ledger: [], disputes: [], delta: null }, 'HEAD\'s gate was given an empty ledger and a full review');
+  assert.deepEqual(factsOf(f.events, 'review-ledger'), [], 'no finding of the previous release\'s gate is ledgered, and HEAD\'s approval minted none');
+  const logs = hostLogs(p);
+  for (const kind of ['judgment-inputs.review', 'gate.finding.review', 'gate.rulings']) {
+    assert.ok(logs.includes(`roadmap: upgrade default (${kind})`), `HEAD read the previous release's gate round with the ${kind} default, and warned`);
+  }
+});
 
 test('upgrade.fingerprint-open-ff: the previous release approved page-id and crashed with its ff open; HEAD\'s recovery compares its fingerprint byte for byte and publishes, with no new judgment', T, async () => {
   await fingerprintOpenFf(PREVIOUS_RELEASE, (inputs) => {

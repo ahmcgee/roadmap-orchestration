@@ -45,6 +45,13 @@
 // `debtKey` against the baseline's ledger and the arc's banked items (`mintDebt`), right after the `approval` fact. A crash between the two is finished
 // from the consumed answer at recovery: `gateRead` re-reads it, keeps the approval, and banks only what is missing.
 //
+// Proportional review (dev.17, src/pipeline/review.ts): the capture records the unit's findings ledger, the disputes its
+// latest build wrote and its delta from the unit's approval on `judgment-inputs` (`review`); the answer is held to the
+// review's rules (`reviewRules`: a defect on every blocking finding, no blocking re-raise of a settled finding whose file is
+// unchanged, one ruling per dispute, demotion off the delta), and once read its findings enter the ledger (`review-ledger`).
+// An approval records its blobs (`ApprovalBlobs`); a later gate whose delta is empty records `delta-empty` and approves again
+// at the new fingerprint without a call.
+//
 // M3: the gate grades against the obligations its diff selects (`selectObligations`, src/holistic/impact.ts: the
 // spec's declared ones and repairs, its dependency closure's declared ones, what the diff's paths touch, the future
 // ones it delivers, every must-hold one for an unmapped path), never the vision (R17).
@@ -82,6 +89,9 @@ import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor } from '../prompts/index.ts';
 import type { GateChecks, GatePriorRound, RegeneratedCheck } from '../prompts/inputs.ts';
 import { type GateOutput, clusterCoverage, validateGateOutput } from '../prompts/schemas.ts';
+import type { ApprovalBlobs, GateReview } from '../core/review.ts';
+import { gateReviewOf } from '../core/upgrade.ts';
+import { approvalBlobs, gateDelta, ledgerFact, openDisputes, reviewInput, reviewRules, unitLedger } from './review.ts';
 import { renderSpec } from '../spec/render.ts';
 import { runnerFiles } from '../runner/files.ts';
 import type { JsonValue } from '../core/json.ts';
@@ -316,17 +326,19 @@ const listed = <T>(xs: readonly T[], show: (x: T) => string): string =>
 /**
  * The gate answer's validator for a diff: the schema (`validateGateOutput`), then the cluster map against the threshold.
  * Under it (`largeDiff` null) the map is null; over it, every one of `paths` is in exactly one cluster (`clusterCoverage`).
+ * Then (dev.17) the review's rules, for an attempt given one (`reviewRules`; null: a dev.16 attempt, read without them).
  */
-export function gateAnswerFor(largeDiff: GateLargeDiff | null, paths: readonly RepoPath[]): (value: unknown) => GateOutput {
+export function gateAnswerFor(largeDiff: GateLargeDiff | null, paths: readonly RepoPath[], rules: ((out: GateOutput) => GateOutput) | null = null): (value: unknown) => GateOutput {
+  const ruled = (out: GateOutput): GateOutput => (rules === null ? out : rules(out));
   return (value) => {
     const out = validateGateOutput(value);
     if (largeDiff === null) {
       if (out.clusters !== null) throw new SchemaError('gate.clusters', 'null: the diff fit the gate\'s budget, so no cluster map', `${out.clusters.length} clusters`);
-      return out;
+      return ruled(out);
     }
     if (out.clusters === null) throw new SchemaError('gate.clusters', `a cluster map covering each of the diff's ${paths.length} changed paths exactly once (the diff is over the large-diff threshold)`, null);
     const { uncovered, duplicated } = clusterCoverage(out.clusters, paths);
-    if (uncovered.length === 0 && duplicated.length === 0) return out;
+    if (uncovered.length === 0 && duplicated.length === 0) return ruled(out);
     const parts = [
       ...(uncovered.length === 0 ? [] : [`${uncovered.length} paths in no cluster: ${listed(uncovered, (p) => p)}`]),
       ...(duplicated.length === 0 ? [] : [`${duplicated.length} paths in more than one: ${listed(duplicated, (d) => `${d.path} (${d.clusters.join(', ')})`)}`]),
@@ -340,7 +352,9 @@ function gateAnswerAt(ctx: StageContext, unit: UnitId, attempt: number): (value:
   const inputs = ctx.journal.view.judgmentInputs(unit, 'gate', attempt);
   if (inputs === null || inputs.head === null) throw new Error(`gate ${unit}#${attempt}: a gate answer without its judgment-inputs`);
   const largeDiff = gateLargeDiffOf(inputs);
-  return gateAnswerFor(largeDiff, largeDiff === null ? [] : diffPaths(ctx.repo, diffBase(ctx.repo, inputs.tip, inputs.head), inputs.head));
+  const review = gateReviewOf(inputs);
+  const rules = review === null ? null : reviewRules(ctx.repo, inputs.head, review);
+  return gateAnswerFor(largeDiff, largeDiff === null ? [] : diffPaths(ctx.repo, diffBase(ctx.repo, inputs.tip, inputs.head), inputs.head), rules);
 }
 
 /**
@@ -366,6 +380,8 @@ function buildEvidence(ctx: StageContext, unit: UnitId): readonly AbsPath[] {
 type GateCapture =
   | Readonly<{ kind: 'empty-diff' }>
   | Readonly<{ kind: 'unverified' }>
+  /** dev.17: nothing changed since the unit's approval and nothing it bound moved: approved again at `fingerprint`, no call. */
+  | Readonly<{ kind: 'delta-empty'; fingerprint: ApprovalFingerprint; blobs: ApprovalBlobs }>
   | Readonly<{ kind: 'routing-changed'; needsUser: NeedsUserContent }>
   | Readonly<{
     kind: 'captured'; fingerprint: ApprovalFingerprint; seat: JudgmentDispatch; rendered: string; system: string; schema: JsonValue; evidence: readonly AbsPath[];
@@ -423,6 +439,12 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const series = latestSpecSeries(ctx, unit.id);
     const tree = series === null ? null : seriesTree(ctx.journal.view, series, verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, series.attempt));
     if (series === null || tree === null || tree.at !== head) return { kind: 'unverified' };
+    // dev.17: the delta from the unit's approval; an empty one approves again without a call.
+    const fingerprint = fingerprintAt(ctx, unit, tip);
+    const delta = gateDelta(ctx, unit.id, spec, tip, head, fingerprint);
+    if (delta === 'empty') return { kind: 'delta-empty', fingerprint, blobs: approvalBlobs(ctx.repo, unit.id, spec.rev, tip, head) };
+    const ledger = unitLedger(ctx, unit.id);
+    const review: GateReview = { ledger, disputes: openDisputes(ctx, unit, ledger), delta };
     // The attached diff first: whether it is over the large-diff threshold decides the seat.
     const diffDir = gateDiffDir(ctx, parent);
     const base = diffBase(ctx.repo, tip, head);
@@ -467,17 +489,21 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       largeDiff: largeDiff === null ? null : { overflow: largeDiff.overflow, changed: covered.length, list },
       // dev.13: the milestones it takes part in, their references at the tip (a design unit's own are in its diff).
       milestones: unitMilestones(ctx, unit.id, tip),
+      review: reviewInput(ctx, unit.id, head, review),
     });
-    const fingerprint = fingerprintAt(ctx, unit, tip);
     writeJudgmentInputs(ctx, parent, {
       tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint,
-      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff,
+      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff, review,
     });
     return {
       kind: 'captured', fingerprint, seat, rendered, system: prompt.system, schema: prompt.schema, evidence, head, dirs: targetDirs(target),
-      validate: gateAnswerFor(largeDiff, covered),
+      validate: gateAnswerFor(largeDiff, covered, reviewRules(ctx.repo, head, review)),
     };
   });
+  if (captured.kind === 'delta-empty') {
+    ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint: captured.fingerprint, blobs: captured.blobs });
+    return { ...record(ctx, parent, 'delta-empty'), session: null, fingerprint: captured.fingerprint };
+  }
   if (captured.kind !== 'captured') {
     const done = captured.kind === 'routing-changed' ? record(ctx, parent, 'routing-changed', captured.needsUser) : record(ctx, parent, captured.kind);
     return { ...done, session: null, fingerprint: null };
@@ -532,16 +558,28 @@ export async function gateRead(
     if (error instanceof SchemaError) return done(record(ctx, parent, 'malformed'));
     throw error;
   }
-  if (out.decision !== 'approve') return done(record(ctx, parent, out.decision));
+  const inputs = ctx.journal.view.judgmentInputs(unit.id, 'gate', parent.attempt);
+  if (inputs === null) throw new Error(`gate ${unit.id}#${parent.attempt}: an answer read without its judgment-inputs`);
+  // dev.17: the answer's findings enter the ledger, for an attempt given a review (a dev.16 attempt's are not ledgered).
+  const ledger = (banked: ReadonlySet<number>): void => {
+    if (gateReviewOf(inputs) === null) return;
+    const fact = ledgerFact(ctx, unit.id, parent.attempt, fingerprint.unitCommit, out, banked);
+    if (fact !== null) ctx.journal.fact(fact);
+  };
+  if (out.decision !== 'approve') {
+    ledger(new Set());
+    return done(record(ctx, parent, out.decision));
+  }
   const approved = ctx.journal.view.unit(unit.id).approval;
   if (approved !== null && approved.attempt === parent.attempt) {
-    bankGateNotes(ctx, unit.id, parent.attempt, out.findings);
+    ledger(bankGateNotes(ctx, unit.id, parent.attempt, out.findings));
     return done(record(ctx, parent, 'approve'), approved.fingerprint);
   }
   const head = unitTip(ctx, unit.id);
   if (head !== fingerprint.unitCommit) throw new Error(`gate of ${unit.id}: the unit branch moved from ${fingerprint.unitCommit} to ${head} during the gate`);
-  ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint });
-  bankGateNotes(ctx, unit.id, parent.attempt, out.findings);
+  const blobs = approvalBlobs(ctx.repo, unit.id, fingerprint.specRev, inputs.tip, fingerprint.unitCommit);
+  ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint, blobs });
+  ledger(bankGateNotes(ctx, unit.id, parent.attempt, out.findings));
   return done(record(ctx, parent, 'approve'), fingerprint);
 }
 
@@ -563,18 +601,20 @@ export function gateDebtNotes(findings: GateOutput['findings']): readonly Readon
  * Banks the approving answer's debt (`gateDebtNotes`) of a corpus arc as `gate-note` debt (R7), after its `approval`: each
  * keyed by `(unit, attempt, index)`, its index the finding's place in the answer, and minted against the baseline's
  * ledger and the arc's banked items (`mintDebt`: a source or a key already banked mints nothing). Only a corpus arc
- * banks: its Phase 0 dispositions the ledger it publishes.
+ * banks: its Phase 0 dispositions the ledger it publishes. Returns the indexes of the findings banked (dev.17: their ledger
+ * entries settle `banked`).
  */
-function bankGateNotes(ctx: StageContext, unit: UnitId, attempt: number, findings: GateOutput['findings']): void {
-  if (ctx.plan().target !== 'corpus') return;
+function bankGateNotes(ctx: StageContext, unit: UnitId, attempt: number, findings: GateOutput['findings']): ReadonlySet<number> {
+  if (ctx.plan().target !== 'corpus') return new Set();
   const notes = gateDebtNotes(findings);
-  if (notes.length === 0) return;
+  if (notes.length === 0) return new Set();
   crashPoint('debt.after-approval', unit);
   const baseline = baselineDebtAt(ctx.repo, ctx.plan().baseline);
   for (const n of notes) {
     const fact = mintDebt(baseline, ctx.journal.view.holistic().debt, { type: 'gate-note', unit, attempt, index: n.index, what: n.what });
     if (fact !== null) ctx.journal.fact(fact);
   }
+  return new Set(notes.map((n) => n.index));
 }
 
 // ---------------------------------------------------------------------------------------------------

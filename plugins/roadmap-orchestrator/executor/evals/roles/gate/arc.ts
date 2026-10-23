@@ -63,7 +63,7 @@ const LANE = { id: 'unit', argv: TEST_ARGV } as const;
 // ---------------------------------------------------------------------------------------------------
 // The arc
 
-const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null, experiments: [], debt: null });
+const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null });
 
 /**
  * A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). `large`: the diff is over
@@ -72,10 +72,10 @@ const finding = (path: string, text: string): JsonValue => ({ severity: 'blockin
 function fakeAnswer(kind: Exclude<FakeGate, 'overspend'>, key: AnswerKey, large: boolean): JsonValue {
   const decoy = key.changed.find((p) => p !== key.plant?.path) ?? 'ARCHITECTURE.md';
   const clusters: JsonValue = large ? [{ id: 'all', paths: ['**'], review: 'routine' }] : null;
-  const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters });
+  const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters, rulings: [] });
   switch (kind) {
     case 'approve-all':
-      return { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters };
+      return { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters, rulings: [] };
     case 'revise-all':
       return revise([finding(decoy, 'This change is wrong.')]);
     case 'cite-every-path':

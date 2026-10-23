@@ -170,8 +170,8 @@ test('steer.round-uncharged: a parked unit steered through the command path runs
 });
 
 describe('steer.resume-vs-park', () => {
-  test('steer.resume-vs-park: without --resume a green pass parks `steered` before any candidate; `resume u1` re-runs the gate (a fresh judgment), which approves, and the unit merges', T, async () => {
-    const d = setupArc({ steps: [...TO_PARK, codexSteer(), gateStep({ decision: 'approve' }), gateStep({ decision: 'approve' })] });
+  test('steer.resume-vs-park: without --resume a green pass parks `steered` before any candidate; `resume u1` re-runs the gate, which (dev.17) finds nothing changed since its approval and approves again without a call, and the unit merges', T, async () => {
+    const d = setupArc({ steps: [...TO_PARK, codexSteer(), gateStep({ decision: 'approve' })] });
     const r = contextFor(d);
     try {
       await parkU1(r);
@@ -194,11 +194,11 @@ describe('steer.resume-vs-park', () => {
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
       assert.deepEqual(outcomes(d), [
         ...STRAIGHT_TO_GATE, 'gate:escalate', 'gate:escalate', ...PASS_TO_LANES, 'lanes:green', 'gate:approve',
-        'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published',
+        'gate:delta-empty', 'candidate:green', 'ff:published', 'snapshot:published',
       ]);
       const calls = readCalls(d.scenarioPath);
-      assert.equal(calls.length, gatesBefore + 1, 'the resume re-ran the gate once');
-      assert.ok(calls.every((c) => c.step !== null), 'the re-run gate was a fresh judgment (its step checks `--session-id`, no `--resume`)');
+      assert.equal(calls.length, gatesBefore, 'the re-run gate made no call: the delta from its approval is empty (proportional review)');
+      assert.ok(calls.every((c) => c.step !== null));
     } finally {
       r.journal.close();
     }

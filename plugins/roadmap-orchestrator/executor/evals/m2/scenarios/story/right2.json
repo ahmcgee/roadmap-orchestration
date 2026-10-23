@@ -24,7 +24,8 @@
         ],
         "premises": [],
         "unreviewed": [],
-        "clusters": null
+        "clusters": null,
+        "rulings": []
       }
     }
   ]
