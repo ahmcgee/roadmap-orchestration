@@ -17,7 +17,8 @@ import { runVerifier } from '../evals/roles/verifier/run.ts';
 import { type VerifierSummary, summariseVerifier } from '../evals/roles/verifier/summary.ts';
 import { tmpDir } from './helpers/repo.ts';
 
-const T = { timeout: 120_000 };
+/** The fake trials run real lanes: about 50 s alone, several times that under the parallel tier's load. */
+const T = { timeout: 600_000 };
 
 const cellOf = (id: string): VerifierCell => DEV_VERIFIER_CELLS.find((c) => c.id === id)!;
 const crit = (s: VerifierSummary, name: string): boolean | null => s.criteria.find((c) => c.name === name)!.pass;
