@@ -7,7 +7,9 @@ converges the codebase on the documented target state, unattended, for a week or
 ## Status
 
 **1.0 is in prerelease on `main`** (`1.0.0-dev.17`), and it is what the marketplace installs. Milestones M1 to M4b
-and the dev.13 milestone walkthroughs have landed. The last 0.x release is at tag `v0.20.0`.
+and the dev.13 milestone walkthroughs have landed. dev.17 made plan-check a design pass, put lanes on cadences
+selected by a systems map, made the gate block only on named defects, and added propagation and deflake units,
+costed environments and per-unit fault isolation. The last 0.x release is at tag `v0.20.0`.
 
 ## What 1.0 is
 
@@ -16,11 +18,11 @@ and the dev.13 milestone walkthroughs have landed. The last 0.x release is at ta
 - `codex exec` and `claude -p` as peer backends. Every role resolves through a routing profile; the
   `claude-only` profile needs no `codex` CLI.
 - A unit DAG with resource locks instead of waves; candidate-first merges, so the tested head is the published
-  head and a PR diff holds product changes only.
+  head and a PR diff holds product changes plus the living `.roadmap/` docs.
 - A holistic layer (obligations, cadence audits, a checkpoint that steers) that keeps the run converging on the
   target rather than on the original plan.
 - Milestones: whatever a person or client can use end to end (a web flow, an API, a CLI) is walked as its user would
-  walk it before anything is built on top, and a passing walk promotes a demo you can try.
+  walk it before anything is built on top, and each settled milestone promotes a running demo you can try.
 
 The binding design is [`DESIGN-1.0.md`](DESIGN-1.0.md). The 0.x design record is in git history at tag `v0.20.0`.
 
@@ -44,76 +46,125 @@ For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 
 ## How an arc runs
 
-![Swimlane flowchart: what you do, what the architect (Claude in your session) does, and what the executor runs unattended, across bootstrap, Phase 0, the run and completion](docs/flow.svg)
+![Simplified overview: the three parties (you, the architect, the executor) across bootstrap, Phase 0, the run with its unit pipeline, milestone walk and checkpoint, and completion and chaining](docs/flow.svg)
+
+The detailed process, in BPMN notation: [docs/flow-bpmn.svg](docs/flow-bpmn.svg).
 
 Three parties take part. **You** own the target and the vision. The **architect** is Claude in your session,
 running the `vision` and `orchestrate` skills: it does the judgment code cannot do. The **executor** is a
-detached Node process that owns every process, git operation and lock, and calls models (marked `model` in the
-diagram) only where a judgment is needed.
+detached Node process that owns every process, git operation and lock, and calls models only where a build or a
+judgment is needed. Builds run on an efficient model (Sonnet 5.5 under the `claude-only` profile) with an Opus
+advisor; Opus judges plan-check and the gate at every risk tier.
 
 **1. Bootstrap, once per repo.** You write the target state: detailed documents of what the product must become,
 the corpus. Then you run `/roadmap-orchestrator:orchestrate`. The architect checks the repo's issue policy and
 writes the corpus guide, then runs the `vision` skill: it distils your vision in dialogue, one question at a time,
 and plays back the decisions it would make on your behalf. You confirm it explicitly, set K (how many arcs may run
 past your last acknowledged check-in) and pick the first slice of the vision to build. The architect compiles
-`.roadmap/vision.json` and commits `.roadmap/`.
+`.roadmap/vision.json` and commits `.roadmap/`. It offers a boot hook that brings a dead arc back after a host
+restart, and for an arc with milestones it makes sure the walk tools (the bring-up programs, and the Playwright MCP
+for browser journeys) are installed in the devcontainer.
 
-**2. Phase 0, each arc.** The architect plans the arc in session, fanning the reading out to subagents. Every
-normative claim in the corpus becomes one rule (`T-n`); the corpus is pinned; each rule the slice needs becomes a
-testable obligation with its witness tests. Questions the vision cannot settle are ranked (`P-n`), each with the
-working assumption the arc acts on meanwhile, so nothing waits on you. Wherever units combine into something
-someone can use end to end, the plan marks a milestone with its journeys, and a design unit writes the milestone's
-design references before its other units start. Then the plan and one spec per unit, `roadmap phase0 check` until it
-is clean, and `roadmap start`. The executor refuses bad inputs (including plan defects code can catch, such as a
-witness its lane never runs), smokes each model backend and takes the host lock.
+**2. Phase 0, each arc.** The architect plans the arc in session. Every normative claim in the corpus becomes one
+rule (`T-n`); the corpus is pinned; each rule the slice needs becomes a testable obligation with its witness tests.
+Questions the vision cannot settle are ranked (`P-n`), each with the working assumption the arc acts on meanwhile,
+so nothing waits on you. Wherever units combine into something someone can use end to end, the plan marks a
+milestone with its journeys, and a design unit writes the milestone's design references before its other units
+start. The architect maps the repo's systems once, in `.roadmap/config.json`: each system's paths, tests and
+dependencies. Every test lane declares the systems it tests and its cadence: `build` (the builder runs it in its
+loop), `unit` (after the build), `candidate` (on the merge) or `batch` (end-to-end runs too slow for every merge,
+kept off the merge path). Lanes that need costly infrastructure name an environment. Then the plan and one spec per
+unit, `roadmap phase0 check` until it is clean, and `roadmap start`. The executor refuses bad inputs (including plan
+defects code can catch, such as a witness its lane never runs or a lane naming an unmapped system), smokes each
+model backend and takes the host lock.
 
 **3. The run, unattended for days.** A pack review reads the whole plan before any unit is admitted. Units then
-run in parallel across the DAG under resource locks: plan-check, a build in the unit's own git worktree, the
-lanes (the plan's fast suite lanes, required witnesses, mutation smoke), a fresh-context gate, and publication to
-the arc branch. The gate runs in its own checkout with a shell, so it can run experiments; a diff too large to read
-whole is reviewed in clusters on the strongest seat. A red lane or gate sends the unit back to its build for a fix
-round. A unit whose scope proves too narrow is held at plan-check with a proposed scope growth for the architect to
-accept or reject. A crashed executor is restarted by its supervisor and recovers from its write-ahead log.
+run in parallel across the DAG under resource locks, each through plan-check, a build, the lanes, a gate and a
+candidate merge.
 
-**Milestones are walked before anything builds on them.** When a milestone's units are all in, code brings the
-product up and a walker (a model with a shell, and a browser for web journeys) uses it along each journey as its user
-or client would. A finding that would force rework of what is built on top if fixed later is a break: the journey
-cannot be completed, an interface contract is wrong, or a declared floor is violated. A break holds the milestone's
-dependents until the checkpoint repairs it and a re-walk passes. Everything else (copy, visuals within the design
-tokens, docs and log text) is a deviation, repaired alongside without holding anything. Polish the walker proposes
-becomes units that code admits, and a polish judge keeps each one only if a walk of before and after shows it
-better. A passed milestone promotes the demo: a stable copy on fixed ports that is swapped for a new version only
-once that version is up, which you pick up when you choose with `roadmap demo up`.
+- **Plan-check is a design pass.** An Opus judge works in a checkout of the tip with a shell and web search, and
+  writes a design record: what changes in which systems, the interfaces, the failure modes and the test proving each,
+  and which lanes exercise each acceptance clause. Code binds the record: it refuses one whose tests no lane reaches
+  before the merge, or whose diff would be too large to review. Instead of approving, plan-check may redirect the
+  spec, split the unit into smaller ones, have a cheap model scaffold a new system's skeleton first, or ask for up
+  to two throwaway proofs of concept whose lessons, never code, reach the build. A unit whose scope proves too
+  narrow is held with a proposed scope growth for the architect to accept or reject.
+- **The build** runs in the unit's own git worktree. Code reverts any path it edits outside the scope, and the same path
+  reverted on two build rounds running is held as a scope growth too. A build that starts on a fresh session
+  after earlier work, such as a re-entry, a steer or a new seat, gets a handover built by code: the park diagnosis, the last
+  gate's findings, the clauses still unmet and the last red evidence.
+- **The lanes** run the spec's lanes, then the plan's `build`- and `unit`-cadence suite lanes and any the spec
+  forces, then the required witnesses and mutation smoke. A lane's pass is reused on any later commit that leaves
+  its systems unchanged. When a fix round only touched comments and docs, code and a cheap verifier certify that,
+  and the earlier passes carry over. Environments come up on first use and go down when idle; one that fails to
+  come up parks the unit until it recovers, never a red lane.
+- **The gate** is a fresh Opus judge in its own checkout with a shell, so it can run experiments. A diff too large
+  to read whole is reviewed in clusters. It blocks only on a named defect: incorrect behaviour, a contract violation,
+  a security or data-loss problem, an unmet requirement, or a test cited as proof that does not prove it. Comment
+  and doc findings ride along and never send the unit back. Findings go into a ledger, so a settled finding cannot
+  block again unless its file changed, and a re-gate reviews only what changed since the last approval. When nothing
+  changed, it approves again without a call.
+- **The candidate** merges the unit onto the arc tip in the integration slot and runs the `candidate`-cadence
+  suite lanes the systems map selects (every lane for an unmapped path, none for a docs-only diff), then
+  fast-forwards the arc branch.
+
+A red lane, a gate revise or a red candidate sends the unit back to its build for a charged fix round. A gate
+revises at most twice before the unit goes to the escalation seat, the summit class (Opus at xhigh effort). A red candidate
+retries once, and the third charged failure parks the unit. A lane that goes red then green on a rerun of the same
+tree is a flake: it is forgiven, recorded in the flaky ledger, and code mints a deflake unit to fix the test.
+When a requirement or contract changes mid-arc, code mints a propagation unit that re-witnesses the merged code
+against the new revision; units linked to the change re-open at plan-check, and none reaches its gate until the
+propagation unit merges. A fault confined to one unit parks only that unit and the arc goes on; a crashed executor
+is restarted by its supervisor and recovers from its write-ahead log.
+
+**Milestones are walked before anything builds on them.** When a milestone's units are all in, the plan's `batch`
+lanes whose systems changed run first; a red one is a break. Then code brings the product up and a walker (a model
+with a shell, and a browser for web journeys) uses it along each journey as its user or client would. A finding
+that would force rework of what is built on top if fixed later is a break: the journey cannot be completed, an
+interface contract is wrong, or a declared floor is violated. A break holds the milestone's dependents until the
+checkpoint repairs it and a re-walk passes, for at most three rounds by default. Everything else (copy, visuals
+within the design tokens, docs and log text) is a deviation, repaired alongside without holding anything. Polish the
+walker proposes becomes units that code admits, and a polish judge keeps each one only if a walk of before and after
+shows it better. Each settled milestone promotes the demo automatically: the supervisor brings the new version up
+on stable ports beside the old one and switches over once it is ready. `roadmap status` gives the address, and
+`roadmap demo hold|release|down|up` are your controls.
 
 The architect waits on `roadmap watch --actionable`, which wakes it only on key events (a new needs-user item, a
-merge, a park, completion, your answer) and a 30-minute heartbeat. It never runs a backend or touches the
-executor's state; it acts only through the executor's commands. A parked unit gets a revised spec (`apply`, then
-`resume`), a re-entry under a new id, or a `steer`. You can answer an open question at any time with
-`roadmap answer <P-n> --text "…"`, and it applies at once.
+merge, a park, the run held, blocked or draining, the run ending, your answer) and a 30-minute heartbeat. It never
+runs a backend or touches the executor's state; it acts only through the executor's commands. A parked unit gets a
+revised spec (`apply`, then `resume`), a re-entry under a new id naming the failure it fixes, or a `steer`. A
+usage limit parks that backend arc-wide until `resume --backend`. An `apply` that touches a unit mid-stage is
+queued and lands at the stage boundary; if it can no longer apply there, the architect gets an item and redoes
+the edit. You can answer an open question at any time with `roadmap answer <P-n> --text "…"`, and it applies at
+once.
 
-**The checkpoint steers toward the vision.** Lens audits run every N merges, on a wall-clock timer and after a
-plan change: four model lenses look for broken invariants, drift from the target, vacuous tests and anything that
-fails the vision. After every audit, and on a park that is a design problem, the checkpoint rules. It may admit a
-unit (a repair, an oversight within the slice, or one opportunity per arc that advances a clause outside it),
-respec, re-enter or cut a unit, or amend an obligation, each act citing the vision clauses it serves. Code
-validates the bundle and applies it, so its acts go straight back into the run without waiting for anyone. Every
-departure from the target is recorded as a divergence, which the architect reviews and can `reverse`. An act only
-you may approve becomes an `owner-request`; you are always asked first about anything irreversible, anything
-costing over $10, or anything with legal ramifications. What the checkpoint learns about the corpus becomes an
-amendment for the next Phase 0. Findings too small to matter are released, not banked as debt: code releases any
-P3 not fixed in the same decision, and brakes stop test nitpicks from spawning unit after unit once the milestones
-have passed, so the arc's tail converges.
+**The checkpoint steers toward the vision.** Lens audits run every five publications, on a wall-clock timer, after a
+plan change, when a publication leaves an obligation unwitnessed, and once more when no work remains: four model
+lenses look for broken invariants, drift from the target, vacuous tests and anything that fails the vision. The
+checkpoint rules on a park that is a design problem, after a milestone walk whose findings it has not weighed, and
+after an audit that found something new; an audit that found nothing skips it. It may admit a unit (a repair, an
+oversight within the slice, or one opportunity per arc that advances a clause outside it), respec, re-enter or cut
+a unit, or amend an obligation, each act citing the vision clauses it serves. Code validates the bundle and applies
+it, so its acts go straight back into the run without waiting for anyone. Every departure from the target is
+recorded as a divergence, which the architect reviews and can `reverse`. An act only you may approve becomes an
+`owner-request`; you are always asked first about anything irreversible, anything costing over $10, or anything with
+legal ramifications. What the checkpoint learns about the corpus becomes an amendment for the next Phase 0. Findings
+too small to matter are released, not banked as debt: code releases any P3 not fixed in the same decision, and
+brakes stop test nitpicks from spawning unit after unit once the milestones have passed, so the arc's tail
+converges.
 
 **The flow loop tunes how the arc runs, never what it measures.** It borrows from the Theory of Constraints (where
 to act) and statistical process control (when to act). Code does the diagnosis; a model only proposes.
 
 - **Time every station.** Each merged unit's lead time is cut into stations: the service time of each stage
-  (plan-check, build, lanes, gate, …) and the wait in front of it, the integration slot (candidate, suite lanes, arc
-  lanes, fast-forward), and time held. Code also measures cpu wait for every process tree it launches.
+  (plan-check, proof of concept, scaffold, build, lanes, gate, …) and the wait in front of it, the integration slot
+  (candidate, suite lanes, arc lanes, fast-forward), and time held. Code also measures cpu wait for every process
+  tree it launches.
 - **Chart lead time.** Lead times go on a control chart (XmR, log scale) whose limits come from earlier arcs on the
   same host, or else from this arc's first five merges. Only a special cause starts a run: a merge or a still-running
   unit above the upper limit, or a worsening trend. Ordinary variation starts nothing. A constraint shift, a closed
-  verdict and every 10 merges start one too, with a two-hour cooldown.
+  verdict, a unit held for host pressure and every 10 merges start one too, with a two-hour cooldown that
+  `roadmap flow request` can bypass once per window.
 - **Name the constraint.** Over the last ten merges, the constraint is the station with the largest mean wait in
   front of it when that wait is at least 10 % of lead time, else the station with the largest mean service time.
   When the host's cpu is saturated (work running at under half speed), the constraint is `host:cpu` ahead of both
@@ -131,14 +182,18 @@ to act) and statistical process control (when to act). Code does the diagnosis; 
 Tests, witnesses, arc lanes, judgment seats, lenses and the vision are the ruler and are never levers. Advice only
 you can act on, like more cores, reaches you at the next check-in.
 
-**4. Completion and chaining.** An arc is complete when every unit is merged, every milestone has passed its walk,
-every obligation holds on the head and the checkpoint has nothing left to change. `roadmap pr` pushes the arc branch and opens its PR, stacked on the
-previous arc's. The architect checks in with `roadmap brief`, a short preface and numbered questions, each with
-the assumption it acts on if you have no view. It does not wait for your answers: it chains into the next arc's
-Phase 0 with a slice chosen from the census and any notes left in `roadmap-inputs/_next/`, up to K arcs past your last acknowledged brief. It stops at K, when
-the vision has nothing left to advance, or when you tell it to. Acknowledging a brief frees the K budget; you can
-recalibrate the vision between arcs; and you merge the stacked PRs in order, first into `main`, each with a merge
-commit.
+**4. Completion and chaining.** When no work remains, code settles the arc: bundle requests still unanswered are
+declined and become amendments, open P2s are banked as debt and P3s are released. A close-out publication then runs
+every arc lane and every `batch` lane fresh; a red one blocks it. An arc is complete when every unit is merged or
+cut, every milestone's walks are done, no audit or checkpoint is owed, every obligation holds on the head and the
+checkpoint has nothing left to change. A milestone that settles without passing raises a blocking item instead.
+`roadmap pr` pushes the arc branch and opens its PR, stacked on the previous arc's. The architect checks in with
+`roadmap brief`, a short preface and numbered questions, each with the assumption it acts on if you have no view. It
+does not wait for your answers: it chains into the next arc's Phase 0 with a slice chosen from the census and any
+notes left in `roadmap-inputs/_next/`, up to K arcs past your last acknowledged brief. It stops at K, when the vision
+has nothing left to advance, or when you tell it to. Acknowledging a brief frees the K budget; you can recalibrate
+the vision between arcs; and you merge the stacked PRs in order, first into `main`, each with a merge commit. CI
+failures or review comments on a PR become fix units in the arc, never hand edits.
 
 ## Layout
 
@@ -149,7 +204,8 @@ plugins/roadmap-orchestrator/
   executor/                         # the 1.0 executor (TypeScript on Node 24)
   skills/orchestrate/               # SKILL.md, reference.md (every command), RATIONALE-1.0.md, templates/
   skills/vision/                    # SKILL.md: distil and calibrate the arc's vision in dialogue
-docs/flow.svg                       # how an arc runs: who does what
+docs/flow.svg                       # how an arc runs: simplified overview
+docs/flow-bpmn.svg                  # how an arc runs: the detailed process in BPMN
 DESIGN-1.0.md                       # binding 1.0 design brief
 ```
 
