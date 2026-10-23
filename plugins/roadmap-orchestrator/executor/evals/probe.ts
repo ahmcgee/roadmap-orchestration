@@ -12,7 +12,9 @@
 //                       Haiku and have it try to write a file: the session must call Agent, no Write, Edit, Bash or
 //                       NotebookEdit call may appear in the stream (the subagent has the session's read-only tools), the
 //                       file must not exist, and the adapter's usage must carry the Haiku share as `delegated` economy
-//                       (modelUsage per model, its costs summing to total_cost_usd)
+//                       (modelUsage per model, its costs summing to total_cost_usd), and the only Haiku id in
+//                       modelUsage must be exactly claude-haiku-5-5 (the Agent tool's `haiku` alias, which the gate
+//                       prompt relies on)
 //   claude.clean-context claude-opus-5-5 judgment argv in a git repo whose CLAUDE.md and AGENTS.md carry
 //                       canaries: the stream's init event must list only Task (the Agent tool), Glob, Grep, Read and
 //                       StructuredOutput, no MCP server, no skill and no memory path, and the model must
@@ -421,8 +423,15 @@ async function main(): Promise<void> {
   report(subTools.includes('Agent') && writers.length === 0 && !existsSync(forbidden), 'claude.judgment.subagent.read-only',
     `tool calls=${JSON.stringify(subTools)} file=${existsSync(forbidden)}`);
   const subUsage = sub.result.usage;
-  report(subUsage.kind === 'known' && (subUsage.delegated ?? []).some((d) => d.class === 'economy'), 'claude.judgment.subagent.metered',
-    `usage=${JSON.stringify(subUsage)}`);
+  // The class alone would pass a subagent on an older Haiku (delegateClass maps by family): the Agent tool's `haiku` alias,
+  // which the gate prompt relies on, must put it on exactly claude-haiku-5-5 (owner: Haiku is 5.5, never 4.5).
+  const subModels = readFileSync(join(sub.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').flatMap((l) => {
+    const e = JSON.parse(l) as { type?: string; modelUsage?: Record<string, unknown> };
+    return e.type === 'result' && e.modelUsage !== undefined ? Object.keys(e.modelUsage) : [];
+  });
+  const haikus = [...new Set(subModels.filter((m) => m.startsWith('claude-haiku-')))];
+  report(subUsage.kind === 'known' && (subUsage.delegated ?? []).some((d) => d.class === 'economy') && JSON.stringify(haikus) === JSON.stringify(['claude-haiku-5-5']),
+    'claude.judgment.subagent.metered', `subagent haiku ids=${JSON.stringify(haikus)} modelUsage ids=${JSON.stringify([...new Set(subModels)])} usage=${JSON.stringify(subUsage)}`);
 
   // A judgment's context: nothing from the repo's instruction files, the operator's memory, MCP or skills.
   const canaryRepo = dir(join(root, 'canary'));
