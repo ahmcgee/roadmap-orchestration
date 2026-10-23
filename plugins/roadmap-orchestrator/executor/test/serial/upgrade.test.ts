@@ -8,9 +8,9 @@
 // HEAD's check.ts (every criterion passes, and the upgrade forced no park and no new session), or, where the story
 // needs arc judgments the M1 scenario format cannot express, with HEAD's CLI and fakes directly.
 //
-// Which releases: HEAD (1.0.0-dev.16) adopts arcs started on 1.0.0-dev.7 to dev.15, through the defaults of
+// Which releases: HEAD (1.0.0-dev.17) adopts arcs started on 1.0.0-dev.7 to dev.16, through the defaults of
 // src/core/upgrade.ts. Three are covered here. Every unlabelled cell starts its arc on the previous release
-// (PREVIOUS_RELEASE, 1.0.0-dev.15). The cells labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
+// (PREVIOUS_RELEASE, 1.0.0-dev.16). The cells labelled `upgrade.dev11.*` start theirs on 1.0.0-dev.11 (DEV11_RELEASE)
 // and those labelled `upgrade.dev10.*` on 1.0.0-dev.10 (DEV10_RELEASE): an arc started on each is in flight, so the
 // dev.11 and dev.10 defaults are live code. No arc started on dev.7 to dev.9 is in flight, and no cell starts one.
 //
@@ -19,16 +19,18 @@
 // role sets and pressure records are HEAD's. HEAD's walk roles (`walkthrough`, `polishJudge`) are in force only under a
 // plan with milestones, which no arc of theirs has, so no walk seat is hashed for them.
 //
-// What dev.15 records differently from 1.0.0-dev.17: its lanes declare `tier`, read as their cadence, and its revisions
+// What dev.16 records differently from 1.0.0-dev.17: its lanes declare `tier`, read as their cadence, and its revisions
 // record no systems map, read as none (1.0.0-dev.17, lane topology; src/core/upgrade.ts `laneCadenceDefault`,
 // `systemsMapDefault`); its specs carry no design record (kind `module`, `designKindDefault`) and no revision pins (links
 // `unpinned`: a lasting state, no default); its plan-check answers carry no `staleLinks` (none answered,
 // `planCheckStaleLinksDefault`, propagation); and (proportional review) its gate answers, gate inputs, build answers and
 // approvals predate the findings ledger, the delta and the docs-only claim (`gateFindingReviewDefault`, `gateRulingsDefault`,
-// `gateReviewOf`, `buildDocsOnlySinceDefault`, `approvalBlobsOf`). Nothing else: no release from dev.13 to dev.16 changes a record, nor does dev.12 record anything
-// differently from dev.13 that HEAD reads with a default (dev.17's flaky ledger aside: a dev.15 arc has none, read as empty
+// `gateReviewOf`, `buildDocsOnlySinceDefault`, `approvalBlobsOf`). Nothing else: no release from dev.13 to dev.16 changes a record
+// in a way HEAD reads with a default (dev.16's additions, an evidence snapshot's `notRegular`, a publication's vision files and
+// the `milestone-references-oversize` plan defect, are optional or new kinds), nor does dev.12 record anything
+// differently from dev.13 that HEAD reads with a default (dev.17's flaky ledger aside: a dev.16 arc has none, read as empty
 // at the upgrade, `flakyLedgerDefault`): dev.13's additions (plan `milestones`, `limits.walkRounds`, a
-// unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a dev.15 arc on HEAD warns
+// unit's `polish`, `finding-opened.milestone`) are optional, absent meaning none for good. So a dev.16 arc on HEAD warns
 // those lane defaults and no other `roadmap: upgrade default` (asserted after every unlabelled cell's HEAD phase). Its seat
 // table is not HEAD's (dev.17 moved plan-check and the gate to frontier and build.high to efficient), so under OR-L3 its
 // units re-pin under HEAD's rev and status aliases the revs it recorded (PRE_DEV17_BUILTIN_SEATS).
@@ -261,9 +263,9 @@ type Release = Readonly<{ sha: string; version: string }>;
  * The previous release: its executor starts the arc, HEAD's finishes it, in every cell not labelled with an older
  * release. At each release, move it to the last released commit, the merge of the previous release's PR into main.
  * Merges here are merge commits, so a merged branch's shas stay reachable and `git archive` finds them. Now:
- * 1.0.0-dev.15, merged to main as PR #118 (schema version 1).
+ * 1.0.0-dev.16, merged to main as PR #119 (schema version 1).
  */
-const PREVIOUS_RELEASE: Release = { sha: 'a1eed1c91066e23b0cbe404e3bc11904fc858573', version: '1.0.0-dev.15' };
+const PREVIOUS_RELEASE: Release = { sha: 'bc04af770294487c6b3d9190c6c8de7669eff09e', version: '1.0.0-dev.16' };
 /**
  * 1.0.0-dev.11, merged to main as PR #113: an arc started on it is in flight (adopted by dev.12, then by HEAD), so the
  * cells labelled `upgrade.dev11.*` start their arc on it and exercise the dev.11 defaults of src/core/upgrade.ts end to
